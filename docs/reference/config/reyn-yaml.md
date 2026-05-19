@@ -191,9 +191,9 @@ safety:
     phase_seconds: 0           # per-phase wall-clock budget; 0 = unlimited (--phase-budget)
     chain_seconds: 60          # wait for delegate reply before upstream error
   on_limit:
-    mode: unattended           # interactive | unattended | auto_extend
+    mode: interactive          # interactive | unattended | auto_extend
     auto_extend_times: 1       # (auto_extend mode) number of auto-extensions
-    ask_timeout_seconds: 60    # (interactive mode) user-prompt timeout
+    ask_timeout_seconds: 0     # (interactive mode) user-prompt timeout; 0 = wait forever
 ```
 
 ### `safety.loop` fields
@@ -220,9 +220,9 @@ safety:
 
 | Path | Type | Default | Description |
 |------|------|---------|-------------|
-| `safety.on_limit.mode` | string | `unattended` | What happens when a loop/timeout cap fires. `interactive` — prompt the user via `ask_user` for permission to extend. `unattended` — abort immediately (default for `reyn run` / CI). `auto_extend` — auto-extend `auto_extend_times` times then abort. |
-| `safety.on_limit.auto_extend_times` | int | `1` | Number of auto-extensions before falling through to `unattended`. Used only when `mode: auto_extend`. |
-| `safety.on_limit.ask_timeout_seconds` | float (s) | `60` | How long `interactive` mode waits for a user response. On timeout the request is treated as a refusal (abort with partial data). |
+| `safety.on_limit.mode` | string | `interactive` | What happens when a loop/timeout cap fires. `interactive` (default) — prompt the user via `ask_user` for permission to extend; headless paths short-circuit cleanly to abort. `unattended` — abort immediately on hit (opt-in for CI / cron / scripted runs that cannot pause). `auto_extend` — auto-extend `auto_extend_times` times then abort. |
+| `safety.on_limit.auto_extend_times` | int | `1` | Number of auto-extensions before falling through to abort. Used only when `mode: auto_extend`. |
+| `safety.on_limit.ask_timeout_seconds` | float (s) | `0` | How long `interactive` mode waits for a user response. `0` (default) = wait forever; positive = abort with partial data after the window elapses. |
 
 ## `plan` block
 

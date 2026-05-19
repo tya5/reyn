@@ -53,12 +53,14 @@ def _one_phase_skill() -> Skill:
 
 @pytest.mark.asyncio
 async def test_os_max_phase_visits_unattended_raises_on_hit() -> None:
-    """Tier 2: ``mode=unattended`` (= default) preserves the legacy
-    raise path: a phase entered ``max_phase_visits`` times raises
-    ``LoopLimitExceededError`` without dispatching any intervention.
+    """Tier 2: explicit ``mode=unattended`` raises ``LoopLimitExceededError``
+    on hit without dispatching any intervention. Default mode is now
+    ``interactive``, so opting into legacy abort-on-hit behaviour is
+    explicit (= the ``OnLimitConfig(mode="unattended")`` override).
     """
     rt = OSRuntime(
         _one_phase_skill(), model="stub/model", run_id="run-fp5-B-unatt",
+        safety=SafetyConfig(on_limit=OnLimitConfig(mode="unattended")),
     )
     rt._max_phase_visits = 2
 
@@ -66,7 +68,7 @@ async def test_os_max_phase_visits_unattended_raises_on_hit() -> None:
     await rt._enter_phase("greet", {"type": "greet_in", "data": {}})
     await rt._enter_phase("greet", {"type": "greet_in", "data": {}})
 
-    # Third entry: cap hit. Default unattended mode → raise.
+    # Third entry: cap hit. Unattended mode → raise.
     with pytest.raises(LoopLimitExceededError) as excinfo:
         await rt._enter_phase("greet", {"type": "greet_in", "data": {}})
     assert "max_phase_visits" in str(excinfo.value)
@@ -112,9 +114,11 @@ def _make_session(*, cap: int, on_limit: OnLimitConfig) -> ChatSession:
 
 
 def test_router_cap_unattended_raises_on_hit(tmp_path, monkeypatch) -> None:
-    """Tier 2: with default ``unattended`` mode, the router cap
+    """Tier 2: with explicit ``unattended`` mode, the router cap
     fires the legacy ``RouterCapExceeded`` raise — byte-for-byte
-    legacy behaviour.
+    legacy behaviour. Default mode is now ``interactive``; opting
+    into immediate-raise is the ``OnLimitConfig(mode="unattended")``
+    override.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(cap=2, on_limit=OnLimitConfig(mode="unattended"))
@@ -158,12 +162,14 @@ def test_router_cap_auto_extend_grants_then_aborts(
 # ─── ChatSession threads on_limit through the constructor ─────────────
 
 
-def test_chatsession_default_on_limit_is_unattended() -> None:
+def test_chatsession_default_on_limit_is_interactive() -> None:
     """Tier 2: a ChatSession without an explicit ``safety`` argument
-    defaults to ``unattended`` on_limit (= preserves legacy behaviour).
+    defaults to ``interactive`` on_limit so a TUI / a2a run holds open
+    for a user reply rather than silently discarding mid-run state.
+    See ``OnLimitConfig`` docstring for the headless safety story.
     """
     s = ChatSession(agent_name="t")
-    assert s._on_limit.mode == "unattended"
+    assert s._on_limit.mode == "interactive"
 
 
 def test_chatsession_threads_on_limit_through_constructor() -> None:

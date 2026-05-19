@@ -263,15 +263,18 @@ class OnLimitConfig:
 
     Reyn supports three behaviours when a safety limit fires:
 
-    - ``interactive``: pause the run, prompt the user via ``ask_user``
-      for permission to continue. On approval the limit is extended by
-      one increment; on refusal (or ask timeout) the run aborts with
-      ``RunResult.partial_data`` populated. This is the default for
-      ``reyn chat`` — the user is sitting at a TUI and can answer.
+    - ``interactive`` (= default): pause the run, prompt the user via
+      ``ask_user`` for permission to continue. On approval the limit
+      is extended by one increment; on refusal (or ask timeout) the
+      run aborts with ``RunResult.partial_data`` populated. Default
+      ``ask_timeout_seconds=0`` means "wait forever for a human
+      reply" — silently discarding mid-run state on a 60s wall clock
+      is a worse UX than holding the run open until the user returns.
 
-    - ``unattended``: abort immediately (legacy behaviour). This is the
-      default for ``reyn run`` and CI invocations — there is no user to
-      ask, so silent escalation is the safer choice.
+    - ``unattended``: abort immediately on hit. Opt-in for CI / cron
+      / scripted runs that genuinely cannot pause for a human, where
+      a hung intervention prompt would be a worse outcome than a
+      clean abort.
 
     - ``auto_extend``: auto-extend the limit ``auto_extend_times`` times
       without prompting, then fall through to ``unattended`` behaviour
@@ -286,15 +289,19 @@ class OnLimitConfig:
     pipeline.
 
     ``ask_timeout_seconds`` bounds how long ``interactive`` mode waits
-    for a user response. If the prompt is not answered within the
-    window, the request is treated as a refusal (= abort with
-    partial_data). Defaults to 60s — long enough for a human reply,
-    short enough to avoid a hung delegate / chat session.
+    for a user response. ``0`` (= default) means "wait forever";
+    positive values abort with ``partial_data`` after the window
+    elapses. Headless paths are still safe regardless of timeout:
+    ``bus=None`` (= no intervention surface, e.g. dispatch_tool /
+    scripted runs) short-circuits to abort via the ``no_bus`` reason
+    in ``handle_limit_exceeded``, and ``StdinInterventionBus`` on a
+    non-TTY raises ``EOFError`` immediately which the helper treats
+    as a refusal.
     """
 
-    mode: Literal["interactive", "unattended", "auto_extend"] = "unattended"
+    mode: Literal["interactive", "unattended", "auto_extend"] = "interactive"
     auto_extend_times: int = 1
-    ask_timeout_seconds: float = 60.0
+    ask_timeout_seconds: float = 0.0
 
 
 @dataclass

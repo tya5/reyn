@@ -130,10 +130,15 @@ safety:
 
 ## limit 到達時の挙動 (`safety.on_limit`)
 
-既定の挙動: limit 到達は実行を abort します。Reyn は `RunResult` を返し、
-`status` を `loop_limit_exceeded` / `phase_budget_exceeded` /
-`budget_exceeded` のいずれかに設定し、`partial_data` には最後に完了した
-フェーズの artifact (= *「今ここまでの成果物」*) を入れます。
+既定の挙動: limit 到達時、 `ask_user` で user に延長を確認します
+(= `mode: interactive` / `ask_timeout_seconds: 0` — 無制限待機)。
+拒否 / timeout / intervention surface 不在の場合は abort、 Reyn は
+`RunResult` を返し、 `status` を `loop_limit_exceeded` /
+`phase_budget_exceeded` / `budget_exceeded` のいずれかに設定し、
+`partial_data` には最後に完了したフェーズの artifact (= *「今ここまでの
+成果物」*) を入れます。ヘッドレス path (= `bus=None` / 非 TTY stdin) は
+intervention 不要に自動的に abort 経路へ短絡するので、 `interactive`
+既定はどの環境でも安全です。
 
 挙動は `safety.on_limit.mode` で変更できます:
 
@@ -141,17 +146,17 @@ safety:
 # reyn.local.yaml
 safety:
   on_limit:
-    mode: unattended       # 既定 — 到達時に abort (旧来の挙動)
-    # mode: interactive    # ask_user で user に確認、 承認時に limit 延長して継続
+    mode: interactive      # 既定 — ask_user で user に確認、 承認時に limit 延長して継続
+    # mode: unattended     # 到達時に abort (= CI / cron / スクリプト実行向けのオプトイン)
     # mode: auto_extend    # N 回まで自動延長、 それ以降は abort
     auto_extend_times: 1   # auto_extend 時のみ参照
-    ask_timeout_seconds: 60  # interactive 時のみ参照
+    ask_timeout_seconds: 0  # interactive 時のみ参照; 0 = 無制限待機
 ```
 
 | モード | 用途 |
 |---|---|
-| `unattended` (既定) | `reyn run` / CI / スクリプト実行 — 確認できる人がいない、 fail fast 推奨 |
-| `interactive` | `reyn chat` / TUI session — ユーザーが目の前にいて判断できる |
+| `interactive` (既定) | `reyn chat` / TUI / a2a session — user が到達可能で延長判断を返せる |
+| `unattended` | CI / cron / スクリプト実行で human を待てない用途のオプトイン、 fail fast |
 | `auto_extend` | 信頼済みの長時間タスクで「N 回までは自動延長して良い」と分かっているとき |
 
 **各 limit がどの site で wiring されているか (FP-0005 Phase 2 — landing 完了):**

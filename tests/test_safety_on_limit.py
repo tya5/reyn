@@ -45,16 +45,19 @@ def _write_yaml(path: Path, body: str) -> None:
 # ─── 1. OnLimitConfig defaults ─────────────────────────────────────────
 
 
-def test_on_limit_default_is_unattended() -> None:
-    """Tier 2: the default ``OnLimitConfig`` mode is ``unattended`` so
-    legacy callers (= every existing reyn run / chat without explicit
-    config) preserve their abort-on-limit behaviour. Opt into
-    ``interactive`` / ``auto_extend`` is explicit.
+def test_on_limit_default_is_interactive_with_no_timeout() -> None:
+    """Tier 2: the default ``OnLimitConfig`` mode is ``interactive`` with
+    ``ask_timeout_seconds=0`` so that a run on a real intervention
+    surface (= chat TUI / a2a peer) holds open for a user reply rather
+    than silently discarding mid-run state on a 60s wall clock.
+    Headless paths (``bus=None``, non-TTY stdin) still abort cleanly
+    via the ``no_bus`` / ``user_refused`` short-circuits in
+    ``handle_limit_exceeded`` — see the helper docstring.
     """
     cfg = OnLimitConfig()
-    assert cfg.mode == "unattended"
+    assert cfg.mode == "interactive"
     assert cfg.auto_extend_times == 1
-    assert cfg.ask_timeout_seconds == 60.0
+    assert cfg.ask_timeout_seconds == 0.0
 
 
 def test_on_limit_modes_constant_includes_all_three() -> None:
@@ -99,7 +102,7 @@ safety:
     mode: not-a-real-mode
 """.lstrip())
     cfg = load_config(cwd=isolated_project)
-    assert cfg.safety.on_limit.mode == "unattended"
+    assert cfg.safety.on_limit.mode == "interactive"
 
 
 def test_safety_on_limit_negative_values_clamped(
@@ -118,10 +121,10 @@ safety:
 """.lstrip())
     cfg = load_config(cwd=isolated_project)
     assert cfg.safety.on_limit.auto_extend_times == 1
-    assert cfg.safety.on_limit.ask_timeout_seconds == 60.0
+    assert cfg.safety.on_limit.ask_timeout_seconds == 0.0
 
 
-def test_safety_section_default_includes_unattended_on_limit(
+def test_safety_section_default_includes_interactive_on_limit(
     isolated_project: Path,
 ) -> None:
     """Tier 2: an empty ``safety:`` (or no safety: at all) yields a
