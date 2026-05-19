@@ -360,3 +360,73 @@ def test_routing_decided_skipped_when_action_name_empty():
         f"routing_decided must NOT fire when action_name is absent/empty, "
         f"but got: {events}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6 (issue #241): qualified-name direct call NOT in tools[] → "ars_direct"
+# ---------------------------------------------------------------------------
+
+
+def test_routing_decided_source_ars_direct_for_unsalvageable_qualified_name():
+    """Tier 2: a qualified name not in catalog tags ``source="ars_direct"``.
+
+    Issue #241: distinguish "the alias was a real hot-list entry the LLM
+    used correctly" (= name actually surfaced in tools[]) from "the LLM
+    picked a name from ARS text and called it directly" (= name appeared
+    only in invoke_action.description's ARS block). Pre-#241 the label
+    was unconditionally ``"hot_list_alias"`` for any ``__``-containing
+    direct call, regardless of catalog landing.
+
+    Uses ``bogus_category__action`` — unresolvable via universal_dispatch,
+    so the #229 salvage is a no-op and we still get the dispatcher's
+    standard ``unknown_tool`` error path. The label is the only thing
+    being verified here; the error outcome is incidental.
+    """
+    host = _FakeRouterHost(universal_wrappers_enabled=True)
+    _run_with_llm_sequence(
+        host,
+        [
+            _tool_result([{"name": "bogus_category__action", "args": {}}]),
+            _text_result("done"),
+        ],
+    )
+    events = _routing_decided_events(host)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["action_name"] == "bogus_category__action"
+    assert ev["source"] == "ars_direct", (
+        f"Expected source='ars_direct' for qualified name not in catalog, "
+        f"got {ev['source']!r}"
+    )
+
+
+def test_routing_decided_source_hot_list_alias_only_when_in_catalog():
+    """Tier 2: ``source="hot_list_alias"`` requires name to be in tools[].
+
+    Pin the discriminator: with a tracker pre-loaded for ``skill__bar``,
+    the alias IS in tools[] → ``"hot_list_alias"`` (already covered by
+    ``test_routing_decided_emitted_for_hot_list_alias``). Without a
+    tracker, the same name would tag ``"ars_direct"`` (= #241 split).
+    """
+    # Same skill name, same call shape, but no tracker → skill__bar NOT
+    # surfaced as a hot-list alias → NOT in tools[] / self._catalog.
+    host = _FakeRouterHost(
+        universal_wrappers_enabled=True,
+        tracker=None,
+        skills=[{"name": "bar", "short_description": "bar skill"}],
+    )
+    _run_with_llm_sequence(
+        host,
+        [
+            _tool_result([{"name": "skill__bar", "args": {}}]),
+            _text_result("done"),
+        ],
+    )
+    events = _routing_decided_events(host)
+    assert len(events) == 1
+    ev = events[0]
+    assert ev["action_name"] == "skill__bar"
+    assert ev["source"] == "ars_direct", (
+        f"Without hot-list landing, source must be 'ars_direct' not "
+        f"'hot_list_alias' (issue #241); got {ev['source']!r}"
+    )
