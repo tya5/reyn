@@ -38,6 +38,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from reyn.chat.channel_state import ChannelState
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +53,10 @@ class RunEntry:
     issue #292 (α): ``pending_intervention`` and ``question`` fields
     removed — iv state lives in ``ChatSession._interventions``. This
     entry only carries A2A-task-wrapper state.
+
+    issue #269 Phase 2: ``_webhook_channel_state`` (private, lazy-init)
+    tracks dead-channel detection for the registered ``webhook_url``.
+    See ``RunRegistry.webhook_channel_state``.
     """
     run_id: str
     agent_name: str
@@ -61,6 +69,12 @@ class RunEntry:
     history_events: list[dict] = field(default_factory=list)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # issue #269 Phase 2: per-run webhook liveness state. In-memory
+    # only (not persisted) — restart starts fresh, which matches the
+    # peer's expectation that a server restart resets retry counters.
+    _webhook_channel_state: "ChannelState | None" = field(
+        default=None, repr=False,
+    )
 
     def to_public_dict(self) -> dict:
         """JSON-safe shape for GET /a2a/tasks/{run_id} responses.
@@ -301,6 +315,34 @@ class RunRegistry:
     def remove(self, run_id: str) -> None:
         if self._runs.pop(run_id, None) is not None:
             self._persist()
+
+    def webhook_channel_state(
+        self, run_id: str,
+    ) -> "ChannelState | None":
+        """Get-or-create the ``ChannelState`` for this run's webhook URL.
+
+        Returns ``None`` when the run has no ``webhook_url`` set (=
+        peer never registered a callback URL → there's no channel to
+        track). Otherwise lazy-initialises a ``ChannelState`` with
+        ``channel_id="webhook:<run_id>"`` on first access.
+
+        In-memory only — not persisted across process restart, which
+        matches the peer's expectation that a restart resets retry
+        counters. Callers (= ``A2AInterventionBus.on_dispatch``,
+        ``_A2AProgressBridge._send``) check ``is_alive()`` before each
+        fire and call ``record_attempt(result)`` after.
+
+        issue #269 Phase 2.
+        """
+        entry = self._runs.get(run_id)
+        if entry is None or entry.webhook_url is None:
+            return None
+        if entry._webhook_channel_state is None:
+            from reyn.chat.channel_state import ChannelState  # noqa: PLC0415
+            entry._webhook_channel_state = ChannelState(
+                channel_id=f"webhook:{run_id}",
+            )
+        return entry._webhook_channel_state
 
 
 __all__ = ["RunEntry", "RunRegistry"]

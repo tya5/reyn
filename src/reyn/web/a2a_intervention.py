@@ -137,17 +137,46 @@ class A2AInterventionBus:
                 "failed for run %r", self._run_id,
             )
 
-        # Webhook POST (issue #267 Gap 2). Best-effort, opt-in.
+        # Webhook POST (issue #267 Gap 2 + issue #269 Phase 2). Best-
+        # effort, opt-in. Liveness-gated: skip the post if the
+        # per-run ChannelState says the webhook URL is dead (=
+        # consecutive 5xx / timeout / 4xx beyond threshold). Update
+        # the state after each attempt so subsequent fires (= terminal
+        # completed / failed, and _A2AProgressBridge progress events)
+        # share the dead-channel inference.
         if entry.webhook_url:
+            channel_state = self._registry.webhook_channel_state(self._run_id)
+            if channel_state is not None and not channel_state.is_alive():
+                logger.warning(
+                    "A2AInterventionBus.on_dispatch: webhook channel "
+                    "for run %r is dead (= %d consecutive failures); "
+                    "skipping POST", self._run_id,
+                    channel_state.delivery_failures,
+                )
+                return
             from reyn.web.notifications import post_webhook  # noqa: PLC0415
 
             try:
-                await post_webhook(entry.webhook_url, payload)
-            except Exception:  # noqa: BLE001
+                result = await post_webhook(entry.webhook_url, payload)
+            except Exception as exc:  # noqa: BLE001
                 logger.exception(
-                    "A2AInterventionBus.on_dispatch: webhook POST failed "
+                    "A2AInterventionBus.on_dispatch: webhook POST raised "
                     "for run %r url=%s", self._run_id, entry.webhook_url,
                 )
+                # post_webhook's internal retry / error handling normally
+                # converts exceptions into a DeliveryResult; a raise here
+                # means a defensive path failed. Record as retryable so
+                # the state machine accounts for the attempt.
+                from reyn.chat.channel_state import (  # noqa: PLC0415
+                    DeliveryOutcome,
+                    DeliveryResult,
+                )
+                result = DeliveryResult(
+                    outcome=DeliveryOutcome.RETRYABLE_FAILURE,
+                    error=str(exc),
+                )
+            if channel_state is not None:
+                channel_state.record_attempt(result)
 
 
 __all__ = ["A2AInterventionBus"]
