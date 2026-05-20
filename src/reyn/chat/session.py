@@ -609,17 +609,30 @@ def _extract_skill_input_hint(skill_dir: "Path", entry_phase_name: str) -> dict:
         input_schema: dict | None = None
         input_wrapped: bool = True
         artifacts_dir = skill_dir / "artifacts"
+        # B46-fix: shared stdlib artifacts (= src/reyn/stdlib/artifacts/<n>.yaml,
+        # e.g. user_message) are referenced by many skills as their entry input
+        # but live outside the skill directory. Without a fallback, every skill
+        # using user_message ends up with input_schema=None → hot-list wrapper
+        # surfaces empty {properties: {}, additionalProperties: true} → LLM
+        # calls skill__<name> with {} (= word_stats_demo multiline 9/10 empty
+        # args in dogfood B46 W2 S6). Verified via trace-patch-replay: when the
+        # alias parameters include the shared artifact's properties (= just
+        # `text` declaration), flash-lite passes the correct value 10/10.
+        stdlib_artifacts_dir = stdlib_root() / "artifacts"
         for art_name in preferred:
-            art_path = artifacts_dir / f"{art_name}.yaml"
-            if not art_path.exists():
-                continue
-            art_data = _yaml.safe_load(art_path.read_text(encoding="utf-8")) or {}
-            schema = art_data.get("schema") or {}
-            props = schema.get("properties") or {}
-            if props:
-                input_fields = list(props.keys())
-                input_schema = dict(schema)
-                input_wrapped = bool(art_data.get("wrapped", True))
+            for candidate in (artifacts_dir / f"{art_name}.yaml",
+                              stdlib_artifacts_dir / f"{art_name}.yaml"):
+                if not candidate.exists():
+                    continue
+                art_data = _yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
+                schema = art_data.get("schema") or {}
+                props = schema.get("properties") or {}
+                if props:
+                    input_fields = list(props.keys())
+                    input_schema = dict(schema)
+                    input_wrapped = bool(art_data.get("wrapped", True))
+                    break
+            if input_schema is not None:
                 break
 
         result: dict = {
