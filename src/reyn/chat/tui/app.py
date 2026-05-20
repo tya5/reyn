@@ -566,7 +566,24 @@ class ReynTUIApp(App):
             # ChatEventForwarder now forwards workflow_finished / workflow_aborted
             # as "skill done: <status>" so the row can stop spinning here.
             status = text[len("skill done: "):].strip()
-            conv.finish_skill_row(run_id, success=(status == "finished"), reason="")
+            # Wave-3 SK2: pass the phase-visit count as ``reason`` so
+            # ``SkillActivityRow._build_finished`` renders the
+            # ``· N phase(s)`` suffix. Previously hard-coded
+            # ``reason=""`` suppressed the suffix entirely; the
+            # widget already supports the conditional render but had
+            # no caller setting the value. Read from
+            # ``_skill_exec`` which the ``phase started:`` branch
+            # populates throughout the run.
+            _visits = int(
+                (self._skill_exec.get(run_id) or {}).get("phase_visits", 0)
+            )
+            _reason = (
+                f"{_visits} phase{'s' if _visits != 1 else ''}"
+                if _visits > 0 else ""
+            )
+            conv.finish_skill_row(
+                run_id, success=(status == "finished"), reason=_reason,
+            )
             # Out-of-band: an aborted skill is an attention case — flash the
             # title to "error" and ring the bell so a user with reyn in a
             # background tab sees something happened. Successful finishes
