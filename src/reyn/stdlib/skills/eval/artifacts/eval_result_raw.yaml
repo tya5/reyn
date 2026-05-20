@@ -58,4 +58,4 @@ schema:
         Status returned by the target skill's run, copied from
         case_run_result. The postprocessor uses this to short-circuit
         scoring when the target run did not finish.
-  required: [criteria_results, weakest_phase, spec_path, summary, run_status]
+  required: [criteria_results, weakest_phase, summary, run_status]
