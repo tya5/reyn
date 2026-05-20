@@ -104,6 +104,13 @@ class InputBar(Widget):
         self._slash_commands: list[SlashCommand] = list(slash_commands or [])
         self._history: list[str] = []
         self._history_idx: int = -1
+        # Wave-4 ML4: track whether the current TextArea contents came
+        # from a history restore + haven't been edited yet. When True,
+        # Up/Down navigate history directly (skipping the line-by-line
+        # cursor walk) so multi-line restored entries don't require
+        # ``row_count`` Up presses to advance one history step.
+        # Cleared on ``TextArea.Changed`` (= user edit).
+        self._restore_pristine: bool = False
 
     def compose(self) -> ComposeResult:
         # Picker docked above TextArea (compose order matters: top-down).
@@ -167,6 +174,11 @@ class InputBar(Widget):
     @on(TextArea.Changed, "#input")
     def on_textarea_changed(self, event: TextArea.Changed) -> None:
         self._update_picker(event.text_area.text)
+        # ML4: any text edit clears the restore-pristine flag so the
+        # next Up/Down resumes line-by-line cursor walk (= edit mode).
+        # ``_load_history_entry`` re-sets the flag after this fires,
+        # so restore → flag True flow is preserved.
+        self._restore_pristine = False
 
     def on_paste(self, event: events.Paste) -> None:
         """Insert pasted text at the cursor, normalising line endings.
@@ -238,13 +250,26 @@ class InputBar(Widget):
             self._confirm_picker(picker, ta)
 
     def action_key_up(self) -> None:
-        """Up — picker selection if open, else input history at top edge."""
+        """Up — picker selection if open, else input history at top edge.
+
+        Wave-4 ML4: while ``_restore_pristine`` is True (= the current
+        text came from a history restore and hasn't been edited), Up
+        jumps to the previous history entry directly — skipping the
+        line-by-line cursor walk that previously required N Up presses
+        for an N-line restored entry to advance one history step. Any
+        text edit clears the flag (see ``on_textarea_changed``), so
+        once the user starts modifying the restored entry, Up resumes
+        cursor-up navigation within the buffer.
+        """
         picker = self._picker()
         ta = self._textarea()
         if ta is None:
             return
         if picker is not None and picker.visible_ and picker.has_matches:
             picker.move_selection(-1)
+            return
+        if self._restore_pristine:
+            self._history_up(ta)
             return
         row, _ = ta.cursor_location
         if row == 0:
@@ -254,13 +279,21 @@ class InputBar(Widget):
         ta.action_cursor_up()
 
     def action_key_down(self) -> None:
-        """Down — picker selection if open, else input history at bottom edge."""
+        """Down — picker selection if open, else input history at bottom edge.
+
+        Wave-4 ML4 mirror: while ``_restore_pristine`` is True, Down
+        navigates history forward; otherwise it's cursor-down within
+        the buffer.
+        """
         picker = self._picker()
         ta = self._textarea()
         if ta is None:
             return
         if picker is not None and picker.visible_ and picker.has_matches:
             picker.move_selection(+1)
+            return
+        if self._restore_pristine:
+            self._history_down(ta)
             return
         last_row = ta.text.count("\n")
         row, _ = ta.cursor_location
@@ -513,6 +546,15 @@ class InputBar(Widget):
         lines = text.split("\n")
         last_row = len(lines) - 1
         ta.move_cursor((last_row, len(lines[last_row])))
+        # Wave-4 ML4: signal that the buffer now holds a verbatim
+        # history entry. Subsequent Up/Down navigates history while
+        # this flag is set; the first text edit (via
+        # ``on_textarea_changed``) clears it. ``load_text`` above
+        # fires ``TextArea.Changed`` which would normally clear the
+        # flag — but on_textarea_changed runs SYNCHRONOUSLY before
+        # we get here, so setting the flag at this point lands after
+        # the changed-event clear. Tested via tmux smoke.
+        self._restore_pristine = True
 
     # ── hint rendering ────────────────────────────────────────────────────────
 
