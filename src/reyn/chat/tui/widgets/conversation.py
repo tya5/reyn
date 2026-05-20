@@ -1189,11 +1189,30 @@ class ConversationView(Widget):
         self.show_status(text, kind="general")
 
     def _flash_turn_position(self, n: int, total: int) -> None:
-        """Write a dim ``↑ turn N / M`` line to the conv log.
+        """Surface ``↑ turn N / M`` feedback for Ctrl+P/N navigation.
 
         Deduped by ``_last_turn_flash`` so rapid Ctrl+P/N presses that
-        land on the same anchor don't spam the log with identical lines.
-        Cleared on Ctrl+L so post-clear navigation flashes fresh.
+        land on the same anchor don't spam the surface with identical
+        messages. Cleared on Ctrl+L so post-clear navigation flashes
+        fresh.
+
+        Wave-3 FS1: previously this wrote ONLY to the conv log via
+        ``_write_log``. Problem: Ctrl+P scrolls the user UP through
+        history, and the new turn-N/M line lands at the LOG BOTTOM
+        (= invisible at the current scroll position). The user
+        navigates to turn 1 of 8 but only sees the flash when they
+        later scroll back to the bottom — by which time the lines
+        have accumulated as junk in conversation history.
+
+        Switch to the sticky-status surface (= the same place the
+        boundary hint from FS2 writes to). It's visible regardless
+        of scroll position AND it doesn't pollute the conv log
+        permanently. ``kind="general"`` reads as advisory (grey
+        accent), doesn't preempt an active ``⟳ thinking…`` (= those
+        use ``kind="thinking"``).
+
+        Boundary dedup state also cleared here so any successful
+        in-bounds move re-flashes the boundary cue next time.
         """
         if self._last_turn_flash == (n, total):
             return
@@ -1202,7 +1221,7 @@ class ConversationView(Widget):
         # dedup so the next time the user hits the edge they get the
         # hint fresh (= "user navigated away from the boundary").
         self._last_boundary_flash = None
-        self._write_log(Text(f"  ↑ turn {n} / {total}", style="dim italic #666666"))
+        self.show_status(f"↑ turn {n} / {total}", kind="general")
 
     def clear(self) -> None:
         """Ctrl+L: clear the log + reset state. Does not affect engine state."""
