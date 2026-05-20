@@ -736,6 +736,30 @@ def _run_install_from_source(
     print(f"Scope: {scope}")
     if pre_env:
         print(f"Pre-supplied env keys: {', '.join(pre_env.keys())}")
+    # issue #320: warn when /tmp is passed as a server arg on macOS.
+    # /tmp is a symlink to /private/tmp on Darwin; the filesystem MCP
+    # server (and similar path-checking servers) resolve the configured
+    # root to its canonical path but compare LITERAL strings against
+    # tool-call arguments → 'Access denied - path outside allowed
+    # directories'. Surfacing the gotcha at install time saves a debug
+    # round later. Linux unaffected.
+    import platform as _platform  # noqa: PLC0415
+    if extra_args and _platform.system() == "Darwin":
+        tmp_args = [
+            a for a in extra_args
+            if isinstance(a, str) and (a == "/tmp" or a.startswith("/tmp/"))
+        ]
+        if tmp_args:
+            print(
+                "Warning: detected /tmp path(s) in --args on macOS: "
+                f"{tmp_args}. /tmp is a symlink to /private/tmp; some "
+                "path-checking MCP servers (e.g. filesystem) compare "
+                "literal paths and will deny tool calls that reference "
+                "/tmp/... while the configured root resolved to "
+                "/private/tmp/... — use a non-symlink path (e.g. ./.mcp-sandbox "
+                "or ~/mcp-sandbox) to avoid this.",
+                file=sys.stderr,
+            )
     print()
 
     try:
