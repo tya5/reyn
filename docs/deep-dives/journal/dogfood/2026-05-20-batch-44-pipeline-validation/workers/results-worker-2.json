@@ -1,0 +1,394 @@
+{
+  "batch": "B44",
+  "worker": 2,
+  "head": "bffe32e4",
+  "date": "2026-05-20",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 3,
+    "I": 2,
+    "R": 4,
+    "B": 0
+  },
+  "vs_past": {
+    "B43": {
+      "V": 5,
+      "I": 0,
+      "R": 4,
+      "B": 0
+    },
+    "B42": {
+      "V": 5,
+      "I": 0,
+      "R": 3,
+      "B": 1
+    },
+    "B44_delta_V_vs_B43": -2,
+    "B44_delta_V_vs_B42": -2
+  },
+  "telemetry": {
+    "router_empty_response_retry_injected_total": 7,
+    "invoke_skill_spawn_ack_exit_total": 4
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "verdict": "I",
+      "events_pass": false,
+      "events_fails": [
+        "skill_run_completed(status=success) not emitted",
+        "phase_started count 0 < 1",
+        "phase_completed count 0 < 1"
+      ],
+      "rubric_breakdown": [
+        true,
+        true,
+        true
+      ],
+      "rubric_partial": "3/3",
+      "artifact_present": true,
+      "env_failure": true,
+      "skill_failures": [
+        {
+          "skill": "index_docs",
+          "error": "Skill 'index_docs' declares an unsafe python step (./chunkers.py:gather_samples) but --allow-unsafe-python was not provided. Re-run with the flag to enable unsafe-mode Python preprocessor steps."
+        }
+      ],
+      "reply_excerpt": "concepts_index という名前で、docs/concepts/ 以下の Markdown ファイルのセマンティック インデックス作成を開始しました。完了までバックグラウンドで実行されます。\n\nskill__index_docs の実行中にエラーが発生しました。`--allow-unsafe-python` フラグが指定されていないため、`./chunkers.py` の `gather_samples` 関数で安全でないPythonコードの実行がブロックされました。",
+      "events_files": [
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s1/chat/2026-05/2026-05-20T191331.jsonl",
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s1/skill_runs/2026-05/2026-05-20T191337_index_docs.jsonl"
+      ],
+      "event_type_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 0,
+        "skill_run_failed": 1,
+        "phase_started": 0,
+        "phase_completed": 0,
+        "llm_called": 0,
+        "permission_denied": 0,
+        "router_empty_response_retry_injected": 1,
+        "invoke_skill_spawn_ack_exit": 1
+      }
+    },
+    {
+      "id": "read_local_files_explain_source",
+      "verdict": "R",
+      "events_pass": false,
+      "events_fails": [
+        "skill_run_spawned count 0 < 1",
+        "skill_run_completed count 0 < 1",
+        "phase_started count 0 < 1"
+      ],
+      "rubric_breakdown": [
+        true,
+        true,
+        true
+      ],
+      "rubric_partial": "3/3",
+      "artifact_present": false,
+      "env_failure": false,
+      "skill_failures": [],
+      "reply_excerpt": "`src/reyn/cron/scheduler.py` は、Reyn のスキルを定期的に実行するための非同期 Cron スケジューラを実装しています。\n\nこのファイルには、以下の機能が含まれています。\n\n*   **CronJob クラス:** ジョブ名、実行するスキル、cron 式のスケジュール、入力、有効/無効の状態、最終実行日時、実行ステータス、エラーメッセージ、次回の実行予定日時などの情報を持つ cron ジョブを表します。\n*   **CronScheduler クラス:**\n    *   複数の `CronJob` を管理し、それぞれを独立した asyncio タスクとして実行",
+      "events_files": [
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s2/chat/2026-05/2026-05-20T191347.jsonl"
+      ],
+      "event_type_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 0,
+        "skill_run_completed": 0,
+        "skill_run_failed": 0,
+        "phase_started": 0,
+        "phase_completed": 0,
+        "llm_called": 0,
+        "permission_denied": 0,
+        "router_empty_response_retry_injected": 1,
+        "invoke_skill_spawn_ack_exit": 0
+      }
+    },
+    {
+      "id": "read_local_files_multi_file",
+      "verdict": "R",
+      "events_pass": false,
+      "events_fails": [
+        "skill_run_spawned count 0 < 1",
+        "skill_run_completed count 0 < 1"
+      ],
+      "rubric_breakdown": [
+        true,
+        true,
+        true
+      ],
+      "rubric_partial": "3/3",
+      "artifact_present": false,
+      "env_failure": false,
+      "skill_failures": [],
+      "reply_excerpt": "It seems I cannot access the content of the files in the `src/reyn/op_runtime/` directory using the `source__read` tool. The available tools do not support reading files from that specific path. Therefore, I am unable to provide a summary of what these files do.",
+      "events_files": [
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s3/chat/2026-05/2026-05-20T191356.jsonl"
+      ],
+      "event_type_counts": {
+        "routing_decided": 21,
+        "skill_run_spawned": 0,
+        "skill_run_completed": 0,
+        "skill_run_failed": 0,
+        "phase_started": 0,
+        "phase_completed": 0,
+        "llm_called": 0,
+        "permission_denied": 0,
+        "router_empty_response_retry_injected": 0,
+        "invoke_skill_spawn_ack_exit": 0
+      }
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "verdict": "V",
+      "events_pass": true,
+      "events_fails": [],
+      "rubric_breakdown": [
+        true,
+        true,
+        true
+      ],
+      "rubric_partial": "3/3",
+      "artifact_present": true,
+      "env_failure": false,
+      "skill_failures": [],
+      "reply_excerpt": "OK。スキル \"web_article_summariser\" の作成を開始しました。完了したら通知します。\n\nスキル「web_article_summariser」が正常に作成され、記事の取得、要約、および結果の提供を行うためのファイルが生成されました。このスキルは、ウェブ記事の内容を3文で要約するように設計されています。",
+      "events_files": [
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s4/chat/2026-05/2026-05-20T191404.jsonl",
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s4/skill_runs/2026-05/2026-05-20T191405_skill_builder.jsonl"
+      ],
+      "event_type_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_failed": 0,
+        "phase_started": 5,
+        "phase_completed": 5,
+        "llm_called": 7,
+        "permission_denied": 0,
+        "router_empty_response_retry_injected": 0,
+        "invoke_skill_spawn_ack_exit": 0
+      }
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "verdict": "V",
+      "events_pass": true,
+      "events_fails": [],
+      "rubric_breakdown": [
+        true,
+        true,
+        true
+      ],
+      "rubric_partial": "3/3",
+      "artifact_present": true,
+      "env_failure": false,
+      "skill_failures": [],
+      "reply_excerpt": "「word_stats_demo」スキルが「The quick brown fox jumps over the lazy dog.」というテキストの解析を開始しました。処理が完了すると、結果をお知らせします。\n\nword_stats_demo スキルが完了し、提供されたテキストは 44 文字で 1 行で構成されていることがわかりました。最も長い行は 44 文字でした。",
+      "events_files": [
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s5/chat/2026-05/2026-05-20T191445.jsonl",
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s5/skill_runs/2026-05/2026-05-20T191451_word_stats_demo.jsonl"
+      ],
+      "event_type_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_failed": 0,
+        "phase_started": 1,
+        "phase_completed": 1,
+        "llm_called": 1,
+        "permission_denied": 0,
+        "router_empty_response_retry_injected": 1,
+        "invoke_skill_spawn_ack_exit": 1
+      }
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "verdict": "V",
+      "events_pass": true,
+      "events_fails": [],
+      "rubric_breakdown": [
+        true,
+        true,
+        true
+      ],
+      "rubric_partial": "3/3",
+      "artifact_present": true,
+      "env_failure": false,
+      "skill_failures": [],
+      "reply_excerpt": "The `word_stats_demo` skill has been run with your provided text. The result indicates that the process has been spawned and will run in the background. You will be notified upon completion. You can check the progress using `/tasks`.\n\nThe `word_stats_demo` skill has finished processing your text. Th",
+      "events_files": [
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s6/chat/2026-05/2026-05-20T191459.jsonl",
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s6/skill_runs/2026-05/2026-05-20T191501_word_stats_demo.jsonl"
+      ],
+      "event_type_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_failed": 0,
+        "phase_started": 1,
+        "phase_completed": 1,
+        "llm_called": 1,
+        "permission_denied": 0,
+        "router_empty_response_retry_injected": 1,
+        "invoke_skill_spawn_ack_exit": 0
+      }
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "verdict": "R",
+      "events_pass": false,
+      "events_fails": [
+        "skill_run_completed count 0 < 1"
+      ],
+      "rubric_breakdown": [
+        true,
+        false,
+        true
+      ],
+      "rubric_partial": "2/3",
+      "artifact_present": true,
+      "env_failure": false,
+      "skill_failures": [
+        {
+          "skill": "eval",
+          "error": "Postprocessor output failed schema validation (output_schema): 'overall_score' is a required property; 'passed' is a required property; 'passed_criteria' is a required property; 'spec_path' is a requi"
+        }
+      ],
+      "reply_excerpt": "skill__eval スキルがバックグラウンドで実行を開始しました。完了次第、結果をお知らせします。\n\nskill__eval の実行中にエラーが発生しました。厳密なスキーマ検証に失敗したため、結果を要約できません。",
+      "events_files": [
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s7/chat/2026-05/2026-05-20T191507.jsonl",
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s7/skill_runs/2026-05/2026-05-20T191508_eval.jsonl"
+      ],
+      "event_type_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 0,
+        "skill_run_failed": 1,
+        "phase_started": 2,
+        "phase_completed": 2,
+        "llm_called": 4,
+        "permission_denied": 0,
+        "router_empty_response_retry_injected": 1,
+        "invoke_skill_spawn_ack_exit": 1
+      }
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "verdict": "R",
+      "events_pass": false,
+      "events_fails": [
+        "skill_run_spawned count 0 < 1",
+        "llm_called count 0 < 1"
+      ],
+      "rubric_breakdown": [
+        true,
+        true,
+        true
+      ],
+      "rubric_partial": "3/3",
+      "artifact_present": false,
+      "env_failure": false,
+      "skill_failures": [],
+      "reply_excerpt": "承知いたしました。Reyn chat におけるルーティングの仕組みについて、universal action catalog と skill routing の関係、そして `routing_decided` イベントが何を表すかを含めて説明します。\n\n### Reyn Chat におけるルーティングの仕組み\n\nReyn Chat におけるルーティングは、ユーザーからの入力を受け取り、それを最も適切に処理できるアクション（ツール、Skill、他のエージェントなど）に振り分けるプロセスです。このルーティングは、エージェントの知能の中核部分であり、Reyn の柔軟性と拡張性を支えています。\n\n##",
+      "events_files": [
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s8/chat/2026-05/2026-05-20T191520.jsonl"
+      ],
+      "event_type_counts": {
+        "routing_decided": 2,
+        "skill_run_spawned": 0,
+        "skill_run_completed": 0,
+        "skill_run_failed": 0,
+        "phase_started": 0,
+        "phase_completed": 0,
+        "llm_called": 0,
+        "permission_denied": 0,
+        "router_empty_response_retry_injected": 0,
+        "invoke_skill_spawn_ack_exit": 0
+      }
+    },
+    {
+      "id": "chained_find_then_index",
+      "verdict": "I",
+      "events_pass": false,
+      "events_fails": [
+        "skill_run_completed count 0 < 1",
+        "phase_started count 0 < 1"
+      ],
+      "rubric_breakdown": [
+        true,
+        true,
+        true
+      ],
+      "rubric_partial": "3/3",
+      "artifact_present": true,
+      "env_failure": true,
+      "skill_failures": [
+        {
+          "skill": "index_docs",
+          "error": "Skill 'index_docs' declares an unsafe python step (./chunkers.py:gather_samples) but --allow-unsafe-python was not provided. Re-run with the flag to enable unsafe-mode Python preprocessor steps."
+        },
+        {
+          "skill": "index_docs",
+          "error": "Skill 'index_docs' declares an unsafe python step (./chunkers.py:gather_samples) but --allow-unsafe-python was not provided. Re-run with the flag to enable unsafe-mode Python preprocessor steps."
+        }
+      ],
+      "reply_excerpt": "\"architecture.md\" と \"events.md\" を \"arch_events_index\" というソース名でセマンティック インデックスに登録しました。インデックス作成はバックグラウンドで実行されており、完了次第通知されます。\n\nインデックス作成中にエラーが発生しました。安全でないPythonコードの実行が許可されていないため、`index_docs` スキルが失敗しました。安全でないPythonステップを許可するには、`--allow-unsafe-python` フラグを付けて再実行してください。\n\nインデックス作成中にエラーが発生しました。安全でないPythonコードの実",
+      "events_files": [
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s9/chat/2026-05/2026-05-20T191625.jsonl",
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s9/skill_runs/2026-05/2026-05-20T191635_index_docs.jsonl",
+        "/reyn-worktrees/b44-2/.reyn/events/agents/dogfood-b44-2-s9/skill_runs/2026-05/2026-05-20T191635_index_docs_1.jsonl"
+      ],
+      "event_type_counts": {
+        "routing_decided": 3,
+        "skill_run_spawned": 2,
+        "skill_run_completed": 0,
+        "skill_run_failed": 2,
+        "phase_started": 0,
+        "phase_completed": 0,
+        "llm_called": 0,
+        "permission_denied": 0,
+        "router_empty_response_retry_injected": 2,
+        "invoke_skill_spawn_ack_exit": 1
+      }
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B44-W2-1",
+      "kind": "telemetry",
+      "summary": "router_empty_response_retry_injected fired 7 times across 6 scenarios — REYN_EMPTY_STOP_RETRY=1 active recovery path exercised in dogfood."
+    },
+    {
+      "id": "B44-W2-2",
+      "kind": "telemetry",
+      "summary": "invoke_skill_spawn_ack_exit fired 4 times — REYN_SPAWN_ACK_TO_LLM=1 active path exercised."
+    },
+    {
+      "id": "B44-W2-3",
+      "kind": "env",
+      "summary": "index_docs unsafe-python failure (--allow-unsafe-python not passed by reyn web) affected scenarios: ['index_docs_basic', 'chained_find_then_index']. Treated as Inconclusive."
+    },
+    {
+      "id": "B44-W2-4-read_local_files_explain_source",
+      "kind": "routing",
+      "summary": "read_local_files_explain_source: router selected raw file__read via hot_list_alias instead of dispatching to read_local_files skill — reply quality OK but skill artifact absent."
+    },
+    {
+      "id": "B44-W2-5",
+      "kind": "skill-bug",
+      "summary": "eval skill: Postprocessor output failed schema validation — missing required fields (overall_score, passed, passed_criteria, spec_path, summary). LLM produced final-output that didn't match eval.final_output_schema."
+    }
+  ]
+}

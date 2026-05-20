@@ -1,0 +1,108 @@
+{
+  "batch": "B44",
+  "worker": 5,
+  "head": "bffe32e4",
+  "date": "2026-05-20",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 2,
+    "I": 2,
+    "R": 3,
+    "B": 0
+  },
+  "vs_past": {
+    "B43": {"V": 2, "I": 0, "R": 5, "B": 0, "delta_V": 0, "delta_I": "+2", "delta_R": "-2"},
+    "B42": {"V": 0, "I": 4, "R": 3, "B": 0, "delta_V": "+2", "delta_I": "-2", "delta_R": 0}
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "verdict": "R",
+      "http_status": 200,
+      "events_pass": false,
+      "events_path": ".reyn/events/agents/dogfood-b44-5-s1/chat/2026-05/2026-05-20T191332.jsonl",
+      "reply_excerpt": "MCPレジストリには、現在GitHub関連のサーバーは見つかりませんでした。",
+      "notes": "Rubric option 3 (no results + alternatives) partially met — explains no results but suggests no alternatives. Events fail: must_emit routing_decided (>=1) and skill_run_spawned (>=1) — neither present. Handled inline (chat_turn_completed_inline)."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "verdict": "V",
+      "http_status": 200,
+      "events_pass": true,
+      "events_path": ".reyn/events/agents/dogfood-b44-5-s2/chat/2026-05/2026-05-20T191332.jsonl",
+      "reply_excerpt": "I can't see any MCP servers. Therefore, I can't list recent PRs using the GitHub MCP server.",
+      "notes": "Rubric met: explains MCP not configured + actionable. Events pass: must_emit_any chat_turn_completed_inline present (=1)."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "verdict": "I",
+      "http_status": 200,
+      "events_pass": true,
+      "events_path": ".reyn/events/agents/dogfood-b44-5-s3/chat/2026-05/2026-05-20T191332.jsonl",
+      "reply_excerpt": "the agent named 'researcher' was not found. Please check the agent's name and try again.",
+      "notes": "Events pass: routing_decided=1. Rubric partial — explains agent not found but does NOT explain how to create the agent."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "verdict": "V",
+      "http_status": 200,
+      "events_pass": true,
+      "events_path": ".reyn/events/agents/dogfood-b44-5-s4/chat/2026-05/2026-05-20T191351.jsonl",
+      "reply_excerpt_turn1": "Researcher エージェントが見つかりませんでした。別のエージェントに依頼するか、利用可能なエージェントのリストを確認してください。",
+      "reply_excerpt_turn2": "writer エージェントが見つかりませんでした。別のエージェントに依頼するか、利用可能なエージェントのリストを確認してください。",
+      "notes": "Events pass: routing_decided=2. Rubric met: reports agents do not exist, non-empty reply, two turns handled (tool_failed=1 observed but reply non-empty)."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "verdict": "R",
+      "http_status": 200,
+      "events_pass": true,
+      "events_path": ".reyn/events/agents/dogfood-b44-5-s5/chat/2026-05/2026-05-20T191405.jsonl",
+      "reply_excerpt": "Reynには、Web APIにアクセスしてタスクを送信し、そのステータスを確認するための直接的なスキルはありません。 ... `skill__direct_llm` ...",
+      "notes": "Events pass (must_emit=[]). Rubric fails on all 3 items: does NOT describe message/send method/endpoint, does NOT mention GET /a2a/tasks/{run_id}, does NOT mention reyn web running. Observed router_empty_response_retry_injected=1."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "verdict": "I",
+      "http_status": 200,
+      "events_pass": true,
+      "events_path": ".reyn/events/agents/dogfood-b44-5-s6/chat/2026-05/2026-05-20T191405.jsonl",
+      "reply_excerpt": "Postgres MCP サーバーのインストールを開始しました。... MCP サーバーのインストール中にエラーが発生しました。安全でないPythonコードの実行が許可されていなかったため、インストールが失敗しました。 `--allow-unsafe-python` フラグを付けて再試行してください。",
+      "notes": "Events pass: routing_decided=1, skill_run_spawned=1. Skill failed for env reason (--allow-unsafe-python not provided) → Inconclusive per verdict rule (env reason). Observed: router_empty_response_retry_injected=1, invoke_skill_spawn_ack_exit=1, skill_run_failed=1."
+    },
+    {
+      "id": "cron_schedule_status",
+      "verdict": "R",
+      "http_status": 200,
+      "events_pass": false,
+      "events_path": ".reyn/events/agents/dogfood-b44-5-s7/chat/2026-05/2026-05-20T191405.jsonl",
+      "reply_excerpt": "cron ジョブを一覧表示する直接的なツールは見つかりませんでした。OS レベルの cron ジョブを一覧表示する機能は、このエージェントのツールセットには含まれていないようです。",
+      "notes": "Events fail: must_emit routing_decided (>=1) — not present (handled inline via chat_turn_completed_inline). Rubric partial: no fabrication, but does not mention reyn.yaml / reyn CLI for recurring runs."
+    }
+  ],
+  "event_observations": {
+    "router_empty_response_retry_injected": {
+      "count": 2,
+      "scenarios": ["a2a_task_lifecycle_status_poll (s5)", "mcp_install_permission_gate (s6)"]
+    },
+    "invoke_skill_spawn_ack_exit": {
+      "count": 1,
+      "scenarios": ["mcp_install_permission_gate (s6)"]
+    }
+  },
+  "new_findings": [
+    "B44-W5-1: Two scenarios with inline handling (s1 mcp_search_registry, s7 cron_schedule_status) fail must_emit routing_decided/skill_run_spawned — the LLM is answering from prior knowledge instead of dispatching to mcp-search / ops-report skills. Rubric-wise their replies are reasonable but contract-wise R.",
+    "B44-W5-2: REYN_EMPTY_STOP_RETRY env var visibly active — router_empty_response_retry_injected fired in 2/7 scenarios (s5, s6) and both produced non-empty final replies, suggesting the retry path is recovering empty-stop attractors.",
+    "B44-W5-3: REYN_SPAWN_ACK_TO_LLM env var visibly active — invoke_skill_spawn_ack_exit fired in s6 (mcp_install) alongside skill_run_spawned + skill_completion_injected, the spawn-ack handoff completed.",
+    "B44-W5-4: vs B43 (2V/0I/5R): +2 I shift (s3, s6) — same V count but two refuted scenarios moved up to inconclusive. vs B42 (0V/4I/3R): +2V improvement, sustained from B43.",
+    "B44-W5-5: s4 multi_agent_topology_route lifted to V — both delegation turns return a non-empty agent-not-found reply (one tool_failed observed but no empty-stop)."
+  ]
+}

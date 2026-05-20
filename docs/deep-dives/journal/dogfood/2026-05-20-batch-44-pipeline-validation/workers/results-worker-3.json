@@ -1,0 +1,139 @@
+{
+  "batch": "B44",
+  "worker": 3,
+  "head": "bffe32e4",
+  "date": "2026-05-20",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 3,
+    "I": 1,
+    "R": 5,
+    "B": 0
+  },
+  "vs_past": {
+    "B43": {"V": 4, "I": 2, "R": 3, "B": 0, "delta_V": -1, "delta_I": -1, "delta_R": 2, "delta_B": 0},
+    "B42": {"V": 5, "I": 1, "R": 3, "B": 0, "delta_V": -2, "delta_I": 0, "delta_R": 2, "delta_B": 0}
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "verdict": "V",
+      "reply_summary": "Summarises principles.md P1-P8 with descriptions and traps.",
+      "events_observed": ["routing_decided", "tool_called", "tool_executed", "tool_returned", "permission_granted", "hot_list_updated", "compaction_check"],
+      "rubric_met": ["quotes/summarises content", "mentions P1-P8"],
+      "must_emit_met": true,
+      "must_not_emit_met": true
+    },
+    {
+      "id": "file_glob_grep",
+      "verdict": "R",
+      "reply_summary": "Says 'I couldn't find any skill.md files under src/ that mention judge_output.' Rubric requires listing at least one file path.",
+      "events_observed": ["routing_decided x2", "tool_called x2", "tool_executed x2", "tool_returned x2", "permission_granted x2"],
+      "rubric_met": [],
+      "must_emit_met": true,
+      "must_not_emit_met": true,
+      "failure_reason": "rubric: no file path listed (env: src/ tree may not include skill.md that mentions judge_output, or LLM gave up early)"
+    },
+    {
+      "id": "web_search_query",
+      "verdict": "V",
+      "reply_summary": "Reports search results — found CrewAI changelog mentioning openai SDK; references OpenAI and Python SDK.",
+      "events_observed": ["routing_decided", "web_search_started", "web_search_completed", "tool_called", "tool_returned", "router_empty_response_detected", "router_empty_response_retry_injected"],
+      "rubric_met": ["reports results/summary", "references OpenAI or Python SDK"],
+      "must_emit_met": true,
+      "must_not_emit_met": true,
+      "notes": "router_empty_response_retry_injected fired and recovered to a valid reply (envelope fix B44 wave WORKING)."
+    },
+    {
+      "id": "web_fetch_url",
+      "verdict": "R",
+      "reply_summary": "Refuses: 'cannot fulfill this request. Fetching the content of the URL is not allowed due to permission restrictions.'",
+      "events_observed": ["routing_decided", "tool_called", "tool_failed"],
+      "rubric_met": [],
+      "must_emit_met": false,
+      "must_emit_missing": ["web_fetch_started"],
+      "must_not_emit_met": true,
+      "failure_reason": "tool_failed before web_fetch_started; no permission_denied event though reply says permission denied (mismatch — likely default permission policy)."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "verdict": "R",
+      "reply_summary": "Reports failure: 'Python interpreter could not be found or accessed due to file system sandbox restrictions.'",
+      "events_observed": ["routing_decided", "sandboxed_exec_started", "sandboxed_exec_completed", "tool_called", "tool_returned"],
+      "rubric_met": [],
+      "must_emit_met": true,
+      "must_not_emit_met": true,
+      "failure_reason": "rubric: did not report output 4; sandbox environment lacks python interpreter access (B43/B42 also R likely)."
+    },
+    {
+      "id": "lint_a_skill",
+      "verdict": "R",
+      "reply_summary": "Says no direct 'lint' action exists; describes index_events action instead. No pass/fail nor error count reported.",
+      "events_observed": ["chat_turn_completed_inline", "tool_called", "tool_returned"],
+      "rubric_met": [],
+      "must_emit_met": false,
+      "must_emit_missing": ["routing_decided", "lint_completed"],
+      "must_not_emit_met": true,
+      "failure_reason": "Router answered inline without invoking lint skill; chat_turn_completed_inline replaced routing_decided. Affordance gap — LLM didn't see lint_plan op as available."
+    },
+    {
+      "id": "recall_indexed_source",
+      "verdict": "I",
+      "reply_summary": "Returns 'Error: KeyError: sources' — skill failure for environmental reason (no indexed sources / corpus not set up).",
+      "events_observed": ["routing_decided", "tool_called", "tool_failed"],
+      "rubric_met": [],
+      "must_emit_met": true,
+      "must_not_emit_met": true,
+      "failure_reason": "skill failed for env reason (no indexed corpus); rubric requires either docs OR explicit 'no sources' report; KeyError is neither — inconclusive per worker prompt (skill failed for env reason = I)."
+    },
+    {
+      "id": "judge_output_direct",
+      "verdict": "V",
+      "reply_summary": "Reports judge_phase passed both criteria with score 1.0; references criteria (non-empty description, declared phase).",
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_completed", "tool_called", "tool_returned", "router_empty_response_detected", "router_empty_response_retry_injected", "invoke_skill_spawn_ack_exit", "skill_completion_injected", "chat_turn_completed_inline"],
+      "skill_run_events": ["workflow_started", "phase_started", "context_built", "llm_called", "tool_executed", "artifact_created x3", "artifact_validated", "control_decided", "act_executed", "postprocessor_step_completed", "phase_completed", "workflow_finished"],
+      "rubric_met": ["mentions passed", "score 1.0", "references criteria"],
+      "must_emit_met": true,
+      "must_not_emit_met": true,
+      "notes": "invoke_skill_spawn_ack_exit + router_empty_response_retry_injected BOTH fired and led to successful skill_completion_injected → V. B44 envelope-fix wave evidence."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "verdict": "R",
+      "reply_summary": "Turn 1: asks for skill name (good ask). Turn 2: 'skill_builder encountered error during plan_skill phase and was rolled back.' No user_intervention_requested/received events fired — skill_builder failed before reaching ask_user phase.",
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_failed", "tool_called", "tool_returned", "router_empty_response_detected", "router_empty_response_retry_injected", "invoke_skill_spawn_ack_exit", "skill_completion_injected", "chat_turn_completed_inline x2"],
+      "skill_run_events": ["workflow_started", "phase_started x3", "context_built x3", "llm_called x3", "artifact_created x3", "artifact_validated", "control_decided x3", "lint_plan_completed", "preprocessor_step_completed", "phase_completed", "phase_rollback", "workflow_aborted"],
+      "rubric_met": ["partially: references skill_builder action started"],
+      "must_emit_met": false,
+      "must_emit_missing": ["user_intervention_requested", "user_intervention_received"],
+      "must_not_emit_met": true,
+      "failure_reason": "skill_builder hit phase_rollback in plan_skill before ever emitting ask_user; user-supplied name in turn 2 was actually the round-trip prompt but skill workflow had already aborted. envelope-fix events fired but did not save scenario."
+    }
+  ],
+  "envelope_fix_events_summary": {
+    "router_empty_response_retry_injected": {
+      "scenarios": ["web_search_query", "judge_output_direct", "ask_user_round_trip"],
+      "count": 3,
+      "outcome": "S3 + S8 recovered to V; S9 still R (skill_builder failed independently of router envelope issue)"
+    },
+    "invoke_skill_spawn_ack_exit": {
+      "scenarios": ["judge_output_direct", "ask_user_round_trip"],
+      "count": 2,
+      "outcome": "S8 V (clean spawn-ack-exit + completion injection); S9 fires but skill itself aborts in plan_skill"
+    }
+  },
+  "new_findings": [
+    "B44-W3-F1: web_fetch tool_failed without permission_denied event despite reply citing permission restrictions (S4). Either permission policy default blocks web_fetch silently or web_fetch wrapper raises before emitting permission_denied. Worth investigating event/error layer alignment.",
+    "B44-W3-F2: lint_a_skill (S6) regressed to inline router answer — chat_turn_completed_inline replaced routing_decided. LLM lists index_events as alternative; lint_plan op affordance not visible to router in chat context. Affordance-bias variant of B41 lint regression.",
+    "B44-W3-F3: skill_builder plan_skill phase consistently hits phase_rollback in S9. preprocessor_step_completed fires once, then 3 phase_started cycles end in rollback. ask_user op never reached. Unrelated to envelope-fix wave but blocks ask_user round-trip verification.",
+    "B44-W3-F4 (positive): envelope-fix wave (router_empty_response_retry_injected + invoke_skill_spawn_ack_exit + skill_completion_injected) fired 3 + 2 + 2 times across S3/S8/S9 with no false-positive injections; S3 + S8 directly converted from likely-R/I in B42/B43 baseline to V here. Direct primary evidence of envelope fix working."
+  ]
+}

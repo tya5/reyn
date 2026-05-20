@@ -1,0 +1,121 @@
+{
+  "batch": "B44",
+  "worker": 1,
+  "head": "bffe32e4",
+  "date": "2026-05-20",
+  "scenario_set": "chat_router_smoke.yaml",
+  "state_mode": "fresh",
+  "config": "default",
+  "port": 8241,
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 2,
+    "I": 0,
+    "R": 5,
+    "B": 0
+  },
+  "vs_past": {
+    "b43_verdicts": {"V": 3, "I": 0, "R": 4, "B": 0},
+    "b42_verdicts": {"V": 3, "I": 0, "R": 4, "B": 0},
+    "deltas_vs_b43": {"V": -1, "I": 0, "R": 1, "B": 0},
+    "deltas_vs_b42": {"V": -1, "I": 0, "R": 1, "B": 0},
+    "note": "B44 W1 V=2/7, one V step down vs B43/B42. The regression is s2 (factual_query_direct_llm): in B43/B42 the LLM dispatched direct_llm skill (V); in B44 the LLM answered inline (chat_turn_completed_inline) and produced no direct_llm artifact, failing the artifacts.direct_llm.present=true rubric -> R. All other per-scenario verdicts are identical to B43. PR #287 (router_empty_response_retry_injected) and PR #290 (invoke_skill_spawn_ack_exit) BOTH observed in events for s4 and s6 -> wired paths are exercised end-to-end in this run."
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "result": "refuted",
+      "events_pass": true,
+      "rubric_pass": false,
+      "rubric_notes": "Reply mentions skills/agents/RAG/memory/web at a high level (helpful, no error) -> reply rubric items pass. user_message_received emitted, no permission_denied. BUT artifacts.direct_llm.present=true is NOT met: events show only chat_turn_completed_inline (no routing_decided / skill_run_spawned). Inline answer path skipped direct_llm artifact creation.",
+      "reply_excerpt": "こんにちは！Reyn では、以下のようなことができます。 *コードの操作:* ファイルの読み取り、書き込み、検索、リスト表示など… *Webの操作:* … *記憶:* … *RAG:* … *スキルの実行:* …",
+      "vs_b43": "R -> R (unchanged)",
+      "notes": "Inline-answer affordance — same pattern as B42/B43."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "result": "refuted",
+      "events_pass": true,
+      "rubric_pass": false,
+      "rubric_notes": "Reply explains 冪等 (idempotency) clearly with API example — reply.rubric satisfied. No permission_denied. BUT artifacts.direct_llm.present=true NOT met: events show only chat_turn_completed_inline (no routing_decided / skill_run_*). The LLM answered inline rather than dispatching direct_llm skill.",
+      "reply_excerpt": "Idempotent (冪等) とは、ある操作を1回実行しても、複数回実行しても、その結果が同じになる性質のことです。…プログラミングにおいては、特にAPIリクエストなどでこの性質が重要視されます。",
+      "vs_b43": "V -> R (REGRESSION)",
+      "notes": "B43/B42 both V here because LLM dispatched direct_llm skill. B44 LLM answered inline -> artifact rubric fails. This is the one verdict delta vs B43. N=1 run -> attractor variance, not necessarily a structural regression. Worth flagging for main-agent cross-worker check (does W2-W7 see same inline drift for s2?)."
+    },
+    {
+      "id": "skill_discovery_request",
+      "result": "refuted",
+      "events_pass": false,
+      "rubric_pass": true,
+      "rubric_notes": "Reply lists actual skill names verbatim (skill__direct_llm, skill__eval, skill__eval_builder, skill__index_docs, skill__index_events) — reply rubric PASSES. BUT events.must_emit requires routing_decided>=1 which is NOT emitted (only tool_called/tool_returned/chat_turn_completed_inline). Events check fails -> refuted.",
+      "reply_excerpt": "skill__direct_llm: Catalogue-gap fallback…  skill__eval: Run a single eval case… skill__eval_builder: Build an eval spec… skill__index_docs: Build a searchable semantic index… skill__index_events: P6 イベントログ…",
+      "vs_b43": "R -> R (unchanged)",
+      "notes": "Inline tool-call path (list_skills) without routing_decided event. Same affordance gap as B43."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "result": "verified",
+      "events_pass": true,
+      "rubric_pass": true,
+      "rubric_notes": "Events: routing_decided=1, skill_run_spawned=1, skill_run_completed=1 (status=finished), no permission_denied. Artifact word_stats_demo/review/v01_text_review.json present with commentary='The provided text contains 44 characters across 1 line. The longest line has 44 characters, and it's estimated to be around 11 tokens.' Reply mentions length and token estimation analysis. Also observed: router_empty_response_detected=1 + router_empty_response_retry_injected=1 (PR #287 path) AND invoke_skill_spawn_ack_exit=1 (PR #290 path) on this scenario.",
+      "reply_excerpt": "I have started processing the text \"The quick brown fox jumps over the lazy dog.\" using the `word_stats_demo` skill. … The `word_stats_demo` skill has finished processing the text. It analyzed the input and provided commentary on its length and token estimation.",
+      "vs_b43": "V -> V (unchanged)",
+      "notes": "Explicit skill name in prompt -> dispatch reliable. PR #287 + PR #290 paths exercised here."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "result": "refuted",
+      "events_pass": true,
+      "rubric_pass": false,
+      "rubric_notes": "Events: chat_turn_completed_inline=1 satisfies must_emit_any. No permission_denied. BUT reply rubric fails: 'reply contains a poem' NOT met — the reply asks 'どのようなテーマや雰囲気の詩がお好みですか?' (asks for theme back, not producing a poem).",
+      "reply_excerpt": "はい、承知いたしました。どのようなテーマや雰囲気の詩がお好みですか？ 例えば、以下のようなテーマはいかがでしょうか。 * 自然 * 感情 …",
+      "vs_b43": "R -> R (unchanged)",
+      "notes": "Clarifying-question attractor — LLM asks for more info instead of just writing a short poem. Known B42/B43 pattern, unchanged in B44."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "result": "verified",
+      "events_pass": true,
+      "rubric_pass": true,
+      "rubric_notes": "Turn-1: inline reply explaining list comprehension with `[x for x in range(10) if x%2==0]` example. Turn-2: routing_decided=1, skill_run_spawned=1, skill_run_completed=1 (status=finished), direct_llm artifact present. Reply narration coherent with turn-1 (リスト内包表記). Also observed: router_empty_response_detected=1 + router_empty_response_retry_injected=1 (PR #287) + invoke_skill_spawn_ack_exit=1 (PR #290) on turn-2.",
+      "reply_excerpt": "[t1] Pythonのリスト内包表記は、既存のイテラブル… [x for x in range(10) if x % 2 == 0]… [t2] Pythonのリスト内包表記について、基本的な例、条件付きの例、ネストされたリスト内包表記の3つのコード例を提示しました。",
+      "vs_b43": "V -> V (unchanged)",
+      "notes": "Single skill_run_completed (no 5x over-dispatch unlike B43 W1 s6). PR #287 + PR #290 paths exercised here. Turn-2 wall-clock 6.9s (vs B43's 19s) — much faster."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "result": "refuted",
+      "events_pass": true,
+      "rubric_pass": false,
+      "rubric_notes": "Events: chat_turn_completed_inline=1, no permission_denied. BUT reply rubric fails: 'politely declines or explains capability is not available' NOT met — reply asks 'どの画像をご希望ですか? 詳細を教えていただけますでしょうか。' (asks for image details, implying it can generate), 'does not pretend to generate' also violated.",
+      "reply_excerpt": "どの画像をご希望ですか？ 詳細を教えていただけますでしょうか。",
+      "vs_b43": "R -> R (unchanged)",
+      "notes": "Pretend-capability attractor — LLM doesn't decline. Known B42/B43 pattern, unchanged in B44."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B44-W1-N1",
+      "scenario": "factual_query_direct_llm",
+      "observation": "s2 dropped from V (B43/B42) to R (B44). Single-run inline-vs-skill attractor flip: identical prompt '冪等 とはどういう意味ですか?' that previously triggered direct_llm dispatch was answered inline in B44, producing no direct_llm artifact and failing artifacts.direct_llm.present=true.",
+      "primary_data": "events file .reyn/events/agents/dogfood-b44-1-s2/chat/2026-05/2026-05-20T191324.jsonl shows ONLY user_message_received + chat_turn_completed_inline + compaction_check (no routing_decided / no skill_run_spawned). B43 W1 s2 baseline showed routing_decided + skill_run_spawned + skill_run_completed (per 2026-05-20-batch-43-post-empty-stop-retry/workers/results-worker-1.json).",
+      "severity": "LOW",
+      "hypothesis_only": "Single-shot run, attractor variance is the dominant hypothesis (= same prompt may route differently across runs). Cross-worker check (W2-W7 same scenario set) needed before claiming regression. PR #287/#290 do not target this code path."
+    },
+    {
+      "id": "B44-W1-N2",
+      "scenario": "all",
+      "observation": "PR #287 (router_empty_response_retry_injected) AND PR #290 (invoke_skill_spawn_ack_exit) BOTH observed in events for s4 (word_stats_demo dispatch) and s6 turn-2 (direct_llm dispatch). Each of those two scenarios emits router_empty_response_detected=1 + router_empty_response_retry_injected=1 + invoke_skill_spawn_ack_exit=1. Inline-only scenarios (s1/s2/s3/s5/s7) do NOT exercise these paths.",
+      "primary_data": "events files .reyn/events/agents/dogfood-b44-1-s4/skill_runs/.../word_stats_demo.jsonl and .../dogfood-b44-1-s6/skill_runs/.../direct_llm.jsonl. Counted via python3 collections.Counter over events.jsonl.",
+      "severity": "INFO",
+      "hypothesis_only": "Confirms PR #287 + #290 are wired and reachable on both skill-dispatch scenarios in this scenario set. Effect on V is positive-or-neutral — no skill_run_completed status=error observed."
+    }
+  ]
+}

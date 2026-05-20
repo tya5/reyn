@@ -1,0 +1,159 @@
+{
+  "batch": "B44",
+  "worker": 6,
+  "head": "bffe32e4",
+  "date": "2026-05-20",
+  "scenario_set": "plan_mode",
+  "scenario_set_file": "dogfood/scenarios/plan_mode.yaml",
+  "scenarios_run": ["plan_compare_two_concepts", "plan_explain_with_code_references", "plan_summary_across_n_files"],
+  "scenarios_run_count": 3,
+  "scenario_set_note": "Worker prompt header says s1-s3 (= the plan trio). plan_mode.yaml currently has 3 scenarios total; the 'run 7 scenarios' phrase in the prompt setup section is stale boilerplate carried over from a previous template (= confirmed by reading plan_mode.yaml end-to-end).",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1",
+    "REYN_LLM_TRACE_DUMP": "<worktree>/.reyn/llm_trace.jsonl"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "models_resolved": {
+    "light": "openai/gemini-2.5-flash-lite",
+    "standard": "openai/gemini-2.5-flash-lite",
+    "strong": "openai/gemini-2.5-flash-lite"
+  },
+  "server": {
+    "port": 8246,
+    "health_status": 200,
+    "transport": "POST /a2a/agents/<name> JSON-RPC message/send"
+  },
+  "verdicts": {"V": 1, "I": 1, "R": 1, "B": 0},
+  "verdict_total": 3,
+  "verified_rate": "1/3 = 33.3%",
+  "vs_past": {
+    "B43": {"V": 1, "I": 5, "R": 1, "B": 0, "total": 7, "verified_rate": "1/7 = 14.3%", "scope_note": "B43 ran 7 scenarios in W6 slot (= prior scenario set, not directly comparable)"},
+    "B42": {"V": 0, "I": 3, "R": 3, "B": 1, "total": 7, "verified_rate": "0/7 = 0%"},
+    "delta_note": "Direct V-count comparison is misleading because B43/B42 ran 7 scenarios in this worker slot while B44 runs only 3 (plan trio). Per-scenario, B44 produces 1 V (plan_compare_two_concepts) where B43 was R for plan_explain_with_code_references on top-level chat-router empty-stop. PR #287 wiring is verified live via 3 router_empty_response_retry_injected events (s1=2, s2=1, s3=0). With retry active, all 3 scenarios completed the plan lifecycle end-to-end (plan_emitted + plan_step_started >=2 + plan_step_completed >=2 + plan_aggregated, no plan_step_failed, no plan_run_interrupted) — a structural unblock vs B43-W6-s2 'R was top-level empty-stop'."
+  },
+  "primary_verify_pr_287": {
+    "router_empty_response_retry_injected_total": 3,
+    "per_scenario": {
+      "plan_compare_two_concepts": 2,
+      "plan_explain_with_code_references": 1,
+      "plan_summary_across_n_files": 0
+    },
+    "interpretation": "PR #287 is live and firing in chat-router RouterLoop. Headline B43-W6-s2 scope gap (plan_explain_with_code_references) saw 1 retry injection and reached I (= no longer R-by-empty-stop). The retry path is exercised on 2/3 scenarios."
+  },
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "agent": "dogfood-b44-6-s1",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b44-6-s1/chat/2026-05/2026-05-20T191344.jsonl",
+      "events_total": 32,
+      "event_counts": {
+        "plan_emitted": 1,
+        "plan_step_started": 3,
+        "plan_step_completed": 3,
+        "plan_aggregated": 1,
+        "plan_step_failed": 0,
+        "plan_run_interrupted": 0,
+        "router_empty_response_retry_injected": 2
+      },
+      "events_pass": true,
+      "rubric_eval": {
+        "references_both_docs": true,
+        "lists_3_or_more_points": true,
+        "cites_specific_evidence": true,
+        "no_fabrication": true,
+        "all_met": true
+      },
+      "verdict": "V",
+      "notes": "Reply lists 5 numbered points, quotes both permission-model.md and workspace.md with direct citations (e.g. 決定論の境界, CredentialScopeError, .reyn/ scope, file.write op). All event must_emit thresholds met (step_started=3>=2, step_completed=3>=2, plan_emitted=1, plan_aggregated=1). 2 router empty-stop retries successfully recovered."
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "agent": "dogfood-b44-6-s2",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b44-6-s2/chat/2026-05/2026-05-20T191345.jsonl",
+      "events_total": 26,
+      "event_counts": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_step_failed": 0,
+        "plan_run_interrupted": 0,
+        "router_empty_response_retry_injected": 1
+      },
+      "events_pass": true,
+      "rubric_eval": {
+        "references_plan_py_and_planner_py": "partial — reply references reyn.chat.planner.execute_plan (planner.py content) but substitutes src/reyn/plan/plan_runtime.py for the prompt-named src/reyn/tools/plan.py. plan.py is not directly cited.",
+        "names_specific_function_or_class": true,
+        "explains_when_AND_how": "partial — explains (1) when to invoke (decompose complex queries) but (2) how steps are executed is shallow (= describes PlanRuntime wrapper, not per-step LLM iteration semantics or retry_limit usage). No line numbers cited.",
+        "no_fabrication": "partial — plan_registry.py and plan_snapshot.py are mentioned without verification; substitution of plan_runtime.py for plan.py reads like file-path drift rather than confirmed fabrication.",
+        "all_met": false
+      },
+      "verdict": "I",
+      "notes": "Event lifecycle fully emitted (>= thresholds). 1 router_empty_response_retry_injected = primary verify of PR #287 unblocking the B43-W6-s2 scope gap. Reply names execute_plan + PlanRuntime.run (concrete functions), explains decomposition trigger, but partial on plan.py reference + shallow on step-execution mechanics + no line numbers. Reads as I not V (rubric partial), and not R (no empty-stop, structural completion)."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "agent": "dogfood-b44-6-s3",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b44-6-s3/chat/2026-05/2026-05-20T191345.jsonl",
+      "events_total": 40,
+      "event_counts": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_step_failed": 0,
+        "plan_run_interrupted": 0,
+        "router_empty_response_retry_injected": 0
+      },
+      "events_pass": true,
+      "rubric_eval": {
+        "references_all_three_or_states_missing_with_reason": false,
+        "lists_4_or_more_pillars": true,
+        "each_pillar_cites_source": "partial — pillars cite README + general OS concepts, not principles.md / architecture.md / workspace.md by name with evidence",
+        "no_fabrication_contradicting_docs": false,
+        "all_met": false
+      },
+      "verdict": "R",
+      "notes": "Reply concludes with explicit fabrication: 'architecture.md および workspace.md はReynリポジトリ内に存在しないため、提供された情報からは参照できませんでした.' Direct ls verification: docs/concepts/architecture.md AND docs/concepts/workspace.md AND docs/concepts/principles.md all exist in this worktree. The reply contradicts repository ground truth = R per 4th rubric bullet (must NOT fabricate concepts that contradict actual docs). Event lifecycle was emitted cleanly (no failed/interrupted), so the failure is content-level not infra-level. 0 router retries fired = clean LLM completion path, attractor is doc-grounding not empty-stop."
+    }
+  ],
+  "events_summary": {
+    "all_scenarios_emitted_full_plan_lifecycle": true,
+    "no_plan_step_failed": true,
+    "no_plan_run_interrupted": true,
+    "router_empty_response_retry_injected_total": 3
+  },
+  "new_findings": [
+    {
+      "id": "B44-W6-NF-1",
+      "scope": "PR #287 verify (primary)",
+      "claim": "REYN_EMPTY_STOP_RETRY=1 wired to chat-router RouterLoop fires in production plan-trio runs: 3 router_empty_response_retry_injected events across 2/3 scenarios.",
+      "evidence_primary": "events.jsonl counts in s1=2, s2=1, s3=0 (direct grep, see per_scenario event_counts)",
+      "evidence_inference": "B43-W6-s2 was R (refuted) for top-level chat-router empty-stop on plan_explain_with_code_references; B44-W6-s2 saw 1 retry injection AND completed plan lifecycle AND reached I (= structural unblock).",
+      "confidence": "high (direct event observation)"
+    },
+    {
+      "id": "B44-W6-NF-2",
+      "scope": "S3 doc-existence fabrication",
+      "claim": "plan_summary_across_n_files attractor: planner reports docs/concepts/{architecture,workspace}.md as 'not present in the Reyn repository' despite both files existing in HEAD bffe32e4 / docs/concepts/.",
+      "evidence_primary": "Reply text final paragraph + ls /tmp/reyn-worktrees/b44-6/docs/concepts/{architecture,workspace,principles}.md = all 3 files present",
+      "evidence_inference": "Plan lifecycle completed cleanly (4 steps started + 4 completed + 1 aggregated, 0 failed, 0 interrupted, 0 retries) = the LLM walked the plan but skill-side file-grounding did not resolve the doc paths. Could be path-shape mismatch (e.g. step asks for docs/concepts/architecture.md but tool resolves relative to a different cwd), or LLM hallucinated absence after a tool returned empty content.",
+      "confidence": "primary-data on fabrication occurrence; mechanism = hypothesis only, needs trace dump inspection"
+    },
+    {
+      "id": "B44-W6-NF-3",
+      "scope": "S2 file-path drift",
+      "claim": "plan_explain_with_code_references substitutes src/reyn/plan/plan_runtime.py for the prompt-named src/reyn/tools/plan.py. Both files actually exist in HEAD bffe32e4.",
+      "evidence_primary": "ls /tmp/reyn-worktrees/b44-6/src/reyn/{tools/plan.py,chat/planner.py} = both present; reply text references plan_runtime.py instead.",
+      "evidence_inference": "Could be the planner gravitating to a more central runtime file rather than the user-specified one — distinct from S3 doc-absence pattern but related (= path resolution / doc-grounding inconsistency under plan flow). N=1, hold as observation not pattern.",
+      "confidence": "medium (direct observation, sample N=1)"
+    }
+  ]
+}
