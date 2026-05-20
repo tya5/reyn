@@ -2926,8 +2926,12 @@ class ChatSession:
         slash_cmd = REGISTRY.get(cmd)
         if slash_cmd is None:
             known = ", ".join(f"/{n}" for n in REGISTRY.names())
+            # ``kind="error"`` so the TUI mounts an ErrorBox (= red ✗ icon,
+            # collapsible, Esc-to-dismiss). The previous ``kind="system"``
+            # rendered as a dim grey line indistinguishable from a successful
+            # slash-command reply — a typo'd command silently looked OK.
             await self._put_outbox(OutboxMessage(
-                kind="system",
+                kind="error",
                 text=f"unknown command /{cmd}; try: {known}",
             ))
             return True
