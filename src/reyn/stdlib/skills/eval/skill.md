@@ -36,7 +36,7 @@ postprocessor:
       weakest_phase:    {type: string}
       spec_path:        {type: string}
       summary:          {type: string}
-    required: [passed, overall_score, passed_criteria, total_criteria, weakest_phase, spec_path, summary]
+    required: [passed, overall_score, passed_criteria, total_criteria, weakest_phase, summary]
   steps:
     - type: python
       module: ./postprocessor.py
@@ -44,7 +44,7 @@ postprocessor:
       into: data
       output_schema:
         type: object
-        required: [passed_criteria, total_criteria, overall_score, passed, weakest_phase, spec_path, summary]
+        required: [passed_criteria, total_criteria, overall_score, passed, weakest_phase, summary]
         properties:
           passed_criteria: {type: integer, minimum: 0}
           total_criteria:  {type: integer, minimum: 0}
