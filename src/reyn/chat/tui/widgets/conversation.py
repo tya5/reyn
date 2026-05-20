@@ -637,7 +637,15 @@ class ConversationView(Widget):
         log.write(hint)
         if had_prev_fold:
             self._write_fold_expired_marker()
-        self._last_long_reply = text
+        # Wave-4 AR1: store only the TAIL (= the part not yet rendered)
+        # in the stash, not the full text. Previously
+        # ``_last_long_reply = text`` re-rendered lines 1-30 on /expand
+        # → user saw the preview AND the full reply with overlap
+        # (= lines 1-30 appeared twice in the log). Storing the tail
+        # makes expand_last_reply render exactly the missing lines,
+        # matching the docstring intent ("flush the rest").
+        # ``_recent_replies`` above still has the full text for /copy.
+        self._last_long_reply = "\n".join(lines[_FOLD_THRESHOLD_LINES:])
 
     def _write_fold_expired_marker(self) -> None:
         """Emit a dim marker noting that an earlier fold's /expand is gone.
