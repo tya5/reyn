@@ -1375,21 +1375,36 @@ class ReynTUIApp(App):
         )
 
     def action_voice_cancel(self) -> None:
-        """Esc — cancel voice recording, dismiss ErrorBox, or close panel.
+        """Esc — cancel voice recording, dismiss slash picker / ErrorBox, or close panel.
 
         Priority:
           1. If recording → cancel recording.
-          2. Else if ErrorBoxes visible → dismiss the topmost one.
-          3. Else if side panel is visible → close it.
+          2. **Else if InputBar is in slash-entry → dismiss picker + clear**
+             prefix (= wave-2 P2). Previously this was unreachable when
+             an ErrorBox was also mounted because ``check_action`` claimed
+             Esc on behalf of step 3 and the user had to press Esc twice
+             (once for ErrorBox, again for picker). Picker first matches
+             the user's mental model (= the picker is the foreground UI
+             they're actively interacting with) and lets a stale
+             ErrorBox wait one more keypress.
+          3. Else if ErrorBoxes visible → dismiss the topmost one.
+          4. Else if side panel is visible → close it.
 
         Gated by check_action so this never fires when no condition holds
-        (allowing InputBar's own Esc binding to handle slash-picker dismissal).
+        (allowing InputBar's own Esc binding to handle slash-picker
+        dismissal in the no-other-overlay case).
         """
         if self._voice_input is not None and self._voice_input.is_recording:
             self._voice_input.cancel()
             self._voice_set_input_locked(False)
             self._voice_status("✗ recording cancelled", style="dim #555555")
             return
+        try:
+            input_bar = self.query_one("#inputbar", InputBar)
+            if input_bar.dismiss_slash_prefix():
+                return
+        except Exception:
+            pass
         try:
             conv = self.query_one("#conversation", ConversationView)
             if conv.has_error_boxes():
@@ -1434,9 +1449,13 @@ class ReynTUIApp(App):
                 return False
         if action == "voice_cancel":
             # Intercept Esc when there's an overlay/recording to dismiss:
-            # voice recording, ErrorBoxes, or the side panel. Without any
-            # of those, Esc falls through so InputBar can handle the
-            # slash-picker dismissal.
+            # voice recording, ErrorBoxes, or the side panel. The slash
+            # picker / prefix case is intentionally handled by
+            # InputBar's own Esc binding when no other overlay is
+            # present (= simpler dispatch path); when an ErrorBox is
+            # also live the app claims Esc here and ``action_voice_cancel``
+            # dismisses the picker first (= wave-2 P2 fix) before the
+            # ErrorBox.
             if self._voice_input is not None and self._voice_input.is_recording:
                 return True
             if self._panel_visible:
