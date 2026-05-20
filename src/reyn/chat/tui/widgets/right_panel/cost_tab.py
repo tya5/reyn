@@ -255,6 +255,18 @@ def render_cost(
                 "right_panel cost: read of %s failed: %s", jsonl, exc,
             )
 
+    # Disclaimer line — costs displayed are client-side estimates derived
+    # from litellm's pricing DB at LLM-call time. They may diverge from
+    # the actual amount billed by the upstream provider (= rate changes
+    # between call time and the bill cycle, special pricing tiers,
+    # unmetered features, etc.) and from any proxy-side accounting.
+    # Surfacing this once at the top of the Cost tab prevents the user
+    # from treating the displayed cents as a billing-authoritative source.
+    lines.append(
+        "[#555555]  (litellm estimate — may differ from actual provider billing)[/]"
+    )
+    lines.append("")
+
     # ── TODAY ────────────────────────────────────────────────────────
     lines.append("[bold #aaaaaa]  TODAY[/]")
     if today["calls"] == 0:
