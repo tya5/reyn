@@ -72,6 +72,34 @@ _SPAWN_ACK_MSG: dict[str, str] = {
 }
 
 
+# NF-W7-B43-2: positive directive injected into the spawn-ack tool_result
+# content. Replaces the previous OS-synthetic spawn-ack outbox push +
+# early-exit pattern with the standard tool_call → tool_result → LLM
+# continuation pattern (= aligned with Claude / GPT competitor designs).
+#
+# Why directive, not bare status:
+#   - Trace-patch-replay N=10 (= 5 variant ablation, 2026-05-20):
+#       Variant A (bare status, no directive):      1/10 ACK, 8/10 EMPTY, 0/10 HALLUCINATE
+#       Variant B (negative directive "don't"):     0/10 ACK, 10/10 EMPTY
+#       Variant D (positive "write short reply"):   7/10 ACK, 3/10 EMPTY, **0/10 HALLUCINATE**
+#   - H3 hallucination defense (= B32 W3 S1 race) preserved across all
+#     variants thanks to "do not include skill output" framing.
+#   - Variant D (= "1-2 sentences confirm" voice) ACK 7/10 baseline;
+#     remaining 3/10 EMPTY covered by PR #265 retry mechanism
+#     (REYN_EMPTY_STOP_RETRY=1).
+#
+# The directive is appended to the tool_result body using the same
+# ``\n\n---\n`` separator pattern as PR #221's ``_post_text`` (= LLM
+# reads it as a textual instruction following the JSON status block).
+_SPAWN_ACK_TOOL_DIRECTIVE = (
+    "The skill has been spawned and is running in the background. "
+    "Write a short reply to the user (1-2 sentences) confirming the "
+    "skill has been started. The actual result will arrive in a "
+    "subsequent turn as a [task_completed] message — do not include "
+    "any skill output here, only the status confirmation."
+)
+
+
 def _strip_frontmatter(content: str) -> str:
     """Remove a leading YAML frontmatter block (``---\\n...\\n---\\n``) from
     a memory file's text and return the body alone.
@@ -1686,34 +1714,21 @@ class RouterLoop:
                 # same "Understood" hallucination under gemini-2.5-flash,
                 # confirming this is OS-layer, not LLM-layer).
                 #
-                # Mechanism: when invoke_skill / invoke_action (= FP-0034
-                # universal catalog dispatches that spawn a background skill
-                # via spawn_for_router) returns status="spawned", continuing
-                # the loop appends the spawn-ack as role=tool. The
-                # (answered) workaround in llm.py:821 then injects a
-                # user-role prompt, causing the LLM to compose a final
-                # reply before the skill output is available — producing
-                # the generic "Understood" / "I will notify you" output
-                # observed in B32.
-                #
-                # Fix: exit on spawn-ack so _handle_skill_completed
-                # re-engages the router with the real skill output via the
-                # [task_completed] inbox message. This is exactly the
-                # invoke_skill / invoke_action analogue of the existing
-                # async_count exit for delegate_to_agent (= adjacent
-                # FP-0012 spawn-ack pattern).
-                #
-                # NOTE: dispatch_tool wraps invoker results as
-                # ``{"status": "ok", "data": <inner_result>}``. The inner
-                # result (= spawn-ack from spawn_for_router) has
-                # ``status="spawned"`` nested under "data". The check
-                # below covers both wrapped and unwrapped shapes.
-                #
-                # This check runs AFTER routing_decided so that the P6
-                # audit event still fires even on the early-exit path.
-                _spawn_ack_count = sum(
-                    1
-                    for tc, r in zip(tool_calls, tool_results)
+                # NF-W7-B43-2 (2026-05-20): the OS-synthetic spawn-ack
+                # message itself became an in-context-learning attractor —
+                # multi-turn conversations accumulated the literal text in
+                # the assistant slot, and weak LLMs echoed it in
+                # subsequent turns (10/10 deterministic in trace-patch-
+                # replay). The env-gated alternative path below switches
+                # to the standard role=tool + LLM-composed reply pattern
+                # (= Claude / GPT alignment) with H3 hallucination
+                # defense via a tool_result directive (= PR #221
+                # ``_post_text`` mechanism). Default behaviour is
+                # unchanged; ``REYN_SPAWN_ACK_TO_LLM=1`` opts in to the
+                # new pattern.
+                _spawn_ack_indices: list[int] = [
+                    i
+                    for i, (tc, r) in enumerate(zip(tool_calls, tool_results))
                     if (
                         tc["function"]["name"] in ("invoke_skill", "invoke_action")
                         and isinstance(r, dict)
@@ -1725,26 +1740,47 @@ class RouterLoop:
                             )
                         )
                     )
-                )
-                if _spawn_ack_count:
+                ]
+                if _spawn_ack_indices:
                     host.events.emit(
                         "invoke_skill_spawn_ack_exit",
-                        spawn_ack_count=_spawn_ack_count,
+                        spawn_ack_count=len(_spawn_ack_indices),
                         chain_id=self.chain_id,
                     )
-                    # OS-level synthetic spawn-ack — see _SPAWN_ACK_MSG
-                    # rationale. Without this, the H3 early-exit leaves
-                    # the user with no feedback until [task_completed]
-                    # arrives.  Deterministic (= not LLM-composed) so the
-                    # B32 W3 S1 hallucination race cannot re-emerge.
-                    lang = getattr(host, "output_language", None)
-                    ack_text = _SPAWN_ACK_MSG.get(lang, _SPAWN_ACK_MSG["en"])
-                    await host.put_outbox(
-                        kind="agent",
-                        text=ack_text,
-                        meta={"chain_id": self.chain_id, "source": "spawn_ack"},
-                    )
-                    return self._total_usage
+                    if os.environ.get("REYN_SPAWN_ACK_TO_LLM") == "1":
+                        # NF-W7-B43-2 opt-in path: annotate each spawn-ack
+                        # tool_result with the directive via ``_post_text``
+                        # so the existing PR #221 serialisation layer below
+                        # appends it outside the JSON body with the standard
+                        # ``\n\n---\n`` separator. The loop continues
+                        # normally — the next LLM iteration composes the
+                        # user-facing reply (= 7/10 ACK in N=10 trace
+                        # replay) with H3 hallucination defense (= 0/10
+                        # hallucinate via the directive wording). Residual
+                        # 3/10 EMPTY is covered by PR #265 / PR #287's
+                        # ``REYN_EMPTY_STOP_RETRY=1`` retry mechanism.
+                        for idx in _spawn_ack_indices:
+                            r = tool_results[idx]
+                            if isinstance(r, dict):
+                                r["_post_text"] = _SPAWN_ACK_TOOL_DIRECTIVE
+                        # Fall through to the standard
+                        # ``messages.append(...)`` block below.
+                    else:
+                        # Default (= pre-NF-W7-B43-2) behaviour: OS pushes
+                        # the deterministic spawn-ack text to the outbox
+                        # and exits the loop. Preserves the existing
+                        # contract (= ``meta.source="spawn_ack"``
+                        # downstream consumers, no LLM composition for
+                        # this turn). The in-context-learning attractor
+                        # the new path closes is still present here.
+                        lang = getattr(host, "output_language", None)
+                        ack_text = _SPAWN_ACK_MSG.get(lang, _SPAWN_ACK_MSG["en"])
+                        await host.put_outbox(
+                            kind="agent",
+                            text=ack_text,
+                            meta={"chain_id": self.chain_id, "source": "spawn_ack"},
+                        )
+                        return self._total_usage
                 # No delegation — accumulate messages for next iteration.
                 # Use deduped tool_calls so the assistant message and tool
                 # result messages stay in sync (matching tool_call_ids).
