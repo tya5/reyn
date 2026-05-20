@@ -37,19 +37,30 @@ def _project_with_empty_memory(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_no_hot_list_omits_hot_now_section(tmp_path):
-    """Tier 2: empty hot_list keeps the existing layout untouched."""
+def test_no_hot_list_shows_placeholder(tmp_path):
+    """Tier 2: empty hot_list still renders the HOT NOW header
+    with a ``(no router activity yet)`` placeholder.
+
+    Wave-4 PC5: the cold-start behavior was changed from "section
+    omitted entirely" to "always-visible section with placeholder"
+    so the feature is discoverable on first launch / before any
+    router activity. Previously the section only appeared after
+    ARS emitted ``hot_list_updated`` for the first time, leaving
+    new users with no idea the feature existed.
+    """
     from reyn.chat.tui.widgets.right_panel.memory_tab import render_memory
 
     rendered, _flat, _ys = render_memory(
         _project_with_empty_memory(tmp_path), cursor=0, hot_list=None,
     )
-    assert "HOT NOW" not in rendered
+    assert "HOT NOW" in rendered
+    assert "no router activity yet" in rendered
 
     rendered, _flat, _ys = render_memory(
         _project_with_empty_memory(tmp_path), cursor=0, hot_list=[],
     )
-    assert "HOT NOW" not in rendered
+    assert "HOT NOW" in rendered
+    assert "no router activity yet" in rendered
 
 
 def test_hot_list_renders_qualified_name_and_freq(tmp_path):
