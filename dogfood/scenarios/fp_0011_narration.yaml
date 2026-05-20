@@ -12,7 +12,6 @@
 #   narr-2  eval              → eval_result           (numeric + boolean + prose)
 #   narr-3  skill_builder     → skill_builder_result  (multi-field: 7 required fields)
 #   narr-4  skill_improver    → improvement_result    (rich: enum + array + 12 fields)
-#   narr-5  read_local_files  → file_content_response (2-field: long prose + path list)
 #
 # Scenario design audit (4 dimensions per scenario):
 #
@@ -62,19 +61,6 @@
 #     alt-path ✓  Router cannot guess score history. invoke_skill is forced.
 #              eval is excluded (it evaluates but does not improve).
 #
-#   narr-5 (read_local_files):
-#     data ✓   file_content_response has 2 fields: response (long prose) and
-#              files_read (string array). Narration of a "reading" result is a
-#              qualitatively different challenge — the key content is a long
-#              synthesised prose block, not a set of scalars.
-#     affordance ✓  "README を読んで概要を教えて" is in read_local_files positive
-#              examples. Natural Japanese user prompt.
-#     source-count ✓  file_content_response.files_read lists actual paths read — only
-#                     read_local_files (via MCP) produces this grounded path list.
-#     alt-path ✓  stable_knowledge cannot read project files. Router must use
-#              invoke_skill to get file contents. Requires filesystem MCP server
-#              configured (see notes).
-#
 # Failure-case scenario (narr-F):
 #   A deterministic OS-level loop_limit_exceeded in a single-prompt stdlib scenario
 #   is not reliably achievable with the current stdlib. skill_improver self-terminates
@@ -121,7 +107,7 @@ scenarios:
       in all 3 conditions during the smoke test (= 0/3 invoke_skill calls).
       The router LLM rationally chose web_search because its description
       covers "find / explore" semantics and Slack-MCP information IS on the
-      public web. Per the same fix pattern as narr-5, prompt now names
+      public web. Per the same audit fix pattern, prompt now names
       "mcp_search スキル" so the SP's ABSOLUTE routing rule fires and
       web_search is excluded.
 
@@ -210,45 +196,6 @@ scenarios:
       termination_reason is max_iterations_reached (cap = 2) or
       score_threshold_met; either is a valid finished run for narration.
 
-  - id: narr-5-read-local-files
-    enabled: false  # SKIP for smoke: requires PREREQ-2 (= filesystem MCP
-                    # server configured in reyn.yaml). Re-enable after
-                    # PREREQ-2 complete.
-    description: >
-      Narration of a file_content_response. Tests extraction of a long-form
-      prose field (response) alongside a string array (files_read). Narrating
-      a "reading" result is qualitatively different from scalar-field
-      extraction — the narrator must ground itself in the file contents, not
-      just enumerate field names.
-    user_prompt: |
-      read_local_files スキルを使って、 プロジェクトの README を読み、
-      主要なコンセプトと使い方の概要を教えてください。
-    expected_skill: read_local_files
-    expected_status: finished
-    judge_focus:
-      - response
-      - files_read
-    notes: >
-      AUDIT FIX (2026-05-10): user_prompt was originally
-      "プロジェクトの README を読んで...". Independent 4-dimension audit
-      (= post-Track-C re-verification) flagged this as FAIL on tool
-      affordance match — the read_file router tool description explicitly
-      mentions README at project root, creating a strong competition. Per
-      audit fix option (A), prompt now names "read_local_files スキル" so
-      the SP's ABSOLUTE routing rule fires and read_file is excluded.
-
-      PREREQUISITE: a filesystem MCP server named "filesystem" must be
-      configured in reyn.yaml pointing at the project root. Without it the
-      skill aborts with a permission error at the mcp op gate. Minimal
-      reyn.yaml entry needed:
-        mcp:
-          servers:
-            filesystem:
-              url: http://localhost:8765/mcp
-      The judge should check that (a) the response field content is
-      substantively referenced in the narration (not just "a response was
-      generated"), and (b) the files_read list is enumerated with actual paths.
-
 # TODO — 6th scenario (failure case): DEFERRED
 #
 #   A deterministic single-prompt OS-level loop_limit_exceeded is not
@@ -259,7 +206,7 @@ scenarios:
 #     produces a long run, not a fast failure.
 #   - eval runs at most 2 phases (run_target + evaluate); cannot loop.
 #   - skill_builder has a fixed 5-phase linear graph; no loop.
-#   - mcp_search and read_local_files are single-phase skills.
+#   - mcp_search is a single-phase skill.
 #
 #   Recommended paths to a reliable failure case:
 #     Option A (preferred) — implement a minimal fixture skill under

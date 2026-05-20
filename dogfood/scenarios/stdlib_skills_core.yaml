@@ -4,7 +4,7 @@ name: stdlib_skills_core
 description: >
   Core stdlib skill dispatch via chat router (FP-0036 starter set).
   Exercises eight stdlib skills end-to-end via reyn chat: index_docs,
-  read_local_files, skill_builder, word_stats_demo, chat_compactor
+  skill_builder, word_stats_demo, chat_compactor
   (session-triggered), eval, judge_phase (via eval), and direct_llm.
   Covers structural (events + artifacts) and judge (reply) verifiers.
 covers:
@@ -65,68 +65,7 @@ scenarios:
       refuted: 1.0
       blocked: 0.0
 
-  # ── 2. read_local_files — explain a source file ─────────────────────────
-  - id: read_local_files_explain_source
-    covers:
-      - stdlib-skills/read-local-files
-      - control-ir-ops/mcp
-    input: "src/reyn/cron/scheduler.py が何をするファイルか教えてください。"
-    expected:
-      reply:
-        kind: judge
-        rubric:
-          - reply explains the purpose of the file (cron scheduling, job management, or similar)
-          - reply demonstrates understanding of the file's role in the codebase
-          - reply does not fabricate contents; if the MCP server is unavailable it says so
-      events:
-        must_emit:
-          - { type: routing_decided, count: ">=1" }
-          - { type: skill_run_spawned, count: ">=1" }
-          - { type: skill_run_completed, count: ">=1" }
-          - { type: phase_started, count: ">=1" }
-        must_not_emit:
-          - { type: permission_denied }
-      artifacts:
-        - { skill: read_local_files, present: true }
-    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
-    outcome_prediction:
-      verified: 0.25
-      inconclusive: 0.25
-      refuted: 0.5
-      blocked: 0.0
-
-  # ── 3. read_local_files — multi-file inspection ─────────────────────────
-  - id: read_local_files_multi_file
-    covers:
-      - stdlib-skills/read-local-files
-      - control-ir-ops/mcp
-    input: >
-      src/reyn/op_runtime/ ディレクトリ にある ファイルは 何をしていますか?
-      概要を教えてください。
-    expected:
-      reply:
-        kind: judge
-        rubric:
-          - reply describes at least one file in src/reyn/op_runtime/
-          - reply references Control IR ops or operation handling
-          - reply does not claim a permission error unless MCP is actually unavailable
-      events:
-        must_emit:
-          - { type: routing_decided, count: ">=1" }
-          - { type: skill_run_spawned, count: ">=1" }
-          - { type: skill_run_completed, count: ">=1" }
-        must_not_emit:
-          - { type: permission_denied }
-      artifacts:
-        - { skill: read_local_files, present: true }
-    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
-    outcome_prediction:
-      verified: 0.0
-      inconclusive: 0.0
-      refuted: 1.0
-      blocked: 0.0
-
-  # ── 4. skill_builder — scaffold a new summarisation skill ───────────────
+  # ── skill_builder — scaffold a new summarisation skill ─────────────────
   - id: skill_builder_web_summariser
     covers:
       - stdlib-skills/skill-builder

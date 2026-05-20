@@ -61,7 +61,6 @@ DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "skill__skill_improver",
     "skill__skill_importer",
     "skill__mcp_search",
-    "skill__read_local_files",
     "skill__index_docs",
     "skill__eval",
 )

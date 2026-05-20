@@ -108,7 +108,7 @@ def test_skill_version_hash_in_run_skill_started_event(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, events)
     op = RunSkillIROp(
         kind="run_skill",
-        skill="read_local_files",
+        skill="word_stats_demo",
         input={"type": "user_message", "data": {"text": "test"}},
     )
 
@@ -149,7 +149,7 @@ def test_skill_version_hash_stable_across_runs(tmp_path, monkeypatch):
         ctx = _make_ctx(tmp_path, events)
         op = RunSkillIROp(
             kind="run_skill",
-            skill="read_local_files",
+            skill="word_stats_demo",
             input={"type": "user_message", "data": {"text": "test"}},
         )
         asyncio.run(run_skill_mod.handle(op, ctx, caller="control_ir"))

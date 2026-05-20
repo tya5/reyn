@@ -199,13 +199,9 @@ Three audit events are emitted per call:
 
 Filter for them with `reyn events tail | grep mcp_` or `grep '"mcp_called"' .reyn/events.jsonl`.
 
-## The first stdlib skill: `read_local_files`
+## Stdlib skills that use MCP
 
-`read_local_files` is the canonical example of a skill built around an MCP server. It pairs with the `filesystem` MCP server to read files inside a project, summarise sections, and answer questions about the contents — everything a vanilla `cat` would do, except routed through the permission system and the audit log.
-
-Treat it as the template to copy when authoring your own MCP-backed skill: declare `permissions.mcp: [filesystem]` in the phase, emit `mcp` ops with `tool: read_text_file` (or whatever the server advertises), and let the OS handle the rest.
-
-See the [reference page](../reference/stdlib/read_local_files.md) for phase shapes and the [how-to](../guide/for-skill-authors/use-an-mcp-server.md) for a full quickstart.
+Stdlib skills declare `permissions.mcp: [<server>]` in the phase, emit `mcp` ops with `tool: <name>` (or whatever the server advertises), and let the OS handle the rest. See the [how-to](../guide/for-skill-authors/use-an-mcp-server.md) for a full quickstart on authoring your own MCP-backed skill.
 
 ## Role 2: MCP server — external clients call Reyn
 
@@ -255,7 +251,6 @@ If you find yourself wishing MCP could do one of these, you're at the wrong laye
 - [Reference: `reyn mcp`](../reference/cli/mcp.md) — full CLI reference for `search`, `install`, `list`, `remove`, `set-secret`, `clear-secret`
 - [Reference: `reyn secret`](../reference/cli/secret.md) — universal secret management
 - [Concepts: secret handling](secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
-- [Reference: `read_local_files`](../reference/stdlib/read_local_files.md) — the first stdlib MCP skill
 - [Reference: `reyn.yaml`](../reference/config/reyn-yaml.md#mcp-servers) — full `mcp.servers:` schema
 - [Concepts: permission model](permission-model.md) — `mcp_install` and `permissions.mcp`
 - [modelcontextprotocol.io](https://modelcontextprotocol.io) — the spec, server registry, official SDKs
