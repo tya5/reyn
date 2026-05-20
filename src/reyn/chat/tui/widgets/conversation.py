@@ -883,14 +883,40 @@ class ConversationView(Widget):
         return bool(self._error_boxes)
 
     def dismiss_last_error(self) -> None:
-        """Remove the most recently mounted ErrorBox (idempotent if already removed)."""
+        """Remove the most recently mounted ErrorBox + leave a breadcrumb.
+
+        UX wave F2: previously Esc removed the ErrorBox entirely with no
+        trace — scrolling up later showed only the user's unanswered
+        message and the failure context was gone. Now we write a dim
+        one-line breadcrumb to the conv log so the dismissed failure
+        stays visible in scroll history. ``(see events)`` is appended
+        only when the error originated from a skill / run (= the same
+        ``has_trace`` gate the ErrorBox's own ``.eb-hint`` label uses).
+        """
         while self._error_boxes:
             box = self._error_boxes.pop()
+            # Capture the summary BEFORE removal — `box` is invalidated
+            # by `remove()` and we still want to write the breadcrumb
+            # even if removal raises (= the widget was already gone).
+            first_line, _sep, _rest = (getattr(box, "_message", "") or "").partition("\n")
+            if len(first_line) > 72:
+                summary = first_line[:71] + "…"
+            else:
+                summary = first_line
+            has_trace = bool(
+                getattr(box, "_skill_name", "") or getattr(box, "_run_id_short", "")
+            )
             try:
                 box.remove()
-                return
             except Exception:
                 continue  # already removed, try next
+            trailer = " (see events)" if has_trace else ""
+            from rich.text import Text as _RichText
+            self._write_log(_RichText(
+                f"  ✗ {summary} (dismissed){trailer}",
+                style="dim #555555",
+            ))
+            return
 
     # ── intervention mounting ─────────────────────────────────────────────────
 
