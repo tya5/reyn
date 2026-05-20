@@ -48,7 +48,6 @@ from reyn.chat.session import (
     enumerate_available_skills,
 )
 
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _STDLIB_SKILLS = _REPO_ROOT / "src" / "reyn" / "stdlib" / "skills"
 _STDLIB_ARTIFACTS = _REPO_ROOT / "src" / "reyn" / "stdlib" / "artifacts"
