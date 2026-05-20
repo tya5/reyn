@@ -1,0 +1,142 @@
+{
+  "batch": "B45",
+  "worker": 3,
+  "head": "23a7a1ad",
+  "date": "2026-05-20",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 3,
+    "I": 2,
+    "R": 4,
+    "B": 0
+  },
+  "vs_past": {
+    "B42": {"V": 5, "I": 1, "R": 3, "B": 0},
+    "B43": {"V": 4, "I": 2, "R": 3, "B": 0},
+    "B44": {"V": 3, "I": 1, "R": 5, "B": 0},
+    "B45": {"V": 3, "I": 2, "R": 4, "B": 0},
+    "delta_B44_to_B45": "V unchanged at 3/9; R -1 (5→4), I +1 (1→2). B44 regression confirmed structural (not N=1 noise)."
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "scenario_index": 1,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_excerpt": "This file describes the eight design principles of Reyn's architecture... the OS controls execution, the LLM is a constrained decision engine, the workspace is the single source of truth, events are the audit trail, the OS is skill-agnostic",
+      "events_emitted": ["routing_decided", "tool_executed", "tool_called", "tool_returned"],
+      "note": "Summarises principles content; mentions descriptions of P3-P7. Both rubric items met."
+    },
+    {
+      "id": "file_glob_grep",
+      "scenario_index": 2,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": true,
+      "reply_excerpt": "There are no files named 'skill.md' directly under the 'src/' directory.",
+      "events_emitted": ["routing_decided", "tool_executed", "tool_called", "tool_returned"],
+      "note": "LLM reported no skill.md under src/ — factually incorrect, files exist. Rubric item 1 (list at least one file path) failed. Structural attractor: LLM gives up after one tool call."
+    },
+    {
+      "id": "web_search_query",
+      "scenario_index": 3,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_excerpt": "I couldn't find a specific changelog for the OpenAI Python SDK for the year 2026. The search results provided information about logging LLM calls using various SDKs, including OpenAI",
+      "events_emitted": ["routing_decided", "web_search_started", "web_search_completed"],
+      "note": "Reports search results (what was found); references OpenAI and Python SDK. Both rubric items met."
+    },
+    {
+      "id": "web_fetch_url",
+      "scenario_index": 4,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_excerpt": "I am sorry, I cannot fulfill this request, as I am unable to access external websites directly due to permissions.",
+      "events_emitted": ["routing_decided", "tool_called", "tool_failed"],
+      "note": "tool_failed with error_kind=permission. web_fetch_started never emitted. Structural: web__fetch permission not granted in this worktree config."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "scenario_index": 5,
+      "verdict": "I",
+      "rubric_met": false,
+      "events_pass": true,
+      "reply_excerpt": "The command failed with the following error: dyld[89746]: Library not loaded: /Users/yasudatetsuya/.pyenv/versions/3.12.7/lib/libpython3.12.dylib ... file system sandbox blocked open()",
+      "events_emitted": ["routing_decided", "sandboxed_exec_started", "sandboxed_exec_completed"],
+      "note": "Env reason: macOS sandbox blocked libpython3.12.dylib load. sandboxed_exec_started+completed emitted but subprocess failed; output was not '4'. Inconclusive due to env constraint."
+    },
+    {
+      "id": "lint_a_skill",
+      "scenario_index": 6,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_excerpt": "The evaluation of the `index_events` skill encountered an error because the output did not conform to the expected schema. The postprocessor reported that several required properties, including 'overall_score', 'passed', 'passed_criteria', 'spec_path', and 'summary', were missing.",
+      "events_emitted": ["routing_decided", "skill_run_spawned", "skill_run_failed", "validation_error"],
+      "note": "eval postprocessor schema validation_error: missing required fields. lint_completed never emitted. Structural regression: eval skill output_schema mismatch ongoing."
+    },
+    {
+      "id": "recall_indexed_source",
+      "scenario_index": 7,
+      "verdict": "I",
+      "rubric_met": false,
+      "events_pass": true,
+      "reply_excerpt": "I'm sorry, I encountered an error while trying to recall documentation about 'phase rollback'. The system returned an error indicating that 'sources' was not found.",
+      "events_emitted": ["routing_decided", "tool_called", "tool_failed"],
+      "note": "tool_failed with KeyError: 'sources' in invoke_action. Reply reports an error rather than 'no indexed sources found'. Rubric item 2 not clearly met (not fabricating = OK, but rubric 1 is partial). Inconclusive."
+    },
+    {
+      "id": "judge_output_direct",
+      "scenario_index": 8,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_excerpt": "The `judge_phase` skill has finished evaluating the artifact. It passed both criteria: the skill has a non-empty description and declares at least one phase. The overall score is 1.0.",
+      "events_emitted": ["routing_decided", "skill_run_spawned", "skill_run_completed", "tool_executed"],
+      "note": "Full success: judge_phase ran end-to-end, verdict='passed', score=1.0. All rubric items met. No validation_error."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "scenario_index": 9,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_excerpt": "I will use 'my_demo_skill' as the skill name. Now, please provide: 1. A one-sentence description...",
+      "events_emitted": ["user_message_received", "tool_called", "tool_returned", "chat_turn_completed_inline"],
+      "note": "Router only called describe_action then gave inline reply asking for description. skill_builder never spawned. No user_intervention_requested/received. Structural: router prefers inline clarification over skill invocation."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF-W3-1",
+      "title": "B45 V=3/9 matches B44 — structural plateau confirmed",
+      "detail": "B45 scores V=3/9 (S1, S3, S8), identical to B44 V=3/9. B44 regression from B43 4/9→3/9 is NOT N=1 noise. The plateau is structural. R moves from 5→4 and I moves from 1→2 (S7 reclassified from R to I due to env/error semantics), so distribution shifted slightly but V count held flat."
+    },
+    {
+      "id": "NF-W3-2",
+      "title": "web__fetch permission failure persists (S4)",
+      "detail": "tool_failed with error_kind=permission on web__fetch in this worktree config. Same as prior batches. Structural: web__fetch not in allowed tools for this agent/worktree. R verdict unchanged across B42-B45."
+    },
+    {
+      "id": "NF-W3-3",
+      "title": "eval/lint postprocessor schema mismatch ongoing (S6)",
+      "detail": "eval skill postprocessor still emits validation_error: missing 'overall_score', 'passed', 'passed_criteria', 'spec_path', 'summary'. skill_run_failed. This has been a consistent R across multiple batches. Root cause: eval output_schema mismatch."
+    },
+    {
+      "id": "NF-W3-4",
+      "title": "recall tool KeyError: 'sources' — structural infra gap (S7)",
+      "detail": "invoke_action for recall fails with KeyError: 'sources'. Not a transient error; consistent across batches. The recall action implementation references a 'sources' key that is not populated when no index exists."
+    }
+  ]
+}

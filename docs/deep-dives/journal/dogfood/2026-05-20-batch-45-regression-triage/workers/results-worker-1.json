@@ -1,0 +1,130 @@
+{
+  "batch": "B45",
+  "worker": 1,
+  "head": "23a7a1ad",
+  "date": "2026-05-20",
+  "scenario_set": "chat_router_smoke.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 1,
+    "I": 1,
+    "R": 5,
+    "B": 0
+  },
+  "vs_past": {
+    "B44": {"V": 2, "I": 0, "R": 5, "B": 0},
+    "B43": {"V": 3, "I": 0, "R": 4, "B": 0},
+    "B42": {"V": 3, "I": 0, "R": 4, "B": 0},
+    "B45": {"V": 1, "I": 1, "R": 5, "B": 0},
+    "delta_vs_B44": {"V": -1, "I": 1, "R": 0, "B": 0}
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "verdict": "R",
+      "reply_rubric_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "notes": "Reply: mentions skills/agents/chat capabilities. Events: user_message_received emitted, no permission_denied. Fail: artifact direct_llm not present (chat_turn_completed_inline path, no skill_run_spawned for direct_llm).",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "http_status": 200
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "verdict": "R",
+      "reply_rubric_pass": true,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "notes": "Reply: explains idempotency factually and comprehensibly. Events: no permission_denied. Fail: artifact direct_llm not present — router used web__search instead of spawning direct_llm skill. routing_decided fired for web__search, not direct_llm.",
+      "events_observed": ["user_message_received", "tool_called", "web_search_started", "web_search_completed", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check"],
+      "http_status": 200
+    },
+    {
+      "id": "skill_discovery_request",
+      "verdict": "R",
+      "reply_rubric_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "notes": "Reply: lists many skill names (direct_llm, eval, word_stats_demo, etc.) — rubric met. Fail: routing_decided NOT emitted (must_emit fails); artifact direct_llm not present (inline response, no skill_run).",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "http_status": 200
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "verdict": "I",
+      "reply_rubric_pass": true,
+      "events_pass": "partial",
+      "artifacts_pass": true,
+      "notes": "Reply: reports '44文字で、1行で、推定トークン数は1' — character count satisfies rubric. Events: routing_decided ✓, skill_run_spawned ✓, skill_run_completed emitted with status='finished' (rubric specifies status=success — string mismatch). Artifact word_stats_demo present (skill_runs file exists). Inconclusive: skill completed successfully but status literal 'finished' vs rubric 'success'.",
+      "events_observed": ["user_message_received", "tool_called", "skill_run_spawned", "tool_returned", "hot_list_updated", "routing_decided", "invoke_skill_spawn_ack_exit", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check", "skill_run_completed", "skill_completion_injected", "chat_turn_completed_inline"],
+      "http_status": 200
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "verdict": "R",
+      "reply_rubric_pass": false,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "notes": "Reply: LLM asked for clarification ('どのようなテーマや雰囲気の詩をご希望ですか？') instead of writing a poem — rubric requires poem with at least two lines. Events: chat_turn_completed_inline emitted (satisfies must_emit_any). Artifact direct_llm not present.",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "http_status": 200
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "verdict": "V",
+      "reply_rubric_pass": true,
+      "events_pass": true,
+      "artifacts_pass": true,
+      "notes": "Turn 1: explains list comprehension. Turn 2: provides '[x*2 for x in range(1, 6)]' code example — rubric met (Python code example, coherent with topic). Events: no permission_denied. Artifact direct_llm present (skill_run for direct_llm completed on turn 2).",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check", "user_message_received", "tool_called", "skill_run_spawned", "tool_returned", "hot_list_updated", "routing_decided", "invoke_skill_spawn_ack_exit", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check", "skill_run_completed", "skill_completion_injected", "chat_turn_completed_inline"],
+      "http_status": 200
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "verdict": "R",
+      "reply_rubric_pass": true,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "notes": "Reply: '画像生成は現在サポートされていません' — politely declines, does not pretend to generate — reply rubric met. Events: no permission_denied. Fail: artifact direct_llm not present (inline response, no skill_run).",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "http_status": 200
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B45-F1",
+      "title": "direct_llm artifact absent for inline-routed scenarios",
+      "description": "S1, S3, S5, S7 all received inline responses (chat_turn_completed_inline) with no skill_run_spawned for direct_llm. The rubric requires {skill: direct_llm, present: true} but these scenarios never invoke the direct_llm skill — the router answers inline. This is the dominant R cause (4/5 R scenarios). Pattern consistent with B44 R trajectory.",
+      "severity": "HIGH",
+      "affected_scenarios": ["simple_capability_question", "skill_discovery_request", "catalog_routing_decided_emitted", "out_of_scope_graceful_decline"]
+    },
+    {
+      "id": "B45-F2",
+      "title": "S2 routes to web__search instead of direct_llm for factual query",
+      "description": "Factual question '「冪等」とはどういう意味ですか?' triggered web__search (routing_decided for web__search) rather than direct_llm skill invocation. Reply quality was good (answered correctly from web results) but artifact check fails. Regression vs B43/B42 where this may have passed.",
+      "severity": "MED",
+      "affected_scenarios": ["factual_query_direct_llm"]
+    },
+    {
+      "id": "B45-F3",
+      "title": "S4 skill_run_completed status field is 'finished' not 'success'",
+      "description": "word_stats_demo completed successfully but emitted skill_run_completed with status='finished'. Rubric checks {status: success}. If 'finished' is the canonical OS status for success, the rubric is wrong; if 'success' is expected, this is an OS status naming regression. Inconclusive verdict assigned pending investigation.",
+      "severity": "LOW",
+      "affected_scenarios": ["explicit_skill_invocation_word_stats"]
+    },
+    {
+      "id": "B45-F4",
+      "title": "S5 poem scenario: LLM asks for clarification instead of producing poem",
+      "description": "Short poem request '短い詩を書いてください' resulted in clarifying question about theme/mood rather than a poem. This is a clear behavioral regression — inline router LLM chose to ask rather than act. Pattern may indicate router system prompt over-caution or ambiguity handling shift.",
+      "severity": "MED",
+      "affected_scenarios": ["catalog_routing_decided_emitted"]
+    }
+  ]
+}

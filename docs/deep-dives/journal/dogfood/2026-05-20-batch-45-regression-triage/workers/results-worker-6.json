@@ -1,0 +1,151 @@
+{
+  "batch": "B45",
+  "worker": 6,
+  "head": "23a7a1ad",
+  "date": "2026-05-20",
+  "scenario_set": "plan_mode_fp_0011_mixed",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "note": "plan_mode.yaml contains 3 scenarios (not 7 as stated in worker prompt); all 3 were run",
+  "verdicts": {
+    "V": 2,
+    "I": 0,
+    "R": 1,
+    "B": 0
+  },
+  "vs_past": {
+    "B44": {"V": 1, "I": 1, "R": 1, "B": 0, "total": 7},
+    "B43": {"V": 1, "I": 5, "R": 1, "B": 0, "total": 7},
+    "B42": {"V": 0, "I": 3, "R": 3, "B": 1, "total": 7},
+    "B45": {"V": 2, "I": 0, "R": 1, "B": 0, "total": 3},
+    "note": "B45 total=3 (yaml only contains 3 scenarios); B42-B44 ran 7 scenarios — direct comparison requires caution"
+  },
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "scenario_index": 1,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "rubric_details": {
+        "references_both_docs": true,
+        "lists_3plus_points": true,
+        "cites_specific_evidence": true,
+        "no_fabrication": true
+      },
+      "events_summary": {
+        "plan_emitted": 1,
+        "plan_step_started": 3,
+        "plan_step_completed": 3,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0,
+        "router_empty_response_retry_injected": 2,
+        "control_ir_failed": 2
+      },
+      "events_check": {
+        "must_emit_satisfied": true,
+        "must_not_emit_violated": false
+      },
+      "notes": "Plan ran to completion. 2 router_empty_response_retry_injected events fired. control_ir_failed x2 for index_query op ('NoneType' has no attribute 'base_dir') — non-fatal, plan proceeded. Reply cited both permission-model.md and workspace.md with 5 concrete points and header names."
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "scenario_index": 2,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": true,
+      "rubric_details": {
+        "references_plan_py_and_planner_py": false,
+        "names_specific_function": false,
+        "explains_when_and_how": false,
+        "no_fabrication": true
+      },
+      "events_summary": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0,
+        "router_empty_response_retry_injected": 0
+      },
+      "events_check": {
+        "must_emit_satisfied": true,
+        "must_not_emit_violated": false
+      },
+      "notes": "Plan executed (4 steps completed) but LLM reported that src/reyn/tools/plan.py and src/reyn/chat/planner.py were not found in the repo. The agent did not fabricate code, but also could not satisfy the rubric requiring specific function names from those files. Rubric fail → R. 0 retry events."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "scenario_index": 3,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "rubric_details": {
+        "references_all_three_files": true,
+        "lists_4plus_pillars": true,
+        "each_pillar_cites_source": true,
+        "no_contradiction": true
+      },
+      "events_summary": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0,
+        "router_empty_response_retry_injected": 3
+      },
+      "events_check": {
+        "must_emit_satisfied": true,
+        "must_not_emit_violated": false
+      },
+      "notes": "Plan ran 4 steps to completion. 3 router_empty_response_retry_injected events fired — one per plan step for steps 1-3 (step 4 ran clean). Reply listed 5 pillars citing principles.md, architecture.md, and workspace.md with specific P-number references. Rubric met → V."
+    }
+  ],
+  "retry_injected_event_counts": {
+    "S1_plan_compare_two_concepts": 2,
+    "S2_plan_explain_with_code_references": 0,
+    "S3_plan_summary_across_n_files": 3,
+    "total_B45_W6": 5
+  },
+  "pr287_accumulation": {
+    "B44_count": 3,
+    "B45_W6_count": 5,
+    "note": "B45 W6 shows 5 retry events across 3 plan_mode scenarios (B44 had 3 across an unspecified scenario set). Pattern: retry fires once per plan step in S3 (3/4 steps triggered retry), and 2x in S1. S2 had 0 retries. Continued accumulation supports PR #287 default-flip evidence.",
+    "per_scenario_breakdown": "S1: 2 retries (plan_step_started x3, retries in 2 of 3 steps), S2: 0 retries (plan ran clean), S3: 3 retries (one per step for steps 1-3)"
+  },
+  "new_findings": [
+    {
+      "id": "W6-F1",
+      "severity": "LOW",
+      "title": "plan_mode.yaml scenario count mismatch",
+      "description": "Worker prompt stated 7 scenarios in plan_mode.yaml but the file contains only 3. All 3 were run. Past B42-B44 verdict tables show 7 total — this implies the yaml was likely edited between those batches and now, or past workers combined multiple scenario sets."
+    },
+    {
+      "id": "W6-F2",
+      "severity": "MED",
+      "title": "plan_explain_with_code_references consistently R — plan.py/planner.py not found",
+      "description": "S2 plan ran 4 steps successfully but the agent reported src/reyn/tools/plan.py and src/reyn/chat/planner.py as not found. This matches B44 expected outcome (refuted=0.5). The plan infrastructure works but the specific files referenced in the scenario prompt do not exist at HEAD 23a7a1ad. Scenario design may need updating to reference actual existing file paths."
+    },
+    {
+      "id": "W6-F3",
+      "severity": "INFO",
+      "title": "router_empty_response_retry_injected fires per-plan-step in S3",
+      "description": "S3 shows 3 retry events for 4 plan steps (steps 1-3 each triggered one retry, step 4 clean). S1 shows 2 retries for 3 steps. S2 shows 0. Pattern: retry probability appears correlated with individual plan step execution, not plan overall. B45 W6 total = 5 retry events. Combined with B44's 3 events, evidence for PR #287 default-flip continues to accumulate."
+    },
+    {
+      "id": "W6-F4",
+      "severity": "LOW",
+      "title": "control_ir_failed index_query in S1 — non-fatal but logged",
+      "description": "S1 emitted 2 control_ir_failed events for index_query kind with error 'NoneType object has no attribute base_dir'. Plan still completed and rubric was met. This suggests the action index is not initialized in this worktree environment but fallback behavior handled gracefully."
+    }
+  ]
+}

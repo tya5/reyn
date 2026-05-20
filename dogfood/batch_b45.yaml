@@ -1,0 +1,80 @@
+batch:
+  name: B45
+  date: "2026-05-20"
+  head: 23a7a1ad
+  env_vars:
+    REYN_EMPTY_STOP_RETRY: "1"      # PR #265 / #287 — held on for B45+
+    REYN_SPAWN_ACK_TO_LLM: "1"      # PR #290 — N≥100 accumulation toward default flip
+  user_params:
+    hot_list_n: 10                  # held constant vs B43/B44
+    models_tier: flash-lite
+  hard_caps:
+    tool_uses: 50
+    wall_clock_min: 15
+
+workers:
+  - name: W1
+    scenario_set: chat_router_smoke.yaml
+    scenario_set_path: dogfood/scenarios/chat_router_smoke.yaml
+    port: 8251
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b45-1
+    agent_prefix: dogfood-b45-1-s
+
+  - name: W2
+    scenario_set: stdlib_skills_core.yaml
+    scenario_set_path: dogfood/scenarios/stdlib_skills_core.yaml
+    port: 8252
+    n_scenarios: 9
+    worktree: /tmp/reyn-worktrees/b45-2
+    agent_prefix: dogfood-b45-2-s
+
+  - name: W3
+    scenario_set: control_ir_ops.yaml
+    scenario_set_path: dogfood/scenarios/control_ir_ops.yaml
+    port: 8253
+    n_scenarios: 9
+    worktree: /tmp/reyn-worktrees/b45-3
+    agent_prefix: dogfood-b45-3-s
+
+  - name: W4
+    scenario_set: permissions_and_safety.yaml
+    scenario_set_path: dogfood/scenarios/permissions_and_safety.yaml
+    port: 8254
+    n_scenarios: 8
+    worktree: /tmp/reyn-worktrees/b45-4
+    agent_prefix: dogfood-b45-4-s
+
+  - name: W5
+    scenario_set: multi_agent_and_mcp.yaml
+    scenario_set_path: dogfood/scenarios/multi_agent_and_mcp.yaml
+    port: 8255
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b45-5
+    agent_prefix: dogfood-b45-5-s
+
+  - name: W6
+    scenario_set: plan_mode_fp_0011_mixed
+    scenario_set_path: dogfood/scenarios/plan_mode.yaml
+    port: 8256
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b45-6
+    agent_prefix: dogfood-b45-6-s
+
+  - name: W7
+    scenario_set: long_session_v1.yaml
+    scenario_set_path: dogfood/scenarios/long_session_v1.yaml
+    port: 8257
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b45-7
+    agent_prefix: dogfood-b45-7-s
+
+past_batches:
+  - name: B44
+    aggregate_path: docs/deep-dives/journal/dogfood/2026-05-20-batch-44-pipeline-validation/aggregate.json
+  - name: B43
+    aggregate_path: docs/deep-dives/journal/dogfood/2026-05-20-batch-43-post-empty-stop-retry/aggregate.json
+  - name: B42
+    aggregate_path: docs/deep-dives/journal/dogfood/2026-05-19-batch-42-b40-v2-cumulative/aggregate.json
+
+journal_dir: docs/deep-dives/journal/dogfood/2026-05-20-batch-45-regression-triage
