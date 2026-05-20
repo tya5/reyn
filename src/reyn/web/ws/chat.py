@@ -209,12 +209,54 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
                         "cancelled_plans": cancelled_plans,
                     },
                 }))
+            elif msg_type == "answer_intervention":
+                # Issue #276 Phase B (2/5): remote intervention answer.
+                # The TUI in ``--connect`` mode routes intervention-
+                # widget answer_callback → proxy → here. Server runs
+                # ``session._maybe_answer_oldest_intervention(text)``
+                # which dispatches via the existing
+                # ``InterventionHandler.maybe_answer`` (= matches
+                # chip-button labels + free-text against the head
+                # pending intervention's choices, same as local TUI).
+                text = str(payload.get("text", "")).strip()
+                if not text:
+                    await websocket.send_text(json.dumps({
+                        "kind": "error",
+                        "text": "answer_intervention requires non-empty 'text'.",
+                        "meta": {},
+                    }))
+                    continue
+                try:
+                    answered = await session._maybe_answer_oldest_intervention(
+                        text,
+                    )
+                except Exception as exc:
+                    logger.exception("answer_intervention failed")
+                    await websocket.send_text(json.dumps({
+                        "kind": "error",
+                        "text": f"answer_intervention failed: {exc}",
+                        "meta": {},
+                    }))
+                    continue
+                if not answered:
+                    # No pending intervention matched. Local
+                    # ``_maybe_answer_oldest_intervention`` returns
+                    # False silently when there's nothing to answer
+                    # (= user typed text without an active prompt);
+                    # we surface a status frame in the remote case
+                    # so the conv pane gets explicit feedback.
+                    await websocket.send_text(json.dumps({
+                        "kind": "status",
+                        "text": "(no pending intervention to answer)",
+                        "meta": {"$answer_ack": True, "answered": False},
+                    }))
             else:
                 # Unknown message type — echo an error but keep the connection.
                 await websocket.send_text(json.dumps({
                     "kind": "error",
                     "text": f"Unknown message type {msg_type!r}. "
-                    "Expected 'user_message' or 'cancel_inflight'.",
+                    "Expected 'user_message', 'cancel_inflight', "
+                    "or 'answer_intervention'.",
                     "meta": {},
                 }))
 

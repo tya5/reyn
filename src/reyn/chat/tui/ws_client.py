@@ -101,6 +101,28 @@ class _WSSessionProxy:
         """
         self._intervention_listener_id = listener_id
 
+    async def _maybe_answer_oldest_intervention(self, text: str) -> None:
+        """Issue #276 Phase B (2/5): send an ``answer_intervention`` WS frame.
+
+        Mirrors :py:meth:`ChatSession._maybe_answer_oldest_intervention`
+        from the TUI's intervention-widget callback path: when the
+        user clicks a chip or types a free-text answer, the widget's
+        ``answer_callback`` calls this with the chosen string.
+        Server-side handler resolves the head intervention + delivers
+        the answer via the existing
+        ``InterventionHandler.maybe_answer`` path; the matching
+        choice-vs-text dispatch is identical to local mode. Status
+        flows back as the next outbox frame.
+
+        Without this method the TUI's ``_mount_intervention``
+        callback raised ``AttributeError`` in remote mode when the
+        user clicked a chip or submitted a free-text answer (= Phase
+        A regression caught during Phase B answer testing). Returns
+        ``None`` — authoritative outcome arrives as a server-side
+        outbox frame.
+        """
+        await self._send_fn({"type": "answer_intervention", "text": text})
+
     async def cancel_inflight(self) -> None:
         """Issue #276 Phase B: send a ``cancel_inflight`` WS frame.
 
