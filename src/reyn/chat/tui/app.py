@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from reyn.chat.session import ChatSession
 
 
-# Debounce window for the "(nothing in-flight to cancel)" line — repeat
+# Debounce window for the "nothing-in-flight cancel" line — repeat
 # Ctrl+C presses within this many seconds are absorbed silently.
 _IDLE_CANCEL_DEDUP_S = 1.5
 
@@ -130,7 +130,7 @@ class ReynTUIApp(App):
         self._outbox_task: asyncio.Task | None = None
         self._panel_visible = False
         self._cancel_event: asyncio.Event = asyncio.Event()
-        # Most-recent "(nothing in-flight to cancel)" timestamp, used to
+        # Most-recent "nothing-in-flight cancel" timestamp, used to
         # suppress repeated identical lines from accumulating in the conv
         # log when the user mashes Ctrl+C on an idle session.
         self._last_idle_cancel_ts: float = 0.0
@@ -825,13 +825,23 @@ class ReynTUIApp(App):
             and cancelled_streams == 0
         ):
             # Suppress repeat lines: when the user mashes Ctrl+C on an idle
-            # session, log a single "(nothing in-flight to cancel)" then
+            # session, log a single "nothing-in-flight cancel" then
             # debounce for ``_IDLE_CANCEL_DEDUP_S`` so subsequent presses
             # don't litter the conv log with identical lines.
             now = _now_monotonic()
             if now - self._last_idle_cancel_ts > _IDLE_CANCEL_DEDUP_S:
+                # ``✗`` prefix gives the line a glyph that matches the
+                # other ``✗``-led cancellation / error feedback (= the
+                # ``✗ cancelled N skill…`` summary below), and the
+                # ``try /list`` tail tells the user how to verify
+                # nothing's actually stuck (= the most common "wait,
+                # did it really do nothing?" reaction to a no-op
+                # cancel). The previous bare ``(nothing in-flight to
+                # cancel)`` parenthetical had neither cue and read
+                # like an unimportant aside.
                 self._voice_status(
-                    "(nothing in-flight to cancel)", style="dim #555555",
+                    "✗ nothing in-flight to cancel — try /list to see active runs",
+                    style="dim #555555",
                 )
                 self._last_idle_cancel_ts = now
             return
