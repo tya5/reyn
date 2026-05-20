@@ -74,6 +74,7 @@ class RightPanel(Widget):
     RightPanel {
         display: none;
         width: 33%;
+        min-width: 44;
         background: #111111;
         layout: vertical;
         height: 100%;
@@ -335,15 +336,21 @@ class RightPanel(Widget):
         if self._panel_width == 0:
             self._panel_width = self.size.width or 40
         max_width = self._max_panel_width()
-        # Min width is sized so the full 6-tab bar
-        # (Keys/Events/Agents/Memory/Cost/Docs ≈ 36 cells incl. margins)
-        # always fits. Below this the Textual Tabs widget silently scrolls
-        # the right-most tabs out of view with no overflow marker, leaving
-        # the user no way to tell which tabs exist by glancing at the
-        # bar — Ctrl+W still cycles them but the visible set was a
-        # misleading subset. Bumped from 24 → 36 to guarantee the bar
-        # acts as a complete navigation surface at every width.
-        _MIN_WIDTH = 36
+        # Min width is sized so the full 7-tab bar
+        # (Keys/Events/Agents/Memory/Cost/Docs/Pending ≈ 44 cells incl.
+        # margins) always fits. Below this the Textual Tabs widget
+        # silently scrolls the right-most tabs out of view with no
+        # overflow marker, leaving the user no way to tell which tabs
+        # exist by glancing at the bar — Ctrl+W still cycles them but
+        # the visible set is a misleading subset.
+        #
+        # Bump history:
+        # - 24 → 36 (6 tabs era: Keys/Events/Agents/Memory/Cost/Docs)
+        # - 36 → 44 (= wave-3 SP1, 7-tab era: + Pending from issue #277)
+        #   At 36 cells, "Pending" truncated to "Pend…" or scrolled
+        #   out entirely at the default 33%-width panel; bumping to 44
+        #   guarantees the full label fits with the new tab.
+        _MIN_WIDTH = 44
         new_width = max(_MIN_WIDTH, min(max_width, self._panel_width + delta))
         # Flash the new width in the conv sticky bar so the user sees
         # something changed (and learns the bounds via the at-min /
