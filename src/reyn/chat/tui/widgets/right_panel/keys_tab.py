@@ -27,12 +27,23 @@ _KEY_PRETTY: dict[str, str] = {
     "up": "↑", "down": "↓", "left": "←", "right": "→",
 }
 _CONVERSATION_KEYS = {"ctrl+p", "ctrl+n", "ctrl+shift+n", "ctrl+shift+p"}
+# ``j`` / ``k`` / ``space`` / ``c`` are routed via ``RightPanel.on_key``
+# (not ``app.BINDINGS``) and dispatch per-tab inside the panel handler,
+# so they are panel-universal — not docs-only. Wave-2 K1: previously
+# they lived in ``_DOCS_KEYS`` which labelled them "DOCS (gated)" in
+# the Keys tab even though they scroll any tab (events / agents /
+# memory / docs / pending / cost) and toggle the preview pane on
+# whichever tab is active. ``c`` is the generic "copy current view"
+# action with pending-tab override (= claim); listing it under PANEL
+# matches its dominant meaning.
 _PANEL_KEYS = {
     "ctrl+o", "ctrl+w", "ctrl+shift+o", "ctrl+shift+w", "tab", "shift+tab",
-    "h", "l",
+    "h", "l", "j", "k", "space", "c",
 }
 _EVENTS_KEYS = {"f", "t"}
-_DOCS_KEYS = {"j", "k", "space", "/"}
+# ``/`` stays DOCS-only — it opens the docs name filter, no other tab
+# consumes it.
+_DOCS_KEYS = {"/"}
 _GROUP_ORDER = [
     "GLOBAL", "INPUT", "CONVERSATION", "PANEL",
     "EVENTS (gated)", "DOCS (gated)", "OTHER",
@@ -105,17 +116,24 @@ def render_keys(app: "App") -> str:
         seen.add(b.key)
         groups["INPUT"].append((_pretty_key(b.key), b.description))
 
-    # Right-panel resize keys (h / l) are handled via ``RightPanel.on_key``
-    # rather than a declared ``Binding`` object, so the BINDINGS iterations
-    # above never see them and the Keys tab silently omitted them. Surface
-    # them explicitly so the user can discover panel resize without
-    # reading the source.
-    if "h" not in seen:
-        groups["PANEL"].append((_pretty_key("h"), "Widen panel"))
-        seen.add("h")
-    if "l" not in seen:
-        groups["PANEL"].append((_pretty_key("l"), "Narrow panel"))
-        seen.add("l")
+    # Right-panel keys handled via ``RightPanel.on_key`` (not declared
+    # ``Binding`` objects) are invisible to the BINDINGS iterations above.
+    # Surface them explicitly so the user can discover them without
+    # reading the source. K1 (wave-2): expanded the panel-universal set
+    # to include j / k / space / c, which previously either lived under
+    # DOCS-only or were missing entirely despite working on every tab.
+    _PANEL_EXPLICIT: list[tuple[str, str]] = [
+        ("h", "Widen panel"),
+        ("l", "Narrow panel"),
+        ("j", "Scroll down (current tab)"),
+        ("k", "Scroll up (current tab)"),
+        ("space", "Toggle preview pane"),
+        ("c", "Copy current view (pending tab: claim cursor)"),
+    ]
+    for key, desc in _PANEL_EXPLICIT:
+        if key not in seen:
+            groups["PANEL"].append((_pretty_key(key), desc))
+            seen.add(key)
 
     lines: list[str] = []
     # Key column width: max key length within the group, capped at 6
