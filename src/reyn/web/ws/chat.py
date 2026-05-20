@@ -161,11 +161,60 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
                 text = str(payload.get("text", "")).strip()
                 if text:
                     await session.submit_user_text(text)
+            elif msg_type == "cancel_inflight":
+                # Issue #276 Phase B: remote Ctrl+C. Iterate the
+                # session's running_skills / running_plans and call
+                # ``.cancel()`` on each — mirrors what
+                # ``app.action_cancel_inflight`` does for the local
+                # session. The TUI thin client side delegates here
+                # because the proxy's local ``running_skills`` /
+                # ``running_plans`` dicts are empty (server-side state
+                # isn't replicated). Reports the result back as a
+                # ``status`` outbox so the conv pane gets the same
+                # "✗ cancelled N skill + M plan" summary local mode
+                # shows.
+                cancelled_skills = 0
+                for task in list(getattr(session, "running_skills", {}).values()):
+                    if not task.done():
+                        task.cancel()
+                        cancelled_skills += 1
+                cancelled_plans = 0
+                for task in list(getattr(session, "running_plans", {}).values()):
+                    if not task.done():
+                        task.cancel()
+                        cancelled_plans += 1
+                if cancelled_skills == 0 and cancelled_plans == 0:
+                    summary = "(nothing in-flight on remote to cancel)"
+                else:
+                    parts: list[str] = []
+                    if cancelled_skills:
+                        parts.append(
+                            f"{cancelled_skills} skill"
+                            f"{'s' if cancelled_skills != 1 else ''}"
+                        )
+                    if cancelled_plans:
+                        parts.append(
+                            f"{cancelled_plans} plan"
+                            f"{'s' if cancelled_plans != 1 else ''}"
+                        )
+                    summary = f"✗ cancelled {' + '.join(parts)}"
+                # Push as a status frame the TUI will surface via its
+                # OutboxRouter ``status`` handler.
+                await websocket.send_text(json.dumps({
+                    "kind": "status",
+                    "text": summary,
+                    "meta": {
+                        "$cancel_ack": True,
+                        "cancelled_skills": cancelled_skills,
+                        "cancelled_plans": cancelled_plans,
+                    },
+                }))
             else:
                 # Unknown message type — echo an error but keep the connection.
                 await websocket.send_text(json.dumps({
                     "kind": "error",
-                    "text": f"Unknown message type {msg_type!r}. Expected 'user_message'.",
+                    "text": f"Unknown message type {msg_type!r}. "
+                    "Expected 'user_message' or 'cancel_inflight'.",
                     "meta": {},
                 }))
 

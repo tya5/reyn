@@ -793,6 +793,45 @@ class ReynTUIApp(App):
             )
             return
 
+        # Issue #276 Phase B: remote (``--connect``) mode delegates the
+        # cancel to the server. The ``_WSSessionProxy`` exposes
+        # ``cancel_inflight()`` which fires a WS frame; the server-side
+        # endpoint iterates the real ``session.running_skills`` /
+        # ``running_plans`` and emits a ``status`` outbox back with the
+        # "✗ cancelled N skill + M plan" summary. The local proxy's
+        # ``running_skills`` / ``running_plans`` dicts are always empty
+        # (state lives server-side), so the legacy iteration below
+        # would be a no-op and we'd report "(nothing in-flight to
+        # cancel)" even when the remote agent is mid-call. Detect the
+        # proxy by the registry holding a ``_ws`` attribute — only the
+        # WS client (``_WSRegistry``) sets that; local AgentRegistry
+        # doesn't.
+        is_remote_proxy = getattr(self._agent_registry, "_ws", None) is not None
+        remote_cancel = getattr(session, "cancel_inflight", None)
+        if is_remote_proxy and callable(remote_cancel):
+            asyncio.create_task(remote_cancel())
+            # Optimistic local feedback — the authoritative summary
+            # arrives as a ``status`` outbox frame from the server.
+            self._voice_status(
+                "cancel sent to remote — awaiting confirmation",
+                style="dim #aa6666",
+            )
+            # Seal any locally-tracked skill-activity rows so their
+            # spinners stop immediately (the remote will send
+            # ``trace`` workflow_aborted events shortly but the
+            # visible spinner shouldn't keep ticking in the meantime).
+            if conv is not None and self._skill_exec:
+                for run_id in list(self._skill_exec.keys()):
+                    try:
+                        conv.finish_skill_row(
+                            run_id, success=False, reason="cancelled (remote)",
+                        )
+                    except Exception:
+                        pass
+                    self._skill_exec.pop(run_id, None)
+                self._push_exec_state()
+            return
+
         cancelled_skills = 0
         for task in list(getattr(session, "running_skills", {}).values()):
             if not task.done():
