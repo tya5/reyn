@@ -117,6 +117,28 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
     from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import RecallIROp
 
+    # Defensive arg validation. LLMs sometimes call `recall` without
+    # the required keys (= when no "Indexed sources" appears in the
+    # system prompt, or when the LLM forgets the schema). Raising a
+    # raw KeyError leaks the literal Python exception into the
+    # tool_failed event and the user-facing reply (observed in
+    # dogfood B45/B46 W3 `recall_indexed_source` scenario). Return a
+    # structured tool result instead so the LLM can compose a clean
+    # "no indexed sources" reply.
+    missing = [k for k in ("query", "sources") if not args.get(k)]
+    if missing:
+        return {
+            "ok": False,
+            "error_kind": "missing_required_arg",
+            "error_message": (
+                f"recall requires {missing}. "
+                "Available sources are listed under 'Indexed sources' in "
+                "the system prompt; if none are listed, no sources have "
+                "been indexed yet for this agent."
+            ),
+            "missing": missing,
+        }
+
     op = RecallIROp(
         kind="recall",
         query=str(args["query"]),
