@@ -193,7 +193,14 @@ def render_cost(
                         current_step_id = None
                         continue
                     if ev_type == "llm_called":
-                        pending_model = str(d.get("model", "unknown"))
+                        raw_model = str(d.get("model", "unknown"))
+                        # Strip the litellm proxy prefix (e.g.
+                        # ``openai/gemini-2.5-flash-lite`` → ``gemini-2.5-flash-lite``)
+                        # so the BY MODEL section shows the human-readable
+                        # model identifier rather than the routing path.
+                        # ``rsplit("/", 1)[-1]`` is idempotent for already-clean
+                        # names (no slash → returned verbatim).
+                        pending_model = raw_model.rsplit("/", 1)[-1]
                         continue
                     if ev_type != "llm_response_received":
                         continue
