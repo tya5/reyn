@@ -3333,7 +3333,21 @@ class ChatSession:
             return [{"error": str(exc)}]
 
     async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
-        """Invoke an MCP tool and return its result."""
+        """Invoke an MCP tool and return its result.
+
+        Close the per-call MCP clients in the same task that opened
+        them — the MCP SDK's ``stdio_client`` uses anyio cancel scopes
+        that are task-affine, and leaving them open until asyncio loop
+        teardown produces a "cancel scope crossed task boundary"
+        RuntimeError (= recurring crash on every chat session end
+        observed during the 2026-05-20 8-server smoke round).
+
+        Per-call open/close is fine for now: the chat router invokes
+        MCP tools individually and there's no value in caching across
+        unrelated tool calls. A future optimisation could pool clients
+        per-server within a single chat-turn act batch, but the same-
+        task-close discipline still applies.
+        """
         from reyn.op_runtime import execute_op
         from reyn.permissions.permissions import PermissionDecl
         from reyn.schemas.models import MCPIROp
@@ -3352,7 +3366,22 @@ class ChatSession:
             file_write=ctx.permission_decl.file_write,
             mcp=[server],
         )
-        return await execute_op(op, ctx, caller="control_ir")
+        try:
+            return await execute_op(op, ctx, caller="control_ir")
+        finally:
+            # Close every MCPClient that op_runtime/mcp.py cached on
+            # ``ctx.mcp_clients`` during this call. Failures are
+            # swallowed — best-effort; the op result is already
+            # captured at this point.
+            for client in list(ctx.mcp_clients.values()):
+                try:
+                    await client.close()
+                except Exception:  # noqa: BLE001 — best-effort teardown
+                    logger.debug(
+                        "mcp client close failed for chat router",
+                        exc_info=True,
+                    )
+            ctx.mcp_clients.clear()
 
     # NOTE: ``spawn_plan_task`` and ``_spawn_resumed_plan`` moved to
     # PlanRunner.spawn_plan_task / spawn_resumed_plan (RunSpawner wave).
