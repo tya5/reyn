@@ -354,6 +354,7 @@ def run(args: argparse.Namespace) -> None:
                 model=model,
                 budget_tracker=budget_tracker,
                 banner=getattr(args, "banner", False),
+                no_restore=skip_restore,
             )
 
         run_async(_main_tui())

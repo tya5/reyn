@@ -116,6 +116,7 @@ class ReynTUIApp(App):
         model: str = "",
         budget_tracker=None,
         banner: bool = False,
+        no_restore: bool = False,
     ) -> None:
         super().__init__()
         self.register_theme(self._REYN_THEME)
@@ -125,6 +126,7 @@ class ReynTUIApp(App):
         self._model = model
         self._budget_tracker = budget_tracker
         self._banner = banner
+        self._no_restore = no_restore
         self._outbox_task: asyncio.Task | None = None
         self._panel_visible = False
         self._cancel_event: asyncio.Event = asyncio.Event()
@@ -240,6 +242,21 @@ class ReynTUIApp(App):
                 conv._write_log(rt)
             conv._write_log(Text("  Gives you the reins.", style="dim #555555"))
             conv._write_log(Text("─" * 38, style="#2a2a2a"))
+
+        # ``--no-restore`` was previously surfaced only via a stderr print
+        # from the CLI entry point, which the TUI overlay completely hides.
+        # Echo the same reassurance into the conversation pane so the
+        # operator can confirm the flag took effect even after the TUI is
+        # already in the foreground. Amber styling matches other
+        # advisory-but-non-fatal lines (= header `[N pending]` badge).
+        if self._no_restore:
+            conv = self.query_one("#conversation", ConversationView)
+            from rich.text import Text as _RichText
+            conv._write_log(_RichText(
+                "⚠ --no-restore: in-flight skill state was NOT loaded this run. "
+                "Restart without --no-restore to resume.",
+                style="#d4a017",
+            ))
 
         # Start outbox subscription if registry is available
         if self._agent_registry is not None:
@@ -1395,6 +1412,7 @@ async def run_tui(
     model: str = "",
     budget_tracker=None,
     banner: bool = False,
+    no_restore: bool = False,
 ) -> None:
     """Entry point called from cli/commands/chat.py when TUI mode is selected."""
     app = ReynTUIApp(
@@ -1403,5 +1421,6 @@ async def run_tui(
         model=model,
         budget_tracker=budget_tracker,
         banner=banner,
+        no_restore=no_restore,
     )
     await app.run_async()
