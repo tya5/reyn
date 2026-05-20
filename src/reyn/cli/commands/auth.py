@@ -122,6 +122,28 @@ def _open_browser_or_skip(url: str) -> None:
         pass
 
 
+def _print_scope_advertisement(provider_cfg) -> None:
+    """Print the OAuth scopes this device-grant flow is about to request.
+
+    Issue #291 Priority 3 #7: previously reyn silently sent ``scope=...``
+    to the provider's device_authorization endpoint with no client-side
+    visibility. The provider's consent screen still lists scopes, but
+    surfacing them in the CLI first gives the user a chance to abort
+    before any network round-trip — and creates a paper trail in shell
+    history / CI logs of exactly what was requested.
+
+    Skips silently when ``provider.scopes`` is empty (= provider does
+    not request any scopes, or the user is using a public-API token).
+    """
+    scopes = getattr(provider_cfg, "scopes", None) or []
+    if not scopes:
+        return
+    print(
+        f"Requesting scopes for {provider_cfg.name!r}: {', '.join(scopes)}",
+        file=sys.stderr,
+    )
+
+
 def _print_user_action(info: dict) -> None:
     """Display the device code + verification URI for the user to act on.
 
@@ -239,6 +261,8 @@ def run_login(args: argparse.Namespace) -> None:
     key = args.save_as or args.provider
     events = EventLog()
 
+    _print_scope_advertisement(provider_cfg)
+
     async def _run() -> None:
         try:
             token = await device_grant_flow(
@@ -271,6 +295,27 @@ def run_login(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _classify_token_status(delta_seconds: float) -> str:
+    """Map an ``expires_at - now`` delta (seconds) to a 3-state label.
+
+    Issue #291 Priority 3 #9: previously the 2-state label ``valid`` /
+    ``near-expiry`` collapsed ``expired`` (= already past) into the same
+    bucket as ``near-expiry`` (= about to expire), making it impossible
+    to distinguish "needs refresh now" from "needs re-auth now" from
+    the list output.
+
+    The thresholds match the OAuth refresh buffer (``oauth.py:_REFRESH_BUFFER_SECONDS``):
+      - ``expired`` :  delta <  0    (= past the expires_at timestamp)
+      - ``near-expiry`` : 0 ≤ delta < 60   (= within refresh-on-next-use window)
+      - ``valid`` : delta ≥ 60   (= no refresh needed yet)
+    """
+    if delta_seconds < 0:
+        return "expired"
+    if delta_seconds < 60:
+        return "near-expiry"
+    return "valid"
+
+
 def run_list(args: argparse.Namespace) -> None:
     """List token keys in the OAuth store. Values are never printed."""
     from reyn.secrets import list_oauth_token_keys, load_oauth_token
@@ -286,7 +331,7 @@ def run_list(args: argparse.Namespace) -> None:
             print(f"  {key}: <malformed>")
             continue
         delta = token.expires_at - now
-        status = "valid" if delta.total_seconds() > 60 else "near-expiry"
+        status = _classify_token_status(delta.total_seconds())
         print(f"  {key}: {status}, expires {token.expires_at.isoformat()}")
 
 
