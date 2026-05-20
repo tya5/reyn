@@ -1096,6 +1096,44 @@ class ConversationView(Widget):
             except Exception:
                 pass
 
+    def scroll_page_up(self) -> None:
+        """Scroll the conv log up one page without changing focus.
+
+        Wave-4 AR5: the RichLog has ``can_focus=False`` (intentional —
+        prevents inadvertent focus capture from input), so Textual's
+        default PageUp doesn't reach it. The App's PageUp binding
+        dispatches here to drive ``log.scroll_page_up`` directly.
+        Sets the user-scrolled flag so the scroll watcher doesn't
+        immediately auto-scroll back to the bottom on the next
+        message.
+        """
+        log = self._log()
+        try:
+            log.scroll_page_up(animate=False)
+        except Exception:
+            try:
+                log.scroll_relative(y=-log.size.height, animate=False)
+            except Exception:
+                pass
+        self._user_scrolled = True
+
+    def scroll_page_down(self) -> None:
+        """Scroll the conv log down one page without changing focus."""
+        log = self._log()
+        try:
+            log.scroll_page_down(animate=False)
+        except Exception:
+            try:
+                log.scroll_relative(y=log.size.height, animate=False)
+            except Exception:
+                pass
+        # When we scroll back to the tail, re-arm auto-scroll.
+        try:
+            if log.scroll_y >= log.max_scroll_y - 1:
+                self._user_scrolled = False
+        except Exception:
+            pass
+
     def _jump_to_relative_anchor(self, delta: int) -> None:
         if not self._turn_anchors:
             return
