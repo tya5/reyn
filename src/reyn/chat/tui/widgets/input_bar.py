@@ -363,8 +363,14 @@ class InputBar(Widget):
             c for c in self._slash_commands
             if c.name.startswith(token)
         ]
-        # Sort by name length then alpha so closer prefix shows first
-        matches.sort(key=lambda c: (len(c.name), c.name))
+        # Alphabetical so muscle memory built from /help (which lists
+        # alphabetically) transfers to the picker. The previous
+        # ``(len(name), name)`` ordering pushed common-but-longer
+        # commands like /attach, /budget, /cancel below shorter ones
+        # like /copy, /cost, /help on the empty-token open — a user
+        # who stopped reading after the first few rows never saw the
+        # high-value entries.
+        matches.sort(key=lambda c: c.name)
         picker.set_matches(matches)
 
     def _run_completer(
