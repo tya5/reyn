@@ -195,6 +195,15 @@ class ReynTUIApp(App):
 
         inputbar.focus_input()
 
+        # Restore persisted TUI prefs (= /cost-inline state etc.) from
+        # ``<project_root>/.reyn/tui_prefs.json``. Defaults stay in-code
+        # when the file is absent / malformed (= first launch, fresh
+        # project). F10: previously /cost-inline reset to "off" on
+        # every restart because no persistence existed.
+        from reyn.chat.tui.prefs import load_tui_prefs
+        prefs = load_tui_prefs(self._project_root_path())
+        self._cost_inline_enabled = bool(prefs.get("cost_inline", False))
+
         # issue #254 Phase 1: declare ourselves as the intervention listener
         # for the attached session. Without this, ``ChatSession`` constructed
         # with ``enforce_listener_presence=True`` would short-circuit
@@ -1440,6 +1449,20 @@ class ReynTUIApp(App):
         if self._agent_registry is None:
             return None
         return self._agent_registry.attached_session()
+
+    def _project_root_path(self) -> Path | None:
+        """Return the attached registry's project root, or None.
+
+        Used by ``prefs.load_tui_prefs`` / ``prefs.save_tui_prefs`` to
+        locate ``<project_root>/.reyn/tui_prefs.json``. Defensive: the
+        registry may be missing the ``_project_root`` attribute on
+        certain test / remote-mode bootstrap paths, in which case the
+        prefs file falls back to "no persistence" — toggle state still
+        works in memory.
+        """
+        if self._agent_registry is None:
+            return None
+        return getattr(self._agent_registry, "_project_root", None)
 
 
 async def run_tui(
