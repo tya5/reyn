@@ -66,22 +66,62 @@ class SourceResolution:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+# issue #319: common MCP-server-name prefixes that are stripped when
+# deriving the short config key. The MCP ecosystem widely uses
+# ``server-<name>`` (= Anthropic official) and ``mcp-server-<name>``
+# (= third-party convention). Stripping these gives a short key that
+# matches stdlib skill expectations (e.g. ``read_local_files`` looks
+# for ``mcp.servers.filesystem``, not ``mcp.servers.server-filesystem``).
+_MCP_NAME_PREFIXES = ("mcp-server-", "server-")
+
+
+def _strip_mcp_prefix(name: str) -> str:
+    """Strip common ``server-`` / ``mcp-server-`` prefixes (issue #319).
+
+    Returns the input unchanged when no prefix matches.
+    """
+    for prefix in _MCP_NAME_PREFIXES:
+        if name.startswith(prefix) and len(name) > len(prefix):
+            return name[len(prefix):]
+    return name
+
+
 def _npm_package_name(identifier: str) -> str:
     """Derive a short config key from an npm package name.
 
-    ``@modelcontextprotocol/server-filesystem`` → ``server-filesystem``
+    ``@modelcontextprotocol/server-filesystem`` → ``filesystem``
+    ``mcp-server-foo``                          → ``foo``
     ``my-mcp-server``                           → ``my-mcp-server``
+    ``@scope/plain-name``                       → ``plain-name``
+
+    issue #319: pre-fix the function returned ``server-filesystem``
+    verbatim (= the npm package's last path component). The stdlib
+    ``read_local_files`` skill expects ``mcp.servers.filesystem`` —
+    every install through this path required a manual rename. Now
+    the ecosystem-standard prefixes are stripped automatically.
     """
     if "/" in identifier:
-        return identifier.split("/")[-1]
-    return identifier
+        name = identifier.split("/")[-1]
+    else:
+        name = identifier
+    return _strip_mcp_prefix(name)
 
 
 def _pypi_package_name(identifier: str) -> str:
-    """Derive a short name from a PyPI package name."""
+    """Derive a short name from a PyPI package name.
+
+    ``mcp-server-time``  → ``time``
+    ``mcp-server-fetch`` → ``fetch``
+    ``my-mcp-tool``      → ``my-mcp-tool``
+
+    issue #319: same prefix-strip as ``_npm_package_name`` so the
+    PyPI install path produces the same canonical short names as
+    the npm path. Pre-fix ``pypi:mcp-server-time`` installed as
+    ``mcp-server-time``; now installs as ``time``.
+    """
     # Strip any version specifier
     base = re.split(r"[=><!]", identifier)[0].strip()
-    return base.replace("_", "-")
+    return _strip_mcp_prefix(base.replace("_", "-"))
 
 
 def _docker_image_name(image: str) -> str:
@@ -276,7 +316,10 @@ def _resolve_github_url(url: str) -> SourceResolution:
             }
         ]
         return SourceResolution(
-            server_name=f"server-{subdir}",
+            # issue #319: don't reintroduce the ``server-`` prefix here
+            # either — the github resolver builds the same config key
+            # the npm path produces, so the stripped form is canonical.
+            server_name=subdir,
             runtime_hint="npx",
             packages_raw=packages_raw,
             raw={"packages": packages_raw, "_source_github_url": url},

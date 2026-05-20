@@ -74,8 +74,15 @@ def _scope_to_path(scope: str, project_root: Path) -> Path:
 def _build_server_entry(pkg_raw: dict, env_keys: list[str]) -> dict:
     """Build the mcp.servers.<name> config dict from a ServerPackage raw dict.
 
-    Returns a dict with keys: command, args, and optionally env + transport.
+    Returns a dict with keys: type, command, args, and optionally env.
     The env field uses ${KEY} references only — values stay in secrets.env.
+
+    issue #318: ``type:`` is ALWAYS written (= matches the loader's
+    ``MCPClient`` expectation that ``type`` be one of
+    ``stdio | http | sse``). Pre-fix the function omitted the field
+    for the default stdio case + wrote a ``transport:`` key (not
+    ``type:``) for non-stdio — both produced configs that the loader
+    rejected with ``Unsupported MCP server type: None``.
     """
     registry_type = pkg_raw.get("registryType", "").lower()
     identifier = pkg_raw.get("identifier", "")
@@ -87,24 +94,21 @@ def _build_server_entry(pkg_raw: dict, env_keys: list[str]) -> dict:
         args = ["-y", identifier]
         if version:
             args = ["-y", f"{identifier}@{version}"]
-        entry: dict = {"command": "npx", "args": args}
+        entry: dict = {"type": transport_type, "command": "npx", "args": args}
     elif registry_type == "pypi":
         args = [identifier]
         if version:
             args = [f"{identifier}=={version}"]
-        entry = {"command": "uvx", "args": args}
+        entry = {"type": transport_type, "command": "uvx", "args": args}
     elif registry_type == "docker":
         args = ["run", "--rm", "-i", identifier]
-        entry = {"command": "docker", "args": args}
+        entry = {"type": transport_type, "command": "docker", "args": args}
     elif registry_type == "nuget":
         args = ["tool", "run", identifier]
-        entry = {"command": "dnx", "args": args}
+        entry = {"type": transport_type, "command": "dnx", "args": args}
     else:
         # Unknown registry type: store raw info so user can fix manually
-        entry = {"command": "", "args": [identifier]}
-
-    if transport_type and transport_type != "stdio":
-        entry["transport"] = transport_type
+        entry = {"type": transport_type, "command": "", "args": [identifier]}
 
     if env_keys:
         entry["env"] = {k: f"${{{k}}}" for k in env_keys}

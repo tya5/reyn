@@ -28,11 +28,16 @@ from reyn.registry.source_resolver import SourceResolution, resolve
 
 class TestSourceResolverNpm:
     def test_npm_bare_package(self):
-        """Tier 2: npm: scheme resolves a bare package name to npx runtime."""
+        """Tier 2: npm: scheme resolves a bare package name to npx runtime.
+
+        issue #319: ``server-`` prefix is stripped from the derived
+        config key so the stdlib skill expectations align without a
+        manual rename. The ``identifier`` keeps the npm-canonical name.
+        """
         r = resolve("npm:@modelcontextprotocol/server-filesystem")
         assert r.error == ""
         assert r.runtime_hint == "npx"
-        assert r.server_name == "server-filesystem"
+        assert r.server_name == "filesystem"
         assert r.packages_raw[0]["registryType"] == "npm"
         assert r.packages_raw[0]["identifier"] == "@modelcontextprotocol/server-filesystem"
         assert r.packages_raw[0]["version"] == ""
@@ -46,11 +51,15 @@ class TestSourceResolverNpm:
         assert r.packages_raw[0]["version"] == "0.6.2"
 
     def test_npm_unscoped_package(self):
-        """Tier 2: npm: scheme resolves an unscoped package."""
+        """Tier 2: npm: scheme resolves an unscoped package.
+
+        issue #319: the ``mcp-server-`` prefix is also stripped (= the
+        third-party convention).
+        """
         r = resolve("npm:mcp-server-tool")
         assert r.error == ""
         assert r.runtime_hint == "npx"
-        assert r.server_name == "mcp-server-tool"
+        assert r.server_name == "tool"
 
     def test_npm_empty_package_returns_error(self):
         """Tier 2: npm: with no package name returns error."""
@@ -112,12 +121,15 @@ class TestSourceResolverDocker:
 
 class TestSourceResolverGitHub:
     def test_github_known_repo_with_subdir(self):
-        """Tier 2: GitHub URL for known repo with src/<subdir> resolves to npm."""
+        """Tier 2: GitHub URL for known repo with src/<subdir> resolves to npm.
+
+        issue #319: same prefix-strip applies to the github→npm path.
+        """
         url = "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem"
         r = resolve(url)
         assert r.error == ""
         assert r.runtime_hint == "npx"
-        assert r.server_name == "server-filesystem"
+        assert r.server_name == "filesystem"
         assert r.packages_raw[0]["identifier"] == "@modelcontextprotocol/server-filesystem"
 
     def test_github_known_repo_with_github_subdir(self):
@@ -126,7 +138,7 @@ class TestSourceResolverGitHub:
         r = resolve(url)
         assert r.error == ""
         assert r.runtime_hint == "npx"
-        assert r.server_name == "server-github"
+        assert r.server_name == "github"
         assert r.packages_raw[0]["identifier"] == "@modelcontextprotocol/server-github"
 
     def test_github_unknown_repo_no_runtime(self):
@@ -244,14 +256,17 @@ def test_source_npm_skips_registry_and_installs(tmp_path):
     assert result["runtime"] == "npx"
     assert result["source"] == "npm:@modelcontextprotocol/server-filesystem"
 
-    # Config file written
+    # Config file written. issue #319: server key is the prefix-stripped
+    # short form. issue #318: ``type: stdio`` is present so the loader
+    # accepts the entry without manual edit.
     config_path = tmp_path / "reyn.local.yaml"
     assert config_path.exists()
     import yaml
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     servers = written["mcp"]["servers"]
-    assert "server-filesystem" in servers
-    entry = servers["server-filesystem"]
+    assert "filesystem" in servers
+    entry = servers["filesystem"]
+    assert entry["type"] == "stdio"
     assert entry["command"] == "npx"
     assert "@modelcontextprotocol/server-filesystem" in " ".join(str(a) for a in entry["args"])
 
@@ -358,7 +373,8 @@ def test_source_github_known_installs_npm(tmp_path):
     config_path = tmp_path / "reyn.local.yaml"
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     servers = written["mcp"]["servers"]
-    assert "server-filesystem" in servers
+    # issue #319: prefix-stripped short key.
+    assert "filesystem" in servers
 
 
 def test_source_missing_runtime_returns_error(tmp_path):
