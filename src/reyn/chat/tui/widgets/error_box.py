@@ -73,6 +73,16 @@ class ErrorBox(Widget):
         width: 1fr;
         padding: 0 2;
     }
+    /* Inline recovery hint extracted from the message — always visible
+       (= no display:none) so users can read "• retry or check provider
+       status" without expanding. Distinct color from `.eb-hint` so it
+       reads as actionable, not just metadata. */
+    ErrorBox Label.eb-inline-hint {
+        color: #8a7a4a;
+        height: 1;
+        width: 1fr;
+        padding: 0 2;
+    }
     /* Expanded state — reveal details */
     ErrorBox.-expanded Static.eb-details {
         display: block;
@@ -97,6 +107,22 @@ class ErrorBox(Widget):
         self._run_id_short = run_id_short
         self._skill_name = skill_name
         self._expanded = False
+        # Extract trailing ``• <hint>`` from the first line so the header
+        # can truncate the detail portion without silently dropping the
+        # recovery hint — ``classify_router_error`` formats messages as
+        # ``"router failed: [bucket] <long-detail> • <hint>"`` and the
+        # previous 72-char header cap cut the ``• hint`` suffix off when
+        # the provider repr was verbose. Rendering the hint on its own
+        # always-visible label keeps the actionable signal in front of
+        # the user without requiring an expand.
+        first_line, _sep, _rest = message.partition("\n")
+        if " • " in first_line:
+            detail_part, _bullet, hint_part = first_line.partition(" • ")
+            self._inline_hint = hint_part.strip()
+            self._first_line_for_header = detail_part
+        else:
+            self._inline_hint = ""
+            self._first_line_for_header = first_line
 
     # ── header text helpers ───────────────────────────────────────────────────
 
@@ -128,8 +154,10 @@ class ErrorBox(Widget):
         # line itself is too long — for multi-line messages whose first
         # line already fits (e.g. usage strings with sub-commands below),
         # the ▶/▼ arrow alone signals "expand for more" instead of a
-        # misleading mid-sentence truncation marker.
-        first_line, sep, _rest = self._message.partition("\n")
+        # misleading mid-sentence truncation marker. The ``• <hint>``
+        # tail (when present) lives on its own ``.eb-inline-hint`` label,
+        # so don't include it in the header truncation budget.
+        first_line = self._first_line_for_header
         if len(first_line) > 72:
             msg = first_line[:71] + "…"
         else:
@@ -143,6 +171,10 @@ class ErrorBox(Widget):
 
     def compose(self) -> ComposeResult:
         yield Label(self._header_text(), classes="eb-header")
+        if self._inline_hint:
+            yield Label(
+                f"• {self._inline_hint}", classes="eb-inline-hint",
+            )
 
         # The trace hint only makes sense when this error came from a
         # skill / op run — slash-command usage errors (= no skill_name,
