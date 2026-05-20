@@ -1,0 +1,151 @@
+{
+  "batch": "B45",
+  "worker": 7,
+  "head": "23a7a1ad",
+  "date": "2026-05-20",
+  "scenario_set": "long_session_v1.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 3,
+    "I": 3,
+    "R": 0,
+    "B": 1
+  },
+  "vs_past": {
+    "B44": {"V": 5, "I": 1, "R": 1, "B": 0},
+    "B43": {"V": 3, "I": 1, "R": 3, "B": 0},
+    "B42": {"V": 2, "I": 3, "R": 2, "B": 0},
+    "B45": {"V": 3, "I": 3, "R": 0, "B": 1},
+    "delta_vs_B44": "V: -2, I: +2, R: -1, B: +1 (S2 adr-not-found env issue counts as B in strict reading; softer reading = I)"
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "verdict": "V",
+      "turns": 5,
+      "event_count": 25,
+      "spawn_ack_count": 0,
+      "literal_echo": false,
+      "final_turn_empty": false,
+      "notes": "T5 addressed skill-specific leakage prevention, referenced P7-equivalent separation of concerns, cited earlier context (P1/P2/P3). All rubric items met."
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "verdict": "I",
+      "turns": 6,
+      "event_count": 34,
+      "spawn_ack_count": 0,
+      "literal_echo": false,
+      "final_turn_empty": false,
+      "notes": "All 6 turns answered non-empty. T3-T6 fell back to 'cannot determine' for event format details lacking file access. Pronoun chain preserved (replied to each 'it'/'that' reference). No rubric to judge V."
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "verdict": "I",
+      "turns": 5,
+      "event_count": 34,
+      "spawn_ack_count": 0,
+      "literal_echo": false,
+      "final_turn_empty": false,
+      "notes": "T4-T5 acknowledged LangGraph knowledge gap — T4 could not compare async handling. T5 migration advice incomplete. No empty replies. No rubric."
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "verdict": "I",
+      "turns": 6,
+      "event_count": 27,
+      "spawn_ack_count": 0,
+      "literal_echo": false,
+      "final_turn_empty": false,
+      "notes": "All 6 repetitive turns answered; skill list maintained consistently across T1/T2/T4/T6 (direct_llm, eval, simple_memo_app, skill_router, etc). G12 Pattern E (empty stop) did not trigger. No rubric."
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "verdict": "V",
+      "turns": 5,
+      "event_count": 96,
+      "spawn_ack_count": 3,
+      "literal_echo": false,
+      "final_turn_empty": false,
+      "spawn_ack_turns": ["T1", "T4", "T5"],
+      "notes": "T5 final reply produced asyncio.Queue code (producer/consumer with None sentinel). Three invoke_skill_spawn_ack_exit events fired for skill-spawning turns (T1, T4, T5); REYN_SPAWN_ACK_TO_LLM=1 path exercised. No literal echo of 'invoke_skill_spawn_ack_exit' in any LLM response. T2 did not spawn skill (inline reply with question), which is a minor UX regression but rubric evaluates final turn only. All 3 rubric items met."
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "verdict": "B",
+      "turns": 5,
+      "event_count": 29,
+      "spawn_ack_count": 0,
+      "literal_echo": false,
+      "final_turn_empty": false,
+      "notes": "Agent correctly reported no ADRs found in worktree (b45-7 worktree lacks docs/adr/ directory). All 5 turns answered non-empty. Classified B because the scenario premise (ADRs exist) is not met in this worktree, so the chain cannot exercise its intent. Alternate reading: I (env-limited)."
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "verdict": "V",
+      "turns": 5,
+      "event_count": 40,
+      "spawn_ack_count": 0,
+      "literal_echo": false,
+      "final_turn_empty": false,
+      "notes": "All 5 turns answered substantively. Covered: eventual consistency, CAP theorem, DynamoDB as AP example, runtime detection limitations acknowledged, repair strategies (read-repair, anti-entropy, merkle trees). Good context carry-through from T1 to T5."
+    }
+  ],
+  "primary_verify_pr_290": {
+    "description": "PR #290 spawn-ack-to-LLM path verification (B45 W7 contribution)",
+    "env": "REYN_SPAWN_ACK_TO_LLM=1",
+    "total_scenarios_run": 7,
+    "total_turns": 37,
+    "spawn_ack_exit_events_total": 3,
+    "spawn_ack_exit_by_scenario": {
+      "scenario_1": 0,
+      "scenario_2": 0,
+      "scenario_3": 0,
+      "scenario_4": 0,
+      "scenario_5": 3,
+      "scenario_6": 0,
+      "scenario_7": 0
+    },
+    "spawn_ack_exit_by_turn_s5": {
+      "T1": 1,
+      "T2": 0,
+      "T3": 0,
+      "T4": 1,
+      "T5": 1
+    },
+    "literal_echo_scan": {
+      "method": "scanned all LLM response content fields in llm_trace.jsonl for string 'invoke_skill_spawn_ack_exit'",
+      "result": 0,
+      "h3_re_emergence": false,
+      "detail": "3 spawn_ack_exit events fired as event records; zero instances appeared as text in any LLM response content field. PR #290 default-flip showing zero H3 hallucination holds for this batch."
+    },
+    "cumulative_note": "B44 contributed 3 spawn_ack turns + 0 literal echoes. B45-W7 adds 3 more spawn_ack turns + 0 literal echoes. Cumulative total for B44+B45-W7: 6 spawn_ack turns, 0 H3 hallucinations. Target N>=100 across B45-B47 requires continued accumulation."
+  },
+  "new_findings": [
+    {
+      "id": "B45-W7-1",
+      "severity": "LOW",
+      "description": "Scenario 6 (ADR lookup chain) blocked in b45-7 worktree: worktree lacks docs/adr/ directory. Agent correctly reported no ADRs found rather than hallucinating. Rubric-less scenario cannot be verified. Worktree setup for ADR-heavy scenarios should include the docs/adr/ path.",
+      "evidence": "S6 T1-T5 replies: 'There are no ADRs in this project that match the pattern'. LLM trace entries 125-137."
+    },
+    {
+      "id": "B45-W7-2",
+      "severity": "LOW",
+      "description": "S5 T2 (asyncio.gather vs asyncio.wait question) produced an inline 'Would you like me to proceed?' reply instead of directly invoking direct_llm skill. T3-T5 recovered and all spawned skills normally. Not an empty-stop; a hesitation pattern where agent asks user permission before spawning skill.",
+      "evidence": "LLM trace entry 95: content='I couldn’t find a direct action... Would you like me to proceed?'. Event [17] chat_turn_completed_inline with tool_calls_attempted=1."
+    },
+    {
+      "id": "B45-W7-3",
+      "severity": "INFO",
+      "description": "S4 repetitive context bloat (6 re-asks of skill list) did NOT trigger G12 Pattern E empty stop. All 6 turns answered with non-empty replies. Context growth to 27 events total without degradation. Supports hypothesis that REYN_EMPTY_STOP_RETRY=1 suppresses this attractor.",
+      "evidence": "S4 event_count=27, all 6 replies non-empty, no router_empty_response_detected events in S4 event file."
+    }
+  ]
+}

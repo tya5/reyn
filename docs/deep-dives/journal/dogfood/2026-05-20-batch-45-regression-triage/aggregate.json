@@ -1,0 +1,92 @@
+{
+  "batch": "B45",
+  "date": "2026-05-20",
+  "head_at_dispatch": "23a7a1ad",
+  "scenarios_total": 49,
+  "verdict_totals": {
+    "verified": 14,
+    "inconclusive": 18,
+    "refuted": 16,
+    "blocked": 1
+  },
+  "verified_rate": 0.286,
+  "env_settings": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1",
+    "user_param_hot_list_n": 10,
+    "user_param_models_tier": "flash-lite"
+  },
+  "delta_vs_b44": {
+    "b44_v": 23,
+    "b45_v": 14,
+    "delta_v": -9
+  },
+  "delta_vs_b43": {
+    "b43_v": 22,
+    "b45_v": 14,
+    "delta_v": -8
+  },
+  "delta_vs_b42": {
+    "b42_v": 21,
+    "b45_v": 14,
+    "delta_v": -7
+  },
+  "workers": {
+    "W1": {
+      "scenarios": 7,
+      "v": 1,
+      "i": 1,
+      "r": 5,
+      "b": 0,
+      "scenario_set": "chat_router_smoke.yaml"
+    },
+    "W2": {
+      "scenarios": 9,
+      "v": 1,
+      "i": 3,
+      "r": 4,
+      "b": 0,
+      "scenario_set": "stdlib_skills_core.yaml"
+    },
+    "W3": {
+      "scenarios": 9,
+      "v": 3,
+      "i": 2,
+      "r": 4,
+      "b": 0,
+      "scenario_set": "control_ir_ops.yaml"
+    },
+    "W4": {
+      "scenarios": 8,
+      "v": 3,
+      "i": 5,
+      "r": 0,
+      "b": 0,
+      "scenario_set": "permissions_and_safety.yaml"
+    },
+    "W5": {
+      "scenarios": 7,
+      "v": 1,
+      "i": 4,
+      "r": 2,
+      "b": 0,
+      "scenario_set": "multi_agent_and_mcp.yaml"
+    },
+    "W6": {
+      "scenarios": 7,
+      "v": 2,
+      "i": 0,
+      "r": 1,
+      "b": 0,
+      "scenario_set": "plan_mode_fp_0011_mixed"
+    },
+    "W7": {
+      "scenarios": 7,
+      "v": 3,
+      "i": 3,
+      "r": 0,
+      "b": 1,
+      "scenario_set": "long_session_v1.yaml"
+    }
+  }
+}

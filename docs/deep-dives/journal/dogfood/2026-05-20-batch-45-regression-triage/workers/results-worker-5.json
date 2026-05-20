@@ -1,0 +1,137 @@
+{
+  "batch": "B45",
+  "worker": 5,
+  "head": "23a7a1ad",
+  "date": "2026-05-20",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 1,
+    "I": 4,
+    "R": 2,
+    "B": 0
+  },
+  "vs_past": {
+    "B44": {"V": 2, "I": 2, "R": 3, "B": 0},
+    "B43": {"V": 2, "I": 0, "R": 5, "B": 0},
+    "B42": {"V": 0, "I": 4, "R": 3, "B": 0},
+    "B45": {"V": 1, "I": 4, "R": 2, "B": 0},
+    "delta_vs_B44": "V: 2->1 (-1), I: 2->4 (+2), R: 3->2 (-1)"
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "index": 1,
+      "agent": "dogfood-b45-5-s1",
+      "verdict": "I",
+      "rubric_pass": true,
+      "events_pass": false,
+      "reply_summary": "Replied 'no MCP servers related to GitHub found' — meets rubric item 3 (explains no results found). However required events routing_decided and skill_run_spawned were not emitted; only chat_turn_completed_inline observed.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided", "skill_run_spawned"],
+      "notes": "LLM answered inline without routing to mcp_search skill. routing_decided absent."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "index": 2,
+      "agent": "dogfood-b45-5-s2",
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Replied 'no MCP server actions available' — correctly explains github MCP not configured. Rubric met (actionable information provided). Events: chat_turn_completed_inline satisfies must_emit_any requirement.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required_any": ["routing_decided", "chat_turn_completed_inline"],
+      "notes": "B28-Q2 path taken: inline explanation. Both rubric and events pass."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "index": 3,
+      "agent": "dogfood-b45-5-s3",
+      "verdict": "I",
+      "rubric_pass": false,
+      "events_pass": true,
+      "reply_summary": "Replied researcher agent not found. Rubric item 3 requires 'explains how to create the agent' — reply does not include creation instructions. routing_decided emitted.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check"],
+      "events_required": ["routing_decided"],
+      "notes": "Partial rubric: agent-not-found path identified but creation guidance absent."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "index": 4,
+      "agent": "dogfood-b45-5-s4",
+      "verdict": "I",
+      "rubric_pass": false,
+      "events_pass": true,
+      "reply_summary": "Turn 1: researcher not found, offers alternatives. Turn 2: writer not found. Rubric item 1 partially met (reports agents don't exist) but no 3-line summary produced from any source, and no synthesis. reply non-empty. routing_decided present.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "routing_decided", "tool_called", "tool_returned", "hot_list_updated", "compaction_check", "user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided"],
+      "notes": "Multi-turn scenario: both agents absent. Rubric only partially satisfied — no 3-line summary from any path."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "index": 5,
+      "agent": "dogfood-b45-5-s5",
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": true,
+      "reply_summary": "Replied 'I've started the process for you' (fabricated/hallucinated confirmation). Does not describe message/send JSON-RPC method, does not mention GET /a2a/tasks/{run_id}, does not explain reyn web must be running. All 3 rubric items fail.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "tool_called", "tool_returned", "hot_list_updated", "tool_called", "skill_run_spawned", "tool_returned", "hot_list_updated", "routing_decided", "invoke_skill_spawn_ack_exit", "compaction_check", "skill_run_completed", "skill_completion_injected", "tool_called", "skill_run_spawned", "tool_returned", "hot_list_updated", "routing_decided", "invoke_skill_spawn_ack_exit", "router_empty_response_detected", "router_empty_response_retry_injected", "skill_run_completed", "skill_completion_injected", "chat_turn_completed_inline"],
+      "events_required": [],
+      "notes": "Fabricated 'started process' response instead of providing procedural documentation. Consistent with B44/B43 refuted pattern. router_empty_response_detected+retry present."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "index": 6,
+      "agent": "dogfood-b45-5-s6",
+      "verdict": "I",
+      "rubric_pass": false,
+      "events_pass": true,
+      "reply_summary": "Attempted install then failed with --allow-unsafe-python error. Rubric: attempt ✓, permission gate mentioned as flag requirement (partial), not silently skipped ✓. Env reason: allow-unsafe-python blocks execution per verdict rule.",
+      "events_observed": ["user_message_received", "tool_called", "skill_run_spawned", "tool_returned", "skill_run_failed", "hot_list_updated", "routing_decided", "invoke_skill_spawn_ack_exit", "router_empty_response_detected", "router_empty_response_retry_injected", "skill_completion_injected", "compaction_check", "chat_turn_completed_inline"],
+      "events_required": ["routing_decided", "skill_run_spawned"],
+      "notes": "skill_run_failed due to missing --allow-unsafe-python. Classified I per verdict rule 'skill failed for env reason'. skill_run_spawned and routing_decided both present."
+    },
+    {
+      "id": "cron_schedule_status",
+      "index": 7,
+      "agent": "dogfood-b45-5-s7",
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_summary": "Replied 'functionality not provided' (inline, no routing). Does not list jobs, does not explain reyn.yaml config, does not show CLI invocation. All 3 rubric items fail. Only chat_turn_completed_inline emitted; routing_decided required but absent.",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided"],
+      "notes": "LLM did not attempt routing or tool use at all. Pure inline refusal. Consistent with B44/B43 refuted pattern."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B45-W5-NF1",
+      "scenario": "a2a_task_lifecycle_status_poll",
+      "description": "S5 produces fabricated 'I've started the process for you' confirmation for a documentation-style question, then spawns skill runs (direct_llm twice). The reply does not contain the requested procedural content. Pattern: informational/how-to queries routed to direct_llm produce task-started fabrication rather than documentation. Consistent across B43/B44/B45.",
+      "severity": "HIGH",
+      "evidence": "Reply text fabricated; rubric items 1-3 all fail; router_empty_response_detected+retry observed in events."
+    },
+    {
+      "id": "B45-W5-NF2",
+      "scenario": "mcp_search_registry",
+      "description": "MCP registry search answered inline (no routing) instead of dispatching mcp_search skill. Reply content is plausibly correct ('no github MCP servers found') but skill not exercised. Same inline-bypass pattern seen in S7. Possible: flash-lite skips routing when it can answer inline.",
+      "severity": "MED",
+      "evidence": "routing_decided and skill_run_spawned absent; only chat_turn_completed_inline in events."
+    },
+    {
+      "id": "B45-W5-NF3",
+      "scenario": "mcp_install_permission_gate",
+      "description": "mcp_install skill now reached (routing_decided + skill_run_spawned present) but fails on --allow-unsafe-python gate. Represents a skill-layer env block, not a routing failure. B44 may have classified this as R; current run qualifies as I per verdict rules. Worth confirming B44 classification.",
+      "severity": "LOW",
+      "evidence": "skill_run_failed event in events file; error message in reply: '--allow-unsafe-python フラグが提供されませんでした'."
+    }
+  ]
+}
