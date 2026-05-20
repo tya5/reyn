@@ -1,0 +1,195 @@
+{
+  "batch": "B46",
+  "worker": 3,
+  "head": "8c33c6fa",
+  "date": "2026-05-20",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 3,
+    "I": 3,
+    "R": 3,
+    "B": 0
+  },
+  "vs_past": {
+    "B45": {"V": 3, "I": 2, "R": 4, "B": 0},
+    "B46": {"V": 3, "I": 3, "R": 3, "B": 0},
+    "delta_V": 0,
+    "delta_I": "+1",
+    "delta_R": "-1",
+    "note": "One scenario shifted R→I (recall KeyError = env bug not rubric failure)."
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "scenario_num": 1,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_excerpt": "The document docs/concepts/principles.md details the eight core design principles of the reyn architecture...",
+      "events_observed": {
+        "routing_decided": 3,
+        "tool_executed": 1,
+        "permission_denied": 0
+      },
+      "notes": "Reply quoted/summarised content and mentioned P1-P8 principles. routing_decided and tool_executed emitted as required."
+    },
+    {
+      "id": "file_glob_grep",
+      "scenario_num": 2,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": true,
+      "reply_excerpt": "I couldn't find any skill.md files under src/ that mention judge_output.",
+      "events_observed": {
+        "routing_decided": 2,
+        "tool_executed": 2,
+        "permission_denied": 0
+      },
+      "notes": "LLM reply is factually correct (no skill.md files under src/ mention judge_output — confirmed by direct grep), but rubric requires 'lists at least one file path containing skill.md' which cannot be satisfied. Rubric item 1 not met. judge_output appears only in .py files not skill.md files."
+    },
+    {
+      "id": "web_search_query",
+      "scenario_num": 3,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_excerpt": "As of May 12, 2026, Admin APIs were supported in the OpenAI SDKs, including Python...",
+      "events_observed": {
+        "routing_decided": 1,
+        "web_search_started": 1,
+        "web_search_completed": 1,
+        "web_search_failed": 0,
+        "permission_denied": 0
+      },
+      "notes": "Reply references OpenAI Python SDK results. All required events emitted. No failures."
+    },
+    {
+      "id": "web_fetch_url",
+      "scenario_num": 4,
+      "verdict": "I",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_excerpt": "The web fetch action was denied. Please check the events tab for more details...",
+      "events_observed": {
+        "routing_decided": 1,
+        "web_fetch_started": 0,
+        "tool_failed": 1,
+        "permission_denied_via_tool_failed": 1
+      },
+      "notes": "web__fetch failed with error_kind=permission_denied before web_fetch_started event was emitted. Required event web_fetch_started never fired. Environment permission restriction — not a rubric/logic failure. Inconclusive."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "scenario_num": 5,
+      "verdict": "I",
+      "rubric_met": false,
+      "events_pass": true,
+      "reply_excerpt": "I encountered an error when trying to run the command in the sandbox. The error message indicates that a Python library could not be loaded because the file system sandbox blocked access to it.",
+      "events_observed": {
+        "routing_decided": 1,
+        "sandboxed_exec_started": 1,
+        "sandboxed_exec_completed": 1,
+        "permission_denied": 0
+      },
+      "notes": "sandboxed_exec ran (events emitted) but pyenv python path was blocked by seatbelt sandbox, returncode=-6. Output was empty/error not '4'. Env restriction (seatbelt + pyenv incompatibility). Inconclusive."
+    },
+    {
+      "id": "lint_a_skill",
+      "scenario_num": 6,
+      "verdict": "I",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_excerpt": "The evaluation of the index_events skill has completed with an error. The postprocessor output failed schema validation, indicating that 'overall_score', 'passed', 'passed_criteria', 'spec_path', and 'summary' are missing.",
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "lint_completed": 0,
+        "validation_error": 1,
+        "skill_run_interrupted": 1,
+        "permission_denied": 0
+      },
+      "notes": "eval skill was spawned but postprocessor raised PostprocessorError (validation_error: spec_path None is not type string). Required event lint_completed not emitted at chat layer. Postprocessor schema bug — env/bug failure not rubric test. Inconclusive."
+    },
+    {
+      "id": "recall_indexed_source",
+      "scenario_num": 7,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": true,
+      "reply_excerpt": "ERROR: KeyError: 'sources'",
+      "events_observed": {
+        "routing_decided": 1,
+        "tool_failed": 1,
+        "permission_denied": 0
+      },
+      "notes": "rag.operation__recall threw KeyError: 'sources' — a bug in the recall handler. Reply exposed raw exception string rather than a clean 'no indexed sources found' message. Rubric requires either returning chunks OR clearly reporting no sources — raw exception does not satisfy either. Marked R because the system surface (reply) failed rubric even though root cause is a bug."
+    },
+    {
+      "id": "judge_output_direct",
+      "scenario_num": 8,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_excerpt": "The skill artifact was evaluated and passed all criteria, indicating a valid structure with a description and at least one phase. The judgment score was 1.0.",
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "tool_executed": 1,
+        "workflow_finished": 1,
+        "validation_error": 0,
+        "permission_denied": 0
+      },
+      "notes": "judge_phase ran end-to-end, workflow_finished with score=1.0, passed=true. Reply mentions 'passed', '1.0', and both criteria referenced. All required events present, no forbidden events."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "scenario_num": 9,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_excerpt": "I can help with that. What would you like to name the new skill? [Turn 2] skill_builder failed: no improvements made.",
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "user_intervention_requested": 0,
+        "user_intervention_received": 0,
+        "skill_run_failed": 1
+      },
+      "notes": "Router asked the name in-chat (not via formal ask_user op), so user_intervention_requested and user_intervention_received events were never emitted. skill_builder ran with 'my_demo_skill' but failed (phase_no_progress + workflow_aborted). Required events not emitted; rubric final reply references skill name but skill scaffolding did not complete."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B46-W3-F1",
+      "scenario": "file_glob_grep",
+      "severity": "LOW",
+      "finding": "Rubric for file_glob_grep scenario is permanently unpassable: no skill.md files under src/ mention 'judge_output' — confirmed by direct grep. The expected output pattern cannot be satisfied by a correct LLM response. Rubric needs redesign to match actual codebase content (e.g. grep for a string that actually appears in a skill.md, or change the rubric to accept 'no files found' as valid)."
+    },
+    {
+      "id": "B46-W3-F2",
+      "scenario": "recall_indexed_source",
+      "severity": "MED",
+      "finding": "rag.operation__recall throws KeyError: 'sources' when no index exists, exposing a raw exception to the reply instead of a graceful 'no sources found' message. The error handler does not catch missing 'sources' key in the recall response shape. Fix: recall handler should catch KeyError and return structured empty-result response."
+    },
+    {
+      "id": "B46-W3-F3",
+      "scenario": "ask_user_round_trip",
+      "severity": "MED",
+      "finding": "skill_builder does not route ask_user op through the formal user_intervention_requested/received event pathway. The router intercepts the skill name request before skill_builder starts, handling it as a direct chat question. The ask_user mechanism within skill_builder is bypassed when the router can satisfy the question upfront, meaning user_intervention events are never emitted in this flow."
+    },
+    {
+      "id": "B46-W3-F4",
+      "scenario": "sandboxed_exec_simple",
+      "severity": "INFO",
+      "finding": "seatbelt sandbox blocks pyenv-managed python paths (returncode=-6, SIGABRT). sandboxed_exec events fire correctly but execution fails at OS level. Consistent with B45 I verdict. System-level python (not pyenv) would be needed for sandbox exec to succeed in this environment."
+    }
+  ]
+}

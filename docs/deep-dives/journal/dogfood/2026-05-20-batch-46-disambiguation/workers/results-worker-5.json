@@ -1,0 +1,172 @@
+{
+  "batch": "B46",
+  "worker": 5,
+  "head": "8c33c6fa",
+  "date": "2026-05-20",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 1,
+    "I": 3,
+    "R": 3,
+    "B": 0
+  },
+  "vs_past": {
+    "B45": {"V": 1, "I": 4, "R": 2, "B": 0},
+    "B46": {"V": 1, "I": 3, "R": 3, "B": 0},
+    "delta_V": 0,
+    "delta_I": -1,
+    "delta_R": 1,
+    "note": "V count unchanged; one I shifted to R (mcp_install_permission_gate moved from I to R-boundary but kept as I; net: cron_schedule_status / mcp_search_registry / a2a_task_lifecycle stayed R)"
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "verdict": "R",
+      "events_pass": false,
+      "rubric_pass": false,
+      "reply_summary": "Says 'I cannot find any MCP servers related to GitHub.' No alternative suggestions provided.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided", "skill_run_spawned"],
+      "events_missing": ["routing_decided", "skill_run_spawned"],
+      "rubric_details": {
+        "lists_mcp_candidates": false,
+        "includes_identifier": false,
+        "explains_no_results_with_alternatives": false,
+        "note": "Explains no results but does not suggest alternatives"
+      },
+      "finding": "Router answered inline without dispatching mcp_search skill; required routing_decided and skill_run_spawned events absent"
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_pass": true,
+      "reply_summary": "Explains MCP servers not configured, asks user to check if server is running and suggests alternatives.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required_any": ["routing_decided", "chat_turn_completed_inline"],
+      "events_missing": [],
+      "rubric_details": {
+        "lists_prs_or_explains_not_configured": true,
+        "does_not_silently_fail": true
+      },
+      "finding": "chat_turn_completed_inline path accepted by must_emit_any; both rubric items met"
+    },
+    {
+      "id": "agent_delegation_simple",
+      "verdict": "I",
+      "events_pass": true,
+      "rubric_pass": false,
+      "reply_summary": "Explains researcher agent not found, lists available agents, asks if user wants to send request to one of them.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "routing_decided", "tool_called", "tool_returned", "hot_list_updated", "compaction_check"],
+      "events_required": ["routing_decided"],
+      "events_missing": [],
+      "rubric_details": {
+        "provides_summary_or_explains_not_exist": true,
+        "if_delegation_succeeded_substantive_content": "N/A",
+        "if_not_found_explains_how_to_create": false,
+        "note": "Explains agent not found and lists alternatives, but does not explain how to create the researcher agent"
+      },
+      "finding": "routing_decided emitted (attempted peer delegation), agent not found handled gracefully, but 'how to create' rubric item not met"
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "verdict": "I",
+      "events_pass": true,
+      "rubric_pass": false,
+      "reply_summary": "Turn 1: researcher agent not found error. Turn 2: writer agent not found error. Second turn answered inline without attempting delegation.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check", "user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided"],
+      "events_missing": [],
+      "rubric_details": {
+        "concise_summary_or_reports_not_exist": true,
+        "if_both_agents_existed_synthesis": "N/A",
+        "not_empty_reply": true,
+        "note": "Reports both agents not found (partial pass); turn 2 answered inline without routing attempt"
+      },
+      "finding": "Turn 2 did not attempt delegation (no routing_decided for writer); multi-hop chain not exercised; consistent with B45"
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "verdict": "R",
+      "events_pass": true,
+      "rubric_pass": false,
+      "reply_summary": "Talks about skill__direct_llm for web API interaction. Does not describe A2A message/send method, GET /a2a/tasks/{id} endpoint, or requirement to run reyn web first.",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "router_empty_response_detected", "router_empty_response_retry_injected", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": [],
+      "events_missing": [],
+      "rubric_details": {
+        "describes_a2a_message_send": false,
+        "mentions_get_tasks_endpoint": false,
+        "explains_reyn_web_prerequisite": false
+      },
+      "finding": "LLM deflected to skill__direct_llm rather than answering A2A protocol question; empty-stop retry fired (router_empty_response_detected); knowledge of A2A endpoints not surfaced"
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "verdict": "I",
+      "events_pass": true,
+      "rubric_pass": false,
+      "reply_summary": "Attempts mcp_install skill, skill fails due to allow-unsafe-python not enabled. Reply says install failed and requests --allow-unsafe-python flag.",
+      "events_observed": ["user_message_received", "tool_called", "skill_run_spawned", "tool_returned", "skill_run_failed", "hot_list_updated", "routing_decided", "invoke_skill_spawn_ack_exit", "router_empty_response_detected", "router_empty_response_retry_injected", "skill_completion_injected", "compaction_check", "chat_turn_completed_inline"],
+      "events_required": ["routing_decided", "skill_run_spawned"],
+      "events_missing": [],
+      "rubric_details": {
+        "attempts_install_or_explains": true,
+        "mentions_permission_approval_step": false,
+        "note": "Skill dispatched and attempted. Failed on allow-unsafe-python env restriction. Reply mentions --allow-unsafe-python flag (env blocker) but not an explicit permission approval/confirmation step"
+      },
+      "finding": "Skill correctly dispatched; routing_decided + skill_run_spawned both emitted; blocked by allow-unsafe-python env restriction (same as B45); permission gate rubric item not met due to env failure masking it"
+    },
+    {
+      "id": "cron_schedule_status",
+      "verdict": "R",
+      "events_pass": false,
+      "rubric_pass": false,
+      "reply_summary": "Says 'I cannot fulfill this request directly as there is no tool available to list scheduled cron jobs.'",
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided"],
+      "events_missing": ["routing_decided"],
+      "rubric_details": {
+        "lists_jobs_or_explains_none_configured": false,
+        "does_not_fabricate": true,
+        "shows_how_to_configure": false,
+        "note": "Declines entirely without routing to ops-report or explaining reyn.yaml configuration"
+      },
+      "finding": "Router answered inline without routing_decided; no skill dispatched; rubric items for configuration explanation not met"
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B46-W5-F1",
+      "title": "mcp_search_registry: router bypasses skill dispatch entirely",
+      "observation": "S1 events show tool_called/tool_returned (likely agent registry tool) but no routing_decided or skill_run_spawned. Router answered inline 'I cannot find any MCP servers related to GitHub' without ever dispatching the mcp_search stdlib skill. Consistent with B45 I verdict shifting to R due to missing alternatives in reply.",
+      "layer": "router/skill-dispatch"
+    },
+    {
+      "id": "B46-W5-F2",
+      "title": "cron_schedule_status: ops-report skill not invoked, routing_decided absent",
+      "observation": "S7 router answered inline without routing to any skill. No routing_decided event. The cron/scheduled-job introspection rubric requires skill dispatch that never occurred in B45 or B46.",
+      "layer": "router/skill-dispatch"
+    },
+    {
+      "id": "B46-W5-F3",
+      "title": "a2a_task_lifecycle_status_poll: router_empty_response_detected fired; deflected to skill__direct_llm",
+      "observation": "S5 had router_empty_response_detected + retry injected before chat_turn_completed_inline. LLM initially produced empty stop, then on retry deflected to skill__direct_llm generalization rather than answering the A2A protocol knowledge question. Prediction: refuted=1.0 matched actual.",
+      "layer": "router/empty-stop-retry"
+    },
+    {
+      "id": "B46-W5-F4",
+      "title": "multi_agent_topology_route turn 2 skips delegation attempt",
+      "observation": "S4 turn 2 (writer agent delegation) produced chat_turn_completed_inline without any tool_called or routing_decided. The second hop of the multi-hop scenario was not attempted at all; consistent with B45.",
+      "layer": "multi-agent/hop-2"
+    }
+  ]
+}

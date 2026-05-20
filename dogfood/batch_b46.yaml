@@ -1,0 +1,86 @@
+batch:
+  name: B46
+  date: "2026-05-20"
+  head: 8c33c6fa
+  env_vars:
+    REYN_EMPTY_STOP_RETRY: "1"      # PR #265 / #287 — held on
+    REYN_SPAWN_ACK_TO_LLM: "1"      # PR #290 — N≥100 accumulation
+  user_params:
+    hot_list_n: 10                  # held constant vs B43/B44/B45
+    models_tier: flash-lite
+  hard_caps:
+    tool_uses: 50
+    wall_clock_min: 15
+
+# B46 disambiguation: vary measurement-process vars from B45 to isolate
+# real regression from measurement drift.
+#   1. past_batches lists ONLY B45 (= single past-V anchor, no multi-anchor
+#      anchoring effect)
+#   2. main dispatch prompts to workers WILL drop "Special focus: regression
+#      triage" framing (set in this file's dispatch driver, not yaml)
+# Goal: if V≥20 → measurement drift dominant; if V=14-16 → real regression
+# starts individual NF triage in B47.
+
+workers:
+  - name: W1
+    scenario_set: chat_router_smoke.yaml
+    scenario_set_path: dogfood/scenarios/chat_router_smoke.yaml
+    port: 8261
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b46-1
+    agent_prefix: dogfood-b46-1-s
+
+  - name: W2
+    scenario_set: stdlib_skills_core.yaml
+    scenario_set_path: dogfood/scenarios/stdlib_skills_core.yaml
+    port: 8262
+    n_scenarios: 9
+    worktree: /tmp/reyn-worktrees/b46-2
+    agent_prefix: dogfood-b46-2-s
+
+  - name: W3
+    scenario_set: control_ir_ops.yaml
+    scenario_set_path: dogfood/scenarios/control_ir_ops.yaml
+    port: 8263
+    n_scenarios: 9
+    worktree: /tmp/reyn-worktrees/b46-3
+    agent_prefix: dogfood-b46-3-s
+
+  - name: W4
+    scenario_set: permissions_and_safety.yaml
+    scenario_set_path: dogfood/scenarios/permissions_and_safety.yaml
+    port: 8264
+    n_scenarios: 8
+    worktree: /tmp/reyn-worktrees/b46-4
+    agent_prefix: dogfood-b46-4-s
+
+  - name: W5
+    scenario_set: multi_agent_and_mcp.yaml
+    scenario_set_path: dogfood/scenarios/multi_agent_and_mcp.yaml
+    port: 8265
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b46-5
+    agent_prefix: dogfood-b46-5-s
+
+  - name: W6
+    scenario_set: plan_mode_fp_0011_mixed
+    scenario_set_path: dogfood/scenarios/plan_mode.yaml
+    port: 8266
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b46-6
+    agent_prefix: dogfood-b46-6-s
+
+  - name: W7
+    scenario_set: long_session_v1.yaml
+    scenario_set_path: dogfood/scenarios/long_session_v1.yaml
+    port: 8267
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b46-7
+    agent_prefix: dogfood-b46-7-s
+
+# SINGLE past-V anchor (= disambiguation rule #2)
+past_batches:
+  - name: B45
+    aggregate_path: docs/deep-dives/journal/dogfood/2026-05-20-batch-45-regression-triage/aggregate.json
+
+journal_dir: docs/deep-dives/journal/dogfood/2026-05-20-batch-46-disambiguation

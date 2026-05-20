@@ -1,0 +1,226 @@
+{
+  "batch": "B46",
+  "worker": 2,
+  "head": "8c33c6fa",
+  "date": "2026-05-20",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 1,
+    "I": 4,
+    "R": 4,
+    "B": 0
+  },
+  "vs_past": {
+    "B45": { "V": 1, "I": 3, "R": 4, "B": 0 },
+    "B46": { "V": 1, "I": 4, "R": 4, "B": 0 },
+    "delta_V": 0,
+    "delta_I": 1,
+    "delta_R": 0,
+    "delta_B": 0,
+    "note": "Flat vs B45. One I shifted from possible B (env reasons stable)."
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "scenario_index": 1,
+      "verdict": "I",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_summary": "Started indexing then failed: requires --allow-unsafe-python flag.",
+      "events_observed": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": false,
+        "skill_run_failed": true,
+        "permission_denied": false,
+        "phase_started": false
+      },
+      "failure_reason": "Env: --allow-unsafe-python not set; skill_run_failed with unsafe python gate. skill_run_completed not emitted.",
+      "notes": "Consistent with B45 I verdict. env gating on python step prevents completion."
+    },
+    {
+      "id": "read_local_files_explain_source",
+      "scenario_index": 2,
+      "verdict": "I",
+      "rubric_pass": true,
+      "events_pass": false,
+      "reply_summary": "Correctly explained CronScheduler purpose including CronJob dataclass, asyncio scheduling, job management.",
+      "events_observed": {
+        "routing_decided": true,
+        "skill_run_spawned": false,
+        "skill_run_completed": false,
+        "skill_run_failed": false,
+        "permission_denied": false,
+        "phase_started": false
+      },
+      "failure_reason": "Router used direct file__read op instead of dispatching read_local_files skill. No skill_run_spawned/completed events emitted (rubric required). Reply quality is good but structural contract not met.",
+      "notes": "Same routing miss as B45. Router resolved file read directly without going through stdlib skill."
+    },
+    {
+      "id": "read_local_files_multi_file",
+      "scenario_index": 3,
+      "verdict": "I",
+      "rubric_pass": true,
+      "events_pass": false,
+      "reply_summary": "Listed op_runtime files with plausible descriptions (ask_user, embed, file, index_drop/query/write, judge_output, lint, mcp). Referenced Control IR ops.",
+      "events_observed": {
+        "routing_decided": true,
+        "skill_run_spawned": false,
+        "skill_run_completed": false,
+        "skill_run_failed": false,
+        "permission_denied": false,
+        "phase_started": false
+      },
+      "failure_reason": "Router used file__list + router_empty_response_retry instead of read_local_files skill. skill_run_spawned/completed required by rubric events but not emitted. Reply was generated via inline inference, not from actual file reads.",
+      "notes": "Router empty-stop then inline response. Structural bypass of read_local_files skill."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "scenario_index": 4,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_summary": "Started skill creation then aborted: phase 'build_skill' produced identical output to rejected output, aborting loop prevention.",
+      "events_observed": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": false,
+        "skill_run_failed": true,
+        "permission_denied": false,
+        "phase_started": true,
+        "phase_no_progress": true,
+        "workflow_aborted": true
+      },
+      "failure_reason": "skill_builder phase_no_progress: build_skill loop detected (verify_skill rollback → same output). workflow_aborted. Reply claims creation started but reports total failure.",
+      "notes": "Same failure mode as B45. LLM on flash-lite cannot break out of skill verify loop."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "scenario_index": 5,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "skill_run_completed(success). Reply states '44 characters over a single line'. Input text is 44 chars. Reply references actual text analysed.",
+      "events_observed": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": true,
+        "skill_run_failed": false,
+        "permission_denied": false,
+        "phase_started": true,
+        "llm_called": true,
+        "python_step_completed": true
+      },
+      "failure_reason": null,
+      "notes": "Only V this batch. Rubric: stat reported (44 chars) ✓, references input text ✓, consistent with actual length (44 chars) ✓. Note: artifact on disk shows stats=0 because S6 overwrote the shared path, but reply confirms correct computation during run."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "scenario_index": 6,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": true,
+      "reply_summary": "skill_run_completed(success). Reply states '0 characters and 0 lines'. Text input was a multi-sentence block but preprocessor received empty input.",
+      "events_observed": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": true,
+        "skill_run_failed": false,
+        "permission_denied": false,
+        "phase_started": true,
+        "python_step_completed": true
+      },
+      "failure_reason": "Rubric: 'reply mentions word count or character count for multi-line text' — fails because stats=0 (input not captured). 'References precomputed statistics rather than estimating' — reports 0 which is wrong. Text input for multi-line prompt not propagated to skill input artifact.",
+      "notes": "Input artifact was {} (empty). Python step ran but computed 0. Router did not pass multiline text body to skill input. Structural bug: multi-line text in prompt not captured in skill input."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "scenario_index": 7,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_summary": "Eval started then failed with schema validation error: 'overall_score', 'passed', 'passed_criteria', 'spec_path', 'summary' required properties missing.",
+      "events_observed": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": false,
+        "skill_run_failed": true,
+        "permission_denied": false,
+        "phase_started": true,
+        "validation_error": true,
+        "skill_run_interrupted": true
+      },
+      "failure_reason": "Postprocessor output failed schema validation. eval skill LLM output missing required fields. spec_path=None (not a string). skill_run_interrupted → skill_run_failed.",
+      "notes": "Same failure as B45. eval schema validation consistently fails. spec_path=None is a recurring structural issue."
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "scenario_index": 8,
+      "verdict": "I",
+      "rubric_pass": true,
+      "events_pass": false,
+      "reply_summary": "5 turns responded inline. Final turn coherently explains reyn chat routing, mentions routing_decided event, universal action catalog. No bare error.",
+      "events_observed": {
+        "routing_decided": false,
+        "skill_run_spawned": false,
+        "llm_called": false,
+        "permission_denied": false,
+        "chat_turn_completed_inline": true,
+        "compaction_check_outcome": "too_few_turns"
+      },
+      "failure_reason": "All 5 turns resolved inline (direct LLM, no skill dispatch). must_emit: skill_run_spawned and llm_called not satisfied. Compaction never triggered (token threshold not reached: 10 turns seen but compaction needs more). direct_llm artifact not present.",
+      "notes": "Reply quality meets rubric but structural/event requirements unmet. Inline routing for knowledge questions is expected behavior. Compaction threshold not reachable in 5 turns with flash-lite."
+    },
+    {
+      "id": "chained_find_then_index",
+      "scenario_index": 9,
+      "verdict": "I",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_summary": "Turn 1: correctly listed docs/concepts/ markdown files. Turn 2: attempted arch_events_index indexing, failed with --allow-unsafe-python error (twice).",
+      "events_observed": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": false,
+        "skill_run_failed": true,
+        "permission_denied": false
+      },
+      "failure_reason": "Env: --allow-unsafe-python not set. Turn 2 skill_run_failed twice. Final reply reports error without confirming indexing. Rubric: 'confirms indexing was requested or completed' — partial (requested but failed). 'references arch_events_index' — mentioned.",
+      "notes": "Same env block as S1. Chaining worked (turn 1 listed files correctly), but env gate prevents index completion."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF-W2-1",
+      "title": "word_stats_demo multi-line text input not propagated to skill (S6)",
+      "severity": "HIGH",
+      "description": "When router dispatches word_stats_demo with a multi-line text body (embedded in the prompt via YAML literal block), the skill input artifact is written as {} (empty). Python preprocessor then computes stats=0 for all fields. S5 with single-line text in quotes worked (44 chars correct), but S6 with multi-line block scalar failed. Hypothesis: router strips or fails to extract multi-line embedded text from prompt when building skill input.",
+      "evidence": "S6 _input artifact={}, preprocessed artifact stats={char_count:0,word_count:0,...}. S5 reply='44 characters' matches actual input length. S6 reply='0 characters and 0 lines'.",
+      "category": "structural/input-propagation"
+    },
+    {
+      "id": "NF-W2-2",
+      "title": "eval skill spec_path=None fails postprocessor schema validation consistently",
+      "severity": "HIGH",
+      "description": "eval skill fails with PostprocessorError: 'spec_path' is None (not of type string), plus missing overall_score/passed/passed_criteria/summary required properties. This is a recurring structural failure across batches. The LLM output from run_target phase sets spec_path to null instead of empty string or a valid path.",
+      "evidence": "validation_error event: \"'spec_path': None is not of type 'string'\". skill_run_failed: missing 'overall_score', 'passed', 'passed_criteria', 'spec_path', 'summary'.",
+      "category": "structural/schema-validation"
+    },
+    {
+      "id": "NF-W2-3",
+      "title": "read_local_files routing bypass — router uses direct file ops instead of skill",
+      "severity": "MED",
+      "description": "Both S2 and S3 prompts requesting file explanation routed to direct file__read/file__list ops instead of dispatching the read_local_files skill. This is a persistent routing miss. The skill is available in the action catalog but the router prefers the lower-level file ops. Reply quality is good (rubric text passes) but structural contract (skill_run_spawned/completed) is not met.",
+      "evidence": "S2: routing_decided action_name=file__read source=hot_list_alias. S3: routing_decided action_name=file__list. Neither emitted skill_run_spawned.",
+      "category": "behavioral/routing"
+    }
+  ]
+}
