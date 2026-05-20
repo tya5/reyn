@@ -390,6 +390,18 @@ def render_cost(
     else:
         lines.append("[#555555]    (no model data yet)[/]")
 
+    # Footer hint: ``/budget reset`` only clears per-agent + per-chain
+    # counters used by the safety hard-stop rate limiter. The TODAY /
+    # ALL TIME / BY MODEL totals shown above are recomputed from the
+    # event log on every render, so they survive ``/budget reset``.
+    # Users who run reset expecting "all the numbers go to zero" need
+    # this distinction surfaced once, where they can see it.
+    lines.append("")
+    lines.append(
+        "[#555555]  /budget reset clears per-agent counters "
+        "(daily totals persist — they come from the event log)[/]"
+    )
+
     return "\n".join(lines)
 
 
