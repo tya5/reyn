@@ -81,6 +81,6 @@ def run(args: argparse.Namespace) -> None:
     print("       reyn chat   # then ask a question covered by your indexed docs")
     print()
     print("MCP servers (optional):")
-    print("  To use stdlib skills like read_local_files, uncomment the mcp:")
+    print("  To use stdlib skills that depend on MCP, uncomment the mcp:")
     print("  block in reyn.yaml.  Full example: cookbook/configs/with-mcp.yaml")
     print("  Setup guide:          docs/guide/for-skill-authors/use-an-mcp-server.md")

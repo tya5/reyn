@@ -73,7 +73,7 @@ permissions:
   # shell: allow
 
 # ───────────────────────────────────────────────────────────────────────────
-# MCP servers (optional). Stdlib skills like `read_local_files` need a
+# MCP servers (optional). Stdlib skills that depend on MCP need a
 # `filesystem` server. Uncomment below to enable, or see the full example at
 # cookbook/configs/with-mcp.yaml.  Run the server manually first to verify:
 #   npx -y @modelcontextprotocol/server-filesystem .

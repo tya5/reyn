@@ -236,8 +236,8 @@ def test_missing_fields_in_jsonl_skipped(tmp_path: Path) -> None:
 # ── 8. DEFAULT_HOT_LIST_SEED ──────────────────────────────────────────────────
 
 
-def test_default_seed_has_seventeen_items() -> None:
-    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 17 entries.
+def test_default_seed_has_sixteen_items() -> None:
+    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 16 entries.
 
     Seed growth log:
       - file__grep removed (B27-M2): §D20 file-ops not yet implemented
@@ -262,8 +262,11 @@ def test_default_seed_has_seventeen_items() -> None:
         D2-wrapper scope is hot-list-only; seeding these ensures the LLM
         sees canonical arg schemas (write: content; drop_source: source)
         from the first turn instead of hallucinating wrong key names.
+      - skill__read_local_files removed (B46 cleanup, 2026-05-21): the
+        skill duplicated the router's inline file__read path with no
+        added value; removed from stdlib alongside its seed entry.
     """
-    assert len(DEFAULT_HOT_LIST_SEED) == 17
+    assert len(DEFAULT_HOT_LIST_SEED) == 16
 
 
 def test_default_seed_fits_within_default_hot_list_n() -> None:

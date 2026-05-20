@@ -1,21 +1,19 @@
 """Tier 2: OS invariant tests — stdlib skills expose non-empty input_schema via catalogue.
 
-B36/B37/B38 retros flagged a hot-list coverage gap: 4 stdlib skills were absent
+B36/B37/B38 retros flagged a hot-list coverage gap: stdlib skills were absent
 from the ARS / hot-list because their catalogue entry had no ``input_schema``
 (= the D2-full condition ``properties non-empty`` skipped them).
 
-Root causes (B39 investigation):
-- ``skill__direct_llm`` and ``skill__read_local_files``: their entry phases take
-  ``user_message`` as input, but ``user_message.yaml`` lived only in
-  ``src/reyn/stdlib/artifacts/``, not in each skill's own ``artifacts/`` dir.
-  ``_extract_skill_input_hint`` only searches the skill-local artifacts dir,
-  so it found nothing.
+Root causes (B39 + B46 investigation):
+- ``skill__direct_llm``: entry phase takes ``user_message`` as input, but
+  ``user_message.yaml`` lived only in ``src/reyn/stdlib/artifacts/``, not in
+  the skill's own ``artifacts/`` dir. Initial B39 fix copied the file
+  skill-side; B46 widened the fix so ``_extract_skill_input_hint`` falls
+  back to the stdlib shared artifacts dir whenever a skill-local file is
+  absent (= covers every shared-input skill, not just the originals).
 - ``skill__index_docs`` and ``skill__eval``: already had their input artifact in
   the skill-local dir and were already working; included in the test suite to
   make regression detection explicit.
-
-Fix (B39): added ``user_message.yaml`` to ``direct_llm/artifacts/`` and
-``read_local_files/artifacts/``.  No OS code changed.
 
 All tests use ``enumerate_available_skills`` (the public catalogue API) — not
 private attributes or mock objects.
@@ -77,40 +75,6 @@ def test_index_docs_input_schema_fields():
 
 
 # ---------------------------------------------------------------------------
-# skill__read_local_files
-# ---------------------------------------------------------------------------
-
-
-def test_read_local_files_input_schema_non_empty():
-    """Tier 2: read_local_files catalogue entry exposes non-empty input_schema.properties.
-
-    read_local_files entry phase (decide_files) takes user_message.  Before
-    B39 the fix, user_message.yaml was absent from the skill-local artifacts/
-    dir, so _extract_skill_input_hint returned no input_schema and the skill
-    was invisible to the ARS / hot-list alias builder.
-    """
-    entry = _skill_entry("read_local_files")
-    assert "input_schema" in entry, (
-        "read_local_files catalogue entry must have input_schema (B39 fix)"
-    )
-    props = entry["input_schema"].get("properties") or {}
-    assert props, "read_local_files input_schema.properties must be non-empty"
-
-
-def test_read_local_files_input_schema_fields():
-    """Tier 2: read_local_files input_schema mirrors the user_message artifact (text field).
-
-    The entry phase (decide_files) reads input_artifact.data.text.  The
-    catalogue must expose ``text`` so callers know the canonical field name.
-    """
-    entry = _skill_entry("read_local_files")
-    props = (entry.get("input_schema") or {}).get("properties") or {}
-    assert "text" in props, (
-        f"read_local_files input_schema must contain 'text' field; got {sorted(props)}"
-    )
-
-
-# ---------------------------------------------------------------------------
 # skill__direct_llm
 # ---------------------------------------------------------------------------
 
@@ -120,7 +84,7 @@ def test_direct_llm_input_schema_non_empty():
 
     direct_llm entry phase (respond) takes user_message.  Before B39 the fix,
     user_message.yaml was absent from the skill-local artifacts/ dir, causing
-    the same coverage gap as read_local_files.
+    the same coverage gap that motivated B39 / B46 fixes.
     """
     entry = _skill_entry("direct_llm")
     assert "input_schema" in entry, (

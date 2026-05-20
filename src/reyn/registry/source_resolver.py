@@ -70,7 +70,7 @@ class SourceResolution:
 # deriving the short config key. The MCP ecosystem widely uses
 # ``server-<name>`` (= Anthropic official) and ``mcp-server-<name>``
 # (= third-party convention). Stripping these gives a short key that
-# matches stdlib skill expectations (e.g. ``read_local_files`` looks
+# matches stdlib skill expectations (e.g. MCP-dependent skills look
 # for ``mcp.servers.filesystem``, not ``mcp.servers.server-filesystem``).
 _MCP_NAME_PREFIXES = ("mcp-server-", "server-")
 
@@ -95,10 +95,11 @@ def _npm_package_name(identifier: str) -> str:
     ``@scope/plain-name``                       → ``plain-name``
 
     issue #319: pre-fix the function returned ``server-filesystem``
-    verbatim (= the npm package's last path component). The stdlib
-    ``read_local_files`` skill expects ``mcp.servers.filesystem`` —
-    every install through this path required a manual rename. Now
-    the ecosystem-standard prefixes are stripped automatically.
+    verbatim (= the npm package's last path component). Stdlib
+    MCP-dependent skills expect short keys like
+    ``mcp.servers.filesystem`` — every install through this path
+    required a manual rename. Now the ecosystem-standard prefixes are
+    stripped automatically.
     """
     if "/" in identifier:
         name = identifier.split("/")[-1]

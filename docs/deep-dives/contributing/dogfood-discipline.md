@@ -702,7 +702,7 @@ The reply is the agent's final synthesised text — exactly what the TUI would r
 - `send_to_agent_impl` (the A2A entry point) waits via `MessageBus.request` until quiescent (= `running_skills` empty), so the completion narration is captured into the response.
 - `reyn chat --cui` with piped stdin closes stdin after the single user prompt, triggering CUI shutdown. The shutdown grace window (B27-H4, 30 s) is best-effort — heavy skills (e.g. multi-phase `skill_builder`, multi-turn `eval`) often overrun, and the completion narration is then lost to the shutdown.
 
-Empirically (B33 W2): A2A POST captured the completion narration cleanly on `invoke_action(skill__read_local_files)` ("The `read_local_files` skill could not be completed because the filesystem MCP server is inaccessible..."). The same prompt under `reyn chat --cui` stdin-pipe in B33 W2 returned empty reply on 3 of 4 spawn-ack scenarios (timing-dependent).
+Empirically (B33 W2): A2A POST captured the completion narration cleanly on an MCP-backed skill invocation ("The skill could not be completed because the filesystem MCP server is inaccessible..."). The same prompt under `reyn chat --cui` stdin-pipe in B33 W2 returned empty reply on 3 of 4 spawn-ack scenarios (timing-dependent).
 
 **Recommendation for B34+ batch workers**:
 
