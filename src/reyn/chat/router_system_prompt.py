@@ -251,6 +251,24 @@ def build_system_prompt(
             "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
         )
         parts.append("")
+        # Catalog partiality signal: the function list shown to the LLM is a
+        # hot-list of frequently-used + seeded actions. The FULL catalog is
+        # larger (= every configured MCP server's tools, every project skill,
+        # every static op category). Without this signal, the LLM treats the
+        # hot-list as the complete inventory and refuses capability requests
+        # whose tool is not pre-loaded. Trace-replay verified pre-fix vs
+        # post-fix on sqlite + everything MCP servers: pre-fix the LLM
+        # refused; post-fix it calls list_actions(filter="<server>") and
+        # follows up with invoke_action.
+        parts.append(
+            "The function list visible to you is a HOT-LIST (= a subset of "
+            "the full catalog). Whenever the user requests a capability and "
+            "no listed tool obviously matches, ALWAYS call "
+            "`list_actions(filter=\"<keyword>\")` to discover the rest of "
+            "the catalog BEFORE refusing. Refusing without that check is a "
+            "failure mode — the action you assumed missing often exists."
+        )
+        parts.append("")
 
     # ── 4 & 5. Behaviour (static core) ─────────────────────────────────────
     # FP-0023 Change 1: Static Behaviour rules moved here (before dynamic
