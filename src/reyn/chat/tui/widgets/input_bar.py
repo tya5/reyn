@@ -24,7 +24,7 @@ Keybindings (handled here):
 """
 from __future__ import annotations
 
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.message import Message
@@ -167,6 +167,43 @@ class InputBar(Widget):
     @on(TextArea.Changed, "#input")
     def on_textarea_changed(self, event: TextArea.Changed) -> None:
         self._update_picker(event.text_area.text)
+
+    def on_paste(self, event: events.Paste) -> None:
+        """Insert pasted text at the cursor, normalising line endings.
+
+        Wave-4 ML1 + ML2 combined fix:
+
+        - **ML1** (P1): without an explicit Paste handler, environments
+          where the terminal does NOT emit bracket-paste escape codes
+          (``\\x1b[200~…\\x1b[201~``) send the pasted text as raw
+          keystrokes. The first ``\\n`` in the paste is consumed by
+          the priority Enter binding (``action_submit_or_confirm``)
+          and submits only the first line; the rest stays in the
+          TextArea or is silently lost. Common breakage path on
+          plain SSH / minimal tmux / SecureCRT.
+        - **ML2** (P2): Windows-origin clipboards and many code
+          snippets use ``\\r\\n`` line endings. The TextArea inserts
+          them as literal ``\\r`` + ``\\n`` pairs, producing visible
+          empty lines between every "real" line in the input.
+
+        Both gone with one handler: intercept the Paste event,
+        normalise ``\\r\\n`` / ``\\r`` → ``\\n``, and insert the text
+        via ``TextArea.insert`` (= cursor-respecting). Stop the
+        event so the default raw-keystroke path doesn't also fire.
+        """
+        text = event.text
+        if not text:
+            return
+        normalised = text.replace("\r\n", "\n").replace("\r", "\n")
+        try:
+            ta = self.query_one("#input", TextArea)
+        except Exception:
+            return
+        ta.insert(normalised)
+        # Prevent the default Paste handling from also delivering the
+        # raw text as keystrokes (which would trigger the Enter binding
+        # at the first newline — exactly the ML1 bug).
+        event.stop()
 
     # ── action handlers (priority-bound keys) ────────────────────────────────
 
