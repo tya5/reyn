@@ -29,7 +29,7 @@ import json
 import os
 import stat
 import warnings
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -593,6 +593,8 @@ async def device_grant_flow(
     events: Any = None,  # EventLog | None
     http_client: Any = None,  # httpx.AsyncClient | None
     on_user_action: Callable[[dict], None] | None = None,
+    wait_fn: Callable[[float], Awaitable[None]] | None = None,
+    on_slow_down: Callable[[float], None] | None = None,
     poll_interval_override: float | None = None,  # for tests
     deadline_override: float | None = None,  # max wall-clock seconds (for tests)
 ) -> OAuthToken:
@@ -696,10 +698,19 @@ async def device_grant_flow(
                 pass
 
         # ── Step 4: poll loop (wrapped in deadline) ──────────────────────
+        # ``wait_fn`` lets the caller substitute the inter-poll sleep with
+        # an animated indicator (= CLI spinner). Falling back to
+        # ``asyncio.sleep`` preserves the pre-Component-C-P2 behaviour.
+        # ``on_slow_down`` fires when the server returns the
+        # ``slow_down`` error so the caller can surface the new interval
+        # to the user (= avoids silent back-off, RFC 8628 §3.5).
         async def _poll_loop() -> OAuthToken:
             nonlocal poll_interval
             while True:
-                await asyncio.sleep(poll_interval)
+                if wait_fn is not None:
+                    await wait_fn(poll_interval)
+                else:
+                    await asyncio.sleep(poll_interval)
                 status, body = await _poll_token(provider, device_code, http_client)
 
                 if status == 200 and body.get("access_token"):
@@ -714,6 +725,11 @@ async def device_grant_flow(
                 elif status == 400 and error_code == "slow_down":
                     # Server instructs us to back off.
                     poll_interval += _SLOW_DOWN_INCREMENT
+                    if on_slow_down is not None:
+                        try:
+                            on_slow_down(poll_interval)
+                        except Exception:  # noqa: BLE001 — UX hint must not break flow
+                            pass
                     continue
                 elif status == 400 and error_code == "access_denied":
                     raise DeviceGrantError(

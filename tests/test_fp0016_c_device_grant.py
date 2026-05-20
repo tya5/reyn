@@ -361,7 +361,145 @@ async def test_device_grant_flow_emits_events() -> None:
     assert isinstance(completed.data["scopes"], list)
 
 
-# ── Test 8: client_secret in polling POST body ───────────────────────────
+# ── Test 8a: wait_fn callback (issue #291 P2) ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_device_grant_flow_invokes_wait_fn_between_polls() -> None:
+    """Tier 2: ``wait_fn`` substitutes for ``asyncio.sleep`` between polls.
+
+    Issue #291 P2: the CLI uses ``wait_fn`` to drive an animated spinner
+    while the loop waits. This test verifies (a) ``wait_fn`` is called
+    once per poll cycle with the current ``poll_interval``, and (b) the
+    flow still completes correctly.
+    """
+    poll_responses: deque = deque([
+        httpx.Response(400, json={"error": "authorization_pending"}),
+        httpx.Response(200, json=_token_success_response()),
+    ])
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _DEVICE_URL:
+            return httpx.Response(200, json=_device_auth_response())
+        return poll_responses.popleft()
+
+    wait_calls: list[float] = []
+
+    async def _recorder(seconds: float) -> None:
+        wait_calls.append(seconds)
+        # No real sleep — keep the test fast.
+
+    provider = _make_provider()
+    client = _mock_transport(_handler)
+    try:
+        token = await device_grant_flow(
+            provider,
+            http_client=client,
+            wait_fn=_recorder,
+            poll_interval_override=0.01,
+        )
+    finally:
+        await client.aclose()
+
+    assert token.access_token == "AT_x"
+    # Two poll cycles: pending + success → 2 wait_fn calls.
+    assert len(wait_calls) == 2
+    # First call uses the initial override interval.
+    assert wait_calls[0] == 0.01
+
+
+# ── Test 8b: on_slow_down callback (issue #291 P2) ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_device_grant_flow_invokes_on_slow_down_with_new_interval() -> None:
+    """Tier 2: server returns ``slow_down`` → ``on_slow_down`` fires with
+    the post-increment poll interval (= the value the next sleep will
+    actually use).
+
+    Issue #291 P2: surfaces the OAuth server's back-off request to the
+    user instead of absorbing it silently. We bypass the real sleep via
+    ``wait_fn`` so the test stays fast (otherwise the 5 s
+    ``_SLOW_DOWN_INCREMENT`` would make this slow).
+    """
+    poll_responses: deque = deque([
+        httpx.Response(400, json={"error": "slow_down"}),
+        httpx.Response(200, json=_token_success_response()),
+    ])
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _DEVICE_URL:
+            return httpx.Response(200, json=_device_auth_response())
+        return poll_responses.popleft()
+
+    slow_down_calls: list[float] = []
+
+    def _on_slow_down(new_interval: float) -> None:
+        slow_down_calls.append(new_interval)
+
+    async def _fast_wait(_seconds: float) -> None:
+        return None  # skip the real sleep
+
+    provider = _make_provider()
+    client = _mock_transport(_handler)
+    try:
+        await device_grant_flow(
+            provider,
+            http_client=client,
+            wait_fn=_fast_wait,
+            on_slow_down=_on_slow_down,
+            poll_interval_override=0.01,
+        )
+    finally:
+        await client.aclose()
+
+    # Single slow_down notice fired.
+    assert len(slow_down_calls) == 1
+    # The reported interval is post-increment (= initial 0.01 + 5.0).
+    assert slow_down_calls[0] == pytest.approx(5.01, abs=0.001)
+
+
+@pytest.mark.asyncio
+async def test_device_grant_flow_on_slow_down_exception_is_swallowed() -> None:
+    """Tier 2: a faulty ``on_slow_down`` callback must not abort the flow.
+
+    Issue #291 P2: UX hints are best-effort — a buggy CLI hook
+    (= raising inside the callback) should not break the auth flow.
+    """
+    poll_responses: deque = deque([
+        httpx.Response(400, json={"error": "slow_down"}),
+        httpx.Response(200, json=_token_success_response()),
+    ])
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == _DEVICE_URL:
+            return httpx.Response(200, json=_device_auth_response())
+        return poll_responses.popleft()
+
+    def _broken(_new_interval: float) -> None:
+        raise RuntimeError("ui crashed")
+
+    async def _fast_wait(_seconds: float) -> None:
+        return None
+
+    provider = _make_provider()
+    client = _mock_transport(_handler)
+    try:
+        token = await device_grant_flow(
+            provider,
+            http_client=client,
+            wait_fn=_fast_wait,
+            on_slow_down=_broken,
+            poll_interval_override=0.01,
+        )
+    finally:
+        await client.aclose()
+
+    # Flow completed despite the callback raising.
+    assert token.access_token == "AT_x"
+
+
+# ── Test 9: client_secret in polling POST body ───────────────────────────
 
 
 @pytest.mark.asyncio

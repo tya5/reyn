@@ -15,6 +15,13 @@ import sys
 import webbrowser
 from datetime import datetime
 
+# Spinner frame strings — fixed width (3 chars) so successive ``\r``-anchored
+# redraws fully overwrite the previous frame without leaving residue. The
+# empty-trailer frame ("   ") creates a brief visual pause that confirms
+# the animation is still running rather than freezing on three dots.
+_SPINNER_FRAMES = (".  ", ".. ", "...", "   ")
+_SPINNER_INTERVAL_SECONDS = 0.5
+
 
 def register(sub) -> None:
     p = sub.add_parser("auth", help="Manage OAuth credentials (login, list, revoke)")
@@ -157,7 +164,53 @@ def _print_user_action(info: dict) -> None:
 
     _open_browser_or_skip(url_to_show)
 
-    print("Waiting for approval...", file=sys.stderr)
+    # The Ctrl+C hint is part of the static line so non-TTY contexts
+    # (= pipe, CI capture) still see it — ``_animated_wait`` on TTY
+    # adds the spinner on the next line.
+    print("Waiting for approval (Ctrl+C to cancel)...", file=sys.stderr)
+
+
+async def _animated_wait(seconds: float) -> None:
+    """Show an animated dot spinner on stderr for *seconds*.
+
+    The spinner cycles through ``_SPINNER_FRAMES`` every
+    ``_SPINNER_INTERVAL_SECONDS``, using ``\\r`` to overwrite the
+    previous frame on the same line. Two-space indent matches the
+    other CLI bullets (= the box drawing + expires_in lines) so the
+    spinner reads as "this is the same flow, still waiting".
+
+    Falls back to a plain ``asyncio.sleep`` when stderr is not a TTY
+    (= CI, pipes, log capture) — animation is noise in those contexts.
+    """
+    if not sys.stderr.isatty():
+        await asyncio.sleep(seconds)
+        return
+
+    idx = 0
+    elapsed = 0.0
+    while elapsed < seconds:
+        frame = _SPINNER_FRAMES[idx % len(_SPINNER_FRAMES)]
+        print(f"\r  {frame}", end="", file=sys.stderr, flush=True)
+        await asyncio.sleep(_SPINNER_INTERVAL_SECONDS)
+        elapsed += _SPINNER_INTERVAL_SECONDS
+        idx += 1
+
+
+def _print_slow_down_notice(new_interval: float) -> None:
+    """Surface the OAuth server's slow_down hint to the user.
+
+    Clears the spinner line first (TTY only) so the notice prints
+    cleanly, then logs the new interval as a permanent line. The
+    spinner resumes on the next ``_animated_wait`` cycle below.
+    """
+    if sys.stderr.isatty():
+        # 60 chars is enough to clear the spinner + any slow_down residue
+        # without making the line jitter on narrow terminals.
+        print("\r" + " " * 60 + "\r", end="", file=sys.stderr, flush=True)
+    print(
+        f"  Server requested slower polling — interval now {new_interval:.0f}s.",
+        file=sys.stderr,
+    )
 
 
 def run_login(args: argparse.Namespace) -> None:
@@ -192,10 +245,18 @@ def run_login(args: argparse.Namespace) -> None:
                 provider_cfg,
                 events=events,
                 on_user_action=_print_user_action,
+                wait_fn=_animated_wait,
+                on_slow_down=_print_slow_down_notice,
             )
         except DeviceGrantError as exc:
+            # Terminate the spinner line cleanly before printing the error
+            # (otherwise the error overlays the last spinner frame on TTY).
+            if sys.stderr.isatty():
+                print("", file=sys.stderr)
             print(f"Authentication failed: {exc}", file=sys.stderr)
             sys.exit(2)
+        if sys.stderr.isatty():
+            print("", file=sys.stderr)
         save_oauth_token(key, token)
         print(
             f"Saved OAuth token under key {key!r}. "
