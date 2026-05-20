@@ -474,11 +474,19 @@ class InputBar(Widget):
     # ── hint rendering ────────────────────────────────────────────────────────
 
     def _build_hint(self) -> str:
-        # Fits in 80 cols (= 72 cells incl. 2-space left margin) so the
+        # Fits in 80 cols (= ≤72 cells incl. 2-space left margin) so the
         # tail "Ctrl+P/N turn" doesn't get clipped on default terminals.
-        # Dropped Ctrl+J nl in addition to Ctrl+O / Ctrl+R / Ctrl+\ /
-        # Ctrl+C — all remain discoverable via the Keys tab (Ctrl+B).
+        # Dropped Ctrl+J nl / Ctrl+O / Ctrl+R / Ctrl+\ — all remain
+        # discoverable via the Keys tab (Ctrl+B).
+        #
+        # Wave-2 K4: ``Ctrl+C cancel`` swapped in for ``Ctrl+D quit`` —
+        # cancel is the highest-frequency interactive key during active
+        # skill runs (= every time a user notices a long-running call
+        # they want to abort) while Ctrl+D is the well-known
+        # terminal-EOF convention users carry in from the shell. Both
+        # remain in the Keys tab; the always-visible footer should
+        # advertise the in-session-frequent key, not the universal one.
         return (
-            "  Enter send │ Ctrl+D quit │ Ctrl+L clear │ "
+            "  Enter send │ Ctrl+C cancel │ Ctrl+L clear │ "
             "Ctrl+B panel │ Ctrl+P/N turn"
         )
