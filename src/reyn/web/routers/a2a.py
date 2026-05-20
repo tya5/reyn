@@ -650,26 +650,33 @@ async def _handle_answer_injection(
 
 
 class _A2AProgressBridge:
-    """Forwards selected agent chat-events to the A2A peer via webhook
-    POST (issue #267 Gap 2).
+    """Forwards selected agent chat-events to A2A peer surfaces.
 
-    Mirrors ``mcp_server._MCPProgressBridge`` for the A2A surface: same
-    event scope (``phase_started`` / ``llm_called`` / ``act_executed``),
-    same ordinal-counter semantics. Different transport: instead of the
-    MCP protocol's ``notifications/progress``, fires a webhook POST with
-    ``status="in-progress"`` so the registered peer URL sees progression
-    beyond the terminal ``completed`` / ``failed`` webhooks.
+    Two sinks, one subscriber:
 
-    Two instances (= MCP + A2A) is below the rule-of-three threshold,
-    so we keep the bridge logic per-protocol for now. A future third
-    instance (= e.g. WebSocket / gRPC streaming) is the trigger to lift
-    the common subscribe/format/dispatch shape into a shared base.
+      - **SSE buffer** (= ``run_registry.append_event``): events land
+        in ``RunEntry.history_events`` so ``GET /a2a/tasks/{run_id}/events``
+        replays them. Always wired (issue #267 Gap 1).
+      - **Webhook POST** (= ``post_webhook``): same payload pushed to
+        the registered peer URL. Opt-in — only fires when
+        ``webhook_url`` is non-None (issue #267 Gap 2, landed in PR
+        #286 with webhook-only bridge; this revision adds the SSE
+        sink alongside).
+
+    Mirrors ``mcp_server._MCPProgressBridge`` for the event-scope side:
+    same lifecycle kinds (``phase_started`` / ``llm_called`` /
+    ``act_executed``), same ordinal counter, same message formatting.
+    Different transports. Two instances (= MCP + A2A) is below the
+    rule-of-three threshold so the bridge logic stays per-protocol;
+    a future third instance is the trigger to lift the common
+    ``subscribe / filter / format / dispatch`` shape into a shared base.
 
     Lifecycle: subscribe via ``attach()`` once, ``detach()`` in a
-    try/finally so the subscriber doesn't outlive the call. Any
-    transport error during a fire is swallowed — progress is
-    best-effort; the A2A task's final ``completed`` / ``failed``
-    webhook is the authoritative outcome signal.
+    try/finally so the subscriber doesn't outlive the call. Any sink
+    failure during a fire is swallowed independently — progress is
+    best-effort; the A2A task's terminal ``completed`` / ``failed``
+    signal (= SSE ``event: end`` + webhook POST from
+    ``_handle_async_mode._run``) is the authoritative outcome.
     """
 
     _TRACKED_EVENTS = frozenset({
@@ -683,13 +690,15 @@ class _A2AProgressBridge:
         *,
         session: "object",
         run_id: str,
-        webhook_url: str,
+        webhook_url: str | None,
         agent_name: str,
+        run_registry: "object",
     ) -> None:
         self._session = session
         self._run_id = run_id
         self._webhook_url = webhook_url
         self._agent_name = agent_name
+        self._run_registry = run_registry
         self._ordinal = 0
         self._detached = False
         self._tasks: list[asyncio.Task[None]] = []
@@ -748,8 +757,6 @@ class _A2AProgressBridge:
     async def _send(
         self, ordinal: int, event_type: str, message: str,
     ) -> None:
-        from reyn.web.notifications import post_webhook  # noqa: PLC0415
-
         payload = {
             "run_id": self._run_id,
             "status": "in-progress",
@@ -758,10 +765,21 @@ class _A2AProgressBridge:
             "message": message,
             "agent_name": self._agent_name,
         }
+        # Sink 1: SSE buffer (always). The append failure is logged
+        # implicitly and must not block the webhook fire below.
         try:
-            await post_webhook(self._webhook_url, payload)
-        except Exception:  # noqa: BLE001 — progress is best-effort
-            return
+            self._run_registry.append_event(self._run_id, payload)
+        except Exception:  # noqa: BLE001 — sse buffer is best-effort
+            pass
+        # Sink 2: webhook POST (opt-in). Each sink swallows its own
+        # transport error independently so one failure doesn't suppress
+        # the other.
+        if self._webhook_url is not None:
+            from reyn.web.notifications import post_webhook  # noqa: PLC0415
+            try:
+                await post_webhook(self._webhook_url, payload)
+            except Exception:  # noqa: BLE001 — progress is best-effort
+                return
 
 
 async def _handle_async_mode(
@@ -787,27 +805,30 @@ async def _handle_async_mode(
     bus = A2AInterventionBus(run_id, run_registry)
 
     async def _run() -> None:
-        # issue #267 Gap 2: when a webhook_url is registered, subscribe a
-        # progress bridge to the agent's chat_events for the lifetime of
-        # this call. The bridge fires intermediate ``status="in-progress"``
-        # webhooks for skill lifecycle events (= phase_started / llm_called
-        # / act_executed) so the A2A peer sees progression beyond just
-        # terminal completed / failed. Bridge attach is best-effort —
-        # failure to load the session or subscribe must NOT block the
-        # main call (= progress is decoration; the answer is the contract).
+        # issue #267 Gap 1 + Gap 2: subscribe a progress bridge to the
+        # agent's chat_events for the lifetime of this call. The bridge
+        # fans out skill lifecycle events (phase_started / llm_called /
+        # act_executed) to two sinks:
+        #   - SSE buffer (always): append to RunEntry.history_events so
+        #     GET /a2a/tasks/{run_id}/events replays progression.
+        #   - Webhook POST (opt-in): when webhook_url is registered,
+        #     same payload pushed to the peer URL.
+        # Bridge attach is best-effort — failure to load the session or
+        # subscribe must NOT block the main call (= progress is
+        # decoration; the answer is the contract).
         bridge: "_A2AProgressBridge | None" = None
-        if webhook_url:
-            try:
-                session = registry.get_or_load(agent_name)
-                bridge = _A2AProgressBridge(
-                    session=session,
-                    run_id=run_id,
-                    webhook_url=webhook_url,
-                    agent_name=agent_name,
-                )
-                bridge.attach()
-            except Exception:  # noqa: BLE001 — defensive
-                bridge = None
+        try:
+            session = registry.get_or_load(agent_name)
+            bridge = _A2AProgressBridge(
+                session=session,
+                run_id=run_id,
+                webhook_url=webhook_url,
+                agent_name=agent_name,
+                run_registry=run_registry,
+            )
+            bridge.attach()
+        except Exception:  # noqa: BLE001 — defensive
+            bridge = None
         try:
             result = await send_to_agent_impl(
                 registry,

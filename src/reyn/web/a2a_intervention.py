@@ -91,29 +91,40 @@ class A2AInterventionBus:
             pending_intervention=iv,
         )
 
-        # Optional webhook notification (fire-and-forget; failures logged).
-        # issue #267 Gap 4: surface iv ``kind`` + ``choices`` in the payload
-        # so peer can render structured affordance (= permission yes/no/always
-        # hotkeys) instead of guessing from prompt text. Free-text ``ask_user``
-        # still works unchanged (= ``choices`` is an empty list). ``detail``
-        # is included when present so the peer has the same context the
-        # in-process TUI surfaces below the prompt.
+        # Build the canonical input-required payload once + fan out to
+        # both A2A peer surfaces (issue #267 Gap 1 + Gap 4):
+        #
+        #   - SSE buffer (always): append to RunEntry.history_events so
+        #     ``GET /a2a/tasks/{run_id}/events`` streams the prompt to a
+        #     peer that connected via SSE.
+        #   - Webhook POST (opt-in): same payload pushed to webhook_url
+        #     when registered. ``kind`` + ``choices`` (Gap 4) let the
+        #     peer render structured affordance (= permission yes/no/always
+        #     hotkeys) instead of guessing from prompt text. ``detail`` is
+        #     included when present so the peer has the same context the
+        #     in-process TUI surfaces below the prompt.
+        payload: dict = {
+            "run_id": self._run_id,
+            "status": "input-required",
+            "question": iv.prompt,
+            "agent_name": entry.agent_name,
+            "kind": iv.kind,
+            "choices": [
+                {"id": c.id, "label": c.label, "hotkey": c.hotkey}
+                for c in iv.choices
+            ],
+        }
+        if iv.detail:
+            payload["detail"] = iv.detail
+
+        try:
+            self._registry.append_event(self._run_id, payload)
+        except Exception:  # noqa: BLE001 — sse buffer is best-effort
+            pass
+
         if entry.webhook_url:
             from reyn.web.notifications import post_webhook
 
-            payload: dict = {
-                "run_id": self._run_id,
-                "status": "input-required",
-                "question": iv.prompt,
-                "agent_name": entry.agent_name,
-                "kind": iv.kind,
-                "choices": [
-                    {"id": c.id, "label": c.label, "hotkey": c.hotkey}
-                    for c in iv.choices
-                ],
-            }
-            if iv.detail:
-                payload["detail"] = iv.detail
             await post_webhook(entry.webhook_url, payload)
 
         # Block until the peer POSTs an answer (= registry.answer_intervention

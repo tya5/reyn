@@ -42,6 +42,16 @@ from reyn.events.events import EventLog  # noqa: E402
 from reyn.schemas.models import Event  # noqa: E402
 
 
+class _FakeRunRegistry:
+    """Minimal stub for tests — captures append_event calls."""
+
+    def __init__(self) -> None:
+        self.appended: list[tuple[str, dict]] = []
+
+    def append_event(self, run_id: str, event: dict) -> None:
+        self.appended.append((run_id, event))
+
+
 def _make_bridge(*, captured_posts: list[tuple[str, dict]], events: EventLog | None = None):
     """Build a bridge with a fake session whose ``_chat_events`` is the
     given EventLog (or a fresh one). The bridge's _send is monkey-patched
@@ -61,6 +71,7 @@ def _make_bridge(*, captured_posts: list[tuple[str, dict]], events: EventLog | N
         run_id="run-X",
         webhook_url="https://peer.test/hook",
         agent_name="demo",
+        run_registry=_FakeRunRegistry(),
     )
 
     async def _capture(ordinal, event_type, message):  # noqa: ANN202
@@ -244,6 +255,7 @@ def test_send_posts_canonical_progress_payload(monkeypatch) -> None:
         run_id="run-Y",
         webhook_url="https://peer.test/hook",
         agent_name="demo",
+        run_registry=_FakeRunRegistry(),
     )
 
     asyncio.run(bridge._send(7, "phase_started", "phase: planning"))
@@ -281,6 +293,7 @@ def test_send_swallows_transport_errors(monkeypatch) -> None:
         run_id="run-Z",
         webhook_url="https://peer.test/hook",
         agent_name="demo",
+        run_registry=_FakeRunRegistry(),
     )
 
     # No exception raised, no return value used.
@@ -318,11 +331,16 @@ def test_late_event_after_detach_is_ignored() -> None:
 # ── 7. Integration: _handle_async_mode wires the bridge ────────────────
 
 
-def test_handle_async_mode_attaches_bridge_when_webhook_url_present() -> None:
-    """Tier 2: in ``_handle_async_mode._run``, when ``webhook_url`` is
-    provided, an ``_A2AProgressBridge`` is constructed + attached
-    BEFORE ``send_to_agent_impl`` is called. Verified via in-source
+def test_handle_async_mode_attaches_bridge_around_send_to_agent_impl() -> None:
+    """Tier 2: in ``_handle_async_mode._run``, ``_A2AProgressBridge``
+    is constructed + attached BEFORE ``send_to_agent_impl`` is called
+    and detached in a ``finally`` afterwards. Verified via in-source
     grep so a refactor that drops the wiring fails immediately.
+
+    After #267 Gap 1 (= SSE producer wiring), the bridge is
+    UNCONDITIONAL (no longer gated on ``webhook_url``) because the
+    SSE sink is always available — see
+    ``test_handle_async_mode_bridge_is_unconditional_after_gap1``.
     """
     import ast
     from pathlib import Path
@@ -356,20 +374,31 @@ def test_handle_async_mode_attaches_bridge_when_webhook_url_present() -> None:
     assert bridge_detach_calls >= 1
 
 
-def test_handle_async_mode_skips_bridge_when_no_webhook_url() -> None:
-    """Tier 2: in-source grep confirms the bridge construction is
-    GATED on ``webhook_url`` (= no webhook → no bridge → no event
-    subscription). The peer that doesn't register a URL sees zero
-    overhead.
+def test_handle_async_mode_bridge_is_unconditional_after_gap1() -> None:
+    """Tier 2: after #267 Gap 1 landed (= SSE producer wiring), the
+    bridge is constructed UNCONDITIONALLY in ``_handle_async_mode``.
+    The SSE sink (= ``run_registry.append_event``) always runs; the
+    webhook sink is gated INSIDE the bridge's ``_send`` instead of at
+    construction time.
+
+    Pre-Gap-1 (PR #286), the bridge was gated on ``webhook_url`` so
+    peers without a webhook paid zero overhead. Post-Gap-1, peers
+    that connect via SSE need the bridge regardless — so the gate
+    moved from construction to per-sink dispatch.
     """
     import inspect
 
     from reyn.web.routers import a2a as a2a_router
 
     src = inspect.getsource(a2a_router._handle_async_mode)
-    # The bridge construction must be inside an ``if webhook_url:`` block.
-    assert "if webhook_url:" in src
+    # Bridge is constructed once — no `if webhook_url:` guard around
+    # the construction itself.
     assert "_A2AProgressBridge(" in src
-    # And detach must run in a finally so it executes on both success
-    # and exception paths.
+    assert "bridge.attach()" in src
+    # detach must run in a finally so it executes on both success and
+    # exception paths.
     assert "bridge.detach()" in src
+    # The bridge construction is paired with run_registry (= SSE sink
+    # is wired). Pin the param presence so a refactor that drops it
+    # fails immediately.
+    assert "run_registry=run_registry" in src
