@@ -5,12 +5,12 @@ import textwrap
 
 from reyn.chat.slash import REGISTRY, reply, slash
 
-# Built-ins handled outside the registry (intercepted by the TUI / REPL
-# before reaching session._maybe_handle_slash). Listed here for discoverability.
-_BUILTIN_HINTS: list[tuple[str, str]] = [
-    ("quit", "Exit the chat (alias: /exit, Ctrl+D)"),
-    ("exit", "Exit the chat (alias: /quit, Ctrl+D)"),
-]
+# Built-ins handled outside the registry. ``/quit`` + ``/exit`` were
+# previously here but moved into ``reyn.chat.slash.quit`` (= wave-2 P3)
+# so the slash palette can match them on ``/q`` / ``/ex`` prefixes.
+# Keep this list as the future home for any TUI-intercepted commands
+# that genuinely cannot land in the registry.
+_BUILTIN_HINTS: list[tuple[str, str]] = []
 
 # Target line width for pre-wrapping. The TUI body adds a 7-cell left
 # Padding (``_BODY_INDENT_COLS`` in conversation.py) AND the conv pane

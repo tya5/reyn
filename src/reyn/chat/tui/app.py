@@ -651,11 +651,14 @@ class ReynTUIApp(App):
         session = self._get_session()
 
         if text.startswith("/"):
-            # Handle /quit and /exit locally
-            cmd_body = text[1:].split()[0] if len(text) > 1 else ""
-            if cmd_body in {"quit", "exit"}:
-                await self.action_quit_tui()
-                return
+            # ``/quit`` / ``/exit`` previously had a hard-coded intercept
+            # here that short-circuited to ``action_quit_tui`` before the
+            # registry dispatch. Wave-2 P3 moved them into the registry
+            # (``reyn.chat.slash.quit``) so they surface in the palette
+            # + ``/help``; the registry handler emits ``__quit__`` and
+            # ``app_outbox._on_quit`` runs the same shutdown. Removing
+            # the intercept keeps a single source of truth for the slash
+            # dispatch path.
             # Dispatch to session._maybe_handle_slash (which uses registry)
             if session is not None:
                 await session._maybe_handle_slash(text)
