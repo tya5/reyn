@@ -359,6 +359,64 @@ def build_server(
                     "additionalProperties": False,
                 },
             ),
+            Tool(
+                name="answer_intervention",
+                description=(
+                    "Deliver an answer to a pending ask_user / "
+                    "permission / safety intervention on a running "
+                    "send_to_agent call (issue #270 Phase B). "
+                    "Routes via ChatSession.answer_pending_intervention. "
+                    "Identify the iv by ``run_id`` (= surfaced in the "
+                    "progress notification that the server pushed when "
+                    "the iv was dispatched, see experimental capability "
+                    "``reyn.iv.input_required``). For choice-based "
+                    "prompts (= permission.* / safety.limit.*) pass "
+                    "``choice_id`` explicitly; for free-text ask_user "
+                    "omit it."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "agent_name": {
+                            "type": "string",
+                            "description": (
+                                "Name of the agent that emitted the "
+                                "intervention (= the same agent_name "
+                                "used in the original send_to_agent "
+                                "call)."
+                            ),
+                        },
+                        "run_id": {
+                            "type": "string",
+                            "description": (
+                                "The iv's run_id, as surfaced in the "
+                                "input-required progress notification."
+                            ),
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": (
+                                "Free-text answer body. For choice-"
+                                "based prompts, set ``choice_id`` "
+                                "below; the text becomes the human-"
+                                "readable selection label."
+                            ),
+                        },
+                        "choice_id": {
+                            "type": "string",
+                            "description": (
+                                "Optional. For closed-set prompts, "
+                                "the explicit choice id from the "
+                                "iv's choices list (e.g. ``yes`` / "
+                                "``always`` / ``no``). Omit for "
+                                "free-text ask_user answers."
+                            ),
+                        },
+                    },
+                    "required": ["agent_name", "run_id", "text"],
+                    "additionalProperties": False,
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -395,12 +453,20 @@ def build_server(
             bridge = await _make_mcp_progress_bridge(
                 registry, agent_name, server,
             )
+            # issue #270 Phase B: build MCP-side iv observer. When a
+            # skill emits a UserIntervention, this bus pushes the
+            # iv payload to the peer via progress notification + lets
+            # the peer answer via the ``answer_intervention`` tool.
+            iv_bus = await _make_mcp_intervention_bus(
+                registry, agent_name, server,
+            )
             try:
                 result = await send_to_agent_impl(
                     registry,
                     agent_name=agent_name,
                     message=message,
                     timeout=timeout,
+                    intervention_override=iv_bus,
                 )
             except ValueError as e:
                 return [TextContent(type="text", text=f"error: {e}")]
@@ -417,9 +483,196 @@ def build_server(
             import json
             return [TextContent(type="text", text=json.dumps(result))]
 
+        if name == "answer_intervention":
+            import json  # noqa: PLC0415
+
+            from reyn.user_intervention import InterventionAnswer  # noqa: PLC0415
+
+            args = arguments or {}
+            agent_name = args.get("agent_name") or ""
+            run_id = args.get("run_id") or ""
+            text = args.get("text") or ""
+            choice_id_raw = args.get("choice_id")
+            choice_id: str | None = (
+                choice_id_raw if isinstance(choice_id_raw, str) and choice_id_raw
+                else None
+            )
+            if not agent_name:
+                return [TextContent(type="text", text="error: agent_name is required")]
+            if not run_id:
+                return [TextContent(type="text", text="error: run_id is required")]
+            if not registry.exists(agent_name):
+                return [TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "answered": False,
+                        "reason": f"agent {agent_name!r} not found",
+                    }),
+                )]
+            try:
+                session = await _get_session(registry, agent_name)
+            except Exception as exc:  # noqa: BLE001 — defensive
+                return [TextContent(
+                    type="text",
+                    text=json.dumps({
+                        "answered": False,
+                        "reason": f"agent load failed: {exc}",
+                    }),
+                )]
+            answer = InterventionAnswer(text=text, choice_id=choice_id)
+            delivered = await session.answer_pending_intervention(run_id, answer)
+            return [TextContent(
+                type="text",
+                text=json.dumps({
+                    "answered": bool(delivered),
+                    "reason": (
+                        None if delivered else
+                        "already answered or no pending intervention"
+                    ),
+                }),
+            )]
+
         return [TextContent(type="text", text=f"error: unknown tool {name!r}")]
 
     return server
+
+
+async def _make_mcp_intervention_bus(
+    registry: "AgentRegistry",
+    agent_name: str,
+    server: "object",
+) -> "_MCPInterventionBus | None":
+    """Build an MCP iv-observer for the duration of one ``send_to_agent``
+    call (issue #270 Phase B).
+
+    issue #292 α extended to MCP: when a skill spawned via
+    ``send_to_agent_impl`` emits a ``UserIntervention``, that iv lands
+    in ``ChatSession._interventions._active`` and ``handler.dispatch``
+    awaits its future. Pre-#270 Phase B the MCP transport had no
+    observer registered as chain override → no peer-facing surface to
+    push the iv question to → the iv would hang if no TUI was
+    simultaneously attached.
+
+    This bus fills the same role ``A2AInterventionBus`` does for the
+    A2A surface: pure side-effect observer (= ``on_dispatch(iv)``
+    pushes an MCP notification carrying the iv payload; does NOT await
+    ``iv.future``). The peer answers via a separate
+    ``answer_intervention`` MCP tool call that lands at
+    ``ChatSession.answer_pending_intervention``.
+
+    Returns ``None`` when the request context is unavailable (= e.g.
+    direct test calls bypassing the MCP server). The caller (= send-
+    to-agent handler) then runs without the override, matching pre-
+    Phase-B behaviour.
+    """
+    try:
+        ctx = server.request_context  # type: ignore[attr-defined]
+    except (LookupError, AttributeError):
+        return None
+    if not registry.exists(agent_name):
+        return None
+    return _MCPInterventionBus(
+        mcp_session=ctx.session,
+        related_request_id=ctx.request_id,
+    )
+
+
+class _MCPInterventionBus:
+    """MCP-side iv side-effect observer (issue #270 Phase B).
+
+    Registered as the chain-scoped override during ``send_to_agent_impl``.
+    Mirrors ``A2AInterventionBus``'s post-α observer shape:
+
+      - ``on_dispatch(iv)`` runs as a side effect inside
+        ``ChatSession._dispatch_intervention``, BEFORE the regular
+        handler dispatch awaits ``iv.future``.
+      - Stamps ``iv.origin_channel_id`` so the agent layer can attribute
+        this iv to the MCP channel.
+      - Pushes an iv-payload notification to the MCP peer (= the
+        client that opened the ``send_to_agent`` request) so the
+        peer's UI can render the question + collect the answer.
+      - Does NOT await ``iv.future``. The handler awaits on the
+        skill's behalf; the peer answers via the
+        ``answer_intervention`` MCP tool which routes to
+        ``ChatSession.answer_pending_intervention``.
+
+    Notification transport: uses ``Session.send_progress_notification``
+    with the iv payload encoded as JSON in the ``message`` field +
+    ``progress=0.0`` / ``total=None`` (= indeterminate, per MCP spec
+    for non-numeric updates). This piggy-backs on the existing
+    progress channel rather than introducing a new notification type
+    — clients that already parse progress messages from PR #279's
+    ``_MCPProgressBridge`` see the iv as one more structured payload
+    with a recognisable ``{"type": "intervention", ...}`` shape.
+
+    The Reyn experimental capability ``reyn.iv.input_required``
+    (declared in ``serve_stdio``) advertises this shape to peers via
+    the MCP ``initialize`` response.
+    """
+
+    def __init__(
+        self,
+        *,
+        mcp_session: "object",
+        related_request_id: "str | None",
+    ) -> None:
+        self._mcp_session = mcp_session
+        self._related_request_id = related_request_id
+
+    @property
+    def channel_id(self) -> str:
+        """Stable channel identifier for issue #268 origin-pin routing.
+
+        Format: ``mcp:<request_id>``. The bus's lifetime is one
+        ``send_to_agent`` MCP call, so the channel id is unique per
+        call.
+        """
+        return f"mcp:{self._related_request_id}"
+
+    async def on_dispatch(self, iv) -> None:
+        """Side-effect observer entry point.
+
+        Stamp the iv's ``origin_channel_id`` (= for #268 cross-channel
+        routing), build the canonical input-required payload (= same
+        shape PR #285 Gap 4 standardised for A2A), and push it as a
+        progress notification. Failures are swallowed — the handler's
+        dispatch path must continue regardless of whether the peer
+        actually received the notification.
+        """
+        if iv.origin_channel_id is None:
+            iv.origin_channel_id = self.channel_id
+
+        payload = {
+            "type": "intervention",
+            "status": "input-required",
+            "run_id": iv.run_id,
+            "kind": iv.kind,
+            "question": iv.prompt,
+            "choices": [
+                {"id": c.id, "label": c.label, "hotkey": c.hotkey}
+                for c in iv.choices
+            ],
+        }
+        if iv.detail:
+            payload["detail"] = iv.detail
+
+        send_fn = getattr(
+            self._mcp_session, "send_progress_notification", None,
+        )
+        if send_fn is None:
+            return
+        import json  # noqa: PLC0415
+
+        try:
+            await send_fn(
+                progress_token=f"reyn-iv:{iv.id}",
+                progress=0.0,
+                total=None,
+                message=json.dumps(payload),
+                related_request_id=self._related_request_id,
+            )
+        except Exception:  # noqa: BLE001 — best-effort
+            return
 
 
 async def _make_mcp_progress_bridge(
@@ -627,6 +880,21 @@ async def serve_stdio(
             },
             "reyn.cancellation.cooperative": {
                 "version": 1,
+            },
+            "reyn.iv.input_required": {
+                "version": 1,
+                "transport": "progress_notification",
+                "message_format": "json",
+                "shape": {
+                    "type": "intervention",
+                    "status": "input-required",
+                    "run_id": "<string>",
+                    "kind": "<ask_user|permission.*|safety.limit.*>",
+                    "question": "<string>",
+                    "choices": "<list of {id,label,hotkey}>",
+                    "detail": "<optional string>",
+                },
+                "answer_tool": "answer_intervention",
             },
         },
     )

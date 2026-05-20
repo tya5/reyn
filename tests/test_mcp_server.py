@@ -504,11 +504,13 @@ def test_drain_skill_completed_inbox_preserves_other_kinds(tmp_path):
     assert leftover_payload.get("from_agent") == "peer"
 
 
-def test_build_server_exposes_two_tools(tmp_path):
-    """Tier 2: build_server registers exactly the two documented tools
-    (list_agents, send_to_agent). Acts as a P7 detection net — adding a
-    third tool here without refreshing the documented contract trips
-    this test.
+def test_build_server_exposes_documented_tools(tmp_path):
+    """Tier 2: build_server registers exactly the documented tools.
+    Acts as a P7 detection net — adding a new tool without refreshing
+    the documented contract trips this test.
+
+    issue #270 Phase B added ``answer_intervention`` (= MCP-side
+    answer-delivery wire for ivs emitted by send_to_agent skills).
     """
     from reyn.mcp_server import build_server
 
@@ -526,4 +528,4 @@ def test_build_server_exposes_two_tools(tmp_path):
     result = asyncio.run(handler(req))
     tools = result.root.tools
     names = {t.name for t in tools}
-    assert names == {"list_agents", "send_to_agent"}
+    assert names == {"list_agents", "send_to_agent", "answer_intervention"}
