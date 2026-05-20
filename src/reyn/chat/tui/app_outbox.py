@@ -61,6 +61,7 @@ class OutboxRouter:
         # Methods on `self` are bound, so we can reference them directly.
         self.HANDLERS: dict[str, Callable[..., str | None]] = {
             "__end__":                  self._on_end,
+            "__quit__":                 self._on_quit,
             "__attach_request__":       self._on_attach_request,
             "__matrix__":               self._on_matrix,
             "__donut__":                self._on_donut,
@@ -181,6 +182,21 @@ class OutboxRouter:
         """
         conv.hide_status()
         return _STOP
+
+    def _on_quit(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """`__quit__` — /quit or /exit slash; trigger the same shutdown
+        path as Ctrl+D.
+
+        Wave-2 finding P3: the slash command palette previously had no
+        ``/quit`` / ``/exit`` entry because the historical implementation
+        intercepted them outside the registry. Routing through the
+        sentinel here keeps the shutdown semantics identical to the
+        Ctrl+D path (= the App's existing ``action_quit_tui`` does the
+        graceful teardown + WAL flush).
+        """
+        self._app.call_later(self._app.action_quit_tui)
 
     def _on_attach_request(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
