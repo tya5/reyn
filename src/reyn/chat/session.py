@@ -203,6 +203,31 @@ class RouterCapExceeded(Exception):
 DEFAULT_CHAT_CHANNEL_ID = "tui"
 
 
+# B43-NF-W6-1: continuation directive injected when the top-level chat
+# router LLM produces an empty stop after a tool round (= same attractor
+# as the plan-step case PR #265 closed at the planner.py sub_loop
+# construction sites). The chat router runs the full user-facing
+# conversation, so the directive references "the user's question" rather
+# than the plan-step's "step report". RouterLoop reads
+# ``REYN_EMPTY_STOP_RETRY=1`` from the environment at runtime; this
+# constant is plumbed in unconditionally but only kicks in when the env
+# var is set (= same opt-in mechanic as PR #265).
+#
+# Trace-patch-replay verified (= B43 W6-S2 top-level router post-plan
+# narration call): baseline N=10 = 6/10 EMPTY_STOP (60% trigger rate),
+# patched N=10 = 0/10 empty + 10/10 substantive (169-1485 chars).
+# Cross-provider documented attractor — Anthropic ``handling-stop-
+# reasons`` docs explicitly recommend continuation prompts "as a last
+# resort". Lead-coder review heuristic applied: this wires the third
+# (and last) RouterLoop construction site — planner.py has the other
+# two for plan-step sub_loops.
+_CHAT_ROUTER_EMPTY_STOP_RETRY_DIRECTIVE = (
+    "Now write your reply to the user. Summarise the relevant content "
+    "from the tool result above and address the user's question. Do "
+    "not call another tool. Write the reply text now."
+)
+
+
 @dataclass(frozen=True)
 class PendingOpView:
     """Read-only view of a pending / stalled operation surfaced across channels
@@ -3308,6 +3333,10 @@ class ChatSession:
         loop = RouterLoop(
             host=self._router_host, chain_id=chain_id, max_iterations=5,
             budget=self._budget_tracker,
+            # B43-NF-W6-1: chat router empty-stop retry. Same opt-in
+            # mechanic as PR #265's plan-step wiring — directive plumbed
+            # unconditionally, runtime gated by ``REYN_EMPTY_STOP_RETRY=1``.
+            empty_stop_retry_directive=_CHAT_ROUTER_EMPTY_STOP_RETRY_DIRECTIVE,
         )
         history = self._build_history_for_router()
         router_usage = await loop.run(user_text=user_text, history=history)
