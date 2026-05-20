@@ -280,6 +280,10 @@ class ConversationView(Widget):
         # (n, total) tuple. Used to suppress duplicate "↑ turn N / M"
         # log lines when the user mashes Ctrl+P/N within the same anchor.
         self._last_turn_flash: tuple[int, int] | None = None
+        # Wave-3 FS2: separate dedup state for the boundary hint
+        # (``↑ beginning of history`` / ``↓ end of history``) so rapid
+        # Ctrl+P/N at the edge doesn't spam the log. Reset on clear().
+        self._last_boundary_flash: str | None = None
         # Empty-state (B5)
         self._has_first_message = False
         # Turn navigation (B4) — absolute line positions for each turn header.
@@ -1103,6 +1107,7 @@ class ConversationView(Widget):
                 if a < cur_y - 1:  # strictly above current view
                     target = a
                     break
+            hit_boundary = target is None
             if target is None:
                 target = anchors[0]
         else:
@@ -1111,8 +1116,20 @@ class ConversationView(Widget):
                 if a > cur_y + 1:  # strictly below current view
                     target = a
                     break
+            hit_boundary = target is None
             if target is None:
                 target = anchors[-1]
+        # Wave-3 FS2: when Ctrl+P/N hits the boundary AND the cursor was
+        # already there, the scroll is a no-op AND the
+        # ``_flash_turn_position`` dedup suppresses the turn-number
+        # flash — silent. Surface a brief "↑ beginning / ↓ end of
+        # history" cue so the user knows the key registered, not
+        # that nav broke. ``abs(cur_y - target) <= 1`` matches the
+        # same 1-line tolerance the scan loop above uses for "strictly
+        # above / below".
+        if hit_boundary and abs(cur_y - target) <= 1:
+            self._flash_boundary_hint("start" if delta < 0 else "end")
+            return
         try:
             log.scroll_to(y=target, animate=False)
         except Exception:
@@ -1130,6 +1147,47 @@ class ConversationView(Widget):
             return
         self._flash_turn_position(idx + 1, len(anchors))
 
+    def _flash_boundary_hint(self, direction: str) -> None:
+        """Surface a ``↑ beginning of history`` / ``↓ end of history`` cue.
+
+        Wave-3 FS2: separate from ``_flash_turn_position`` so the
+        boundary cue isn't deduped by the (idx, total) tuple that
+        stays unchanged when the user mashes Ctrl+P at the first
+        turn. Has its own dedup state so rapid repeats at the same
+        boundary don't spam — but the moment the user navigates
+        inward (= turn-flash fires), the dedup clears so re-hitting
+        the boundary later flashes again.
+
+        Writes BOTH to the conv log (= permanent breadcrumb) AND to
+        StickyStatus (= immediately visible regardless of scroll
+        position). The log line alone wasn't enough because the
+        end-boundary case fires when the user is scrolled to the
+        last anchor — the new line at log-bottom is below the
+        viewport and invisible. This is the same family of issue
+        flagged by FS1 (turn N/M flash visibility); the sticky
+        surface here gives FS2 immediate readability without
+        depending on the FS1 follow-up.
+        """
+        if direction == "start":
+            text = "↑ beginning of history"
+        else:
+            text = "↓ end of history"
+        # Dedup against the previous boundary direction. Mashing
+        # Ctrl+P at the start just shows the hint once.
+        if self._last_boundary_flash == direction:
+            return
+        self._last_boundary_flash = direction
+        # Clear the turn-flash dedup so a subsequent in-bounds
+        # Ctrl+P/N re-flashes the turn number cleanly.
+        self._last_turn_flash = None
+        # Permanent breadcrumb in the log (= readable when scrolled
+        # to bottom; matches the existing turn-flash convention).
+        self._write_log(Text(f"  {text}", style="dim italic #666666"))
+        # Immediate sticky cue — visible regardless of scroll
+        # position. ``kind="general"`` reads as advisory (= grey
+        # accent) without preempting an active ``⟳ thinking…``.
+        self.show_status(text, kind="general")
+
     def _flash_turn_position(self, n: int, total: int) -> None:
         """Write a dim ``↑ turn N / M`` line to the conv log.
 
@@ -1140,6 +1198,10 @@ class ConversationView(Widget):
         if self._last_turn_flash == (n, total):
             return
         self._last_turn_flash = (n, total)
+        # Wave-3 FS2: any successful in-bounds move clears the boundary
+        # dedup so the next time the user hits the edge they get the
+        # hint fresh (= "user navigated away from the boundary").
+        self._last_boundary_flash = None
         self._write_log(Text(f"  ↑ turn {n} / {total}", style="dim italic #666666"))
 
     def clear(self) -> None:
@@ -1167,6 +1229,7 @@ class ConversationView(Widget):
         self._last_speaker_at = 0.0
         self._last_header_date = ""
         self._last_turn_flash = None
+        self._last_boundary_flash = None
         self._turn_anchors.clear()
         self._trim_warned = False
         self._last_long_reply = None
