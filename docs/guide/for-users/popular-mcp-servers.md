@@ -1,12 +1,16 @@
 # Popular local MCP servers — smoke-test procedure
 
-A copy-paste-runnable procedure for verifying four popular MCP servers
-with Reyn locally:
+A copy-paste-runnable procedure for verifying popular MCP servers with
+Reyn locally. Eight servers verified end-to-end (4 npm + 4 pypi/uvx):
 
 - [filesystem](#filesystem) — sandboxed file read/write
 - [memory](#memory) — knowledge-graph KV (persists across calls)
 - [time](#time) — timezone-aware current time / conversion
 - [everything](#everything) — demo kitchen-sink covering protocol primitives
+- [sqlite](#sqlite) — local DB queries (read + write + schema)
+- [git](#git) — local repo operations (log / status / diff / branch)
+- [sequential-thinking](#sequential-thinking) — chain-of-thought scratchpad
+- [fetch](#fetch) — HTTP fetch with markdown extraction
 
 Each section captures the install command, the workarounds needed
 (see [Known issues](#known-issues) at the bottom), and a minimal
@@ -235,6 +239,224 @@ Expected: `content[0].text` carries the computed sum / echoed message.
 `trigger-long-running-operation` is especially useful for testing
 [PR #266](https://github.com/tya5/reyn/pull/266)'s MCP progress
 callback wire — it emits `notifications/progress` during execution.
+
+---
+
+## sqlite
+
+Local SQLite database via `mcp-server-sqlite` (Python / uvx). Supports
+read (SELECT), write (INSERT / UPDATE / DELETE), schema (CREATE), and
+table introspection.
+
+### Prerequisite
+
+```bash
+brew install uv     # if not already installed
+```
+
+### Install
+
+```bash
+reyn mcp install --source pypi:mcp-server-sqlite --non-interactive
+```
+
+Same workarounds (#318 + #319); additionally pass the `--db-path` arg:
+
+```python
+python - <<'PY'
+import yaml
+with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
+fs = cfg["mcp"]["servers"].pop("mcp-server-sqlite")
+fs["type"] = "stdio"
+fs["args"] = fs.get("args", []) + ["--db-path", "./.mcp-sandbox/test.db"]
+cfg["mcp"]["servers"]["sqlite"] = {"type": fs.pop("type"), **fs}
+with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
+PY
+```
+
+### Smoke
+
+```bash
+mkdir -p .mcp-sandbox && rm -f .mcp-sandbox/test.db
+python scripts/mcp_smoke.py sqlite create_table \
+    '{"query": "CREATE TABLE smoke (id INTEGER PRIMARY KEY, msg TEXT)"}'
+python scripts/mcp_smoke.py sqlite write_query \
+    '{"query": "INSERT INTO smoke (msg) VALUES (\"hello from sqlite mcp\")"}'
+python scripts/mcp_smoke.py sqlite read_query \
+    '{"query": "SELECT * FROM smoke"}'
+```
+
+Expected: third call returns `[{'id': 1, 'msg': 'hello from sqlite mcp'}]`.
+
+### Tools surfaced
+
+`read_query` / `write_query` / `create_table` / `list_tables` /
+`describe_table` / `append_insight`.
+
+---
+
+## git
+
+Local git repo operations via `mcp-server-git` (Python / uvx). Useful
+when an agent needs to inspect commit history / branches / diffs
+during a development workflow.
+
+### Install
+
+```bash
+reyn mcp install --source pypi:mcp-server-git --non-interactive
+```
+
+Same workarounds (#318 + #319):
+
+```python
+python - <<'PY'
+import yaml
+with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
+fs = cfg["mcp"]["servers"].pop("mcp-server-git")
+fs["type"] = "stdio"
+cfg["mcp"]["servers"]["git"] = {"type": fs.pop("type"), **fs}
+with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
+PY
+```
+
+### Smoke
+
+```bash
+# Recent commits in current repo
+python scripts/mcp_smoke.py git git_log \
+    "{\"repo_path\": \"$PWD\", \"max_count\": 3}"
+
+# Local branches
+python scripts/mcp_smoke.py git git_branch \
+    "{\"repo_path\": \"$PWD\", \"branch_type\": \"local\"}"
+```
+
+Expected: `git_log` returns "Commit history:\n..." with 3 most recent
+entries; `git_branch` lists local branches with the current one marked.
+
+### Tools surfaced
+
+`git_status` / `git_diff_unstaged` / `git_diff_staged` / `git_diff` /
+`git_commit` / `git_add` / `git_reset` / `git_log` /
+`git_create_branch` / `git_checkout` / `git_show` / `git_branch`.
+
+> Note: the git server uses `Repo(path)` so it works on any local
+> repo, not just CWD. Pass `repo_path` as an absolute path for
+> clarity.
+
+---
+
+## sequential-thinking
+
+A meta tool for guided chain-of-thought reasoning. Useful as a demo
+of MCP servers that wrap *workflow patterns* rather than I/O.
+
+### Install
+
+```bash
+reyn mcp install --source npm:@modelcontextprotocol/server-sequential-thinking \
+    --non-interactive
+```
+
+Same workarounds (#318 + #319):
+
+```python
+python - <<'PY'
+import yaml
+with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
+fs = cfg["mcp"]["servers"].pop("server-sequential-thinking")
+fs["type"] = "stdio"
+cfg["mcp"]["servers"]["sequential_thinking"] = {"type": fs.pop("type"), **fs}
+with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
+PY
+```
+
+### Smoke
+
+```bash
+python scripts/mcp_smoke.py sequential_thinking sequentialthinking '{
+  "thought": "Verify the smoke harness works for stateful tools.",
+  "thoughtNumber": 1,
+  "totalThoughts": 1,
+  "nextThoughtNeeded": false
+}'
+```
+
+Expected: `structuredContent` carries
+`{"thoughtNumber": 1, "totalThoughts": 1, "nextThoughtNeeded": false,
+"branches": [], "thoughtHistoryLength": 1}`.
+
+### Tools surfaced
+
+`sequentialthinking` (the single tool — multiple invocations build up
+a thought chain inside the server's memory).
+
+---
+
+## fetch
+
+HTTP fetch with markdown extraction via `mcp-server-fetch` (Anthropic
+official, Python / uvx). Useful for agents that need to read web pages
+as plain text.
+
+### Install
+
+```bash
+reyn mcp install --source pypi:mcp-server-fetch --non-interactive
+```
+
+Same workarounds (#318 + #319):
+
+```python
+python - <<'PY'
+import yaml
+with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
+fs = cfg["mcp"]["servers"].pop("mcp-server-fetch")
+fs["type"] = "stdio"
+cfg["mcp"]["servers"]["fetch"] = {"type": fs.pop("type"), **fs}
+with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
+PY
+```
+
+### Smoke
+
+```bash
+python scripts/mcp_smoke.py fetch fetch \
+    '{"url": "https://example.com", "max_length": 500}'
+```
+
+Expected: `content[0].text` contains "Contents of https://example.com/:\n
+This domain is for use in documentation examples...".
+
+> First invocation may print a benign uvx-init stderr line that
+> looks like a `pydantic_core.ValidationError` — this is uvx's
+> install / dep-check output bleeding into the smoke runner's
+> error stream. The tool call itself succeeds (= the `content`
+> block is returned correctly). It does not recur on subsequent
+> invocations once uvx has cached the package.
+
+### Tools surfaced
+
+`fetch` (the single tool — supports `url` / `max_length` /
+`start_index` / `raw=true|false` args).
+
+### Comparison vs Reyn's built-in `web_fetch` op
+
+Reyn already ships a `web_fetch` Control IR op
+(`src/reyn/op_runtime/web_fetch.py`). Differences:
+
+| | `web_fetch` op | `fetch` MCP server |
+|---|---|---|
+| Transport | In-process (httpx) | stdio subprocess (uvx) |
+| Latency | ~50ms cold | ~200ms cold (subprocess spawn) |
+| Markdown extraction | Reyn's own | trafilatura (= upstream choice) |
+| Pagination | `max_length` only | `max_length` + `start_index` |
+| Permission gate | `web_fetch` | `mcp.fetch` |
+
+For typical skills, the built-in `web_fetch` op is cheaper. Use the
+MCP `fetch` server when you specifically want trafilatura's extraction
+quality or `start_index` pagination.
 
 ---
 
