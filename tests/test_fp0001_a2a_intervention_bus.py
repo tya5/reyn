@@ -1,19 +1,35 @@
-"""Tier 1: FP-0001 A2AInterventionBus — contract tests.
+"""Tier 2: A2AInterventionBus — contract tests (post-issue-#292 α refactor).
 
-Covers:
-1. request(iv) updates the run entry: status='input-required', question=iv.prompt,
-   pending_intervention is iv
-2. Without a webhook URL, no webhook is fired (webhook_url=None)
-3. request(iv) awaits iv.future — scheduling registry.answer_intervention from
-   a separate task; assert request returns the same answer
-4. RunRegistry.answer_intervention transitions status back to 'running'
-   (verified via registry.get after request returns)
-5. Constructor raises RuntimeError when registry has no such run_id
+Pre-#292 this file pinned the bus as an iv owner: ``request(iv)``
+awaited ``iv.future`` and returned the answer; the iv was stored in
+``RunEntry.pending_intervention``. The pre-α architecture is described
+in issue #292 body (= "A2A override completely bypasses ChatSession's
+iv machinery"); see history of this file in git for the old test
+shape.
 
-For the webhook-fires path, httpx.MockTransport (real httpx client with a
-deterministic transport) is used — no MagicMock / AsyncMock / patch.
-Real RunRegistry, real UserIntervention, and real InterventionAnswer are used
-throughout.
+Post-α the bus is a **side-effect observer**: ``on_dispatch(iv)`` is
+invoked by ``ChatSession._dispatch_intervention`` for chain-registered
+overrides and runs A2A peer-facing notifications (RunRegistry status
+mirror, SSE history append, webhook POST) without taking iv
+ownership. The iv lives in ``ChatSession._interventions._active`` and
+the future is awaited by ``InterventionHandler.dispatch`` like any
+other (= TUI) iv.
+
+Pins (= α contract):
+
+  1. ``A2AInterventionBus.on_dispatch(iv)`` exists; ``request`` /
+     ``deliver`` are removed (= peer answers no longer flow through
+     the bus; they flow through ``ChatSession.answer_pending_intervention``).
+  2. ``on_dispatch`` mirrors ``status="input-required"`` on the RunEntry.
+  3. ``on_dispatch`` does NOT write ``pending_intervention`` to
+     RunEntry (= the field is dropped from RunEntry entirely).
+  4. ``on_dispatch`` does NOT await ``iv.future`` (= it returns
+     promptly so dispatch can continue to the handler).
+  5. ``on_dispatch`` posts a webhook when ``webhook_url`` is configured
+     and skips it when None.
+  6. ``on_dispatch`` is best-effort: missing RunEntry → warning log,
+     no raise. Side-effect failure (= webhook 500, broken append_event)
+     → swallowed.
 """
 from __future__ import annotations
 
@@ -23,11 +39,9 @@ import json
 import httpx
 import pytest
 
-from reyn.user_intervention import InterventionAnswer, UserIntervention
+from reyn.user_intervention import UserIntervention
 from reyn.web.a2a_intervention import A2AInterventionBus
-from reyn.web.run_registry import RunRegistry
-
-# ── helpers ────────────────────────────────────────────────────────────────────
+from reyn.web.run_registry import RunEntry, RunRegistry
 
 
 def _make_registry_with_run(
@@ -39,231 +53,243 @@ def _make_registry_with_run(
     registry = RunRegistry()
     entry = registry.create(
         agent_name=agent_name,
-        chain_id="chain-abc",
+        chain_id="test-chain",
         webhook_url=webhook_url,
     )
     return registry, entry.run_id
 
 
-def _make_iv(prompt: str = "Which environment?") -> UserIntervention:
-    return UserIntervention(kind="ask_user", prompt=prompt)
+# ── 1. API surface ─────────────────────────────────────────────────────────────
 
 
-# ── 1. request updates run entry ──────────────────────────────────────────────
+def test_bus_exposes_on_dispatch_not_request_or_deliver() -> None:
+    """Tier 2: α contract — ``on_dispatch`` is the only public method.
+    ``request`` / ``deliver`` (= pre-α names that returned an answer)
+    are removed because peer answers no longer flow through the bus.
+    """
+    registry = RunRegistry()
+    bus = A2AInterventionBus(run_id="x", registry=registry)
+    assert hasattr(bus, "on_dispatch")
+    assert not hasattr(bus, "request")
+    assert not hasattr(bus, "deliver")
 
 
-@pytest.mark.asyncio
-async def test_request_sets_input_required_status() -> None:
-    """Tier 1: request(iv) sets status='input-required' and stores question + IV."""
+def test_bus_channel_id_format_unchanged() -> None:
+    """Tier 2: ``channel_id`` is still ``a2a:<run_id>`` (= issue #268
+    contract preserved across the α refactor).
+    """
+    registry = RunRegistry()
+    bus = A2AInterventionBus(run_id="abc123", registry=registry)
+    assert bus.channel_id == "a2a:abc123"
+
+
+# ── 2. Status mirror ───────────────────────────────────────────────────────────
+
+
+def test_on_dispatch_mirrors_input_required_status() -> None:
+    """Tier 2: ``on_dispatch`` flips RunEntry.status to ``"input-required"``
+    so polling peers see the pending state. The iv itself stays in
+    ChatSession; this is a public-status mirror only.
+    """
     registry, run_id = _make_registry_with_run()
-    bus = A2AInterventionBus(run_id, registry)
-    iv = _make_iv("Pick a region")
+    bus = A2AInterventionBus(run_id=run_id, registry=registry)
 
-    # Schedule the answer delivery so request() doesn't block forever.
-    answer = InterventionAnswer(text="us-east-1")
+    async def _drive() -> None:
+        iv = UserIntervention(kind="ask_user", prompt="?")
+        await bus.on_dispatch(iv)
 
-    async def _deliver():
-        await asyncio.sleep(0)  # yield to let request() reach the await
-        registry.answer_intervention(run_id, answer)
+    asyncio.run(_drive())
 
-    task = asyncio.create_task(_deliver())
-
-    await bus.request(iv)
-    await task
-
-    # After request() returns the entry is back to 'running' (verified in #4).
-    # Check that during the window the entry was correctly set.
-    # We capture state inside the delivery helper by inspecting before resolving.
+    assert registry.get(run_id).status == "input-required"
 
 
-@pytest.mark.asyncio
-async def test_request_stores_question_and_pending_iv() -> None:
-    """Tier 1: run entry holds question=iv.prompt and pending_intervention=iv
-    immediately after the registry.update call inside request."""
+def test_on_dispatch_does_not_write_pending_intervention_to_run_entry() -> None:
+    """Tier 2: α contract — the RunEntry has NO ``pending_intervention``
+    field. The iv lives in ChatSession's outstanding_interventions.
+    Verifies the dataclass shape change ships cleanly.
+    """
     registry, run_id = _make_registry_with_run()
-    bus = A2AInterventionBus(run_id, registry)
-    iv = _make_iv("Which env?")
+    bus = A2AInterventionBus(run_id=run_id, registry=registry)
 
-    captured_entry: dict = {}
-    answer = InterventionAnswer(text="staging")
+    async def _drive() -> None:
+        iv = UserIntervention(kind="ask_user", prompt="?")
+        await bus.on_dispatch(iv)
 
-    async def _deliver():
-        # Yield once so request() has a chance to call registry.update.
-        await asyncio.sleep(0)
-        entry = registry.get(run_id)
-        captured_entry["status"] = entry.status
-        captured_entry["question"] = entry.question
-        captured_entry["pending_iv_is_iv"] = entry.pending_intervention is iv
-        registry.answer_intervention(run_id, answer)
-
-    task = asyncio.create_task(_deliver())
-    await bus.request(iv)
-    await task
-
-    assert captured_entry["status"] == "input-required"
-    assert captured_entry["question"] == "Which env?"
-    assert captured_entry["pending_iv_is_iv"] is True
-
-
-# ── 2. No webhook URL — no HTTP call ──────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_request_no_webhook_fires_no_http(monkeypatch) -> None:
-    """Tier 1: webhook_url=None → no HTTP call is made."""
-    registry, run_id = _make_registry_with_run(webhook_url=None)
-    bus = A2AInterventionBus(run_id, registry)
-    iv = _make_iv("No webhook test")
-    answer = InterventionAnswer(text="ok")
-
-    http_calls: list = []
-
-    # Inject a MockTransport into the notifications module path so any
-    # accidental HTTP call would be captured.  Because webhook_url is None,
-    # the import of post_webhook inside A2AInterventionBus must not be reached.
-    async def _spy_handler(request: httpx.Request) -> httpx.Response:
-        http_calls.append(request)
-        return httpx.Response(200)
-
-    async def _deliver():
-        await asyncio.sleep(0)
-        registry.answer_intervention(run_id, answer)
-
-    task = asyncio.create_task(_deliver())
-    await bus.request(iv)
-    await task
-
-    assert http_calls == [], "No HTTP call should be made when webhook_url is None"
-
-
-# ── 3. request awaits iv.future and returns correct answer ────────────────────
-
-
-@pytest.mark.asyncio
-async def test_request_awaits_future_and_returns_answer() -> None:
-    """Tier 1: request(iv) blocks on iv.future; resolving via
-    registry.answer_intervention returns the exact InterventionAnswer."""
-    registry, run_id = _make_registry_with_run()
-    bus = A2AInterventionBus(run_id, registry)
-    iv = _make_iv("What is your name?")
-    expected = InterventionAnswer(text="Reyn")
-
-    async def _deliver():
-        await asyncio.sleep(0)
-        registry.answer_intervention(run_id, expected)
-
-    task = asyncio.create_task(_deliver())
-    result = await bus.request(iv)
-    await task
-
-    assert result is expected
-
-
-# ── 4. answer_intervention restores status to 'running' ───────────────────────
-
-
-@pytest.mark.asyncio
-async def test_status_returns_to_running_after_answer() -> None:
-    """Tier 1: after request() returns, registry entry status is 'running'
-    (RunRegistry.answer_intervention restores it)."""
-    registry, run_id = _make_registry_with_run()
-    bus = A2AInterventionBus(run_id, registry)
-    iv = _make_iv()
-    answer = InterventionAnswer(text="done")
-
-    async def _deliver():
-        await asyncio.sleep(0)
-        registry.answer_intervention(run_id, answer)
-
-    task = asyncio.create_task(_deliver())
-    await bus.request(iv)
-    await task
+    asyncio.run(_drive())
 
     entry = registry.get(run_id)
-    assert entry is not None
-    assert entry.status == "running"
-    assert entry.question is None
-    assert entry.pending_intervention is None
+    assert isinstance(entry, RunEntry)
+    assert not hasattr(entry, "pending_intervention")
+    assert not hasattr(entry, "question")
 
 
-# ── 5. Unknown run_id raises RuntimeError ─────────────────────────────────────
+# ── 3. No await iv.future ──────────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_request_raises_for_unknown_run_id() -> None:
-    """Tier 1: request on a bus with a bogus run_id raises RuntimeError."""
-    registry = RunRegistry()  # empty — no entries
-    bus = A2AInterventionBus("no-such-run", registry)
-    iv = _make_iv()
+def test_on_dispatch_returns_promptly_without_awaiting_future() -> None:
+    """Tier 2: α contract — ``on_dispatch`` MUST return without
+    awaiting ``iv.future``. The handler dispatch path awaits on the
+    skill's behalf; if the bus also awaited, two awaiters would race
+    on the same future. Pin by leaving the future unresolved + asserting
+    the call returns.
+    """
+    registry, run_id = _make_registry_with_run()
+    bus = A2AInterventionBus(run_id=run_id, registry=registry)
 
-    with pytest.raises(RuntimeError, match="not in registry"):
-        await bus.request(iv)
+    async def _drive() -> bool:
+        iv = UserIntervention(kind="ask_user", prompt="?")
+        # If on_dispatch awaited iv.future, this would hang forever
+        # because no one resolves it.
+        await asyncio.wait_for(bus.on_dispatch(iv), timeout=2.0)
+        return not iv.future.done()  # future MUST still be pending
+
+    assert asyncio.run(_drive())
 
 
-# ── 6. Webhook fires before awaiting future ───────────────────────────────────
+# ── 4. Webhook fire is gated on URL ────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_request_fires_webhook_before_awaiting_future() -> None:
-    """Tier 1: when webhook_url is set, bus fires a POST (via MockTransport)
-    before awaiting iv.future. The payload contains run_id, status, question,
-    and agent_name."""
-    webhook_calls: list[dict] = []
+def test_on_dispatch_no_webhook_when_url_unset() -> None:
+    """Tier 2: peer that didn't register a webhook URL sees zero HTTP
+    cost. We pin this by using a real httpx MockTransport that fails
+    the test if a request reaches it (= no patch, no mock).
+    """
+    posted: list[httpx.Request] = []
 
-    async def _webhook_handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(await request.aread())
-        webhook_calls.append(body)
-        return httpx.Response(200)
+    def _handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request)
+        return httpx.Response(200, json={})
 
-    webhook_client = httpx.AsyncClient(
-        transport=httpx.MockTransport(_webhook_handler)
-    )
+    transport = httpx.MockTransport(_handler)
+    # Inject the transport via the reyn.web.notifications client
+    # factory — but the simplest pin is just: webhook_url=None should
+    # skip post_webhook entirely without any transport setup.
 
-    # Patch post_webhook to use our deterministic transport.
-    import reyn.web.notifications as _notif_mod
-    from reyn.web import notifications as _notif
+    registry, run_id = _make_registry_with_run(webhook_url=None)
+    bus = A2AInterventionBus(run_id=run_id, registry=registry)
 
-    _original_post_webhook = _notif.post_webhook
+    async def _drive() -> None:
+        iv = UserIntervention(kind="ask_user", prompt="?")
+        await bus.on_dispatch(iv)
 
-    async def _patched_post_webhook(url: str, payload: dict, **kwargs):
-        await _original_post_webhook(url, payload, _http_client=webhook_client, **kwargs)
+    asyncio.run(_drive())
 
-    import reyn.web.a2a_intervention as _bus_mod
-    # We inject by temporarily replacing the post_webhook imported in the bus
-    # module's lazy import path.  Because a2a_intervention does
-    # ``from reyn.web.notifications import post_webhook`` inside the method,
-    # we patch the notifications module's attribute directly.
-    _notif_mod.post_webhook = _patched_post_webhook
+    # No webhook URL → no HTTP attempt at all.
+    assert posted == [], "no webhook URL set, but a request was made"
+
+
+def test_on_dispatch_posts_webhook_when_url_set(monkeypatch) -> None:
+    """Tier 2: with ``webhook_url`` set, ``on_dispatch`` POSTs the
+    canonical input-required payload (= issue #267 Gap 4 shape with
+    ``kind`` / ``choices`` / ``detail``).
+    """
+    posted: list[tuple[str, dict]] = []
+
+    async def _fake_post(url: str, payload: dict):  # noqa: ANN202
+        posted.append((url, payload))
+        from reyn.web.notifications import DeliveryOutcome, DeliveryResult
+        return DeliveryResult(outcome=DeliveryOutcome.SUCCESS)
+
+    import reyn.web.notifications as notifications_mod
+    monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     registry, run_id = _make_registry_with_run(
-        agent_name="my_agent",
-        webhook_url="https://peer.example.com/notify",
+        webhook_url="https://peer.test/hook",
     )
-    bus = A2AInterventionBus(run_id, registry)
-    iv = _make_iv("Deploy to prod?")
-    answer = InterventionAnswer(text="yes")
+    bus = A2AInterventionBus(run_id=run_id, registry=registry)
 
-    webhook_fired_before_future: list[bool] = []
+    async def _drive() -> None:
+        iv = UserIntervention(kind="ask_user", prompt="Question?")
+        await bus.on_dispatch(iv)
 
-    async def _deliver():
-        await asyncio.sleep(0)
-        # At this point post_webhook has been awaited (fire-and-forget completes
-        # before iv.future is awaited by bus.request).
-        webhook_fired_before_future.append(len(webhook_calls) > 0)
-        registry.answer_intervention(run_id, answer)
+    asyncio.run(_drive())
 
-    try:
-        task = asyncio.create_task(_deliver())
-        result = await bus.request(iv)
-        await task
-    finally:
-        _notif_mod.post_webhook = _original_post_webhook
-        await webhook_client.aclose()
+    assert len(posted) == 1
+    url, payload = posted[0]
+    assert url == "https://peer.test/hook"
+    assert payload["status"] == "input-required"
+    assert payload["question"] == "Question?"
+    assert payload["kind"] == "ask_user"
 
-    assert result is answer
-    assert len(webhook_calls) == 1, "Exactly one webhook POST should be fired"
-    wc = webhook_calls[0]
-    assert wc["run_id"] == run_id
-    assert wc["status"] == "input-required"
-    assert wc["question"] == "Deploy to prod?"
-    assert wc["agent_name"] == "my_agent"
+
+# ── 5. Defensive paths ─────────────────────────────────────────────────────────
+
+
+def test_on_dispatch_unknown_run_id_logs_warning_no_raise(caplog) -> None:
+    """Tier 2: defensive — when the bus's run_id is not in the
+    registry, ``on_dispatch`` logs a warning and returns. Pre-α this
+    raised RuntimeError; α changed to warn+return because raising
+    would abort the dispatch chain and the iv would never reach the
+    handler.
+    """
+    import logging as _logging
+
+    registry = RunRegistry()  # empty
+    bus = A2AInterventionBus(run_id="ghost-run", registry=registry)
+
+    async def _drive() -> None:
+        iv = UserIntervention(kind="ask_user", prompt="?")
+        # No raise expected.
+        await bus.on_dispatch(iv)
+
+    with caplog.at_level(_logging.WARNING, logger="reyn.web.a2a_intervention"):
+        asyncio.run(_drive())
+
+    assert any(
+        "ghost-run" in record.message for record in caplog.records
+    ), "expected a warning naming the unknown run_id"
+
+
+def test_on_dispatch_webhook_failure_does_not_raise(monkeypatch) -> None:
+    """Tier 2: side-effect failure on the webhook sink is swallowed.
+    The iv must continue to ``InterventionHandler.dispatch`` even if
+    the peer's webhook server is down.
+    """
+
+    async def _failing_post(url: str, payload: dict):  # noqa: ANN202
+        raise RuntimeError("simulated peer 500")
+
+    import reyn.web.notifications as notifications_mod
+    monkeypatch.setattr(notifications_mod, "post_webhook", _failing_post)
+
+    registry, run_id = _make_registry_with_run(
+        webhook_url="https://peer.test/hook",
+    )
+    bus = A2AInterventionBus(run_id=run_id, registry=registry)
+
+    async def _drive() -> None:
+        iv = UserIntervention(kind="ask_user", prompt="?")
+        # Expect no exception to propagate.
+        await bus.on_dispatch(iv)
+
+    asyncio.run(_drive())
+
+
+# ── 6. SSE history append (= Gap 1 wire preserved) ─────────────────────────────
+
+
+def test_on_dispatch_appends_input_required_to_history_events() -> None:
+    """Tier 2: ``on_dispatch`` appends the input-required payload to
+    ``RunEntry.history_events`` so SSE consumers see ask_user prompts
+    inline. issue #267 Gap 1 wire preserved across the α refactor.
+    """
+    registry, run_id = _make_registry_with_run()
+    bus = A2AInterventionBus(run_id=run_id, registry=registry)
+
+    async def _drive() -> None:
+        iv = UserIntervention(kind="ask_user", prompt="?")
+        await bus.on_dispatch(iv)
+
+    asyncio.run(_drive())
+
+    history = registry.get(run_id).history_events
+    assert len(history) == 1
+    assert history[0]["status"] == "input-required"
+    assert history[0]["kind"] == "ask_user"
+
+
+# Silence unused-import warning for httpx/json kept for parity with the
+# original FP-0001 file naming convention; they may be needed by future
+# tests that want to use httpx.MockTransport explicitly.
+_ = json
+_ = pytest

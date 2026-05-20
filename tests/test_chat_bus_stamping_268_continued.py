@@ -319,27 +319,31 @@ def test_chat_bus_skips_stamping_when_chain_override_active(tmp_path: Path) -> N
     ``origin_channel_id=None`` slot to stamp ``a2a:<run_id>`` instead.
 
     Critical correctness contract: WITHOUT this skip, A2A-spawned skill
-    ivs would carry ``origin_channel_id="tui"`` (= bus default), then
-    in _dispatch_intervention the override path runs FIRST (= delivers
-    to A2A peer correctly), but the iv body that the peer sees has
-    "tui" as the origin — a wrong provenance claim. The peer's ack /
+    ivs would carry ``origin_channel_id="tui"`` (= bus default) and the
+    A2A observer's ``on_dispatch`` would see a pre-stamped iv → could
+    not assign the correct ``a2a:<run_id>`` origin → peer's ack /
     observe / claim machinery (= future Phase) would route based on
-    that wrong origin.
+    the wrong origin.
+
+    issue #292 (α): the override is a side-effect observer with
+    ``on_dispatch`` (= not ``request``). The skip-stamping logic is
+    unchanged: ChatInterventionBus.deliver inspects whether an
+    override is registered for the chain and skips its stamp if so,
+    leaving the slot clean for the observer.
     """
     session = ChatSession(agent_name="t")
+    session.register_intervention_listener("test")
 
-    # Simulate A2A-style override registration for chain "chain-A2A".
-    class _CapturingOverride:
+    # Simulate A2A-style override observer for chain "chain-A2A".
+    class _CapturingObserver:
         def __init__(self) -> None:
             self.received: list[UserIntervention] = []
 
-        async def request(self, iv: UserIntervention) -> InterventionAnswer:
+        async def on_dispatch(self, iv: UserIntervention) -> None:
             self.received.append(iv)
-            return InterventionAnswer(text="from-override")
 
-    override = _CapturingOverride()
+    override = _CapturingObserver()
     session.register_intervention_override("chain-A2A", override)
-    # Wire run_id → chain mapping so _dispatch_intervention can resolve.
     session.running_skills_chain["run-A2A"] = "chain-A2A"
 
     bus = ChatInterventionBus(
@@ -349,18 +353,26 @@ def test_chat_bus_skips_stamping_when_chain_override_active(tmp_path: Path) -> N
 
     async def _drive() -> str | None:
         iv = UserIntervention(kind="ask_user", prompt="?")
-        answer = await bus.deliver(iv)
-        assert answer.text == "from-override"
+
+        async def _resolve() -> None:
+            await asyncio.sleep(0.05)
+            iv.future.set_result(InterventionAnswer(text="from-handler"))
+
+        resolver = asyncio.create_task(_resolve())
+        try:
+            await bus.deliver(iv)
+        finally:
+            resolver.cancel()
         return iv.origin_channel_id
 
     stamped = asyncio.run(_drive())
     assert stamped is None, (
         f"ChatInterventionBus must NOT stamp origin_channel_id when "
-        f"chain override is active (got {stamped!r}); leave the slot "
-        f"clean so A2AInterventionBus.deliver downstream can stamp "
-        f"the correct a2a:<run_id> value."
+        f"a chain override observer is active (got {stamped!r}); the "
+        f"slot stays clean so the A2A observer can stamp "
+        f"a2a:<run_id> downstream."
     )
-    # And the override actually saw the iv.
+    # Observer was notified as a side effect (= α decorator semantics).
     assert len(override.received) == 1
 
 

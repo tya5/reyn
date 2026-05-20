@@ -104,14 +104,20 @@ def test_chat_intervention_bus_satisfies_both_protocols(tmp_path: Path) -> None:
     assert isinstance(bus, UserChannel)
 
 
-def test_a2a_intervention_bus_satisfies_both_protocols() -> None:
-    """Tier 2: ``A2AInterventionBus`` satisfies both Protocols. Constructor
-    takes a registry handle which we pass as ``None`` here since we
-    don't invoke ``deliver`` / ``request`` in this protocol-only test.
+def test_a2a_intervention_bus_exposes_on_dispatch_post_alpha() -> None:
+    """Tier 2 (= issue #292 α): ``A2AInterventionBus`` is a side-effect
+    observer post-α; it no longer satisfies ``RequestBus`` / ``UserChannel``
+    (= those required ``request`` / ``deliver`` returning an answer).
+    The new public surface is ``on_dispatch(iv) -> None``.
     """
     bus = A2AInterventionBus(run_id="r1", registry=None)  # type: ignore[arg-type]
-    assert isinstance(bus, RequestBus)
-    assert isinstance(bus, UserChannel)
+    assert hasattr(bus, "on_dispatch")
+    assert not hasattr(bus, "request")
+    assert not hasattr(bus, "deliver")
+    # Not a RequestBus/UserChannel anymore — pre-α it was; α reclassified
+    # the bus into a different role (observer) outside those Protocols.
+    assert not isinstance(bus, RequestBus)
+    assert not isinstance(bus, UserChannel)
 
 
 # ── 3. Phase 2 backwards-compat: request delegates to deliver ──────────
@@ -159,12 +165,19 @@ def test_chat_bus_request_delegates_to_deliver() -> None:
     )
 
 
-def test_a2a_bus_request_delegates_to_deliver() -> None:
-    """Tier 2: ``A2AInterventionBus.request`` delegates to ``deliver``."""
-    src = inspect.getsource(A2AInterventionBus.request)
-    assert "self.deliver(iv)" in src, (
-        "A2AInterventionBus.request must delegate to deliver in Phase 2"
-    )
+def test_a2a_bus_only_exposes_on_dispatch_post_alpha() -> None:
+    """Tier 2 (= issue #292 α): ``A2AInterventionBus.request`` /
+    ``deliver`` were removed when the bus became a side-effect
+    observer. Pin the absence so a future refactor that re-adds them
+    fails first (= the iv ownership question is settled: ChatSession
+    owns it, the bus only emits side effects).
+    """
+    assert not hasattr(A2AInterventionBus, "request")
+    assert not hasattr(A2AInterventionBus, "deliver")
+    src = inspect.getsource(A2AInterventionBus.on_dispatch)
+    # The observer must NOT await iv.future (= that's the handler's job).
+    assert "await iv.future" not in src
+    assert "iv.future.set_result" not in src
 
 
 # ── 4. Outbox shape commitment (tui-coder Q1) ──────────────────────────

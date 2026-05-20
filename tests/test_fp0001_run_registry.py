@@ -157,83 +157,11 @@ async def test_attach_task_stores_task_reference() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 6: answer_intervention() resolves pending IV's future
+# Tests 6-8: removed in issue #292 (α). RunRegistry.answer_intervention is
+# gone; iv resolution lives in ChatSession.answer_pending_intervention,
+# tested in tests/test_fp0001_a2a_intervention_bus.py + the new
+# tests/test_a2a_iv_kind_choices_267_gap4.py answer-injection block.
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_answer_intervention_resolves_future_and_clears_question() -> None:
-    """Tier 1: answer_intervention delivers answer to IV future; status → 'running'; question cleared."""
-    registry = _make_registry()
-    entry = _make_entry(registry)
-
-    iv = UserIntervention(kind="ask_user", prompt="What is your name?")
-    entry.pending_intervention = iv
-    entry.question = "What is your name?"
-    entry.status = "input-required"
-
-    answer = InterventionAnswer(text="hi")
-    result = registry.answer_intervention(entry.run_id, answer)
-
-    assert result is True
-    assert iv.future.done()
-    assert iv.future.result().text == "hi"
-    assert entry.pending_intervention is None
-    assert entry.question is None
-    assert entry.status == "running"
-
-
-# ---------------------------------------------------------------------------
-# Test 7: answer_intervention() returns False when no pending IV
-# ---------------------------------------------------------------------------
-
-
-def test_answer_intervention_returns_false_when_no_pending_iv() -> None:
-    """Tier 1: answer_intervention returns False when entry has no pending_intervention."""
-    registry = _make_registry()
-    entry = _make_entry(registry)
-    # No pending_intervention set (default None)
-
-    result = registry.answer_intervention(entry.run_id, InterventionAnswer(text="ignored"))
-    assert result is False
-
-
-def test_answer_intervention_returns_false_for_unknown_run_id() -> None:
-    """Tier 1: answer_intervention returns False when run_id doesn't exist."""
-    registry = _make_registry()
-    result = registry.answer_intervention("no-such-id", InterventionAnswer(text="x"))
-    assert result is False
-
-
-# ---------------------------------------------------------------------------
-# Test 8: answer_intervention() returns False when future is already done
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_answer_intervention_returns_false_on_duplicate_answer() -> None:
-    """Tier 1: answer_intervention returns False when IV future is already resolved."""
-    registry = _make_registry()
-    entry = _make_entry(registry)
-
-    iv = UserIntervention(kind="ask_user", prompt="Are you sure?")
-    entry.pending_intervention = iv
-    entry.question = "Are you sure?"
-    entry.status = "input-required"
-
-    # First answer — resolves the future
-    first_result = registry.answer_intervention(entry.run_id, InterventionAnswer(text="yes"))
-    assert first_result is True
-    assert iv.future.done()
-
-    # Re-attach the IV (as if it somehow re-appeared) but future is done
-    entry.pending_intervention = iv
-
-    # Second answer — future already done → should return False
-    second_result = registry.answer_intervention(entry.run_id, InterventionAnswer(text="no"))
-    assert second_result is False
-    # Original answer preserved
-    assert iv.future.result().text == "yes"
 
 
 # ---------------------------------------------------------------------------
@@ -335,15 +263,17 @@ def test_remove_no_op_for_unknown_run_id() -> None:
 
 @pytest.mark.asyncio
 async def test_to_public_dict_returns_json_safe_fields() -> None:
-    """Tier 1: to_public_dict() exposes run_id/agent_name/chain_id/status/question/result/error/timestamps; omits task and IV."""
+    """Tier 1: to_public_dict() exposes run_id / agent_name / chain_id
+    / status / result / error / timestamps. issue #292 (α):
+    ``question`` and ``pending_intervention`` no longer exist on
+    RunEntry (= iv lives in ChatSession).
+    """
     registry = _make_registry()
     entry = registry.create(agent_name="myagent", chain_id="chain-99", webhook_url="http://example.com")
 
-    # Attach a real task and IV to confirm they're excluded
+    # Attach a real task to confirm it's excluded.
     task = asyncio.create_task(_noop())
     registry.attach_task(entry.run_id, task)
-    iv = UserIntervention(kind="ask_user", prompt="Q?")
-    entry.pending_intervention = iv
 
     d = entry.to_public_dict()
 
@@ -352,17 +282,18 @@ async def test_to_public_dict_returns_json_safe_fields() -> None:
     assert d["agent_name"] == "myagent"
     assert d["chain_id"] == "chain-99"
     assert d["status"] == "running"
-    assert d["question"] is None
     assert d["result"] is None
     assert d["error"] is None
     assert isinstance(d["created_at"], str)
     assert isinstance(d["updated_at"], str)
 
-    # Internal-only fields must not appear
+    # Internal-only / non-public fields must not appear.
     assert "task" not in d
-    assert "pending_intervention" not in d
     assert "webhook_url" not in d
     assert "history_events" not in d
+    # α: pending_intervention / question fully removed.
+    assert "pending_intervention" not in d
+    assert "question" not in d
 
     await task  # clean up
 
@@ -379,7 +310,7 @@ def test_updated_at_advances_monotonically() -> None:
 
     t0 = entry.updated_at
 
-    registry.update(entry.run_id, status="input-required", question="Q?")
+    registry.update(entry.run_id, status="input-required")
     t1 = entry.updated_at
 
     registry.update(entry.run_id, status="running")

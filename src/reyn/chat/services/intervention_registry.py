@@ -268,7 +268,13 @@ class InterventionRegistry:
 
     # ── Resolution (called by user input router) ─────────────────────────────
 
-    async def deliver_answer(self, iv: UserIntervention, text: str) -> bool:
+    async def deliver_answer(
+        self,
+        iv: UserIntervention,
+        text: str,
+        *,
+        choice_id_override: str | None = None,
+    ) -> bool:
         """Resolve *iv* with *text*.
 
         Returns
@@ -279,17 +285,35 @@ class InterventionRegistry:
             Not consumed — either the future was already done, or choices were
             present but the user's text did not match any hotkey (re-prompt
             path; the caller may surface a hint to the user).
+
+        ``choice_id_override``: when set (= peer-provided structured
+        answer, e.g. A2A POST with explicit ``choice_id`` per PR #285
+        Gap 4), bypass ``match_choice`` and resolve directly with the
+        supplied choice id. Validates the id against ``iv.choices`` so
+        a malformed peer payload still falls into the unrecognised-
+        choice path. issue #292 (α): added so the peer-answer route
+        can reach this single resolution path without losing the
+        choice_id semantics PR #285 wired through.
         """
         if iv.future.done():
             return False
         if iv.choices:
-            choice = match_choice(text, iv.choices)
-            if choice is None:
-                # Unrecognised hotkey — do NOT resolve; let the caller handle
-                # the re-prompt hint.  Return False so the session knows not
-                # to suppress a fresh router turn.
-                return False
-            answer = InterventionAnswer(text=text, choice_id=choice.id)
+            if choice_id_override is not None:
+                # Peer supplied choice_id explicitly; verify it's valid.
+                valid_ids = {c.id for c in iv.choices}
+                if choice_id_override not in valid_ids:
+                    return False
+                answer = InterventionAnswer(
+                    text=text, choice_id=choice_id_override,
+                )
+            else:
+                choice = match_choice(text, iv.choices)
+                if choice is None:
+                    # Unrecognised hotkey — do NOT resolve; let the caller handle
+                    # the re-prompt hint.  Return False so the session knows not
+                    # to suppress a fresh router turn.
+                    return False
+                answer = InterventionAnswer(text=text, choice_id=choice.id)
         else:
             answer = InterventionAnswer(text=text)
 

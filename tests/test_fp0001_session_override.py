@@ -41,23 +41,26 @@ from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 
 class _CaptureBus:
-    """Minimal InterventionBus fake that records calls and returns a fixed answer."""
+    """Minimal intervention observer fake (post-issue-#292 α refactor).
+
+    Records ``on_dispatch`` calls. Pre-α this class implemented
+    ``request`` which returned an ``InterventionAnswer``; post-α the
+    bus is a side-effect observer that does NOT own iv resolution —
+    ``on_dispatch`` returns None.
+    """
 
     def __init__(
         self,
         *,
-        answer: InterventionAnswer = InterventionAnswer(text="captured"),
-        raise_on_request: Exception | None = None,
+        raise_on_dispatch: Exception | None = None,
     ) -> None:
         self.calls: list[UserIntervention] = []
-        self._answer = answer
-        self._raise_on_request = raise_on_request
+        self._raise_on_dispatch = raise_on_dispatch
 
-    async def request(self, iv: UserIntervention) -> InterventionAnswer:
+    async def on_dispatch(self, iv: UserIntervention) -> None:
         self.calls.append(iv)
-        if self._raise_on_request is not None:
-            raise self._raise_on_request
-        return self._answer
+        if self._raise_on_dispatch is not None:
+            raise self._raise_on_dispatch
 
 
 class _RecordingHandler:
@@ -211,45 +214,55 @@ async def test_dispatch_falls_through_when_no_override(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_uses_override_when_registered(tmp_path):
-    """Tier 2: _dispatch_intervention with iv.run_id whose chain_id IS registered
-    delegates to the override bus, returns the override bus's answer.
+async def test_dispatch_notifies_override_then_continues_to_handler(tmp_path):
+    """Tier 2 (= issue #292 α): _dispatch_intervention with a registered
+    override notifies the override's ``on_dispatch`` AS A SIDE EFFECT,
+    then ALWAYS continues to the default InterventionHandler.dispatch.
+    Pre-α the override REPLACED the handler; α changed it to DECORATE.
     """
     session = _make_session(tmp_path)
     run_id = "run-override"
     chain_id = "chain-with-override"
     session.running_skills_chain[run_id] = chain_id
 
-    override_bus = _CaptureBus(answer=InterventionAnswer(text="from-override"))
+    override_bus = _CaptureBus()
     session.register_intervention_override(chain_id, override_bus)
 
     iv = _make_iv(run_id=run_id)
-    answer = await session._dispatch_intervention(iv)
 
-    assert answer.text == "from-override"
+    # The handler will await iv.future. Resolve it concurrently with a
+    # known value so dispatch returns; the test pin is that the override
+    # was called AND the handler-resolved value came back.
+    async def _resolve_after_delay() -> None:
+        await asyncio.sleep(0.05)
+        iv.future.set_result(InterventionAnswer(text="from-handler"))
+
+    resolver = asyncio.create_task(_resolve_after_delay())
+    try:
+        answer = await session._dispatch_intervention(iv)
+    finally:
+        resolver.cancel()
+
+    # Override was notified.
     assert len(override_bus.calls) == 1
     assert override_bus.calls[0] is iv
-
-
-# ---------------------------------------------------------------------------
-# Test 4: default handler NOT called when override fires
-# ---------------------------------------------------------------------------
+    # Handler resolved the answer (= α decorator semantics: handler always runs).
+    assert answer.text == "from-handler"
 
 
 @pytest.mark.asyncio
-async def test_override_short_circuits_default_handler(tmp_path):
-    """Tier 2: when the override fires, the default InterventionHandler.dispatch
-    is NOT called (= short-circuit).
-
-    Observes this by wrapping the real _intervention_handler with a call-counting
-    shim (no mock — real callable wrapping real callable).
+async def test_override_does_not_short_circuit_default_handler(tmp_path):
+    """Tier 2 (= issue #292 α): the override DECORATES dispatch, it
+    does NOT replace it. This is the exact contract reversal from PR
+    pre-α: where the old test asserted "default NOT called", the new
+    test asserts "default IS called" + override is called alongside.
     """
     session = _make_session(tmp_path)
     run_id = "run-sc"
     chain_id = "chain-sc"
     session.running_skills_chain[run_id] = chain_id
 
-    override_bus = _CaptureBus(answer=InterventionAnswer(text="override-sc"))
+    override_bus = _CaptureBus()
     session.register_intervention_override(chain_id, override_bus)
 
     # Wrap the real handler's dispatch to count invocations.
@@ -263,12 +276,22 @@ async def test_override_short_circuits_default_handler(tmp_path):
     session._intervention_handler.dispatch = _counting_dispatch  # type: ignore[method-assign]
 
     iv = _make_iv(run_id=run_id)
-    answer = await session._dispatch_intervention(iv)
 
-    assert answer.text == "override-sc"
-    # Default handler's dispatch must NOT have been called.
-    assert len(dispatch_calls) == 0, (
-        f"Default handler was called {len(dispatch_calls)} time(s); expected 0"
+    async def _resolve_after_delay() -> None:
+        await asyncio.sleep(0.05)
+        iv.future.set_result(InterventionAnswer(text="from-handler"))
+
+    resolver = asyncio.create_task(_resolve_after_delay())
+    try:
+        await session._dispatch_intervention(iv)
+    finally:
+        resolver.cancel()
+
+    # α contract: BOTH ran. Override was notified AND default handler dispatched.
+    assert len(override_bus.calls) == 1
+    assert len(dispatch_calls) == 1, (
+        f"α contract: handler.dispatch must run alongside the override; "
+        f"got {len(dispatch_calls)} dispatch calls (expected 1)"
     )
 
 
@@ -286,7 +309,7 @@ async def test_dispatch_falls_through_when_run_id_is_none(tmp_path):
     session.is_attached = True
 
     chain_id = "chain-any"
-    override_bus = _CaptureBus(answer=InterventionAnswer(text="should-not-reach"))
+    override_bus = _CaptureBus()
     # Register an override (should not be reached because run_id is None).
     session.register_intervention_override(chain_id, override_bus)
 
@@ -317,7 +340,7 @@ async def test_dispatch_falls_through_when_run_id_not_in_chain(tmp_path):
     session.is_attached = True
 
     chain_id = "chain-known"
-    override_bus = _CaptureBus(answer=InterventionAnswer(text="should-not-reach"))
+    override_bus = _CaptureBus()
     session.register_intervention_override(chain_id, override_bus)
 
     # run_id is NOT in running_skills_chain.
@@ -373,7 +396,7 @@ def test_send_to_agent_impl_override_registered_and_cleaned_up(tmp_path, monkeyp
     # MessageBus in this call — the override is registered but the request
     # flow is what matters; we use a fake _handle_user_message instead to
     # keep the test deterministic).
-    override_bus = _CaptureBus(answer=InterventionAnswer(text="ok"))
+    override_bus = _CaptureBus()
 
     # Stub _handle_user_message so the session produces a synthetic reply
     # without invoking a real LLM.
@@ -423,7 +446,7 @@ def test_send_to_agent_impl_override_cleaned_up_on_exception(tmp_path, monkeypat
     registry = _build_registry(tmp_path, [("default", "")])
     session = registry.get_or_load("default")
 
-    override_bus = _CaptureBus(answer=InterventionAnswer(text="ok"))
+    override_bus = _CaptureBus()
 
     # Stub MessageBus.request to raise immediately.
     from reyn.chat.message_bus import MessageBus
@@ -468,8 +491,8 @@ def test_concurrent_send_to_agent_impl_no_override_leak(tmp_path, monkeypatch):
     registry = _build_registry(tmp_path, [("default", "")])
     session = registry.get_or_load("default")
 
-    bus_alpha = _CaptureBus(answer=InterventionAnswer(text="alpha-answer"))
-    bus_beta = _CaptureBus(answer=InterventionAnswer(text="beta-answer"))
+    bus_alpha = _CaptureBus()
+    bus_beta = _CaptureBus()
 
     # Track registration events per bus identity.
     registered: list[tuple[str, object]] = []   # (chain_id, bus)

@@ -231,31 +231,42 @@ def test_session_interventions_attribute_path_is_stable_in_phase3() -> None:
 # ── 6. handle_intervention preserves the chain-override path ───────────
 
 
-def test_handle_intervention_respects_chain_override(tmp_path: Path) -> None:
-    """Tier 2: when an InterventionBus override is registered for a
-    chain_id, ``handle_intervention`` honours it (= Phase 3 delegates
-    to _dispatch_intervention which performs the override lookup).
-
-    This is the path used by A2A async-mode tasks — Phase 3 must NOT
-    bypass it.
+def test_handle_intervention_notifies_chain_override_observer(tmp_path: Path) -> None:
+    """Tier 2 (= issue #292 α): when a chain override is registered,
+    ``handle_intervention`` notifies it via ``on_dispatch`` AS A
+    SIDE EFFECT before continuing through the regular handler. The
+    iv future is owned by the handler post-α; the override is a
+    pure observer.
     """
     session = ChatSession(agent_name="t")
+    session.register_intervention_listener("test")
 
     captured: list[UserIntervention] = []
 
-    class _StubOverrideBus:
-        async def request(self, iv: UserIntervention) -> InterventionAnswer:
+    class _StubOverrideObserver:
+        async def on_dispatch(self, iv: UserIntervention) -> None:
             captured.append(iv)
-            return InterventionAnswer(text="from-override", choice_id=None)
 
-    # Register the override AND simulate the running_skills_chain wiring
-    # so the chain_id lookup in _dispatch_intervention finds the override.
-    session.register_intervention_override("chain-X", _StubOverrideBus())
+    session.register_intervention_override("chain-X", _StubOverrideObserver())
     session.running_skills_chain["run-1"] = "chain-X"
 
-    iv = UserIntervention(kind="ask_user", prompt="Q?", run_id="run-1")
-    answer = asyncio.run(session.handle_intervention(iv))
+    async def _drive() -> tuple[UserIntervention, InterventionAnswer]:
+        iv = UserIntervention(kind="ask_user", prompt="Q?", run_id="run-1")
 
-    assert answer.text == "from-override"
+        async def _resolve() -> None:
+            await asyncio.sleep(0.05)
+            iv.future.set_result(InterventionAnswer(text="from-handler"))
+
+        resolver = asyncio.create_task(_resolve())
+        try:
+            answer = await session.handle_intervention(iv)
+        finally:
+            resolver.cancel()
+        return iv, answer
+
+    iv, answer = asyncio.run(_drive())
+
+    # α: observer received the iv as a side effect; handler resolved the future.
     assert len(captured) == 1
     assert captured[0] is iv
+    assert answer.text == "from-handler"

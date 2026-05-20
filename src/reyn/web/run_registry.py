@@ -1,40 +1,33 @@
 """A2A task lifecycle registry (FP-0001 + issue #267 Gap 5 persistence).
 
 Tracks asyncio.Task instances spawned by POST /a2a/agents/<name> async-mode
-calls. Each entry carries status, any pending ask_user intervention,
-a webhook URL for push notifications, and a buffered event history
-for SSE replay. Concurrent access by FastAPI request handlers is
-serialised by ``RunRegistry`` internally; do NOT call from outside
-the asyncio event loop.
+calls. Each entry carries A2A-task-wrapper-owned state (status, result,
+error, webhook URL, SSE event buffer). Concurrent access by FastAPI
+request handlers is serialised by ``RunRegistry`` internally; do NOT
+call from outside the asyncio event loop.
 
 Persistence (issue #267 Gap 5):
 
 When ``RunRegistry`` is constructed with a ``persist_path``, every
 mutation rewrites the file atomically (= tmp file + ``Path.replace()``)
-so a server-process restart can reload the registry from disk. This
-closes the 「ChatSession side outstanding_interventions is persisted by
-PR-intervention-link L2-L6 but RunRegistry side is in-memory only」
-gap that left A2A peer routing half-restored on restart.
+so a server-process restart can reload the registry from disk.
+
+Persistence boundary (= issue #292 α refactor):
+
+Pre-#292, ``RunEntry`` also persisted ``pending_intervention`` (= the
+full ``UserIntervention`` object). That field has been **removed**:
+the iv is owned by ``ChatSession._interventions`` (= same machinery
+TUI ivs use, including R-D12's persistent answer buffer). What
+``RunRegistry`` persists is only the A2A-task-wrapper state.
 
 What persists:
-  - run_id, agent_name, chain_id, status, question, result, error
+  - run_id, agent_name, chain_id, status, result, error
   - webhook_url, history_events, created_at, updated_at
-  - pending_intervention (= via UserIntervention.to_dict, future excluded)
 
 What does NOT persist (= volatile, restored as ``None`` / dropped):
   - asyncio.Task reference (= bound to the process that died)
-  - UserIntervention.future (= fresh future allocated on from_dict)
-
-Restore semantics (= what the rebuilt ``RunEntry`` looks like after a
-process restart):
-  - All public state fields restored from JSON
-  - ``task`` is ``None`` (= caller can re-spawn if applicable, but the
-    original skill execution is gone with the prior process)
-  - ``pending_intervention``: if present, restored ``UserIntervention``
-    with a fresh future. The full rebind to the ChatSession side iv
-    (= so peer answers reach the ChatSession's restored
-    InterventionRegistry queue) is a Gap 5 Phase 2 follow-up; this
-    PR ships the persistence infrastructure alone.
+  - pending iv state (= owned by ChatSession; queried at request time
+    rather than mirrored here)
 """
 from __future__ import annotations
 
@@ -45,23 +38,22 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class RunEntry:
-    """One A2A async task. Mutable; ``RunRegistry`` owns lifecycle."""
+    """One A2A async task. Mutable; ``RunRegistry`` owns lifecycle.
+
+    issue #292 (α): ``pending_intervention`` and ``question`` fields
+    removed — iv state lives in ``ChatSession._interventions``. This
+    entry only carries A2A-task-wrapper state.
+    """
     run_id: str
     agent_name: str
     chain_id: str
     status: str = "running"
-    question: str | None = None
-    pending_intervention: "UserIntervention | None" = None
     result: str | None = None
     error: str | None = None
     webhook_url: str | None = None
@@ -72,13 +64,12 @@ class RunEntry:
 
     def to_public_dict(self) -> dict:
         """JSON-safe shape for GET /a2a/tasks/{run_id} responses.
-        Drops asyncio.Task and UserIntervention (= internal-only)."""
+        Drops asyncio.Task (= internal-only)."""
         return {
             "run_id": self.run_id,
             "agent_name": self.agent_name,
             "chain_id": self.chain_id,
             "status": self.status,
-            "question": self.question,
             "result": self.result,
             "error": self.error,
             "created_at": self.created_at.isoformat(),
@@ -86,25 +77,21 @@ class RunEntry:
         }
 
     def to_persist_dict(self) -> dict:
-        """Persistence-safe shape (issue #267 Gap 5).
+        """Persistence-safe shape (issue #267 Gap 5 + issue #292 α).
 
-        Includes more fields than ``to_public_dict`` because the
-        registry's own restore path needs them: webhook_url for
-        post-restart peer notifications, history_events for SSE
-        replay continuity, pending_intervention (via
-        ``UserIntervention.to_dict``) so the peer-binding can be
-        re-established by a Gap 5 Phase 2 follow-up.
+        Includes webhook_url + history_events for post-restart peer
+        notification + SSE replay continuity. iv state (formerly
+        ``pending_intervention``) is owned by ChatSession and persisted
+        via AgentSnapshot — see issue #292 body for the layering.
 
         Excludes volatile fields:
           - ``task``: asyncio.Task is bound to the dead process
-          - ``pending_intervention.future``: re-allocated on from_dict
         """
-        out: dict = {
+        return {
             "run_id": self.run_id,
             "agent_name": self.agent_name,
             "chain_id": self.chain_id,
             "status": self.status,
-            "question": self.question,
             "result": self.result,
             "error": self.error,
             "webhook_url": self.webhook_url,
@@ -112,29 +99,16 @@ class RunEntry:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
-        if self.pending_intervention is not None:
-            out["pending_intervention"] = self.pending_intervention.to_dict()
-        return out
 
     @classmethod
     def from_persist_dict(cls, data: dict) -> "RunEntry":
-        """Inverse of ``to_persist_dict`` (issue #267 Gap 5).
+        """Inverse of ``to_persist_dict``.
 
-        Rebuilds a ``RunEntry`` from the persistence snapshot:
-          - ``task`` set to ``None`` (= cannot resurrect dead asyncio.Task)
-          - ``pending_intervention``: if present in data, re-create
-            ``UserIntervention`` via ``from_dict`` (= fresh future)
-          - timestamps parsed from ISO strings; tolerate missing or
-            malformed fields by falling back to ``now()`` so a
-            corrupt snapshot doesn't poison the restore loop
+        Rebuilds a ``RunEntry`` from the persistence snapshot. Tolerant
+        of pre-#292 snapshots that included ``pending_intervention`` /
+        ``question`` keys (= silently ignored, the iv is restored via
+        ChatSession's AgentSnapshot instead).
         """
-        # Lazy import to avoid circular dependency.
-        from reyn.user_intervention import UserIntervention
-
-        iv = None
-        iv_data = data.get("pending_intervention")
-        if iv_data:
-            iv = UserIntervention.from_dict(iv_data)
 
         def _parse_ts(value: object) -> datetime:
             if isinstance(value, str):
@@ -149,8 +123,6 @@ class RunEntry:
             agent_name=str(data.get("agent_name", "")),
             chain_id=str(data.get("chain_id", "")),
             status=str(data.get("status", "running")),
-            question=data.get("question"),
-            pending_intervention=iv,
             result=data.get("result"),
             error=data.get("error"),
             webhook_url=data.get("webhook_url"),
@@ -281,22 +253,18 @@ class RunRegistry:
         run_id: str,
         *,
         status: str | None = None,
-        question: str | None = None,
-        pending_intervention: "UserIntervention | None" = None,
         result: str | None = None,
         error: str | None = None,
     ) -> RunEntry | None:
+        """Update task-wrapper state. issue #292 (α): ``question`` and
+        ``pending_intervention`` params removed — iv lifecycle is owned
+        by ChatSession.
+        """
         entry = self._runs.get(run_id)
         if entry is None:
             return None
         if status is not None:
             entry.status = status
-        if question is not None:
-            entry.question = question
-        # pending_intervention can be set to None explicitly (= clearing)
-        if pending_intervention is not None or status == "running":
-            # status="running" after answer → also clear pending fields
-            entry.pending_intervention = pending_intervention
         if result is not None:
             entry.result = result
         if error is not None:
@@ -309,28 +277,6 @@ class RunRegistry:
         if entry := self._runs.get(run_id):
             entry.task = task
         # NB: task is volatile (= not persisted), no _persist() call.
-
-    def answer_intervention(self, run_id: str, answer: "InterventionAnswer") -> bool:
-        """Deliver ``answer`` to the run's pending intervention.
-
-        Returns True iff the intervention was resolved (= run exists,
-        has a pending intervention whose future isn't already done).
-        After delivery, ``status`` returns to 'running' and ``question``
-        is cleared.
-        """
-        entry = self._runs.get(run_id)
-        if entry is None or entry.pending_intervention is None:
-            return False
-        iv = entry.pending_intervention
-        if iv.future.done():
-            return False
-        iv.future.set_result(answer)
-        entry.pending_intervention = None
-        entry.question = None
-        entry.status = "running"
-        entry.updated_at = datetime.now(timezone.utc)
-        self._persist()
-        return True
 
     def cancel(self, run_id: str) -> bool:
         """Cancel the task if running; mark status='cancelled'.

@@ -1,30 +1,46 @@
-"""A2AInterventionBus — ``UserChannel`` implementation backed by
-``RunRegistry`` (FP-0001).
+"""A2AInterventionBus — A2A peer-facing **side-effect observer** for
+ivs that arise on async-mode tasks.
 
-When a skill running under an A2A async-mode task fires ``ask_user``,
-this channel publishes the prompt to the run's RunEntry (= status
-changes to ``input-required``, the question text and the IV are stored),
-optionally fires a webhook to notify the peer, then awaits the IV's
-``future`` until the peer POSTs an answer via
-``POST /a2a/agents/<name> {task_id, answer}``.
+issue #292 (α refactor): pre-#292 this class **owned** the iv lifecycle
+when registered as a chain override — ``_dispatch_intervention``
+replaced its normal handler-dispatch path with ``override.request(iv)``
+and the bus awaited ``iv.future`` directly. The iv lived in this bus +
+``RunRegistry.pending_intervention`` only; it never entered
+``ChatSession._interventions._active`` or the WAL / snapshot persistence
+channels. On restart, the bus coroutine died and the restored iv was
+orphaned — no in-process awaiter, no R-D12 buffer eligibility, no
+``SkillResumeCoordinator`` integration. See issue #292 body for the
+full analysis.
+
+Post-α this class is a **side-effect observer**: ``on_dispatch(iv)``
+is invoked by ``ChatSession._dispatch_intervention`` BEFORE
+``InterventionHandler.dispatch`` runs. The bus:
+
+  - Mirrors ``status="input-required"`` on the RunEntry so polling
+    peers see the prompt is pending.
+  - Appends the input-required payload to ``RunEntry.history_events``
+    so the SSE stream surfaces the prompt (issue #267 Gap 1).
+  - POSTs the same payload to the peer's ``webhook_url`` if registered
+    (issue #267 Gap 2 + Gap 4 ``kind`` / ``choices`` / ``detail`` shape).
+  - Does NOT await ``iv.future``. The handler awaits it on behalf of
+    the skill; the bus has no in-process answer-resolution role.
+
+Peer answers arrive via the A2A router's ``POST /a2a/agents/<name>
+{task_id, answer}`` → ``ChatSession.answer_pending_intervention`` →
+``handler.deliver_answer_to`` (= same path the TUI uses). The iv future
+is resolved by the handler; the bus is unaware. R-D12's persistent
+answer buffer captures the answer if a crash intervenes before the
+skill consumes it, so restart-resume picks up cleanly.
 
 Wired by ``mcp_server.send_to_agent_impl`` through
 ``ChatSession.register_intervention_override(chain_id, bus)``.
 
-Phase 2 (issue #254) — responsibility scope:
-
-  - ⭕ in-scope: deliver ``ask_user`` prompts to the A2A peer (= the
-    physical user surface for an async-mode A2A run) and receive the
-    peer's answer.  ``deliver`` is the canonical method; ``request``
-    is a Phase 2 backward-compat alias.
-  - ❌ out-of-scope: skill completion narration, intermediate progress
-    narration, direct writes to ``RunRegistry`` for run-lifecycle
-    events.  Those flow through PR #253's ``_handle_message_send``
-    auto-escalation path (sync→Task envelope on running-skill timeout)
-    and the OS's ``_handle_skill_completed`` event chain, both of which
-    are independent of this channel.  In particular this module MUST
-    NOT import ``_handle_skill_completed`` — pinned by Tier 2 test
-    (``tests/test_intervention_bus_protocols.py``).
+Scope guard:
+  - ⭕ in-scope: notify A2A peer of input-required state via webhook +
+    SSE buffer + RunEntry status mirror.
+  - ❌ out-of-scope: iv ownership (= ChatSession owns it post-α),
+    iv.future resolution (= handler does it), skill completion
+    narration (= flows through ``_handle_skill_completed``).
 """
 from __future__ import annotations
 
@@ -32,14 +48,17 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.user_intervention import InterventionAnswer, UserIntervention
+    from reyn.user_intervention import UserIntervention
     from reyn.web.run_registry import RunRegistry
 
 logger = logging.getLogger(__name__)
 
 
 class A2AInterventionBus:
-    """Per-task ``UserChannel`` that routes ``ask_user`` via RunRegistry."""
+    """Per-task A2A-side iv side-effect observer (post-α refactor).
+
+    issue #292 (α): no longer an iv owner; pure side-effect emitter.
+    """
 
     def __init__(self, run_id: str, registry: "RunRegistry") -> None:
         self._run_id = run_id
@@ -50,26 +69,31 @@ class A2AInterventionBus:
         """Stable channel identifier for issue #268 origin-pin routing.
 
         Format: ``a2a:<run_id>``. Used by:
-          - bus stamping of ``iv.origin_channel_id`` on each ``deliver``
-            (= so the iv carries provenance for cross-channel observe /
-            discard / claim)
-          - listener registration in ``_handle_async_mode._run`` so the
-            ``ChatSession.handle_intervention`` origin-pin check sees
-            this channel as alive while the A2A task is running
+          - bus stamping of ``iv.origin_channel_id`` on each ``on_dispatch``
+          - listener registration in ``send_to_agent_impl`` so the
+            agent's origin-pin check sees this channel as alive while
+            the A2A task is running.
         """
         return f"a2a:{self._run_id}"
 
-    async def deliver(self, iv: "UserIntervention") -> "InterventionAnswer":
-        """``UserChannel.deliver`` — route the prompt to the A2A peer
-        via RunRegistry + optional webhook, then block until the peer's
-        POST resolves ``iv.future``.
+    async def on_dispatch(self, iv: "UserIntervention") -> None:
+        """Fire A2A peer-facing side effects when ``iv`` is about to be
+        dispatched by the agent.
 
-        issue #268 Phase 2: stamps ``iv.origin_channel_id`` so the
-        agent layer can later attribute the iv to this A2A task (=
-        used by stall detection + cross-channel observe / claim).
-        Pre-existing stamping (= if a caller already set the field)
-        is respected — overwrite would clobber an explicit origin
-        from an upstream layer.
+        Called by ``ChatSession._dispatch_intervention`` for each iv
+        whose chain has this bus registered as an override. Runs
+        BEFORE ``InterventionHandler.dispatch`` so the peer learns
+        input-required before the awaiter blocks.
+
+        Side effects (each best-effort; failures logged, never raised):
+          1. Stamp ``iv.origin_channel_id`` with ``a2a:<run_id>`` (= for
+             #268 cross-channel routing).
+          2. Mirror ``status="input-required"`` on the RunEntry.
+          3. Append the input-required payload to
+             ``RunEntry.history_events`` for SSE replay (issue #267
+             Gap 1, payload shape per Gap 4).
+          4. POST the same payload to ``webhook_url`` if configured
+             (issue #267 Gap 2).
         """
         # issue #268 Phase 2: stamp origin channel for cross-channel routing.
         if iv.origin_channel_id is None:
@@ -77,32 +101,19 @@ class A2AInterventionBus:
 
         entry = self._registry.get(self._run_id)
         if entry is None:
-            raise RuntimeError(
-                f"A2AInterventionBus: run {self._run_id!r} not in registry"
+            logger.warning(
+                "A2AInterventionBus.on_dispatch: run %r not in registry "
+                "(= iv side effects skipped; dispatch will continue)",
+                self._run_id,
             )
+            return
 
-        # Publish: status=input-required + question + IV reference so
-        # POST /a2a/agents/<name> {task_id, answer} can resolve via
-        # RunRegistry.answer_intervention.
-        self._registry.update(
-            self._run_id,
-            status="input-required",
-            question=iv.prompt,
-            pending_intervention=iv,
-        )
+        # Mirror status. Post-α the iv itself lives in ChatSession's
+        # outstanding_interventions; we only reflect the high-level
+        # state on the RunEntry for peer polling visibility.
+        self._registry.update(self._run_id, status="input-required")
 
-        # Build the canonical input-required payload once + fan out to
-        # both A2A peer surfaces (issue #267 Gap 1 + Gap 4):
-        #
-        #   - SSE buffer (always): append to RunEntry.history_events so
-        #     ``GET /a2a/tasks/{run_id}/events`` streams the prompt to a
-        #     peer that connected via SSE.
-        #   - Webhook POST (opt-in): same payload pushed to webhook_url
-        #     when registered. ``kind`` + ``choices`` (Gap 4) let the
-        #     peer render structured affordance (= permission yes/no/always
-        #     hotkeys) instead of guessing from prompt text. ``detail`` is
-        #     included when present so the peer has the same context the
-        #     in-process TUI surfaces below the prompt.
+        # Build the canonical input-required payload (issue #267 Gap 4 shape).
         payload: dict = {
             "run_id": self._run_id,
             "status": "input-required",
@@ -117,32 +128,26 @@ class A2AInterventionBus:
         if iv.detail:
             payload["detail"] = iv.detail
 
+        # SSE buffer append (issue #267 Gap 1). Best-effort.
         try:
             self._registry.append_event(self._run_id, payload)
-        except Exception:  # noqa: BLE001 — sse buffer is best-effort
-            pass
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "A2AInterventionBus.on_dispatch: history_events append "
+                "failed for run %r", self._run_id,
+            )
 
+        # Webhook POST (issue #267 Gap 2). Best-effort, opt-in.
         if entry.webhook_url:
-            from reyn.web.notifications import post_webhook
+            from reyn.web.notifications import post_webhook  # noqa: PLC0415
 
-            await post_webhook(entry.webhook_url, payload)
-
-        # Block until the peer POSTs an answer (= registry.answer_intervention
-        # resolves iv.future).
-        answer = await iv.future
-        return answer
-
-    async def request(self, iv: "UserIntervention") -> "InterventionAnswer":
-        """``RequestBus.request`` — Phase 2 backward-compat alias.
-
-        Existing callers wired through
-        ``ChatSession.register_intervention_override`` still receive
-        this class typed as ``InterventionBus`` and invoke ``request``.
-        Delegates to ``deliver`` so the underlying behaviour is
-        unchanged.  Phase 3 will route OS-level requests through the
-        Agent, which will call ``deliver`` directly.
-        """
-        return await self.deliver(iv)
+            try:
+                await post_webhook(entry.webhook_url, payload)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "A2AInterventionBus.on_dispatch: webhook POST failed "
+                    "for run %r url=%s", self._run_id, entry.webhook_url,
+                )
 
 
 __all__ = ["A2AInterventionBus"]

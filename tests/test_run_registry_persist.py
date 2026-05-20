@@ -95,7 +95,9 @@ def test_restore_from_existing_snapshot_repopulates_runs(tmp_path: Path) -> None
     # Phase 1: populate + close (= process death simulation).
     registry_a = RunRegistry(persist_path=persist_path)
     entry = registry_a.create(agent_name="demo", chain_id="chain-A")
-    registry_a.update(entry.run_id, status="input-required", question="Continue?")
+    # issue #292 (α): ``question`` field removed — iv state owned by
+    # ChatSession. We only mirror the public ``status`` on RunEntry.
+    registry_a.update(entry.run_id, status="input-required")
     registry_a.append_event(entry.run_id, {"type": "phase", "name": "greet"})
 
     # Phase 2: fresh registry from same path (= post-restart).
@@ -105,7 +107,6 @@ def test_restore_from_existing_snapshot_repopulates_runs(tmp_path: Path) -> None
     assert restored.agent_name == "demo"
     assert restored.chain_id == "chain-A"
     assert restored.status == "input-required"
-    assert restored.question == "Continue?"
     assert restored.history_events == [{"type": "phase", "name": "greet"}]
 
 
@@ -151,39 +152,20 @@ def test_restored_pending_intervention_has_fresh_future(tmp_path: Path) -> None:
     registry_a = RunRegistry(persist_path=persist_path)
     entry = registry_a.create(agent_name="demo", chain_id="chain-A")
 
-    # Attach a pending intervention with a resolved-in-prior-process future
-    # (= simulate "the prior process did set_result before crash").
-    loop = asyncio.new_event_loop()
-    try:
-        async def _populate() -> None:
-            iv = UserIntervention(
-                kind="ask_user",
-                prompt="What is your name?",
-                detail="for greeting",
-            )
-            registry_a.update(
-                entry.run_id,
-                status="input-required",
-                question=iv.prompt,
-                pending_intervention=iv,
-            )
+    # issue #292 (α): iv state lives in ChatSession, not RunRegistry.
+    # Restart simulation just mirrors the public status; iv restore is
+    # tested in tests/test_intervention_restore.py via AgentSnapshot.
+    registry_a.update(entry.run_id, status="input-required")
 
-        loop.run_until_complete(_populate())
-    finally:
-        loop.close()
-
-    # Restart: restored iv must have a fresh, unresolved future.
+    # Restart: restored RunEntry has the status mirror; iv state is
+    # restored separately by ChatSession's snapshot path.
     registry_b = RunRegistry(persist_path=persist_path)
     restored = registry_b.get(entry.run_id)
     assert restored is not None
-    assert restored.pending_intervention is not None
-    iv = restored.pending_intervention
-    assert iv.kind == "ask_user"
-    assert iv.prompt == "What is your name?"
-    assert iv.detail == "for greeting"
-    # Fresh future: not yet resolved.
-    assert iv.future is not None
-    assert not iv.future.done()
+    assert restored.status == "input-required"
+    # α: RunEntry no longer carries pending_intervention. iv lives in
+    # ChatSession's AgentSnapshot.outstanding_interventions.
+    assert not hasattr(restored, "pending_intervention")
 
 
 # ── 3. All mutations persist (= regression guards) ─────────────────────
@@ -241,34 +223,29 @@ def test_remove_drops_entry_from_snapshot(tmp_path: Path) -> None:
     assert entry_b.run_id in data
 
 
-def test_answer_intervention_persists_cleared_state(tmp_path: Path) -> None:
-    """Tier 2: ``answer_intervention()`` clears pending fields + persists."""
+def test_answer_status_mirror_persists(tmp_path: Path) -> None:
+    """Tier 2: post-α, ``answer_intervention`` is removed from
+    RunRegistry. The peer-answer flow lives in
+    ``_handle_answer_injection`` → ``ChatSession.answer_pending_intervention``.
+    The RunRegistry only mirrors the public ``status`` back to
+    ``"running"`` after the answer is delivered. Pin the status
+    transition persists correctly.
+    """
     persist_path = tmp_path / "run_registry.json"
     registry = RunRegistry(persist_path=persist_path)
     entry = registry.create(agent_name="demo", chain_id="chain-A")
 
-    loop = asyncio.new_event_loop()
-    try:
-        async def _drive() -> None:
-            iv = UserIntervention(kind="ask_user", prompt="?")
-            registry.update(
-                entry.run_id,
-                status="input-required",
-                question="?",
-                pending_intervention=iv,
-            )
-            registry.answer_intervention(
-                entry.run_id, InterventionAnswer(text="ok"),
-            )
-
-        loop.run_until_complete(_drive())
-    finally:
-        loop.close()
+    # Pre-answer: status is "input-required" (= mirror, set by the
+    # observer bridge when iv is dispatched).
+    registry.update(entry.run_id, status="input-required")
+    # Post-answer: router resets to "running" via the same update path.
+    registry.update(entry.run_id, status="running")
 
     data = json.loads(persist_path.read_text(encoding="utf-8"))
     assert data[entry.run_id]["status"] == "running"
-    assert data[entry.run_id]["question"] is None
+    # α: pending_intervention / question keys no longer persisted.
     assert "pending_intervention" not in data[entry.run_id]
+    assert "question" not in data[entry.run_id]
 
 
 # ── 4. Atomic write (= no partial file on crash mid-write) ──────────────

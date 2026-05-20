@@ -258,11 +258,11 @@ def test_webhook_sink_failure_does_not_block_sse(monkeypatch) -> None:
 # ── 5. A2AInterventionBus.deliver appends input-required ──────────────
 
 
-def test_a2a_intervention_bus_deliver_appends_input_required_to_history() -> None:
-    """Tier 2: ``A2AInterventionBus.deliver`` appends the
-    input-required payload to RunEntry.history_events BEFORE the
-    (optional) webhook POST. SSE consumers see ask_user prompts inline
-    with the progress stream.
+def test_a2a_intervention_bus_on_dispatch_appends_input_required_to_history() -> None:
+    """Tier 2: ``A2AInterventionBus.on_dispatch`` appends the
+    input-required payload to RunEntry.history_events. SSE consumers
+    see ask_user prompts inline with the progress stream. issue #292
+    α: renamed from ``deliver`` to ``on_dispatch``.
     """
     registry = RunRegistry()
     entry = registry.create(
@@ -277,11 +277,7 @@ def test_a2a_intervention_bus_deliver_appends_input_required_to_history() -> Non
             prompt="Allow read?",
             choices=[InterventionChoice(id="yes", label="[Y]", hotkey="y")],
         )
-        task = asyncio.ensure_future(bus.deliver(iv))
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        iv.future.set_result(InterventionAnswer(text="yes", choice_id="yes"))
-        await task
+        await bus.on_dispatch(iv)
 
     asyncio.run(_drive())
 
@@ -311,11 +307,7 @@ def test_a2a_intervention_bus_appends_history_even_without_webhook() -> None:
 
     async def _drive() -> None:
         iv = UserIntervention(kind="ask_user", prompt="?")
-        task = asyncio.ensure_future(bus.deliver(iv))
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        iv.future.set_result(InterventionAnswer(text="ok"))
-        await task
+        await bus.on_dispatch(iv)
 
     asyncio.run(_drive())
     assert len(registry.get(entry.run_id).history_events) == 1
