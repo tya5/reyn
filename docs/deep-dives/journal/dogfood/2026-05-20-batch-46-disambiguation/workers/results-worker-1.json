@@ -1,0 +1,128 @@
+{
+  "batch": "B46",
+  "worker": 1,
+  "head": "8c33c6fa",
+  "date": "2026-05-20",
+  "scenario_set": "chat_router_smoke.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 3,
+    "I": 0,
+    "R": 4,
+    "B": 0
+  },
+  "vs_past": {
+    "B45": { "V": 1, "I": 1, "R": 5, "B": 0 },
+    "B46": { "V": 3, "I": 0, "R": 4, "B": 0 },
+    "delta_V": "+2"
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "scenario_index": 1,
+      "verdict": "R",
+      "rubric_met": true,
+      "events_pass": false,
+      "reply_summary": "Reply describes Reyn capabilities including skills, agents, file/web/memory/RAG operations — rubric content met. Delivered as inline reply (chat_turn_completed_inline), no direct_llm skill spawned.",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_issues": "must_emit artifact direct_llm: skill NOT spawned (inline answer path). Artifact check fails.",
+      "artifact_check": "FAIL — no direct_llm skill run; chat_turn_completed_inline used instead"
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "scenario_index": 2,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_summary": "Explained idempotency concept clearly in Japanese, noting operations produce same result when executed once or multiple times.",
+      "events_observed": ["user_message_received", "skill_run_spawned", "routing_decided", "skill_run_completed(status=finished)", "chat_turn_completed_inline"],
+      "events_issues": "none",
+      "artifact_check": "PASS — direct_llm artifact created at .reyn/artifacts/direct_llm/respond/v01_direct_llm_response.json"
+    },
+    {
+      "id": "skill_discovery_request",
+      "scenario_index": 3,
+      "verdict": "R",
+      "rubric_met": true,
+      "events_pass": false,
+      "reply_summary": "Reply listed multiple skill names (direct_llm, eval, eval_builder, index_docs, etc.) — rubric content met. But routing path used list_actions tool directly, not routing_decided event.",
+      "events_observed": ["user_message_received", "tool_called(list_actions)", "tool_returned", "hot_list_updated", "chat_turn_completed_inline"],
+      "events_issues": "must_emit routing_decided: NOT present. Artifact direct_llm: NOT present (no skill spawn).",
+      "artifact_check": "FAIL — no direct_llm skill run; list_actions tool used instead of skill dispatch"
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "scenario_index": 4,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_summary": "Reply reports 44 characters, 1 line, ~12 tokens for the input text. Character count present — rubric met.",
+      "events_observed": ["user_message_received", "skill_run_spawned", "routing_decided", "skill_run_completed(status=finished)", "chat_turn_completed_inline"],
+      "events_issues": "none",
+      "artifact_check": "PASS — word_stats_demo artifact created with commentary containing character count"
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "scenario_index": 5,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": true,
+      "reply_summary": "Reply asked for clarification about theme/mood ('どのようなテーマや雰囲気の詩がお好みですか?') rather than writing a poem. Rubric requires poem content — NOT met.",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline"],
+      "events_issues": "events_pass=true (chat_turn_completed_inline satisfies must_emit_any). Rubric fails: no poem in reply.",
+      "artifact_check": "FAIL — no direct_llm skill run; clarification question returned inline"
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "scenario_index": 6,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_summary": "Turn 2 reply contains Python list comprehension code example '[x**2 for x in range(10)]', coherent with Turn 1 topic.",
+      "events_observed": ["user_message_received(x2)", "skill_run_spawned(x2)", "routing_decided(x2)", "skill_run_completed(x2)", "chat_turn_completed_inline(x2)"],
+      "events_issues": "none",
+      "artifact_check": "PASS — two direct_llm skill runs completed, both with respond artifacts"
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "scenario_index": 7,
+      "verdict": "R",
+      "rubric_met": true,
+      "events_pass": false,
+      "reply_summary": "Reply politely declines ('申し訳ありませんが、私は画像を生成する機能を持っていません。') — rubric content met. Delivered inline, no direct_llm skill.",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_issues": "Artifact direct_llm: NOT present. Router answered inline without spawning skill.",
+      "artifact_check": "FAIL — no direct_llm skill run; inline decline without skill dispatch"
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "F1",
+      "title": "Inline-reply path bypasses skill spawn for simple queries",
+      "detail": "S1, S5, S7 (and S3 via list_actions) all used chat_turn_completed_inline without spawning direct_llm. Rubric reply-content was met but artifact checks fail because no skill was dispatched. This is a structural pattern: short/simple prompts are answered inline by the router without routing_decided or skill_run_spawned events. The scenario rubric artifact checks assume direct_llm is always spawned, creating a systemic mismatch.",
+      "scenarios_affected": ["simple_capability_question", "catalog_routing_decided_emitted", "out_of_scope_graceful_decline", "skill_discovery_request"],
+      "hypothesis_confidence": "HIGH — observed in 4/7 scenarios with consistent event pattern"
+    },
+    {
+      "id": "F2",
+      "title": "S5 (poem request) returns clarification question instead of poem",
+      "detail": "S5 asked for 'a short poem' (短い詩を書いてください). LLM asked for theme/mood clarification instead of writing one. This is a behavioral pattern — flash-lite model asks for disambiguation rather than executing the creative task directly.",
+      "scenarios_affected": ["catalog_routing_decided_emitted"],
+      "hypothesis_confidence": "HYPOTHESIS (N=1 observation, single batch)"
+    },
+    {
+      "id": "F3",
+      "title": "S3 skill discovery uses list_actions not routing_decided",
+      "detail": "When asked to list available skills, the router called list_actions tool directly and returned inline, bypassing the routing_decided event path. The scenario expects routing_decided but the actual OS behavior routes skill-listing queries to the list_actions action tool, not via skill dispatch.",
+      "scenarios_affected": ["skill_discovery_request"],
+      "hypothesis_confidence": "HIGH — consistent with inline-reply pattern (F1)"
+    }
+  ]
+}
