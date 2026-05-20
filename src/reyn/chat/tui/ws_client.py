@@ -41,6 +41,16 @@ logger = logging.getLogger(__name__)
 # The TUI's OutboxRouter already dispatches on these.
 _KNOWN_KINDS = frozenset({
     "agent", "status", "error", "intervention", "trace", "skill_done",
+    # Issue #276 Phase B (4/5): ``__attach_request__`` is now
+    # forwarded so the TUI's ``_on_attach_request`` handler can
+    # update the header label + clear the conv pane when a remote
+    # ``/attach`` triggers the server-side swap.
+    "__attach_request__",
+    # ``intervention_resolved`` was always forwarded by the server
+    # via the existing ``status`` / ``intervention`` pipeline — listed
+    # here for explicitness so the parse-time `unknown kind`
+    # diagnostic doesn't fire on it.
+    "intervention_resolved",
 })
 
 
@@ -100,6 +110,30 @@ class _WSSessionProxy:
         registration if needed.
         """
         self._intervention_listener_id = listener_id
+
+    async def _maybe_handle_slash(self, text: str) -> bool:
+        """Issue #276 Phase B (4/5): forward all slash commands to the server.
+
+        The local ``ChatSession._maybe_handle_slash`` dispatches to a
+        registered handler (e.g. ``agents_cmd``, ``attach_cmd``) that
+        reads ``session._registry`` — server-side state the proxy
+        cannot reach locally. Forward the raw command text instead;
+        the server runs the slash handler in its own session context
+        and the resulting ``system`` / ``error`` / ``__attach_request__``
+        outbox frames flow back via the existing forwarding pipeline.
+
+        Without this method ``ReynTUIApp.on_input_bar_user_submitted``
+        crashed with ``AttributeError`` on any slash command in
+        ``--connect`` mode (= Phase A regression caught during
+        Phase B testing).
+
+        Returns ``True`` to match the local API shape (= "slash
+        handled, don't fall through to user_message"). Actual
+        execution is async server-side; the visible result arrives
+        as the next inbound frame.
+        """
+        await self._send_fn({"type": "slash_command", "text": text})
+        return True
 
     async def _maybe_answer_oldest_intervention(self, text: str) -> None:
         """Issue #276 Phase B (2/5): send an ``answer_intervention`` WS frame.

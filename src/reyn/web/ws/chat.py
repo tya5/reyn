@@ -46,9 +46,16 @@ router = APIRouter(tags=["websocket"])
 logger = logging.getLogger(__name__)
 
 # Outbox message kinds we forward verbatim to the WebSocket client.
-# __end__ and __attach_request__ are control signals consumed by the registry.
+# __end__ is a control signal consumed by the registry (= shutdown).
+# __attach_request__ used to be dropped here (= the REPL's registry
+# forwarder consumed it), but the TUI in ``--connect`` mode owns the
+# attached-agent label / conv-clear-on-switch UX (= F13 PR #303's
+# ``_on_attach_request`` handler) and needs the sentinel so the
+# header label + conv pane stay in sync when a remote ``/attach``
+# triggers the server-side swap. Issue #276 Phase B (4/5).
 _FORWARDED_KINDS = frozenset({
     "agent", "status", "error", "intervention", "trace", "skill_done",
+    "__attach_request__",
 })
 
 
@@ -229,6 +236,35 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
                         "cancelled_plans": cancelled_plans,
                     },
                 }))
+            elif msg_type == "slash_command":
+                # Issue #276 Phase B (4/5): forward all slash commands
+                # (= ``/agents``, ``/attach``, ``/cost``, ``/budget``,
+                # ``/cancel``, etc.) to the server's session. Single
+                # routing — the proxy can't reach
+                # ``session._registry`` directly in remote mode, so
+                # the slash handlers (which read ``_registry`` and
+                # other server-side state) run server-side instead.
+                # Their replies surface naturally via the existing
+                # outbox forwarding (= ``reply`` writes
+                # ``kind="system"`` frames, ``reply_error`` writes
+                # ``kind="error"``, both already forwarded).
+                text = str(payload.get("text", "")).strip()
+                if not text or not text.startswith("/"):
+                    await websocket.send_text(json.dumps({
+                        "kind": "error",
+                        "text": "slash_command requires non-empty 'text' starting with '/'.",
+                        "meta": {},
+                    }))
+                    continue
+                try:
+                    await session._maybe_handle_slash(text)
+                except Exception as exc:
+                    logger.exception("slash_command failed")
+                    await websocket.send_text(json.dumps({
+                        "kind": "error",
+                        "text": f"slash_command failed: {exc}",
+                        "meta": {},
+                    }))
             elif msg_type == "answer_intervention":
                 # Issue #276 Phase B (2/5): remote intervention answer.
                 # The TUI in ``--connect`` mode routes intervention-
@@ -276,7 +312,7 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
                     "kind": "error",
                     "text": f"Unknown message type {msg_type!r}. "
                     "Expected 'user_message', 'cancel_inflight', "
-                    "or 'answer_intervention'.",
+                    "'answer_intervention', or 'slash_command'.",
                     "meta": {},
                 }))
 
