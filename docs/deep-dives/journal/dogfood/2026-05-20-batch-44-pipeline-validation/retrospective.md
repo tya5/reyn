@@ -104,3 +104,9 @@ This batch was the first run of `dogfood_batch_dispatch.py` +
 - W7 S1 T5 prompt-affordance NF (B44-NF-W7-1) — scenario design, not a fix.
 - `dogfood_batch_dispatch.py` enhancement: emit absolute `journal_dir` into
   worker prompts so worktrees don't drift.
+- **PR #290 default-flip plan**: keep `REYN_SPAWN_ACK_TO_LLM=1` opt-in
+  through B45–B47, accumulate spawn-ack-path turns to N≥100 with zero
+  literal echo + zero H3 re-emergence, then ship a separate PR that flips
+  the default (legacy outbox-push path retained for 1 release as
+  deprecation window). B44 N=35 (W7 only) is too thin to justify a
+  default flip in this PR.
