@@ -659,9 +659,14 @@ async def device_grant_flow(
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
         # ── Step 2: notify user ──────────────────────────────────────────
+        # ``expires_in`` is surfaced so callers can show a deadline to the
+        # user (= avoids the "device code expired with no warning" UX
+        # failure mode). Existing consumers that only read ``user_code`` /
+        # ``verification_uri`` keep working — the new keys are additive.
         user_action_data: dict[str, Any] = {
             "user_code": user_code,
             "verification_uri": verification_uri,
+            "expires_in": expires_in,
         }
         if verification_uri_complete:
             user_action_data["verification_uri_complete"] = verification_uri_complete

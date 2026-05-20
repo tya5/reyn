@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
+import webbrowser
 from datetime import datetime
 
 
@@ -61,16 +63,100 @@ def _no_subcommand(args: argparse.Namespace) -> None:  # pragma: no cover
     sys.exit(1)
 
 
+def _box_user_code(code: str, *, indent: str = "     ") -> str:
+    """Render *code* inside a unicode box for visual emphasis.
+
+    Empty / missing codes degrade gracefully — the user still sees the
+    URL and a `(no user code)` placeholder so the auth flow surface
+    explains itself instead of dropping the line.
+    """
+    if not code:
+        return f"{indent}(no user code)"
+    inner = f"  {code}  "
+    border = "─" * len(inner)
+    return (
+        f"{indent}┌{border}┐\n"
+        f"{indent}│{inner}│\n"
+        f"{indent}└{border}┘"
+    )
+
+
+def _open_browser_or_skip(url: str) -> None:
+    """Offer to auto-open *url* in the user's browser.
+
+    Skips silently when:
+      - stdin is not a TTY (= pipe, script, CI run) so `input()` would
+        hang or raise EOFError.
+      - The ``REYN_AUTH_NO_BROWSER`` env var is set (= explicit opt-out
+        for users on remote shells / SSH without DISPLAY).
+
+    Otherwise prompts the user to press Enter, then calls
+    ``webbrowser.open()``. Browser-launch failures are swallowed —
+    the URL is already on screen so the manual fallback works.
+    KeyboardInterrupt during the Enter prompt propagates as cancel.
+    """
+    if not sys.stdin.isatty():
+        return
+    if os.environ.get("REYN_AUTH_NO_BROWSER"):
+        return
+    try:
+        print(
+            "Press Enter to open the URL in your browser (Ctrl+C to cancel)...",
+            end="",
+            file=sys.stderr,
+            flush=True,
+        )
+        input()
+    except EOFError:
+        return
+    try:
+        webbrowser.open(url)
+    except Exception:  # noqa: BLE001 — manual fallback URL is already printed
+        pass
+
+
 def _print_user_action(info: dict) -> None:
-    """Display the device code + verification URI for the user to act on."""
+    """Display the device code + verification URI for the user to act on.
+
+    Renders a 3-section layout:
+      1. The verification URL (preferring ``verification_uri_complete``
+         when the provider supplied one — that variant embeds the
+         user_code so a single click handles both steps).
+      2. The user_code in a unicode box (= phishing protection per RFC
+         8628 §3.3.1 still asks the user to verify the code matches
+         even when ``verification_uri_complete`` is used).
+      3. The deadline (= ``expires_in`` in minutes, when present) so
+         the user knows how long they have before the device code
+         expires server-side.
+
+    Falls through to ``_open_browser_or_skip`` which handles the
+    Enter-to-open prompt + TTY / env-var skips.
+    """
+    user_code = info.get("user_code", "")
+    verification_uri = info.get("verification_uri", "")
+    verification_uri_complete = info.get("verification_uri_complete")
+    expires_in = info.get("expires_in")
+    url_to_show = verification_uri_complete or verification_uri
+
     print(file=sys.stderr)
-    print("To authenticate, open this URL in your browser:", file=sys.stderr)
-    if info.get("verification_uri_complete"):
-        print(f"  {info['verification_uri_complete']}", file=sys.stderr)
-    else:
-        print(f"  {info['verification_uri']}", file=sys.stderr)
-        print(f"  and enter code: {info['user_code']}", file=sys.stderr)
+    print("To authenticate:", file=sys.stderr)
     print(file=sys.stderr)
+    print("  1. Open this URL in your browser:", file=sys.stderr)
+    print(f"     {url_to_show}", file=sys.stderr)
+    print(file=sys.stderr)
+    print("  2. Verify the code matches:", file=sys.stderr)
+    print(file=sys.stderr)
+    print(_box_user_code(user_code), file=sys.stderr)
+    print(file=sys.stderr)
+
+    if isinstance(expires_in, int) and expires_in > 0:
+        minutes = max(1, expires_in // 60)
+        unit = "minute" if minutes == 1 else "minutes"
+        print(f"  Code expires in {minutes} {unit}.", file=sys.stderr)
+        print(file=sys.stderr)
+
+    _open_browser_or_skip(url_to_show)
+
     print("Waiting for approval...", file=sys.stderr)
 
 
