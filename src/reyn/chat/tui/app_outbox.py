@@ -235,7 +235,10 @@ class OutboxRouter:
         """`__cost_inline_toggle__` — /cost-inline slash command sets this.
 
         Body text is "on" / "off" / empty (toggle). Shows a 2.5 s sticky
-        status indicating the new state.
+        status indicating the new state. F10: also persists the new
+        state to ``.reyn/tui_prefs.json`` so the next ``reyn chat``
+        starts with the user's last choice instead of always reverting
+        to off.
         """
         app = self._app
         want = (msg.text or "").strip().lower()
@@ -247,6 +250,15 @@ class OutboxRouter:
             app._cost_inline_enabled = not app._cost_inline_enabled
         state = "on" if app._cost_inline_enabled else "off"
         self._show_transient_status(conv, f"cost-inline {state}", duration=2.5)
+        # Persist the new state — additive merge, so unknown future
+        # pref keys round-trip untouched. Failure is silent (= file
+        # write errors don't break the toggle itself).
+        from reyn.chat.tui.prefs import load_tui_prefs, save_tui_prefs
+        root = app._project_root_path()
+        if root is not None:
+            prefs = load_tui_prefs(root)
+            prefs["cost_inline"] = app._cost_inline_enabled
+            save_tui_prefs(root, prefs)
 
     def _on_expand_last_reply(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
