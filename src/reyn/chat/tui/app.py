@@ -351,13 +351,40 @@ class ReynTUIApp(App):
             return
         try:
             snap = self._budget_tracker.snapshot()
+            # Caps live on the BudgetConfig object referenced by
+            # ``snap["config"]`` (= ``cfg.daily_tokens.hard_limit`` /
+            # ``cfg.daily_cost_usd.hard_limit``). The previous wiring
+            # looked them up as flat ``daily_tokens_cap`` /
+            # ``daily_cost_usd_cap`` keys on the snapshot dict, which
+            # don't exist — so ``snap.get(...)`` always returned None,
+            # and the header's ``[N tok / <cap>]`` / ``$N / $<cap>``
+            # suffixes never appeared even when the user had configured
+            # ``cost.daily_cost_usd.hard_limit`` in ``reyn.local.yaml``.
+            cfg = snap.get("config")
+            tok_cap: int | None = None
+            cost_cap: float | None = None
+            if cfg is not None:
+                tok_cap_cfg = getattr(cfg, "daily_tokens", None)
+                cost_cap_cfg = getattr(cfg, "daily_cost_usd", None)
+                tok_hard = (
+                    getattr(tok_cap_cfg, "hard_limit", None)
+                    if tok_cap_cfg else None
+                )
+                cost_hard = (
+                    getattr(cost_cap_cfg, "hard_limit", None)
+                    if cost_cap_cfg else None
+                )
+                if tok_hard and tok_hard > 0:
+                    tok_cap = int(tok_hard)
+                if cost_hard and cost_hard > 0:
+                    cost_cap = float(cost_hard)
             header.refresh_status(
                 agent_name=self._agent_name,
                 model=self._model,
                 tokens_today=snap.get("daily_tokens", 0),
-                tokens_cap=snap.get("daily_tokens_cap"),
+                tokens_cap=tok_cap,
                 cost_usd=snap.get("daily_cost_usd", 0.0),
-                cost_cap=snap.get("daily_cost_usd_cap"),
+                cost_cap=cost_cap,
                 stalled_count=self._poll_stalled_count(),
             )
         except Exception:
