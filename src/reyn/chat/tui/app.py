@@ -93,7 +93,14 @@ class ReynTUIApp(App):
         # touching the keyboard for the edit step. Gated by check_action
         # so plain Enter in the input bar still does its normal submit.
         Binding("enter", "voice_stop_and_submit", "Voice send", priority=True, show=False),
-        Binding("escape", "voice_cancel", "Voice cancel", priority=True, show=False),
+        # Esc multiplexes: cancel voice recording / dismiss ErrorBox /
+        # close right panel — see ``action_voice_cancel``. The action
+        # name is historical (= voice was the first user, the rest
+        # accreted), but the surfaced description should reflect the
+        # dominant chat-time meaning so the Keys tab doesn't tell a
+        # non-voice user "Voice cancel" for a key they use daily for
+        # dismissing errors. Wave-2 K3.
+        Binding("escape", "voice_cancel", "Dismiss / cancel", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
     ]
 
