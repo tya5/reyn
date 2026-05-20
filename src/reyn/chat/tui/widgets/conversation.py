@@ -77,6 +77,11 @@ _RECENT_REPLIES_MAX = 10
 # turn anchors below are drop-aware so even pathological sessions that DO
 # cross the boundary don't break Ctrl+P/N navigation.
 _RICHLOG_MAX_LINES = 20_000
+# Cap on simultaneously-mounted ErrorBox widgets. Past this, the oldest
+# rolls into a dim ``_write_log`` breadcrumb (= same shape as the F2
+# Esc-dismissed breadcrumb) so the footer area can't pile up under a
+# burst of failures (e.g. proxy down + multiple retries).
+_MAX_VISIBLE_ERROR_BOXES = 3
 _NAME_COL_COLS = 4  # display-cell width reserved for the speaker label column
 # Hanging indent for message bodies (= the lines under each header). The
 # header is ``HH:MM  reyn ───`` — 5 (timestamp) + 2 (gap) = 7 cells before
@@ -846,6 +851,37 @@ class ConversationView(Widget):
         skill_name: str = "",
     ) -> ErrorBox:
         self._consume_empty_hint()
+        # F5: cap the live stack. When more than _MAX_VISIBLE_ERROR_BOXES
+        # mounted boxes pile up under the conv pane, the oldest get
+        # "rolled" into a dim breadcrumb in the RichLog and removed from
+        # the DOM. This matches the F2 pattern for ESC-dismissed
+        # ErrorBoxes (same summary + has_trace gating, same dim style)
+        # so the conv log carries a coherent "✗ … (state)" record
+        # regardless of whether the box was dismissed by user or
+        # auto-evicted by stack pressure.
+        from rich.text import Text as _RichText
+        while len(self._error_boxes) >= _MAX_VISIBLE_ERROR_BOXES:
+            oldest = self._error_boxes.pop(0)
+            old_first, _sep, _rest = (
+                getattr(oldest, "_message", "") or ""
+            ).partition("\n")
+            if len(old_first) > 72:
+                old_summary = old_first[:71] + "…"
+            else:
+                old_summary = old_first
+            old_has_trace = bool(
+                getattr(oldest, "_skill_name", "")
+                or getattr(oldest, "_run_id_short", "")
+            )
+            try:
+                oldest.remove()
+            except Exception:
+                pass
+            old_trailer = " (see events)" if old_has_trace else ""
+            self._write_log(_RichText(
+                f"  ✗ {old_summary} (rolled to log){old_trailer}",
+                style="dim #555555",
+            ))
         # Replace the sticky "thinking…" — the turn is over (it failed).
         # When the user is at the tail, a bare ``hide_status`` is enough
         # (they'll see the ErrorBox the next render tick). When they're
