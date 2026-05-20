@@ -490,12 +490,27 @@ class OutboxRouter:
         # Best-effort queue depth — the registry owns the canonical count;
         # any failure (no session attached, attribute missing on a stubbed
         # session in tests) falls back to 0 so we never break the mount.
+        #
+        # Issue #276 Phase B (3/5): in ``--connect`` mode the proxy's
+        # ``_interventions`` is None, so the registry-based path below
+        # collapses to 0 even when the remote server has multiple
+        # queued interventions. The WS server inlines ``queued_count``
+        # into the intervention frame's meta (= ``web/ws/chat.py``
+        # ``_serialize`` augmentation) — read from there as a fallback
+        # so the ``+N more pending`` badge stays accurate in remote
+        # mode.
         queued_extra = 0
         try:
             session = self._app._get_session()
             registry = getattr(session, "_interventions", None) if session else None
             if registry is not None:
                 queued_extra = max(0, registry.queued_count() - 1)
+            else:
+                # Remote-mode fallback — meta.queued_count was set by
+                # the WS server forwarder.
+                meta_count = msg.meta.get("queued_count")
+                if isinstance(meta_count, int):
+                    queued_extra = max(0, meta_count - 1)
         except Exception:
             queued_extra = 0
         # Issue #163: prefer the structured ``prompt`` from meta over the

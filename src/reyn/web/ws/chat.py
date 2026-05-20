@@ -52,13 +52,33 @@ _FORWARDED_KINDS = frozenset({
 })
 
 
-def _serialize(msg) -> str:
-    """Serialize an OutboxMessage to a JSON string for the WS wire."""
+def _serialize(msg, *, session=None) -> str:
+    """Serialize an OutboxMessage to a JSON string for the WS wire.
+
+    Issue #276 Phase B (3/5): when forwarding a ``kind="intervention"``
+    frame, augment the meta with ``queued_count`` read from the
+    session's ``_interventions`` registry. The TUI in ``--connect``
+    mode has no local registry (= the proxy's ``_interventions`` is
+    ``None``) so its ``+N more pending`` badge collapsed to 0 even
+    when the server held multiple queued items. Inlining the count
+    on the way out keeps the TUI's existing ``meta.queued_count``
+    fallback path (see ``app_outbox._on_intervention``) populated
+    end-to-end without touching the OS-side
+    ``InterventionHandler._iv_meta``.
+    """
+    meta = dict(msg.meta or {})
+    if msg.kind == "intervention" and session is not None:
+        try:
+            registry = getattr(session, "_interventions", None)
+            if registry is not None and "queued_count" not in meta:
+                meta["queued_count"] = registry.queued_count()
+        except Exception:
+            pass
     return json.dumps(
         {
             "kind": msg.kind,
             "text": msg.text,
-            "meta": msg.meta or {},
+            "meta": meta,
         },
         ensure_ascii=False,
     )
@@ -135,7 +155,7 @@ async def ws_chat(websocket: WebSocket, agent_name: str) -> None:
                     pass
                 return
             try:
-                await websocket.send_text(_serialize(msg))
+                await websocket.send_text(_serialize(msg, session=session))
             except Exception:
                 return
 
