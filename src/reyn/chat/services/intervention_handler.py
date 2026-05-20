@@ -163,7 +163,13 @@ class InterventionHandler:
             return False
         return await self.deliver_answer_to(head, text)
 
-    async def deliver_answer_to(self, iv: UserIntervention, text: str) -> bool:
+    async def deliver_answer_to(
+        self,
+        iv: UserIntervention,
+        text: str,
+        *,
+        choice_id_override: str | None = None,
+    ) -> bool:
         """Resolve ``iv`` with ``text``, append a user-history entry, emit the
         ``user_answered_intervention`` event.
 
@@ -176,7 +182,9 @@ class InterventionHandler:
         """
         if iv.future.done():
             return False
-        resolved = await self._registry.deliver_answer(iv, text)
+        resolved = await self._registry.deliver_answer(
+            iv, text, choice_id_override=choice_id_override,
+        )
         if not resolved and iv.choices:
             # No-match path: surface hint, but consume the input so the
             # router doesn't run on a stray hotkey-attempt.
@@ -190,7 +198,16 @@ class InterventionHandler:
         if not resolved:
             return False
         # Successfully resolved: append history + emit audit event.
-        choice = match_choice(text, iv.choices) if iv.choices else None
+        # issue #292 (α): peer-provided choice_id_override is the
+        # authoritative choice for audit; otherwise match_choice on
+        # text gives the same result as the resolved registry entry.
+        if choice_id_override is not None:
+            choice = next(
+                (c for c in iv.choices if c.id == choice_id_override),
+                None,
+            )
+        else:
+            choice = match_choice(text, iv.choices) if iv.choices else None
         self._append_history(
             "user",
             text,

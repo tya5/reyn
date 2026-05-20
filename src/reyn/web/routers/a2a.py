@@ -343,7 +343,9 @@ async def _handle_message_send(
     # ── Mode 1: answer injection ──────────────────────────────────────────
     task_id = params.get("task_id")
     if task_id and isinstance(task_id, str):
-        return await _handle_answer_injection(req_id, task_id, params, run_registry)
+        return await _handle_answer_injection(
+            req_id, task_id, params, registry, run_registry,
+        )
 
     # ── Shared: extract text from message parts ───────────────────────────
     message = params.get("message")
@@ -594,12 +596,14 @@ async def _handle_answer_injection(
     req_id: Any,
     task_id: str,
     params: dict,
+    registry,
     run_registry,
 ) -> dict:
     """Deliver an answer to a pending ask_user intervention on an async task.
 
     Extracts text from ``params.message.parts`` (same as normal send),
-    then calls ``run_registry.answer_intervention``.
+    then routes to ``ChatSession.answer_pending_intervention`` (= issue
+    #292 α path).
 
     issue #267 Gap 4: also extracts ``choice_id`` for closed-set prompts
     (= permission.* / safety.limit.*). Resolution order, top → bottom:
@@ -609,6 +613,15 @@ async def _handle_answer_injection(
          structured-metadata channel.
 
     Free-text ``ask_user`` answers omit ``choice_id`` and travel unchanged.
+
+    issue #292 (α): pre-#292 this called
+    ``run_registry.answer_intervention`` which resolved a separate iv
+    future owned by RunRegistry. Post-α, the iv lives in ChatSession's
+    ``_interventions._active`` and the agent's
+    ``answer_pending_intervention`` is the single authoritative entry
+    point — R-D12's persistent answer buffer applies automatically so
+    a restart between peer-POST and skill-resume is now survivable.
+    The RunEntry is only consulted to find the owning agent.
     """
     from reyn.user_intervention import InterventionAnswer  # noqa: PLC0415
 
@@ -632,18 +645,40 @@ async def _handle_answer_injection(
     if isinstance(top_choice, str) and top_choice:
         choice_id = top_choice
 
+    # Look up the owning agent via RunEntry → load ChatSession →
+    # authoritative answer delivery.
+    entry = run_registry.get(task_id)
+    if entry is None:
+        return _jsonrpc_result(req_id, {
+            "task_id": task_id, "answered": False, "reason": "not found",
+        })
+
+    try:
+        session = registry.get_or_load(entry.agent_name)
+    except Exception:  # noqa: BLE001 — defensive (agent missing / load failure)
+        logger.exception(
+            "answer_injection: failed to load agent %r for task %r",
+            entry.agent_name, task_id,
+        )
+        return _jsonrpc_result(req_id, {
+            "task_id": task_id, "answered": False,
+            "reason": "agent unavailable",
+        })
+
     answer = InterventionAnswer(text=answer_text, choice_id=choice_id)
-    delivered = run_registry.answer_intervention(task_id, answer)
+    delivered = await session.answer_pending_intervention(task_id, answer)
 
     if delivered:
+        # Mirror status back to "running" on the RunEntry for peer
+        # polling. The actual iv resolution already happened in
+        # ChatSession; this is just the public-status mirror.
+        run_registry.update(task_id, status="running")
         result = {"task_id": task_id, "answered": True}
     else:
-        entry = run_registry.get(task_id)
-        if entry is None:
-            reason = "not found"
-        else:
-            reason = "already answered or no pending intervention"
-        result = {"task_id": task_id, "answered": False, "reason": reason}
+        result = {
+            "task_id": task_id, "answered": False,
+            "reason": "already answered or no pending intervention",
+        }
 
     return _jsonrpc_result(req_id, result)
 

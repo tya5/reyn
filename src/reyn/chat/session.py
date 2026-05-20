@@ -1989,9 +1989,63 @@ class ChatSession:
         """Thin wrapper → InterventionHandler.maybe_answer."""
         return await self._intervention_handler.maybe_answer(text)
 
-    async def _deliver_answer_to(self, iv: UserIntervention, text: str) -> bool:
-        """Thin wrapper → InterventionHandler.deliver_answer_to."""
-        return await self._intervention_handler.deliver_answer_to(iv, text)
+    async def _deliver_answer_to(
+        self,
+        iv: UserIntervention,
+        text: str,
+        *,
+        choice_id_override: str | None = None,
+    ) -> bool:
+        """Thin wrapper → InterventionHandler.deliver_answer_to.
+
+        ``choice_id_override`` is forwarded so peer-side callers (= A2A
+        POST answer with explicit choice_id per PR #285 Gap 4) can bypass
+        the TUI's text-based match_choice. issue #292 (α).
+        """
+        return await self._intervention_handler.deliver_answer_to(
+            iv, text, choice_id_override=choice_id_override,
+        )
+
+    async def answer_pending_intervention(
+        self,
+        run_id: str,
+        answer: "InterventionAnswer",
+    ) -> bool:
+        """Deliver ``answer`` to the outstanding intervention for ``run_id``.
+
+        Authoritative entry point for peer answer delivery (= A2A POST
+        ``{task_id, answer}`` → ``_handle_answer_injection`` → here).
+        issue #292 (α): replaces the pre-#292
+        ``RunRegistry.answer_intervention`` path. Under α, the A2A
+        override is a side-effect observer and the iv lives in
+        ``_interventions._active`` like a TUI iv, so the answer
+        delivery uses the same handler path the TUI uses
+        (``deliver_answer_to``). R-D12's persistent answer buffer
+        applies automatically.
+
+        Looks up the iv by ``run_id`` in active interventions; for
+        the peer-answer case there's typically one iv per run (skills
+        await serially). Delegates to the handler so history +
+        ``user_answered_intervention`` event + outbox cleanup all fire
+        the same way as TUI answers — observers on the audit trail
+        see a consistent shape regardless of answer origin.
+
+        Returns True when the future was resolved; False for unknown
+        run_id, already-answered iv, malformed ``choice_id``, or no
+        matching iv. Callers translate False into a
+        ``{"answered": false, "reason": ...}`` peer response.
+        """
+        for iv in self._interventions.list_active():
+            if iv.run_id != run_id:
+                continue
+            if iv.future.done():
+                return False
+            return await self._deliver_answer_to(
+                iv,
+                answer.text,
+                choice_id_override=answer.choice_id,
+            )
+        return False
 
     async def _announce_intervention(self, iv: UserIntervention) -> None:
         """Thin wrapper → InterventionHandler.announce."""
@@ -2133,16 +2187,40 @@ class ChatSession:
         when iv.origin_channel_id is set but the listener has gone)
         lives here so it fires for ALL iv flows, not just the
         handle_intervention path. The check sits AFTER the chain-override
-        check so A2A-spawned ivs go to the A2A peer even if the local
-        TUI listener is absent.
+        notification so A2A peers still see the iv's input-required
+        signal even if the local TUI listener is absent.
+
+        issue #292 (α): chain overrides now run as **side-effect
+        observers** (= notify A2A peer surfaces, write history, post
+        webhook) BEFORE the regular dispatch path, instead of replacing
+        it. The iv always flows through ``InterventionHandler.dispatch``
+        so it lands in ``_interventions._active`` + WAL +
+        ``outstanding_interventions`` + becomes eligible for R-D12's
+        persistent answer buffer. Pre-#292, the override replaced
+        dispatch and A2A ivs were invisible to ChatSession's iv
+        machinery — fixed structurally here, not patched.
         """
-        # FP-0001: chain_id-scoped override path (A2A async tasks).
+        # FP-0001 / issue #292: chain_id-scoped override notification
+        # (A2A async tasks). The override is now an OBSERVER that runs
+        # side effects (= webhook / SSE / RunRegistry status mirror)
+        # alongside the normal dispatch — NOT a bypass replacement.
+        # Notify before dispatch so the peer learns input-required
+        # before the awaiter (= handler.dispatch) blocks the iv future.
         if iv.run_id is not None and self._intervention_overrides:
             chain_id = self.running_skills_chain.get(iv.run_id)
             if chain_id is not None:
                 override = self._intervention_overrides.get(chain_id)
                 if override is not None:
-                    return await override.request(iv)
+                    try:
+                        await override.on_dispatch(iv)
+                    except Exception:  # noqa: BLE001 — side effects are best-effort
+                        # Override notification must NOT block dispatch.
+                        # A failed webhook / SSE append / status mirror
+                        # is logged elsewhere; dispatch proceeds.
+                        logger.exception(
+                            "intervention override on_dispatch raised "
+                            "(chain_id=%s iv_id=%s)", chain_id, iv.id,
+                        )
         # issue #268 Phase 2 continuation: origin-pin stall check.
         # When the iv carries an explicit ``origin_channel_id`` whose
         # listener is no longer present (= the origin channel closed

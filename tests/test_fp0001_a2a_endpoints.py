@@ -278,12 +278,15 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
 
 
 def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
-    """Tier 2: POST /a2a/agents/{name} with params.task_id set delivers an
-    InterventionAnswer to the run's pending_intervention and returns
-    {"answered": True} when the intervention is active.
+    """Tier 2: POST /a2a/agents/{name} with params.task_id set delivers
+    an InterventionAnswer to the agent's pending intervention and
+    returns ``{"answered": True}``.
 
-    We populate a pending intervention by hand (using UserIntervention +
-    asyncio.Future) without going through the full async stack.
+    issue #292 (α): iv lives in ``ChatSession._interventions._active``,
+    NOT in ``RunEntry.pending_intervention`` (removed). We seed the iv
+    directly into the agent's intervention registry; the router looks
+    up the agent via the RunEntry's ``agent_name`` and calls
+    ``ChatSession.answer_pending_intervention``.
     """
     from fastapi.testclient import TestClient
 
@@ -321,17 +324,24 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     run_registry = RunRegistry()
     entry = run_registry.create(agent_name="demo", chain_id="chain-iv")
 
-    # Populate a pending intervention on the entry.
+    # Seed the iv directly into the agent's outstanding intervention
+    # queue (= post-α: ChatSession owns iv state). Use the same loop
+    # the TestClient will drive so the future is on the right loop.
     loop = asyncio.new_event_loop()
     try:
-        iv_future: asyncio.Future = loop.create_future()
-        iv = UserIntervention(kind="ask_user", prompt="What is your name?", future=iv_future)
-        run_registry.update(
-            entry.run_id,
-            status="input-required",
-            question=iv.prompt,
-            pending_intervention=iv,
+        session = registry.get_or_load("demo")
+        iv_future = loop.create_future()
+        iv = UserIntervention(
+            kind="ask_user",
+            prompt="What is your name?",
+            run_id=entry.run_id,
+            future=iv_future,
         )
+        # Insert into the registry's active queue (= bypasses dispatch
+        # for test setup simplicity; production goes through
+        # InterventionHandler.dispatch).
+        session._interventions._active[iv.id] = iv
+        session._interventions._order.append(iv.id)
 
         app.dependency_overrides[get_registry] = lambda: registry
         app.dependency_overrides[get_run_registry] = lambda: run_registry
@@ -359,9 +369,10 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
             assert result["task_id"] == entry.run_id
             assert result["answered"] is True
 
-            # The future must have been resolved with the answer text.
-            # (loop.run_until_complete would block; check via done() instead)
-            assert iv_future.done(), "intervention future must be resolved after answer injection"
+            # Future resolved with the answer text.
+            assert iv_future.done(), (
+                "iv future must be resolved after answer injection"
+            )
             resolved = iv_future.result()
             assert resolved.text == "Alice"
         finally:

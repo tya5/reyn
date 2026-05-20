@@ -73,11 +73,11 @@ def test_a2a_intervention_bus_channel_id_reflects_run_id() -> None:
 # ── 2. deliver stamps iv.origin_channel_id ────────────────────────────
 
 
-def test_deliver_stamps_origin_channel_id_when_unset() -> None:
-    """Tier 2: ``deliver`` sets ``iv.origin_channel_id`` to the bus's
-    ``channel_id`` when the iv was created without one (= the typical
-    case for skill-emitted ivs that don't know which channel they're
-    being delivered to).
+def test_on_dispatch_stamps_origin_channel_id_when_unset() -> None:
+    """Tier 2: ``on_dispatch`` sets ``iv.origin_channel_id`` to the bus's
+    ``channel_id`` when the iv was created without one. issue #292
+    α: renamed from ``deliver`` to ``on_dispatch`` — semantics
+    (side-effect observer) preserved for the stamping contract.
     """
     registry = RunRegistry()
     entry = registry.create(agent_name="demo", chain_id="chain-A")
@@ -85,23 +85,17 @@ def test_deliver_stamps_origin_channel_id_when_unset() -> None:
 
     async def _drive() -> str | None:
         iv = UserIntervention(kind="ask_user", prompt="?")
-        # Schedule deliver, resolve the iv's future to let deliver return.
-        task = asyncio.ensure_future(bus.deliver(iv))
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        iv.future.set_result(InterventionAnswer(text="ok"))
-        await task
+        await bus.on_dispatch(iv)
         return iv.origin_channel_id
 
     stamped = asyncio.run(_drive())
     assert stamped == f"a2a:{entry.run_id}"
 
 
-def test_deliver_respects_preexisting_origin_channel_id() -> None:
+def test_on_dispatch_respects_preexisting_origin_channel_id() -> None:
     """Tier 2: when an iv arrives with ``origin_channel_id`` already
-    set (= e.g. an upstream agent's bus already stamped it for
-    multi-hop delegation), ``deliver`` does NOT overwrite. Preserves
-    the origin's provenance for cross-channel routing decisions.
+    set (= e.g. upstream multi-hop delegation), ``on_dispatch`` does
+    NOT overwrite.
     """
     registry = RunRegistry()
     entry = registry.create(agent_name="demo", chain_id="chain-A")
@@ -113,11 +107,7 @@ def test_deliver_respects_preexisting_origin_channel_id() -> None:
             prompt="?",
             origin_channel_id="upstream:custom",
         )
-        task = asyncio.ensure_future(bus.deliver(iv))
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        iv.future.set_result(InterventionAnswer(text="ok"))
-        await task
+        await bus.on_dispatch(iv)
         return iv.origin_channel_id
 
     stamped = asyncio.run(_drive())

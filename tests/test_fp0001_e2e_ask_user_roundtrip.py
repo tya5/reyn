@@ -89,93 +89,54 @@ def test_run_registry_create_and_get():
     assert entry.run_id
     assert entry.agent_name == "myagent"
     assert entry.status == "running"
-    assert entry.question is None
     assert entry.result is None
     assert entry.error is None
+    # issue #292 (α): ``question`` field removed from RunEntry.
+    assert not hasattr(entry, "question")
 
     fetched = registry.get(entry.run_id)
     assert fetched is entry
 
 
 def test_run_registry_update_status():
-    """Tier 2c: RunRegistry.update mutates status and clears pending intervention."""
+    """Tier 2c: RunRegistry.update mutates status. issue #292 (α):
+    the ``question`` kwarg is removed — status mirror is the only
+    A2A-wrapper-owned field that mutates here.
+    """
     registry = _new_run_registry()
     entry = registry.create(agent_name="a", chain_id="c")
 
-    registry.update(entry.run_id, status="input-required", question="What next?")
+    registry.update(entry.run_id, status="input-required")
     assert registry.get(entry.run_id).status == "input-required"
-    assert registry.get(entry.run_id).question == "What next?"
 
-    # Transitioning back to running clears pending fields.
+    # Transitioning back to running.
     registry.update(entry.run_id, status="running")
     assert registry.get(entry.run_id).status == "running"
 
 
 def test_run_registry_to_public_dict_excludes_internals():
-    """Tier 2c: RunEntry.to_public_dict excludes asyncio.Task and UserIntervention."""
-    from reyn.user_intervention import UserIntervention
-
+    """Tier 2c: RunEntry.to_public_dict excludes asyncio.Task. issue
+    #292 (α): ``pending_intervention`` / ``question`` were also
+    excluded pre-α; α removes them entirely from RunEntry's data
+    shape (= they live in ChatSession).
+    """
     registry = _new_run_registry()
     entry = registry.create(agent_name="b", chain_id="c2")
-    iv = _new_intervention("continue?", run_id=entry.run_id)
-    registry.update(
-        entry.run_id,
-        status="input-required",
-        question="continue?",
-        pending_intervention=iv,
-    )
+    registry.update(entry.run_id, status="input-required")
 
     pub = entry.to_public_dict()
     assert "pending_intervention" not in pub
     assert "task" not in pub
+    assert "question" not in pub
     assert pub["status"] == "input-required"
-    assert pub["question"] == "continue?"
     assert "run_id" in pub
     assert "agent_name" in pub
 
 
-def test_run_registry_answer_intervention_resolves_future():
-    """Tier 2c: answer_intervention resolves iv.future and resets status to running."""
-    registry = _new_run_registry()
-    entry = registry.create(agent_name="c", chain_id="c3")
-    iv = _new_intervention("proceed?", run_id=entry.run_id)
-    registry.update(
-        entry.run_id,
-        status="input-required",
-        question="proceed?",
-        pending_intervention=iv,
-    )
-
-    answer = _new_answer("yes")
-
-    # answer_intervention must resolve the future synchronously (same-loop call).
-    loop = asyncio.new_event_loop()
-    try:
-        # Set the future on the same loop.
-        iv.future = loop.create_future()
-        resolved = registry.answer_intervention(entry.run_id, answer)
-        assert resolved is True
-
-        # Future is done; result is the answer.
-        assert iv.future.done()
-        assert iv.future.result() is answer
-
-        # Registry clears pending state.
-        updated = registry.get(entry.run_id)
-        assert updated.status == "running"
-        assert updated.question is None
-        assert updated.pending_intervention is None
-    finally:
-        loop.close()
-
-
-def test_run_registry_answer_intervention_returns_false_when_no_pending():
-    """Tier 2c: answer_intervention returns False if no pending intervention exists."""
-    registry = _new_run_registry()
-    entry = registry.create(agent_name="d", chain_id="c4")
-    # No pending intervention set.
-    answer = _new_answer("hello")
-    assert registry.answer_intervention(entry.run_id, answer) is False
+# Tests for ``RunRegistry.answer_intervention`` removed: post-issue-#292,
+# the method is gone and peer-answer flows go through
+# ``ChatSession.answer_pending_intervention``. See
+# tests/test_fp0001_a2a_intervention_bus.py for the post-α coverage.
 
 
 def test_run_registry_cancel_marks_cancelled():
@@ -200,82 +161,11 @@ def test_run_registry_cancel_marks_cancelled():
 # ---------------------------------------------------------------------------
 
 
-def test_a2a_intervention_bus_publishes_and_awaits():
-    """Tier 2c: A2AInterventionBus.request publishes the question to RunRegistry
-    and blocks on iv.future until answer_intervention resolves it."""
-    from reyn.user_intervention import InterventionAnswer, UserIntervention
-
-    registry = _new_run_registry()
-    entry = registry.create(agent_name="f", chain_id="c6")
-    bus = _new_a2a_bus(entry.run_id, registry)
-    answer = _new_answer("yes, proceed")
-
-    async def _run():
-        # Create the intervention inside the running loop so iv.future is
-        # bound to the correct event loop (Future is created in __post_init__
-        # via asyncio.get_running_loop()).
-        iv = UserIntervention(kind="ask_user", prompt="Is this OK?", run_id=entry.run_id)
-
-        # Deliver the answer from a concurrent task after a short yield.
-        async def _deliver():
-            await asyncio.sleep(0)  # yield to let bus.request publish first
-            registry.answer_intervention(entry.run_id, answer)
-
-        deliver_task = asyncio.create_task(_deliver())
-        received = await bus.request(iv)
-        await deliver_task
-        return received, iv
-
-    loop = asyncio.new_event_loop()
-    try:
-        received, iv = loop.run_until_complete(_run())
-    finally:
-        loop.close()
-
-    # bus.request returned the answer delivered by answer_intervention.
-    assert received is answer
-    assert received.text == "yes, proceed"
-
-    # Registry should have cleared the pending state once bus.request returned.
-    # (answer_intervention already cleared it when resolving the future.)
-    updated = registry.get(entry.run_id)
-    assert updated.pending_intervention is None
-
-
-def test_a2a_intervention_bus_sets_input_required_before_blocking():
-    """Tier 2c: A2AInterventionBus.request sets status=input-required and
-    exposes the question text BEFORE awaiting the future."""
-    from reyn.user_intervention import UserIntervention
-
-    registry = _new_run_registry()
-    entry = registry.create(agent_name="g", chain_id="c7")
-    bus = _new_a2a_bus(entry.run_id, registry)
-
-    status_at_request_time: list[str] = []
-    question_at_request_time: list[str | None] = []
-
-    async def _run():
-        # Create intervention inside the loop so Future is loop-bound.
-        iv = UserIntervention(kind="ask_user", prompt="What colour?", run_id=entry.run_id)
-
-        async def _observe_then_deliver():
-            await asyncio.sleep(0)  # yield so bus.request runs first
-            e = registry.get(entry.run_id)
-            status_at_request_time.append(e.status)
-            question_at_request_time.append(e.question)
-            registry.answer_intervention(entry.run_id, _new_answer("blue"))
-
-        asyncio.create_task(_observe_then_deliver())
-        await bus.request(iv)
-
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(_run())
-    finally:
-        loop.close()
-
-    assert status_at_request_time == ["input-required"]
-    assert question_at_request_time == ["What colour?"]
+# Tests for A2AInterventionBus.request awaiting iv.future + question
+# field mirroring removed: post-issue-#292 the bus is a side-effect
+# observer (= ``on_dispatch``) that does not own iv resolution. Status
+# mirror behaviour is covered by
+# tests/test_fp0001_a2a_intervention_bus.py::test_on_dispatch_mirrors_input_required_status.
 
 
 # ---------------------------------------------------------------------------
@@ -486,9 +376,12 @@ def test_get_task_returns_run_entry(tmp_path, monkeypatch):
 
     # Pre-populate RunRegistry with a known entry so we can exercise
     # GET /a2a/tasks/{run_id} without needing a live async task.
+    # issue #292 (α): ``question`` is removed from the public dict —
+    # iv prompt text is exposed via the SSE stream / webhook payload
+    # (= history_events buffer), not via the GET-task endpoint.
     run_registry = RunRegistry()
     entry = run_registry.create(agent_name="default", chain_id="test-chain")
-    run_registry.update(entry.run_id, status="input-required", question="Proceed?")
+    run_registry.update(entry.run_id, status="input-required")
 
     app.dependency_overrides[get_registry] = lambda: registry
     app.dependency_overrides[get_run_registry] = lambda: run_registry
@@ -500,7 +393,7 @@ def test_get_task_returns_run_entry(tmp_path, monkeypatch):
         body = r.json()
         assert body["run_id"] == entry.run_id
         assert body["status"] == "input-required"
-        assert body["question"] == "Proceed?"
+        assert "question" not in body  # α: field removed
         assert body["agent_name"] == "default"
     finally:
         app.dependency_overrides.clear()
