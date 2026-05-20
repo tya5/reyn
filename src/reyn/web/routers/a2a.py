@@ -805,15 +805,39 @@ class _A2AProgressBridge:
             self._run_registry.append_event(self._run_id, payload)
         except Exception:  # noqa: BLE001 — sse buffer is best-effort
             pass
-        # Sink 2: webhook POST (opt-in). Each sink swallows its own
-        # transport error independently so one failure doesn't suppress
-        # the other.
+        # Sink 2: webhook POST (opt-in + liveness-gated, issue #269
+        # Phase 2). Skip if the per-run ChannelState marked the URL
+        # dead from earlier sustained failures; record each attempt
+        # outcome so subsequent fires (= more progress events,
+        # terminal completed / failed) share the inference.
         if self._webhook_url is not None:
+            # Defensive getattr so stub registries (= test fakes that
+            # only implement append_event) still work with the bridge.
+            channel_state = None
+            get_state = getattr(
+                self._run_registry, "webhook_channel_state", None,
+            )
+            if get_state is not None:
+                try:
+                    channel_state = get_state(self._run_id)
+                except Exception:  # noqa: BLE001
+                    channel_state = None
+            if channel_state is not None and not channel_state.is_alive():
+                return
+            from reyn.chat.channel_state import (  # noqa: PLC0415
+                DeliveryOutcome,
+                DeliveryResult,
+            )
             from reyn.web.notifications import post_webhook  # noqa: PLC0415
             try:
-                await post_webhook(self._webhook_url, payload)
-            except Exception:  # noqa: BLE001 — progress is best-effort
-                return
+                result = await post_webhook(self._webhook_url, payload)
+            except Exception as exc:  # noqa: BLE001 — progress is best-effort
+                result = DeliveryResult(
+                    outcome=DeliveryOutcome.RETRYABLE_FAILURE,
+                    error=str(exc),
+                )
+            if channel_state is not None:
+                channel_state.record_attempt(result)
 
 
 async def _handle_async_mode(
