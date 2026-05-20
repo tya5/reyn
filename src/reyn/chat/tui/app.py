@@ -575,19 +575,16 @@ class ReynTUIApp(App):
             if status != "finished":
                 self.set_title_state("error")
                 self.alert()
-            # Issue 2 — dim completion line in conversation log
-            _existing = self._skill_exec.get(run_id) or {}
-            _elapsed = _now_monotonic() - _existing.get("start_time", _now_monotonic())
-            _sname = _existing.get("skill_name") or skill_name or run_id
-            from rich.text import Text as _RichText
-            _note = _RichText()
-            _icon = "✓" if status == "finished" else "✗"
-            _color = "#447744" if status == "finished" else "#884444"
-            _note.append(
-                f"{_icon} {_sname}: {status} ({_elapsed:.0f}s)",
-                style=f"dim {_color}",
-            )
-            conv._write_log(_note)
+            # Wave-3 SK1: previously a second ``conv._write_log`` line
+            # ``✓ skill_name: finished (Xs)`` was emitted here, but
+            # ``SkillActivityRow._build_finished`` (= the row the
+            # ``finish_skill_row`` call above transitions) already
+            # renders ``✓ skill#abcd  · Ns  · Ctrl+B → agents`` /
+            # ``✗ skill#abcd  · failed: …`` in-pane. The dual marker
+            # cluttered the conv log with redundant lines. Drop the
+            # ``_write_log`` block; book-keeping (= ``_skill_exec``
+            # pop + ``_push_exec_state`` + ``_last_focal_tab``)
+            # stays.
             self._skill_exec.pop(run_id, None)
             self._push_exec_state()
             self._last_focal_tab = "agents"
