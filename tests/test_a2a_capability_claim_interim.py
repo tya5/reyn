@@ -1,42 +1,42 @@
-"""Tier 2: A2A Agent Card capability claim — issue #267 Gap 3 Z-b interim disclosure.
+"""Tier 2: A2A Agent Card capability claim — issue #267 Gap 3 Z-c re-elevation.
 
-Pure-Python test that pins the interim ``False`` state of the
-``streaming`` and ``pushNotifications`` capabilities without booting
-FastAPI / TestClient. Calls ``_build_agent_card`` directly so the
-check runs in any environment (= the broader test_a2a.py /
-test_fp0001_a2a_endpoints.py tests need the optional ``fastapi``
-extra; this file does not).
+With Gap 1 (= SSE producer wiring, PR #288) and Gap 2 (= webhook
+trigger expansion, PR #286) both landed, ``streaming`` +
+``pushNotifications`` flip back to ``True`` (= reversing PR #272's
+Gap 3 Z-b interim disclosure). Each claim is now pinned to the
+in-source wire that backs it, mirroring PR #284's MCP capability/wire
+AST-pin pattern (= prevents the #267 Z-b "claim/reality mismatch"
+regression by construction).
+
+Calibration constraint (= same as PR #284 M3): every declared
+``True`` capability must derive from a concrete in-source wire. Tests
+below pin BOTH the declaration AND the wire, so a future PR that
+removes one without the other fails immediately.
 
 Pins:
 
-  1. ``streaming`` is ``False`` (= issue #267 Gap 1 SSE producer not
-     wired, history_events stays empty in production).
-  2. ``pushNotifications`` is ``False`` (= issue #267 Gap 2 webhook
-     trigger limited to completed / failed / input-required, claiming
-     ``True`` would mislead spec-conformance-strict peers).
-  3. ``stateTransitionHistory`` is ``False`` (= no plans to implement,
-     unchanged from FP-0001).
-  4. Required Agent Card fields stay shape-stable (= name / description
-     / url / version / protocolVersion / capabilities / defaultInputModes
-     / defaultOutputModes / skills) so the Gap 3 Z-b change is a
-     **value flip only**, not a schema change.
+  1. ``streaming`` is ``True`` + backed by ``_A2AProgressBridge``
+     appending to ``run_registry.history_events`` (Gap 1 PR #288).
+  2. ``pushNotifications`` is ``True`` + backed by the lifecycle
+     webhook fire path (Gap 2 PR #286) + the original 3 terminal
+     triggers in ``_handle_async_mode._run`` + ``A2AInterventionBus``.
+  3. ``stateTransitionHistory`` stays ``False`` (= unchanged from
+     FP-0001, no plans to implement).
+  4. Required Agent Card fields stay shape-stable.
 
-Gap 3 Z-a (= flip ``True`` back) lands once Gap 1 + Gap 2 close; at
-that point this test's expected values flip to ``True`` and reference
-the Gap-completion PRs.
+Pure-Python tests — call ``_build_agent_card`` directly so the check
+runs in any environment.
 """
 from __future__ import annotations
+
+import inspect
 
 import pytest
 
 
 def _maybe_skip_if_router_unavailable() -> None:
-    """Skip when ``reyn.web.routers.a2a`` can't import.
-
-    The module pulls in fastapi at top-level (= ``from fastapi import
-    APIRouter, ...``); environments without the optional extra simply
-    skip. CI has fastapi installed; local dev may not. issue #253
-    introduced the dependency.
+    """Skip when ``reyn.web.routers.a2a`` can't import (= optional
+    fastapi extra missing). CI has it; local dev may not.
     """
     try:
         import reyn.web.routers.a2a  # noqa: F401
@@ -44,42 +44,96 @@ def _maybe_skip_if_router_unavailable() -> None:
         pytest.skip(f"reyn.web.routers.a2a unavailable: {exc}")
 
 
-def test_agent_card_streaming_is_false_until_gap1_lands() -> None:
-    """Tier 2: ``streaming`` capability is False (= issue #267 Gap 3 Z-b).
+# ── 1. streaming = True + backed by producer wire ────────────────────
 
-    SSE endpoint exists at GET /a2a/tasks/{run_id}/events but
-    history_events has no in-tree producer, so streaming never delivers
-    in-flight events. Claiming True would mislead spec-conformance peers.
-    Gap 3 Z-a flips this back to True once Gap 1 wires the producer.
+
+def test_agent_card_streaming_is_true_after_gap1_lands() -> None:
+    """Tier 2: ``streaming`` capability is True (= issue #267 Gap 3
+    Z-c re-elevation). Backed by ``_A2AProgressBridge``'s SSE sink
+    landed in PR #288.
     """
     _maybe_skip_if_router_unavailable()
     from reyn.web.routers.a2a import _build_agent_card
 
     card = _build_agent_card("test_agent", "test role", "http://localhost/a2a")
-    assert card["capabilities"]["streaming"] is False
+    assert card["capabilities"]["streaming"] is True
 
 
-def test_agent_card_push_notifications_is_false_until_gap2_lands() -> None:
-    """Tier 2: ``pushNotifications`` capability is False (= issue #267
-    Gap 3 Z-b).
+def test_streaming_claim_backed_by_append_event_call_site() -> None:
+    """Tier 2: pin the in-source wire backing ``streaming=True``. The
+    producer call site is ``_A2AProgressBridge._send`` (= PR #288)
+    calling ``run_registry.append_event(...)``. AST-search confirms
+    the wire still exists so a refactor removing the producer fails
+    this test alongside the Z-c claim test.
+    """
+    _maybe_skip_if_router_unavailable()
+    from reyn.web.routers import a2a as a2a_router
 
-    Webhook fires on exactly three triggers (completed / failed /
-    input-required). Claiming True would imply support for arbitrary
-    state-change notifications, which we don't deliver. Gap 3 Z-a
-    flips this back to True once Gap 2 expands the trigger set.
+    bridge_src = inspect.getsource(a2a_router._A2AProgressBridge)
+    assert "append_event" in bridge_src, (
+        "_A2AProgressBridge no longer calls run_registry.append_event — "
+        "the streaming capability claim is now unbacked (= #267 Z-b "
+        "style claim/reality mismatch). Either restore the wire or "
+        "flip the claim back to False."
+    )
+
+
+# ── 2. pushNotifications = True + backed by webhook fire wires ───────
+
+
+def test_agent_card_push_notifications_is_true_after_gap2_lands() -> None:
+    """Tier 2: ``pushNotifications`` capability is True (= issue #267
+    Gap 3 Z-c re-elevation). Backed by the lifecycle webhook fire
+    path landed in PR #286 + the original 3 terminal triggers.
     """
     _maybe_skip_if_router_unavailable()
     from reyn.web.routers.a2a import _build_agent_card
 
     card = _build_agent_card("test_agent", "test role", "http://localhost/a2a")
-    assert card["capabilities"]["pushNotifications"] is False
+    assert card["capabilities"]["pushNotifications"] is True
+
+
+def test_push_notifications_claim_backed_by_webhook_post_call_sites() -> None:
+    """Tier 2: pin the in-source wires backing ``pushNotifications=True``.
+    Two surfaces must call ``post_webhook``:
+
+      - ``_A2AProgressBridge._send`` (= PR #286 lifecycle fire)
+      - ``_handle_async_mode._run`` (= original completed / failed
+        terminal fires)
+      - ``A2AInterventionBus.deliver`` (= original input-required
+        terminal fire, in src/reyn/web/a2a_intervention.py)
+
+    AST-search for ``post_webhook`` references confirms the wires still
+    exist. A refactor removing them fails this test alongside the Z-c
+    claim test.
+    """
+    _maybe_skip_if_router_unavailable()
+    from pathlib import Path
+
+    repo_root = Path(__file__).parent.parent / "src" / "reyn" / "web"
+    a2a_router_src = (repo_root / "routers" / "a2a.py").read_text(
+        encoding="utf-8",
+    )
+    bus_src = (repo_root / "a2a_intervention.py").read_text(encoding="utf-8")
+
+    assert "post_webhook" in a2a_router_src, (
+        "src/reyn/web/routers/a2a.py no longer calls post_webhook — "
+        "pushNotifications claim is unbacked."
+    )
+    assert "post_webhook" in bus_src, (
+        "src/reyn/web/a2a_intervention.py no longer calls post_webhook "
+        "— pushNotifications claim is unbacked for the iv surface."
+    )
+
+
+# ── 3. stateTransitionHistory unchanged ─────────────────────────────
 
 
 def test_agent_card_state_transition_history_stays_false() -> None:
     """Tier 2: ``stateTransitionHistory`` capability remains False
     (= unchanged from FP-0001, no plans to implement).
 
-    Catches any accidental flip during the Gap 3 Z-b adjustment.
+    Catches any accidental flip during the Z-c adjustment.
     """
     _maybe_skip_if_router_unavailable()
     from reyn.web.routers.a2a import _build_agent_card
@@ -88,13 +142,14 @@ def test_agent_card_state_transition_history_stays_false() -> None:
     assert card["capabilities"]["stateTransitionHistory"] is False
 
 
-def test_agent_card_required_fields_shape_stable_through_gap3_zb() -> None:
-    """Tier 2: Gap 3 Z-b is a **value flip only**, not a schema change.
+# ── 4. Card shape stability ──────────────────────────────────────────
 
-    Required Agent Card fields stay present with their expected shape
-    so peer clients reading the card parse it the same way. Pinning
-    this guards against accidental schema drift bundled into the value
-    flip.
+
+def test_agent_card_required_fields_shape_stable_through_gap3_zc() -> None:
+    """Tier 2: Z-c re-elevation is a **value flip only**, not a schema
+    change. Required Agent Card fields stay present with their
+    expected shape so peer clients reading the card parse it the same
+    way.
     """
     _maybe_skip_if_router_unavailable()
     from reyn.web.routers.a2a import _build_agent_card
@@ -110,7 +165,7 @@ def test_agent_card_required_fields_shape_stable_through_gap3_zb() -> None:
     assert "version" in card
     assert "protocolVersion" in card
 
-    # Capabilities map shape (3 boolean fields, all False post-Z-b)
+    # Capabilities map shape (3 boolean fields)
     caps = card["capabilities"]
     assert isinstance(caps, dict)
     assert set(caps.keys()) == {

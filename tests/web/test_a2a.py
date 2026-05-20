@@ -143,10 +143,11 @@ def test_agent_card_returns_canonical_shape(tmp_path):
     returns an A2A-compliant Agent Card with the agent's role as
     description and the JSON-RPC endpoint URL.
 
-    Capabilities: issue #267 Gap 3 Z-b interim disclosure (= streaming
-    + pushNotifications both ``False`` until Gap 1 SSE producer wiring
-    + Gap 2 webhook trigger expansion land; then Gap 3 Z-a re-flips
-    them to ``True``).
+    Capabilities: issue #267 Gap 3 Z-c re-elevation (= streaming +
+    pushNotifications both ``True`` after Gap 1 SSE producer wiring
+    PR #288 + Gap 2 webhook trigger expansion PR #286 landed; each
+    claim is pinned to its in-source wire in
+    ``tests/test_a2a_capability_claim_interim.py``).
     """
     client, _ = _client_with_registry(tmp_path, [("default", "general assistant")])
     try:
@@ -161,11 +162,11 @@ def test_agent_card_returns_canonical_shape(tmp_path):
         # Endpoint URL points at the JSON-RPC handler for THIS agent.
         assert card["url"].endswith("/a2a/agents/default")
 
-        # Capabilities advertised: issue #267 Gap 3 Z-b interim
-        # disclosure — both False until impl gaps close.
+        # Capabilities advertised: issue #267 Gap 3 Z-c re-elevation
+        # — both True after Gap 1 + Gap 2 closed.
         caps = card["capabilities"]
-        assert caps["streaming"] is False
-        assert caps["pushNotifications"] is False
+        assert caps["streaming"] is True
+        assert caps["pushNotifications"] is True
         assert caps["stateTransitionHistory"] is False
 
         # Modes + skills shape (peers parse these to capability-negotiate).
