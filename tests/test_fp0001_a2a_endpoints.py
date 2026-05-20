@@ -203,19 +203,19 @@ def test_stream_task_events_returns_not_found_for_missing_run() -> None:
 
 
 def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> None:
-    """Tier 2: Agent Card capabilities currently advertise the interim
-    state from issue #267 Gap 3 Z-b:
+    """Tier 2: Agent Card capabilities advertise:
 
-      - streaming: False (= SSE producer not wired, history_events empty)
-      - pushNotifications: False (= webhook fires only on 3 lifecycle events)
+      - streaming: True (= issue #267 Gap 1 SSE producer wired in PR #288)
+      - pushNotifications: True (= issue #267 Gap 2 webhook trigger
+        expansion landed in PR #286)
       - stateTransitionHistory: False (= no plans to implement)
 
-    FP-0001 originally flipped streaming + pushNotifications to True for
-    the design intent, but the implementation gaps (= issue #267 Gap 1 +
-    Gap 2) make those claims misleading. Gap 3 Z-b is the interim
-    honest disclosure; Gap 3 Z-a will flip them back to True once Gap 1
-    + Gap 2 land. Test name kept for git-blame continuity with the
-    FP-0001 history.
+    History: FP-0001 originally claimed both ``True`` but the producers
+    were missing; PR #272 (Gap 3 Z-b) flipped them to ``False`` as an
+    interim honest disclosure while Gap 1+2 work landed; this PR
+    (= Gap 3 Z-c) flips them back to ``True`` now that the producers
+    are wired. Each claim is pinned to its concrete in-source wire by
+    ``tests/test_a2a_capability_claim_interim.py``.
     """
     from fastapi.testclient import TestClient
 
@@ -259,13 +259,13 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
         r = client.get("/a2a/agents/demo/.well-known/agent-card.json")
         assert r.status_code == 200, r.text
         caps = r.json()["capabilities"]
-        assert caps["streaming"] is False, (
-            "streaming must be False until issue #267 Gap 1 lands "
-            "(= SSE producer wiring). Gap 3 Z-b interim disclosure."
+        assert caps["streaming"] is True, (
+            "streaming must be True after issue #267 Gap 1 SSE producer "
+            "wiring (PR #288). Gap 3 Z-c re-elevation."
         )
-        assert caps["pushNotifications"] is False, (
-            "pushNotifications must be False until issue #267 Gap 2 lands "
-            "(= webhook trigger expansion). Gap 3 Z-b interim disclosure."
+        assert caps["pushNotifications"] is True, (
+            "pushNotifications must be True after issue #267 Gap 2 "
+            "webhook trigger expansion (PR #286). Gap 3 Z-c re-elevation."
         )
         assert caps["stateTransitionHistory"] is False, "stateTransitionHistory must remain False"
     finally:

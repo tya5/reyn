@@ -93,31 +93,29 @@ def _build_agent_card(agent_name: str, role: str, base_url: str) -> dict:
       * ``name`` — the Reyn agent name (= addressable identity).
       * ``description`` — the agent's ``role`` text from profile.yaml.
       * ``url`` — the JSON-RPC endpoint to POST to.
-      * ``capabilities`` — issue #267 Gap 3 Z-b interim disclosure:
-        ``streaming`` and ``pushNotifications`` are currently advertised
-        as ``False`` to honestly reflect the **partial implementation
-        state**, not the FP-0001 design intent. Concretely:
+      * ``capabilities`` — issue #267 Gap 3 Z-c re-elevation. With
+        Gap 1 (= SSE producer wiring, PR #288) and Gap 2 (= webhook
+        trigger expansion, PR #286) both landed, the two surfaces now
+        produce events backing the claims. Re-elevated to ``True``:
 
-          - ``streaming``: SSE endpoint exists (``GET /a2a/tasks/{run_id}/events``)
-            but ``RunRegistry.append_event`` has no in-tree producer
-            (= history_events stays empty in production), so streaming
-            never delivers in-flight events. Claim was ``True`` pre-#267
-            but the empty stream was misleading. issue #267 Gap 1 tracks
-            the producer-wiring work; this claim flips back to ``True``
-            via Gap 3 Z-a once SSE is functional.
-          - ``pushNotifications``: webhook fires on exactly three
-            triggers (= ``completed`` / ``failed`` / ``input-required``).
-            spec-conformance-strict peers reading the ``True`` claim
-            would expect notifications for any state change, which we
-            don't deliver. issue #267 Gap 2 tracks the trigger
-            expansion; same Gap 3 Z-a re-evaluation criteria.
+          - ``streaming``: ``GET /a2a/tasks/{run_id}/events`` SSE stream
+            backed by ``_A2AProgressBridge`` fan-out into
+            ``RunEntry.history_events`` (PR #288) +
+            ``A2AInterventionBus.deliver`` appending input-required
+            events (= peers see lifecycle + ask_user inline).
+          - ``pushNotifications``: webhook fires on lifecycle events
+            (= phase_started / llm_called / act_executed via PR #286)
+            plus the original ``completed`` / ``failed`` /
+            ``input-required`` triggers. The two-sink bridge means
+            webhook and SSE consumers see identical payloads.
 
         ``stateTransitionHistory`` remains ``False`` (= no plans to
-        implement). The interim ``False`` state is **honest
-        disclosure**: peers can rely on what we declare. Existing
-        webhook-using peers can still POST + receive on the three
-        trigger events; the capability advertising doesn't gate
-        functionality, only the spec-level negotiation.
+        implement). Each claim is pinned to an in-source wire by the
+        Tier 2 contract test so a future refactor that removes the
+        producer without flipping the claim back fails immediately —
+        same pattern as PR #284's MCP capability/wire AST-pin
+        calibration (= prevents the #267 Z-b "claim/reality mismatch"
+        regression by construction).
       * ``skills`` — A2A's ``skill`` is an outward-facing capability,
         not Reyn's internal skill graph. We expose a single coarse-
         grained skill (``chat``) since each Reyn agent's actual
@@ -132,13 +130,14 @@ def _build_agent_card(agent_name: str, role: str, base_url: str) -> dict:
         "version": _REYN_A2A_VERSION,
         "protocolVersion": _A2A_PROTOCOL_VERSION,
         "capabilities": {
-            # issue #267 Gap 3 Z-b: interim ``False`` until implementation
-            # catches up (= Gap 1 SSE producer / Gap 2 webhook trigger
-            # expansion). See docstring above for the full disclosure
-            # rationale. Gap 3 Z-a will re-evaluate flipping these back
-            # to ``True`` once Gap 1 + Gap 2 land.
-            "streaming": False,
-            "pushNotifications": False,
+            # issue #267 Gap 3 Z-c re-elevation: Gap 1 (PR #288 SSE
+            # producer) + Gap 2 (PR #286 webhook trigger expansion)
+            # both landed → claims backed by in-source wires.
+            # Tier 2 contract test pins each claim to its wire so a
+            # regression flipping these back to False without removing
+            # the producer (or vice versa) fails immediately.
+            "streaming": True,
+            "pushNotifications": True,
             "stateTransitionHistory": False,
         },
         "defaultInputModes": ["text/plain"],
