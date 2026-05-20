@@ -56,7 +56,6 @@ from __future__ import annotations
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.tools.universal_catalog import _LIST_ACTIONS_DESCRIPTION
 
-
 # ── A: SP partial-signal ─────────────────────────────────────────────
 
 
