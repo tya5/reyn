@@ -82,6 +82,42 @@ class _WSSessionProxy:
         """
         await self._send_fn({"type": "user_message", "text": text})
 
+    def register_intervention_listener(self, listener_id: str) -> None:
+        """No-op stub for the TUI's ``on_mount`` listener registration.
+
+        The local ``ChatSession`` uses this to declare which UI surface
+        consumes intervention prompts (= local TUI vs MCP vs A2A). In
+        remote (``--connect``) mode the server-side session handles its
+        own listener registration; the thin client doesn't need to
+        coordinate. Recording the listener id keeps the API shape
+        compatible without adding a round-trip to the server.
+
+        Phase A omitted this method which crashed
+        ``ReynTUIApp.on_mount`` on first ``--connect`` launch (= this
+        was a Phase A regression caught during Phase B integration
+        testing). Phase B adds it as a no-op so the proxy can be
+        mounted; future phases may grow a server-side listener
+        registration if needed.
+        """
+        self._intervention_listener_id = listener_id
+
+    async def cancel_inflight(self) -> None:
+        """Issue #276 Phase B: send a ``cancel_inflight`` WS frame.
+
+        The proxy holds no real ``running_skills`` / ``running_plans``
+        — that state lives on the server. The TUI delegates Ctrl+C to
+        this method when ``--connect`` mode is detected, and the
+        server-side endpoint (= ``src/reyn/web/ws/chat.py``) iterates
+        its session's running tasks + emits a ``status`` outbox with
+        the same "✗ cancelled N skill + M plan" summary local mode
+        produces.
+
+        Returns immediately after the WS send — actual cancellation
+        is async on the server, the visible result arrives via the
+        next inbound ``status`` frame.
+        """
+        await self._send_fn({"type": "cancel_inflight"})
+
 
 class _WSRegistry:
     """Minimal AgentRegistry-shaped object backing the TUI in ``--connect`` mode.
