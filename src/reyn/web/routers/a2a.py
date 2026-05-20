@@ -649,6 +649,121 @@ async def _handle_answer_injection(
     return _jsonrpc_result(req_id, result)
 
 
+class _A2AProgressBridge:
+    """Forwards selected agent chat-events to the A2A peer via webhook
+    POST (issue #267 Gap 2).
+
+    Mirrors ``mcp_server._MCPProgressBridge`` for the A2A surface: same
+    event scope (``phase_started`` / ``llm_called`` / ``act_executed``),
+    same ordinal-counter semantics. Different transport: instead of the
+    MCP protocol's ``notifications/progress``, fires a webhook POST with
+    ``status="in-progress"`` so the registered peer URL sees progression
+    beyond the terminal ``completed`` / ``failed`` webhooks.
+
+    Two instances (= MCP + A2A) is below the rule-of-three threshold,
+    so we keep the bridge logic per-protocol for now. A future third
+    instance (= e.g. WebSocket / gRPC streaming) is the trigger to lift
+    the common subscribe/format/dispatch shape into a shared base.
+
+    Lifecycle: subscribe via ``attach()`` once, ``detach()`` in a
+    try/finally so the subscriber doesn't outlive the call. Any
+    transport error during a fire is swallowed — progress is
+    best-effort; the A2A task's final ``completed`` / ``failed``
+    webhook is the authoritative outcome signal.
+    """
+
+    _TRACKED_EVENTS = frozenset({
+        "phase_started",
+        "llm_called",
+        "act_executed",
+    })
+
+    def __init__(
+        self,
+        *,
+        session: "object",
+        run_id: str,
+        webhook_url: str,
+        agent_name: str,
+    ) -> None:
+        self._session = session
+        self._run_id = run_id
+        self._webhook_url = webhook_url
+        self._agent_name = agent_name
+        self._ordinal = 0
+        self._detached = False
+        self._tasks: list[asyncio.Task[None]] = []
+
+    def attach(self) -> None:
+        events = getattr(self._session, "_chat_events", None)
+        if events is not None:
+            events.add_subscriber(self._on_event)
+
+    def detach(self) -> None:
+        if self._detached:
+            return
+        self._detached = True
+        events = getattr(self._session, "_chat_events", None)
+        if events is not None:
+            events.remove_subscriber(self._on_event)
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+
+    def _on_event(self, event: "object") -> None:
+        # Sync callback from EventLog dispatcher. Filter by type, build
+        # payload, schedule async POST.
+        if self._detached:
+            return
+        event_type = getattr(event, "type", None)
+        if event_type not in self._TRACKED_EVENTS:
+            return
+        data = getattr(event, "data", {}) or {}
+        message = self._format_message(event_type, data)
+        self._ordinal += 1
+        ordinal = self._ordinal
+        try:
+            task = asyncio.ensure_future(
+                self._send(ordinal, event_type, message),
+            )
+        except RuntimeError:
+            # No running loop (= EventLog dispatched outside async context).
+            return
+        self._tasks.append(task)
+
+    @staticmethod
+    def _format_message(event_type: str, data: dict) -> str:
+        if event_type == "phase_started":
+            phase = data.get("phase") or "?"
+            return f"phase: {phase}"
+        if event_type == "llm_called":
+            model = data.get("model") or "?"
+            return f"llm: {model}"
+        if event_type == "act_executed":
+            op_count = data.get("op_count") or 0
+            suffix = "" if op_count == 1 else "s"
+            return f"act: {op_count} op{suffix}"
+        return event_type
+
+    async def _send(
+        self, ordinal: int, event_type: str, message: str,
+    ) -> None:
+        from reyn.web.notifications import post_webhook  # noqa: PLC0415
+
+        payload = {
+            "run_id": self._run_id,
+            "status": "in-progress",
+            "progress": ordinal,
+            "event": event_type,
+            "message": message,
+            "agent_name": self._agent_name,
+        }
+        try:
+            await post_webhook(self._webhook_url, payload)
+        except Exception:  # noqa: BLE001 — progress is best-effort
+            return
+
+
 async def _handle_async_mode(
     req_id: Any,
     text: str,
@@ -672,6 +787,27 @@ async def _handle_async_mode(
     bus = A2AInterventionBus(run_id, run_registry)
 
     async def _run() -> None:
+        # issue #267 Gap 2: when a webhook_url is registered, subscribe a
+        # progress bridge to the agent's chat_events for the lifetime of
+        # this call. The bridge fires intermediate ``status="in-progress"``
+        # webhooks for skill lifecycle events (= phase_started / llm_called
+        # / act_executed) so the A2A peer sees progression beyond just
+        # terminal completed / failed. Bridge attach is best-effort —
+        # failure to load the session or subscribe must NOT block the
+        # main call (= progress is decoration; the answer is the contract).
+        bridge: "_A2AProgressBridge | None" = None
+        if webhook_url:
+            try:
+                session = registry.get_or_load(agent_name)
+                bridge = _A2AProgressBridge(
+                    session=session,
+                    run_id=run_id,
+                    webhook_url=webhook_url,
+                    agent_name=agent_name,
+                )
+                bridge.attach()
+            except Exception:  # noqa: BLE001 — defensive
+                bridge = None
         try:
             result = await send_to_agent_impl(
                 registry,
@@ -704,6 +840,9 @@ async def _handle_async_mode(
                     webhook_url,
                     {"run_id": run_id, "status": "failed", "error": str(exc)},
                 )
+        finally:
+            if bridge is not None:
+                bridge.detach()
 
     task = asyncio.create_task(_run())
     run_registry.attach_task(run_id, task)
