@@ -193,6 +193,13 @@ class OutboxRouter:
         about WHICH agent is actively running. Any pending transient
         auto-hide timer is cancelled too — the new agent should not
         inherit a ghost timer from the old one's flow.
+
+        Additionally clears the conversation log (= ``conv.clear()``)
+        and writes a dim divider line naming the freshly attached
+        agent. Previously only the header label updated, leaving the
+        old agent's transcript fully visible — visually two agents'
+        conversations blended into one scroll history and the user
+        couldn't tell where one ended and the next began.
         """
         app = self._app
         new_name = msg.text
@@ -201,6 +208,12 @@ class OutboxRouter:
             header.refresh_status(agent_name=new_name)
             self._cancel_transient_timer()
             conv.hide_status()
+            conv.clear()
+            from rich.text import Text as _RichText
+            conv._write_log(_RichText(
+                f"── attached to {new_name} ──",
+                style="dim #555555",
+            ))
 
     def _on_matrix(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
