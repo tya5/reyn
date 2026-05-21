@@ -108,8 +108,12 @@ def test_image_cmd_queues_png(tmp_path, monkeypatch):
 
     assert len(session._pending_user_images) == 1
     block = session._pending_user_images[0]
-    assert block["type"] == "image_url"
-    assert block["image_url"]["url"].startswith("data:image/png;base64,")
+    # Issue #383 PR-C: /image now stores a path-ref to the user's file
+    # instead of inlining base64. Storage stays out of history.jsonl.
+    assert block["type"] == "image"
+    assert block["mime_type"] == "image/png"
+    assert "shot.png" in block["path"]
+    assert block["content_hash"].startswith("sha256:")
     # outbox confirmation
     assert any("shot.png" in m.text for m in session.captured_outbox)
 
@@ -125,7 +129,9 @@ def test_image_cmd_supports_jpeg_and_alias(tmp_path, monkeypatch):
     _run(cmd.handler(session, "pic.jpg"))
 
     assert len(session._pending_user_images) == 1
-    assert "data:image/jpeg;base64," in session._pending_user_images[0]["image_url"]["url"]
+    block = session._pending_user_images[0]
+    assert block["mime_type"] == "image/jpeg"
+    assert "pic.jpg" in block["path"]
 
 
 def test_multiple_image_calls_stack(tmp_path, monkeypatch):

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from reyn.events.state_log import StateLog
     from reyn.secrets.store import ScopedSecretStore
     from reyn.skill.skill_registry import SkillRegistry
+    from reyn.workspace.media_store import MediaStore
 from reyn.config import SafetyConfig
 from reyn.context_builder import build_frame
 from reyn.events.events import EventLog
@@ -74,6 +75,7 @@ class OSRuntime:
         parent_run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
+        media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
         plan_step: dict | None = None,
     ) -> None:
@@ -132,6 +134,8 @@ class OSRuntime:
         self._sandbox_config = sandbox_config
         # Issue #364 multi-modal cluster: media-size gate config.
         self._multimodal_config = multimodal_config
+        # Issue #383 PR-C: media + tool-result file storage.
+        self._media_store = media_store
         # FP-0016 D: per-skill credential scoping. None = unrestricted
         # (= preserves backward compat for callers that don't supply a store).
         self._secret_store = secret_store
@@ -152,6 +156,7 @@ class OSRuntime:
             run_id=run_id,
             sandbox_config=sandbox_config,
             multimodal_config=multimodal_config,
+            media_store=media_store,
             secret_store=secret_store,
         )
         self._preprocessor = PreprocessorExecutor(

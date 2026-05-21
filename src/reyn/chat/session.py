@@ -533,6 +533,92 @@ class ChatMessage:
 # Design-B ChatMessage instances.
 
 
+def _materialise_path_ref_content(
+    content: str | list[dict], media_store: Any,
+) -> str | list[dict]:
+    """Issue #383 PR-C: convert path-ref content parts to inline data URLs
+    at the LLM wire boundary.
+
+    Three input cases:
+      - str content → returned unchanged.
+      - list content with no path-ref parts → returned unchanged.
+      - list content with path-ref parts (= ``{"type":"image","path":...}``)
+        → each path-ref is resolved via ``media_store.read_image`` and
+        emitted as ``{"type":"image_url","image_url":{"url":"data:..."}}``.
+
+    When ``media_store`` is None OR the path resolves outside the storage
+    root OR the file no longer exists, the block is dropped (= conversation
+    continues without it, no crash). Already-inline image_url parts pass
+    through.
+    """
+    if isinstance(content, str) or not isinstance(content, list):
+        return content
+    has_pathref = any(
+        isinstance(p, dict) and p.get("type") == "image" and p.get("path")
+        for p in content
+    )
+    if not has_pathref:
+        return content
+    materialised: list[dict] = []
+    for part in content:
+        if not isinstance(part, dict):
+            materialised.append(part)
+            continue
+        if part.get("type") != "image" or not part.get("path"):
+            materialised.append(part)
+            continue
+        path = part["path"]
+        mime = part.get("mime_type") or part.get("mimeType") or "image/png"
+        data_bytes = _read_pathref_image(path, media_store)
+        if data_bytes is None:
+            continue
+        import base64
+        data_b64 = base64.b64encode(data_bytes).decode("ascii")
+        materialised.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{data_b64}"},
+        })
+    return materialised
+
+
+def _read_pathref_image(path: str, media_store: Any) -> bytes | None:
+    """Resolve a path-ref to raw image bytes (issue #383 PR-C).
+
+    Two cases:
+      - Path inside the MediaStore's image directory (= Reyn-owned,
+        from a tool result): read via ``media_store.read_image``.
+      - Path elsewhere (= user-attached via ``/image``): read directly
+        from disk so user files don't need to be copied into the
+        workspace.
+
+    Returns None when the path can't be resolved (missing file,
+    permission denied, etc.). Caller drops the block in that case so
+    the LLM message stays valid.
+    """
+    from pathlib import Path as _Path
+    # Try the MediaStore first (= validates inside-media_dir + reads).
+    if media_store is not None:
+        try:
+            data_bytes, found = media_store.read_image(path)
+            if found:
+                return data_bytes
+        except PermissionError:
+            # Not inside media_dir — try direct disk read below.
+            pass
+    # Direct disk read for user-attached files. Resolve relative paths
+    # against CWD (= the chat session's project root convention).
+    p = _Path(path)
+    if not p.is_absolute():
+        p = _Path.cwd() / p
+    p = p.resolve()
+    if not p.exists() or not p.is_file():
+        return None
+    try:
+        return p.read_bytes()
+    except OSError:
+        return None
+
+
 def _migrate_legacy_chat_message(raw: dict) -> dict:
     """Read-time migration for pre-#383 history.jsonl entries.
 
@@ -910,6 +996,24 @@ class ChatSession:
         # through to spawned Agents AND to the router host adapter (=
         # chat-router web__fetch / file__read / mcp paths).
         self._multimodal_config = multimodal_config
+        # Issue #383 PR-C — single MediaStore instance per ChatSession,
+        # constructed from the multimodal config's storage dirs.
+        # Subsequently threaded into spawned Agents (= for control-IR
+        # ops invoked from skills) AND into the router host adapter
+        # (= for ops invoked directly from the chat router via tool
+        # calls). ``None`` when no multimodal config is supplied —
+        # handlers then fall back to the pre-#383 inline shape.
+        from reyn.workspace.media_store import MediaStore, MediaStoreConfig
+        if multimodal_config is not None:
+            self._media_store: "MediaStore | None" = MediaStore(
+                MediaStoreConfig(
+                    media_dir=multimodal_config.media_dir,
+                    tool_results_dir=multimodal_config.tool_results_dir,
+                ),
+                project_root=Path.cwd(),
+            )
+        else:
+            self._media_store = None
         # Issue #366: queue of image blocks the user attached via
         # ``/image PATH`` or ``--image PATH``. Drained on the next user
         # message turn (= attached to that ChatMessage's ``media`` field).
@@ -1284,6 +1388,8 @@ class ChatSession:
             ),
             # Issue #364 multi-modal cluster: media-size gate config.
             multimodal_config=self._multimodal_config,
+            # Issue #383 PR-C: shared MediaStore for image + tool-result storage.
+            media_store=self._media_store,
             # B25-S5-1: thread eager-build flag so RouterLoop awaits build
             # before computing _search_visible on the first turn.
             eager_embedding_build=self._eager_embedding_build,
@@ -1987,6 +2093,7 @@ class ChatSession:
             budget_tracker=self._budget_tracker,
             sandbox_config=self._sandbox_config,
             multimodal_config=self._multimodal_config,
+            media_store=self._media_store,
         )
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
@@ -3641,16 +3748,17 @@ class ChatSession:
 
         # E-full (#383) pass-through: ChatMessage IS the wire shape, so the
         # builder just serialises each entry into a litellm-compatible
-        # message dict. Tool fields surface only on the roles where they
-        # are non-None. Path-ref content parts (= ``{"type":"image","path":...}``)
-        # are left as-is; the LLM wire boundary (= call_llm_tools or its
-        # delegates) is responsible for resolving them to data URLs.
+        # message dict. Path-ref content parts (= ``{"type":"image","path":...}``)
+        # are materialised to data URLs **at this boundary** so storage
+        # stays light and the LLM sees the inline form it expects.
         messages: list[dict] = []
+        media_store = getattr(self, "_media_store", None)
         for m in selected:
             # Legacy "agent" stragglers (= migrated entries that somehow
             # bypassed _migrate_legacy_chat_message) → normalise on read.
             role = "assistant" if m.role == "agent" else m.role
-            msg: dict = {"role": role, "content": m.content}
+            content = _materialise_path_ref_content(m.content, media_store)
+            msg: dict = {"role": role, "content": content}
             if m.tool_calls is not None:
                 msg["tool_calls"] = m.tool_calls
             if m.tool_call_id is not None:

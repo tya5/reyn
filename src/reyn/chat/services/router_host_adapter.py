@@ -187,6 +187,8 @@ class RouterHostAdapter:
         # file__read / mcp ops consult the cap + on_oversize policy.
         # ``None`` = no cap.
         multimodal_config: Any = None,
+        # Issue #383 PR-C: media + tool-result file storage.
+        media_store: Any = None,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -250,8 +252,19 @@ class RouterHostAdapter:
         # Issue #364: store the gate config so make_router_op_context can
         # thread it into the OpContext for router-initiated binary ops.
         self._multimodal_config = multimodal_config
+        # Issue #383 PR-C: store the MediaStore for path-ref save/read.
+        self._media_store = media_store
 
     # --- RouterLoopHost identity attributes ---
+
+    @property
+    def media_store(self) -> Any:
+        """Issue #383 PR-C: expose the session's MediaStore so the
+        RouterLoop's media-followup builder can materialise path-ref
+        blocks at the wire boundary. ``None`` when no multimodal config
+        was supplied (= legacy / test paths).
+        """
+        return self._media_store
 
     @property
     def chat_id(self) -> str:
@@ -987,4 +1000,6 @@ class RouterHostAdapter:
             intervention_bus=bus,
             # Issue #364: gate config for router-initiated binary ops.
             multimodal_config=self._multimodal_config,
+            # Issue #383 PR-C: shared MediaStore for path-ref save/read.
+            media_store=self._media_store,
         )

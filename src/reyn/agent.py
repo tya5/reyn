@@ -11,6 +11,7 @@ from reyn.config import OnLimitConfig, SafetyConfig
 if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig
     from reyn.secrets.store import ScopedSecretStore
+    from reyn.workspace.media_store import MediaStore
 from reyn.events.event_store import EventStore
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.model_resolver import ModelResolver
@@ -55,6 +56,7 @@ class Agent:
         budget_tracker: BudgetTracker | None = None,
         sandbox_config: "SandboxConfig | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
+        media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
     ) -> None:
         self.model = model
@@ -79,6 +81,8 @@ class Agent:
         # Issue #364 multi-modal cluster: media-size gate config (reyn.yaml
         # ``multimodal:``). ``None`` → no cap (= permissive default).
         self._multimodal_config = multimodal_config
+        # Issue #383 PR-C: media + tool-result file storage.
+        self._media_store = media_store
         self._secret_store = secret_store
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
@@ -150,6 +154,7 @@ class Agent:
             parent_run_id=parent_run_id,
             sandbox_config=self._sandbox_config,
             multimodal_config=self._multimodal_config,
+            media_store=self._media_store,
             secret_store=self._secret_store,
             plan_step=plan_step,
         )

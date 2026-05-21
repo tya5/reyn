@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from reyn.schemas.models import Skill
     from reyn.secrets.store import ScopedSecretStore
     from reyn.user_intervention import RequestBus
+    from reyn.workspace.media_store import MediaStore
     from reyn.workspace.workspace import Workspace
 
 
@@ -105,6 +106,14 @@ class OpContext:
     # backward-compatible. Callers with a ReynConfig should pass
     # config.multimodal here.
     multimodal_config: "MultimodalConfig | None" = None
+
+    # Issue #383 PR-C: flat-file storage for image binary + tool result
+    # text dumps. Tool handlers (web__fetch / file__read / mcp) save
+    # binary via ``ctx.media_store.save_image`` and emit path-ref blocks
+    # in their op result instead of inline base64. When None, handlers
+    # fall back to the pre-#383 inline shape (= backward-compat for
+    # direct-OpContext tests).
+    media_store: "MediaStore | None" = None
 
     # FP-0016 D: per-skill credential scoping. None = unrestricted (= today's
     # behaviour; preserves backward compat for top-level / chat-router /

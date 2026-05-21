@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig
     from reyn.secrets.store import ScopedSecretStore
+    from reyn.workspace.media_store import MediaStore
 
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.events.events import EventLog
@@ -91,6 +92,7 @@ class ControlIRExecutor:
         run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
+        media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
     ) -> None:
         self.workspace = workspace
@@ -135,6 +137,10 @@ class ControlIRExecutor:
         # ``None`` = no cap (= permissive default for callers that don't
         # supply a ReynConfig).
         self._multimodal_config = multimodal_config
+        # Issue #383 PR-C — flat-file media + tool-result storage threaded
+        # to OpContext so handlers can save binary via
+        # ``ctx.media_store.save_image`` and emit path-ref blocks.
+        self._media_store = media_store
         # FP-0016 D: per-skill credential scoping. None = unrestricted
         # (= preserves backward compat for callers that don't supply a store).
         self._secret_store = secret_store
@@ -296,6 +302,8 @@ class ControlIRExecutor:
             sandbox_config=self._sandbox_config,
             # Issue #364 — multi-modal cluster media-size gate.
             multimodal_config=self._multimodal_config,
+            # Issue #383 PR-C — media + tool-result file storage.
+            media_store=self._media_store,
             # FP-0016 D: per-skill credential scoping.
             secret_store=self._secret_store,
         )

@@ -100,17 +100,43 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
             if isinstance(item, dict) and item.get("type") == "text"
         )
         # Issue #362: preserve non-text content blocks (images, etc.) so the
-        # chat router can forward them to vision-capable models. content_blocks
-        # carries only NON-text items (= image, resource, ...); the text field
-        # above already covers type=="text". Empty list when the result is
-        # text-only — backward-compatible with callers that only read `content`.
-        media_blocks = [
+        # chat router can forward them to vision-capable models.
+        raw_media_blocks = [
             item for item in content_items
             if isinstance(item, dict) and item.get("type") != "text"
         ]
     else:
         text = str(content_items)
-        media_blocks = []
+        raw_media_blocks = []
+
+    # Issue #383 PR-C: when MediaStore is available, persist image media
+    # blocks as flat files under ``.reyn/media/`` and emit path-ref blocks
+    # instead of inline base64. Non-image media blocks (= resource, etc.)
+    # pass through unchanged for now (= future #385 scope expansion).
+    media_blocks: list[dict] = []
+    for idx, item in enumerate(raw_media_blocks, start=1):
+        if (
+            ctx.media_store is not None
+            and isinstance(item, dict)
+            and item.get("type") == "image"
+            and isinstance(item.get("data"), str)
+        ):
+            import base64
+            try:
+                raw_bytes = base64.b64decode(item["data"])
+            except (ValueError, TypeError):
+                # Fall through to legacy inline shape on bad b64
+                media_blocks.append(item)
+                continue
+            mime = item.get("mimeType") or item.get("mime_type") or "image/png"
+            media_blocks.append(ctx.media_store.save_image(
+                raw_bytes, mime_type=mime,
+                chain_id=ctx.run_id or "",
+                tool=f"mcp_{op.server}_{op.tool}",
+                seq=idx,
+            ))
+        else:
+            media_blocks.append(item)
 
     is_error = bool(result.get("isError"))
     ctx.events.emit(
