@@ -1488,7 +1488,17 @@ class RouterLoop:
         # an empty / mismatched history alive).
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
-        if not history or history[-1].get("role") != "user" or history[-1].get("content") != user_text:
+        # When history's last entry is a user message, trust it — it is
+        # either:
+        #   - text identical to ``user_text`` (= the normal chat path,
+        #     ChatSession already appended it via _append_history); or
+        #   - a content-list shape (= issue #366 multimodal turn where
+        #     the user attached images via /image; comparing string
+        #     ``user_text`` against the list would always fail and
+        #     produce a duplicate text-only entry).
+        # Only append the fallback text user message when history is
+        # empty / mismatched (= defensive for direct-RouterLoop tests).
+        if not history or history[-1].get("role") != "user":
             messages.append({"role": "user", "content": user_text})
 
         # B28-Q2 Case A: per-turn counters for chat_turn_completed_inline.
