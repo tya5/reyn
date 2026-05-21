@@ -102,6 +102,16 @@ class ReynTUIApp(App):
         # dismissing errors. Wave-2 K3.
         Binding("escape", "voice_cancel", "Dismiss / cancel", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
+        # Wave-4 AR5: keyboard scroll for the conv log. RichLog has
+        # ``can_focus=False`` (intentional — prevents inadvertent
+        # focus capture from input), so Textual's default Page
+        # Up/Down don't reach it. Bind at app level + dispatch
+        # through ``conv.scroll_page_up`` / ``scroll_page_down``
+        # without transferring focus, so the user can scroll
+        # back through history with the keyboard alone (= no mouse
+        # required, complement to the existing anchor-based Ctrl+P/N).
+        Binding("pageup", "conv_scroll_page_up", "Scroll up", priority=True, show=False),
+        Binding("pagedown", "conv_scroll_page_down", "Scroll down", priority=True, show=False),
     ]
 
     _REYN_THEME = Theme(
@@ -973,6 +983,28 @@ class ReynTUIApp(App):
         """ctrl+p — scroll the conversation log to the previous agent turn."""
         try:
             self.query_one("#conversation", ConversationView).jump_prev_turn()
+        except Exception:
+            pass
+
+    def action_conv_scroll_page_up(self) -> None:
+        """PageUp — scroll the conv log up one page without changing focus.
+
+        Wave-4 AR5: complements the anchor-based Ctrl+P/N navigation
+        with free-form keyboard scrolling. RichLog has ``can_focus=
+        False`` so Textual's default Page Up doesn't reach it; we
+        dispatch through the conv pane explicitly.
+        """
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.scroll_page_up()
+        except Exception:
+            pass
+
+    def action_conv_scroll_page_down(self) -> None:
+        """PageDown — scroll the conv log down one page without changing focus."""
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.scroll_page_down()
         except Exception:
             pass
 
