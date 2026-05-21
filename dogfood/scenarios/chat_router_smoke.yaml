@@ -35,8 +35,10 @@ scenarios:
           - { type: user_message_received, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { skill: direct_llm, present: true }
+      # B48 W1-S1 fix (2026-05-22): artifact requirement removed (was:
+      # skill direct_llm present: true). Router-inline reply is also a
+      # valid path for a meta capability question — forcing direct_llm
+      # dispatch incentivises unnecessary skill invocation.
       # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
         verified: 0.25
@@ -176,8 +178,9 @@ scenarios:
         must_emit: []
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { skill: direct_llm, present: true }
+      # B48 W1-S6 fix (2026-05-22): artifact requirement removed (was:
+      # skill direct_llm present: true). Inline router reply for a code
+      # example is valid — forcing direct_llm dispatch is over-strict.
       # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
         verified: 0.25
@@ -202,8 +205,9 @@ scenarios:
         must_emit: []
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { skill: direct_llm, present: true }
+      # B48 W1-S7 fix (2026-05-22): artifact requirement removed (was:
+      # skill direct_llm present: true). Out-of-scope decline is correctly
+      # answered inline — direct_llm dispatch isn't necessary.
       # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
         verified: 0.0
