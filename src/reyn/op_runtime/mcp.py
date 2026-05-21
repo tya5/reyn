@@ -99,17 +99,31 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
             item.get("text", "") for item in content_items
             if isinstance(item, dict) and item.get("type") == "text"
         )
+        # Issue #362: preserve non-text content blocks (images, etc.) so the
+        # chat router can forward them to vision-capable models. content_blocks
+        # carries only NON-text items (= image, resource, ...); the text field
+        # above already covers type=="text". Empty list when the result is
+        # text-only — backward-compatible with callers that only read `content`.
+        media_blocks = [
+            item for item in content_items
+            if isinstance(item, dict) and item.get("type") != "text"
+        ]
     else:
         text = str(content_items)
+        media_blocks = []
 
     is_error = bool(result.get("isError"))
-    ctx.events.emit("mcp_completed", server=op.server, tool=op.tool, is_error=is_error)
+    ctx.events.emit(
+        "mcp_completed", server=op.server, tool=op.tool, is_error=is_error,
+        media_block_count=len(media_blocks),
+    )
     return {
         "kind": "mcp",
         "status": "error" if is_error else "ok",
         "server": op.server,
         "tool": op.tool,
         "content": text,
+        "media_blocks": media_blocks,
         "raw": result,
     }
 
