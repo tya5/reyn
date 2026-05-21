@@ -1,0 +1,142 @@
+{
+  "batch": "B47",
+  "worker": 7,
+  "head": "e6d31b61",
+  "date": "2026-05-21",
+  "scenario_set": "long_session_v1.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 0,
+    "I": 5,
+    "R": 2,
+    "B": 0
+  },
+  "vs_past": {
+    "B46": {"V": 5, "I": 2, "R": 0, "B": 0},
+    "delta_V": -5,
+    "delta_I": 3,
+    "delta_R": 2,
+    "delta_B": 0,
+    "note": "B47 W7 flash-lite scored 0V/5I/2R vs B46 5V/2I/0R. Regression on rubric scenarios (S1, S5). No rubric on S2/S3/S4/S6/S7 — those are inconclusive by design."
+  },
+  "spawn_ack_exit_count": 1,
+  "literal_echo_count": 0,
+  "pr290_observation": "1 invoke_skill_spawn_ack_exit event observed (S6, index_docs skill spawn). 0 literal-echo strings found across all 33 turns ('is running in the background' / 'バックグラウンドで実行' / 'Use `/tasks` to monitor').",
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "agent": "dogfood-b47-7-s1",
+      "verdict": "R",
+      "reason": "Rubric requires final turn addresses P7/skill-specific leakage prevention and references prior context. Turn 5 reply: 'I cannot answer your question because I lack information about the OS in Reyn's architecture.' — fails both rubric items. Turn 2 also failed to find skill docs. Empty-stop retry fired 1 time.",
+      "rubric_items": [
+        {"item": "final answer addresses skill-specific leakage prevention (P7 or equivalent)", "met": false},
+        {"item": "references concepts established in earlier turns without re-explaining from scratch", "met": false},
+        {"item": "does not produce an empty reply on the final turn", "met": true}
+      ],
+      "events_pass": false,
+      "empty_stop_retries": 1,
+      "turns": 5
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "agent": "dogfood-b47-7-s2",
+      "verdict": "I",
+      "reason": "No rubric/expected block. All 6 turns produced non-empty replies. Pronoun chain partially maintained (turn 2 gave info about simplest skill; turns 3-6 answered contextually). 3 empty-stop retries fired, all resolved via REYN_EMPTY_STOP_RETRY. No rubric to evaluate pass/fail definitively.",
+      "rubric_items": [],
+      "events_pass": null,
+      "empty_stop_retries": 3,
+      "turns": 6
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "agent": "dogfood-b47-7-s3",
+      "verdict": "I",
+      "reason": "No rubric/expected block. All 5 turns completed. Cross-reference maintained: turn 5 references both LangGraph (graph-based) and Reyn (peer-to-peer) from earlier turns. Turn 4 noted async comparison inconclusive due to tool limits. Substantive answers throughout. 5 empty-stop retries fired.",
+      "rubric_items": [],
+      "events_pass": null,
+      "empty_stop_retries": 5,
+      "turns": 5
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "agent": "dogfood-b47-7-s4",
+      "verdict": "I",
+      "reason": "No rubric/expected block. All 6 repetitive turns completed with substantive skill-list answers. No empty-stop retries fired (0) — suggesting context-bloat did NOT trigger G12-type empty completions on this scenario. This is a positive signal for the REYN_EMPTY_STOP_RETRY fix.",
+      "rubric_items": [],
+      "events_pass": null,
+      "empty_stop_retries": 0,
+      "turns": 6
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "agent": "dogfood-b47-7-s5",
+      "verdict": "R",
+      "reason": "Rubric requires final turn produce a working minimal async producer-consumer queue using asyncio.Queue. Turn 5 reply: 'I am unable to provide a minimal example of an async producer-consumer queue at this time.' The agent searched for tools/actions instead of reasoning directly. Fails all rubric items. 2 empty-stop retries fired.",
+      "rubric_items": [
+        {"item": "final reply contains a working minimal async producer-consumer queue example in Python", "met": false},
+        {"item": "the code uses asyncio.Queue or equivalent", "met": false},
+        {"item": "does not produce an empty reply on the final turn", "met": true}
+      ],
+      "events_pass": false,
+      "empty_stop_retries": 2,
+      "turns": 5
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "agent": "dogfood-b47-7-s6",
+      "verdict": "I",
+      "reason": "No rubric. Skill run spawned (index_docs) but failed with 'allow-unsafe-python not provided' — env reason, qualifying as inconclusive per verdict rules. Tool 'source__glob' also not in catalog. 1 invoke_skill_spawn_ack_exit event observed (spawn_ack_count=1). 3 empty-stop retries fired.",
+      "rubric_items": [],
+      "events_pass": null,
+      "empty_stop_retries": 3,
+      "skill_run_failed_reason": "Skill 'index_docs' declares an unsafe python step (./chunkers.py:gather_samples) but --allow-unsafe-python was not provided.",
+      "turns": 5
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "agent": "dogfood-b47-7-s7",
+      "verdict": "I",
+      "reason": "No rubric. All 5 turns on distributed systems (eventual consistency, CAP theorem, concrete examples, runtime detection, repair strategies) produced substantive answers with good context continuity. Turn 4 and 5 generated 6043 and 5558 chars respectively — longest replies in W7 batch. 1 empty-stop retry fired.",
+      "rubric_items": [],
+      "events_pass": null,
+      "empty_stop_retries": 1,
+      "turns": 5
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "W7-F1",
+      "severity": "HIGH",
+      "title": "flash-lite falls back to tool-search instead of direct reasoning for general knowledge",
+      "description": "S5 (Python asyncio) and S1 (Reyn architecture) both show flash-lite attempting to find 'actions' or tool results for factual questions it should answer directly. When tool search fails, it refuses to answer. This is a tool-bias attractor: the model treats every question as requiring a tool call. S5 turn 5 explicitly searched 'asyncio producer consumer queue example' via tool, got no results, then refused to generate code. Rubric items requiring direct reasoning output both failed.",
+      "affected_scenarios": ["scenario_1_reyn_research_chain", "scenario_5_general_python_chain"],
+      "hypothesis": "flash-lite has stronger tool-call affordance bias than expected — prefers tool search over direct LLM reasoning even for general knowledge questions.",
+      "observation_count": 2,
+      "data_quality": "primary (direct reply text observation)"
+    },
+    {
+      "id": "W7-F2",
+      "severity": "MED",
+      "title": "REYN_EMPTY_STOP_RETRY=1 active across all scenarios; S4 (repetitive context) fired 0 retries",
+      "description": "Empty-stop retries fired in S1(1), S2(3), S3(5), S4(0), S5(2), S6(3), S7(1). Notably S4 (the primary G12 attractor scenario: repetitive context-bloat) fired 0 retries, suggesting the repeated context pattern did not trigger empty completions under flash-lite in this run. S3 fired the most (5 retries across 5 turns = 1 per turn), suggesting cross-reference scenario is highest empty-stop risk.",
+      "affected_scenarios": ["scenario_3_cross_reference_compare"],
+      "hypothesis": "G12 empty-stop attractor may be model-tier dependent; flash-lite's lower capability may produce non-empty but low-quality refusals rather than empty stops.",
+      "data_quality": "primary (event log counts)"
+    },
+    {
+      "id": "W7-F3",
+      "severity": "LOW",
+      "title": "PR #290 spawn_ack accumulation: 1 event observed in W7 (S6 only)",
+      "description": "1 invoke_skill_spawn_ack_exit event with spawn_ack_count=1 observed in S6 when index_docs skill was spawned. Literal-echo count = 0 across all 33 turns — REYN_SPAWN_ACK_TO_LLM=1 did not cause echo text to appear in replies. S6 skill failed before ACK could be meaningfully delivered (allow-unsafe-python not provided), so full ACK-to-LLM flow was not tested end-to-end.",
+      "affected_scenarios": ["scenario_6_file_and_doc_lookup_chain"],
+      "data_quality": "primary (event log + reply text scan)"
+    }
+  ]
+}

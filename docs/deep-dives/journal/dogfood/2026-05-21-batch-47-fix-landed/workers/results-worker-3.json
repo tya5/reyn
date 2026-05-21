@@ -1,0 +1,150 @@
+{
+  "batch": "B47",
+  "worker": 3,
+  "head": "e6d31b61",
+  "date": "2026-05-21",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 4,
+    "I": 0,
+    "R": 5,
+    "B": 0
+  },
+  "vs_past": {
+    "B46": {"V": 3, "I": 3, "R": 3, "B": 0},
+    "B47_delta": {"V": "+1", "I": "-3", "R": "+2", "B": "0"}
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "verdict": "V",
+      "reply_excerpt": "The contents of `docs/concepts/principles.md` describe Reyn's eight design principles (P1-P8).",
+      "events_pass": true,
+      "events_emitted": ["routing_decided", "tool_executed", "tool_called", "permission_granted", "tool_returned"],
+      "events_absent": ["permission_denied"],
+      "rubric_met": ["quotes or summarises content from the principles document", "mentions at least one of P1 through P8 or their descriptions"],
+      "notes": "File read via chat router worked end-to-end. Both rubric items met."
+    },
+    {
+      "id": "file_glob_grep",
+      "verdict": "R",
+      "reply_excerpt": "I couldn't find any `.md` files under `src/` that mention \"judge_output\".",
+      "events_pass": true,
+      "events_emitted": ["routing_decided", "tool_executed", "tool_called", "permission_granted", "tool_returned"],
+      "events_absent": ["permission_denied"],
+      "rubric_met": ["mentions judge_output in relation to the found file(s)"],
+      "rubric_failed": ["lists at least one file path containing skill.md"],
+      "notes": "Grep ran correctly (match_count=0 — no skill.md under src/ mentions judge_output). Rubric item 1 fails because no file path was returned; ground truth confirms no such file exists. Scenario rubric is factually unachievable on this codebase."
+    },
+    {
+      "id": "web_search_query",
+      "verdict": "V",
+      "reply_excerpt": "I couldn't find a changelog specifically for the OpenAI Python SDK in 2026. The search results showed changelogs for other libraries.",
+      "events_pass": true,
+      "events_emitted": ["routing_decided", "web_search_started", "web_search_completed"],
+      "events_absent": ["permission_denied", "web_search_failed"],
+      "rubric_met": ["reports search results or a summary of what was found", "references OpenAI or the Python SDK in the response"],
+      "notes": "Web search op fired and completed. Reply references OpenAI SDK. Rubric met despite null results."
+    },
+    {
+      "id": "web_fetch_url",
+      "verdict": "R",
+      "reply_excerpt": "I am unable to fetch the content from the provided URL due to a permission denial.",
+      "events_pass": false,
+      "events_emitted": ["routing_decided", "tool_called", "tool_failed"],
+      "events_absent": ["web_fetch_started"],
+      "rubric_failed": ["mentions at least one Python 3.12 feature", "reply is a summary, not a raw HTML dump"],
+      "notes": "web__fetch tool failed with error_kind=permission_denied (tool_failed event). web_fetch_started never emitted. must_not_emit permission_denied violated (implicit via tool_failed.error_kind=permission_denied). Env-level permission block."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "verdict": "R",
+      "reply_excerpt": "The command failed to execute because the Python interpreter could not be found.",
+      "events_pass": true,
+      "events_emitted": ["routing_decided", "sandboxed_exec_started", "sandboxed_exec_completed"],
+      "events_absent": ["permission_denied"],
+      "rubric_failed": ["reports the output as 4", "does not report an error or permission denial"],
+      "notes": "sandboxed_exec_started and sandboxed_exec_completed emitted (events pass). However Python interpreter not found in sandbox — output was error, not '4'. Rubric fails on both items."
+    },
+    {
+      "id": "lint_a_skill",
+      "verdict": "R",
+      "reply_excerpt": "The eval skill failed due to a schema validation error in the postprocessor output. The required properties 'overall_score', 'passed', 'passed_criteria', 'summary', and 'total_criteria' were missing.",
+      "events_pass": false,
+      "events_emitted": ["routing_decided", "skill_run_spawned", "skill_run_failed"],
+      "events_absent": ["lint_completed"],
+      "rubric_failed": ["reports whether the skill passed linting or not", "mentions error count or warning count"],
+      "notes": "skill_run_spawned emitted but skill_run_failed twice. First failure: target skill file not found. Second failure: postprocessor output schema validation error (missing overall_score/passed/etc.). lint_completed never emitted. Postprocessor schema mismatch is a persistent bug."
+    },
+    {
+      "id": "recall_indexed_source",
+      "verdict": "V",
+      "reply_excerpt": "I am sorry, but I cannot fulfill this request. The recall tool requires a list of sources to search within, and no sources have been indexed for this agent yet.",
+      "events_pass": true,
+      "events_emitted": ["routing_decided", "tool_called", "tool_returned"],
+      "events_absent": ["permission_denied"],
+      "rubric_met": ["either returns relevant documentation chunks about phase rollback, OR clearly reports that no indexed sources were found", "does not fabricate phase rollback details without citing a source"],
+      "notes": "No sources indexed; system correctly reports no results. Both OR-branch rubric items met. No fabrication observed."
+    },
+    {
+      "id": "judge_output_direct",
+      "verdict": "V",
+      "reply_excerpt": "The artifact at `dogfood/fixtures/judge_phase/sample_artifact.json` is being evaluated... The `judge_phase` skill has finished successfully. The artifact passed all criteria, with a score of 1.0.",
+      "events_pass": true,
+      "events_emitted": ["routing_decided", "skill_run_spawned", "tool_executed", "skill_run_completed", "workflow_finished"],
+      "events_absent": ["permission_denied", "validation_error"],
+      "rubric_met": ["mentions passed or failed verdict", "reports a numeric score (1.0)", "references at least one of the two evaluation criteria"],
+      "notes": "judge_phase skill ran end-to-end to completion. Postprocessor completed. skill_run_completed emitted. All rubric items met."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "verdict": "R",
+      "reply_excerpt": "What would you like to name your new skill? [Turn2] Thanks! And what should this skill do?",
+      "events_pass": false,
+      "events_emitted": ["routing_decided", "tool_called", "chat_turn_completed_inline"],
+      "events_absent": ["skill_run_spawned", "user_intervention_requested", "user_intervention_received"],
+      "rubric_failed": ["the final reply references the skill name provided (my_demo_skill)", "OR reports that scaffolding was started or completed"],
+      "notes": "Router called describe_action to inspect skill_builder but never invoked it via invoke_action. Turn 1 ended with inline_reply asking for skill name. Turn 2 'my_demo_skill' triggered another inline_reply asking for description — skill_builder never spawned. skill_run_spawned, user_intervention_requested, and user_intervention_received never emitted. Router describe-only attractor: queries skill info but does not execute."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF-W3-1",
+      "title": "web__fetch permission_denied blocks web-fetch scenarios",
+      "severity": "HIGH",
+      "description": "S4 (web_fetch_url): web__fetch tool failed with error_kind=permission_denied. web_fetch_started was never emitted. This is a persistent env-level permission block that prevents all web-fetch rubric coverage. Same issue likely blocked B46 S4."
+    },
+    {
+      "id": "NF-W3-2",
+      "title": "sandboxed_exec Python interpreter not found in sandbox",
+      "severity": "MED",
+      "description": "S5: sandboxed_exec_started and sandboxed_exec_completed emitted successfully (infra works), but the sandbox environment cannot locate the Python interpreter, producing an error instead of '4'. sandboxed_exec infra is wired but the sandbox runtime is broken for Python commands."
+    },
+    {
+      "id": "NF-W3-3",
+      "title": "eval postprocessor output schema mismatch causes persistent lint_a_skill failure",
+      "severity": "HIGH",
+      "description": "S6 (lint_a_skill): eval skill run failed with PostprocessorError — postprocessor output missing 'overall_score', 'passed', 'passed_criteria', 'summary', 'total_criteria'. This is the second attempt in one agent turn; both failed. The eval skill postprocessor schema is misaligned with what compute_eval_score returns."
+    },
+    {
+      "id": "NF-W3-4",
+      "title": "Router describe-only attractor: skill_builder never spawned in ask_user scenario",
+      "severity": "MED",
+      "description": "S9: Router called describe_action on skill_builder but never called invoke_action to run it. The multi-turn interaction collected user answers but skill_run_spawned was never emitted. Router falls into describe-only mode rather than executing skills when multi-turn clarification is needed."
+    },
+    {
+      "id": "NF-W3-5",
+      "title": "file_glob_grep rubric is factually unachievable: no skill.md under src/ mentions judge_output",
+      "severity": "LOW",
+      "description": "S2: grep ran correctly (match_count=0). The rubric requires listing a file path with skill.md + judge_output, but no such file exists in the codebase. Scenario design flaw — rubric item 1 is unachievable. S2 should be reclassified as I (scenario design flaw) or rubric updated to accept accurate negative result."
+    }
+  ]
+}
