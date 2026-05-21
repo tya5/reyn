@@ -58,10 +58,10 @@ async def test_escape_from_right_panel_focuses_input() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
 
-        # Open the panel + focus it
-        await pilot.press("ctrl+b")     # toggle visible
-        await pilot.pause()
-        await pilot.press("ctrl+o")     # focus into the panel
+        # Open the panel — PC1 (PR #345): Ctrl+B now auto-focuses
+        # panel tabs on open, so the separate Ctrl+O hop is no longer
+        # part of the setup. See ``action_toggle_panel`` in app.py.
+        await pilot.press("ctrl+b")
         await pilot.pause()
 
         # Sanity: focus is no longer on the input TextArea
