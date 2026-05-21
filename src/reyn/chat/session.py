@@ -45,6 +45,7 @@ from reyn.config import (  # noqa: F401
     ActionRetrievalConfig,
     EmbeddingConfig,
     EventsConfig,
+    MultimodalConfig,
     OnLimitConfig,
     SafetyConfig,
     SandboxConfig,
@@ -730,6 +731,7 @@ class ChatSession:
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
         sandbox_config: "SandboxConfig | None" = None,
+        multimodal_config: "MultimodalConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
@@ -752,6 +754,10 @@ class ChatSession:
         # Plumbed through to spawned Agents so sandboxed_exec backend selection
         # honors the operator's declared policy.
         self._sandbox_config = sandbox_config
+        # Issue #364 — multi-modal cluster: media-size gate config plumbed
+        # through to spawned Agents AND to the router host adapter (=
+        # chat-router web__fetch / file__read / mcp paths).
+        self._multimodal_config = multimodal_config
         # FP-0034 PR-3b-iii: action_retrieval config — drives whether the
         # universal catalog wrappers appear in the router tools=. Default
         # constructs an off-flag ActionRetrievalConfig so existing chat
@@ -1118,6 +1124,8 @@ class ChatSession:
                 self._sandbox_config.backend if self._sandbox_config is not None
                 else None
             ),
+            # Issue #364 multi-modal cluster: media-size gate config.
+            multimodal_config=self._multimodal_config,
             # B25-S5-1: thread eager-build flag so RouterLoop awaits build
             # before computing _search_visible on the first turn.
             eager_embedding_build=self._eager_embedding_build,
@@ -1793,6 +1801,7 @@ class ChatSession:
             caller=f"agents/{self.agent_name}",
             budget_tracker=self._budget_tracker,
             sandbox_config=self._sandbox_config,
+            multimodal_config=self._multimodal_config,
         )
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:

@@ -115,6 +115,62 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
         return {"kind": "web_fetch", "url": op.url, "status": "error", "error": str(exc)}
 
     content_type = response.headers.get("content-type", "")
+
+    # Issue #364: when the response is a binary image, switch to
+    # bytes + base64 + media_blocks instead of decoding as text. Apply the
+    # shared media-size gate (config: multimodal.max_bytes / on_oversize)
+    # before allocating any large payloads into the LLM context. Other
+    # binary types (audio/video) are deferred — fall through to the text
+    # path's errors="replace" behaviour, which preserves the pre-#364
+    # output for non-image binary.
+    if content_type.startswith("image/"):
+        image_bytes = response.content
+        if ctx.permission_resolver is not None and ctx.multimodal_config is not None:
+            if ctx.intervention_bus is None:
+                raise RuntimeError(
+                    "web_fetch op requires intervention_bus when loading "
+                    "binary media (multimodal gate)"
+                )
+            try:
+                await ctx.permission_resolver.require_media_load(
+                    size_bytes=len(image_bytes),
+                    source=f"web fetch {op.url}",
+                    mime_type=content_type,
+                    max_bytes=ctx.multimodal_config.max_bytes,
+                    on_oversize=ctx.multimodal_config.on_oversize,
+                    bus=ctx.intervention_bus,
+                )
+            except PermissionError as exc:
+                ctx.events.emit(
+                    "web_fetch_media_denied",
+                    url=op.url, size_bytes=len(image_bytes),
+                    mime_type=content_type,
+                )
+                return {
+                    "kind": "web_fetch", "url": op.url, "status": "denied",
+                    "content_type": content_type, "size_bytes": len(image_bytes),
+                    "error": str(exc),
+                }
+        import base64
+        data_b64 = base64.b64encode(image_bytes).decode("ascii")
+        ctx.events.emit(
+            "web_fetch_completed",
+            url=op.url, status_code=response.status_code,
+            content_type=content_type, content_length=len(image_bytes),
+            extractor="binary", media_block_count=1,
+        )
+        return {
+            "kind": "web_fetch", "url": op.url, "status": "ok",
+            "status_code": response.status_code, "content_type": content_type,
+            "content": "", "truncated": False,
+            "extractor": "binary",
+            "start_index": 0, "next_start": None,
+            "total_length": len(image_bytes),
+            "media_blocks": [
+                {"type": "image", "data": data_b64, "mimeType": content_type},
+            ],
+        }
+
     raw = response.text
 
     if "text/html" in content_type:
@@ -156,6 +212,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
         "content": content,
         "truncated": truncated,
         "extractor": extractor_name,
+        "media_blocks": [],
         "start_index": op.start_index,
         "next_start": next_start,
         "total_length": total_length,

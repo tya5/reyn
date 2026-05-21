@@ -723,6 +723,67 @@ def _build_web_config(raw: object) -> WebConfig:
     return WebConfig(fetch=_build_web_fetch_config(fetch_raw))
 
 
+# ── multimodal: media-size gate for image/audio/etc. (#364 cluster) ─────────
+
+
+_MULTIMODAL_ON_OVERSIZE = ("ask", "allow", "deny")
+
+
+@dataclass
+class MultimodalConfig:
+    """``multimodal:`` — controls how Reyn handles large binary content
+    (currently images from web__fetch / file__read / MCP servers).
+
+    Fields:
+        max_bytes:
+            Decoded-payload byte cap before the gate fires. Default 5MB
+            matches Anthropic's per-image API limit. Counts the BINARY size
+            (= ``len(response.content)`` / ``len(file_bytes)``), not the
+            base64-encoded shape.
+        on_oversize:
+            What to do when a piece of media exceeds ``max_bytes``:
+
+            - ``ask`` (default): prompt the user via the intervention bus
+              with size + source info; yes loads the media, no drops it.
+            - ``allow``: silently accept; no prompt. Use when running
+              non-interactively in a trusted pipeline.
+            - ``deny``: silently reject; the op returns ``status="denied"``
+              with no media data. Use in cost-sensitive contexts where
+              over-limit content should never reach the LLM.
+
+    Issue #364 lands this config + the shared ``require_media_load`` gate;
+    paths #365 (file__read binary) and #366 (user chat input image) reuse
+    them.
+    """
+    max_bytes: int = 5_000_000
+    on_oversize: Literal["ask", "allow", "deny"] = "ask"
+
+
+def _build_multimodal_config(raw: object) -> MultimodalConfig:
+    """Parse the ``multimodal:`` section. Unknown keys ignored, bad types
+    fall back to defaults.
+    """
+    if not isinstance(raw, dict):
+        return MultimodalConfig()
+    max_bytes_raw = raw.get("max_bytes")
+    try:
+        max_bytes = int(max_bytes_raw) if max_bytes_raw is not None else 5_000_000
+    except (TypeError, ValueError):
+        max_bytes = 5_000_000
+    if max_bytes < 0:
+        max_bytes = 5_000_000
+    on_oversize_raw = raw.get("on_oversize")
+    on_oversize: Literal["ask", "allow", "deny"]
+    if (
+        isinstance(on_oversize_raw, str)
+        and on_oversize_raw in _MULTIMODAL_ON_OVERSIZE
+    ):
+        on_oversize = on_oversize_raw  # type: ignore[assignment]
+    else:
+        on_oversize = "ask"
+    return MultimodalConfig(max_bytes=max_bytes, on_oversize=on_oversize)
+
+
 SKILL_RESUME_POLICIES = ("prompt", "retry", "skip", "discard_skill")
 
 
@@ -1326,6 +1387,9 @@ class ReynConfig:
     # Priority: web.fetch.ca_bundle → web.fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).
     web: WebConfig = field(default_factory=WebConfig)
+    # Issue #364 — multi-modal cluster: cap binary media size (= images from
+    # web__fetch / file__read / MCP) + iv-gated user permission when exceeded.
+    multimodal: MultimodalConfig = field(default_factory=MultimodalConfig)
     # FP-0029: plan-mode execution tuning (step iteration budget, etc.)
     plan: PlanConfig = field(default_factory=PlanConfig)
     # FP-0007 Component A: trace export adapter config.
@@ -1604,6 +1668,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         embedding=_build_embedding_config(merged.get("embedding")),
         safety=safety,
         web=_build_web_config(merged.get("web")),
+        multimodal=_build_multimodal_config(merged.get("multimodal")),
         skill_search=_build_skill_search_config(merged.get("skill_search")),
         plan=_build_plan_config(merged.get("plan")),
         eval=_build_eval_config(merged.get("eval")),

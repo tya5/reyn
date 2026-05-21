@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from reyn.config import SandboxConfig
+    from reyn.config import MultimodalConfig, SandboxConfig
     from reyn.secrets.store import ScopedSecretStore
 
 from reyn.dispatch import DispatchContext, dispatch_tool
@@ -90,6 +90,7 @@ class ControlIRExecutor:
         resume_plan: Any = None,
         run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        multimodal_config: "MultimodalConfig | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
     ) -> None:
         self.workspace = workspace
@@ -127,6 +128,13 @@ class ControlIRExecutor:
         # policy. ``None`` means the factory falls through to platform
         # auto-detection (= unchanged behavior pre-wiring).
         self._sandbox_config = sandbox_config
+        # Issue #364 — multi-modal media-size gate config (= reyn.yaml
+        # ``multimodal:`` section). Threaded into OpContext so binary paths
+        # (web__fetch / file__read / MCP / user input) can consult the cap
+        # + on_oversize policy before loading large payloads into the LLM.
+        # ``None`` = no cap (= permissive default for callers that don't
+        # supply a ReynConfig).
+        self._multimodal_config = multimodal_config
         # FP-0016 D: per-skill credential scoping. None = unrestricted
         # (= preserves backward compat for callers that don't supply a store).
         self._secret_store = secret_store
@@ -286,6 +294,8 @@ class ControlIRExecutor:
             agent_id=getattr(self.events, "agent_id", None),
             # FP-0017 follow-up: declarative sandbox config (reyn.yaml).
             sandbox_config=self._sandbox_config,
+            # Issue #364 — multi-modal cluster media-size gate.
+            multimodal_config=self._multimodal_config,
             # FP-0016 D: per-skill credential scoping.
             secret_store=self._secret_store,
         )
