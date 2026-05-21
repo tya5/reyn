@@ -115,10 +115,19 @@ async def image_cmd(session: object, args: str) -> None:
             )
             return
 
-    data_b64 = base64.b64encode(image_bytes).decode("ascii")
+    # Issue #383 PR-C: store a path-ref to the user's original file
+    # instead of duplicating the bytes as a data URL in history.jsonl.
+    # The user's file is the source of truth — Reyn does not copy.
+    # ``content_hash`` lets the wire-shape boundary detect file drift
+    # (= the user modifying shot.png after attach surfaces as a hash
+    # mismatch in the materialisation path).
+    import hashlib
+    content_hash = "sha256:" + hashlib.sha256(image_bytes).hexdigest()
     block: dict = {
-        "type": "image_url",
-        "image_url": {"url": f"data:{mime};base64,{data_b64}"},
+        "type": "image",
+        "path": str(path),
+        "mime_type": mime,
+        "content_hash": content_hash,
     }
     # Queue is drained by ChatSession._handle_user_message on the next
     # user turn (= attached to that ChatMessage.media).

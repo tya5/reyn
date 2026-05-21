@@ -151,13 +151,28 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
                     "content_type": content_type, "size_bytes": len(image_bytes),
                     "error": str(exc),
                 }
-        import base64
-        data_b64 = base64.b64encode(image_bytes).decode("ascii")
+        # Issue #383 PR-C: emit a path-ref media block when MediaStore is
+        # available (= production path). Without a MediaStore (= direct
+        # OpContext in tests / legacy callers) fall back to inline base64
+        # so the pre-PR-C behaviour is preserved.
+        media_block: dict
+        if ctx.media_store is not None:
+            media_block = ctx.media_store.save_image(
+                image_bytes, mime_type=content_type,
+                chain_id=ctx.run_id or "", tool="web_fetch", seq=1,
+            )
+        else:
+            import base64
+            data_b64 = base64.b64encode(image_bytes).decode("ascii")
+            media_block = {
+                "type": "image", "data": data_b64, "mimeType": content_type,
+            }
         ctx.events.emit(
             "web_fetch_completed",
             url=op.url, status_code=response.status_code,
             content_type=content_type, content_length=len(image_bytes),
             extractor="binary", media_block_count=1,
+            stored_as=("path_ref" if ctx.media_store is not None else "inline_b64"),
         )
         return {
             "kind": "web_fetch", "url": op.url, "status": "ok",
@@ -166,9 +181,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
             "extractor": "binary",
             "start_index": 0, "next_start": None,
             "total_length": len(image_bytes),
-            "media_blocks": [
-                {"type": "image", "data": data_b64, "mimeType": content_type},
-            ],
+            "media_blocks": [media_block],
         }
 
     raw = response.text

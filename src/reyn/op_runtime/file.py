@@ -90,18 +90,27 @@ async def _read_image_file(op: FileIROp, ctx: OpContext, *, mime_type: str) -> d
                 "size_bytes": len(image_bytes), "error": str(exc),
             }
 
-    import base64
-    data_b64 = base64.b64encode(image_bytes).decode("ascii")
+    # Issue #383 PR-C: emit path-ref via MediaStore when available;
+    # fall back to inline base64 when not configured.
+    media_block: dict
+    if ctx.media_store is not None:
+        media_block = ctx.media_store.save_image(
+            image_bytes, mime_type=mime_type,
+            chain_id=ctx.run_id or "", tool="file_read", seq=1,
+        )
+    else:
+        import base64
+        data_b64 = base64.b64encode(image_bytes).decode("ascii")
+        media_block = {"type": "image", "data": data_b64, "mimeType": mime_type}
     ctx.events.emit(
         "tool_executed", op="read_file", path=op.path,
         mode="binary", mime_type=mime_type, media_block_count=1,
+        stored_as=("path_ref" if ctx.media_store is not None else "inline_b64"),
     )
     return {
         "kind": "file", "op": "read", "path": op.path,
         "status": "ok", "content": "",
-        "media_blocks": [
-            {"type": "image", "data": data_b64, "mimeType": mime_type},
-        ],
+        "media_blocks": [media_block],
     }
 
 

@@ -140,20 +140,31 @@ def _strip_frontmatter(content: str) -> str:
 
 
 def _build_media_followup_message(
-    *, tool_name: str, media_blocks: list[dict],
+    *,
+    tool_name: str,
+    media_blocks: list[dict],
+    media_store: Any = None,
 ) -> dict | None:
     """Build a multimodal follow-up user message for MCP tool results that
-    include image / non-text content blocks (issue #362).
+    include image / non-text content blocks (issue #362 → #383 PR-C).
 
     Strategy (= Option A): after each tool result that carries non-text
     media, append a synthetic user message containing those media blocks
     in litellm-normalised shape. Provider-agnostic because user messages
     with content lists are universally supported (Anthropic, Gemini,
-    OpenAI vision models); a tool message with content list would break
-    OpenAI's tool-message contract.
+    OpenAI vision models).
 
-    Returns None when no image-typed block can be rendered (= other media
-    types like resources are deferred until a real use case appears).
+    Two media block shapes are accepted (= dual mode during the #383 PR-C
+    transition):
+      1. **Path-ref** (post-PR-C, MediaStore-backed):
+         ``{"type": "image", "path": "...", "mime_type": "...", "content_hash": "..."}``
+         → read the file via ``media_store.read_image``, base64-encode,
+         embed as data URL.
+      2. **Inline** (pre-PR-C / no MediaStore):
+         ``{"type": "image", "data": "<b64>", "mimeType": "..."}``
+         → embed directly as data URL.
+
+    Returns None when no image-typed block can be rendered.
     """
     parts: list[dict] = [
         {"type": "text", "text": f"Tool `{tool_name}` returned the following image(s):"},
@@ -164,12 +175,34 @@ def _build_media_followup_message(
             continue
         if block.get("type") != "image":
             continue
+        mime = block.get("mime_type") or block.get("mimeType") or "image/png"
+        # Path-ref shape (PR-C): resolve via MediaStore.
+        path = block.get("path")
+        if isinstance(path, str) and path:
+            if media_store is None:
+                # Path-ref present but no MediaStore available — skip the
+                # block rather than crash. Pre-PR-C consumers shouldn't
+                # see path-refs in the first place, so this is defensive
+                # only.
+                continue
+            try:
+                data_bytes, found = media_store.read_image(path)
+            except PermissionError:
+                continue
+            if not found:
+                continue
+            import base64
+            data_b64 = base64.b64encode(data_bytes).decode("ascii")
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{data_b64}"},
+            })
+            rendered += 1
+            continue
+        # Inline shape (pre-PR-C): use the base64 directly.
         data = block.get("data")
-        mime = block.get("mimeType") or block.get("mime_type") or "image/png"
         if not isinstance(data, str) or not data:
             continue
-        # data is base64 per MCP spec. Build a data URL (= litellm /
-        # OpenAI-vision standard wire format).
         parts.append({
             "type": "image_url",
             "image_url": {"url": f"data:{mime};base64,{data}"},
@@ -1875,9 +1908,14 @@ class RouterLoop:
                         "content": content_str,
                     })
                     if media_blocks:
+                        # Issue #383 PR-C: pass the host's media_store so
+                        # path-ref blocks are materialised to data URLs at
+                        # the LLM wire boundary. ``getattr`` keeps tests
+                        # that mock the host with bare attributes happy.
                         followup = _build_media_followup_message(
                             tool_name=tc.get("function", {}).get("name", "tool"),
                             media_blocks=media_blocks,
+                            media_store=getattr(host, "media_store", None),
                         )
                         if followup is not None:
                             messages.append(followup)

@@ -732,7 +732,8 @@ _MULTIMODAL_ON_OVERSIZE = ("ask", "allow", "deny")
 @dataclass
 class MultimodalConfig:
     """``multimodal:`` — controls how Reyn handles large binary content
-    (currently images from web__fetch / file__read / MCP servers).
+    (currently images from web__fetch / file__read / MCP servers) and
+    where multimodal artefacts live on disk.
 
     Fields:
         max_bytes:
@@ -750,13 +751,24 @@ class MultimodalConfig:
             - ``deny``: silently reject; the op returns ``status="denied"``
               with no media data. Use in cost-sensitive contexts where
               over-limit content should never reach the LLM.
+        media_dir:
+            Project-relative directory for image binary storage (issue
+            #383 PR-C / E-full Phase 3). Files are flat-named with a
+            timestamp + chain-id + tool prefix so ``ls -la`` sorts
+            chronologically. User-browseable and user-deleteable.
+        tool_results_dir:
+            Project-relative directory for text-y tool result dumps
+            (= #385 PoC foundation). PR-C lands the writer alongside
+            ``media_dir``; PR-D wires the consumer + preview.
 
     Issue #364 lands this config + the shared ``require_media_load`` gate;
     paths #365 (file__read binary) and #366 (user chat input image) reuse
-    them.
+    them. Issue #383 PR-C extends with the storage paths.
     """
     max_bytes: int = 5_000_000
     on_oversize: Literal["ask", "allow", "deny"] = "ask"
+    media_dir: str = ".reyn/media"
+    tool_results_dir: str = ".reyn/tool-results"
 
 
 def _build_multimodal_config(raw: object) -> MultimodalConfig:
@@ -781,7 +793,21 @@ def _build_multimodal_config(raw: object) -> MultimodalConfig:
         on_oversize = on_oversize_raw  # type: ignore[assignment]
     else:
         on_oversize = "ask"
-    return MultimodalConfig(max_bytes=max_bytes, on_oversize=on_oversize)
+    media_dir_raw = raw.get("media_dir")
+    media_dir = (
+        str(media_dir_raw) if isinstance(media_dir_raw, str) and media_dir_raw
+        else ".reyn/media"
+    )
+    tool_results_dir_raw = raw.get("tool_results_dir")
+    tool_results_dir = (
+        str(tool_results_dir_raw)
+        if isinstance(tool_results_dir_raw, str) and tool_results_dir_raw
+        else ".reyn/tool-results"
+    )
+    return MultimodalConfig(
+        max_bytes=max_bytes, on_oversize=on_oversize,
+        media_dir=media_dir, tool_results_dir=tool_results_dir,
+    )
 
 
 SKILL_RESUME_POLICIES = ("prompt", "retry", "skip", "discard_skill")
