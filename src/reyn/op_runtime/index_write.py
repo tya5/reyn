@@ -78,6 +78,17 @@ async def handle(
     if op.chunks is None and op.input_artifact is None:
         raise ValueError("IndexWriteIROp: one of chunks / input_artifact must be set")
 
+    # B48-NF-W2-S7 fix (2026-05-22): same defensive guard as index_query.
+    # See index_query.py for full rationale.
+    if ctx.workspace is None:
+        raise ValueError(
+            "index_write: op_runtime context has no workspace. Index ops "
+            "require a workspace to locate the SQLite backend; pass an "
+            "OpContext with a populated `workspace` field. This typically "
+            "indicates the calling tool was invoked from a router-side path "
+            "without a workspace."
+        )
+
     workspace_root = ctx.workspace.base_dir
     backend = SqliteIndexBackend(workspace_root=workspace_root)
 
