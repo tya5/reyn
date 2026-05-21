@@ -14,15 +14,22 @@ from typing import Any, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-# Description must be byte-identical to the current router_tools.py
-# ToolSpec.description for web_fetch (= the literal from the E2 block).
-# Copied verbatim.
+# Description updated by #385 PoC PR-D: when MediaStore is available
+# (= default production path), the tool returns a structured ``preview``
+# block + ``path_ref`` under ``.reyn/tool-results/`` instead of inlining
+# the full extracted body. The ``read_tool_result(path=...)`` tool loads
+# the full body on demand. The wording stays purely descriptive — no
+# behavioural guidance about WHEN to expand (= sandbox_2 cofounder
+# warning (b): keep the LLM's decision driven by the tool schema, not
+# by prompt-engineered instructions).
 _WEB_FETCH_DESCRIPTION = (
-    "Fetch a single URL and return its (text-extracted) "
-    "content. url: absolute http/https URL. "
-    "max_length: cap on returned content size "
-    "(default 50000). Use after web_search to read a "
-    "result page in detail."
+    "Fetch a single URL. Returns a structured preview "
+    "(title, outline, first paragraph, link count for HTML; "
+    "first lines for text) plus a path_ref to the full body "
+    "stored under .reyn/tool-results/. url: absolute http/https URL. "
+    "max_length: cap on extracted body length (default 50000). "
+    "Use after web_search to load a result page; call "
+    "read_tool_result(path) to read the full body."
 )
 
 # Parameters JSON schema must be byte-identical to the current

@@ -62,6 +62,129 @@ def _extract_html_text(html_content: str) -> tuple[str, str]:
     return parser.text(), "stdlib"
 
 
+class _HtmlPreviewParser(html.parser.HTMLParser):
+    """Distill an HTML page to (title, outline, first_paragraph, link_count).
+
+    Pure-function deterministic preview generator for #385 PoC. Designed so
+    the same input HTML always produces the same preview output — required
+    to keep sandbox_2 dogfood measurement N-runs reproducible (= the
+    "preview deterministic 化" cofounder warning).
+
+    No LLM involvement; pure structural extraction so the preview is a
+    stable function of the input bytes.
+    """
+
+    _HEADING_TAGS = {"h1", "h2", "h3"}
+    _OUTLINE_MAX = 8
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._title_parts: list[str] = []
+        self._in_title = False
+        self._outline: list[tuple[str, list[str]]] = []  # (tag, buf)
+        self._current_heading: tuple[str, list[str]] | None = None
+        self._first_paragraph_parts: list[str] = []
+        self._in_first_paragraph = False
+        self._first_paragraph_done = False
+        self._link_count = 0
+
+    def handle_starttag(self, tag: str, attrs: object) -> None:
+        if tag == "title":
+            self._in_title = True
+        elif tag in self._HEADING_TAGS and len(self._outline) < self._OUTLINE_MAX:
+            self._current_heading = (tag, [])
+        elif (
+            tag == "p"
+            and not self._first_paragraph_done
+            and not self._in_first_paragraph
+        ):
+            self._in_first_paragraph = True
+        elif tag == "a":
+            self._link_count += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self._in_title = False
+        elif tag in self._HEADING_TAGS and self._current_heading is not None:
+            heading = self._current_heading
+            self._outline.append(heading)
+            self._current_heading = None
+        elif tag == "p" and self._in_first_paragraph:
+            self._in_first_paragraph = False
+            if self._first_paragraph_parts:
+                self._first_paragraph_done = True
+
+    def handle_data(self, data: str) -> None:
+        stripped = data.strip()
+        if not stripped:
+            return
+        if self._in_title:
+            self._title_parts.append(stripped)
+        if self._current_heading is not None:
+            self._current_heading[1].append(stripped)
+        if self._in_first_paragraph and not self._first_paragraph_done:
+            self._first_paragraph_parts.append(stripped)
+
+    def result(self) -> dict:
+        title = " ".join(self._title_parts).strip()
+        outline = [
+            f"{tag.upper()}: {' '.join(parts).strip()}"[:120]
+            for tag, parts in self._outline
+            if parts
+        ]
+        first_paragraph = " ".join(self._first_paragraph_parts).strip()
+        if len(first_paragraph) > 280:
+            first_paragraph = first_paragraph[:277] + "…"
+        return {
+            "title": title,
+            "outline": outline,
+            "first_paragraph": first_paragraph,
+            "link_count": self._link_count,
+        }
+
+
+def _generate_web_fetch_preview(
+    raw_html: str,
+    *,
+    extracted_text: str,
+    content_type: str,
+) -> dict:
+    """Build a structured preview dict for a web_fetch result (#385 PoC).
+
+    Pure function — same inputs produce same output. HTML inputs use
+    :class:`_HtmlPreviewParser` to extract title / outline / first paragraph
+    / link count. Non-HTML text falls back to a small structured summary
+    of the first lines so the LLM still has something to gauge "is the
+    extracted body the answer I need".
+
+    Returns a dict with keys appropriate to the content type:
+
+      HTML  → ``{title, outline, first_paragraph, link_count, content_chars}``
+      other → ``{first_lines, line_count, content_chars}``
+    """
+    content_chars = len(extracted_text)
+    if "text/html" in content_type:
+        try:
+            parser = _HtmlPreviewParser()
+            parser.feed(raw_html)
+            html_preview = parser.result()
+        except Exception:
+            html_preview = {
+                "title": "", "outline": [],
+                "first_paragraph": "", "link_count": 0,
+            }
+        html_preview["content_chars"] = content_chars
+        return html_preview
+    # Plain text / JSON / unknown — surface the head of the extracted body.
+    lines = extracted_text.splitlines()
+    first_lines = lines[:10]
+    return {
+        "first_lines": first_lines,
+        "line_count": len(lines),
+        "content_chars": content_chars,
+    }
+
+
 def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
     """Resolve the SSL verify value for httpx from config + env fallback.
 
@@ -205,6 +328,53 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
     else:
         content = sliced
         next_start = None
+
+    # #385 PoC: when MediaStore is available, route the (potentially
+    # large) extracted text through ``.reyn/tool-results/`` and return a
+    # preview + path-ref instead of inlining the full body. The LLM then
+    # decides whether the preview is enough or to call ``read_tool_result``
+    # for full content. Backward-compat: when ``ctx.media_store is None``
+    # (= legacy callers / tests), fall through to the pre-PoC inline shape.
+    if ctx.media_store is not None and content:
+        saved_block = ctx.media_store.save_tool_result(
+            content,
+            mime_type=(content_type or "text/plain"),
+            chain_id=ctx.run_id or "",
+            tool="web_fetch",
+            seq=1,
+        )
+        preview = _generate_web_fetch_preview(
+            raw, extracted_text=content, content_type=content_type,
+        )
+        ctx.events.emit(
+            "web_fetch_completed",
+            url=op.url,
+            status_code=response.status_code,
+            content_length=len(content),
+            truncated=truncated,
+            extractor=extractor_name,
+            start_index=op.start_index,
+            total_length=total_length,
+            stored_as="path_ref",
+            path=saved_block.get("path"),
+        )
+        return {
+            "kind": "web_fetch",
+            "url": op.url,
+            "status": "ok",
+            "status_code": response.status_code,
+            "content_type": content_type,
+            "content": "",
+            "preview": preview,
+            "path_ref": saved_block,
+            "truncated": truncated,
+            "extractor": extractor_name,
+            "media_blocks": [],
+            "start_index": op.start_index,
+            "next_start": next_start,
+            "total_length": total_length,
+            "stored_as": "path_ref",
+        }
 
     ctx.events.emit(
         "web_fetch_completed",

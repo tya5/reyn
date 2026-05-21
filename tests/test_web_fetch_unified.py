@@ -24,9 +24,15 @@ from reyn.tools.web_fetch import _WEB_FETCH_DESCRIPTION, _WEB_FETCH_PARAMETERS, 
 # ── 1. render_for_router byte-identity gate ───────────────────────────────────
 
 def test_web_fetch_router_render_matches_legacy_shape():
-    """Tier 2: WEB_FETCH.render_for_router() produces byte-identical output
-    to the prior ToolSpec literal for web_fetch. Drift here would invalidate
-    LLMReplay fixtures."""
+    """Tier 2: WEB_FETCH.render_for_router() produces the expected shape.
+
+    Description was rewritten in #385 PoC PR-D to surface the new
+    preview + path_ref return contract (= text bodies routed to
+    ``.reyn/tool-results/`` instead of inlined). Key-phrase checks now
+    pin the NEW wording. LLMReplay fixtures that hashed the old
+    description need to be re-recorded in the same PR; this test pins
+    the new contract so future drift gets caught.
+    """
     rendered = WEB_FETCH.render_for_router()
 
     # Top-level shape
@@ -38,13 +44,17 @@ def test_web_fetch_router_render_matches_legacy_shape():
     # Name
     assert fn["name"] == "web_fetch"
 
-    # Description: key phrases that identify the web_fetch description
-    # (= the full description must be verbatim).
+    # Description: key phrases that identify the post-PR-D web_fetch
+    # contract. The exact wording is pinned in
+    # ``test_web_fetch_router_render_exact_description``; this test
+    # only checks the load-bearing tokens.
     assert "URL" in fn["description"] or "url" in fn["description"].lower()
-    assert "text-extracted" in fn["description"]
+    assert "preview" in fn["description"]
+    assert "path_ref" in fn["description"]
     assert "max_length" in fn["description"]
     assert "50000" in fn["description"]
     assert "web_search" in fn["description"]
+    assert "read_tool_result" in fn["description"]
 
     # Parameters schema
     params = fn["parameters"]
@@ -57,17 +67,21 @@ def test_web_fetch_router_render_matches_legacy_shape():
 
 
 def test_web_fetch_router_render_exact_description():
-    """Tier 2: WEB_FETCH description is byte-identical to the legacy ToolSpec
-    description string. Any whitespace or punctuation diff is a stop signal."""
+    """Tier 2: WEB_FETCH description is byte-identical to the post-#385
+    PoC PR-D string. Any whitespace or punctuation diff is a stop signal
+    — LLMReplay fixtures hash this verbatim.
+    """
     rendered = WEB_FETCH.render_for_router()
-    legacy_description = (
-        "Fetch a single URL and return its (text-extracted) "
-        "content. url: absolute http/https URL. "
-        "max_length: cap on returned content size "
-        "(default 50000). Use after web_search to read a "
-        "result page in detail."
+    expected_description = (
+        "Fetch a single URL. Returns a structured preview "
+        "(title, outline, first paragraph, link count for HTML; "
+        "first lines for text) plus a path_ref to the full body "
+        "stored under .reyn/tool-results/. url: absolute http/https URL. "
+        "max_length: cap on extracted body length (default 50000). "
+        "Use after web_search to load a result page; call "
+        "read_tool_result(path) to read the full body."
     )
-    assert rendered["function"]["description"] == legacy_description
+    assert rendered["function"]["description"] == expected_description
 
 
 def test_web_fetch_router_render_exact_parameters():
@@ -158,8 +172,10 @@ def test_build_tools_includes_web_fetch_via_registry():
     assert wf["type"] == "function"
     assert wf["function"]["name"] == "web_fetch"
 
-    # Description byte-identity check (key phrases)
-    assert "text-extracted" in wf["function"]["description"]
+    # Description byte-identity check (key phrases). Wording updated in
+    # #385 PoC PR-D to surface the preview + path_ref contract.
+    assert "preview" in wf["function"]["description"]
+    assert "path_ref" in wf["function"]["description"]
     assert "max_length" in wf["function"]["description"]
     assert "50000" in wf["function"]["description"]
 
