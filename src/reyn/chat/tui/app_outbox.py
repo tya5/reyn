@@ -35,6 +35,24 @@ if TYPE_CHECKING:
 _STOP = "stop"
 
 
+# Body prefixes emitted by ``planner.py`` for plan-progress status updates.
+# Used by ``_on_status`` to recognise a plan-sourced sticky body that
+# should not be overwritten by an unrelated router-loop status update.
+# Kept here (not in planner.py) because the priority policy is a TUI
+# UX choice, not a planner contract.
+_PLAN_SOURCED_BODY_PREFIXES: tuple[str, ...] = (
+    "plan step ",
+    "plan started ",
+    "リトライ ",
+)
+
+
+def _is_plan_sourced_body(body: str) -> bool:
+    """Return True when ``body`` looks like a plan-sourced status emission."""
+    stripped = body.lstrip()
+    return any(stripped.startswith(p) for p in _PLAN_SOURCED_BODY_PREFIXES)
+
+
 # Re-export for backward compatibility — moved to a shared module so the
 # right_panel widgets can use it without creating an import cycle through
 # app_outbox.
@@ -604,8 +622,35 @@ class OutboxRouter:
         A live ``⟳ thinking…`` must outlive any pending transient timer
         from a slash command that fired just before this turn started —
         otherwise the auto-hide kills the agent's spinner mid-thought.
+
+        Priority guard: ``planner.py`` and ``router_loop.py`` both emit
+        ``kind="status"`` messages that flow through the same sticky bar.
+        Without a guard, a router-loop "dispatched N async requests"
+        update arrives mid-plan and overwrites the more-informative
+        "plan step N/M: <desc>" counter — the user briefly loses the
+        per-step location they just saw and the elapsed timer resets
+        each swap.
+
+        ``planner.py`` already tags its emissions with
+        ``meta={"source": "plan", ...}``; the router-loop "dispatched"
+        path does not. When the incoming message lacks that source tag
+        AND the currently-displayed sticky body matches a plan-shaped
+        prefix (``plan step``, ``plan started``, or the retry banner
+        ``リトライ``), the lower-priority dispatch update is dropped.
+        Plan-sourced updates always go through, so step counters
+        continue to advance normally.
         """
         self._cancel_transient_timer()
+        incoming_source = (msg.meta or {}).get("source")
+        if incoming_source != "plan":
+            try:
+                snap = conv._sticky().snapshot() if conv._sticky() else None
+            except Exception:
+                snap = None
+            if snap and snap.get("active"):
+                current_body = str(snap.get("body", ""))
+                if _is_plan_sourced_body(current_body):
+                    return  # don't overwrite the higher-priority plan status
         conv.show_status(msg.text, kind="thinking")
 
     def _on_trace(
