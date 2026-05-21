@@ -81,12 +81,18 @@ scenarios:
           - reply mentions at least one skill name or describes the skill catalogue
           - reply does not return a bare error message
       events:
-        must_emit:
+        # B48 W1-S3 fix (2026-05-22): router can answer skill-discovery inline
+        # without invoking direct_llm. Both paths emit either routing_decided
+        # OR chat_turn_completed_inline — accept either as evidence the agent
+        # processed the turn.
+        must_emit_any:
           - { type: routing_decided, count: ">=1" }
+          - { type: chat_turn_completed_inline, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { skill: direct_llm, present: true }
+      # artifacts requirement removed (was: skill direct_llm present): router-
+      # inline reply is also a valid solution for this scenario per the rubric,
+      # and forcing direct_llm dispatch incentivises unnecessary skill invocation.
       # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
         verified: 0.0
