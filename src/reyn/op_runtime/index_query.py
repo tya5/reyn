@@ -55,6 +55,22 @@ async def handle(
     if op.query_vector is None:
         return await _fallback_enumerate(op, ctx)
 
+    # B48-NF-W2-S7 fix (2026-05-22): ctx.workspace may be None when the
+    # caller (= recall tool or similar router-side path) propagates a
+    # workspace-less ToolContext. Raise a clear ValueError instead of the
+    # opaque ``AttributeError: 'NoneType' object has no attribute 'base_dir'``
+    # so the failure is actionable to the LLM and to operators reading the
+    # control_ir_failed event. Observed B48 W2-S7 (= chained_find_then_index)
+    # 4x consecutive failures with the AttributeError noise.
+    if ctx.workspace is None:
+        raise ValueError(
+            "index_query: op_runtime context has no workspace. Index ops "
+            "require a workspace to locate the SQLite backend; pass an "
+            "OpContext with a populated `workspace` field. This typically "
+            "indicates the calling tool (e.g. recall, drop_source) was "
+            "invoked from a router-side path without a workspace."
+        )
+
     workspace_root = ctx.workspace.base_dir
     backend = SqliteIndexBackend(workspace_root=workspace_root)
 

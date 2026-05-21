@@ -31,6 +31,17 @@ async def handle(
     Returns:
       {removed: bool, chunks_dropped: int}
     """
+    # B48-NF-W2-S7 fix (2026-05-22): same defensive guard as index_query.
+    # See index_query.py for full rationale.
+    if ctx.workspace is None:
+        raise ValueError(
+            "index_drop: op_runtime context has no workspace. Index ops "
+            "require a workspace to locate the SQLite backend; pass an "
+            "OpContext with a populated `workspace` field. This typically "
+            "indicates the calling tool (e.g. drop_source) was invoked from "
+            "a router-side path without a workspace."
+        )
+
     workspace_root = ctx.workspace.base_dir
 
     # Permission gate (ADR-0029 mirror — ask default)
