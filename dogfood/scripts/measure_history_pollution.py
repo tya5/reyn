@@ -32,11 +32,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,12 +48,18 @@ class IterationResult:
     reply_excerpt: str = ""
 
 
-def _seed_workspace(workspace: Path, agent: str, history_fixture: Path | None) -> None:
-    """Materialise a clean workspace with the chosen initial history state."""
-    agent_dir = workspace / ".reyn" / "agents" / agent
+def _seed_agent_history(project_root: Path, agent: str, history_fixture: Path | None) -> None:
+    """Reset the chosen agent's history + state under ``project_root/.reyn/``.
+
+    Uses an actual agent slot inside the real project workspace so the
+    ``reyn.local.yaml`` MCP config is found (= isolated temp workspaces
+    would not see ``reyn.yaml`` / ``reyn.local.yaml`` at the repo root).
+    Callers should pass a dedicated agent name (= ``pollution_test``)
+    distinct from ``default`` to avoid clobbering the user's chat state.
+    """
+    agent_dir = project_root / ".reyn" / "agents" / agent
     state_dir = agent_dir / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
-    # Profile is required by ChatSession's load path.
     profile = agent_dir / "profile.yaml"
     if not profile.exists():
         profile.write_text("name: " + agent + "\nrole: ''\n", encoding="utf-8")
@@ -64,20 +68,26 @@ def _seed_workspace(workspace: Path, agent: str, history_fixture: Path | None) -
         history_path.write_text("", encoding="utf-8")
     else:
         shutil.copyfile(history_fixture, history_path)
+    # Wipe any leftover snapshot so --no-restore actually starts fresh.
+    snapshot = state_dir / "snapshot.json"
+    if snapshot.exists():
+        snapshot.unlink()
+    # Wipe leftover skill snapshots too — they can leak skill-run state
+    # across iterations and pollute the measurement.
+    skills_dir = state_dir / "skills"
+    if skills_dir.exists():
+        shutil.rmtree(skills_dir)
 
 
-def _parse_events_for_tool_calls(events_dir: Path, target_tool: str) -> tuple[bool, list[str]]:
-    """Scan the newest events.jsonl under ``events_dir`` for ``tool_called``
-    events. Returns ``(target_hit, all_tool_names)``.
+def _parse_events_for_tool_calls_in_files(
+    event_files: set[Path], target_tool: str,
+) -> tuple[bool, list[str]]:
+    """Scan a set of events.jsonl paths for ``tool_called`` events.
+    Returns ``(target_hit, all_tool_names)``.
     """
-    if not events_dir.exists():
-        return False, []
-    candidates = sorted(events_dir.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime)
-    if not candidates:
-        return False, []
     tools: list[str] = []
     hit = False
-    for path in candidates:
+    for path in sorted(event_files, key=lambda p: p.stat().st_mtime if p.exists() else 0):
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
@@ -86,7 +96,9 @@ def _parse_events_for_tool_calls(events_dir: Path, target_tool: str) -> tuple[bo
                     ev = json.loads(line)
                 except Exception:
                     continue
-                if ev.get("name") == "tool_called":
+                # Reyn events use ``type`` as the discriminator.
+                ev_type = ev.get("type") or ev.get("name")
+                if ev_type == "tool_called":
                     tool = (ev.get("data") or {}).get("tool", "")
                     if tool:
                         tools.append(tool)
@@ -99,7 +111,7 @@ def _parse_events_for_tool_calls(events_dir: Path, target_tool: str) -> tuple[bo
 
 def _run_single_iteration(
     *,
-    workspace: Path,
+    project_root: Path,
     agent: str,
     prompt: str,
     history_fixture: Path | None,
@@ -107,18 +119,26 @@ def _run_single_iteration(
     iteration: int,
     timeout_seconds: int,
 ) -> IterationResult:
-    """Execute one ``reyn chat --cui --no-restore`` cycle and harvest result."""
-    _seed_workspace(workspace, agent, history_fixture)
-    env = os.environ.copy()
-    # Force the chat session into the temp workspace.
-    env["REYN_PROJECT_ROOT"] = str(workspace)
-    env["HOME"] = str(workspace)  # in case any path falls back to ~
+    """Execute one ``reyn chat --cui --no-restore`` cycle and harvest result.
+
+    Runs inside the real project workspace (= ``project_root``) so the
+    repo-level ``reyn.yaml`` / ``reyn.local.yaml`` MCP config is picked
+    up. Each iteration re-seeds ``project_root/.reyn/agents/<agent>/``
+    before the run to remove any state from the previous iteration.
+    """
+    _seed_agent_history(project_root, agent, history_fixture)
+    # Track events.jsonl files that existed BEFORE this iteration so we
+    # can identify which ones were created by THIS run.
+    events_root = project_root / ".reyn" / "events" / "agents" / agent
+    pre_existing = set(
+        events_root.rglob("*.jsonl")
+    ) if events_root.exists() else set()
     try:
         proc = subprocess.run(
             ["reyn", "chat", agent, "--cui", "--no-restore"],
             input=prompt + "\n/quit\n",
             text=True, capture_output=True,
-            cwd=str(workspace), env=env, timeout=timeout_seconds,
+            cwd=str(project_root), timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired:
         return IterationResult(
@@ -126,8 +146,14 @@ def _run_single_iteration(
             error=f"timeout after {timeout_seconds}s",
         )
     reply_excerpt = (proc.stdout or "")[-400:]
-    events_dir = workspace / ".reyn" / "events"
-    hit, tools = _parse_events_for_tool_calls(events_dir, target_tool)
+    # Only count events from files created during this iteration.
+    new_event_files = (
+        set(events_root.rglob("*.jsonl")) - pre_existing
+        if events_root.exists() else set()
+    )
+    hit, tools = _parse_events_for_tool_calls_in_files(
+        new_event_files, target_tool,
+    )
     return IterationResult(
         iteration=iteration,
         target_tool_called=hit,
@@ -153,8 +179,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Target tool name to count. Default 'list_actions' matches issue #352.",
     )
     parser.add_argument(
-        "--agent", default="default",
-        help="Agent name inside the temp workspace. Default 'default'.",
+        "--agent", default="pollution_test",
+        help=(
+            "Agent name within the project workspace. Default "
+            "'pollution_test' to avoid clobbering the user's 'default' agent."
+        ),
+    )
+    parser.add_argument(
+        "--project-root", default=".",
+        help=(
+            "Project root that holds reyn.yaml / reyn.local.yaml / .reyn/. "
+            "Defaults to the current working directory."
+        ),
     )
     parser.add_argument(
         "--timeout", type=int, default=60,
@@ -174,29 +210,41 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         fixture = fixture_path
 
+    project_root = Path(args.project_root).resolve()
+    if not (project_root / ".reyn").exists():
+        print(
+            f"error: {project_root} does not contain .reyn/; "
+            "pass --project-root pointing at a Reyn project root.",
+            file=sys.stderr,
+        )
+        return 2
+
     results: list[IterationResult] = []
     for i in range(1, args.n + 1):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            (tmp_path / ".reyn").mkdir(parents=True, exist_ok=True)
-            result = _run_single_iteration(
-                workspace=tmp_path,
-                agent=args.agent,
-                prompt=args.prompt,
-                history_fixture=fixture,
-                target_tool=args.tool,
-                iteration=i,
-                timeout_seconds=args.timeout,
-            )
-            results.append(result)
-            print(
-                f"# iter {i}/{args.n}: "
-                f"target={'HIT' if result.target_tool_called else 'miss'}  "
-                f"tools={result.tool_calls_observed[:4]}",
-                file=sys.stderr,
-            )
+        result = _run_single_iteration(
+            project_root=project_root,
+            agent=args.agent,
+            prompt=args.prompt,
+            history_fixture=fixture,
+            target_tool=args.tool,
+            iteration=i,
+            timeout_seconds=args.timeout,
+        )
+        results.append(result)
+        print(
+            f"# iter {i}/{args.n}: "
+            f"target={'HIT' if result.target_tool_called else 'miss'}  "
+            f"tools={result.tool_calls_observed[:4]}",
+            file=sys.stderr,
+        )
 
     hit_count = sum(1 for r in results if r.target_tool_called)
+    # Refusal = the LLM produced a final reply with NO tool calls (=
+    # text-only refusal pattern). This is the actual symptom of #352
+    # in-context-learning trap, independent of which specific tool the
+    # LLM "should" have called.
+    refusal_count = sum(1 for r in results if not r.tool_calls_observed)
+    any_tool_count = sum(1 for r in results if r.tool_calls_observed)
     summary = {
         "history_fixture": (
             "empty" if fixture is None else str(fixture)
@@ -206,6 +254,11 @@ def main(argv: list[str] | None = None) -> int:
         "n": args.n,
         "target_tool_hit_count": hit_count,
         "target_tool_hit_rate": hit_count / args.n if args.n else 0.0,
+        # Refusal-rate metric for #352 in-context-learning measurement.
+        "refusal_count": refusal_count,
+        "refusal_rate": refusal_count / args.n if args.n else 0.0,
+        "any_tool_call_count": any_tool_count,
+        "any_tool_call_rate": any_tool_count / args.n if args.n else 0.0,
         "iterations": [
             {
                 "i": r.iteration,
