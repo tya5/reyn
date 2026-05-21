@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.config import SandboxConfig, WebConfig
+    from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionDecl, PermissionResolver
@@ -98,6 +98,13 @@ class OpContext:
     # When None, sandboxed_exec falls back to platform auto-detection
     # (= same as no-config-loaded behavior).
     sandbox_config: "SandboxConfig | None" = None
+
+    # Issue #364: declarative cap on binary media size (= images from
+    # web__fetch / file__read / MCP / user input). When None, the gate
+    # is skipped — direct-OpContext constructions in tests stay
+    # backward-compatible. Callers with a ReynConfig should pass
+    # config.multimodal here.
+    multimodal_config: "MultimodalConfig | None" = None
 
     # FP-0016 D: per-skill credential scoping. None = unrestricted (= today's
     # behaviour; preserves backward compat for top-level / chat-router /

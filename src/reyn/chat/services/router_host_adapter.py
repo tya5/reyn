@@ -181,6 +181,12 @@ class RouterHostAdapter:
         # config-deny path still raises, interactive prompt path raises
         # the documented RuntimeError telling the caller a bus is needed).
         intervention_bus_factory: Callable[[], Any] | None = None,
+        # Issue #364 multi-modal cluster: media-size gate config (reyn.yaml
+        # ``multimodal:`` section). Threaded into the OpContext built by
+        # ``make_router_op_context`` so router-initiated web_fetch /
+        # file__read / mcp ops consult the cap + on_oversize policy.
+        # ``None`` = no cap.
+        multimodal_config: Any = None,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -241,6 +247,9 @@ class RouterHostAdapter:
         # interactive (Layer 4) approval flow without crashing on
         # ``intervention_bus is None`` defensive guards.
         self._intervention_bus_factory = intervention_bus_factory
+        # Issue #364: store the gate config so make_router_op_context can
+        # thread it into the OpContext for router-initiated binary ops.
+        self._multimodal_config = multimodal_config
 
     # --- RouterLoopHost identity attributes ---
 
@@ -972,4 +981,6 @@ class RouterHostAdapter:
             skill_name="chat_router",
             mcp_servers=self._mcp_servers_flat(),
             intervention_bus=bus,
+            # Issue #364: gate config for router-initiated binary ops.
+            multimodal_config=self._multimodal_config,
         )

@@ -9,7 +9,7 @@ from reyn.budget.budget import BudgetTracker
 from reyn.config import OnLimitConfig, SafetyConfig
 
 if TYPE_CHECKING:
-    from reyn.config import SandboxConfig
+    from reyn.config import MultimodalConfig, SandboxConfig
     from reyn.secrets.store import ScopedSecretStore
 from reyn.events.event_store import EventStore
 from reyn.kernel.runtime import OSRuntime, RunResult
@@ -54,6 +54,7 @@ class Agent:
         caller: str = "direct",
         budget_tracker: BudgetTracker | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        multimodal_config: "MultimodalConfig | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
     ) -> None:
         self.model = model
@@ -75,6 +76,9 @@ class Agent:
         # FP-0017 follow-up: declarative sandbox config (reyn.yaml `sandbox:`).
         # None → platform auto-detect; otherwise honors backend/on_unsupported.
         self._sandbox_config = sandbox_config
+        # Issue #364 multi-modal cluster: media-size gate config (reyn.yaml
+        # ``multimodal:``). ``None`` → no cap (= permissive default).
+        self._multimodal_config = multimodal_config
         self._secret_store = secret_store
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
@@ -145,6 +149,7 @@ class Agent:
             resume_plan=resume_plan,
             parent_run_id=parent_run_id,
             sandbox_config=self._sandbox_config,
+            multimodal_config=self._multimodal_config,
             secret_store=self._secret_store,
             plan_step=plan_step,
         )

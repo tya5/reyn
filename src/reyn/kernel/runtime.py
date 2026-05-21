@@ -10,7 +10,7 @@ from reyn.schemas.models import CandidateOutput, ContextFrame, Skill
 
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
-    from reyn.config import SandboxConfig
+    from reyn.config import MultimodalConfig, SandboxConfig
     from reyn.events.state_log import StateLog
     from reyn.secrets.store import ScopedSecretStore
     from reyn.skill.skill_registry import SkillRegistry
@@ -73,6 +73,7 @@ class OSRuntime:
         resume_plan: Any = None,
         parent_run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        multimodal_config: "MultimodalConfig | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
         plan_step: dict | None = None,
     ) -> None:
@@ -129,6 +130,8 @@ class OSRuntime:
         # executor so sandboxed_exec backend selection honors the operator's
         # declared backend / on_unsupported policy. None → platform default.
         self._sandbox_config = sandbox_config
+        # Issue #364 multi-modal cluster: media-size gate config.
+        self._multimodal_config = multimodal_config
         # FP-0016 D: per-skill credential scoping. None = unrestricted
         # (= preserves backward compat for callers that don't supply a store).
         self._secret_store = secret_store
@@ -148,6 +151,7 @@ class OSRuntime:
             resume_plan=resume_plan,
             run_id=run_id,
             sandbox_config=sandbox_config,
+            multimodal_config=multimodal_config,
             secret_store=secret_store,
         )
         self._preprocessor = PreprocessorExecutor(

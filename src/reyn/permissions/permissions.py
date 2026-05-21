@@ -951,6 +951,64 @@ class PermissionResolver:
         ):
             raise PermissionError(f"tool {tool!r} access denied")
 
+    async def require_media_load(
+        self,
+        *,
+        size_bytes: int,
+        source: str,
+        mime_type: str,
+        max_bytes: int,
+        on_oversize: str,
+        bus: RequestBus,
+    ) -> None:
+        """Multi-modal cluster gate (issue #364) — applies to binary media
+        (images today; audio/video deferred) about to be loaded into LLM
+        context from web__fetch / file__read / MCP / user input.
+
+        Under-limit: returns immediately (= zero overhead for the common
+        case). At-or-over limit: behaves per ``on_oversize`` (see
+        ``MultimodalConfig``):
+
+          - ``allow`` → pass.
+          - ``deny`` → ``PermissionError`` (caller emits status="denied").
+          - ``ask`` → interactive prompt via 4-layer ``_approve`` flow:
+
+            Layer 1 (config):    ``media.oversize: allow`` → pre-approve.
+                                 ``media.oversize: deny`` → deny.
+            Layer 2 (approvals): ``media.oversize`` persistent decision.
+            Layer 3 (session):   prior in-memory decision (= ALWAYS/NEVER).
+            Layer 4 (interactive): prompt with concrete size + source.
+
+        The shared infrastructure is reused by #365 (file__read binary) and
+        #366 (user chat input image) — only the ``source`` string differs.
+        """
+        if size_bytes <= max_bytes:
+            return
+        if on_oversize == "allow":
+            return
+        if on_oversize == "deny":
+            raise PermissionError(
+                f"media load denied: {source} returned {size_bytes} bytes "
+                f"(limit {max_bytes}, multimodal.on_oversize=deny)"
+            )
+        # on_oversize == "ask" → 4-layer approval path.
+        size_mb = size_bytes / 1_000_000
+        limit_mb = max_bytes / 1_000_000
+        description = (
+            f"{source} returned media ({mime_type}, {size_mb:.1f}MB). "
+            f"Limit is {limit_mb:.1f}MB."
+        )
+        if not await self._approve(
+            "media.oversize",
+            description,
+            bus,
+            user_prompt="Load this oversize media into context?",
+        ):
+            raise PermissionError(
+                f"media load denied by user: {source} ({size_bytes} bytes "
+                f"> {max_bytes})"
+            )
+
     async def require_web_fetch(self, url: str, bus: RequestBus) -> None:
         """Tier 1 gate for web_fetch — no declaration required, full 4-layer approval.
 

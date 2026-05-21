@@ -441,6 +441,7 @@ def _build_live_runner(agent_name: str):
                 state_log=None,  # no WAL for dogfood dispatch
                 budget_tracker=budget_tracker,
                 sandbox_config=config.sandbox,
+                multimodal_config=config.multimodal,
                 action_retrieval_config=config.action_retrieval,
             )
             s.load_history()
