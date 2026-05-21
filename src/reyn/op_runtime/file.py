@@ -14,10 +14,95 @@ from .context import OpContext
 _WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index", "mkdir", "move"})
 _READ_OPS = frozenset({"read", "glob", "grep", "stat"})
 
+# Issue #365: image extensions that trigger the binary read path.
+# Extension-based detection (= no magic-byte sniff for the initial scope);
+# unknown binaries still fall through to the text path with errors="replace"
+# (= pre-#365 behaviour preserved).
+_IMAGE_EXTENSIONS: dict[str, str] = {
+    ".png":  "image/png",
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif":  "image/gif",
+    ".webp": "image/webp",
+    ".svg":  "image/svg+xml",
+}
+
+
+def _image_mime_for_path(path: str) -> str | None:
+    """Return the image MIME type for ``path`` if its extension is in
+    ``_IMAGE_EXTENSIONS``, else None (= treat as text).
+    """
+    dot = path.rfind(".")
+    if dot == -1:
+        return None
+    return _IMAGE_EXTENSIONS.get(path[dot:].lower())
+
 # Max nearby-file suggestions returned on a not_found error. Mirrors the
 # ~8-suggestion shape that invoke_action's UnknownActionError emits so the
 # LLM's "did you mean X" narration looks the same across both surfaces.
 _NOT_FOUND_SUGGESTIONS_LIMIT = 8
+
+
+async def _read_image_file(op: FileIROp, ctx: OpContext, *, mime_type: str) -> dict:
+    """Read an image file as bytes, apply the media-size gate, return as
+    a media_blocks-bearing result (issue #365).
+
+    Permission-gate flow: the outer ``handle`` already called
+    ``require_file_read`` against ``op.path`` (= read-zone check). This
+    helper additionally calls ``require_media_load`` for the multi-modal
+    size cap (= shared with web__fetch / user input). When the gate
+    rejects, returns ``status="denied"`` with no media payload.
+    """
+    image_bytes, found = ctx.workspace.read_file_bytes(op.path)
+    if not found:
+        ctx.events.emit("tool_executed", op="read_file", path=op.path, found=False)
+        return {
+            "kind": "file", "op": "read", "path": op.path,
+            "status": "not_found",
+            "error": f"file not found: {op.path}",
+            "suggestions": _nearby_files(ctx.workspace, op.path),
+            "content": "",
+        }
+
+    if ctx.permission_resolver is not None and ctx.multimodal_config is not None:
+        if ctx.intervention_bus is None:
+            raise RuntimeError(
+                "file read of binary image requires intervention_bus on "
+                "OpContext (multimodal gate)"
+            )
+        try:
+            await ctx.permission_resolver.require_media_load(
+                size_bytes=len(image_bytes),
+                source=f"file read {op.path}",
+                mime_type=mime_type,
+                max_bytes=ctx.multimodal_config.max_bytes,
+                on_oversize=ctx.multimodal_config.on_oversize,
+                bus=ctx.intervention_bus,
+            )
+        except PermissionError as exc:
+            ctx.events.emit(
+                "file_read_media_denied",
+                path=op.path, size_bytes=len(image_bytes), mime_type=mime_type,
+            )
+            return {
+                "kind": "file", "op": "read", "path": op.path,
+                "status": "denied", "content_type": mime_type,
+                "size_bytes": len(image_bytes), "error": str(exc),
+            }
+
+    import base64
+    data_b64 = base64.b64encode(image_bytes).decode("ascii")
+    ctx.events.emit(
+        "tool_executed", op="read_file", path=op.path,
+        mode="binary", mime_type=mime_type, media_block_count=1,
+    )
+    return {
+        "kind": "file", "op": "read", "path": op.path,
+        "status": "ok", "content": "",
+        "media_blocks": [
+            {"type": "image", "data": data_b64, "mimeType": mime_type},
+        ],
+    }
 
 
 def _nearby_files(ws, path: str, *, max_results: int = _NOT_FOUND_SUGGESTIONS_LIMIT) -> list[str]:
@@ -63,6 +148,11 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
         return {"kind": "file", "op": "write", "path": op.path, "status": "ok"}
 
     if op.op == "read":
+        # Issue #365: image extensions → binary path with media-size gate.
+        image_mime = _image_mime_for_path(op.path)
+        if image_mime is not None:
+            return await _read_image_file(op, ctx, mime_type=image_mime)
+
         content, found = ctx.workspace.read_file(op.path)
         if not found:
             suggestions = _nearby_files(ctx.workspace, op.path)

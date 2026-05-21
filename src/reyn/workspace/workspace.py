@@ -71,6 +71,19 @@ class Workspace:
             return path.read_text(encoding="utf-8"), True
         return "", False
 
+    def read_file_bytes(self, path_str: str) -> tuple[bytes, bool]:
+        """Read a file as raw bytes (issue #365).
+
+        Mirrors ``read_file`` but skips text decoding — used by the file
+        handler's binary path (image/* extensions). Returns
+        ``(content_bytes, found)``. Raises PermissionError if the read is
+        denied by the workspace policy.
+        """
+        path = self._resolve_read(path_str)
+        if path.exists():
+            return path.read_bytes(), True
+        return b"", False
+
     def write_file(self, path_str: str, content: str) -> None:
         """Write a file into the project. Raises PermissionError if denied."""
         path = self._resolve_write(path_str)
