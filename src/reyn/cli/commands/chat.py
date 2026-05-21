@@ -232,7 +232,11 @@ def run(args: argparse.Namespace) -> None:
     session_cfg = Session.from_args(args)
     from reyn.cli.credentials_check import verify_credentials_or_exit
     verify_credentials_or_exit(session_cfg, args)
-    model, _ = session_cfg.model_for(args)
+    # ``model`` (= tier key like "standard" / "strong") drives ChatSession's
+    # ModelResolver. ``resolved_model`` (= the litellm string like
+    # "openai/gemini-2.5-flash-lite") is what the header should surface so
+    # the user can see which model their requests actually go to.
+    model, resolved_model = session_cfg.model_for(args)
     output_language = session_cfg.output_language_for(args)
     safety = session_cfg.safety_for(args)
 
@@ -351,7 +355,7 @@ def run(args: argparse.Namespace) -> None:
             await run_tui(
                 registry,
                 agent_name=name,
-                model=model,
+                model=resolved_model,
                 budget_tracker=budget_tracker,
                 banner=getattr(args, "banner", False),
                 no_restore=skip_restore,
