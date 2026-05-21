@@ -139,6 +139,47 @@ def _strip_frontmatter(content: str) -> str:
     return "\n".join(body_lines).rstrip("\n") + ("\n" if body_lines else "")
 
 
+def _build_media_followup_message(
+    *, tool_name: str, media_blocks: list[dict],
+) -> dict | None:
+    """Build a multimodal follow-up user message for MCP tool results that
+    include image / non-text content blocks (issue #362).
+
+    Strategy (= Option A): after each tool result that carries non-text
+    media, append a synthetic user message containing those media blocks
+    in litellm-normalised shape. Provider-agnostic because user messages
+    with content lists are universally supported (Anthropic, Gemini,
+    OpenAI vision models); a tool message with content list would break
+    OpenAI's tool-message contract.
+
+    Returns None when no image-typed block can be rendered (= other media
+    types like resources are deferred until a real use case appears).
+    """
+    parts: list[dict] = [
+        {"type": "text", "text": f"Tool `{tool_name}` returned the following image(s):"},
+    ]
+    rendered = 0
+    for block in media_blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "image":
+            continue
+        data = block.get("data")
+        mime = block.get("mimeType") or block.get("mime_type") or "image/png"
+        if not isinstance(data, str) or not data:
+            continue
+        # data is base64 per MCP spec. Build a data URL (= litellm /
+        # OpenAI-vision standard wire format).
+        parts.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{mime};base64,{data}"},
+        })
+        rendered += 1
+    if rendered == 0:
+        return None
+    return {"role": "user", "content": parts}
+
+
 def _is_empty_router_response(response: Any) -> bool:
     """OS-side detection: model emitted no text and no tool calls.
 
@@ -1802,6 +1843,19 @@ class RouterLoop:
                     if isinstance(r, dict) and isinstance(r.get("_post_text"), str):
                         post_text = r["_post_text"]
                         r = {k: v for k, v in r.items() if k != "_post_text"}
+
+                    # Issue #362: extract MCP media blocks (= image, etc.)
+                    # BEFORE JSON-serialising the tool result. The blocks
+                    # would JSON-stringify into the tool message as opaque
+                    # base64 (= wasted tokens) — instead, surface them as a
+                    # multimodal follow-up user message so vision-capable
+                    # models actually see the image. Strip from `r` so the
+                    # tool result text stays compact.
+                    media_blocks: list[dict] = []
+                    if isinstance(r, dict) and isinstance(r.get("media_blocks"), list):
+                        media_blocks = list(r["media_blocks"])
+                        r = {k: v for k, v in r.items() if k != "media_blocks"}
+
                     content_str = json.dumps(r, default=str)
                     if post_text:
                         content_str = f"{content_str}\n\n---\n{post_text}"
@@ -1810,6 +1864,13 @@ class RouterLoop:
                         "tool_call_id": tc["id"],
                         "content": content_str,
                     })
+                    if media_blocks:
+                        followup = _build_media_followup_message(
+                            tool_name=tc.get("function", {}).get("name", "tool"),
+                            media_blocks=media_blocks,
+                        )
+                        if followup is not None:
+                            messages.append(followup)
                 continue
 
             # Option F (ADR-0021): detect empty-stop before treating as text reply.
