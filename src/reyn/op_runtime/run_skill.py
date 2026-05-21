@@ -17,7 +17,7 @@ _log = logging.getLogger(__name__)
 def _resolve_skill_ref(skill_ref: str) -> tuple[str, Path, str | None]:
     """Resolve a sub-skill reference to ``(skill_md_path, path_for_hash, skill_root)``.
 
-    Accepts three reference shapes on the ``op.skill`` field:
+    Accepts four reference shapes on the ``op.skill`` field:
 
     1. **Bare name** — e.g. ``"direct_llm"``. Resolved via
        ``resolve_skill_path`` search order (reyn/local → reyn/project →
@@ -34,29 +34,74 @@ def _resolve_skill_ref(skill_ref: str) -> tuple[str, Path, str | None]:
     3. **Multi-segment literal path** — e.g.
        ``"reyn/local/my_app/skill.md"``. Passed through to
        ``load_dsl_skill`` as written.
+    4. **LLM-hallucination forms** (B47-NF-eval-1): router LLMs at flash-lite
+       hallucinate paths like ``"skills/direct_llm.yaml"``,
+       ``"skills/direct_llm.py"``, or ``"skills/skill__direct_llm.py"`` when
+       constructing ``target_skill_path`` for the eval skill. N=3
+       reproduction (2026-05-21) showed 3/3 failures with varying wrong paths.
+       Each hallucination has a recoverable bare-skill-name candidate buried
+       in the last path segment after stripping ``skill__`` prefix and any
+       ``.yaml`` / ``.py`` / ``.md`` extension. We try that candidate against
+       ``resolve_skill_path`` as a defensive last resort *before* falling
+       through to form 3 (= literal-path interpretation that would fail
+       relative to CWD). The form-3 fall-through is preserved for genuinely
+       literal callers.
     """
-    from reyn.skill.skill_paths import resolve_skill_path
+    from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path
 
-    parts = skill_ref.split("/")
-    if "/" not in skill_ref and not skill_ref.endswith(".md"):
-        # form 1
-        skill_dir, inferred_root = resolve_skill_path(skill_ref)
+    def _pack(skill_dir: Path, inferred_root: Path) -> tuple[str, Path, str | None]:
         skill_md_path = str(skill_dir / "skill.md")
         path_for_hash = skill_dir / "skill.md"
-        skill_root = str(inferred_root) if inferred_root else None
-        return skill_md_path, path_for_hash, skill_root
+        skill_root_str = str(inferred_root) if inferred_root else None
+        return skill_md_path, path_for_hash, skill_root_str
+
+    parts = skill_ref.split("/")
+    form1_tried = False
+    if "/" not in skill_ref and not skill_ref.endswith(".md"):
+        # form 1: bare name
+        try:
+            return _pack(*resolve_skill_path(skill_ref))
+        except (SkillNotFoundError, FileNotFoundError):
+            form1_tried = True  # fall through to form 4
     if len(parts) == 2 and parts[1] == "skill.md" and parts[0]:
         # form 2: ``<name>/skill.md`` — try stdlib resolution by the
         # leading segment first.
         try:
-            skill_dir, inferred_root = resolve_skill_path(parts[0])
-            skill_md_path = str(skill_dir / "skill.md")
-            path_for_hash = skill_dir / "skill.md"
-            skill_root = str(inferred_root) if inferred_root else None
-            return skill_md_path, path_for_hash, skill_root
-        except FileNotFoundError:
+            return _pack(*resolve_skill_path(parts[0]))
+        except (SkillNotFoundError, FileNotFoundError):
+            pass  # fall through to form 4 then form 3
+    # form 4: LLM-hallucination recovery. Try extracting a bare skill name
+    # from the last path segment after stripping common extensions and the
+    # ``skill__`` action-alias prefix. Fires after forms 1/2 fail (= the
+    # caller's literal ref doesn't resolve as bare name nor as
+    # ``<name>/skill.md``). The form-3 literal fall-through stays in place
+    # for callers who actually mean a literal relative path.
+    last_segment = parts[-1] if parts else skill_ref
+    candidate = last_segment
+    for ext in (".yaml", ".py", ".md"):
+        if candidate.endswith(ext):
+            candidate = candidate[: -len(ext)]
+            break
+    if candidate.startswith("skill__"):
+        candidate = candidate[len("skill__"):]
+    if candidate and candidate != skill_ref:
+        try:
+            skill_dir, inferred_root = resolve_skill_path(candidate)
+            _log.warning(
+                "run_skill: recovered skill ref %r → %r via "
+                "form-4 LLM-hallucination normalization. Callers should "
+                "pass the bare skill name to avoid this fallback.",
+                skill_ref, candidate,
+            )
+            return _pack(skill_dir, inferred_root)
+        except (SkillNotFoundError, FileNotFoundError):
             pass  # fall through to form 3 literal-path interpretation
-    # form 3
+    # form 3: literal-path passthrough. If form 1 was tried and failed (= a
+    # bare-looking name that doesn't resolve), preserve the original
+    # SkillNotFoundError semantics by re-raising it; otherwise return the
+    # literal path for callers who mean a relative path.
+    if form1_tried:
+        raise SkillNotFoundError(skill_ref, [])
     return skill_ref, Path(skill_ref), None
 
 
