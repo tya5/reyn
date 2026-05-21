@@ -108,7 +108,8 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 
     _run(run())
 
-    agent_turns = [m for m in session.history if m.role == "agent"]
+    # Issue #383: role rename "agent" → "assistant" at construction time.
+    agent_turns = [m for m in session.history if m.role == "assistant"]
     assert len(agent_turns) == 1
     assert agent_turns[0].text == "hello back"
 

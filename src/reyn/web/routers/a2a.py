@@ -577,17 +577,19 @@ def _harvest_completion_narration(session, skill_run_id: str) -> str:
         prev = history[i - 1]
         meta = getattr(msg, "meta", None) or {}
         prev_meta = getattr(prev, "meta", None) or {}
+        # Issue #383: role rename "agent" → "assistant"; tolerate both
+        # while pre-#383 entries may still appear via migration edge cases.
         if (
-            getattr(msg, "role", None) == "agent"
+            getattr(msg, "role", None) in ("assistant", "agent")
             and meta.get("source") != "spawn_ack"
             and prev_meta.get("source") == "skill_completion"
             and prev_meta.get("run_id") == skill_run_id
         ):
             return getattr(msg, "text", "") or ""
-    # Fallback: latest non-spawn-ack agent message.
+    # Fallback: latest non-spawn-ack assistant message.
     for msg in reversed(history):
         meta = getattr(msg, "meta", None) or {}
-        if getattr(msg, "role", None) == "agent" and meta.get("source") != "spawn_ack":
+        if getattr(msg, "role", None) in ("assistant", "agent") and meta.get("source") != "spawn_ack":
             return getattr(msg, "text", "") or ""
     return ""
 

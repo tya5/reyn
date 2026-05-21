@@ -422,10 +422,26 @@ def _load_chain_replies(project_root: Path) -> dict[str, str]:
                     continue
                 try:
                     m = json.loads(raw)
-                    if m.get("role") == "agent":
+                    # Issue #383: role rename "agent" → "assistant".
+                    # Tolerate both for pre-#383 history.jsonl entries.
+                    if m.get("role") in ("assistant", "agent"):
                         cid = (m.get("meta") or {}).get("chain_id")
                         if cid:
-                            replies[cid] = m.get("text", "")
+                            # Pre-#383 entries carry "text"; post-#383
+                            # entries carry "content" (str or list-of-parts).
+                            content = m.get("content")
+                            if isinstance(content, str):
+                                reply_text = content
+                            elif isinstance(content, list):
+                                # extract first text part
+                                reply_text = next(
+                                    (p.get("text", "") for p in content
+                                     if isinstance(p, dict) and p.get("type") == "text"),
+                                    "",
+                                )
+                            else:
+                                reply_text = m.get("text", "")
+                            replies[cid] = reply_text
                 except Exception as exc:
                     logger.warning(
                         "right_panel events: malformed history.jsonl line in %s: %s",

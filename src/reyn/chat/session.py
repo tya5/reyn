@@ -7,7 +7,7 @@ import logging
 import re
 import time
 import uuid
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 
 logger = logging.getLogger(__name__)
 from dataclasses import asdict, dataclass, field
@@ -416,21 +416,196 @@ class ChatInterventionBus:
     # method-level call so the bus signature stays stable.
 
 
-@dataclass
+@dataclass(init=False)
 class ChatMessage:
-    role: str  # "user" | "agent" | "skill_event" | "summary"
-    text: str
-    ts: str
+    """Chat-history entry, shaped to mirror the OpenAI/Anthropic message
+    list wire format (issue #383 E-full).
+
+    Each ``ChatMessage`` is one entry in the LLM-facing conversation, so
+    ``self.history`` can be serialised straight to the LLM without
+    synthesis. Tool turns are represented as their own ``role="tool"``
+    entries; assistant turns that emitted tool calls carry the
+    ``tool_calls`` field; multi-modal user / tool turns use the
+    list-of-parts ``content`` shape.
+
+    Role vocabulary:
+      - ``user`` — user input
+      - ``assistant`` — LLM reply (= previously ``agent``)
+      - ``tool`` — tool response (= new)
+      - ``system`` — system prompt (rare; usually built at wire time)
+      - ``summary`` — chat-compactor output (Reyn-internal, filtered at wire boundary)
+      - ``skill_event`` — TUI display marker (Reyn-internal, filtered at wire boundary)
+    """
+    role: Literal[
+        "user", "assistant", "tool", "system", "summary", "skill_event",
+        # Legacy value retained for read-time migration. Code that reaches
+        # for this directly is a bug — _migrate_legacy_chat_message
+        # rewrites it on load.
+        "agent",
+    ]
+    # ``content`` is either:
+    #   - a ``str`` (= text-only turn), or
+    #   - a ``list[dict]`` of litellm-style content parts (= multimodal user
+    #     turn / tool response with an image / etc.). Each part is e.g.
+    #       {"type": "text", "text": "..."}
+    #       {"type": "image_url", "image_url": {"url": "<data url OR file ref>"}}
+    #       {"type": "image",     "path": "<abs or cwd-rel>",
+    #                             "mime_type": "...", "content_hash": "sha256:..."}
+    # The last shape (= ``"image"`` with ``path``) is the **path-ref**
+    # introduced by #383: storage points at a file on disk, the
+    # wire-shape builder reads and embeds the binary at LLM-call time.
+    content: str | list[dict] = ""
+    ts: str = ""
     seq: int = 0  # monotonic per-session sequence id; 0 for non-conversational entries
     meta: dict = field(default_factory=dict)
-    # Issue #366: optional multimodal media blocks attached to this
-    # message (= images user attached via /image / --image). Each block
-    # is a litellm-style content part, e.g.
-    #   {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
-    # Empty list = pure text message (= backward compat with all callers).
-    # Persisted in history.jsonl via the dataclass default — restart-resume
-    # carries images along with text turns.
-    media: list[dict] = field(default_factory=list)
+    # OpenAI/Anthropic tool-turn fields ─────────────────────────────────
+    # ``tool_calls`` is set ONLY on ``role="assistant"`` entries where the
+    # LLM emitted one or more tool calls. Each block follows the OpenAI
+    # function-tool shape:
+    #   {"id": "<tool_call_id>", "type": "function",
+    #    "function": {"name": "<tool>", "arguments": "<json str>"}}
+    tool_calls: list[dict] | None = None
+    # ``tool_call_id`` is set ONLY on ``role="tool"`` entries. Links the
+    # response back to the originating ``tool_call`` block on the
+    # preceding assistant message.
+    tool_call_id: str | None = None
+    # ``name`` is set ONLY on ``role="tool"`` entries (= function name).
+    # Mirrors the OpenAI tool-message ``name`` field; some providers
+    # require it for tool-result attribution.
+    name: str | None = None
+
+    def __init__(
+        self,
+        role: str,
+        content: "str | list[dict] | None" = None,
+        ts: str = "",
+        seq: int = 0,
+        meta: "dict | None" = None,
+        tool_calls: "list[dict] | None" = None,
+        tool_call_id: "str | None" = None,
+        name: "str | None" = None,
+        # ── Pre-#383 compat kwargs (= retired in PR-B) ──────────────────
+        # ``text`` and ``media`` are folded into ``content`` during
+        # construction so callers that haven't migrated yet still produce
+        # Design-B storage. Both PR-A intra-PR sweep and external test
+        # callers benefit; once PR-B's sweep eliminates the last legacy
+        # caller, these kwargs (and the matching read properties below)
+        # get removed.
+        text: "str | None" = None,
+        media: "list[dict] | None" = None,
+    ) -> None:
+        # role: legacy "agent" → "assistant" at construction time so the
+        # rest of the runtime never sees the pre-#383 spelling.
+        if role == "agent":
+            role = "assistant"
+        # Fold legacy text + media into content when caller didn't pass
+        # the new content kwarg. Caller may pass EITHER content OR
+        # text/media — not both.
+        if content is None:
+            if text is not None or media is not None:
+                _text_val = text or ""
+                _media_val = media or []
+                if _media_val:
+                    parts: list[dict] = []
+                    if _text_val:
+                        parts.append({"type": "text", "text": _text_val})
+                    parts.extend(_media_val)
+                    content = parts
+                else:
+                    content = _text_val
+            else:
+                content = ""
+        self.role = role
+        self.content = content
+        self.ts = ts
+        self.seq = seq
+        self.meta = meta if meta is not None else {}
+        self.tool_calls = tool_calls
+        self.tool_call_id = tool_call_id
+        self.name = name
+
+    @property
+    def text(self) -> str:
+        """Backward-compat read for code that hasn't migrated to
+        ``content``. Returns ``content`` when it is a str; otherwise
+        extracts the first ``{"type":"text"}`` part from a content list.
+        Empty string when neither applies. Retired in PR-B.
+        """
+        if isinstance(self.content, str):
+            return self.content
+        if isinstance(self.content, list):
+            for part in self.content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    return part.get("text", "")
+        return ""
+
+    @property
+    def media(self) -> list[dict]:
+        """Backward-compat read for code expecting the pre-#383 ``media``
+        list (= non-text content parts). Returns the non-text parts of
+        ``content`` when it is a list; empty list otherwise. Retired in
+        PR-B.
+        """
+        if isinstance(self.content, list):
+            return [
+                p for p in self.content
+                if isinstance(p, dict) and p.get("type") != "text"
+            ]
+        return []
+
+
+# ── Legacy ChatMessage migration ───────────────────────────────────────
+#
+# history.jsonl files written before issue #383 used the pre-Design-B
+# shape: ``role`` ∈ {"user","agent","skill_event","summary"}; ``text:
+# str``; ``media: list[dict]`` (= inline base64 image_url parts from
+# #366). On load, ``_migrate_legacy_chat_message`` rewrites such
+# entries into the new wire shape so the runtime only ever sees
+# Design-B ChatMessage instances.
+
+
+def _migrate_legacy_chat_message(raw: dict) -> dict:
+    """Read-time migration for pre-#383 history.jsonl entries.
+
+    Detects the legacy shape (= ``text`` key + optional ``media`` list,
+    ``role="agent"`` for assistant replies) and emits the Design-B
+    shape (= ``content`` field, ``role="assistant"``). Mutates a copy;
+    the caller hands the result to ``ChatMessage(**kwargs)``.
+
+    Legacy → new:
+      role: "agent"            → "assistant"
+      text: "hi"               → content: "hi"
+      text + media: [...]      → content: [{"type": "text", "text": "hi"}, ...media]
+      (no text, media: [...])  → content: [...media]
+
+    Inline base64 in media blocks is left alone — those entries
+    pre-date the path-ref design and rewriting them to files would
+    be a one-shot tool, out of scope for read-time migration.
+    """
+    raw = dict(raw)  # don't mutate the caller's dict
+    if "content" in raw:
+        # Already new shape (= written post-#383 or already migrated).
+        # Still normalise role just in case "agent" snuck in.
+        if raw.get("role") == "agent":
+            raw["role"] = "assistant"
+        return raw
+
+    # Legacy shape: text + optional media.
+    text_val = raw.pop("text", "")
+    media_val = raw.pop("media", None) or []
+
+    if media_val:
+        parts: list[dict] = []
+        if text_val:
+            parts.append({"type": "text", "text": text_val})
+        parts.extend(media_val)
+        raw["content"] = parts
+    else:
+        raw["content"] = text_val
+
+    if raw.get("role") == "agent":
+        raw["role"] = "assistant"
+    return raw
 
 
 def _now_iso() -> str:
@@ -1305,7 +1480,10 @@ class ChatSession:
         ``(role, text, ts, meta)`` signature to ChatSession._append_history
         (which takes a ChatMessage).
         """
-        self._append_history(ChatMessage(role=role, text=text, ts=ts, meta=meta))
+        self._append_history(ChatMessage(
+            role="assistant" if role == "agent" else role,
+            content=text, ts=ts, meta=meta,
+        ))
 
     def _append_history_for_a2a_handler(
         self, role: str, text: str, ts: str, meta: dict,
@@ -1316,7 +1494,10 @@ class ChatSession:
         InterventionHandler.  This adapter bridges to ChatSession._append_history
         (which takes a ChatMessage).
         """
-        self._append_history(ChatMessage(role=role, text=text, ts=ts, meta=meta))
+        self._append_history(ChatMessage(
+            role="assistant" if role == "agent" else role,
+            content=text, ts=ts, meta=meta,
+        ))
 
     # ── A2A transport callbacks (FP-0019 Wave 2 part 2) ─────────────────────────
     # Session-side wrappers that perform registry topology checks and the
@@ -1380,7 +1561,11 @@ class ChatSession:
                 if not line:
                     continue
                 try:
-                    self.history.append(ChatMessage(**json.loads(line)))
+                    raw = json.loads(line)
+                    # Read-time migration for pre-#383 entries (legacy
+                    # text + media shape → new content shape).
+                    raw = _migrate_legacy_chat_message(raw)
+                    self.history.append(ChatMessage(**raw))
                 except Exception:
                     continue
         # Initialize the seq counter past any seqs already in the file. Old
@@ -1650,14 +1835,23 @@ class ChatSession:
                 name="wal-size-safety-net",
             )
 
-        # Issue #366: drain any /image-queued media blocks onto this turn.
+        # Issue #366 → #383: drain any /image-queued media blocks onto
+        # this turn. Each block is a content-part dict (= image_url or
+        # image path-ref shape); when present, the user message becomes
+        # list-content shape mirroring the LLM wire format.
         attached_media = self._pending_user_images
         self._pending_user_images = []
 
+        if attached_media:
+            content: str | list[dict] = (
+                ([{"type": "text", "text": text}] if text else []) + attached_media
+            )
+        else:
+            content = text
+
         self._append_history(ChatMessage(
-            role="user", text=text, ts=_now_iso(),
+            role="user", content=content, ts=_now_iso(),
             meta={"chain_id": chain_id},
-            media=attached_media,
         ))
         self._chat_events.emit(
             "user_message_received", text=text, chain_id=chain_id,
@@ -1904,7 +2098,7 @@ class ChatSession:
             kind="agent", text=fallback, meta={"chain_id": chain_id},
         ))
         self._append_history(ChatMessage(
-            role="agent", text=fallback, ts=_now_iso(),
+            role="assistant", content=fallback, ts=_now_iso(),
             meta={
                 "chain_id": chain_id,
                 "source": "router_cap_exhausted",
@@ -2653,7 +2847,7 @@ class ChatSession:
         )
 
         self._append_history(ChatMessage(
-            role="user", text=injected_text, ts=_now_iso(),
+            role="user", content=injected_text, ts=_now_iso(),
             meta={
                 "source": "skill_completion",
                 "skill": skill_name,
@@ -3092,7 +3286,7 @@ class ChatSession:
                 failures_str = repr(step_failures)
             injected_text += f"\n\nstep_failures:\n{failures_str}\n"
         self._append_history(ChatMessage(
-            role="user", text=injected_text, ts=_now_iso(),
+            role="user", content=injected_text, ts=_now_iso(),
             meta={
                 "source": "plan_completion",
                 "plan_id": plan_id,
@@ -3445,7 +3639,14 @@ class ChatSession:
         actually exceeds the window.
         """
         cfg = self._compaction
-        turns = [m for m in self.history if m.role in ("user", "agent")]
+        # E-full (#383): include tool-turn entries (= assistant w/ tool_calls,
+        # tool responses) in the slice. The wire-shape builder below
+        # forwards them as-is to the LLM. ``summary`` / ``skill_event``
+        # remain Reyn-internal and filtered out.
+        turns = [
+            m for m in self.history
+            if m.role in ("user", "assistant", "tool", "agent")
+        ]
 
         if len(turns) <= cfg.head_size + cfg.tail_size:
             # No compaction needed — head+tail would overlap and duplicate.
@@ -3456,31 +3657,38 @@ class ChatSession:
             tail = turns[-cfg.tail_size:] if cfg.tail_size else []
             summary = self._latest_summary()
             if summary:
+                summary_text = (
+                    summary.content if isinstance(summary.content, str)
+                    else json.dumps(summary.content, ensure_ascii=False)
+                )
                 bridge = [ChatMessage(
-                    role="agent",
-                    text=f"[summary of earlier conversation]\n{summary.text}",
+                    role="assistant",
+                    content=f"[summary of earlier conversation]\n{summary_text}",
                     ts=summary.ts,
                 )]
                 selected = head + bridge + tail
             else:
                 selected = head + tail
 
+        # E-full (#383) pass-through: ChatMessage IS the wire shape, so the
+        # builder just serialises each entry into a litellm-compatible
+        # message dict. Tool fields surface only on the roles where they
+        # are non-None. Path-ref content parts (= ``{"type":"image","path":...}``)
+        # are left as-is; the LLM wire boundary (= call_llm_tools or its
+        # delegates) is responsible for resolving them to data URLs.
         messages: list[dict] = []
         for m in selected:
-            role = "user" if m.role == "user" else "assistant"
-            # Issue #366: when a message carries multimodal media blocks
-            # (= /image-attached images), build content as a list of
-            # litellm content parts. Text-only messages keep the legacy
-            # string-content shape so the existing prompt cache + replay
-            # fixtures stay byte-identical.
-            if m.media:
-                parts: list[dict] = []
-                if m.text:
-                    parts.append({"type": "text", "text": m.text})
-                parts.extend(m.media)
-                messages.append({"role": role, "content": parts})
-            else:
-                messages.append({"role": role, "content": m.text})
+            # Legacy "agent" stragglers (= migrated entries that somehow
+            # bypassed _migrate_legacy_chat_message) → normalise on read.
+            role = "assistant" if m.role == "agent" else m.role
+            msg: dict = {"role": role, "content": m.content}
+            if m.tool_calls is not None:
+                msg["tool_calls"] = m.tool_calls
+            if m.tool_call_id is not None:
+                msg["tool_call_id"] = m.tool_call_id
+            if m.name is not None:
+                msg["name"] = m.name
+            messages.append(msg)
         return messages
 
     async def _run_router_loop(

@@ -103,7 +103,8 @@ def _new_agent_history_entries(
     """
     out: list[str] = []
     for msg in session.history[baseline:]:
-        if msg.role != "agent" or not msg.text:
+        # Issue #383: role rename "agent" → "assistant"; tolerate both.
+        if msg.role not in ("assistant", "agent") or not msg.text:
             continue
         if chain_id is not None and (msg.meta or {}).get("chain_id") != chain_id:
             continue
@@ -130,8 +131,12 @@ async def _await_turn_complete(
     """
     deadline = asyncio.get_event_loop().time() + timeout
     while True:
+        # Issue #383: assistant replies now have role="assistant". "agent"
+        # kept in the predicate for any pre-#383 history entry that
+        # bypassed read-time migration.
         has_reply = any(
-            msg.role == "agent" for msg in session.history[baseline:]
+            msg.role in ("assistant", "agent")
+            for msg in session.history[baseline:]
         )
         is_idle = session.inbox.empty() and not session.running_skills
         if has_reply and is_idle:

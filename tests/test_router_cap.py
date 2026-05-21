@@ -137,9 +137,10 @@ def test_handle_user_message_emits_fallback_when_cap_exhausted(
     assert "router_retry_exhausted" in names
 
     # History contains the fallback agent message tagged with the reason.
+    # Issue #383: role rename "agent" → "assistant".
     fallback_msgs = [
         m for m in session.history
-        if m.role == "agent" and m.meta.get("source") == "router_cap_exhausted"
+        if m.role == "assistant" and m.meta.get("source") == "router_cap_exhausted"
     ]
     assert len(fallback_msgs) == 1
 
