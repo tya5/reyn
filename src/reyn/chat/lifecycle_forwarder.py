@@ -62,6 +62,41 @@ class ChatLifecycleForwarder:
         except asyncio.QueueFull:
             pass
 
+    # ── Budget warn (wave-5 C5) ──────────────────────────────────────────
+
+    def on_budget_warn(self, data: dict) -> None:
+        """Surface a ``[↑ budget warn: <dimension> (N%)]`` marker in the conv pane.
+
+        The Events tab colour-codes ``budget_warn`` in yellow, but a user
+        with the side panel closed (= the default) sees nothing — the
+        budget can silently approach its cap without any signal in the
+        conv pane. Mirror the ``on_compaction_completed`` pattern: emit a
+        lifecycle marker (``[↑ … ]``) so the conv pane's
+        ``_render_lifecycle_marker`` route displays it as a dim inline
+        divider, matching the compaction marker's visual weight.
+
+        ``data["dimension"]`` names the warned axis (``daily_tokens`` /
+        ``daily_cost_usd`` / etc.). ``data["current"]`` and
+        ``data["hard"]`` are the snapshot from ``BudgetCheck.context``;
+        when both are numeric we surface a ``(N%)`` annotation so the
+        user can see how close they are to the cap.
+        """
+        dim = str(data.get("dimension") or "budget")
+        current = data.get("current")
+        hard = data.get("hard")
+        pct_part = ""
+        try:
+            if (
+                isinstance(current, (int, float))
+                and isinstance(hard, (int, float))
+                and hard > 0
+            ):
+                pct = int(round((float(current) / float(hard)) * 100))
+                pct_part = f" ({pct}%)"
+        except Exception:
+            pct_part = ""
+        self._enqueue(f"[↑ budget warn: {dim}{pct_part}]")
+
     # ── Compaction (issue #162) ──────────────────────────────────────────
 
     def on_compaction_completed(self, data: dict) -> None:

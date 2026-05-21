@@ -112,3 +112,70 @@ def test_compaction_started_is_not_surfaced() -> None:
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(type="compaction_started", data={"new_turn_count": 8}))
     assert _drain(q) == []
+
+
+# ── budget_warn (wave-5 C5) ──────────────────────────────────────────
+
+
+def test_budget_warn_emits_lifecycle_marker_with_pct() -> None:
+    """Tier 2: budget_warn → ``[↑ budget warn: <dim> (N%)]`` lifecycle marker.
+
+    Without this forwarding path, ``budget_warn`` events only showed up
+    in the Events tab (= side panel, default-closed). A user with the
+    panel closed had no in-conv signal that the daily cap was being
+    approached.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="budget_warn",
+        data={
+            "dimension": "daily_tokens",
+            "agent": "default",
+            "chain_id": "abc123",
+            "current": 80000,
+            "hard": 100000,
+        },
+    ))
+    msgs = _drain(q)
+    assert len(msgs) == 1
+    assert msgs[0].kind == "system"
+    assert msgs[0].text == "[↑ budget warn: daily_tokens (80%)]"
+
+
+def test_budget_warn_without_numeric_context_drops_pct() -> None:
+    """Tier 2: missing / non-numeric current / hard → no ``(N%)`` annotation.
+
+    The marker still surfaces — pct just degrades to "no annotation"
+    rather than failing the whole emit.
+    """
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="budget_warn",
+        data={"dimension": "rate_limit"},
+    ))
+    msgs = _drain(q)
+    assert len(msgs) == 1
+    assert msgs[0].text == "[↑ budget warn: rate_limit]"
+
+
+def test_budget_warn_missing_dimension_uses_generic_label() -> None:
+    """Tier 2: absent ``dimension`` falls back to the generic ``budget`` label."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(type="budget_warn", data={}))
+    msgs = _drain(q)
+    assert msgs[0].text == "[↑ budget warn: budget]"
+
+
+def test_budget_warn_zero_hard_drops_pct_safely() -> None:
+    """Tier 2: ``hard=0`` would divide by zero — pct degrades, no crash."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="budget_warn",
+        data={"dimension": "daily_tokens", "current": 100, "hard": 0},
+    ))
+    msgs = _drain(q)
+    assert msgs[0].text == "[↑ budget warn: daily_tokens]"
