@@ -365,8 +365,14 @@ class _PreviewPane(Widget):
         else:
             name = "—"
         try:
+            # Shortened from ``J/n=next K/p=prev`` (15 cells) to
+            # ``J/K=next/prev`` (14 cells minus 1 — but more importantly,
+            # the trailing prev-shortcut hint is no longer the first
+            # thing to clip at default panel widths. The earlier wording
+            # truncated to ``K/p=pr…`` at 44-cell minimum panel widths,
+            # hiding the prev-item discoverability cue entirely.
             self.query_one("#preview-header", Label).update(
-                f"  {name}  │  j↓ k↑ d⇊ u⇈ h← l→  J/n=next K/p=prev"
+                f"  {name}  │  j↓ k↑ d⇊ u⇈ h← l→  J/K=next/prev"
             )
         except Exception as exc:
             logger.warning("right_panel preview header update failed: %s", exc)
