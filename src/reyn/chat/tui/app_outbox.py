@@ -242,8 +242,28 @@ class OutboxRouter:
             header.refresh_status(agent_name=new_name)
             self._cancel_transient_timer()
             conv.hide_status()
+            # Capture the running-skill identities BEFORE conv.clear() so
+            # we can leave a breadcrumb after the wipe. Without this, a
+            # hot-swap mid-skill silently discards the running row — the
+            # user types ``/attach <other>`` and sees only ``── attached
+            # to <other> ──``, with no trace of the in-flight skill that
+            # just got cancelled. ``_skill_name`` / ``_short_id`` are
+            # SkillActivityRow's stable display identifiers; reading them
+            # here is intra-package coupling, but the alternative (a new
+            # public accessor) is more surface area for the same purpose.
+            interrupted: list[str] = []
+            for row in list(conv._skill_rows.values()):
+                try:
+                    interrupted.append(
+                        f"✗ {row._skill_name}#{row._short_id}"
+                        " — interrupted by /attach"
+                    )
+                except Exception:
+                    pass
             conv.clear()
             from rich.text import Text as _RichText
+            for line in interrupted:
+                conv._write_log(_RichText(line, style="dim #888888"))
             conv._write_log(_RichText(
                 f"── attached to {new_name} ──",
                 style="dim #555555",
