@@ -123,9 +123,19 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
         content = raw
         extractor_name = "none"
 
-    truncated = len(content) > op.max_length
+    # Pagination (issue #357): slice extracted content by start_index, then
+    # cap at max_length. next_start tells the LLM where to resume on the
+    # follow-up call. start_index past end-of-content yields empty content
+    # with truncated=False.
+    total_length = len(content)
+    sliced = content[op.start_index:]
+    truncated = len(sliced) > op.max_length
     if truncated:
-        content = content[: op.max_length]
+        content = sliced[: op.max_length]
+        next_start: int | None = op.start_index + op.max_length
+    else:
+        content = sliced
+        next_start = None
 
     ctx.events.emit(
         "web_fetch_completed",
@@ -134,6 +144,8 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
         content_length=len(content),
         truncated=truncated,
         extractor=extractor_name,
+        start_index=op.start_index,
+        total_length=total_length,
     )
     return {
         "kind": "web_fetch",
@@ -144,6 +156,9 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
         "content": content,
         "truncated": truncated,
         "extractor": extractor_name,
+        "start_index": op.start_index,
+        "next_start": next_start,
+        "total_length": total_length,
     }
 
 

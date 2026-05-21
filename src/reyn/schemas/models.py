@@ -315,6 +315,7 @@ class WebFetchIROp(BaseModel):
     prompt: str = ""              # optional hint describing what to extract (informational for LLM)
     timeout: int = 30             # request timeout in seconds
     max_length: int = 50_000      # cap on returned content length (characters)
+    start_index: int = 0          # byte offset into extracted content for pagination (issue #357)
 
 
 class WebSearchIROp(BaseModel):
