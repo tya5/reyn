@@ -1,6 +1,6 @@
 # Popular local MCP servers — install + usage procedure
 
-A copy-paste-runnable procedure for 6 popular local MCP servers with
+A copy-paste-runnable procedure for 5 popular local MCP servers with
 Reyn. Each section shows:
 
 1. **Install** — one `reyn mcp install` command. Post-PR #331 the
@@ -20,17 +20,22 @@ Servers covered:
 - [git](#git) — local repo operations (log / status / diff / branch)
 - [sequential-thinking](#sequential-thinking) — chain-of-thought scratchpad
 - [sqlite](#sqlite) — local DB queries (read + write + schema)
-- [fetch](#fetch) — HTTP fetch with markdown extraction
 - [everything](#everything) — demo kitchen-sink covering protocol primitives
 
-> **Why no filesystem / memory section?** Both MCP servers structurally
-> overlap with Reyn's built-in ops (= `file__*` for filesystem,
-> `memory.operation__*` for the agent's memory layer). With both
-> available, the chat router consistently picks the Reyn-internal op
-> on natural prompts — the MCP servers don't get exercised through
-> the agent path. Use them via direct calls (`scripts/mcp_smoke.py`)
-> or the `read_local_files` stdlib skill (for filesystem) if you
-> have a specific need.
+> **Why no filesystem / memory / fetch section?** All three MCP servers
+> structurally overlap with Reyn built-in ops:
+>
+> - filesystem ↔ `file__*` (= read / write / list / grep / glob)
+> - memory ↔ `memory.operation__*` (= remember_shared / forget)
+> - fetch ↔ `web__fetch` (= HTTP fetch with markdown extraction)
+>
+> With both available, the chat router consistently picks the
+> Reyn-internal op on natural prompts (10/10 in measurement,
+> 2026-05-21). The MCP servers don't get exercised through the
+> agent path. Use them via direct calls (`scripts/mcp_smoke.py`)
+> or, for filesystem, the `read_local_files` stdlib skill, if you
+> have a specific need (e.g. trafilatura extraction quality for
+> fetch, or a sandboxed filesystem root).
 
 > **Chat-history pollution caveat (= issue #352).** If your agent
 > has previously refused a capability (= the LLM said "I cannot
@@ -249,71 +254,6 @@ why.
 
 ---
 
-## fetch
-
-HTTP fetch with markdown extraction via `mcp-server-fetch` (Anthropic
-official, Python / uvx).
-
-### Install
-
-```bash
-reyn mcp install --source pypi:mcp-server-fetch --non-interactive
-```
-
-### Direct smoke
-
-```bash
-python scripts/mcp_smoke.py fetch fetch '{"url": "https://example.com", "max_length": 500}'
-```
-
-Expected: `content[0].text` contains "Contents of https://example.com/:\n
-This domain is for use in documentation examples...".
-
-### Usage from chat
-
-```bash
-echo 'mcp.fetch: true' >> .reyn/approvals.yaml
-
-reyn chat
-> Fetch https://example.com and summarise it.
-```
-
-> **LLM-side caveat (= not Reyn's bug)**: `gemini-2.5-flash-lite`
-> (Reyn's default workhorse model) has a strong training-time prior
-> that refuses external URL access ("I cannot access external
-> websites"). Even with the catalog-partial signal from PR #342,
-> the model frequently declines to call `fetch`. Workarounds:
->
-> - **Use `web__fetch`** instead (= Reyn's built-in op; same
->   functionality, doesn't trigger the LLM's URL refusal prior in
->   the same way).
-> - **Direct smoke** is reliable: `python scripts/mcp_smoke.py fetch
->   fetch '{"url": "..."}'` always works.
-> - **Stronger model**: `--model strong` may bypass the prior; not
->   tested as part of the standard procedure (= strong models are
->   cost-gated per project policy).
-
-### Comparison vs Reyn's built-in `web_fetch` op
-
-| | `web_fetch` op | `fetch` MCP server |
-|---|---|---|
-| Transport | In-process (httpx) | stdio subprocess (uvx) |
-| Latency | ~50ms cold | ~200ms cold (subprocess spawn) |
-| Markdown extraction | Reyn's own | trafilatura (= upstream choice) |
-| Pagination | `max_length` only | `max_length` + `start_index` |
-| LLM URL refusal | Less common | Common (= see caveat above) |
-
-For chat usage, prefer `web_fetch` op. Use `fetch` MCP when you
-specifically want trafilatura extraction quality or `start_index`
-pagination.
-
-### Tools surfaced
-
-`fetch` (single tool — supports `url` / `max_length` / `start_index`
-/ `raw=true|false` args).
-
----
-
 ## everything
 
 Demo "kitchen sink" server covering most MCP protocol primitives.
@@ -393,4 +333,4 @@ requiring credentials: `reyn mcp set-secret <name> <KEY>` + reference
 | `MCP server <name> access denied` | Permission not pre-approved | `echo 'mcp.<name>: true' >> .reyn/approvals.yaml` |
 | `not found` errors after install | Server uses uvx (Python) but `uv` not installed | `brew install uv` |
 | Server config in YAML missing `type: stdio` or has `server-` prefix | Pre-PR #331 install path | Re-install via `reyn mcp install` post-#331 |
-| URL fetch refused by agent | LLM-side URL refusal prior | Use `web__fetch` op or `scripts/mcp_smoke.py` direct |
+| MCP fetch / filesystem / memory installed but agent uses Reyn op instead | Reyn internal op (`web__fetch` / `file__*` / `memory.operation__*`) wins on natural prompts | Use `scripts/mcp_smoke.py` direct call; the MCP server isn't exercised through the chat router |
