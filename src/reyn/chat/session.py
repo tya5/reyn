@@ -423,6 +423,14 @@ class ChatMessage:
     ts: str
     seq: int = 0  # monotonic per-session sequence id; 0 for non-conversational entries
     meta: dict = field(default_factory=dict)
+    # Issue #366: optional multimodal media blocks attached to this
+    # message (= images user attached via /image / --image). Each block
+    # is a litellm-style content part, e.g.
+    #   {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+    # Empty list = pure text message (= backward compat with all callers).
+    # Persisted in history.jsonl via the dataclass default — restart-resume
+    # carries images along with text turns.
+    media: list[dict] = field(default_factory=list)
 
 
 def _now_iso() -> str:
@@ -758,6 +766,12 @@ class ChatSession:
         # through to spawned Agents AND to the router host adapter (=
         # chat-router web__fetch / file__read / mcp paths).
         self._multimodal_config = multimodal_config
+        # Issue #366: queue of image blocks the user attached via
+        # ``/image PATH`` or ``--image PATH``. Drained on the next user
+        # message turn (= attached to that ChatMessage's ``media`` field).
+        # litellm-style content parts:
+        #   {"type": "image_url", "image_url": {"url": "data:...;base64,..."}}
+        self._pending_user_images: list[dict] = []
         # FP-0034 PR-3b-iii: action_retrieval config — drives whether the
         # universal catalog wrappers appear in the router tools=. Default
         # constructs an off-flag ActionRetrievalConfig so existing chat
@@ -1636,11 +1650,19 @@ class ChatSession:
                 name="wal-size-safety-net",
             )
 
+        # Issue #366: drain any /image-queued media blocks onto this turn.
+        attached_media = self._pending_user_images
+        self._pending_user_images = []
+
         self._append_history(ChatMessage(
             role="user", text=text, ts=_now_iso(),
             meta={"chain_id": chain_id},
+            media=attached_media,
         ))
-        self._chat_events.emit("user_message_received", text=text, chain_id=chain_id)
+        self._chat_events.emit(
+            "user_message_received", text=text, chain_id=chain_id,
+            media_block_count=len(attached_media),
+        )
         await self._put_outbox(OutboxMessage(
             kind="status", text="thinking…", meta={"chain_id": chain_id},
         ))
@@ -3446,7 +3468,19 @@ class ChatSession:
         messages: list[dict] = []
         for m in selected:
             role = "user" if m.role == "user" else "assistant"
-            messages.append({"role": role, "content": m.text})
+            # Issue #366: when a message carries multimodal media blocks
+            # (= /image-attached images), build content as a list of
+            # litellm content parts. Text-only messages keep the legacy
+            # string-content shape so the existing prompt cache + replay
+            # fixtures stay byte-identical.
+            if m.media:
+                parts: list[dict] = []
+                if m.text:
+                    parts.append({"type": "text", "text": m.text})
+                parts.extend(m.media)
+                messages.append({"role": role, "content": parts})
+            else:
+                messages.append({"role": role, "content": m.text})
         return messages
 
     async def _run_router_loop(
