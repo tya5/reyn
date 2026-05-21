@@ -1,17 +1,17 @@
 """Tier 2: ChatMessage Design-B schema + read-time migration (issue #383).
 
-E-full Phase 1 pins:
-  - New constructor: ``role`` ∈ {user, assistant, tool, system, summary,
+E-full Phase 1 (PR-A + PR-B) final state pins:
+  - Constructor: ``role`` ∈ {user, assistant, tool, system, summary,
     skill_event}; ``content`` is ``str | list[dict]``;
     ``tool_calls`` / ``tool_call_id`` / ``name`` for tool-turn fields.
-  - Constructor still accepts legacy ``text=`` / ``media=`` kwargs (= folds
-    into ``content``). PR-A compat shim — removed in PR-B sweep.
-  - ``role="agent"`` is renamed to ``"assistant"`` at construction time.
-  - Backward-compat read properties: ``m.text`` returns the str content
-    (or extracts the first text part from a list); ``m.media`` returns
-    non-text content parts from a list.
-  - ``_migrate_legacy_chat_message`` rewrites pre-#383 dicts into the
-    new shape (used by ``load_history`` on disk-read).
+  - PR-B removed the PR-A compat shim:
+      * legacy ``text=`` / ``media=`` kwargs → constructor raises TypeError
+      * ``role="agent"`` → constructor raises ValueError (= force update)
+      * ``.media`` property removed (= callers branch on isinstance directly)
+  - Permanent derived view: ``m.text`` returns the str content
+    (or extracts the first text part from a list-of-parts content).
+  - ``_migrate_legacy_chat_message`` STILL exists for on-disk pre-#383
+    history.jsonl entries (= load-time migration, not constructor-time).
 """
 from __future__ import annotations
 
@@ -73,47 +73,41 @@ def test_chat_message_multimodal_user_content_list() -> None:
     assert m.content == parts
 
 
-# ── Constructor: legacy kwargs compat (= PR-A only, removed in PR-B) ───
+# ── Constructor rejects pre-#383 legacy shape ──────────────────────────
 
 
-def test_legacy_text_kwarg_folds_into_content() -> None:
-    """Tier 2 (compat): pre-#383 callers pass ``text=...``. Result has
-    ``content`` set to the same string; ``text`` is not stored.
+def test_constructor_rejects_legacy_agent_role() -> None:
+    """Tier 2 (PR-B): ``role="agent"`` is the pre-#383 spelling.
+    PR-A accepted it for transition; PR-B's constructor rejects it with
+    a structured ValueError so any straggler caller gets a loud signal.
+    Migration of on-disk entries still happens via
+    ``_migrate_legacy_chat_message`` on history load.
     """
-    m = ChatMessage(role="user", text="hello", ts="t1")
-    assert m.content == "hello"
-    # Property delegates back to content.
-    assert m.text == "hello"
+    import pytest
+    with pytest.raises(ValueError, match="role='agent'"):
+        ChatMessage(role="agent", content="x", ts="t1")
 
 
-def test_legacy_media_kwarg_folds_into_content_list() -> None:
-    """Tier 2 (compat): pre-#383 callers pass ``text=`` + ``media=``.
-    Result has list-of-parts content with text-part first, media after.
+def test_constructor_no_longer_accepts_text_kwarg() -> None:
+    """Tier 2 (PR-B): the legacy ``text=`` kwarg was removed alongside
+    the compat shim. Callers must pass ``content=``.
     """
-    block = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}
-    m = ChatMessage(role="user", text="see this", media=[block], ts="t1")
-    assert isinstance(m.content, list)
-    assert m.content == [{"type": "text", "text": "see this"}, block]
+    import pytest
+    with pytest.raises(TypeError):
+        ChatMessage(role="user", text="hi", ts="t1")  # type: ignore[call-arg]
 
 
-def test_legacy_media_only_no_text_folds_into_list() -> None:
-    """Tier 2 (compat): media without text → content is list with just
-    the media block(s)."""
-    block = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}
-    m = ChatMessage(role="user", media=[block], ts="t1")
-    assert m.content == [block]
-
-
-def test_role_agent_renames_to_assistant_on_construct() -> None:
-    """Tier 2: ``role="agent"`` is the pre-#383 spelling; constructor
-    normalises it to ``"assistant"`` so no live code path sees the
-    legacy value.
+def test_constructor_no_longer_accepts_media_kwarg() -> None:
+    """Tier 2 (PR-B): the legacy ``media=`` kwarg was removed alongside
+    the compat shim. Callers must build a content list directly.
     """
-    m = ChatMessage(role="agent", text="reply", ts="t1")
-    assert m.role == "assistant"
+    import pytest
+    block = {"type": "image_url", "image_url": {"url": "data:..."}}
+    with pytest.raises(TypeError):
+        ChatMessage(role="user", media=[block], ts="t1")  # type: ignore[call-arg]
 
 
-# ── Read properties (= text / media) ───────────────────────────────────
+# ── Derived text view (= permanent API, NOT a compat shim) ─────────────
 
 
 def test_text_property_from_str_content() -> None:
@@ -145,23 +139,6 @@ def test_text_property_empty_when_no_text_part() -> None:
         ts="t1",
     )
     assert m.text == ""
-
-
-def test_media_property_returns_non_text_parts() -> None:
-    """Tier 2: m.media returns the non-text content parts."""
-    block = {"type": "image_url", "image_url": {"url": "data:..."}}
-    m = ChatMessage(
-        role="user",
-        content=[{"type": "text", "text": "see this"}, block],
-        ts="t1",
-    )
-    assert m.media == [block]
-
-
-def test_media_property_empty_for_str_content() -> None:
-    """Tier 2: when content is a plain str, m.media is empty."""
-    m = ChatMessage(role="user", content="hi", ts="t1")
-    assert m.media == []
 
 
 # ── Migration ──────────────────────────────────────────────────────────

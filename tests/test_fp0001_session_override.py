@@ -404,11 +404,11 @@ def test_send_to_agent_impl_override_registered_and_cleaned_up(tmp_path, monkeyp
 
     async def _fake_handle(self_inner, message, *, chain_id):
         self_inner._append_history(ChatMessage(
-            role="user", text=message, ts="2026-05-16T00:00:00",
+            role="user", content=message, ts="2026-05-16T00:00:00",
             meta={"chain_id": chain_id},
         ))
         self_inner._append_history(ChatMessage(
-            role="agent", text="stub-reply",
+            role="assistant", content="stub-reply",
             ts="2026-05-16T00:00:01",
             meta={"chain_id": chain_id},
         ))
@@ -520,12 +520,12 @@ def test_concurrent_send_to_agent_impl_no_override_leak(tmp_path, monkeypatch):
         nonlocal call_count
         call_count += 1
         self_inner._append_history(ChatMessage(
-            role="user", text=message, ts="2026-05-16T00:00:00",
+            role="user", content=message, ts="2026-05-16T00:00:00",
             meta={"chain_id": chain_id},
         ))
         self_inner._append_history(ChatMessage(
-            role="agent",
-            text=f"reply-to:{message[:20]}",
+            role="assistant",
+            content=f"reply-to:{message[:20]}",
             ts="2026-05-16T00:00:01",
             meta={"chain_id": chain_id},
         ))

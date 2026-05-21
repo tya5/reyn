@@ -333,7 +333,7 @@ def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
         from reyn.chat.session import ChatMessage
         # Append the user message (= mirror real path)
         self._append_history(ChatMessage(
-            role="user", text=message, ts="2026-05-08T00:00:00",
+            role="user", content=message, ts="2026-05-08T00:00:00",
             meta={"chain_id": chain_id},
         ))
         # Schedule a background "plan task" that appends terminal
@@ -341,7 +341,7 @@ def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
         async def _plan_task():
             await asyncio.sleep(0.05)
             self._append_history(ChatMessage(
-                role="agent", text=f"PLAN_RESULT_FOR:{message[:20]}",
+                role="assistant", content=f"PLAN_RESULT_FOR:{message[:20]}",
                 ts="2026-05-08T00:00:01",
                 meta={"chain_id": chain_id, "source": "plan"},
             ))
@@ -399,7 +399,7 @@ def test_send_to_agent_drains_skill_completed_inbox(tmp_path, monkeypatch):
     async def _fake_handle_user_message(self, message, *, chain_id):
         from reyn.chat.session import ChatMessage
         self._append_history(ChatMessage(
-            role="user", text=message, ts="2026-05-11T00:00:00",
+            role="user", content=message, ts="2026-05-11T00:00:00",
             meta={"chain_id": chain_id},
         ))
 
@@ -419,8 +419,8 @@ def test_send_to_agent_drains_skill_completed_inbox(tmp_path, monkeypatch):
     async def _fake_handle_skill_completed(self, payload):
         from reyn.chat.session import ChatMessage
         self._append_history(ChatMessage(
-            role="agent",
-            text=f"{sentinel}: {payload.get('skill')} {payload.get('status')}",
+            role="assistant",
+            content=f"{sentinel}: {payload.get('skill')} {payload.get('status')}",
             ts="2026-05-11T00:00:01",
             meta={
                 "chain_id": payload.get("chain_id"),

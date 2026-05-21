@@ -569,8 +569,12 @@ class RouterHostAdapter:
         # cascading-attractor mitigation needs to live elsewhere
         # (= context build / classifier-side, tracked as follow-up).
         if kind == "agent" and text:
+            # Issue #383: chat history now uses ``role="assistant"`` +
+            # ``content=`` (= wire shape mirror); the OutboxMessage above
+            # keeps ``kind="agent"`` since that's the TUI-facing
+            # OutboxMessage taxonomy, independent of the LLM-side role.
             self._append_history_cb(ChatMessage(
-                role="agent", text=text, ts=_now_iso(), meta=meta,
+                role="assistant", content=text, ts=_now_iso(), meta=meta,
             ))
             # Capture for agent-to-agent paths that need to forward the
             # reply upstream via _send_agent_response.
