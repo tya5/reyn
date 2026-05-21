@@ -3,6 +3,7 @@ type: phase
 name: build_skill
 input: skill_plan
 role: dsl_writer
+model_class: strong
 allowed_ops: [file]
 ---
 
