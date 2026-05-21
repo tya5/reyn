@@ -32,10 +32,15 @@ Servers covered:
 > With both available, the chat router consistently picks the
 > Reyn-internal op on natural prompts (10/10 in measurement,
 > 2026-05-21). The MCP servers don't get exercised through the
-> agent path. Use them via direct calls (`scripts/mcp_smoke.py`)
-> or, for filesystem, the `read_local_files` stdlib skill, if you
-> have a specific need (e.g. trafilatura extraction quality for
-> fetch, or a sandboxed filesystem root).
+> agent path.
+>
+> **Extraction parity (post-#355)**: install `pip install reyn[fetch]`
+> to add trafilatura as the `web__fetch` HTML extractor — at that
+> point, the Reyn op matches `mcp-server-fetch`'s extraction quality
+> for content-dense pages. The MCP server's remaining advantages are
+> `start_index` pagination (= tracked in #357) and robots.txt
+> awareness. Use direct calls (`scripts/mcp_smoke.py`) or the MCP
+> server itself only if you specifically need those.
 
 > **Chat-history pollution caveat (= issue #352).** If your agent
 > has previously refused a capability (= the LLM said "I cannot

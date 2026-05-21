@@ -37,6 +37,31 @@ class _TextExtractor(html.parser.HTMLParser):
         return "\n".join(self._parts)
 
 
+def _extract_html_text(html_content: str) -> tuple[str, str]:
+    """Extract readable text from HTML.
+
+    Tries `trafilatura` (= production-grade extractor, optional `reyn[fetch]`
+    extra) first; falls back to the stdlib `_TextExtractor` when trafilatura
+    is unavailable OR returns no main content. Issue #355.
+
+    Returns ``(text, extractor_name)`` where extractor_name is
+    ``"trafilatura"`` or ``"stdlib"``.
+    """
+    try:
+        import trafilatura
+    except ImportError:
+        trafilatura = None  # type: ignore[assignment]
+
+    if trafilatura is not None:
+        extracted = trafilatura.extract(html_content)
+        if extracted:
+            return extracted, "trafilatura"
+
+    parser = _TextExtractor()
+    parser.feed(html_content)
+    return parser.text(), "stdlib"
+
+
 def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
     """Resolve the SSL verify value for httpx from config + env fallback.
 
@@ -93,11 +118,10 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
     raw = response.text
 
     if "text/html" in content_type:
-        extractor = _TextExtractor()
-        extractor.feed(raw)
-        content = extractor.text()
+        content, extractor_name = _extract_html_text(raw)
     else:
         content = raw
+        extractor_name = "none"
 
     truncated = len(content) > op.max_length
     if truncated:
@@ -109,6 +133,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
         status_code=response.status_code,
         content_length=len(content),
         truncated=truncated,
+        extractor=extractor_name,
     )
     return {
         "kind": "web_fetch",
@@ -118,6 +143,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
         "content_type": content_type,
         "content": content,
         "truncated": truncated,
+        "extractor": extractor_name,
     }
 
 
