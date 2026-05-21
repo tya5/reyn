@@ -564,6 +564,38 @@ class RouterHostAdapter:
         if tracker is not None:
             tracker.append({"to": to, "request": request})
 
+    def append_history_entry(
+        self,
+        *,
+        role: str,
+        content: Any,
+        meta: dict | None = None,
+        tool_calls: "list[dict] | None" = None,
+        tool_call_id: "str | None" = None,
+        name: "str | None" = None,
+    ) -> None:
+        """E-full PR-E (issue #383): persist a single ChatMessage entry
+        without an outbox side-effect.
+
+        Used by ``RouterLoop.run()`` to record per-iteration assistant
+        tool_call turns (= ``role="assistant"`` + ``tool_calls`` field)
+        and tool response turns (= ``role="tool"`` + ``tool_call_id`` +
+        ``name``). The pre-PR-E producer only persisted the LLM's final
+        text reply via ``put_outbox(kind="agent")``; this method closes
+        the gap so the next ``_build_history_for_router`` rebuild
+        replays the full LLM message sequence.
+        """
+        from reyn.chat.session import ChatMessage, _now_iso
+        self._append_history_cb(ChatMessage(
+            role=role,
+            content=content,
+            ts=_now_iso(),
+            meta=meta if meta is not None else {},
+            tool_calls=tool_calls,
+            tool_call_id=tool_call_id,
+            name=name,
+        ))
+
     async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
         from reyn.chat.outbox import OutboxMessage
         from reyn.chat.session import ChatMessage, _now_iso

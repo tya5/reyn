@@ -384,6 +384,27 @@ class RouterLoopHost(Protocol):
     async def put_outbox(self, *, kind: str, text: str,
                          meta: dict) -> None: ...
 
+    # E-full PR-E (issue #383): persist a single ChatMessage entry
+    # without routing through the outbox (= no TUI display side-effect).
+    # Used by ``run()`` to record per-iteration assistant tool_call
+    # turns and tool response turns so the next ``_build_history_for_router``
+    # rebuilds the LLM message list with full fidelity.
+    #
+    # The host implementation constructs ChatMessage and feeds it to
+    # the session's ``_append_history``.  ``meta`` should include
+    # ``chain_id`` so the entry can be traced; other meta keys are
+    # opaque to the router.
+    def append_history_entry(
+        self,
+        *,
+        role: str,
+        content: Any,
+        meta: dict | None = None,
+        tool_calls: "list[dict] | None" = None,
+        tool_call_id: "str | None" = None,
+        name: "str | None" = None,
+    ) -> None: ...
+
     # File ops (via op_runtime/file under permission scope)
     async def file_read(self, path: str) -> str: ...
 
@@ -1868,11 +1889,29 @@ class RouterLoop:
                 # No delegation — accumulate messages for next iteration.
                 # Use deduped tool_calls so the assistant message and tool
                 # result messages stay in sync (matching tool_call_ids).
+                assistant_content = result.content or ""
                 messages.append({
                     "role": "assistant",
-                    "content": result.content or "",
+                    "content": assistant_content,
                     "tool_calls": tool_calls,
                 })
+                # E-full PR-E (#383): persist this assistant tool-call turn
+                # into chat history so the next ``_build_history_for_router``
+                # rebuild emits the same message sequence — without this,
+                # follow-up user turns lose visibility into what tools were
+                # invoked + with what args.
+                #
+                # ``getattr`` guard: test fakes that pre-date PR-E may not
+                # implement ``append_history_entry``. Production hosts
+                # (= RouterHostAdapter) always implement it.
+                _append_entry = getattr(host, "append_history_entry", None)
+                if _append_entry is not None:
+                    _append_entry(
+                        role="assistant",
+                        content=assistant_content,
+                        meta={"chain_id": self.chain_id, "source": "router_tool_turn"},
+                        tool_calls=tool_calls,
+                    )
                 for tc, r in zip(tool_calls, tool_results):
                     # B41-NF-W7-1: tool handlers may attach `_post_text` to
                     # the result dict to surface a textual directive after
@@ -1907,6 +1946,19 @@ class RouterLoop:
                         "tool_call_id": tc["id"],
                         "content": content_str,
                     })
+                    # E-full PR-E (#383): persist this tool response so the
+                    # next router turn sees what the tool returned (= image
+                    # follow-up / grep result follow-up / multi-step plan
+                    # use cases listed in #383). The path-ref shape from
+                    # PR-C keeps storage light when results contain media.
+                    if _append_entry is not None:
+                        _append_entry(
+                            role="tool",
+                            content=content_str,
+                            meta={"chain_id": self.chain_id, "source": "router_tool_turn"},
+                            tool_call_id=tc["id"],
+                            name=tc.get("function", {}).get("name"),
+                        )
                     if media_blocks:
                         # Issue #383 PR-C: pass the host's media_store so
                         # path-ref blocks are materialised to data URLs at
