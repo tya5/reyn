@@ -52,13 +52,17 @@ def render_memory(
     flat_entries: list[Any] = []
     entry_ys: list[int] = []
 
-    # Hot now section (issue #192). Renders only when the list is
-    # populated — keeps the cold-start layout (= no router activity
-    # yet) untouched. Capped at _HOT_LIST_MAX_VISIBLE so a long
-    # ranking doesn't push the SHARED / AGENT entries off the top
-    # of a narrow panel.
+    # Hot now section (issue #192). Always renders the header so the
+    # feature is discoverable on cold-start (= before any router
+    # activity). Wave-4 PC5: previously the entire section was
+    # conditionally hidden when ``hot_list`` was empty, so first-launch
+    # users never learned the section existed. Now the header is
+    # always there + a dim placeholder line when no data, populated
+    # rows once the ARS forwarder emits ``hot_list_updated``.
+    # Capped at _HOT_LIST_MAX_VISIBLE so a long ranking doesn't push
+    # the SHARED / AGENT entries off the top of a narrow panel.
+    lines.append("[bold #ffaa44]  HOT NOW[/]")
     if hot_list:
-        lines.append("[bold #ffaa44]  HOT NOW[/]")
         for entry in hot_list[:_HOT_LIST_MAX_VISIBLE]:
             try:
                 name = str(entry.get("qualified_name", ""))
@@ -76,7 +80,9 @@ def render_memory(
             lines.append(
                 f"[#555555]    … {overflow} more[/]"
             )
-        lines.append("")
+    else:
+        lines.append("[#555555]    (no router activity yet)[/]")
+    lines.append("")
 
     def _render_scope(entries: list, label: str, label_color: str) -> None:
         lines.append(f"[bold {label_color}]  {_esc(label)}[/]")
