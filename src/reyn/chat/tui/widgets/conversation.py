@@ -1021,24 +1021,39 @@ class ConversationView(Widget):
     def render_cost_suffix(self, tokens: int, cost_usd: float, elapsed_s: float) -> None:
         """Append a dim per-turn cost suffix, right-aligned. Caller decides when (opt-in).
 
-        Both pieces are load-bearing: ``Text(..., justify="right")`` only
-        right-aligns when the renderer is told a width to fill, and
-        ``RichLog.write`` defaults to ``expand=False`` — without
-        ``expand=True`` the suffix silently renders at column 0.
+        Three pieces are load-bearing:
 
-        Separator is ``│`` (U+2502, narrow, unambiguous width) rather than
-        ``·`` (U+00B7, East Asian Width "Ambiguous") so Rich's cell-width
-        accounting matches what the terminal actually paints — the previous
-        ``·`` rendered as 2 cells on some terminals, pushing the elapsed
-        tail past the right edge and clipping ``14.3s`` to ``·`` alone.
-        Matches the header's existing ``│`` separator for visual consistency.
+        - ``Text(..., justify="right")`` only right-aligns when the
+          renderer is told a width to fill, and ``RichLog.write`` defaults
+          to ``expand=False`` — without ``expand=True`` the suffix
+          silently renders at column 0.
+        - Wrapping the Text in ``Padding(text, (0, RIGHT_PAD, 0, 0))``
+          reserves explicit right-margin cells. Without that margin the
+          right-justified end of the suffix landed under the vertical
+          scrollbar + the small right-padding RichLog reserves and the
+          trailing ``N.Ns`` segment was clipped at 80-col terminal widths
+          (the ``expand=True`` fill width didn't subtract the scrollbar
+          column from the right edge of the right-justified text).
+        - Separator is ``│`` (U+2502, narrow, unambiguous width) rather
+          than ``·`` (U+00B7, East Asian Width "Ambiguous") so Rich's
+          cell-width accounting matches what the terminal actually paints.
         """
+        from rich.padding import Padding
         t = Text(
             f"⌁ {tokens}t │ ${cost_usd:.4f} │ {elapsed_s:.1f}s",
             style="dim #666666",
             justify="right",
         )
-        self._log().write(t, expand=True)
+        # ``(top=0, right=6, bottom=0, left=0)`` — reserve 6 cells on
+        # the right so the right-justified text stays inside the
+        # scrollbar + widget right-padding. Empirical calibration at
+        # 80-col widths: 2 cells still clipped (``17.``), 3 still clipped
+        # (``17.1.``), 6 leaves the full ``N.Ns`` segment + a visible gap
+        # from the scrollbar. The ``expand=True`` fill width doesn't
+        # subtract the scrollbar column or RichLog's own right-padding
+        # from the right edge of the right-justified text, so we have to
+        # reserve it manually.
+        self._log().write(Padding(t, (0, 6, 0, 0)), expand=True)
 
     # ── turn navigation (B4) ──────────────────────────────────────────────────
 
