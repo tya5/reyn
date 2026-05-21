@@ -57,11 +57,23 @@ chat:
 ## Trade-offs
 
 **Preserved:** topic arc, decisions, pending items, user facts, referenced
-artifacts, and the raw first/last N turns.
+artifacts (= including tool activity per issue #383 PR-E2 — files read /
+URLs fetched / MCP tools called surface as `artifacts_referenced`
+entries when the result is conversation-relevant), and the raw first/last
+N turns.
 
 **Lost:** verbatim phrasing of compacted turns; exact ordering of minor
 exchanges. Section caps are soft — slight overruns self-correct on the
 next compaction pass.
+
+### Tool-aware compaction (post-#383 PR-E2)
+
+`new_turns` includes `role="assistant"` entries with `tool_calls` and
+`role="tool"` response entries (= what the router_loop emitted during
+the user turn, persisted via `RouterLoopHost.append_history_entry`).
+The compactor sees these as structured input and decides whether to
+record the call under `artifacts_referenced`. Tool turns count toward
+the head/tail/body slice the same as plain conversational turns.
 
 Compaction runs in a background asyncio task and never blocks the current
 turn. Events `compaction_started` / `compaction_completed` /

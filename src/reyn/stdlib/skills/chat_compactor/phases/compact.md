@@ -15,7 +15,15 @@ information and dropping low-importance items per the retention rules.
 ## Inputs
 
 - `previous_summary` — the current rolling summary (may be null).
-- `new_turns` — recent raw turns to absorb (oldest first).
+- `new_turns` — recent raw turns to absorb (oldest first). Each turn is
+  `{role, text, seq, ...}` where `role` is one of:
+    - `user` / `assistant` — regular conversational turns.
+    - `assistant` (with `tool_calls`) — the LLM decided to invoke one or
+      more tools; the entry carries
+      `tool_calls: [{name, args_chars}, ...]` so you can reason about
+      what was called (= source for `artifacts_referenced`).
+    - `tool` (with `tool_call_id` + `tool_name`) — the tool's response
+      to a specific `tool_call`; `text` is the JSON-serialised result.
 - `section_token_caps` — soft per-section token budgets.
 
 ## Sections (and retention rules)
@@ -32,6 +40,17 @@ information and dropping low-importance items per the retention rules.
   budget — durable attributes belong in MEMORY.md anyway.
 - **artifacts_referenced**: bullets of files / PRs / commits / issues
   referenced this session. Drop ones no longer in scope.
+
+  Include items derived from **tool activity** in `new_turns` when
+  they are conversation-relevant:
+    - `file_read` / `file_write` / `file_edit` ops → "edited
+      <path>" / "read <path>" entries.
+    - `web_fetch` ops → "fetched <url>" entries.
+    - `mcp.tool__<server>.<tool>` ops → "called <server>.<tool>"
+      entries when the call result informed the user-visible reply.
+  Do NOT enumerate every tool call mechanically — only those whose
+  outputs the conversation depends on going forward (= same
+  retention rule as other artifacts).
 
 ## Output
 
