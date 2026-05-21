@@ -255,16 +255,18 @@ def render_cost(
                 "right_panel cost: read of %s failed: %s", jsonl, exc,
             )
 
-    # Disclaimer line — costs displayed are client-side estimates derived
+    # Disclaimer — costs displayed are client-side estimates derived
     # from litellm's pricing DB at LLM-call time. They may diverge from
     # the actual amount billed by the upstream provider (= rate changes
     # between call time and the bill cycle, special pricing tiers,
     # unmetered features, etc.) and from any proxy-side accounting.
-    # Surfacing this once at the top of the Cost tab prevents the user
-    # from treating the displayed cents as a billing-authoritative source.
-    lines.append(
-        "[#555555]  (litellm estimate — may differ from actual provider billing)[/]"
-    )
+    # Split across two short lines so the disclaimer survives narrow
+    # panel widths (= 44 cells minimum, see SP1) — a single 62-cell
+    # line clipped to ``(litellm estimate — may differ from …)`` and
+    # the actionable half ("from actual provider billing") never
+    # reached the user.
+    lines.append("[#555555]  (litellm estimate —[/]")
+    lines.append("[#555555]   may differ from actual billing)[/]")
     lines.append("")
 
     # ── TODAY ────────────────────────────────────────────────────────
