@@ -831,9 +831,38 @@ class ConversationView(Widget):
     def finish_skill_row(
         self, run_id: str, *, success: bool = True, reason: str = "",
     ) -> None:
+        """Transition the row to ``✓ / ✗`` and roll it into the scroll log.
+
+        Previously the row was only popped from ``_skill_rows`` and
+        ``row.finish(...)`` was called, leaving the widget mounted in
+        the ConversationView DOM forever. That had two consequences:
+
+        - DOM accumulation: every completed skill stacked another
+          mounted ``SkillActivityRow`` widget, growing layout cost
+          monotonically across the session.
+        - Unreachable breadcrumb: the ``✓ skill#abcd · Ns · Ctrl+B →
+          agents`` line lived below the RichLog as a sibling, so
+          ``Ctrl+P/N`` / ``Page_Up`` / arrow scrolling never reached
+          it — the finished status was visible only while the user
+          stayed at the bottom.
+
+        Flush the finished row's renderable into the RichLog (where it
+        becomes part of the scrollable history) and then remove the
+        widget.
+        """
         row = self._skill_rows.pop(run_id, None)
-        if row is not None:
-            row.finish(success=success, reason=reason)
+        if row is None:
+            return
+        row.finish(success=success, reason=reason)
+        try:
+            finished_text = row._build_finished()
+            self._write_body(finished_text)
+            row.remove()
+        except Exception:
+            # If anything in the flush path fails, leave the row mounted
+            # — the breadcrumb stays visible (just not scrollable), which
+            # is strictly better than blowing up the outbox loop.
+            pass
 
     # ── sticky status (A3) ────────────────────────────────────────────────────
 
