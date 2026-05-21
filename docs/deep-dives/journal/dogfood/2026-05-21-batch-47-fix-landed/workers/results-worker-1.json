@@ -1,0 +1,135 @@
+{
+  "batch": "B47",
+  "worker": 1,
+  "head": "e6d31b61",
+  "date": "2026-05-21",
+  "scenario_set": "chat_router_smoke.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 1,
+    "I": 0,
+    "R": 6,
+    "B": 0
+  },
+  "vs_past": {
+    "B46": { "V": 3, "I": 0, "R": 4, "B": 0 },
+    "B47": { "V": 1, "I": 0, "R": 6, "B": 0 },
+    "delta_V": "-2"
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "scenario_index": 1,
+      "verdict": "R",
+      "rubric_met": true,
+      "events_pass": false,
+      "reply_summary": "Reply describes Reyn capabilities including skills (code review, doc indexing, memo, word_stats_demo) in Japanese — rubric content met. Delivered as inline reply (chat_turn_completed_inline), no direct_llm skill spawned.",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_issues": "Artifact direct_llm: NOT present. Router answered inline without routing_decided or skill spawn.",
+      "artifact_check": "FAIL — no direct_llm skill run; chat_turn_completed_inline used instead"
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "scenario_index": 2,
+      "verdict": "R",
+      "rubric_met": true,
+      "events_pass": false,
+      "reply_summary": "Reply explains idempotency concept clearly in Japanese with examples (delete operation, e-commerce ordering, Idempotency Key). Rubric content met. However routing went to web__search (hot_list_alias) not direct_llm.",
+      "events_observed": ["user_message_received", "tool_called", "web_search_started", "web_search_completed", "tool_returned", "hot_list_updated", "routing_decided(web__search)", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check"],
+      "events_issues": "routing_decided emitted for web__search not direct_llm. No direct_llm skill spawned. Artifact direct_llm: NOT present. Regression vs B46 (was V).",
+      "artifact_check": "FAIL — routing went to web__search via hot_list_alias instead of direct_llm skill"
+    },
+    {
+      "id": "skill_discovery_request",
+      "scenario_index": 3,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_summary": "Reply text: 'Router loop exceeded max iterations (5).' — error response, not a skill catalogue listing. Rubric not met.",
+      "events_observed": ["user_message_received", "tool_called(describe_action x5)", "tool_returned(x5)", "hot_list_updated(x2)", "compaction_check"],
+      "events_issues": "routing_decided NOT emitted. Max routing iterations (5) exhausted on describe_action calls without resolution. No direct_llm artifact.",
+      "artifact_check": "FAIL — no skill run; router loop exceeded"
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "scenario_index": 4,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_summary": "Reply reports 44 characters and ~10 tokens for input text. Character count and token stats present — rubric met. word_stats_demo skill completed successfully.",
+      "events_observed": ["user_message_received", "routing_decided(skill__word_stats_demo)", "skill_run_spawned", "invoke_skill_spawn_ack_exit", "skill_run_completed(status=finished)", "skill_completion_injected", "workflow_started", "artifact_created(review_preprocessed)", "artifact_created(review)", "artifact_validated", "workflow_finished", "chat_turn_completed_inline"],
+      "events_issues": "none",
+      "artifact_check": "PASS — word_stats_demo artifact created at .reyn/artifacts/word_stats_demo/review/v01_text_review.json"
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "scenario_index": 5,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": true,
+      "reply_summary": "Reply asked for clarification on poem theme ('どのようなテーマで短い詩を作成しましょうか?') rather than writing a poem. Rubric requires poem content with at least two lines — NOT met.",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_issues": "events_pass=true (chat_turn_completed_inline satisfies must_emit_any). Rubric fails: no poem in reply — clarification question instead.",
+      "artifact_check": "FAIL — no direct_llm skill run; clarification question returned inline. Consistent with B46 pattern."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "scenario_index": 6,
+      "verdict": "R",
+      "rubric_met": true,
+      "events_pass": false,
+      "reply_summary": "Turn 1: explained list comprehension with example '[x*2 for x in range(5)]'. Turn 2: provided Python code example demonstrating list comprehension — rubric content met. But unexpected skill invocations: simple_memo_app (failed, built_app artifact missing) and word_stats_demo (succeeded) were spawned in T2, not direct_llm.",
+      "events_observed": ["user_message_received(x2)", "chat_turn_completed_inline(T1)", "skill_run_spawned(simple_memo_app)", "skill_run_failed(simple_memo_app)", "skill_run_spawned(word_stats_demo)", "routing_decided(x3)", "skill_run_completed(word_stats_demo)", "skill_completion_injected(x2)", "chat_turn_completed_inline(T2)"],
+      "events_issues": "Artifact direct_llm: NOT present in T2 (word_stats_demo and simple_memo_app spawned instead). Regression vs B46 (was V with two direct_llm runs).",
+      "artifact_check": "FAIL — no direct_llm skill run in T2; word_stats_demo and simple_memo_app invoked instead"
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "scenario_index": 7,
+      "verdict": "R",
+      "rubric_met": true,
+      "events_pass": false,
+      "reply_summary": "Reply politely declines: '私は画像を生成する能力を持っていません。画像生成は私の機能には含まれていません。' — rubric content met. Delivered inline, no direct_llm skill.",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_issues": "Artifact direct_llm: NOT present. Router answered inline without routing_decided or skill spawn.",
+      "artifact_check": "FAIL — no direct_llm skill run; inline decline without skill dispatch"
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "F1",
+      "title": "S2 regression: routing to web__search via hot_list_alias instead of direct_llm",
+      "detail": "S2 (factual_query_direct_llm) was V in B46 (routed to direct_llm skill). In B47 it routed to web__search via hot_list_alias source, triggering empty-stop retry cycle. The idempotency question triggered web search rather than LLM-direct answer. This is a B47-specific regression: hot_list_n=10 may now surface web__search higher in the alias list for factual questions. Single observation (N=1); further investigation needed.",
+      "scenarios_affected": ["factual_query_direct_llm"],
+      "hypothesis_confidence": "HYPOTHESIS — N=1 observation, B46 was V with same prompt"
+    },
+    {
+      "id": "F2",
+      "title": "S3 router loop: describe_action called 5x without resolution",
+      "detail": "S3 (skill_discovery_request) hit max_phase_visits=5 exhausting iterations on repeated describe_action calls (skill__index_docs etc.) without emitting routing_decided. Router entered a describe-only loop without dispatching. Reply was the error string 'Router loop exceeded max iterations (5)'. This may be a regression introduced by the #337 wrapper fix or hot_list changes affecting the describe_action loop guard.",
+      "scenarios_affected": ["skill_discovery_request"],
+      "hypothesis_confidence": "HYPOTHESIS — N=1, needs trace-patch-replay to isolate cause"
+    },
+    {
+      "id": "F3",
+      "title": "S6 T2 unexpected skill dispatch: simple_memo_app + word_stats_demo instead of direct_llm",
+      "detail": "S6 Turn 2 ('それをコード例で示してください') triggered router to spawn simple_memo_app (which failed: 'built_app artifact not found') and word_stats_demo instead of direct_llm. The pronoun reference context ('それ' referring to list comprehension) confused the router into skill dispatch. B46 used direct_llm for T2. This is a routing regression potentially from #337 wrapper changes.",
+      "scenarios_affected": ["multi_turn_pronoun_reference"],
+      "hypothesis_confidence": "HYPOTHESIS — N=1, need to check if simple_memo_app appearing in hot_list or wrapper change caused this"
+    },
+    {
+      "id": "F4",
+      "title": "Inline-reply path persists for S1/S5/S7 — same as B46",
+      "detail": "S1, S5, S7 continue to use chat_turn_completed_inline without spawning direct_llm skill. Reply content was rubric-satisfying but artifact checks fail. This is a known structural pattern (B46 F1) — no change in B47 for these three scenarios.",
+      "scenarios_affected": ["simple_capability_question", "catalog_routing_decided_emitted", "out_of_scope_graceful_decline"],
+      "hypothesis_confidence": "HIGH — consistent across B46 and B47, same event patterns"
+    }
+  ]
+}

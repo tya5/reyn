@@ -1,0 +1,152 @@
+{
+  "batch": "B47",
+  "worker": 2,
+  "head": "e6d31b61",
+  "date": "2026-05-21",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 0,
+    "I": 2,
+    "R": 5,
+    "B": 0
+  },
+  "vs_past": {
+    "B46": {"V": 1, "I": 4, "R": 4, "B": 0},
+    "B47": {"V": 0, "I": 2, "R": 5, "B": 0},
+    "delta_V": -1,
+    "delta_I": -2,
+    "delta_R": 1,
+    "note": "V regressed by 1 vs B46; I dropped from 4 to 2 (two scenarios moved from I to R)"
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "scenario_index": 1,
+      "verdict": "R",
+      "agent": "dogfood-b47-2-s1",
+      "reply_summary": "Router described the skill but did not invoke it. No skill_run_spawned event. Reply mentioned skill__index_docs but ended with inline_reply (chat_turn_completed_inline).",
+      "events_pass": false,
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "router_empty_response_detected", "router_empty_response_retry_injected", "chat_turn_completed_inline"],
+      "events_missing": ["routing_decided_via_skill", "skill_run_spawned", "skill_run_completed", "phase_started", "phase_completed"],
+      "rubric_pass": false,
+      "rubric_notes": "Reply did not confirm indexing completed or started; no skill was actually dispatched.",
+      "error": "Router did not dispatch index_docs skill; responded inline after listing actions."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "scenario_index": 2,
+      "verdict": "R",
+      "agent": "dogfood-b47-2-s2",
+      "reply_summary": "skill__skill_builder was spawned (skill_run_spawned) but failed. Error: LLM returned invalid JSON after repair and retry (invalid \\escape at line 137).",
+      "events_pass": false,
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_failed", "skill_completion_injected"],
+      "events_missing": ["skill_run_completed", "phase_started"],
+      "rubric_pass": false,
+      "rubric_notes": "Reply acknowledged skill was called but skill failed; rubric item 'skill generated or lint passed' not met.",
+      "error": "skill_run_failed: LLM returned invalid JSON after repair and retry. Error: Invalid \\escape: line 137 column 426."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "scenario_index": 3,
+      "verdict": "I",
+      "agent": "dogfood-b47-2-s3",
+      "reply_summary": "skill__word_stats_demo ran and completed (skill_run_completed status=finished). Reply reported '44 characters, 1 line, estimated token count of 9' — all rubric items met. However phase_started and llm_called events not emitted (word_stats_demo is preprocessor-only, no LLM phase).",
+      "events_pass": false,
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_completed", "skill_completion_injected"],
+      "events_missing": ["phase_started", "llm_called"],
+      "rubric_pass": true,
+      "rubric_notes": "All 3 rubric items met: computed statistic reported (44 chars), actual text referenced, statistics consistent with input.",
+      "error": "phase_started and llm_called not emitted — word_stats_demo uses preprocessor-only execution path, no LLM phase invoked. Scenario must_emit may over-specify for preprocessor skills."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "scenario_index": 4,
+      "verdict": "R",
+      "agent": "dogfood-b47-2-s4",
+      "reply_summary": "skill__word_stats_demo ran and completed (skill_run_completed status=finished). However the reply reported no specific statistics — only 'skill completed and produced a summary'. Artifact inspection shows stats={char_count:0, word_count:0, line_count:0, estimated_tokens:1} — all zeros. Preprocessor produced zero stats for multiline input.",
+      "events_pass": false,
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_completed", "skill_completion_injected"],
+      "events_missing": ["phase_started"],
+      "rubric_pass": false,
+      "rubric_notes": "Rubric items not met: reply did not mention word count or char count; artifact shows zero stats. 'statistics are consistent with input' fails as no stats were surfaced.",
+      "error": "word_stats_demo preprocessor produced zero stats for multiline text (char_count=0, word_count=0, line_count=0, estimated_tokens=1). Possible bug: multiline input not processed correctly by stats.py."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "scenario_index": 5,
+      "verdict": "R",
+      "agent": "dogfood-b47-2-s5",
+      "reply_summary": "eval skill was spawned 5 times (retry loop) and failed all 5 times with schema validation error: required properties 'overall_score', 'passed', 'passed_criteria', 'summary', 'total_criteria' missing from postprocessor output.",
+      "events_pass": false,
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_failed", "skill_completion_injected"],
+      "events_missing": ["skill_run_completed", "phase_started"],
+      "rubric_pass": false,
+      "rubric_notes": "Rubric item 1 not met: reply reports eval failure not an eval result with pass/fail score. Rubric items 2 and 3 not met.",
+      "error": "5x skill_run_failed: Postprocessor output failed schema validation (output_schema): 'overall_score' is a required property; 'passed' is a required property; 'passed_criteria' is a required property; 'summary' is a required property; 'total_criteria' is a required property."
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "scenario_index": 6,
+      "verdict": "R",
+      "agent": "dogfood-b47-2-s6",
+      "reply_summary": "5 turns completed; final reply coherently answered routing/catalog question. However, no skill_run_spawned event was emitted at any turn — router used reyn.source__read (turn 1) then inline replies. skill_run_spawned is a must_emit event that was not satisfied.",
+      "events_pass": false,
+      "events_observed": ["routing_decided", "tool_called", "tool_returned", "chat_turn_completed_inline", "router_empty_response_detected", "router_empty_response_retry_injected"],
+      "events_missing": ["skill_run_spawned", "llm_called"],
+      "rubric_pass": true,
+      "rubric_notes": "All 3 reply rubric items met: final reply coherent, mentions skill routing/catalog, no bare error. But events_pass=false disqualifies V.",
+      "error": "No skill_run_spawned emitted across 5 turns. Router answered via inline + reyn.source__read. Compaction threshold not reached. No direct_llm artifact produced."
+    },
+    {
+      "id": "chained_find_then_index",
+      "scenario_index": 7,
+      "verdict": "I",
+      "agent": "dogfood-b47-2-s7",
+      "reply_summary": "Turn 1: correctly listed docs/concepts/ markdown files via file__glob. Turn 2: dispatched index_docs skill but failed: 'unsafe python step ./chunkers.py:gather_samples requires --allow-unsafe-python flag'.",
+      "events_pass": false,
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_failed", "tool_executed", "permission_granted"],
+      "events_missing": ["skill_run_completed", "phase_started", "phase_completed"],
+      "rubric_pass": false,
+      "rubric_notes": "Rubric: 'final reply confirms indexing was requested or completed' — partially (requested, not completed). 'arch_events_index' mentioned. 'no generic error' — fails (unsafe-python error is env constraint, not generic).",
+      "error": "skill_run_failed: Skill 'index_docs' declares an unsafe python step (./chunkers.py:gather_samples) but --allow-unsafe-python was not provided. Env constraint — server not started with --allow-unsafe-python."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF-W2-1",
+      "severity": "HIGH",
+      "scenario": "word_stats_demo_multiline",
+      "finding": "word_stats_demo preprocessor produces zero stats (char_count=0, word_count=0, line_count=0, estimated_tokens=1) for multiline text input. S3 (single-line) correctly computed 44 chars. S4 (multiline, 4 lines) shows all zeros in the review_preprocessed artifact. Possible bug in stats.py multiline parsing or workspace artifact overwrite between S3 and S4 runs (shared artifact namespace).",
+      "primary_data": "Artifact .reyn/artifacts/word_stats_demo/review_preprocessed/v01_unknown.json shows stats all zero for multiline input text."
+    },
+    {
+      "id": "NF-W2-2",
+      "severity": "MEDIUM",
+      "scenario": "eval_run_direct_llm",
+      "finding": "eval skill postprocessor fails schema validation on every attempt (5 retries) — required fields 'overall_score', 'passed', 'passed_criteria', 'summary', 'total_criteria' missing from LLM output. The eval artifact at .reyn/artifacts/eval/__post__/v01_eval_result_raw.json shows run_status='error' with no criteria evaluated. Persistent across all 5 retry attempts — not noise.",
+      "primary_data": "skill_run_failed 5x with identical schema validation error. Eval artifact confirms no criteria assessed."
+    },
+    {
+      "id": "NF-W2-3",
+      "severity": "MEDIUM",
+      "scenario": "word_stats_demo_sentence + word_stats_demo_multiline",
+      "finding": "word_stats_demo skill completes (skill_run_completed=finished) but emits no phase_started or llm_called events. The skill uses a preprocessor-only execution path (python-step in stats.py). Scenario must_emit specifies phase_started and llm_called as required — this appears to be a scenario design flaw (over-specified must_emit for preprocessor skills). Not an OS regression.",
+      "primary_data": "Events for both S3 and S4 contain skill_run_completed but no phase_started or llm_called."
+    },
+    {
+      "id": "NF-W2-4",
+      "severity": "LOW",
+      "scenario": "chained_find_then_index",
+      "finding": "index_docs requires --allow-unsafe-python flag but dogfood server is not started with this flag. This is a consistent env constraint (same as B46 I-verdict). Workers should document whether server was started with --allow-unsafe-python to distinguish env constraint from OS regression.",
+      "primary_data": "skill_run_failed error: 'Skill index_docs declares an unsafe python step ./chunkers.py:gather_samples but --allow-unsafe-python was not provided.'"
+    }
+  ]
+}

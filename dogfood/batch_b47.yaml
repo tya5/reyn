@@ -1,0 +1,95 @@
+batch:
+  name: B47
+  date: "2026-05-21"
+  head: e6d31b61
+  env_vars:
+    REYN_EMPTY_STOP_RETRY: "1"      # PR #265 / #287 — held on
+    REYN_SPAWN_ACK_TO_LLM: "1"      # PR #290 — accumulation toward default flip
+  user_params:
+    hot_list_n: 10                  # held constant vs B43-B46
+    models_tier: flash-lite
+  hard_caps:
+    tool_uses: 50
+    wall_clock_min: 15
+
+# B47 = "fix landed batch":
+# Verifies 5 OS fixes landed in B46 closure round actually translate to
+# scenario-level V improvement under live dogfood load:
+#   - PR #330 eval spec_path optional (= W2 S7 eval_run_direct_llm)
+#   - PR #332 recall defensive args (= W3 S7 recall_indexed_source)
+#   - PR #337 hot-list wrapper stdlib fallback (= W2 S6 word_stats_multiline)
+#   - PR #338 read_local_files removed (= W2 S2/S3 dropped from scenario set)
+#   - PR #358 build_skill strong tier (= W2 S4 skill_builder_web_summariser)
+#
+# Measurement-process controls held constant from B46 (= disambiguation
+# batch baseline):
+#   - single past-V anchor (B46 only)
+#   - neutral worker prompts (no "regression triage" framing)
+#   - same dispatch tool, same sub-agent model (sonnet)
+#
+# Target: V ≥ 22/50 (= recovers most of B44 23/50 baseline)
+# PR #287/#290 evidence accumulation toward N≥50 soft checkpoint
+# (current cumulative B44+B45+B46 = retry 11 + spawn_ack 18).
+
+workers:
+  - name: W1
+    scenario_set: chat_router_smoke.yaml
+    scenario_set_path: dogfood/scenarios/chat_router_smoke.yaml
+    port: 8271
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b47-1
+    agent_prefix: dogfood-b47-1-s
+
+  - name: W2
+    scenario_set: stdlib_skills_core.yaml
+    scenario_set_path: dogfood/scenarios/stdlib_skills_core.yaml
+    port: 8272
+    n_scenarios: 7  # was 9, -2 after read_local_files scenario drop in PR #338
+    worktree: /tmp/reyn-worktrees/b47-2
+    agent_prefix: dogfood-b47-2-s
+
+  - name: W3
+    scenario_set: control_ir_ops.yaml
+    scenario_set_path: dogfood/scenarios/control_ir_ops.yaml
+    port: 8273
+    n_scenarios: 9
+    worktree: /tmp/reyn-worktrees/b47-3
+    agent_prefix: dogfood-b47-3-s
+
+  - name: W4
+    scenario_set: permissions_and_safety.yaml
+    scenario_set_path: dogfood/scenarios/permissions_and_safety.yaml
+    port: 8274
+    n_scenarios: 8
+    worktree: /tmp/reyn-worktrees/b47-4
+    agent_prefix: dogfood-b47-4-s
+
+  - name: W5
+    scenario_set: multi_agent_and_mcp.yaml
+    scenario_set_path: dogfood/scenarios/multi_agent_and_mcp.yaml
+    port: 8275
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b47-5
+    agent_prefix: dogfood-b47-5-s
+
+  - name: W6
+    scenario_set: plan_mode_fp_0011_mixed
+    scenario_set_path: dogfood/scenarios/plan_mode.yaml
+    port: 8276
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b47-6
+    agent_prefix: dogfood-b47-6-s
+
+  - name: W7
+    scenario_set: long_session_v1.yaml
+    scenario_set_path: dogfood/scenarios/long_session_v1.yaml
+    port: 8277
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b47-7
+    agent_prefix: dogfood-b47-7-s
+
+past_batches:
+  - name: B46
+    aggregate_path: docs/deep-dives/journal/dogfood/2026-05-20-batch-46-disambiguation/aggregate.json
+
+journal_dir: docs/deep-dives/journal/dogfood/2026-05-21-batch-47-fix-landed
