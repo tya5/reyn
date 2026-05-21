@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
 
@@ -111,7 +112,6 @@ class StickyStatus(Static):
 
     def _repaint(self) -> None:
         elapsed = max(0.1, time.monotonic() - self._start)
-        t = Text()
         # On 8-color terminals, hex _CORAL (#C8553D) degrades to ANSI bright
         # red — confusable with error indicators. The thinking sticky shows
         # while the agent is working, so route its glyph through _AMBER
@@ -120,9 +120,36 @@ class StickyStatus(Static):
         # general) keep _CORAL since they're typically transient flashes,
         # not the load-bearing "is the agent working?" indicator.
         glyph_color = _AMBER if self._kind == "thinking" else _CORAL
+        # Total cells in the fixed-width suffix segments so we can truncate
+        # the body when narrow terminals would otherwise clip the
+        # ``Ctrl+C cancel`` hint behind the right edge.
+        glyph_cells = cell_len(self._glyph) + 1  # ``<glyph> ``
+        elapsed_suffix = f" · {elapsed:.1f}s"
+        elapsed_cells = cell_len(elapsed_suffix)
+        cancel_suffix = "  · Ctrl+C cancel" if self._kind == "thinking" else ""
+        cancel_cells = cell_len(cancel_suffix)
+        # Padding 0 1 → 2 cells consumed; another 1-cell safety margin
+        # keeps the body off the right edge even if Textual reserves
+        # something additional (cursor / scrollbar on certain themes).
+        chrome_cells = glyph_cells + elapsed_cells + cancel_cells + 2 + 1
+        available = max(0, int(getattr(self.size, "width", 0)) - chrome_cells)
+        body = self._body
+        if available > 0 and cell_len(body) > available:
+            # Truncate by cells (CJK / wide-char aware) and append the
+            # ellipsis. ``available - 1`` reserves the ellipsis cell.
+            out_chars: list[str] = []
+            used = 0
+            for ch in body:
+                w = cell_len(ch)
+                if used + w > max(0, available - 1):
+                    break
+                out_chars.append(ch)
+                used += w
+            body = "".join(out_chars) + "…"
+        t = Text()
         t.append(self._glyph + " ", style=glyph_color)
-        t.append(self._body, style="dim italic")
-        t.append(f" · {elapsed:.1f}s", style="dim italic")
-        if self._kind == "thinking":
-            t.append("  · Ctrl+C cancel", style="dim italic")
+        t.append(body, style="dim italic")
+        t.append(elapsed_suffix, style="dim italic")
+        if cancel_suffix:
+            t.append(cancel_suffix, style="dim italic")
         self.update(t)
