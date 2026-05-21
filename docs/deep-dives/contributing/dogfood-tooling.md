@@ -213,7 +213,62 @@ If you need a new classifier label or directive pattern, add it to the YAML — 
 
 ---
 
-## 7. Related references
+## 7. Known limitations under parallel load
+
+These are surface conditions surfaced during the B47 N=10 reproducibility check (2026-05-21). None are bugs in the production single-agent dispatch path; all are specific to the **parallel-dispatch-per-worktree** pattern the tooling uses when batch-running scenarios. They are documented here so operators know what to expect and can choose between (a) tolerating the symptom, (b) reducing parallelism, or (c) carrying out a deeper fix later.
+
+### 7.1 `safe`-mode Python preprocessor timeout under high parallelism
+
+**Symptom**: A skill that uses a `python` preprocessor step in `safe` mode (e.g. `word_stats_demo`'s `stats.py`) intermittently fails with `python step <module>:<function> timed out after <N>s`. At N=10 parallel dispatch of the same scenario, 7 of 10 runs hit this; the skill's trivial counting function should run in microseconds.
+
+**Root cause**: each safe-mode call spawns a fresh Python subprocess that imports the full `reyn` package before running the user function. Measured cold-start of `python -m reyn.kernel._python_harness` is ~2.2 s on a quiet machine. Under 10-way parallel dispatch the subprocesses contend for disk I/O during their parallel imports, and the per-call wall-clock blows past the default `timeout: 5` declared in many skill DSLs.
+
+**Observed rate**: 7/10 timeout at the worst case (N=10 simultaneous, same worktree). Single-agent dispatch never hits this. The 3-7 worker B-batch dispatch (= 1 scenario per worker at a time, scenarios serialised inside a worker) also doesn't reproduce because each worker only ever has one Python step in flight.
+
+**Mitigations**:
+
+- **Tolerate (recommended for B-batches)**: ignore. The standard 7-worker dispatch doesn't trigger this — only when an operator deliberately fires N parallel A2A POSTs against the *same* skill via the *same* worktree (= NF reproducibility checks).
+- **Raise the timeout** in the affected skill's `skill.md` `permissions.python.timeout`. Doubling to 10 s usually clears even high-contention cases; the only cost is slower failure for genuinely stuck functions.
+- **Reduce parallelism** in the reproducibility check (= N=3 sequential instead of N=10 parallel) — equivalent statistical evidence for binary outcomes at the cost of wall-clock.
+- **Deeper fix (deferred)**: pre-warm subprocess pool, in-process restricted execution for safe-mode, or lighter harness that doesn't import full `reyn`. None of these are blocking; documented here as a future architectural option.
+
+### 7.2 `skill_builder` LLM-generated skill name does not preserve user input verbatim
+
+**Symptom**: When the user prompt requests `skill_builder` to create a skill with a specific name (e.g. `"web_summary_repro2"`), the LLM-driven phases (`plan_skill` / `design_artifacts`) occasionally drop or shorten the user-given suffix. In B47 N=10 reproducibility, 9 of 10 runs created `web_summary` or `web_summary_repro` instead of `web_summary_repro2`. Only 1 run preserved the verbatim name.
+
+**Root cause**: this is `flash-lite` (= weak-model) behaviour at the upstream planning phases, not a Reyn OS bug. The build_skill phase faithfully writes the name decided by `plan_skill` / `design_artifacts`; the LLM at those phases interprets the user's name as a description-with-suffix and "tidies" it. Strong tier (`gemini-2.5-flash`) does not exhibit the same hallucination.
+
+**Observed rate**: 9/10 at flash-lite under parallel load. Single-agent dispatch at flash-lite still exhibits the same behaviour (= not parallelism-specific, but more visible at parallel scale).
+
+**Mitigations**:
+
+- **Tolerate** in dogfood B-batches where the scenario rubric checks "*a* skill was created", not "*this exact name* was created". The B-batch rubrics for `skill_builder_web_summariser` (= W2-S4) already accept any successful build.
+- **Use strong tier for `plan_skill` / `design_artifacts`** if name fidelity matters. The default keeps them at standard because most use cases tolerate the shortening; production setups that require name preservation should upgrade.
+- **Don't fix at the OS layer**. Per `feedback_reyn_care_boundary`, this falls under "LLM への注文" (= LLM compliance to prompt), where Reyn's structural intervention surface is minimal.
+
+### 7.3 Router catalog fuzzy-match on parallel-built skills
+
+**Symptom**: When several `skill_builder` invocations run in parallel within the same worktree, the second-and-later builds may not dispatch `skill_builder` at all — instead, the router LLM picks the *already-built* skill from a previous parallel run (= because the previous build's `reyn/local/<name>/skill.md` made it discoverable in the catalog hot-list) and invokes it directly. The user's intent to "build a new skill" is lost because the catalog reports a fuzzy-matching skill is already available.
+
+**Root cause**: shared filesystem state (= `reyn/local/`) between parallel agents in the same worktree. The first parallel build wins; subsequent calls see the catalog and route to the existing skill. No race in the build itself — just LLM routing prior contaminated by mid-batch catalog growth.
+
+**Observed rate**: 3/10 at N=10 parallel `skill_builder` requests in the same worktree (B47 reproducibility). Sub-batches (= 1 worker per scenario, scenarios serialised) don't reproduce because each worker has its own worktree and the catalog is fixed for the worker's lifetime.
+
+**Mitigations**:
+
+- **Per-worker worktree (the standard B-batch pattern)**: prevents catalog contamination entirely. The `--setup-worktrees` flag in `dogfood_batch_dispatch.py` is exactly this defence.
+- **Distinct skill names per parallel run**: if multiple parallel dispatches must share a worktree, give each scenario a unique target skill name so the LLM cannot fuzzy-match.
+- **Tolerate** for measurement runs that fold "no-build, invoked existing skill" into the FAIL bucket — the verdict is still informative about LLM routing priors.
+
+### 7.4 Cross-cutting observation
+
+All three limitations share the same shape: they fall under `feedback_reyn_care_boundary`'s "LLM への注文" (= LLM compliance) or "structural environment" boundary, where the OS has limited or zero direct intervention surface. They reproduce reliably under high-parallelism stress (= N=10 same-worktree) but disappear under the production-style dispatch the tooling itself recommends (= 1 worker per worktree per scenario). They were surfaced **by the increased parallelism of the N=10 reproducibility check**, which is also operating outside the tools' designed comfort zone.
+
+The lesson is operational: when an N=10 reproducibility check shows a failure mode that wasn't in the original B-batch, check whether it's parallelism-specific before treating it as a real regression. The B47 retrospective documents this for `#337` (= stats=0 hypothesis) and `#358` (= invalid-JSON hypothesis) — both turned out to be N=1 noise that the N=10 check disambiguated.
+
+---
+
+## 8. Related references
 
 - `docs/deep-dives/contributing/dogfood-discipline.md` — when to dispatch, what to measure, why.
 - `docs/deep-dives/contributing/testing.md` (or `.ja.md`) — the testing policy these tools comply with (= no `unittest.mock.patch`, real fixtures, Tier-tagged docstrings).
