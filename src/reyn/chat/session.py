@@ -438,10 +438,6 @@ class ChatMessage:
     """
     role: Literal[
         "user", "assistant", "tool", "system", "summary", "skill_event",
-        # Legacy value retained for read-time migration. Code that reaches
-        # for this directly is a bug — _migrate_legacy_chat_message
-        # rewrites it on load.
-        "agent",
     ]
     # ``content`` is either:
     #   - a ``str`` (= text-only turn), or
@@ -477,44 +473,25 @@ class ChatMessage:
     def __init__(
         self,
         role: str,
-        content: "str | list[dict] | None" = None,
+        content: "str | list[dict]" = "",
         ts: str = "",
         seq: int = 0,
         meta: "dict | None" = None,
         tool_calls: "list[dict] | None" = None,
         tool_call_id: "str | None" = None,
         name: "str | None" = None,
-        # ── Pre-#383 compat kwargs (= retired in PR-B) ──────────────────
-        # ``text`` and ``media`` are folded into ``content`` during
-        # construction so callers that haven't migrated yet still produce
-        # Design-B storage. Both PR-A intra-PR sweep and external test
-        # callers benefit; once PR-B's sweep eliminates the last legacy
-        # caller, these kwargs (and the matching read properties below)
-        # get removed.
-        text: "str | None" = None,
-        media: "list[dict] | None" = None,
     ) -> None:
-        # role: legacy "agent" → "assistant" at construction time so the
-        # rest of the runtime never sees the pre-#383 spelling.
+        # Reject the pre-#383 ``"agent"`` spelling. Migration of on-disk
+        # ``history.jsonl`` entries happens at load time via
+        # ``_migrate_legacy_chat_message``; nothing else should be
+        # constructing with ``role="agent"`` anymore.
         if role == "agent":
-            role = "assistant"
-        # Fold legacy text + media into content when caller didn't pass
-        # the new content kwarg. Caller may pass EITHER content OR
-        # text/media — not both.
-        if content is None:
-            if text is not None or media is not None:
-                _text_val = text or ""
-                _media_val = media or []
-                if _media_val:
-                    parts: list[dict] = []
-                    if _text_val:
-                        parts.append({"type": "text", "text": _text_val})
-                    parts.extend(_media_val)
-                    content = parts
-                else:
-                    content = _text_val
-            else:
-                content = ""
+            raise ValueError(
+                "ChatMessage role='agent' was renamed to 'assistant' in "
+                "issue #383. Pass role='assistant' instead. "
+                "(Legacy on-disk entries are migrated read-time by "
+                "_migrate_legacy_chat_message.)"
+            )
         self.role = role
         self.content = content
         self.ts = ts
@@ -526,10 +503,16 @@ class ChatMessage:
 
     @property
     def text(self) -> str:
-        """Backward-compat read for code that hasn't migrated to
-        ``content``. Returns ``content`` when it is a str; otherwise
-        extracts the first ``{"type":"text"}`` part from a content list.
-        Empty string when neither applies. Retired in PR-B.
+        """Derived view returning a str representation of ``content``.
+
+        - str content → returned as-is.
+        - list-of-parts content → the first ``{"type":"text"}`` part's text.
+        - neither → empty string.
+
+        This is a convenience accessor, NOT a legacy compatibility shim:
+        readers that want a textual rendering of any ChatMessage (text or
+        multimodal) call ``m.text`` instead of branching on isinstance.
+        Writers update ``content`` directly.
         """
         if isinstance(self.content, str):
             return self.content
@@ -538,20 +521,6 @@ class ChatMessage:
                 if isinstance(part, dict) and part.get("type") == "text":
                     return part.get("text", "")
         return ""
-
-    @property
-    def media(self) -> list[dict]:
-        """Backward-compat read for code expecting the pre-#383 ``media``
-        list (= non-text content parts). Returns the non-text parts of
-        ``content`` when it is a list; empty list otherwise. Retired in
-        PR-B.
-        """
-        if isinstance(self.content, list):
-            return [
-                p for p in self.content
-                if isinstance(p, dict) and p.get("type") != "text"
-            ]
-        return []
 
 
 # ── Legacy ChatMessage migration ───────────────────────────────────────
@@ -1342,7 +1311,7 @@ class ChatSession:
             history_appender=self._append_history,
             make_summary_message=lambda rendered, structured, covers: ChatMessage(
                 role="summary",
-                text=rendered,
+                content=rendered,
                 ts=_now_iso(),
                 meta={"structured": structured, "covers_through_seq": covers},
             ),

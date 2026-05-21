@@ -359,12 +359,12 @@ def test_build_history_for_router_shape(tmp_path, monkeypatch):
     from reyn.chat.session import ChatMessage
     session = _make_session(tmp_path)
 
-    # Inject some history
+    # Inject some history (Issue #383: new content kwarg + assistant role)
     session.history = [
-        ChatMessage(role="user", text="hello", ts="t1"),
-        ChatMessage(role="agent", text="hi", ts="t2"),
-        ChatMessage(role="user", text="tell me more", ts="t3"),
-        ChatMessage(role="agent", text="sure!", ts="t4"),
+        ChatMessage(role="user", content="hello", ts="t1"),
+        ChatMessage(role="assistant", content="hi", ts="t2"),
+        ChatMessage(role="user", content="tell me more", ts="t3"),
+        ChatMessage(role="assistant", content="sure!", ts="t4"),
     ]
 
     history = session._build_history_for_router()

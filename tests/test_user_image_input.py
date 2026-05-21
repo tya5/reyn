@@ -229,25 +229,31 @@ def test_image_cmd_no_multimodal_config_skips_gate(tmp_path, monkeypatch):
     assert len(session._pending_user_images) == 1
 
 
-# ── ChatMessage.media field + history builder ──────────────────────────
+# ── ChatMessage content shape (issue #383 update) ──────────────────────
 
 
-def test_chat_message_default_media_is_empty():
-    """Tier 2: ChatMessage.media defaults to empty list — existing callers
-    that build ChatMessage without media argument see no behaviour change.
+def test_chat_message_default_content_str_empty():
+    """Tier 2: ChatMessage with str content has no media via the derived
+    ``.text`` property; constructing without media-typed parts leaves
+    the content as a plain string.
     """
-    msg = ChatMessage(role="user", text="hi", ts="2026-05-21T00:00:00+00:00")
-    assert msg.media == []
+    msg = ChatMessage(role="user", content="hi", ts="2026-05-21T00:00:00+00:00")
+    assert msg.content == "hi"
+    assert msg.text == "hi"  # derived text view
 
 
-def test_chat_message_media_persisted_when_provided():
-    """Tier 2: explicit media is preserved on construction."""
+def test_chat_message_content_list_persists_image_block():
+    """Tier 2: image block stored in ``content`` (list-of-parts shape)
+    survives construction; ``.text`` returns the text-part only.
+    """
     block = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
     msg = ChatMessage(
-        role="user", text="see this", ts="2026-05-21T00:00:00+00:00",
-        media=[block],
+        role="user",
+        content=[{"type": "text", "text": "see this"}, block],
+        ts="2026-05-21T00:00:00+00:00",
     )
-    assert msg.media == [block]
+    assert msg.content == [{"type": "text", "text": "see this"}, block]
+    assert msg.text == "see this"
 
 
 # ── history-builder content-list shape ─────────────────────────────────
@@ -275,8 +281,8 @@ def test_history_text_only_emits_string_content():
     """
     cs = _make_history_builder()
     cs.history = [
-        ChatMessage(role="user", text="hi", ts="t1"),
-        ChatMessage(role="agent", text="hello", ts="t2"),
+        ChatMessage(role="user", content="hi", ts="t1"),
+        ChatMessage(role="assistant", content="hello", ts="t2"),
     ]
     msgs = cs._build_history_for_router()
 
@@ -285,11 +291,17 @@ def test_history_text_only_emits_string_content():
 
 
 def test_history_message_with_media_emits_content_list():
-    """Tier 2: ChatMessage with media → content is a list of litellm parts."""
+    """Tier 2: ChatMessage with multimodal content → wire shape is a
+    list of litellm parts (pass-through, no synthesis).
+    """
     cs = _make_history_builder()
     block = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}
     cs.history = [
-        ChatMessage(role="user", text="look at this", ts="t1", media=[block]),
+        ChatMessage(
+            role="user",
+            content=[{"type": "text", "text": "look at this"}, block],
+            ts="t1",
+        ),
     ]
     msgs = cs._build_history_for_router()
 
@@ -306,7 +318,7 @@ def test_history_message_with_media_and_no_text_emits_only_image() -> None:
     """
     cs = _make_history_builder()
     block = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}
-    cs.history = [ChatMessage(role="user", text="", ts="t1", media=[block])]
+    cs.history = [ChatMessage(role="user", content=[block], ts="t1")]
     msgs = cs._build_history_for_router()
 
     assert msgs[0]["content"] == [block]

@@ -60,7 +60,11 @@ def _make_session(
 
 
 def _push_turn(session, role: str, text: str) -> None:
-    session.history.append(ChatMessage(role=role, text=text, ts=_now()))
+    # Issue #383: ChatMessage uses ``content`` field; legacy "agent" role
+    # → "assistant" for new construction.
+    if role == "agent":
+        role = "assistant"
+    session.history.append(ChatMessage(role=role, content=text, ts=_now()))
 
 
 # ── No-overlap branch (= len(turns) <= head_size + tail_size) ────────────────

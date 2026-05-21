@@ -508,11 +508,11 @@ async def test_a2a_endpoint_uses_message_bus(tmp_path, monkeypatch):
     async def _fake_handle_user_message(self, text, *, chain_id):
         from reyn.chat.session import ChatMessage
         self._append_history(ChatMessage(
-            role="user", text=text, ts="2026-05-14T00:00:00",
+            role="user", content=text, ts="2026-05-14T00:00:00",
             meta={"chain_id": chain_id},
         ))
         self._append_history(ChatMessage(
-            role="agent", text=f"bus_reply:{text}",
+            role="assistant", content=f"bus_reply:{text}",
             ts="2026-05-14T00:00:01",
             meta={"chain_id": chain_id},
         ))
