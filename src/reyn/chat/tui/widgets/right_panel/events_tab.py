@@ -566,12 +566,18 @@ def render_events(
         #      visible when the panel is wider than the filter name).
         if not all_events:
             return "[#555555]  (no matching events)[/]", []
+        # Split the two hints across separate lines so each survives the
+        # 44-cell minimum panel width independently. The single-line
+        # form was ~47 cells and clipped to ``press [f] to cycle filter
+        # · [t] for ta…`` at narrow widths, hiding the ``[t]`` tail-size
+        # discoverability cue entirely.
         return (
             f"[#555555]  (no events matching filter: [/]"
             f"[bold #aaaaaa]{_esc(filter_name)}[/][#555555])[/]\n"
             f"[#555555]  press [/][bold #aaaaaa]\\[f][/]"
-            f"[#555555] to cycle filter · [/]"
-            f"[bold #aaaaaa]\\[t][/][#555555] for tail size[/]"
+            f"[#555555] to cycle filter[/]\n"
+            f"[#555555]  press [/][bold #aaaaaa]\\[t][/]"
+            f"[#555555] for tail size[/]"
         ), []
 
     # Newest-first window — also returned to the caller for cursor / preview
