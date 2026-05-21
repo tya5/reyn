@@ -1,151 +1,78 @@
-# Popular local MCP servers — smoke-test procedure
+# Popular local MCP servers — install + usage procedure
 
-A copy-paste-runnable procedure for verifying popular MCP servers with
-Reyn locally. Eight servers verified end-to-end (4 npm + 4 pypi/uvx):
+A copy-paste-runnable procedure for 6 popular local MCP servers with
+Reyn. Each section shows:
 
-- [filesystem](#filesystem) — sandboxed file read/write
-- [memory](#memory) — knowledge-graph KV (persists across calls)
+1. **Install** — one `reyn mcp install` command. Post-PR #331 the
+   install produces a loader-ready config with no manual edits.
+2. **Direct smoke** — connectivity / tool-discovery / one tool call
+   via the `scripts/mcp_smoke.py` runner. Useful for "is the server
+   alive".
+3. **Usage from chat** — a real `reyn chat` conversation that
+   exercises the server through the chat router. Post-PR #342 the
+   router signals catalog partiality so the LLM proactively calls
+   `list_actions(filter='<server>')` for capabilities it doesn't see
+   in its hot-list.
+
+Servers covered:
+
 - [time](#time) — timezone-aware current time / conversion
-- [everything](#everything) — demo kitchen-sink covering protocol primitives
-- [sqlite](#sqlite) — local DB queries (read + write + schema)
 - [git](#git) — local repo operations (log / status / diff / branch)
 - [sequential-thinking](#sequential-thinking) — chain-of-thought scratchpad
+- [sqlite](#sqlite) — local DB queries (read + write + schema)
 - [fetch](#fetch) — HTTP fetch with markdown extraction
+- [everything](#everything) — demo kitchen-sink covering protocol primitives
 
-Each section captures the install command, the workarounds needed
-(see [Known issues](#known-issues) at the bottom), and a minimal
-smoke test that confirms the server is reachable from Reyn's MCP
-client. Verified 2026-05-20 against Reyn HEAD on macOS (Darwin 25.x).
+> **Why no filesystem / memory section?** Both MCP servers structurally
+> overlap with Reyn's built-in ops (= `file__*` for filesystem,
+> `memory.operation__*` for the agent's memory layer). With both
+> available, the chat router consistently picks the Reyn-internal op
+> on natural prompts — the MCP servers don't get exercised through
+> the agent path. Use them via direct calls (`scripts/mcp_smoke.py`)
+> or the `read_local_files` stdlib skill (for filesystem) if you
+> have a specific need.
+
+> **Chat-history pollution caveat (= issue #352).** If your agent
+> has previously refused a capability (= the LLM said "I cannot
+> ..."), in-context learning may continue the refusal pattern on
+> subsequent turns even though the SP signal directs otherwise. If
+> the usage example below isn't producing the expected tool call,
+> clear the agent's history first:
+>
+> ```bash
+> echo -n > .reyn/agents/default/history.jsonl
+> ```
+>
+> Fresh-history clean-state success rate for the natural-prompt
+> usage examples below is ~90% (measured 2026-05-21 against
+> `gemini-2.5-flash-lite`). Polluted-history rate degrades sharply.
+> See [#352](https://github.com/tya5/reyn/issues/352) for the
+> structural mitigation discussion.
 
 ## Prerequisites
 
 - `node` + `npx` (most servers are npm packages)
-- `uv` + `uvx` (= some servers are Python; install via `brew install uv`)
+- `uv` + `uvx` (= Python servers; `brew install uv`)
 - Reyn installed with the `[mcp]` extra: `pip install -e ".[mcp]"`
-- A reusable smoke runner: `scripts/mcp_smoke.py` (in-tree)
+- For chat usage: pre-approve the per-server permission once per
+  server (= one-liner shown in each section).
 
-The smoke runner bypasses the skill / agent / permissions layer and
-goes straight to `reyn.mcp_client.MCPClient`. Use it for connectivity
-+ tool-discovery + invocation sanity. For full integration tests
-(skill → permissions → mcp op → result) see the filesystem section.
-
-```bash
-# usage
-python scripts/mcp_smoke.py <server-name>                       # list tools
-python scripts/mcp_smoke.py <server-name> <tool> '<json-args>'  # call tool
-```
-
----
-
-## filesystem
-
-Read / write files under a configured sandbox root. Most useful + safest local server.
-
-### Install
-
-```bash
-reyn mcp install --source npm:@modelcontextprotocol/server-filesystem \
-    --args "/Users/<you>/Workspace/<project>/.mcp-sandbox" \
-    --non-interactive
-```
-
-**Apply workarounds** (see [#318](https://github.com/tya5/reyn/issues/318) + [#319](https://github.com/tya5/reyn/issues/319) + [#320](https://github.com/tya5/reyn/issues/320)):
-
-```python
-# Add type: stdio + rename to short name. Run from project root.
-python - <<'PY'
-import yaml
-with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
-fs = cfg["mcp"]["servers"].pop("server-filesystem")
-fs["type"] = "stdio"
-cfg["mcp"]["servers"]["filesystem"] = {"type": fs.pop("type"), **fs}
-with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
-PY
-```
-
-> **macOS users**: avoid `/tmp` as the sandbox root — it's a symlink to
-> `/private/tmp` and the server compares literal paths. Use a path
-> inside the project (e.g. `./.mcp-sandbox`) or your home directory.
-
-### Pre-approve + smoke
-
-```bash
-mkdir -p .mcp-sandbox && echo "hello mcp" > .mcp-sandbox/x.txt
-echo 'mcp.filesystem: true' >> .reyn/approvals.yaml
-
-# Direct client smoke
-python scripts/mcp_smoke.py filesystem read_text_file '{"path": ".mcp-sandbox/x.txt"}'
-
-# End-to-end (skill → permissions → mcp op)
-reyn run read_local_files '.mcp-sandbox/x.txt の内容を教えて'
-```
-
-Expected: agent returns the file content; events log shows
-`act_executed` with `op_kinds: ["mcp"]` and `status: "ok"`.
-
----
-
-## memory
-
-Knowledge-graph KV server. Entities + observations + relations persist
-across calls within one server lifetime (in-memory; restart resets).
-
-### Install
-
-```bash
-reyn mcp install --source npm:@modelcontextprotocol/server-memory --non-interactive
-```
-
-Same workarounds as filesystem (#318 + #319):
-
-```python
-python - <<'PY'
-import yaml
-with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
-fs = cfg["mcp"]["servers"].pop("server-memory")
-fs["type"] = "stdio"
-cfg["mcp"]["servers"]["memory"] = {"type": fs.pop("type"), **fs}
-with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
-PY
-```
-
-### Smoke
-
-```bash
-# List tools (= 9 KV / graph primitives)
-python scripts/mcp_smoke.py memory
-
-# Create an entity
-python scripts/mcp_smoke.py memory create_entities '{
-  "entities": [
-    {"name": "Reyn", "entityType": "project",
-     "observations": ["agent OS for LLM-driven workflows"]}
-  ]
-}'
-
-# Search for it
-python scripts/mcp_smoke.py memory search_nodes '{"query": "Reyn"}'
-```
-
-Expected: second call's `structuredContent.entities` contains the
-"Reyn" entity created by the first call.
-
-### Tools surfaced
-
-`create_entities` / `create_relations` / `add_observations` /
-`delete_*` / `read_graph` / `search_nodes` / `open_nodes`.
+The smoke runner `scripts/mcp_smoke.py` goes straight to
+`reyn.mcp_client.MCPClient`, bypassing the chat router. Useful for
+connectivity sanity. For agent-driven usage (= the typical end-user
+shape), the chat router calls the server via the universal
+`call_mcp_tool` / `invoke_action` dispatch.
 
 ---
 
 ## time
 
-Timezone-aware time queries. Python-based (uvx), so requires `uv`
-installed first.
+Timezone-aware time queries. Python-based (uvx), so requires `uv`.
 
 ### Prerequisite
 
 ```bash
-brew install uv     # adds uvx as the runtime
+brew install uv
 ```
 
 ### Install
@@ -154,33 +81,26 @@ brew install uv     # adds uvx as the runtime
 reyn mcp install --source pypi:mcp-server-time --non-interactive
 ```
 
-> The npm registry has **no** `@modelcontextprotocol/server-time` —
-> the official time server is a Python package at
-> [pypi.org/project/mcp-server-time](https://pypi.org/project/mcp-server-time).
-> Install via the `pypi:` source specifier.
-
-Same workarounds (#318 + #319; the auto-derived name is
-`mcp-server-time`):
-
-```python
-python - <<'PY'
-import yaml
-with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
-fs = cfg["mcp"]["servers"].pop("mcp-server-time")
-fs["type"] = "stdio"
-cfg["mcp"]["servers"]["time"] = {"type": fs.pop("type"), **fs}
-with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
-PY
-```
-
-### Smoke
+### Direct smoke
 
 ```bash
 python scripts/mcp_smoke.py time get_current_time '{"timezone": "Asia/Tokyo"}'
 ```
 
-Expected: `content[0].text` contains `{"timezone": "Asia/Tokyo",
-"datetime": "<ISO 8601>", "day_of_week": "...", "is_dst": false}`.
+Expected: `content[0].text` carries `{"timezone": "Asia/Tokyo", "datetime": "<ISO 8601>", ...}`.
+
+### Usage from chat
+
+```bash
+echo 'mcp.time: true' >> .reyn/approvals.yaml
+
+reyn chat
+> What time is it in Tokyo right now?
+```
+
+The agent calls `mcp.tool__time.get_current_time` and replies in
+natural language. For multi-timezone queries ("Tokyo, NYC, London"),
+the agent chains 3 calls and synthesises one answer.
 
 ### Tools surfaced
 
@@ -188,118 +108,9 @@ Expected: `content[0].text` contains `{"timezone": "Asia/Tokyo",
 
 ---
 
-## everything
-
-Demo "kitchen sink" server covering most MCP protocol primitives.
-Useful for sanity-checking tool-discovery + structured-content +
-long-running ops + sampling, all in one server.
-
-### Install
-
-```bash
-reyn mcp install --source npm:@modelcontextprotocol/server-everything --non-interactive
-```
-
-Same workarounds (#318 + #319):
-
-```python
-python - <<'PY'
-import yaml
-with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
-fs = cfg["mcp"]["servers"].pop("server-everything")
-fs["type"] = "stdio"
-cfg["mcp"]["servers"]["everything"] = {"type": fs.pop("type"), **fs}
-with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
-PY
-```
-
-### Smoke
-
-```bash
-# Tool discovery
-python scripts/mcp_smoke.py everything
-
-# Sum
-python scripts/mcp_smoke.py everything get-sum '{"a": 17, "b": 25}'
-
-# Echo
-python scripts/mcp_smoke.py everything echo '{"message": "hello from reyn smoke"}'
-```
-
-Expected: `content[0].text` carries the computed sum / echoed message.
-
-### Tools surfaced
-
-`echo` / `get-sum` / `get-env` / `get-tiny-image` /
-`get-annotated-message` / `get-structured-content` /
-`get-resource-links` / `get-resource-reference` / `gzip-file-as-resource` /
-`toggle-simulated-logging` / `toggle-subscriber-updates` /
-`trigger-long-running-operation` / `simulate-research-query`.
-
-`trigger-long-running-operation` is especially useful for testing
-[PR #266](https://github.com/tya5/reyn/pull/266)'s MCP progress
-callback wire — it emits `notifications/progress` during execution.
-
----
-
-## sqlite
-
-Local SQLite database via `mcp-server-sqlite` (Python / uvx). Supports
-read (SELECT), write (INSERT / UPDATE / DELETE), schema (CREATE), and
-table introspection.
-
-### Prerequisite
-
-```bash
-brew install uv     # if not already installed
-```
-
-### Install
-
-```bash
-reyn mcp install --source pypi:mcp-server-sqlite --non-interactive
-```
-
-Same workarounds (#318 + #319); additionally pass the `--db-path` arg:
-
-```python
-python - <<'PY'
-import yaml
-with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
-fs = cfg["mcp"]["servers"].pop("mcp-server-sqlite")
-fs["type"] = "stdio"
-fs["args"] = fs.get("args", []) + ["--db-path", "./.mcp-sandbox/test.db"]
-cfg["mcp"]["servers"]["sqlite"] = {"type": fs.pop("type"), **fs}
-with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
-PY
-```
-
-### Smoke
-
-```bash
-mkdir -p .mcp-sandbox && rm -f .mcp-sandbox/test.db
-python scripts/mcp_smoke.py sqlite create_table \
-    '{"query": "CREATE TABLE smoke (id INTEGER PRIMARY KEY, msg TEXT)"}'
-python scripts/mcp_smoke.py sqlite write_query \
-    '{"query": "INSERT INTO smoke (msg) VALUES (\"hello from sqlite mcp\")"}'
-python scripts/mcp_smoke.py sqlite read_query \
-    '{"query": "SELECT * FROM smoke"}'
-```
-
-Expected: third call returns `[{'id': 1, 'msg': 'hello from sqlite mcp'}]`.
-
-### Tools surfaced
-
-`read_query` / `write_query` / `create_table` / `list_tables` /
-`describe_table` / `append_insight`.
-
----
-
 ## git
 
-Local git repo operations via `mcp-server-git` (Python / uvx). Useful
-when an agent needs to inspect commit history / branches / diffs
-during a development workflow.
+Local git repo operations via `mcp-server-git` (Python / uvx).
 
 ### Install
 
@@ -307,43 +118,32 @@ during a development workflow.
 reyn mcp install --source pypi:mcp-server-git --non-interactive
 ```
 
-Same workarounds (#318 + #319):
-
-```python
-python - <<'PY'
-import yaml
-with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
-fs = cfg["mcp"]["servers"].pop("mcp-server-git")
-fs["type"] = "stdio"
-cfg["mcp"]["servers"]["git"] = {"type": fs.pop("type"), **fs}
-with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
-PY
-```
-
-### Smoke
+### Direct smoke
 
 ```bash
-# Recent commits in current repo
-python scripts/mcp_smoke.py git git_log \
-    "{\"repo_path\": \"$PWD\", \"max_count\": 3}"
-
-# Local branches
-python scripts/mcp_smoke.py git git_branch \
-    "{\"repo_path\": \"$PWD\", \"branch_type\": \"local\"}"
+python scripts/mcp_smoke.py git git_log "{\"repo_path\": \"$PWD\", \"max_count\": 3}"
+python scripts/mcp_smoke.py git git_branch "{\"repo_path\": \"$PWD\", \"branch_type\": \"local\"}"
 ```
 
-Expected: `git_log` returns "Commit history:\n..." with 3 most recent
-entries; `git_branch` lists local branches with the current one marked.
+Expected: 3 most-recent commits / local branches listed.
+
+### Usage from chat
+
+```bash
+echo 'mcp.git: true' >> .reyn/approvals.yaml
+
+reyn chat
+> Summarise the last 3 commits in this repo.
+```
+
+The agent calls `mcp.tool__git.git_log` with `repo_path` set to the
+session's working directory and produces a short summary.
 
 ### Tools surfaced
 
 `git_status` / `git_diff_unstaged` / `git_diff_staged` / `git_diff` /
 `git_commit` / `git_add` / `git_reset` / `git_log` /
 `git_create_branch` / `git_checkout` / `git_show` / `git_branch`.
-
-> Note: the git server uses `Repo(path)` so it works on any local
-> repo, not just CWD. Pass `repo_path` as an absolute path for
-> clarity.
 
 ---
 
@@ -355,27 +155,13 @@ of MCP servers that wrap *workflow patterns* rather than I/O.
 ### Install
 
 ```bash
-reyn mcp install --source npm:@modelcontextprotocol/server-sequential-thinking \
-    --non-interactive
+reyn mcp install --source npm:@modelcontextprotocol/server-sequential-thinking --non-interactive
 ```
 
-Same workarounds (#318 + #319):
-
-```python
-python - <<'PY'
-import yaml
-with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
-fs = cfg["mcp"]["servers"].pop("server-sequential-thinking")
-fs["type"] = "stdio"
-cfg["mcp"]["servers"]["sequential_thinking"] = {"type": fs.pop("type"), **fs}
-with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
-PY
-```
-
-### Smoke
+### Direct smoke
 
 ```bash
-python scripts/mcp_smoke.py sequential_thinking sequentialthinking '{
+python scripts/mcp_smoke.py sequential-thinking sequentialthinking '{
   "thought": "Verify the smoke harness works for stateful tools.",
   "thoughtNumber": 1,
   "totalThoughts": 1,
@@ -383,22 +169,90 @@ python scripts/mcp_smoke.py sequential_thinking sequentialthinking '{
 }'
 ```
 
-Expected: `structuredContent` carries
-`{"thoughtNumber": 1, "totalThoughts": 1, "nextThoughtNeeded": false,
-"branches": [], "thoughtHistoryLength": 1}`.
+Expected: `structuredContent` carries `{"thoughtNumber": 1, ...}`.
+
+### Usage from chat
+
+```bash
+echo 'mcp.sequential-thinking: true' >> .reyn/approvals.yaml
+
+reyn chat
+> Use sequential-thinking to plan how to organise a personal task list.
+```
+
+The agent emits a series of `mcp.tool__sequential_thinking.sequentialthinking`
+calls (typically 5-7 thoughts) and synthesises the chain into a
+natural-language plan. The server tracks the thought history
+internally; multiple calls build up a chain inside one server
+lifetime.
+
+> Note: the keyword "sequential-thinking" in the user prompt helps
+> the router pick this server over generic problem-solving paths
+> (= invoke_action with no clear target).
 
 ### Tools surfaced
 
-`sequentialthinking` (the single tool — multiple invocations build up
-a thought chain inside the server's memory).
+`sequentialthinking` (single tool — chained calls build up the
+thought sequence).
+
+---
+
+## sqlite
+
+Local SQLite database via `mcp-server-sqlite` (Python / uvx).
+
+### Install
+
+```bash
+mkdir -p ./.mcp-sandbox && rm -f ./.mcp-sandbox/test.db
+
+reyn mcp install --source pypi:mcp-server-sqlite \
+    --args "--db-path $PWD/.mcp-sandbox/test.db" --non-interactive
+```
+
+### Direct smoke
+
+```bash
+python scripts/mcp_smoke.py sqlite create_table \
+    '{"query": "CREATE TABLE smoke (id INTEGER PRIMARY KEY, msg TEXT)"}'
+python scripts/mcp_smoke.py sqlite write_query \
+    '{"query": "INSERT INTO smoke (msg) VALUES (\"hello from sqlite mcp\")"}'
+python scripts/mcp_smoke.py sqlite read_query \
+    '{"query": "SELECT * FROM smoke"}'
+```
+
+Expected: third call returns `[{'id': 1, 'msg': 'hello from sqlite mcp'}]`.
+
+### Usage from chat
+
+```bash
+echo 'mcp.sqlite: true' >> .reyn/approvals.yaml
+
+# (Optional) ensure clean history if you've previously interacted with sqlite:
+echo -n > .reyn/agents/default/history.jsonl
+
+reyn chat
+> Create a `notes` table in sqlite with columns id and body, then
+> insert a row with body "first note", and show me everything in the table.
+```
+
+The agent chains three `mcp.tool__sqlite.*` calls (= `create_table` →
+`write_query` → `read_query`) within one turn. Post-PR #342 success
+rate ≈ 90% on clean history; if the agent says "I cannot list
+tables...", wipe the history (line above) and retry — see #352 for
+why.
+
+### Tools surfaced
+
+`read_query` / `write_query` / `create_table` / `list_tables` /
+`describe_table` / `append_insight`.
 
 ---
 
 ## fetch
 
 HTTP fetch with markdown extraction via `mcp-server-fetch` (Anthropic
-official, Python / uvx). Useful for agents that need to read web pages
-as plain text.
+official, Python / uvx).
 
 ### Install
 
@@ -406,45 +260,40 @@ as plain text.
 reyn mcp install --source pypi:mcp-server-fetch --non-interactive
 ```
 
-Same workarounds (#318 + #319):
-
-```python
-python - <<'PY'
-import yaml
-with open("reyn.local.yaml") as f: cfg = yaml.safe_load(f)
-fs = cfg["mcp"]["servers"].pop("mcp-server-fetch")
-fs["type"] = "stdio"
-cfg["mcp"]["servers"]["fetch"] = {"type": fs.pop("type"), **fs}
-with open("reyn.local.yaml", "w") as f: yaml.safe_dump(cfg, f, sort_keys=False)
-PY
-```
-
-### Smoke
+### Direct smoke
 
 ```bash
-python scripts/mcp_smoke.py fetch fetch \
-    '{"url": "https://example.com", "max_length": 500}'
+python scripts/mcp_smoke.py fetch fetch '{"url": "https://example.com", "max_length": 500}'
 ```
 
 Expected: `content[0].text` contains "Contents of https://example.com/:\n
 This domain is for use in documentation examples...".
 
-> First invocation may print a benign uvx-init stderr line that
-> looks like a `pydantic_core.ValidationError` — this is uvx's
-> install / dep-check output bleeding into the smoke runner's
-> error stream. The tool call itself succeeds (= the `content`
-> block is returned correctly). It does not recur on subsequent
-> invocations once uvx has cached the package.
+### Usage from chat
 
-### Tools surfaced
+```bash
+echo 'mcp.fetch: true' >> .reyn/approvals.yaml
 
-`fetch` (the single tool — supports `url` / `max_length` /
-`start_index` / `raw=true|false` args).
+reyn chat
+> Fetch https://example.com and summarise it.
+```
+
+> **LLM-side caveat (= not Reyn's bug)**: `gemini-2.5-flash-lite`
+> (Reyn's default workhorse model) has a strong training-time prior
+> that refuses external URL access ("I cannot access external
+> websites"). Even with the catalog-partial signal from PR #342,
+> the model frequently declines to call `fetch`. Workarounds:
+>
+> - **Use `web__fetch`** instead (= Reyn's built-in op; same
+>   functionality, doesn't trigger the LLM's URL refusal prior in
+>   the same way).
+> - **Direct smoke** is reliable: `python scripts/mcp_smoke.py fetch
+>   fetch '{"url": "..."}'` always works.
+> - **Stronger model**: `--model strong` may bypass the prior; not
+>   tested as part of the standard procedure (= strong models are
+>   cost-gated per project policy).
 
 ### Comparison vs Reyn's built-in `web_fetch` op
-
-Reyn already ships a `web_fetch` Control IR op
-(`src/reyn/op_runtime/web_fetch.py`). Differences:
 
 | | `web_fetch` op | `fetch` MCP server |
 |---|---|---|
@@ -452,43 +301,96 @@ Reyn already ships a `web_fetch` Control IR op
 | Latency | ~50ms cold | ~200ms cold (subprocess spawn) |
 | Markdown extraction | Reyn's own | trafilatura (= upstream choice) |
 | Pagination | `max_length` only | `max_length` + `start_index` |
-| Permission gate | `web_fetch` | `mcp.fetch` |
+| LLM URL refusal | Less common | Common (= see caveat above) |
 
-For typical skills, the built-in `web_fetch` op is cheaper. Use the
-MCP `fetch` server when you specifically want trafilatura's extraction
-quality or `start_index` pagination.
+For chat usage, prefer `web_fetch` op. Use `fetch` MCP when you
+specifically want trafilatura extraction quality or `start_index`
+pagination.
+
+### Tools surfaced
+
+`fetch` (single tool — supports `url` / `max_length` / `start_index`
+/ `raw=true|false` args).
 
 ---
 
-## Known issues
+## everything
 
-Encountered during this smoke-test round (2026-05-20):
+Demo "kitchen sink" server covering most MCP protocol primitives.
 
-| Issue | Symptom | Workaround |
-|---|---|---|
-| [#318](https://github.com/tya5/reyn/issues/318) | `reyn mcp install` omits `type: stdio` → loader fails with `Unsupported MCP server type: None` | Add `type: stdio` to the server entry post-install (see snippets above) |
-| [#319](https://github.com/tya5/reyn/issues/319) | Auto-derived server name keeps `server-` / `mcp-server-` prefix → stdlib skill expecting short name (e.g. `filesystem`) fails to find it | Rename the YAML key to the short form post-install |
-| [#320](https://github.com/tya5/reyn/issues/320) | macOS `/tmp` symlink resolves to `/private/tmp` → server's literal path check denies `read_text_file` | Use a sandbox path outside `/tmp` (= project dir or home dir) |
+### Install
 
-The Python snippet in each section bakes in the #318 + #319
-workarounds. #320 affects only the filesystem server's sandbox root.
+```bash
+reyn mcp install --source npm:@modelcontextprotocol/server-everything --non-interactive
+```
+
+### Direct smoke
+
+```bash
+python scripts/mcp_smoke.py everything
+python scripts/mcp_smoke.py everything get-sum '{"a": 17, "b": 25}'
+python scripts/mcp_smoke.py everything echo '{"message": "hello"}'
+```
+
+Expected: 13 tools listed; sum returns "The sum of 17 and 25 is 42.".
+
+### Usage from chat
+
+```bash
+echo 'mcp.everything: true' >> .reyn/approvals.yaml
+
+# Optional: clean history (= same caveat as sqlite)
+echo -n > .reyn/agents/default/history.jsonl
+
+reyn chat
+> Use the everything MCP server to compute 17 plus 25.
+```
+
+The agent calls `mcp.tool__everything.get-sum` with `{a: 17, b: 25}`
+and reports the result. Post-PR #342 success rate ≈ 90% on clean
+history.
+
+> Note: explicitly mentioning "the everything MCP server" in the
+> prompt helps the router disambiguate; with a generic "compute 17
+> plus 25" the LLM may answer arithmetically without tool calls.
+
+### Tools surfaced
+
+`echo` / `get-sum` / `get-env` / `get-tiny-image` /
+`get-annotated-message` / `get-structured-content` /
+`get-resource-links` / `get-resource-reference` /
+`gzip-file-as-resource` / `toggle-simulated-logging` /
+`toggle-subscriber-updates` / `trigger-long-running-operation` /
+`simulate-research-query`.
+
+`trigger-long-running-operation` is especially useful for testing
+[PR #266](https://github.com/tya5/reyn/pull/266)'s MCP progress
+callback wire — it emits `notifications/progress` during execution.
 
 ---
 
 ## Adding more servers
 
-The same procedure works for any stdio-transport MCP server:
+For any stdio-transport MCP server:
 
-1. `reyn mcp install --source npm:<pkg>` (or `pypi:<pkg>` for Python)
-2. Apply the #318 + #319 workaround Python snippet (= add `type: stdio`,
-   rename to a stable short key)
-3. `python scripts/mcp_smoke.py <name>` to list tools
-4. `python scripts/mcp_smoke.py <name> <tool> '<args>'` to verify a call
+```bash
+reyn mcp install --source npm:<package>           # or pypi:<package>
+echo "mcp.<server-name>: true" >> .reyn/approvals.yaml
+reyn chat
+```
 
-If the server requires credentials, use `reyn mcp set-secret <name>
-<KEY>` and reference the secret in the YAML's `env:` block (see
-`docs/guide/for-skill-authors/use-an-mcp-server.ja.md` for the full
-secret-handling shape).
+The install command writes a loader-ready config automatically (= PR
+\#331 fixed the install-flow UX issues #318 / #319 / #320). Servers
+requiring credentials: `reyn mcp set-secret <name> <KEY>` + reference
+`${KEY}` in the YAML `env:` block — see
+[Reference: `reyn.yaml` § MCP servers](../../reference/config/reyn-yaml.md#mcp-servers).
 
-When all 3 install-flow issues (#318 / #319 / #320) close, the
-procedure shrinks to: `reyn mcp install ...` + `python scripts/mcp_smoke.py ...`.
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Agent says "I cannot ..." even though the server is installed | History pollution (= prior refusal turn) | `echo -n > .reyn/agents/<name>/history.jsonl` then retry. See [#352](https://github.com/tya5/reyn/issues/352) |
+| `MCP server <name> access denied` | Permission not pre-approved | `echo 'mcp.<name>: true' >> .reyn/approvals.yaml` |
+| `not found` errors after install | Server uses uvx (Python) but `uv` not installed | `brew install uv` |
+| Server config in YAML missing `type: stdio` or has `server-` prefix | Pre-PR #331 install path | Re-install via `reyn mcp install` post-#331 |
+| URL fetch refused by agent | LLM-side URL refusal prior | Use `web__fetch` op or `scripts/mcp_smoke.py` direct |
