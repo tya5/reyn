@@ -82,7 +82,11 @@ def _past_verdicts_for_worker(
     return out
 
 
-def render_worker_prompt(config: BatchConfig, worker: WorkerSpec) -> str:
+def render_worker_prompt(
+    config: BatchConfig,
+    worker: WorkerSpec,
+    repo_root: Path | None = None,
+) -> str:
     """Compose the markdown worker prompt.
 
     Matches the structure the sandbox_2 session has been hand-rolling
@@ -112,10 +116,19 @@ def render_worker_prompt(config: BatchConfig, worker: WorkerSpec) -> str:
         )
     tool_uses_cap = config.batch.hard_caps.get("tool_uses", 50)
     wall_cap = config.batch.hard_caps.get("wall_clock_min", 15)
-    deliverable_path = (
+    # B45 carry-over fix (2026-05-22): the deliverable path is now emitted
+    # as an absolute filesystem path against the main-repo root, with an
+    # explicit "from MAIN repo CWD" line in the prompt. Pre-fix, the path
+    # was relative (= config.journal_dir/workers/...) and sub-agents
+    # running from the worker's worktree CWD wrote to the worktree-relative
+    # location — the main repo never saw the results JSON without a
+    # post-batch `cp` step. Observed B44/B45/B47 W2/W3/W7.
+    repo_root_abs = repo_root.resolve() if repo_root else Path.cwd().resolve()
+    deliverable_rel = (
         f"{config.journal_dir}/workers/results-worker-"
         f"{worker.name.lstrip('W')}.json"
     )
+    deliverable_path = str(repo_root_abs / deliverable_rel)
 
     return f"""{config.batch.name} worker {worker.name} — run `{worker.scenario_set_path}` ({worker.n_scenarios} scenarios), emit results JSON.
 
@@ -153,6 +166,8 @@ For each of the {worker.n_scenarios} scenarios in `{worker.scenario_set_path}`:
 {json.dumps(config.batch.user_params, indent=2)}
 
 ## Deliverable
+
+Write the results JSON at the **absolute path** below — sub-agents running from a worker worktree CWD must use this exact path so the main repo receives the file (= worktree-relative paths leave the result inside the worktree and the aggregator never sees it). The MAIN repo CWD is `{repo_root_abs}`.
 
 Write `{deliverable_path}` with this shape:
 
@@ -243,14 +258,14 @@ def main() -> int:
     if args.prompts_dir:
         args.prompts_dir.mkdir(parents=True, exist_ok=True)
         for w in config.workers:
-            prompt = render_worker_prompt(config, w)
+            prompt = render_worker_prompt(config, w, repo_root=args.repo_root)
             (args.prompts_dir / f"worker-{w.name}.md").write_text(prompt)
             print(f"[prompt] {w.name} → {args.prompts_dir}/worker-{w.name}.md",
                   file=sys.stderr)
     else:
         for w in config.workers:
             print(f"--- WORKER {w.name} ---")
-            print(render_worker_prompt(config, w))
+            print(render_worker_prompt(config, w, repo_root=args.repo_root))
             print()
     return 0
 
