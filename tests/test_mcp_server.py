@@ -223,9 +223,10 @@ def test_send_to_agent_history_persists_across_calls(tmp_path, monkeypatch):
     assert "You told me 17." in r2["reply"]
     assert "I will remember 17." not in r2["reply"]
 
-    # History accumulated across calls: 2 user turns + 2 agent turns.
+    # History accumulated across calls: 2 user turns + 2 assistant turns.
+    # Issue #383: role rename "agent" → "assistant".
     user_turns = [m for m in history if m.role == "user"]
-    agent_turns = [m for m in history if m.role == "agent"]
+    agent_turns = [m for m in history if m.role == "assistant"]
     assert len(user_turns) == 2
     assert len(agent_turns) == 2
 
