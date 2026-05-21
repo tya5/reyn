@@ -159,6 +159,17 @@ For each of the {worker.n_scenarios} scenarios in `{worker.scenario_set_path}`:
 - **R (refuted)**: rubric not met
 - **B (blocked)**: scenario didn't run end-to-end
 
+**IMPORTANT — verdict scoping** (B48 retrospective): the verdict is decided
+**only** from the scenario yaml's explicit `rubric` + `events.must_emit` /
+`events.must_not_emit` + `artifacts` lists. Do **not** add unwritten
+requirements based on the `covers:` field, the scenario `id`, or the
+`scenario_set` name — those are metadata documenting what the scenario aims to
+exercise, **not** verdict criteria. Examples observed in B48 W1: scenarios
+with `covers: stdlib-skills/direct-llm` were marked I because workers
+inferred "direct_llm artifact required" from `covers`, but the scenario yaml
+had no `artifacts:` requirement — rubric was fully met, so the correct
+verdict was V.
+
 {past_section}
 
 ## User params (= hold constant for apples-to-apples)
