@@ -965,6 +965,19 @@ class ReynTUIApp(App):
                     panel.set_panel_type(self._last_focal_tab)
                 except Exception:
                     pass
+            # Wave-4 PC1: auto-focus the panel tabs so ``j`` / ``k`` /
+            # ``space`` etc. immediately drive the panel's cursor +
+            # preview, not the input bar. Previously the user had to
+            # press Ctrl+B then Ctrl+O to start navigating — pressing
+            # ``j`` after Ctrl+B alone inserted a literal "j" into
+            # the input box. The close path's focus-rescue already
+            # restores input focus when Ctrl+B closes the panel, so
+            # the peek-while-typing flow stays intact (= Ctrl+B opens,
+            # Ctrl+B closes, focus returns, text preserved).
+            try:
+                panel.focus_tabs()
+            except Exception:
+                pass
         else:
             # Closing: rescue focus if it lives inside the panel.
             focused = self.focused
