@@ -28,6 +28,44 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text or "") // 4)
 
 
+def _turn_to_compactor_input(t: "ChatMessage") -> dict:
+    """Serialise a ChatMessage into the compactor's ``new_turns`` shape.
+
+    Post-PR-E1 (issue #383) the history may contain ``assistant`` entries
+    with ``tool_calls``, ``tool`` entries with ``tool_call_id`` + ``name``,
+    and ``user``/``assistant`` entries with multimodal ``content`` lists.
+    The compactor skill needs enough structure to reason about tool
+    activity in ``artifacts_referenced`` while staying within token caps.
+
+    Shape we emit per turn:
+      {role, text, seq, [tool_calls], [tool_call_id], [tool_name]}
+
+    ``text`` is the derived text view (= str content or first text part
+    from a list content). Tool fields are only included on the entries
+    where they're set.
+    """
+    out: dict = {"role": t.role, "text": t.text, "seq": t.seq}
+    if getattr(t, "tool_calls", None):
+        # Compact representation: function names + arg-string lengths.
+        # Avoid sending raw arg JSON since it can be large and the
+        # compactor only needs the structural shape ("LLM called fn X
+        # with N chars of args"). The skill's ``artifacts_referenced``
+        # rule decides whether to surface the call.
+        out["tool_calls"] = [
+            {
+                "name": (tc.get("function") or {}).get("name", ""),
+                "args_chars": len((tc.get("function") or {}).get("arguments", "") or ""),
+            }
+            for tc in t.tool_calls
+            if isinstance(tc, dict)
+        ]
+    if getattr(t, "tool_call_id", None):
+        out["tool_call_id"] = t.tool_call_id
+    if getattr(t, "name", None):
+        out["tool_name"] = t.name
+    return out
+
+
 class CompactionController:
     """Background head/body/tail compaction service.
 
@@ -132,7 +170,15 @@ class CompactionController:
             return
         cfg = self._config
         history = self._history_access()
-        turns = [m for m in history if m.role in ("user", "agent")]
+        # E-full PR-E2 (#383): tool turns (= role="assistant" with
+        # tool_calls + role="tool" responses) are now first-class history
+        # entries and should be compactable. "agent" is the pre-#383
+        # spelling of "assistant" — kept here for backward-compat with
+        # any legacy entries that escaped read-time migration.
+        turns = [
+            m for m in history
+            if m.role in ("user", "assistant", "tool", "agent")
+        ]
         if len(turns) <= cfg.head_size + cfg.tail_size:
             self._events.emit(
                 "compaction_check", outcome="too_few_turns",
@@ -203,7 +249,7 @@ class CompactionController:
             "data": {
                 "previous_summary": prev_structured,
                 "new_turns": [
-                    {"role": t.role, "text": t.text, "seq": t.seq}
+                    _turn_to_compactor_input(t)
                     for t in candidates
                 ],
                 "section_token_caps": {
