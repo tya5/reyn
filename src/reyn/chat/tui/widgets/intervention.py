@@ -249,13 +249,53 @@ class InterventionWidget(Widget):
                     id="chip__free",
                     variant="default",
                 )
+            # Hint reflects the keyboard-first chip nav landed by the
+            # wave-6 IV bundle: the first chip is auto-focused on mount,
+            # so single-key hotkeys (``y`` / ``A`` / ``n`` / ``N``) fire
+            # directly without the user having to Ctrl+O hunt for chip
+            # focus. ``Tab`` cycles chips, ``Enter`` / ``Space`` activate,
+            # ``Ctrl+C`` abandons the prompt entirely.
             yield Label(
-                "↓ type a free answer in the chat input below, or click a button",
+                "hotkey · Tab cycles · Ctrl+C cancels · free response… for free text",
                 classes="iv-hint",
                 markup=False,
             )
         else:
             yield Input(placeholder="type your answer…", id="iv_input")
+
+    def on_mount(self) -> None:
+        """Auto-focus the first chip so chip hotkeys fire without Ctrl+O.
+
+        Before this, the InputBar's TextArea held focus by default and
+        consumed printable keys (``y`` / ``A`` / ``n`` / ``N``) into the
+        editor buffer before they could bubble up to ``on_key``. Users
+        either had to discover the undocumented ``Ctrl+O`` shortcut to
+        cycle focus to the chip area, or click chips with the mouse.
+
+        Focusing the first chip on mount means the chip area is
+        keyboard-active immediately: single-key hotkeys (= the chip's
+        ``[y]``-style mnemonic) match through the existing ``on_key``
+        handler, ``Tab`` cycles between chips, ``Enter`` / ``Space``
+        activates. The "free response…" chip is reachable by Tab and
+        continues to mount its own ``Input`` field via
+        ``_show_free_input`` when pressed.
+
+        Free-text answer path is unchanged for the no-chip case (=
+        ``Input`` widget at the bottom of ``compose``, still
+        auto-focused there); only the chip case gains keyboard access.
+        """
+        if not self._choices:
+            return
+        try:
+            first = self.query("Button").first()
+        except Exception:
+            return
+        if first is None:
+            return
+        try:
+            first.focus()
+        except Exception:
+            pass
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
