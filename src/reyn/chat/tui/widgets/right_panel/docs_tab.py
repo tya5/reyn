@@ -81,10 +81,34 @@ def render_docs(
         lines.append(f"[bold #aaaaaa]  \\[{_esc(label)}][/]")
         for md in groups[section]:
             indent = "    "
-            if file_idx == docs_cursor:
-                lines.append(f"[bold {_CORAL}]{indent}▶ {_esc(md.stem)}[/]")
+            # Wave-4 PC2: stems ending in ``.ja`` (= ``foo.ja.md``)
+            # are Japanese translations of the English doc next to
+            # them. Without distinction the alphabetical sort
+            # interleaves them (``a2a.ja / a2a / care-boundary.ja /
+            # care-boundary / …``), confusing for English-default
+            # users. Annotate the JA stems with a dim ``(ja)``
+            # suffix so the list reads at-a-glance: same alphabetical
+            # order, language identified per row. Avoids a deeper
+            # restructure (= subsection split / filter UI) for the
+            # minimum visible-distinction fix.
+            stem = md.stem
+            if stem.endswith(".ja"):
+                base = stem[:-3]
+                if file_idx == docs_cursor:
+                    lines.append(
+                        f"[bold {_CORAL}]{indent}▶ {_esc(base)}[/]"
+                        f"[dim {_CORAL}]  (ja)[/]"
+                    )
+                else:
+                    lines.append(
+                        f"[#666666]{indent}  {_esc(base)}[/]"
+                        f"[dim #666666]  (ja)[/]"
+                    )
             else:
-                lines.append(f"[#666666]{indent}  {_esc(md.stem)}[/]")
+                if file_idx == docs_cursor:
+                    lines.append(f"[bold {_CORAL}]{indent}▶ {_esc(stem)}[/]")
+                else:
+                    lines.append(f"[#666666]{indent}  {_esc(stem)}[/]")
             file_idx += 1
         lines.append("")
 
