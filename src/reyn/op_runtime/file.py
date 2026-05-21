@@ -1,4 +1,4 @@
-"""file kind handler — read/write/glob/grep/delete/edit/regenerate_index."""
+"""file kind handler — read/write/glob/grep/delete/edit/regenerate_index/mkdir/move/stat."""
 from __future__ import annotations
 
 import re
@@ -11,8 +11,8 @@ from reyn.schemas.models import FileIROp
 from . import register
 from .context import OpContext
 
-_WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index"})
-_READ_OPS = frozenset({"read", "glob", "grep"})
+_WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index", "mkdir", "move"})
+_READ_OPS = frozenset({"read", "glob", "grep", "stat"})
 
 # Max nearby-file suggestions returned on a not_found error. Mirrors the
 # ~8-suggestion shape that invoke_action's UnknownActionError emits so the
@@ -45,8 +45,14 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
             ctx.permission_resolver.require_file_write(
                 ctx.permission_decl, write_target, ctx.skill_name,
             )
+            # move also writes to dest_path — gate both source (= the file
+            # being effectively deleted) and dest (= the file being created).
+            if op.op == "move" and op.dest_path:
+                ctx.permission_resolver.require_file_write(
+                    ctx.permission_decl, op.dest_path, ctx.skill_name,
+                )
         elif op.op in _READ_OPS:
-            # read / glob / grep — gate against read scope
+            # read / glob / grep / stat — gate against read scope
             ctx.permission_resolver.require_file_read(
                 ctx.permission_decl, op.path, ctx.skill_name,
             )
@@ -109,6 +115,56 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
 
     if op.op == "regenerate_index":
         return _execute_regenerate_index(op, ctx)
+
+    if op.op == "mkdir":
+        try:
+            created = ctx.workspace.make_directory(op.path)
+        except FileExistsError as exc:
+            ctx.events.emit("tool_executed", op="mkdir", path=op.path, status="error")
+            return {
+                "kind": "file", "op": "mkdir", "path": op.path,
+                "status": "error", "error": str(exc),
+            }
+        ctx.events.emit("tool_executed", op="mkdir", path=op.path, created=created)
+        return {
+            "kind": "file", "op": "mkdir", "path": op.path,
+            "status": "ok", "created": created,
+        }
+
+    if op.op == "move":
+        if not op.dest_path:
+            return {
+                "kind": "file", "op": "move", "path": op.path,
+                "status": "error", "error": "dest_path is required for move",
+            }
+        moved = ctx.workspace.move_path(op.path, op.dest_path)
+        if not moved:
+            ctx.events.emit("tool_executed", op="move", path=op.path, found=False)
+            return {
+                "kind": "file", "op": "move", "path": op.path,
+                "dest_path": op.dest_path, "status": "not_found",
+                "error": f"source file not found: {op.path}",
+            }
+        ctx.events.emit("tool_executed", op="move", path=op.path, dest_path=op.dest_path)
+        return {
+            "kind": "file", "op": "move", "path": op.path,
+            "dest_path": op.dest_path, "status": "ok", "moved": True,
+        }
+
+    if op.op == "stat":
+        info = ctx.workspace.stat_path(op.path)
+        if info is None:
+            ctx.events.emit("tool_executed", op="stat", path=op.path, found=False)
+            return {
+                "kind": "file", "op": "stat", "path": op.path,
+                "status": "not_found",
+                "error": f"path not found: {op.path}",
+            }
+        ctx.events.emit("tool_executed", op="stat", path=op.path)
+        return {
+            "kind": "file", "op": "stat", "path": op.path,
+            "status": "ok", "info": info,
+        }
 
     raise ValueError(f"unsupported file op: {op.op!r}")
 
