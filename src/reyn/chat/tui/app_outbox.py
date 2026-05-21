@@ -266,6 +266,16 @@ class OutboxRouter:
             app._cost_inline_enabled = not app._cost_inline_enabled
         state = "on" if app._cost_inline_enabled else "off"
         self._show_transient_status(conv, f"cost-inline {state}", duration=2.5)
+        # Persist the state-change in the conv log too — a 2.5 s sticky
+        # is easy to miss if the user just scanned the screen. The
+        # lifecycle-marker shape (= same dim ``── ↑ <body> ────`` divider
+        # used by compaction markers) keeps the visual weight low while
+        # leaving an auditable record of when the toggle fired.
+        from reyn.chat.tui.widgets.conversation import _render_lifecycle_marker
+        try:
+            conv._write_log(_render_lifecycle_marker(f"↑ cost-inline {state}"))
+        except Exception:
+            pass
         # Persist the new state — additive merge, so unknown future
         # pref keys round-trip untouched. Failure is silent (= file
         # write errors don't break the toggle itself).
