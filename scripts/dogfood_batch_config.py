@@ -39,11 +39,37 @@ Config shape (YAML)::
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+def _count_scenarios(scenario_yaml_path: str) -> int | None:
+    """Count ``- id:`` entries in a scenario yaml file.
+
+    Returns ``None`` when the file is unreadable / malformed / not a
+    mapping with a ``scenarios`` list — the caller falls back to the
+    declared ``n_scenarios`` rather than crashing the batch load.
+    """
+    try:
+        path = Path(scenario_yaml_path)
+        if not path.is_file():
+            return None
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        scenarios = data.get("scenarios")
+        if not isinstance(scenarios, list):
+            return None
+        return sum(
+            1 for s in scenarios
+            if isinstance(s, dict) and "id" in s
+        )
+    except Exception:  # noqa: BLE001 — best-effort; never break batch load
+        return None
 
 
 @dataclass(frozen=True)
@@ -62,7 +88,7 @@ class WorkerSpec:
     scenario_set: str
     scenario_set_path: str
     port: int
-    n_scenarios: int
+    n_scenarios: int  # caller-declared, validated/overridden against actual scenario yaml at load time
     worktree: str
     agent_prefix: str
 
@@ -113,15 +139,34 @@ def load_batch_config(path: Path) -> BatchConfig:
     workers: list[WorkerSpec] = []
     for i, w in enumerate(workers_raw):
         for key in ("name", "scenario_set", "scenario_set_path", "port",
-                    "n_scenarios", "worktree", "agent_prefix"):
+                    "worktree", "agent_prefix"):
             if key not in w:
                 raise ValueError(f"workers[{i}].{key} is required")
+        # B47 carry-over fix (2026-05-21): n_scenarios is now derived from
+        # the actual scenario yaml. Caller-declared value is honoured only
+        # when it matches the on-disk scenario count; mismatch emits a
+        # warning and uses the on-disk count. This prevents the recurring
+        # W6 drift where ``n_scenarios: 7`` was hardcoded against a
+        # ``plan_mode.yaml`` that had 3 scenarios → sub-agent dispatched
+        # 7 agents, 4 of them ended up Blocked.
+        actual_n = _count_scenarios(w["scenario_set_path"])
+        declared_n = int(w.get("n_scenarios", actual_n))
+        if actual_n is not None and declared_n != actual_n:
+            warnings.warn(
+                f"workers[{i}].n_scenarios={declared_n} does not match "
+                f"the actual scenario count in {w['scenario_set_path']!r} "
+                f"(= {actual_n}). Using {actual_n}. Drop the n_scenarios "
+                f"field from the batch yaml to silence this warning.",
+                UserWarning,
+                stacklevel=2,
+            )
+        n_scenarios = actual_n if actual_n is not None else declared_n
         workers.append(WorkerSpec(
             name=w["name"],
             scenario_set=w["scenario_set"],
             scenario_set_path=w["scenario_set_path"],
             port=int(w["port"]),
-            n_scenarios=int(w["n_scenarios"]),
+            n_scenarios=n_scenarios,
             worktree=w["worktree"],
             agent_prefix=w["agent_prefix"],
         ))
