@@ -79,10 +79,18 @@ class _PanelContent(Static):
                 return Text.from_markup(markup)
             # Truncate each line independently so long values
             # (event types, file names, …) don't wrap into multiple
-            # rows and split words mid-line.
+            # rows and split words mid-line. A single line whose
+            # markup fails to parse (orphaned ``[/]`` from a leaked
+            # newline upstream, for example) falls back to plain text
+            # rather than killing the whole tab render via the outer
+            # ``except`` — losing one row's color is OK, the entire
+            # panel going blank is not.
             parts: list[Text] = []
             for line_markup in markup.split("\n"):
-                line_t = Text.from_markup(line_markup)
+                try:
+                    line_t = Text.from_markup(line_markup)
+                except Exception:
+                    line_t = Text(line_markup)
                 line_t.truncate(width, overflow="ellipsis")
                 parts.append(line_t)
             return Text("\n").join(parts)

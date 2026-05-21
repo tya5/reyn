@@ -30,6 +30,22 @@ def _truncate_to_cells(s: str, max_cells: int) -> tuple[str, bool]:
         used += w
     return "".join(out_chars), True
 
+
+def _oneline(s: str) -> str:
+    """Collapse any whitespace run (incl. newlines) to a single space.
+
+    Event hints and reply previews land inside a single Rich markup line
+    like ``[#777777]<text>[/]``. An embedded ``\\n`` in ``<text>`` splits
+    that markup across two rendered lines, leaving the closing ``[/]``
+    on its own with no matching open tag — ``Text.from_markup`` raises
+    ``MarkupError`` on the orphan close, the Static fallback returns an
+    empty string, and the entire Events tab goes blank. Collapsing
+    whitespace upstream keeps the rendered output single-line per row.
+    """
+    if not s:
+        return ""
+    return " ".join(s.split())
+
 _EVENT_COLORS: dict[str, str] = {
     "phase_started":               "#44cc88",
     "phase_completed":             "#44cc88",
@@ -584,7 +600,7 @@ def render_events(
         # "2026-05-17T09:54:42…" — the time block lives in chars 11-19
         ts = _esc(raw_ts[11:19] if len(raw_ts) >= 19 else raw_ts)
         color = _EVENT_COLORS.get(ev_type, _DEFAULT_EVENT_COLOR)
-        hint = _esc(_event_hint(ev))
+        hint = _esc(_oneline(_event_hint(ev)))
         hint_part = f"  [#555555]{hint}[/]" if hint else ""
         cursor_prefix = (
             f"[bold {_CORAL}]▶ [/]" if i == cursor else "  "
@@ -605,8 +621,13 @@ def render_events(
                     # ``↳`` line across 2-3 panel rows. 40 cells matches
                     # the ``_event_hint`` cap used elsewhere in this
                     # file and fits the 36-col panel min with the 7-cell
-                    # ``↳`` indent.
-                    truncated, was_truncated = _truncate_to_cells(reply, 40)
+                    # ``↳`` indent. Reply collapses to one line first
+                    # so an embedded newline doesn't orphan the `[/]`
+                    # and crash ``Text.from_markup`` (= the whole tab
+                    # would render blank — see ``_oneline`` docstring).
+                    truncated, was_truncated = _truncate_to_cells(
+                        _oneline(reply), 40,
+                    )
                     short = _esc(truncated) + ("…" if was_truncated else "")
                     lines.append(f"[#444444]       ↳ [/][#777777]{short}[/]")
 
