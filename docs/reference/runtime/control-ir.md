@@ -12,7 +12,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 
 | Kind | Purpose | Permission required |
 |------|---------|---------------------|
-| `file` | Read, write, glob, grep, edit, or delete files | `file.<op>` |
+| `file` | Read, write, glob, grep, edit, delete, mkdir, move, or stat files | `file.<op>` |
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
 | `run_skill` | Run another skill as a sub-workflow | none (skill-level decision) |
 | `lint` | Run the DSL linter on a skill directory | none |
@@ -46,7 +46,7 @@ The OS validates the op against its kind's schema, executes it, and returns a re
 
 ## `file`
 
-Sub-operations: `read`, `write`, `edit`, `delete`, `glob`, `grep`, `regenerate_index`.
+Sub-operations: `read`, `write`, `edit`, `delete`, `glob`, `grep`, `regenerate_index`, `mkdir`, `move`, `stat`.
 
 ```json
 {"kind": "file", "op": "read", "path": "src/foo.py"}
@@ -68,7 +68,19 @@ Sub-operations: `read`, `write`, `edit`, `delete`, `glob`, `grep`, `regenerate_i
  "output_path": ".reyn/memory/MEMORY.md",
  "entry_template": "- [{name}]({slug}.md) — {description}",
  "header": "# Memory Index\n\n"}
+
+{"kind": "file", "op": "mkdir", "path": "subdir/nested"}
+
+{"kind": "file", "op": "move", "path": "old.txt", "dest_path": "new.txt"}
+
+{"kind": "file", "op": "stat", "path": "src/foo.py"}
 ```
+
+**`mkdir`** creates a directory under the project. `mkdir -p` semantics — parents are created and the call is idempotent (returns `created: false` when the directory already exists). Raises an error if a non-directory exists at the path. Permission: `file.write`.
+
+**`move`** renames / moves a file or directory. Requires write permission on **both** source (= delete-like) and destination (= write-like). Destination parent directories are created as needed. Returns `status: not_found` if the source does not exist.
+
+**`stat`** returns filesystem metadata for a path: `{size, mtime, ctime, is_dir, is_file, mode}`. Returns `status: not_found` cleanly if the path does not exist. Permission: `file.read`.
 
 **`regenerate_index`** rebuilds a Markdown index from the YAML frontmatter of every `*.md` file under `path`. Fields:
 

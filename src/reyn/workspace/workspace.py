@@ -87,6 +87,63 @@ class Workspace:
             return True
         return False
 
+    def make_directory(self, path_str: str, *, parents: bool = True) -> bool:
+        """Create a directory under the project (issue #356).
+
+        Idempotent: returns True if newly created, False if the directory
+        already existed. Raises FileExistsError if a non-directory
+        (= a regular file) sits at the path. Raises PermissionError via
+        ``_resolve_write`` if the path is outside the project and not
+        explicitly approved.
+        """
+        path = self._resolve_write(path_str)
+        if path.exists():
+            if path.is_dir():
+                return False
+            raise FileExistsError(
+                f"path exists but is not a directory: {path_str!r}"
+            )
+        path.mkdir(parents=parents, exist_ok=False)
+        self._events.emit("workspace_updated", path=str(path))
+        return True
+
+    def move_path(self, src_str: str, dst_str: str) -> bool:
+        """Move / rename a file or directory (issue #356).
+
+        Requires write permission on BOTH source (= effectively a delete)
+        and destination (= effectively a write). Returns True on success,
+        False if the source does not exist.
+        """
+        src = self._resolve_write(src_str)
+        dst = self._resolve_write(dst_str)
+        if not src.exists():
+            return False
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
+        self._events.emit("workspace_updated", path=str(dst))
+        return True
+
+    def stat_path(self, path_str: str) -> dict | None:
+        """Filesystem metadata for a file / directory (issue #356).
+
+        Returns ``None`` if the path does not exist. Otherwise returns a
+        dict with ``size`` (bytes), ``mtime`` / ``ctime`` (epoch seconds,
+        float), ``is_dir``, ``is_file``, and ``mode`` (= octal permissions
+        string, e.g. ``"0o644"``). Gated by ``_resolve_read``.
+        """
+        path = self._resolve_read(path_str)
+        if not path.exists():
+            return None
+        st = path.stat()
+        return {
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            "ctime": st.st_ctime,
+            "is_dir": path.is_dir(),
+            "is_file": path.is_file(),
+            "mode": oct(st.st_mode & 0o777),
+        }
+
     def glob_files(self, pattern: str, max_results: int = 50) -> list[str]:
         """
         Expand a glob pattern. Relative patterns resolve under base_dir (CWD).

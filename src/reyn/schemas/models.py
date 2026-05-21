@@ -214,9 +214,13 @@ class Skill(BaseModel):
 
 class FileIROp(BaseModel):
     kind: Literal["file"]
-    op: Literal["read", "write", "glob", "delete", "grep", "edit", "regenerate_index"]
-    path: str                        # file path for read/write/edit/delete; glob pattern for glob; dir or file for grep; source dir for regenerate_index
+    op: Literal[
+        "read", "write", "glob", "delete", "grep", "edit",
+        "regenerate_index", "mkdir", "move", "stat",
+    ]
+    path: str                        # file path for read/write/edit/delete/stat; glob pattern for glob; dir or file for grep; source dir for regenerate_index; directory path for mkdir; source path for move
     content: str | None = None       # write only
+    dest_path: str | None = None     # move only: destination path
     max_results: int = 50            # glob only: cap on number of matching paths returned
     # read-specific
     offset: int | None = None        # line number to start reading from (0-indexed); None = beginning
