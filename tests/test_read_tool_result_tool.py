@@ -189,3 +189,113 @@ def test_read_tool_result_without_media_store_degrades_with_error(tmp_path):
 
     assert result["status"] == "error"
     assert "MediaStore" in result["error"]
+
+
+# ── offset / limit line-slice (= PR #409 4-surface symmetry adoption, Q7) ──
+
+
+def test_read_tool_result_offset_only_skips_leading_lines(tmp_path):
+    """Tier 2: ``offset=N`` starts at line N (0-indexed), reads through
+    end-of-body. Mirrors ``read_file`` / ``reyn_src_read`` /
+    ``read_memory_body`` semantics introduced in PR #409.
+    """
+    store, path_ref = _populate_tool_result(
+        tmp_path, "L0\nL1\nL2\nL3\nL4\n",
+    )
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(_handle({"path": path_ref, "offset": 2}, ctx))
+
+    assert result["status"] == "ok"
+    assert result["content"] == "L2\nL3\nL4\n"
+
+
+def test_read_tool_result_limit_only_takes_first_n(tmp_path):
+    """Tier 2: ``limit=N`` without ``offset`` takes the first N lines."""
+    store, path_ref = _populate_tool_result(
+        tmp_path, "L0\nL1\nL2\nL3\nL4\n",
+    )
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(_handle({"path": path_ref, "limit": 2}, ctx))
+
+    assert result["status"] == "ok"
+    assert result["content"] == "L0\nL1\n"
+
+
+def test_read_tool_result_offset_and_limit_window(tmp_path):
+    """Tier 2: combining ``offset`` + ``limit`` returns the
+    ``[offset, offset+limit)`` line window.
+    """
+    store, path_ref = _populate_tool_result(
+        tmp_path, "L0\nL1\nL2\nL3\nL4\n",
+    )
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle({"path": path_ref, "offset": 1, "limit": 2}, ctx),
+    )
+
+    assert result["status"] == "ok"
+    assert result["content"] == "L1\nL2\n"
+
+
+def test_read_tool_result_offset_past_eof_returns_empty(tmp_path):
+    """Tier 2: ``offset`` past the body's last line returns empty
+    content — never an error. Matches the past-EOF semantic of the
+    three sister read tools so the LLM detects out-of-range without a
+    structured failure path.
+    """
+    store, path_ref = _populate_tool_result(tmp_path, "L0\nL1\nL2\n")
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(_handle({"path": path_ref, "offset": 99}, ctx))
+
+    assert result["status"] == "ok"
+    assert result["content"] == ""
+
+
+def test_read_tool_result_slice_then_max_bytes_compose(tmp_path):
+    """Tier 2: ``offset`` / ``limit`` (= line slice) are applied BEFORE
+    ``max_bytes`` (= byte cap) — the two axes compose. Verifies the
+    slice happens against the full body, then the resulting sliced
+    text is byte-capped if it still exceeds ``max_bytes``.
+
+    Scenario: 100 lines of 20-char content (= ~2000 bytes). offset=10,
+    limit=50 → sliced ~1000 bytes. max_bytes=300 → final 300 bytes of
+    the sliced window, ``truncated=True`` on the sliced size.
+    """
+    lines = [f"line {i:>3} content" for i in range(100)]  # 16-char each
+    body = "\n".join(lines) + "\n"
+    store, path_ref = _populate_tool_result(tmp_path, body)
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle(
+            {"path": path_ref, "offset": 10, "limit": 50, "max_bytes": 300},
+            ctx,
+        ),
+    )
+
+    assert result["status"] == "ok"
+    # max_bytes hit, surfaces truncated=True.
+    assert result["truncated"] is True
+    assert result["max_bytes"] == 300
+    # content starts at offset=10 (= "line  10 content"), not the file head.
+    assert result["content"].startswith("line  10 content")
+    # content is exactly 300 bytes (= max_bytes cap on the sliced window).
+    assert len(result["content"].encode("utf-8")) == 300
+
+
+def test_read_tool_result_no_slice_args_is_unchanged_behaviour(tmp_path):
+    """Tier 2: omitting ``offset`` / ``limit`` preserves the prior
+    full-body / max_bytes-only behaviour — backwards-compatible.
+    """
+    store, path_ref = _populate_tool_result(tmp_path, "alpha\nbeta\ngamma\n")
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(_handle({"path": path_ref}, ctx))
+
+    assert result["status"] == "ok"
+    assert result["content"] == "alpha\nbeta\ngamma\n"
+    assert result["truncated"] is False
