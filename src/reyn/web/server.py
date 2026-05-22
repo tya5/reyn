@@ -147,6 +147,11 @@ async def _lifespan(app: FastAPI):
             scheduler.set_runner(_make_cron_runner())
             await scheduler.start()
             app.state.cron_scheduler = scheduler
+            # FP-0041 #489 PR-B2: expose the scheduler to LLM-callable
+            # cron tools (= cron__register / unregister / enable /
+            # disable) so they can apply live updates without restart.
+            from reyn.cron import set_active_scheduler
+            set_active_scheduler(scheduler)
             logger.info(
                 "Started cron scheduler with %d enabled job(s)",
                 sum(1 for j in cron_jobs if j.enabled),
@@ -165,6 +170,10 @@ async def _lifespan(app: FastAPI):
             await sched.stop()
         except Exception as exc:  # noqa: BLE001 — defensive shutdown
             logger.warning("Cron scheduler stop failed: %s", exc)
+        # Clear the active-scheduler registry so LLM-callable tools
+        # invoked after shutdown don't dispatch to a stopped scheduler.
+        from reyn.cron import set_active_scheduler
+        set_active_scheduler(None)
 
 
 app = FastAPI(

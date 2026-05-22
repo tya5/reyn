@@ -46,6 +46,13 @@ def get_default_registry() -> ToolRegistry:
         LIST_AGENTS,
         LIST_SKILLS,
     )
+    from reyn.tools.cron import (
+        CRON_DISABLE,
+        CRON_ENABLE,
+        CRON_LIST,
+        CRON_REGISTER,
+        CRON_UNREGISTER,
+    )
     from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
     from reyn.tools.drop_source import DROP_SOURCE
 
@@ -151,6 +158,14 @@ def get_default_registry() -> ToolRegistry:
     registry.register(PLAN)
     registry.register(REYN_SRC_LIST)
     registry.register(REYN_SRC_READ)
+    # FP-0041 #489 PR-B2: cron action category (= LLM-callable cron
+    # job management). CRON_LIST is both-surface (read_only); the
+    # 4 mutating ops are router-only.
+    registry.register(CRON_REGISTER)
+    registry.register(CRON_UNREGISTER)
+    registry.register(CRON_LIST)
+    registry.register(CRON_ENABLE)
+    registry.register(CRON_DISABLE)
     # FP-0038 (#171) S2 + S3: glob / grep for Reyn's own repo, mirroring
     # the file__glob / file__grep surfaces but scoped to the OS source tree.
     registry.register(REYN_SRC_GLOB)
