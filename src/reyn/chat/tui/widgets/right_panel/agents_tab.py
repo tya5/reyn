@@ -592,7 +592,17 @@ def render_agents(
                 # blended into surrounding text and was easy to miss.
                 plan_n_done = info.get("plan_n_done")
                 plan_n_total = info.get("plan_n_total")
-                if plan_n_done and plan_n_total:
+                # Wave-10 follow-up H-F4: ``plan_n_done is not None``
+                # rather than truthiness. The pre-fix ``if plan_n_done
+                # and plan_n_total`` treats ``plan_n_done == 0`` (=
+                # plan just activated, step 1 of N not yet completed)
+                # as a hide signal, so the badge "pops in" mid-run
+                # instead of being consistent with the conv-pane
+                # SkillActivityRow badge that DOES show "plan 0/5" from
+                # the start of a plan. The ``plan_n_total`` check
+                # remains truthy (= a zero-total plan is degenerate
+                # noise; suppressing it stays correct).
+                if plan_n_done is not None and plan_n_total:
                     skill_label.append(
                         f"  [plan {plan_n_done}/{plan_n_total}]",
                         style=_CORAL,
