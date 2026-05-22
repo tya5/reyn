@@ -111,7 +111,17 @@ class StreamingRow(Widget):
         self._mounted = False
         # Cursor blink state
         self._cursor_visible: bool = True
-        self._last_chunk_at: float = 0.0
+        # Wave-9 F-F2: arm the idle timer from stream open (= row
+        # construction). The sticky ``⟳ thinking…`` indicator hides at
+        # ``__stream_start__`` — BEFORE the first token arrives — so a
+        # cold-start LLM that takes 6-20s to deliver its first token
+        # previously left the user with only a blinking cursor and no
+        # "still waiting" cue (= the old ``_last_chunk_at = 0.0``
+        # sentinel disabled the stall calculation until the first chunk
+        # landed). With the timer armed from open, the stall ``  …``
+        # indicator fires at the standard 5s threshold even when the
+        # first chunk is still in flight.
+        self._last_chunk_at: float = monotonic()
         self._cursor_tick_count: int = 0
         # Handle for the 16 ms render-coalescing interval, stored so
         # ``seal()`` can stop it. Without this the timer kept firing at
@@ -172,7 +182,11 @@ class StreamingRow(Widget):
         t.append(self._prefix, style="bold " + _AMBER)
         t.append(self._accumulated)
         if not self._sealed:
-            idle = (monotonic() - self._last_chunk_at) if self._last_chunk_at != 0.0 else 0.0
+            # ``_last_chunk_at`` is armed at construction (F-F2) so this
+            # calculation is always meaningful — no sentinel-zero guard
+            # needed. Idle past 5s shows the stall cue regardless of
+            # whether any token has arrived yet.
+            idle = monotonic() - self._last_chunk_at
             if idle > 5.0:
                 t.append(" …", style="dim")
             else:
