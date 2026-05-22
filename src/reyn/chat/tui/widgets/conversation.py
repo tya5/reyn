@@ -1178,6 +1178,45 @@ class ConversationView(Widget):
         except Exception:
             pass
 
+    def scroll_line_up(self) -> None:
+        """Scroll the conv log up one line without changing focus.
+
+        Complements ``scroll_page_up`` for fine-grained navigation when
+        a single PageUp overshoots. Sets ``_user_scrolled`` so the
+        scroll watcher doesn't auto-scroll back to bottom on the next
+        message.
+        """
+        log = self._log()
+        try:
+            log.scroll_relative(y=-1, animate=False)
+        except Exception:
+            pass
+        self._user_scrolled = True
+
+    def scroll_line_down(self) -> None:
+        """Scroll the conv log down one line without changing focus."""
+        log = self._log()
+        try:
+            log.scroll_relative(y=1, animate=False)
+        except Exception:
+            pass
+        try:
+            if log.scroll_y >= log.max_scroll_y - 1:
+                self._user_scrolled = False
+        except Exception:
+            pass
+
+    def scroll_to_bottom(self) -> None:
+        """Jump to the tail of the conv log and re-arm auto-scroll.
+
+        Lets the user return to the live tail after reading history
+        via PageUp / Ctrl+P without having to either press PageDown
+        repeatedly or type a new message (which is what currently
+        triggers ``_snap_to_bottom``).
+        """
+        self._snap_to_bottom()
+        self._user_scrolled = False
+
     def _jump_to_relative_anchor(self, delta: int) -> None:
         if not self._turn_anchors:
             return
