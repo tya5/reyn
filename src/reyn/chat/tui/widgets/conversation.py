@@ -1613,6 +1613,31 @@ class ConversationView(Widget):
             except Exception:
                 pass
         self._error_boxes.clear()
+        # Wave-10 G-F1: sweep in-flight ToolCallRow widgets too. They
+        # share the same "child of ConversationView, not a RichLog
+        # line" mounting model as ErrorBox / StreamingRow / SkillActivityRow,
+        # so ``_log().clear()`` doesn't unmount them. Without this loop:
+        #   - the row widgets stay on screen as orphans on the now-blank
+        #     pane (= same visual artefact ErrorBox suffered before its
+        #     sweep was added)
+        #   - ``_tool_call_rows`` still carries the stale op_id keys, so
+        #     when the in-flight tool finally completes,
+        #     ``complete_tool_call_row`` / ``fail_tool_call_row`` pops
+        #     the dict entry and calls ``row.remove()`` against an
+        #     already-orphaned widget → Textual DOM exception swallowed
+        #     by the bare ``except Exception: pass`` in the caller.
+        # We use ``finish_aborted("cleared")`` rather than a bare
+        # ``remove()`` so the row briefly renders its ⊘ terminal state
+        # before the parent ``clear()`` blanks the log — matches the
+        # ``_skill_rows`` ``finish(reason="cleared")`` idiom directly
+        # above.
+        for row in list(self._tool_call_rows.values()):
+            try:
+                row.finish_aborted("cleared")
+                row.remove()
+            except Exception:
+                pass
+        self._tool_call_rows.clear()
         # Reset header-grouping + turn anchors + fold stash
         self._last_speaker = ""
         self._last_speaker_at = 0.0
