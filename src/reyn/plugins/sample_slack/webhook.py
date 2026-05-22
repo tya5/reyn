@@ -83,8 +83,6 @@ from reyn.web.deps import get_registry
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["webhook"])
-
 # Replay-protection window for Slack signing. Per Slack docs, ts older
 # than 5 minutes should be rejected to prevent replay attacks.
 _SLACK_REPLAY_WINDOW_SECONDS = 60 * 5
@@ -190,129 +188,116 @@ def mint_envelope_from_slack_event(event: dict) -> dict | None:
     }
 
 
-# ── target agent resolution (= MVP single-agent shape) ────────────────
+# ── route factory ─────────────────────────────────────────────────────
 
 
-def _resolve_target_agent(config: Any) -> str | None:
-    """Resolve the target agent for Slack inbound messages.
+def build_router(*, target_agent: str) -> APIRouter:
+    """Build the Slack webhook router for the configured target agent.
 
-    MVP shape (= follow-up PR will add per-user/per-channel ACL):
+    Called by the plugin's ``register_router`` entry-point with the
+    resolved target agent name from ``reyn.yaml``. Captures the agent
+    in the closure so the route handler doesn't need to re-resolve
+    per request.
 
-      1. ``SLACK_TARGET_AGENT`` env var (= operator quick-config)
-      2. ``slack.target_agent`` in reyn.yaml (= TBD wiring)
-      3. Default ``"default"`` (= will fail if no such agent exists,
-         and the failure shows up as 500 with a clear log line)
+    Signing secret is read from ``SLACK_SIGNING_SECRET`` env var at
+    request time (= not captured at build time, so operator can
+    rotate without restarting Reyn — Slack-side rotation requires
+    a brief overlap window anyway).
     """
-    env = os.environ.get("SLACK_TARGET_AGENT")
-    if env:
-        return env
-    # config-side wiring lands when ReynConfig.slack section ships.
-    return None
+    router = APIRouter(tags=["plugin-sample_slack"])
 
+    @router.post("/webhook/slack")
+    async def slack_webhook(
+        request: Request,
+        registry=Depends(get_registry),
+    ) -> Response:
+        """Receive a Slack Events API POST.
 
-# ── route ────────────────────────────────────────────────────────────
+        Three branches:
+          1. URL verification → echo challenge.
+          2. Event with no dispatchable payload (= non-message events,
+             malformed payload) → 200 ack only.
+          3. Message event → verify signing, mint envelope, push to
+             target agent's inbox, return 200.
 
+        Errors return appropriate HTTP status without raising; Slack
+        will retry on non-2xx so we avoid 4xx/5xx for transient cases.
+        """
+        body_bytes = await request.body()
 
-@router.post("/webhook/slack")
-async def slack_webhook(
-    request: Request,
-    registry=Depends(get_registry),
-) -> Response:
-    """Receive a Slack Events API POST.
+        # Parse body up-front so we can handle url_verification before
+        # signing check (= URL verification doesn't have a signature
+        # during initial setup with some Slack App configurations).
+        try:
+            import json
+            payload = json.loads(body_bytes.decode("utf-8") or "{}")
+        except Exception:
+            logger.warning("Slack webhook: malformed JSON body")
+            return JSONResponse(
+                {"error": "malformed body"}, status_code=400,
+            )
 
-    Three branches:
-      1. URL verification → echo challenge.
-      2. Event with no dispatchable payload (= non-message events,
-         malformed payload) → 200 ack only.
-      3. Message event → verify signing, mint envelope, push to
-         target agent's inbox, return 200.
+        # URL verification handshake — Slack POSTs this on initial setup.
+        if isinstance(payload, dict) and payload.get("type") == "url_verification":
+            challenge = payload.get("challenge")
+            return JSONResponse(
+                {"challenge": challenge if isinstance(challenge, str) else ""},
+                status_code=200,
+            )
 
-    Errors return appropriate HTTP status without raising; Slack
-    will retry on non-2xx so we avoid 4xx/5xx for transient cases.
-    """
-    body_bytes = await request.body()
-
-    # Parse body up-front so we can handle url_verification before
-    # signing check (= URL verification doesn't have a signature
-    # during initial setup with some Slack App configurations).
-    try:
-        import json
-        payload = json.loads(body_bytes.decode("utf-8") or "{}")
-    except Exception:
-        logger.warning("Slack webhook: malformed JSON body")
-        return JSONResponse(
-            {"error": "malformed body"}, status_code=400,
+        # Signing verification for all other paths.
+        signing_secret = os.environ.get("SLACK_SIGNING_SECRET")
+        if not signing_secret:
+            logger.warning(
+                "Slack webhook received but SLACK_SIGNING_SECRET is unset; rejecting.",
+            )
+            return JSONResponse(
+                {"error": "Slack signing secret not configured"},
+                status_code=503,
+            )
+        ok, detail = verify_slack_signature(
+            body=body_bytes,
+            timestamp=request.headers.get("X-Slack-Request-Timestamp", ""),
+            signature=request.headers.get("X-Slack-Signature", ""),
+            signing_secret=signing_secret,
         )
+        if not ok:
+            logger.warning("Slack webhook signing verify failed: %s", detail)
+            return JSONResponse(
+                {"error": f"signature verification failed: {detail}"},
+                status_code=401,
+            )
 
-    # URL verification handshake — Slack POSTs this on initial setup.
-    if isinstance(payload, dict) and payload.get("type") == "url_verification":
-        challenge = payload.get("challenge")
-        return JSONResponse(
-            {"challenge": challenge if isinstance(challenge, str) else ""},
-            status_code=200,
-        )
+        # Mint envelope from the event.
+        envelope = mint_envelope_from_slack_event(payload)
+        if envelope is None:
+            # Non-dispatchable event (= reaction / channel_join / bot
+            # message echo / etc.). Slack expects 2xx so it won't retry.
+            return JSONResponse({"status": "ignored"}, status_code=200)
 
-    # Signing verification for all other paths.
-    signing_secret = os.environ.get("SLACK_SIGNING_SECRET")
-    if not signing_secret:
-        logger.warning(
-            "Slack webhook received but SLACK_SIGNING_SECRET is unset; rejecting.",
-        )
-        return JSONResponse(
-            {"error": "Slack signing secret not configured"},
-            status_code=503,
-        )
-    ok, detail = verify_slack_signature(
-        body=body_bytes,
-        timestamp=request.headers.get("X-Slack-Request-Timestamp", ""),
-        signature=request.headers.get("X-Slack-Signature", ""),
-        signing_secret=signing_secret,
-    )
-    if not ok:
-        logger.warning("Slack webhook signing verify failed: %s", detail)
-        return JSONResponse(
-            {"error": f"signature verification failed: {detail}"},
-            status_code=401,
-        )
+        # Push to inbox via the registry (= ensure_running so the agent's
+        # router_loop is live to consume). ``target_agent`` was captured
+        # in the closure at ``build_router`` time from the plugin config.
+        try:
+            session = await registry.ensure_running(target_agent)
+        except FileNotFoundError:
+            logger.warning(
+                "Slack webhook: target agent %r not found in registry",
+                target_agent,
+            )
+            return JSONResponse(
+                {"error": f"target agent {target_agent!r} not found"},
+                status_code=503,
+            )
+        try:
+            await session._put_inbox("user", dict(envelope))
+        except Exception as exc:
+            logger.exception("Slack webhook: inbox push failed: %s", exc)
+            return JSONResponse(
+                {"error": f"inbox dispatch failed: {type(exc).__name__}"},
+                status_code=500,
+            )
 
-    # Mint envelope from the event.
-    envelope = mint_envelope_from_slack_event(payload)
-    if envelope is None:
-        # Non-dispatchable event (= reaction / channel_join / bot
-        # message echo / etc.). Slack expects 2xx so it won't retry.
-        return JSONResponse({"status": "ignored"}, status_code=200)
+        return JSONResponse({"status": "ok"}, status_code=200)
 
-    # Resolve target agent.
-    target = _resolve_target_agent(None)
-    if not target:
-        logger.warning(
-            "Slack webhook: no target agent configured "
-            "(SLACK_TARGET_AGENT env var unset)",
-        )
-        return JSONResponse(
-            {"error": "no target agent configured"},
-            status_code=503,
-        )
-
-    # Push to inbox via the registry (= ensure_running so the agent's
-    # router_loop is live to consume).
-    try:
-        session = await registry.ensure_running(target)
-    except FileNotFoundError:
-        logger.warning(
-            "Slack webhook: target agent %r not found in registry", target,
-        )
-        return JSONResponse(
-            {"error": f"target agent {target!r} not found"},
-            status_code=503,
-        )
-    try:
-        await session._put_inbox("user", dict(envelope))
-    except Exception as exc:
-        logger.exception("Slack webhook: inbox push failed: %s", exc)
-        return JSONResponse(
-            {"error": f"inbox dispatch failed: {type(exc).__name__}"},
-            status_code=500,
-        )
-
-    return JSONResponse({"status": "ok"}, status_code=200)
+    return router
