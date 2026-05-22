@@ -47,12 +47,14 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 _READ_TOOL_RESULT_DESCRIPTION = (
     "Read a tool_result_ref resource — the full content referenced by "
     "a path_ref preview. Use when the preview does not contain the "
-    "content needed for what comes next. path: project-relative path "
-    "under .reyn/tool-results/. resource_uri: cross-host capable "
-    "alternative to path (reyn-tool-result://<agent>/<artifact>); pass "
-    "this when the path_ref carries one. Exactly one of path or "
-    "resource_uri is required. offset / limit slice by line (0-indexed) "
-    "— the same shape as read_file / reyn_src_read / read_memory_body. "
+    "content needed for what comes next. Exactly ONE of path / "
+    "resource_uri / url is required. path: project-relative path "
+    "under .reyn/tool-results/ (= same-host only). resource_uri: "
+    "vendor-scheme identifier (reyn-tool-result://<agent>/<artifact>; "
+    "= same-host only). url: standard HTTPS URL — fetched via HTTP "
+    "GET when the host differs from local, short-circuited to fs read "
+    "when it matches. offset / limit slice by line (0-indexed) — the "
+    "same shape as read_file / reyn_src_read / read_memory_body. "
     "max_bytes caps the returned size after slicing (default 16384). "
     "content_hash: optional SHA-256 from the path_ref; when supplied, "
     "the read body's hash is verified and a mismatch returns an error."
@@ -68,8 +70,17 @@ _READ_TOOL_RESULT_PARAMETERS: dict[str, Any] = {
                 "Cross-host capable handle "
                 "(reyn-tool-result://<agent>/<artifact>). Alternative "
                 "to `path` for path-refs that carry a resource_uri. "
-                "Same-host resolution today; cross-host RPC support is "
-                "tracked under #385 β core impl sub-task 3."
+                "Same-host resolution only; for cross-host fetch use "
+                "the `url` field instead."
+            ),
+        },
+        "url": {
+            "type": "string",
+            "description": (
+                "Standard HTTPS URL from the path_ref's `url` field "
+                "(= cross-host capable). When the URL host matches "
+                "the local Reyn instance, the read short-circuits to "
+                "fs; when it differs, the handler HTTP-GETs the body."
             ),
         },
         "offset": {
@@ -151,6 +162,22 @@ def _source_agent_from_uri(resource_uri: str) -> str | None:
     return parsed[0] if parsed else None
 
 
+def _source_agent_from_url(url: str) -> str | None:
+    """Extract the source_agent from a path_ref ``url`` (= the 2nd
+    segment of the path: ``/agents/<agent>/tool-results/<artifact>``).
+
+    Returns None when the URL doesn't match the expected shape — the
+    handler then surfaces ``source_agent="unknown"`` in the event so
+    measurement still sees the URL-based read, just without provenance.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    segments = parsed.path.strip("/").split("/")
+    if len(segments) >= 4 and segments[0] == "agents" and segments[2] == "tool-results":
+        return segments[1] or None
+    return None
+
+
 def _normalise_hash(value: str) -> str:
     """Return ``sha256:<hex>`` form, accepting either prefixed or bare hex.
 
@@ -162,6 +189,88 @@ def _normalise_hash(value: str) -> str:
     if value.startswith("sha256:"):
         return value
     return f"sha256:{value}"
+
+
+async def _http_get_body(
+    url: str, *, timeout: float = 30.0,
+) -> tuple[str, int, str | None]:
+    """HTTP GET the URL's body for cross-host ``read_tool_result``
+    dispatch (= #385 β core impl sub-task 3c).
+
+    Returns ``(body, status_code, error_message)``:
+      - on 200: ``(body, 200, None)``
+      - on non-200: ``("", status_code, error_message)``
+      - on transport failure (= connection / timeout): ``("", 0, error_message)``
+
+    Body is decoded as UTF-8 (= text/plain tool results); binary
+    bodies (= image artifacts) currently fall through to the same
+    decoding, which may produce replacement characters — that's
+    acceptable because LLM consumers of ``read_tool_result`` are
+    text-focused (= image consumption goes through ``read_image`` /
+    materialise paths).
+
+    The function is async and uses ``httpx.AsyncClient`` so the
+    handler stays async-friendly. Tests can substitute via the
+    ``_HTTP_GET_OVERRIDE`` module-level hook below.
+    """
+    if _HTTP_GET_OVERRIDE is not None:
+        return await _HTTP_GET_OVERRIDE(url, timeout=timeout)
+    try:
+        import httpx
+    except ImportError:
+        return "", 0, (
+            "httpx not installed; cross-host read_tool_result requires "
+            "the [web] extra. install with: pip install -e .[web]"
+        )
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url)
+    except Exception as exc:  # noqa: BLE001 — surface any transport failure
+        return "", 0, f"HTTP GET failed: {type(exc).__name__}: {exc}"
+    if resp.status_code != 200:
+        return "", resp.status_code, (
+            f"HTTP {resp.status_code} from {url}"
+        )
+    return resp.text, 200, None
+
+
+# Test override hook: set to an async callable matching
+# ``async (url, *, timeout) -> (body, status, error)`` to substitute
+# for the real httpx call. Used by ``tests/test_read_tool_result_tool.py``
+# cross-host tests; production code path is the real httpx.
+_HTTP_GET_OVERRIDE: Any = None
+
+
+async def _fetch_via_url(
+    media_store: Any, url: str,
+) -> tuple[str, bool, str | None]:
+    """Resolve a path-ref ``url`` via the appropriate transport.
+
+    Returns ``(body, found, http_error)``:
+      - same-host short-circuit succeeded: ``(body, True, None)``
+      - same-host file missing: ``("", False, None)``
+      - cross-host HTTP GET succeeded: ``(body, True, None)``
+      - cross-host HTTP non-200 / transport failure: ``("", False, error_message)``
+
+    The dispatcher first asks ``MediaStore.read_tool_result_by_url``
+    whether the URL is local. ValueError from that call means "not
+    local" — fall through to HTTP GET. Other exceptions surface.
+    """
+    try:
+        body, found = media_store.read_tool_result_by_url(url)
+        return body, found, None
+    except ValueError:
+        # Not local — fall through to HTTP GET.
+        pass
+    body, status, http_error = await _http_get_body(url)
+    if http_error is not None:
+        if status == 404:
+            # Map 404 to the "not_found" status path the handler already
+            # returns for missing same-host files (= unified consumer
+            # contract across transports).
+            return "", False, None
+        return "", False, http_error
+    return body, True, None
 
 
 async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -182,36 +291,43 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     path = str(args.get("path", "") or "").strip()
     resource_uri = str(args.get("resource_uri", "") or "").strip()
+    url = str(args.get("url", "") or "").strip()
 
     # Identifier kind derivation (= used by every emit call below).
-    if resource_uri and not path:
-        identifier_kind = "resource_uri"
-    elif path and not resource_uri:
-        identifier_kind = "path"
-    elif path and resource_uri:
-        identifier_kind = "both"  # caller violation, validated below
-    else:
+    # Exactly-one-of contract across three identifier kinds.
+    supplied = [k for k, v in (
+        ("path", path), ("resource_uri", resource_uri), ("url", url),
+    ) if v]
+    if len(supplied) == 1:
+        identifier_kind = supplied[0]
+    elif len(supplied) == 0:
         identifier_kind = "missing"
-    identifier = resource_uri or path
+    else:
+        identifier_kind = "multiple"  # caller violation, validated below
+    identifier = url or resource_uri or path
 
     # Exactly-one-of contract (= the schema description). Both / neither
     # surface as structured errors so the LLM can correct without crash.
-    if not path and not resource_uri:
+    if not supplied:
         err = (
-            "either path (project-relative under .reyn/tool-results/) "
-            "or resource_uri (reyn-tool-result://<agent>/<artifact>) "
-            "is required"
+            "exactly one of path, resource_uri, or url is required "
+            "(path: project-relative under .reyn/tool-results/; "
+            "resource_uri: reyn-tool-result://<agent>/<artifact>; "
+            "url: https://.../agents/<agent>/tool-results/<artifact>)"
         )
         _emit_event(
             ctx, status="error", error_kind="missing_args",
             identifier_kind="missing", identifier="", error=err,
         )
         return {"status": "error", "error": err}
-    if path and resource_uri:
-        err = "pass exactly one of path or resource_uri, not both"
+    if len(supplied) > 1:
+        err = (
+            "pass exactly one of path, resource_uri, or url, not "
+            f"multiple (supplied: {', '.join(supplied)})"
+        )
         _emit_event(
             ctx, status="error", error_kind="both_supplied",
-            identifier_kind="both", identifier=identifier, error=err,
+            identifier_kind="multiple", identifier=identifier, error=err,
         )
         return {"status": "error", "error": err}
 
@@ -240,12 +356,31 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         )
         return {"status": "error", "error": err}
 
-    # Same-host fs read for path; resource_uri dispatches through
-    # ``read_tool_result_by_uri`` which raises ValueError on cross-host
-    # URIs (= sub-task 3 will lift this; today the stub error is the
-    # contract). PermissionError covers path-traversal escapes.
+    # Dispatch by identifier kind (= #385 β core impl sub-task 3c).
+    #
+    # ``path``         : same-host fs only (= the original Phase 1 shape)
+    # ``resource_uri`` : same-host fs via vendor-scheme dispatcher; cross-
+    #                    host URIs surface ``cross_host_stub`` error_kind
+    #                    (= sub-task 3d MCP adapter would lift this)
+    # ``url``          : new sub-task 3c path. Local URL → short-circuit
+    #                    to fs read; remote URL → HTTP GET via httpx.
+    #
+    # PermissionError covers path-traversal escapes (= MediaStore
+    # boundary check); ValueError covers all dispatcher-side
+    # validation (= invalid URI / cross-host stub / etc.).
     try:
-        if resource_uri:
+        if url:
+            content, found, http_error = await _fetch_via_url(
+                legacy_ctx.media_store, url,
+            )
+            if http_error is not None:
+                _emit_event(
+                    ctx, status="error", error_kind="http_error",
+                    identifier_kind=identifier_kind, identifier=identifier,
+                    error=http_error,
+                )
+                return {"status": "error", "error": http_error}
+        elif resource_uri:
             content, found = legacy_ctx.media_store.read_tool_result_by_uri(
                 resource_uri,
             )
@@ -343,12 +478,16 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     # Identifier is already populated above (= echoed in not_found and
     # event emissions); reuse the same value for the success response.
     sliced = offset is not None or limit is not None
-    # source_agent extraction: cross-host fields exist on the path-ref only
-    # when the producing MediaStore was constructed with agent_name; when
-    # the LLM passed path (not resource_uri), the read went through the
-    # local store, so source = "local".
+    # source_agent extraction for the event payload. Path-based reads
+    # always source from local. resource_uri carries the agent in the
+    # URI segment. url carries it in the path component (= 2nd segment
+    # of /agents/<agent>/tool-results/<artifact>). Cross-host vs same-
+    # host doesn't change this field (= it's about the producer's
+    # identity, not where the read happened to go).
     if resource_uri:
         source_agent = _source_agent_from_uri(resource_uri) or "unknown"
+    elif url:
+        source_agent = _source_agent_from_url(url) or "unknown"
     else:
         source_agent = "local"
 

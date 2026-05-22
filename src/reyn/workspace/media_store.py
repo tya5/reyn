@@ -373,6 +373,53 @@ class MediaStore:
                 f"/tool-results/{filename}"
             )
 
+    def read_tool_result_by_url(self, url: str) -> tuple[str, bool]:
+        """Resolve an ``https://.../agents/<agent>/tool-results/<artifact>``
+        URL and read the body when it points back to this Reyn instance.
+
+        Used by the cross-host dispatcher (= #385 β core impl
+        sub-task 3c) as the same-host short-circuit: when the URL host
+        matches this store's ``base_url``, we read the file via the
+        same ``read_tool_result`` path instead of making a real HTTP
+        round-trip. Saves a network hop and keeps debugging simple.
+
+        Raises ``ValueError`` when:
+          - ``base_url`` is unset (= can't compare hosts)
+          - URL host doesn't match local (= caller should HTTP GET instead)
+          - URL path doesn't match the expected
+            ``/agents/<agent>/tool-results/<artifact>`` shape
+        """
+        if not self._base_url:
+            raise ValueError(
+                "this MediaStore has no base_url configured; "
+                "cannot determine whether the URL is local"
+            )
+        if not url.startswith(self._base_url + "/"):
+            raise ValueError(
+                f"URL host does not match local base_url; "
+                f"caller should HTTP GET (cross-host): {url!r}"
+            )
+        tail = url[len(self._base_url):]
+        # Expected: /agents/<agent>/tool-results/<artifact>
+        parts = tail.lstrip("/").split("/")
+        if len(parts) < 4 or parts[0] != "agents" or parts[2] != "tool-results":
+            raise ValueError(
+                f"URL path does not match /agents/<agent>/tool-results/<artifact>: {url!r}"
+            )
+        artifact = "/".join(parts[3:])
+        # Re-use the existing path-based reader (= same boundary check).
+        try:
+            rel_path = str(
+                (self._tool_results_dir / artifact).relative_to(
+                    self._project_root,
+                ),
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"artifact {artifact!r} resolves outside tool_results_dir"
+            ) from exc
+        return self.read_tool_result(rel_path)
+
     def read_tool_result_by_uri(self, uri: str) -> tuple[str, bool]:
         """Resolve a ``reyn-tool-result://...`` URI and read the body.
 

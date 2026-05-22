@@ -562,7 +562,12 @@ def test_emits_event_with_error_kind_both_supplied(tmp_path):
     payload = _only_tool_result_read(events)[0]
     assert payload["status"] == "error"
     assert payload["error_kind"] == "both_supplied"
-    assert payload["identifier_kind"] == "both"
+    # ``identifier_kind="multiple"`` since #385 β sub-task 3c extended
+    # the exactly-one-of contract from 2-way (path / resource_uri) to
+    # 3-way (path / resource_uri / url). The error_kind name retains
+    # ``both_supplied`` for measurement continuity; identifier_kind
+    # widens to ``multiple`` so it covers any combination of 2 or 3.
+    assert payload["identifier_kind"] == "multiple"
 
 
 def test_emits_event_with_error_kind_cross_host_stub(tmp_path):
@@ -603,6 +608,264 @@ def test_emits_event_with_error_kind_invalid_uri(tmp_path):
     payload = _only_tool_result_read(events)[0]
     assert payload["status"] == "error"
     assert payload["error_kind"] == "invalid_uri"
+
+
+# ── url-based dispatch (#385 β core impl sub-task 3c) ─────────────────
+
+
+def _populate_with_base_url(
+    tmp_path: Path, agent_name: str, base_url: str,
+    content: str = "url body\n",
+) -> tuple[MediaStore, dict]:
+    """MediaStore that mints both resource_uri AND url (= sub-task 3b
+    output shape); returns (store, full path-ref including url)."""
+    store = MediaStore(
+        MediaStoreConfig(),
+        project_root=tmp_path,
+        agent_name=agent_name,
+        base_url=base_url,
+    )
+    block = store.save_tool_result(
+        content, mime_type="text/plain",
+        chain_id="abc", tool="web_fetch", seq=1,
+    )
+    return store, block
+
+
+def test_url_same_host_short_circuits_to_fs_read(tmp_path, monkeypatch):
+    """Tier 2: when the URL host matches this store's ``base_url``, the
+    dispatcher short-circuits to fs read (= no HTTP call). Saves a
+    network round-trip and keeps debugging simple.
+
+    Verified by setting ``_HTTP_GET_OVERRIDE`` to a sentinel that
+    would fail if invoked — the test passes iff the same-host path
+    doesn't reach HTTP.
+    """
+    from reyn.tools import read_tool_result as rtr
+
+    store, block = _populate_with_base_url(
+        tmp_path, "researcher", "https://reyn.example.com",
+        content="same-host body\n",
+    )
+
+    async def _fail_if_called(url, *, timeout):  # noqa: ARG001
+        raise AssertionError(
+            f"HTTP GET unexpectedly invoked for same-host url={url!r}",
+        )
+
+    monkeypatch.setattr(rtr, "_HTTP_GET_OVERRIDE", _fail_if_called)
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(_handle({"url": block["url"]}, ctx))
+
+    assert result["status"] == "ok"
+    assert result["content"] == "same-host body\n"
+
+
+def test_url_cross_host_dispatches_via_http_get(tmp_path, monkeypatch):
+    """Tier 2: when the URL host doesn't match local, the dispatcher
+    falls through to HTTP GET — confirms the cross-host transport
+    actually fires for remote URLs (not just stub error).
+    """
+    from reyn.tools import read_tool_result as rtr
+
+    # Local store base_url = "local"; URL points at "remote" host.
+    store = MediaStore(
+        MediaStoreConfig(),
+        project_root=tmp_path,
+        agent_name="local-agent",
+        base_url="https://local.example.com",
+    )
+    remote_url = "https://remote.example.com/agents/researcher/tool-results/foo.txt"
+
+    captured: dict = {}
+
+    async def _fake_get(url, *, timeout):
+        captured["url"] = url
+        return "remote body\n", 200, None
+
+    monkeypatch.setattr(rtr, "_HTTP_GET_OVERRIDE", _fake_get)
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(_handle({"url": remote_url}, ctx))
+
+    assert result["status"] == "ok"
+    assert result["content"] == "remote body\n"
+    assert captured["url"] == remote_url
+
+
+def test_url_cross_host_404_returns_not_found(tmp_path, monkeypatch):
+    """Tier 2: HTTP 404 from remote → ``status="not_found"`` (= same
+    convention as missing same-host file). Unified consumer contract
+    across transports — the LLM doesn't need to know whether the
+    miss was local or remote.
+    """
+    from reyn.tools import read_tool_result as rtr
+
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path,
+        agent_name="local", base_url="https://local.example.com",
+    )
+
+    async def _fake_get(url, *, timeout):  # noqa: ARG001
+        return "", 404, "HTTP 404 from " + url
+
+    monkeypatch.setattr(rtr, "_HTTP_GET_OVERRIDE", _fake_get)
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(_handle({
+        "url": "https://remote.example.com/agents/x/tool-results/y.txt",
+    }, ctx))
+
+    assert result["status"] == "not_found"
+
+
+def test_url_cross_host_500_returns_http_error(tmp_path, monkeypatch):
+    """Tier 2: HTTP 5xx / non-200 (other than 404) → ``status="error"``
+    with ``error_kind="http_error"`` event. Distinguishes server-side
+    failures from "no such resource", so measurement can flag
+    reliability problems separately from path drift.
+    """
+    from reyn.tools import read_tool_result as rtr
+
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path,
+        agent_name="local", base_url="https://local.example.com",
+    )
+
+    async def _fake_get(url, *, timeout):  # noqa: ARG001
+        return "", 500, "HTTP 500 from " + url
+
+    monkeypatch.setattr(rtr, "_HTTP_GET_OVERRIDE", _fake_get)
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    result = asyncio.run(_handle({
+        "url": "https://remote.example.com/agents/x/tool-results/y.txt",
+    }, ctx))
+
+    assert result["status"] == "error"
+    payload = _only_tool_result_read(events)[0]
+    assert payload["status"] == "error"
+    assert payload["error_kind"] == "http_error"
+
+
+def test_url_cross_host_connection_failure_returns_error(tmp_path, monkeypatch):
+    """Tier 2: transport failure (= connection refused / timeout) →
+    ``status="error"`` with ``error_kind="http_error"`` event.
+    Distinguishes from 404 (= resource missing) and 5xx (= server alive
+    but failed). Lets measurement break down failures by class.
+    """
+    from reyn.tools import read_tool_result as rtr
+
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path,
+        agent_name="local", base_url="https://local.example.com",
+    )
+
+    async def _fake_get(url, *, timeout):  # noqa: ARG001
+        return "", 0, "HTTP GET failed: ConnectError: connection refused"
+
+    monkeypatch.setattr(rtr, "_HTTP_GET_OVERRIDE", _fake_get)
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    result = asyncio.run(_handle({
+        "url": "https://unreachable.example.com/agents/x/tool-results/y.txt",
+    }, ctx))
+
+    assert result["status"] == "error"
+    assert "ConnectError" in result["error"]
+    payload = _only_tool_result_read(events)[0]
+    assert payload["error_kind"] == "http_error"
+
+
+def test_url_with_content_hash_mismatch_returns_hash_error(tmp_path, monkeypatch):
+    """Tier 2: the same content_hash verify logic (= sub-task 4) applies
+    to URL-fetched bodies. Transport corruption surfaces as
+    ``hash_mismatch`` — works uniformly across path / resource_uri / url.
+    """
+    from reyn.tools import read_tool_result as rtr
+
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path,
+        agent_name="local", base_url="https://local.example.com",
+    )
+
+    async def _fake_get(url, *, timeout):  # noqa: ARG001
+        return "actual body\n", 200, None
+
+    monkeypatch.setattr(rtr, "_HTTP_GET_OVERRIDE", _fake_get)
+    bogus_hash = "sha256:" + "f" * 64
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(_handle({
+        "url": "https://remote.example.com/agents/x/tool-results/y.txt",
+        "content_hash": bogus_hash,
+    }, ctx))
+
+    assert result["status"] == "error"
+    assert "mismatch" in result["error"]
+    assert result["expected_hash"] == bogus_hash
+
+
+def test_url_rejected_when_combined_with_path_or_resource_uri(tmp_path):
+    """Tier 2: exactly-one-of contract extends to all three identifier
+    kinds. Combining ``url`` with either of the others surfaces the
+    structured error.
+    """
+    store, block = _populate_with_base_url(
+        tmp_path, "researcher", "https://local.example.com",
+    )
+    ctx = _ctx_with_media_store(store)
+
+    # url + path → reject
+    result = asyncio.run(_handle({
+        "url": block["url"],
+        "path": block["path"],
+    }, ctx))
+    assert result["status"] == "error"
+    assert "exactly one" in result["error"]
+
+    # url + resource_uri → reject
+    result = asyncio.run(_handle({
+        "url": block["url"],
+        "resource_uri": block["resource_uri"],
+    }, ctx))
+    assert result["status"] == "error"
+    assert "exactly one" in result["error"]
+
+
+def test_url_event_emits_with_identifier_kind_url(tmp_path, monkeypatch):
+    """Tier 2: the observability event for a url-based read tags
+    ``identifier_kind="url"`` + ``source_agent`` extracted from the
+    URL path. Measurement can count url-based reads separately from
+    path / resource_uri reads to track cross-host vs same-host
+    consumer mix.
+    """
+    from reyn.tools import read_tool_result as rtr
+
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path,
+        agent_name="local", base_url="https://local.example.com",
+    )
+
+    async def _fake_get(url, *, timeout):  # noqa: ARG001
+        return "body\n", 200, None
+
+    monkeypatch.setattr(rtr, "_HTTP_GET_OVERRIDE", _fake_get)
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({
+        "url": "https://remote.example.com/agents/researcher/tool-results/abc.txt",
+    }, ctx))
+
+    payload = _only_tool_result_read(events)[0]
+    assert payload["status"] == "ok"
+    assert payload["identifier_kind"] == "url"
+    # source_agent extracted from URL path's 2nd segment.
+    assert payload["source_agent"] == "researcher"
 
 
 def test_emits_event_with_status_not_found(tmp_path):
