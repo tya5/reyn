@@ -533,21 +533,28 @@ def render_events(
     cursor: int = 0,
     cache: dict | None = None,
     filelist_cache: list | None = None,
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[dict], list[int]]:
     """Render the recent-events list for the events tab.
 
-    Returns ``(rendered_markup, visible_events)`` so the orchestrator can
-    drive the cursor + Enter→preview integration without re-parsing files.
+    Returns ``(rendered_markup, visible_events, event_ys)`` so the
+    orchestrator can drive the cursor + Enter→preview integration
+    without re-parsing files. ``event_ys[i]`` is the 0-based line index
+    (within ``rendered_markup``) of event ``visible_events[i]``'s
+    headline row — used by ``_scroll_events_into_view`` to position
+    the viewport precisely even when chain-switch blank lines and
+    multi-line ``user_message_received`` rows have pushed the actual
+    row off the naive ``y = 1 + cursor`` projection (A-F3, wave-8).
+
     Consecutive events sharing a chain_id are visually grouped (a blank
     line separates chain switches). The row at index ``cursor`` is
     highlighted with a coral ▶ prefix.
     """
     if project_root is None:
-        return "[#555555]  (no project root)[/]", []
+        return "[#555555]  (no project root)[/]", [], []
 
     events_root = project_root / ".reyn" / "events"
     if not events_root.is_dir():
-        return "[#555555]  (no events yet)[/]", []
+        return "[#555555]  (no events yet)[/]", [], []
 
     if cache is None:
         cache = {}
@@ -581,7 +588,7 @@ def render_events(
         #      cycle to a different filter (the `[f]` header hint is only
         #      visible when the panel is wider than the filter name).
         if not all_events:
-            return "[#555555]  (no matching events)[/]", []
+            return "[#555555]  (no matching events)[/]", [], []
         # Split the two hints across separate lines so each survives the
         # 44-cell minimum panel width independently. The single-line
         # form was ~47 cells and clipped to ``press [f] to cycle filter
@@ -594,7 +601,7 @@ def render_events(
             f"[#555555] to cycle filter[/]\n"
             f"[#555555]  press [/][bold #aaaaaa]\\[t][/]"
             f"[#555555] for tail size[/]"
-        ), []
+        ), [], []
 
     # Newest-first window — also returned to the caller for cursor / preview
     windowed = list(visible[-tail:])[::-1]
@@ -604,6 +611,7 @@ def render_events(
     chain_replies = _load_chain_replies(project_root)
 
     lines: list[str] = []
+    event_ys: list[int] = []
     prev_chain: str | None = None
     for i, ev in enumerate(windowed):
         ev_type = ev.get("type", "?")
@@ -627,6 +635,12 @@ def render_events(
         cursor_prefix = (
             f"[bold {_CORAL}]▶ [/]" if i == cursor else "  "
         )
+        # Record the y of the headline row BEFORE appending — chain
+        # switches add a blank line above, and user_message_received
+        # rows add a ``↳`` reply line below, both of which drift the
+        # arithmetic ``1 + cursor`` projection. Same idiom as
+        # memory_tab / agents_tab.
+        event_ys.append(len(lines))
         lines.append(
             f"{cursor_prefix}[#444444]{ts}[/]  [{color}]{_esc(ev_type)}[/]{hint_part}"
         )
@@ -654,7 +668,7 @@ def render_events(
                     lines.append(f"[#444444]       ↳ [/][#777777]{short}[/]")
 
     del filter_name
-    return "\n".join(lines), windowed
+    return "\n".join(lines), windowed, event_ys
 
 
 __all__ = [
