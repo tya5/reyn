@@ -33,13 +33,19 @@ from reyn.workspace.media_store import MediaStore, MediaStoreConfig
 
 
 class _StubEvents:
-    """Minimal stand-in for the events log — the read tool emits none,
-    but ToolContext requires the attribute.
-    """
-    def emit(self, *args, **kwargs) -> None:
-        pass
+    """Minimal stand-in for the events log.
 
-    subscribers: list = []
+    Captures emit calls so #385 β sub-task 2 tests can assert on the
+    ``tool_result_read`` observability event payload. Existing tests
+    that don't read the log are unaffected (= same constructor shape,
+    extra capture list is opt-in).
+    """
+    def __init__(self) -> None:
+        self.emitted: list[tuple[str, dict]] = []
+        self.subscribers: list = []
+
+    def emit(self, name: str, **kwargs) -> None:
+        self.emitted.append((name, kwargs))
 
 
 def _populate_tool_result(
@@ -54,17 +60,26 @@ def _populate_tool_result(
     return store, block["path"]
 
 
-def _ctx_with_media_store(media_store: MediaStore | None) -> ToolContext:
+def _ctx_with_media_store(
+    media_store: MediaStore | None, *, events: _StubEvents | None = None,
+) -> ToolContext:
     """Build a minimal router-caller ToolContext whose router_state
     factory hands back an OpContext carrying ``media_store``.
+
+    Optional ``events`` lets callers inject a shared ``_StubEvents``
+    instance — used by #385 β sub-task 2 tests to assert on emitted
+    ``tool_result_read`` payloads. When omitted, a fresh stub is
+    constructed so existing tests stay unaffected.
     """
     from reyn.op_runtime.context import OpContext
     from reyn.permissions.permissions import PermissionDecl
 
+    events_log = events or _StubEvents()
+
     def _factory() -> OpContext:
         return OpContext(
             workspace=None,
-            events=_StubEvents(),
+            events=events_log,
             permission_decl=PermissionDecl(),
             permission_resolver=None,
             skill_name="",
@@ -73,7 +88,7 @@ def _ctx_with_media_store(media_store: MediaStore | None) -> ToolContext:
         )
 
     return ToolContext(
-        events=_StubEvents(),
+        events=events_log,
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
@@ -425,3 +440,187 @@ def test_read_tool_result_resource_uri_supports_offset_limit_slice(tmp_path):
 
     assert result["status"] == "ok"
     assert result["content"] == "L1\nL2\n"
+
+
+# ── tool_result_read event emission (#385 β core impl sub-task 2) ──────
+
+
+def _only_tool_result_read(events: _StubEvents) -> list[dict]:
+    """Filter the events log down to ``tool_result_read`` payloads.
+
+    Returns the kwargs dict from each emit call; the event name is
+    asserted on by checking the list is non-empty (= the handler made
+    at least one tool_result_read emit during this dispatch).
+    """
+    return [kw for name, kw in events.emitted if name == "tool_result_read"]
+
+
+def test_emits_event_on_success_with_path(tmp_path):
+    """Tier 2: a successful path-based read emits ``tool_result_read``
+    with status=ok, identifier_kind=path, source_agent=local, and
+    sliced/truncated False (= the basic-success payload sub-task 6
+    measurement will key off).
+    """
+    store, path_ref = _populate_tool_result(tmp_path, "hello\n")
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({"path": path_ref}, ctx))
+
+    emits = _only_tool_result_read(events)
+    assert len(emits) == 1
+    payload = emits[0]
+    assert payload["status"] == "ok"
+    assert payload["identifier_kind"] == "path"
+    assert payload["identifier"] == path_ref
+    assert payload["source_agent"] == "local"
+    assert payload["sliced"] is False
+    assert payload["truncated"] is False
+    assert payload["total_bytes"] == len("hello\n".encode("utf-8"))
+    assert payload["returned_bytes"] == payload["total_bytes"]
+
+
+def test_emits_event_on_success_with_resource_uri_carries_source_agent(tmp_path):
+    """Tier 2: a successful resource_uri read emits source_agent =
+    the agent extracted from the URI, not "local". Lets measurement
+    distinguish cross-host expand attempts from local ones.
+    """
+    store, block = _populate_with_agent_name(tmp_path, "researcher")
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({"resource_uri": block["resource_uri"]}, ctx))
+
+    payload = _only_tool_result_read(events)[0]
+    assert payload["status"] == "ok"
+    assert payload["identifier_kind"] == "resource_uri"
+    assert payload["source_agent"] == "researcher"
+
+
+def test_emits_event_with_sliced_true_when_offset_or_limit(tmp_path):
+    """Tier 2: when offset / limit are supplied, ``sliced=True`` lets
+    the measurement pipeline count partial-read frequency separately
+    from full-body reads.
+    """
+    store, path_ref = _populate_tool_result(tmp_path, "L0\nL1\nL2\n")
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({"path": path_ref, "limit": 1}, ctx))
+
+    payload = _only_tool_result_read(events)[0]
+    assert payload["sliced"] is True
+
+
+def test_emits_event_with_truncated_true_when_max_bytes_hit(tmp_path):
+    """Tier 2: when max_bytes truncation fires, ``truncated=True`` and
+    ``returned_bytes < total_bytes``. Measurement can flag "LLM may
+    need a follow-up call" from this signal alone.
+    """
+    store, path_ref = _populate_tool_result(tmp_path, "a" * 5000)
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({"path": path_ref, "max_bytes": 1000}, ctx))
+
+    payload = _only_tool_result_read(events)[0]
+    assert payload["truncated"] is True
+    assert payload["total_bytes"] == 5000
+    assert payload["returned_bytes"] == 1000
+
+
+def test_emits_event_with_error_kind_missing_args(tmp_path):
+    """Tier 2: validation error from neither-arg surfaces in the event
+    as ``error_kind=missing_args`` so measurement can distinguish LLM
+    contract-violation errors from upstream failures.
+    """
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({}, ctx))
+
+    payload = _only_tool_result_read(events)[0]
+    assert payload["status"] == "error"
+    assert payload["error_kind"] == "missing_args"
+    assert payload["identifier_kind"] == "missing"
+
+
+def test_emits_event_with_error_kind_both_supplied(tmp_path):
+    """Tier 2: validation error when both path and resource_uri are
+    given surfaces as ``error_kind=both_supplied``.
+    """
+    store, block = _populate_with_agent_name(tmp_path, "me")
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({
+        "path": block["path"],
+        "resource_uri": block["resource_uri"],
+    }, ctx))
+
+    payload = _only_tool_result_read(events)[0]
+    assert payload["status"] == "error"
+    assert payload["error_kind"] == "both_supplied"
+    assert payload["identifier_kind"] == "both"
+
+
+def test_emits_event_with_error_kind_cross_host_stub(tmp_path):
+    """Tier 2: a cross-host resource_uri surfaces ``error_kind=
+    cross_host_stub`` so measurement can count "LLM tried cross-host
+    expand" attempts — exactly the signal sub-task 3 will need to
+    prioritise actual cross-host RPC enablement.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="local",
+    )
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({
+        "resource_uri": "reyn-tool-result://remote/some.txt",
+    }, ctx))
+
+    payload = _only_tool_result_read(events)[0]
+    assert payload["status"] == "error"
+    assert payload["error_kind"] == "cross_host_stub"
+    assert payload["identifier_kind"] == "resource_uri"
+
+
+def test_emits_event_with_error_kind_invalid_uri(tmp_path):
+    """Tier 2: a malformed resource_uri surfaces ``error_kind=
+    invalid_uri``, distinct from cross-host. Measurement can isolate
+    "LLM passed garbage" from "LLM tried real cross-host".
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+    )
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({"resource_uri": "not-a-uri"}, ctx))
+
+    payload = _only_tool_result_read(events)[0]
+    assert payload["status"] == "error"
+    assert payload["error_kind"] == "invalid_uri"
+
+
+def test_emits_event_with_status_not_found(tmp_path):
+    """Tier 2: when the underlying file is missing (= deleted between
+    minting and read), the event surfaces ``status=not_found``
+    distinct from ``status=error`` — the file existed once, just isn't
+    there now.
+    """
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    store.tool_results_dir.mkdir(parents=True, exist_ok=True)
+    fake_rel = str(
+        (store.tool_results_dir / "deleted-file.txt").relative_to(tmp_path)
+    )
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    asyncio.run(_handle({"path": fake_rel}, ctx))
+
+    payload = _only_tool_result_read(events)[0]
+    assert payload["status"] == "not_found"
+    assert payload["identifier"] == fake_rel

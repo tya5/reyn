@@ -84,13 +84,58 @@ _READ_TOOL_RESULT_PARAMETERS: dict[str, Any] = {
 }
 
 
+def _emit_event(ctx: ToolContext, **fields: Any) -> None:
+    """Emit a ``tool_result_read`` observability event, defensively.
+
+    Observability must not crash the handler — wrap in try/except so a
+    misconfigured / null events log can't break tool dispatch. The event
+    payload follows the #385 β sub-task 2 schema:
+
+    Required:
+      ``status``         — "ok" | "not_found" | "error"
+      ``identifier``     — the path or resource_uri the LLM supplied
+                           (empty when validation failed before either)
+      ``identifier_kind``— "path" | "resource_uri" | "missing"
+
+    On status="ok":
+      ``source_agent``   — extracted from resource_uri (= dispatcher target);
+                           "local" when the read went through ``path``
+      ``total_bytes``    — full body byte size before max_bytes cap
+      ``returned_bytes`` — bytes actually included in the response
+      ``sliced``         — True when offset/limit were applied
+      ``truncated``      — True when max_bytes truncation fired
+
+    On status="error":
+      ``error_kind``     — "missing_args" | "both_supplied" |
+                           "media_store_unconfigured" | "invalid_uri" |
+                           "cross_host_stub" | "path_traversal" | "other"
+      ``error``          — the message surfaced to the LLM
+    """
+    try:
+        ctx.events.emit("tool_result_read", **fields)
+    except Exception:
+        pass
+
+
+def _source_agent_from_uri(resource_uri: str) -> str | None:
+    """Extract the source_agent from a resource_uri for event tagging."""
+    from reyn.workspace.media_store import parse_resource_uri
+    parsed = parse_resource_uri(resource_uri)
+    return parsed[0] if parsed else None
+
+
 async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Read a tool-result file by project-relative path.
+    """Read a tool-result file by project-relative path or resource URI.
 
     Builds a legacy ``OpContext`` to access ``media_store`` (= same
     bridging pattern as ``web_fetch._handle``). When ``media_store`` is
     not configured (= legacy / non-multimodal session), surfaces a
     structured error rather than crashing.
+
+    Emits a ``tool_result_read`` event on every dispatch outcome (= ok /
+    not_found / each error kind) so observability + #385 measurement
+    can count expand frequency by identifier kind and source agent
+    without having to scrape the response surface.
     """
     from reyn.op_runtime.context import OpContext
     from reyn.permissions.permissions import PermissionDecl
@@ -98,24 +143,37 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     path = str(args.get("path", "") or "").strip()
     resource_uri = str(args.get("resource_uri", "") or "").strip()
 
+    # Identifier kind derivation (= used by every emit call below).
+    if resource_uri and not path:
+        identifier_kind = "resource_uri"
+    elif path and not resource_uri:
+        identifier_kind = "path"
+    elif path and resource_uri:
+        identifier_kind = "both"  # caller violation, validated below
+    else:
+        identifier_kind = "missing"
+    identifier = resource_uri or path
+
     # Exactly-one-of contract (= the schema description). Both / neither
     # surface as structured errors so the LLM can correct without crash.
     if not path and not resource_uri:
-        return {
-            "status": "error",
-            "error": (
-                "either path (project-relative under .reyn/tool-results/) "
-                "or resource_uri (reyn-tool-result://<agent>/<artifact>) "
-                "is required"
-            ),
-        }
+        err = (
+            "either path (project-relative under .reyn/tool-results/) "
+            "or resource_uri (reyn-tool-result://<agent>/<artifact>) "
+            "is required"
+        )
+        _emit_event(
+            ctx, status="error", error_kind="missing_args",
+            identifier_kind="missing", identifier="", error=err,
+        )
+        return {"status": "error", "error": err}
     if path and resource_uri:
-        return {
-            "status": "error",
-            "error": (
-                "pass exactly one of path or resource_uri, not both"
-            ),
-        }
+        err = "pass exactly one of path or resource_uri, not both"
+        _emit_event(
+            ctx, status="error", error_kind="both_supplied",
+            identifier_kind="both", identifier=identifier, error=err,
+        )
+        return {"status": "error", "error": err}
 
     rs = ctx.router_state
     if rs is not None and rs.op_context_factory is not None:
@@ -131,14 +189,16 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         )
 
     if legacy_ctx.media_store is None:
-        return {
-            "status": "error",
-            "error": (
-                "MediaStore is not configured for this session. "
-                "Tool-result expansion requires the multimodal media "
-                "storage layer (= reyn.local.yaml multimodal section)."
-            ),
-        }
+        err = (
+            "MediaStore is not configured for this session. "
+            "Tool-result expansion requires the multimodal media "
+            "storage layer (= reyn.local.yaml multimodal section)."
+        )
+        _emit_event(
+            ctx, status="error", error_kind="media_store_unconfigured",
+            identifier_kind=identifier_kind, identifier=identifier, error=err,
+        )
+        return {"status": "error", "error": err}
 
     # Same-host fs read for path; resource_uri dispatches through
     # ``read_tool_result_by_uri`` which raises ValueError on cross-host
@@ -151,13 +211,32 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             )
         else:
             content, found = legacy_ctx.media_store.read_tool_result(path)
-    except (PermissionError, ValueError) as exc:
+    except PermissionError as exc:
+        _emit_event(
+            ctx, status="error", error_kind="path_traversal",
+            identifier_kind=identifier_kind, identifier=identifier,
+            error=str(exc),
+        )
         return {"status": "error", "error": str(exc)}
+    except ValueError as exc:
+        # Heuristic kind classification from the message — keeps the
+        # event payload actionable for measurement (= "how many cross-
+        # host attempts vs malformed URIs?") without needing dispatcher-
+        # side error types.
+        msg = str(exc)
+        kind = "cross_host_stub" if "cross-host" in msg else "invalid_uri"
+        _emit_event(
+            ctx, status="error", error_kind=kind,
+            identifier_kind=identifier_kind, identifier=identifier,
+            error=msg,
+        )
+        return {"status": "error", "error": msg}
 
     if not found:
-        # Echo whichever identifier the LLM supplied so it can correlate
-        # the not_found with its prior request without bookkeeping.
-        identifier = resource_uri or path
+        _emit_event(
+            ctx, status="not_found",
+            identifier_kind=identifier_kind, identifier=identifier,
+        )
         return {
             "status": "not_found",
             "path": identifier,
@@ -189,23 +268,47 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     encoded = content.encode("utf-8")
     total_bytes = len(encoded)
-    # Echo whichever identifier the LLM supplied so it can correlate
-    # the response with its prior request without bookkeeping (= same
-    # pattern as the not_found branch above).
-    identifier = resource_uri or path
+    # Identifier is already populated above (= echoed in not_found and
+    # event emissions); reuse the same value for the success response.
+    sliced = offset is not None or limit is not None
+    # source_agent extraction: cross-host fields exist on the path-ref only
+    # when the producing MediaStore was constructed with agent_name; when
+    # the LLM passed path (not resource_uri), the read went through the
+    # local store, so source = "local".
+    if resource_uri:
+        source_agent = _source_agent_from_uri(resource_uri) or "unknown"
+    else:
+        source_agent = "local"
+
     if max_bytes > 0 and total_bytes > max_bytes:
         # Truncate on a UTF-8 boundary by using ``errors="replace"``. The
         # LLM still gets the head of the body; the tail is reachable by
         # repeating the call with a higher ``max_bytes``.
-        truncated = encoded[:max_bytes].decode("utf-8", errors="replace")
+        truncated_str = encoded[:max_bytes].decode("utf-8", errors="replace")
+        _emit_event(
+            ctx, status="ok",
+            identifier_kind=identifier_kind, identifier=identifier,
+            source_agent=source_agent,
+            total_bytes=total_bytes,
+            returned_bytes=len(truncated_str.encode("utf-8")),
+            sliced=sliced, truncated=True,
+        )
         return {
             "status": "ok",
             "path": identifier,
-            "content": truncated,
+            "content": truncated_str,
             "truncated": True,
             "max_bytes": max_bytes,
             "total_bytes": total_bytes,
         }
+    _emit_event(
+        ctx, status="ok",
+        identifier_kind=identifier_kind, identifier=identifier,
+        source_agent=source_agent,
+        total_bytes=total_bytes,
+        returned_bytes=total_bytes,
+        sliced=sliced, truncated=False,
+    )
     return {
         "status": "ok",
         "path": identifier,
