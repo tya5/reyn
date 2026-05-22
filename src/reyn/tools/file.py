@@ -87,6 +87,20 @@ _READ_FILE_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "path": {"type": "string"},
+        "offset": {
+            "type": "integer",
+            "description": (
+                "Line number to start reading from (0-indexed). "
+                "Omit to start at the beginning of the file."
+            ),
+        },
+        "limit": {
+            "type": "integer",
+            "description": (
+                "Number of lines to read from `offset`. "
+                "Omit to read through end of file."
+            ),
+        },
     },
     "required": ["path"],
 }
@@ -214,12 +228,20 @@ def _build_legacy_op_context(ctx: ToolContext) -> Any:
 async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Adapter for read_file — delegates to op_runtime file handler.
 
-    Builds FileIROp(op="read") and routes via execute_op.
+    Builds FileIROp(op="read") and routes via execute_op. The optional
+    ``offset`` / ``limit`` line-slice args are forwarded to FileIROp (=
+    already supported by ``op_runtime/file.py``).
     """
     from reyn.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
-    op = FileIROp(kind="file", op="read", path=args["path"])
+    op = FileIROp(
+        kind="file",
+        op="read",
+        path=args["path"],
+        offset=args.get("offset"),
+        limit=args.get("limit"),
+    )
     legacy_ctx = _build_legacy_op_context(ctx)
     return await execute_op(op, legacy_ctx, caller="control_ir")
 

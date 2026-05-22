@@ -89,17 +89,35 @@ def test_reyn_src_read_router_render_exact_description():
 
 
 def test_reyn_src_read_router_render_exact_parameters():
-    """Tier 2: REYN_SRC_READ parameters schema is byte-identical to the legacy
-    ToolSpec parameters in router_tools.py."""
+    """Tier 2: REYN_SRC_READ parameters schema mirrors ``read_file`` /
+    ``read_memory_body`` — required ``path`` plus optional ``offset`` /
+    ``limit`` line-slice args. The slice path additionally bypasses the
+    256-KB byte cap (= line-streaming the requested range only)."""
     rendered = REYN_SRC_READ.render_for_router()
-    legacy_parameters = {
+    expected_parameters = {
         "type": "object",
         "properties": {
             "path": {"type": "string"},
+            "offset": {
+                "type": "integer",
+                "description": (
+                    "Line number to start reading from (0-indexed). "
+                    "Omit to start at the beginning of the file. When set "
+                    "(with or without limit), the 256-KB byte cap is "
+                    "bypassed by line-streaming only the requested slice."
+                ),
+            },
+            "limit": {
+                "type": "integer",
+                "description": (
+                    "Number of lines to read from `offset`. "
+                    "Omit to read through end of file."
+                ),
+            },
         },
         "required": ["path"],
     }
-    assert rendered["function"]["parameters"] == legacy_parameters
+    assert rendered["function"]["parameters"] == expected_parameters
 
 
 # ── 3. Gate invariants ────────────────────────────────────────────────────────

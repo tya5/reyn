@@ -60,12 +60,31 @@ _REYN_SRC_READ_DESCRIPTION = (
     "curated map of deep-dive paths."
 )
 
-# Parameters JSON schema must be byte-identical to the current
-# router_tools.py ToolSpec.parameters for reyn_src_read.
+# Parameters JSON schema for reyn_src_read. Mirrors ``read_file`` /
+# ``read_memory_body`` shape (= line-based ``offset`` / ``limit``) so the
+# three "read one entry" surfaces are parameter-symmetric. When the
+# slice args are provided, the 256-KB byte cap is bypassed — only the
+# requested slice is materialised so a large file can be partially read.
 _REYN_SRC_READ_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "path": {"type": "string"},
+        "offset": {
+            "type": "integer",
+            "description": (
+                "Line number to start reading from (0-indexed). "
+                "Omit to start at the beginning of the file. When set "
+                "(with or without limit), the 256-KB byte cap is "
+                "bypassed by line-streaming only the requested slice."
+            ),
+        },
+        "limit": {
+            "type": "integer",
+            "description": (
+                "Number of lines to read from `offset`. "
+                "Omit to read through end of file."
+            ),
+        },
     },
     "required": ["path"],
 }
@@ -120,7 +139,14 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         target = safe_resolve_inside(root, path)
     except ValueError as exc:
         return {"error": str(exc)}
-    return read_text(target, path)
+    offset_raw = args.get("offset")
+    limit_raw = args.get("limit")
+    return read_text(
+        target,
+        path,
+        offset=int(offset_raw) if offset_raw is not None else None,
+        limit=int(limit_raw) if limit_raw is not None else None,
+    )
 
 
 _REYN_SRC_GLOB_DESCRIPTION = (

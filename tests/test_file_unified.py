@@ -83,17 +83,35 @@ def test_read_file_router_render_exact_description():
 
 
 def test_read_file_router_render_exact_parameters():
-    """Tier 2: READ_FILE parameters schema is byte-identical to the legacy
-    ToolSpec parameters in router_tools.py C2 block."""
+    """Tier 2: READ_FILE parameters schema pins the LLM-visible shape — ``path``
+    is required, optional ``offset`` / ``limit`` expose the line-slice
+    capability that already exists in ``op_runtime/file.py``. This shape is
+    the read-side symmetry contract shared with ``reyn_src_read`` and
+    ``read_memory_body``; widening it should be a deliberate cross-surface
+    decision, not a drift."""
     rendered = READ_FILE.render_for_router()
-    legacy_parameters = {
+    expected_parameters = {
         "type": "object",
         "properties": {
             "path": {"type": "string"},
+            "offset": {
+                "type": "integer",
+                "description": (
+                    "Line number to start reading from (0-indexed). "
+                    "Omit to start at the beginning of the file."
+                ),
+            },
+            "limit": {
+                "type": "integer",
+                "description": (
+                    "Number of lines to read from `offset`. "
+                    "Omit to read through end of file."
+                ),
+            },
         },
         "required": ["path"],
     }
-    assert rendered["function"]["parameters"] == legacy_parameters
+    assert rendered["function"]["parameters"] == expected_parameters
 
 
 # ── 3. WRITE_FILE render_for_router byte-identity ────────────────────────────
