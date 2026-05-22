@@ -29,6 +29,33 @@ _GLYPHS: dict[str, str] = {
     "general": "●",
 }
 
+# Wave-10 G-F8 + I-F8: overwrite-priority hierarchy.
+#
+# ``show()`` was previously unconditional — a low-priority transient
+# (turn-position breadcrumb, boundary hint) would silently overwrite
+# a load-bearing live indicator (``⟳ thinking…``). Two visible
+# failures resulted:
+#
+#   - I-F8: Ctrl+P / Ctrl+N during an LLM call replaced the ⟳ thinking
+#     indicator with ``↑ turn 3 / 8``, making the agent appear frozen
+#     until the next outbox event arrived.
+#   - G-F8: ``_maybe_warn_about_trimmed_history`` wrote to the sticky,
+#     then ``_flash_turn_position`` fired in the same call frame and
+#     overwrote the warning before the user could read it — the
+#     trim-warning was effectively invisible.
+#
+# This map gives each ``kind`` a numeric priority. ``show()`` suppresses
+# its own call when the requested ``kind`` is LOWER than the currently
+# active ``kind``. Same-or-higher priority overwrites freely (= the
+# expected behaviour for genuine status updates, e.g. ``thinking`` →
+# ``thinking`` body update).
+_KIND_PRIORITY: dict[str, int] = {
+    # Live load-bearing state — must not be displaced by transients.
+    "thinking": 100,
+    # Transient flashes / breadcrumbs / one-shot notices.
+    "general": 50,
+}
+
 
 class StickyStatus(Static):
     """A 1-line sticky status bar with a live elapsed timer.
@@ -74,8 +101,24 @@ class StickyStatus(Static):
     # ── public API ────────────────────────────────────────────────────────────
 
     def show(self, text: str, kind: str = "thinking") -> None:
-        """Activate the status bar with the given body text and glyph kind."""
-        self._kind = kind if kind in _GLYPHS else "thinking"
+        """Activate the status bar with the given body text and glyph kind.
+
+        Wave-10 G-F8 + I-F8: when the sticky is already active with a
+        higher-priority ``kind``, a lower-priority ``show()`` is
+        silently suppressed (= the call is a no-op). This protects
+        load-bearing live indicators (``⟳ thinking…``) from being
+        displaced by transient breadcrumbs (turn-position flash,
+        boundary hint). Same-or-higher priority overwrites freely.
+
+        ``hide()`` is unconditional — explicit dismissal always wins.
+        """
+        new_kind = kind if kind in _GLYPHS else "thinking"
+        if self._active:
+            current_priority = _KIND_PRIORITY.get(self._kind, 0)
+            new_priority = _KIND_PRIORITY.get(new_kind, 0)
+            if new_priority < current_priority:
+                return
+        self._kind = new_kind
         self._glyph = _GLYPHS[self._kind]
         self._start = time.monotonic()
         self._active = True
