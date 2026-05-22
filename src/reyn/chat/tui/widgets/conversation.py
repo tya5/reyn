@@ -79,6 +79,12 @@ _RECENT_REPLIES_MAX = 10
 # turn anchors below are drop-aware so even pathological sessions that DO
 # cross the boundary don't break Ctrl+P/N navigation.
 _RICHLOG_MAX_LINES = 20_000
+# F-H: minimum visible duration for an inline ToolCallRow before the conv
+# pane flushes it into the RichLog scroll history + unmounts the live
+# widget. Cache hits / instant returns would otherwise mount + flush
+# within a single event-loop tick, leaving no perceptual cue. 0.3s
+# matches typical perceptual threshold (= "I saw something happen").
+_TOOL_CALL_MIN_DISPLAY_S = 0.3
 # Cap on simultaneously-mounted ErrorBox widgets. Past this, the oldest
 # rolls into a dim ``_write_log`` breadcrumb (= same shape as the F2
 # Esc-dismissed breadcrumb) so the footer area can't pile up under a
@@ -951,7 +957,31 @@ class ConversationView(Widget):
         to scroll history, live widget removed). The row's render
         helpers are pure over its state, so reading them after the
         finish_* call captures the terminal shape.
+
+        F-H min-display-time: very fast tool_calls (= cache hits, instant
+        returns) would mount + flush within a single event-loop tick,
+        leaving no perceptual cue that the tool ran. When the row has
+        been mounted for less than ``_TOOL_CALL_MIN_DISPLAY_S``, defer
+        the flush via ``set_timer`` so each row stays visible briefly
+        before transitioning into RichLog history.
         """
+        elapsed = row.mounted_for_seconds()
+        if elapsed < _TOOL_CALL_MIN_DISPLAY_S:
+            delay = _TOOL_CALL_MIN_DISPLAY_S - elapsed
+            try:
+                self.app.set_timer(
+                    delay, lambda: self._do_flush_tool_call_row(row),
+                )
+                return
+            except Exception:
+                # If timer scheduling fails (e.g. widget already torn
+                # down), fall through to immediate flush — better
+                # to land the row in history than lose it.
+                pass
+        self._do_flush_tool_call_row(row)
+
+    def _do_flush_tool_call_row(self, row: ToolCallRow) -> None:
+        """Actual write-to-RichLog + unmount; safe to call from a timer."""
         try:
             line1 = row._build_line1()
             line2 = row._build_line2()

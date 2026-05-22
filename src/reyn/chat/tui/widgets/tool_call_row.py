@@ -106,6 +106,7 @@ class ToolCallRow(Widget):
 
         # Running state
         self._start = time.monotonic()
+        self._mount_time = self._start  # updated in on_mount when widget composes
         self._running = True
 
         # Terminal state
@@ -128,8 +129,21 @@ class ToolCallRow(Widget):
         yield self._line2
 
     def on_mount(self) -> None:
+        self._mount_time = time.monotonic()
         self.set_interval(_TICK_INTERVAL_S, self._tick)
         self._refresh()
+
+    def mounted_for_seconds(self) -> float:
+        """Wall-time elapsed since the widget actually mounted (= on_mount).
+
+        Used by ``ConversationView._flush_tool_call_row`` to enforce a
+        minimum visible duration: very fast ops (= cache hit, instant
+        return) would otherwise mount + flush within the same event-loop
+        tick, leaving the user with no perceptual cue that the tool was
+        called. The caller defers the flush until this exceeds the
+        configured minimum so each row is briefly perceivable.
+        """
+        return max(0.0, time.monotonic() - self._mount_time)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 

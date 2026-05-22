@@ -85,7 +85,11 @@ async def test_start_tool_call_row_is_idempotent_for_same_op_id():
 
 @pytest.mark.asyncio
 async def test_complete_tool_call_row_unmounts_live_widget():
-    """Tier 2: success terminal removes the live row from the DOM."""
+    """Tier 2: success terminal removes the live row from the DOM.
+
+    F-H min-display-time defers flush by up to 0.3s for very fast ops;
+    the test waits past the threshold so the deferred unmount completes.
+    """
     app = _ConvOnlyApp()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -94,7 +98,8 @@ async def test_complete_tool_call_row_unmounts_live_widget():
         await pilot.pause()
         assert len(list(conv.query(ToolCallRow))) == 1
         conv.complete_tool_call_row("op-b", result_snippet="200 OK 1.2KB")
-        await pilot.pause()
+        # Wait for F-H min-display-time deferral to elapse.
+        await pilot.pause(0.4)
         # Row is unmounted after flush.
         assert len(list(conv.query(ToolCallRow))) == 0
 
@@ -109,7 +114,33 @@ async def test_fail_tool_call_row_unmounts_live_widget_and_records_error():
         conv.start_tool_call_row("op-c", "shell")
         await pilot.pause()
         conv.fail_tool_call_row("op-c", error="timeout")
+        # Wait for F-H min-display-time deferral.
+        await pilot.pause(0.4)
+        assert len(list(conv.query(ToolCallRow))) == 0
+
+
+@pytest.mark.asyncio
+async def test_fast_tool_call_defers_flush_so_row_stays_visible_briefly():
+    """Tier 2 F-H: very fast ops (= mount + complete in same tick) defer
+    the flush so the user can perceive the row before it transitions
+    to RichLog history.
+    """
+    app = _ConvOnlyApp()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        conv.start_tool_call_row("op-fast", "cached_op", args_repr="key=x")
+        await pilot.pause()
+        # Complete immediately — F-H should defer the flush.
+        conv.complete_tool_call_row("op-fast", result_snippet="ok")
+        # Brief pause — less than the min-display threshold; row should
+        # still be visible because the flush is deferred.
+        await pilot.pause(0.05)
+        assert len(list(conv.query(ToolCallRow))) == 1, (
+            "fast row stays mounted briefly so it's perceivable"
+        )
+        # Wait past the threshold — row should be flushed by now.
+        await pilot.pause(0.4)
         assert len(list(conv.query(ToolCallRow))) == 0
 
 
