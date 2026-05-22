@@ -11,6 +11,15 @@ def compute_text_stats(artifact: dict) -> dict:
     # `{"type": "user_message", "data": "..."}`) or a dict with a "text" key
     # (the canonical `{"data": {"text": "..."}}` form).  Handle both.
     #
+    # B49 W2-S3 fix (2026-05-22): the router's `invoke_action(args={"text":
+    # ...})` path delivers the artifact as `{"text": "..."}` (= top-level
+    # text, no `data` wrapper) rather than the phase-side canonical
+    # `{"data": {"text": ...}}` form. Both shapes are valid skill
+    # invocation paths, so fall through to `artifact["text"]` when `data`
+    # is absent or empty. Without this, the preprocessor returned
+    # all-zero stats and the review-phase LLM substituted the
+    # instructions' example number ("133") for the actual stat.
+    #
     # Returns the *normalized* data dict `{"text": ..., "stats": {...}}` so
     # the caller can write the result to `into: data`, replacing the whole
     # field in one step and ensuring `data.text` and `data.stats` are always
@@ -22,7 +31,7 @@ def compute_text_stats(artifact: dict) -> dict:
         text = data.get("text", "") or ""
     else:
         text = ""
-    text = text or ""
+    text = text or artifact.get("text", "") or ""
     lines = text.splitlines()
     line_count = len(lines) if lines else (1 if text else 0)
     word_count = len(text.split())
