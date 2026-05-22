@@ -694,6 +694,23 @@ _STATE_CHANGE_EVENT_MAPPINGS: dict[str, tuple[str, str]] = {
         "mcp_install",
         "MCP server '{server_name}' was installed.",
     ),
+    # MCP server removal success (= ``reyn.op_runtime.mcp_drop_server``
+    # emits this after removing the config entry). Symmetric to
+    # mcp_server_installed — surfaces the "no longer available"
+    # state-change to the LLM so it doesn't keep trying.
+    "mcp_server_removed": (
+        "mcp_drop_server",
+        "MCP server '{server}' was removed.",
+    ),
+    # Indexed corpus removal (= ``reyn.op_runtime.index_drop`` emits
+    # this after dropping chunks from the backend). Recall against
+    # the dropped source will now miss; surfacing the change lets
+    # the LLM understand "the source it was citing yesterday doesn't
+    # exist today".
+    "index_dropped": (
+        "index_drop",
+        "Indexed source '{source}' was removed.",
+    ),
     # Future emitter slots (= add when wired):
     # "config_reloaded":  ("config_watcher", "Reyn configuration was updated."),
     # "sp_version_changed": ("sp_loader",   "Agent system prompt was updated to version {version}."),

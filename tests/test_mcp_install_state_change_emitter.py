@@ -184,3 +184,100 @@ def test_multiple_installs_each_mint_separate_state_change(tmp_path):
         "MCP server 'git' was installed.",
         "MCP server 'fetch' was installed.",
     ]
+
+
+# ── mcp_server_removed emission (= #398 v4 emitter #3) ─────────────────
+
+
+def test_mcp_server_removed_event_mints_state_change(tmp_path):
+    """Tier 2 (#398 v4 emitter #3): emitting ``mcp_server_removed`` on
+    the session's chat_events log triggers a state_change history
+    entry. Symmetric to ``mcp_server_installed`` — surfaces the
+    "no longer available" state-change to the LLM so it doesn't keep
+    trying to call a server that was just removed.
+    """
+    session = _make_session(tmp_path)
+    pre_count = len(_state_changes(session))
+
+    session._chat_events.emit(
+        "mcp_server_removed",
+        server="sqlite",
+        scope="project",
+        removed_path=".reyn/config.yaml",
+    )
+
+    entries = _state_changes(session)
+    assert len(entries) == pre_count + 1
+    assert entries[-1].content == "MCP server 'sqlite' was removed."
+    assert entries[-1].meta.get("source") == "mcp_drop_server"
+
+
+def test_mcp_server_removed_uses_server_field(tmp_path):
+    """Tier 2: the template substitutes the ``server`` field (= the
+    matching ``mcp_drop_server`` op uses ``server``, not ``server_name``).
+    Verifies the dispatch table mapping matches the producer event's
+    actual payload shape — a regression that renamed the field
+    upstream would silently fall through the defensive skip.
+    """
+    session = _make_session(tmp_path)
+    pre_count = len(_state_changes(session))
+
+    session._chat_events.emit("mcp_server_removed", server="git")
+
+    entries = _state_changes(session)
+    assert len(entries) == pre_count + 1
+    assert entries[-1].content == "MCP server 'git' was removed."
+
+
+# ── index_dropped emission (= #398 v4 emitter #4) ──────────────────────
+
+
+def test_index_dropped_event_mints_state_change(tmp_path):
+    """Tier 2 (#398 v4 emitter #4): emitting ``index_dropped`` on the
+    session's chat_events log triggers a state_change history entry.
+    Recall against the dropped source will now miss; the LLM seeing
+    this entry understands "the source I was citing yesterday doesn't
+    exist today".
+    """
+    session = _make_session(tmp_path)
+    pre_count = len(_state_changes(session))
+
+    session._chat_events.emit(
+        "index_dropped",
+        source="some-docs-collection",
+        chunks_dropped=42,
+        manifest_removed=True,
+    )
+
+    entries = _state_changes(session)
+    assert len(entries) == pre_count + 1
+    assert entries[-1].content == "Indexed source 'some-docs-collection' was removed."
+    assert entries[-1].meta.get("source") == "index_drop"
+
+
+# ── 3-way emitter family co-occurrence ─────────────────────────────────
+
+
+def test_install_remove_dropindex_all_minted_separately(tmp_path):
+    """Tier 2: the three op-emitted state changes co-occur without
+    interfering. Each mints its own entry; sources are distinct;
+    contents are distinct. Confirms the dispatch table extension
+    doesn't conflate handlers across event types.
+    """
+    session = _make_session(tmp_path)
+    pre_count = len(_state_changes(session))
+
+    session._chat_events.emit("mcp_server_installed", server_name="x")
+    session._chat_events.emit("mcp_server_removed", server="y")
+    session._chat_events.emit("index_dropped", source="z")
+
+    entries = _state_changes(session)[pre_count:]
+    assert len(entries) == 3
+    sources = [e.meta.get("source") for e in entries]
+    assert sources == ["mcp_install", "mcp_drop_server", "index_drop"]
+    contents = [e.content for e in entries]
+    assert contents == [
+        "MCP server 'x' was installed.",
+        "MCP server 'y' was removed.",
+        "Indexed source 'z' was removed.",
+    ]
