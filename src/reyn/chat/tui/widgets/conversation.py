@@ -1555,9 +1555,15 @@ class ConversationView(Widget):
         via PageUp / Ctrl+P without having to either press PageDown
         repeatedly or type a new message (which is what currently
         triggers ``_snap_to_bottom``).
+
+        Wave-10 follow-up G-F14: the previous ``self._user_scrolled =
+        False`` here was dead code — ``_snap_to_bottom`` already
+        unconditionally resets the flag. Removing it eliminates the
+        misleading hint that ``_snap_to_bottom`` might NOT reset the
+        flag (= which a future reader would have to verify before
+        editing either method).
         """
         self._snap_to_bottom()
-        self._user_scrolled = False
 
     def _jump_to_relative_anchor(self, delta: int) -> None:
         if not self._turn_anchors:
