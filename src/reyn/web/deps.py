@@ -145,6 +145,55 @@ def get_perm_resolver():
 
 
 # ---------------------------------------------------------------------------
+# FP-0041 #489 PR-D2.5: external transport outbox interceptor wiring
+# ---------------------------------------------------------------------------
+
+
+def _wire_external_outbox_interceptor(session, routing) -> None:
+    """Build and attach the external transport outbox interceptor.
+
+    Composes:
+      - per-session MCP dispatcher (= closes over ``session`` so the
+        tool call uses the session's router OpContext: workspace,
+        events log, permission resolver).
+      - ``make_outbox_interceptor`` factory (= dispatch matrix landed
+        in PR-D2: ExternalRef + dispatchable kind → route_to_mcp).
+
+    Sets ``session._outbox_interceptor`` so ``_put_outbox`` consults
+    it on each agent reply.
+
+    The dispatcher resolves the MCP tool name ``<server>__<tool>``
+    (= the convention ``external_transports`` config uses) into a
+    server + tool pair, builds an ``MCPIROp``, and dispatches via
+    ``op_runtime.mcp.handle`` — the same path the LLM-callable
+    ``call_mcp_tool`` uses. Permission gating runs (= operator must
+    have declared ``mcp: [<server>]`` for the agent OR config-level
+    allow); failures propagate as exceptions and are surfaced through
+    ``RouteResult(status="error", ...)`` by the routing primitive.
+    """
+    from reyn.chat.external_routing import make_outbox_interceptor
+
+    async def _mcp_dispatcher(mcp_tool: str, args: dict):
+        if "__" not in mcp_tool:
+            raise ValueError(
+                f"external_transports mcp_tool must be '<server>__<tool>', "
+                f"got {mcp_tool!r}",
+            )
+        server, tool = mcp_tool.split("__", 1)
+        from reyn.op_runtime.mcp import handle as mcp_handle
+        from reyn.schemas.models import MCPIROp
+        op = MCPIROp(kind="mcp", server=server, tool=tool, args=dict(args))
+        ctx = session._make_router_op_context()
+        return await mcp_handle(op=op, ctx=ctx, caller="external_routing")
+
+    interceptor = make_outbox_interceptor(
+        routing=routing,
+        mcp_dispatcher=_mcp_dispatcher,
+    )
+    session._outbox_interceptor = interceptor
+
+
+# ---------------------------------------------------------------------------
 # AgentRegistry  (process-shared)
 # ---------------------------------------------------------------------------
 
@@ -202,6 +251,18 @@ def _get_registry():
                 embedding_config=config.embedding,
             )
             s.load_history()
+            # FP-0041 #489 PR-D2.5: external transport outbox interceptor.
+            # When the operator has declared ``external_transports`` in
+            # reyn.yaml (= e.g. Slack / LINE / Discord routing), build
+            # the per-session interceptor so agent replies to inbox
+            # messages carrying ``ExternalRef`` reply_to are dispatched
+            # via the configured MCP tools instead of the TUI display
+            # queue. The dispatcher closure captures ``s`` so each
+            # session's MCP-tool invocations route through that
+            # session's own router OpContext (= permission gate,
+            # workspace, events log all from the right session).
+            if config.external_transports.transports:
+                _wire_external_outbox_interceptor(s, config.external_transports)
             return s
 
         registry = AgentRegistry(
