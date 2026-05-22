@@ -219,7 +219,6 @@ from reyn.web.routers import skills as _skills_router  # noqa: E402
 from reyn.web.routers import topologies as _topos_router  # noqa: E402
 from reyn.web.routers import web_config as _web_config_router  # noqa: E402
 from reyn.web.routers import web_data as _web_data_router  # noqa: E402
-from reyn.web.routers import webhook_slack as _webhook_slack_router  # noqa: E402
 
 app.include_router(_agents_router.router, prefix="/api")
 app.include_router(_skills_router.router, prefix="/api")
@@ -229,11 +228,20 @@ app.include_router(_perms_router.router, prefix="/api")
 app.include_router(_budget_router.router, prefix="/api")
 app.include_router(_web_config_router.router, prefix="/api")
 app.include_router(_web_data_router.router, prefix="/api")
-# FP-0041 #489 PR-D: Slack inbound webhook (= chat-transport).
-# Route is /webhook/slack at the top level (= no /api prefix) so the
-# URL operators paste into Slack's Event Subscriptions matches the
-# documented industry convention.
-app.include_router(_webhook_slack_router.router)
+
+# FP-0041 #489 plugin framework: webhook plugins (= sample_slack / external
+# packages) are activated by ``webhooks.yaml`` (= dedicated file at the
+# project root, separate from reyn.yaml to keep core config lean) and
+# mounted by the plugin loader at app startup. Reyn core stays SDK-free;
+# per-transport protocol code lives in plugins.
+try:
+    from reyn.config import _find_project_root as _find_root_for_plugins
+    from reyn.web.plugin_loader import load_webhook_plugins, load_webhooks_yaml
+    _project_root_for_plugins = _find_root_for_plugins(Path.cwd()) or Path.cwd()
+    _webhooks_cfg = load_webhooks_yaml(_project_root_for_plugins)
+    load_webhook_plugins(app=app, webhooks_config=_webhooks_cfg)
+except Exception as _exc:  # noqa: BLE001 — defensive boot
+    logger.warning("webhook plugin loading failed: %s", _exc)
 
 # MCP-over-SSE: GET /mcp/sse (event stream) + POST /mcp/messages (client → server).
 # The router carries the GET; the POST endpoint is a Starlette Mount because

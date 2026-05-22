@@ -27,8 +27,9 @@ from typing import Any
 import pytest
 
 from reyn.chat.transport import ExternalRef
-from reyn.web.routers.webhook_slack import (
+from reyn.plugins.sample_slack.webhook import (
     _SLACK_REPLAY_WINDOW_SECONDS,
+    build_router,
     mint_envelope_from_slack_event,
     verify_slack_signature,
 )
@@ -252,10 +253,14 @@ def test_mint_envelope_handles_missing_user_field():
 def _slack_client(monkeypatch):
     """FastAPI TestClient with a stubbed AgentRegistry.
 
-    Captures inbox pushes in a list on the client so tests can assert
-    the right envelope was dispatched without spinning up a real
-    ChatSession.
+    Builds a fresh minimal FastAPI app, mounts the sample_slack
+    plugin's router via ``build_router``, and overrides the registry
+    dependency to capture inbox pushes. Each test gets its own client
+    (= no shared state across tests). Avoids loading the full
+    ``reyn.web.server.app`` since the plugin would otherwise be
+    mounted only when the operator activates it via reyn.yaml.
     """
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     pushes: list = []
@@ -269,29 +274,23 @@ def _slack_client(monkeypatch):
         async def ensure_running(self, name):
             return _StubSession()
 
-    from reyn.web.routers import webhook_slack as _slack_router
-
     def _stub_get_registry():
         return _StubRegistry()
 
-    # Override the FastAPI dependency for this test.
-    from reyn.web.server import app
-    app.dependency_overrides[
-        _slack_router.router.dependencies[0].dependency
-        if _slack_router.router.dependencies
-        else None
-    ] = _stub_get_registry
-
-    # Cleaner override path: replace the get_registry symbol.
+    # Patch the deps module so build_router's dependency closure
+    # resolves to the stub.
     from reyn.web import deps
     monkeypatch.setattr(deps, "_get_registry", _stub_get_registry)
-    # Also clear any cached singleton.
     monkeypatch.setattr(deps, "_registry", None, raising=False)
+
+    app = FastAPI()
+    router = build_router(target_agent="news_agent")
+    app.include_router(router)
+    app.dependency_overrides[deps.get_registry] = _stub_get_registry
 
     client = TestClient(app)
     client.pushes = pushes  # type: ignore[attr-defined]
     yield client
-    app.dependency_overrides.clear()
 
 
 def test_route_url_verification_echoes_challenge(_slack_client):
@@ -443,38 +442,6 @@ def test_route_acks_non_dispatchable_events_with_200(
     assert len(_slack_client.pushes) == 0
 
 
-def test_route_rejects_when_no_target_agent_configured(
-    monkeypatch, _slack_client,
-):
-    """Tier 2: a valid event arriving with no ``SLACK_TARGET_AGENT``
-    env returns 503 + clear error. Operator forgot agent config.
-    """
-    secret = "real-secret"
-    monkeypatch.setenv("SLACK_SIGNING_SECRET", secret)
-    monkeypatch.delenv("SLACK_TARGET_AGENT", raising=False)
-
-    body = json.dumps({
-        "event": {
-            "type": "app_mention",
-            "user": "U1", "channel": "C1", "text": "hi", "ts": "1.0",
-        },
-    }).encode()
-    ts = str(int(time.time()))
-    sig = _sign(body, ts, secret)
-
-    response = _slack_client.post(
-        "/webhook/slack",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Slack-Request-Timestamp": ts,
-            "X-Slack-Signature": sig,
-        },
-    )
-    assert response.status_code == 503
-    assert "target agent" in response.json()["error"].lower()
-
-
 def test_route_malformed_json_returns_400(monkeypatch, _slack_client):
     """Tier 2: non-JSON body returns 400 (= operator misconfig / bad
     network, not Reyn's fault).
@@ -487,11 +454,42 @@ def test_route_malformed_json_returns_400(monkeypatch, _slack_client):
     assert response.status_code == 400
 
 
-def test_route_mounted_on_app():
-    """Tier 2: ``/webhook/slack`` is registered on the FastAPI app.
-    Without this, all other tests in this module would fall through
-    to FastAPI's default 404, masking a mount regression.
+# ── register_router (= plugin entry-point) ────────────────────────────
+
+
+def test_register_router_returns_none_when_target_agent_missing(monkeypatch):
+    """Tier 2: ``register_router`` (= the plugin entry-point) returns
+    ``None`` when ``target_agent`` is missing from config — the
+    loader logs a warning and the route is not mounted. Operator's
+    forgotten config surfaces in logs rather than crashing.
     """
-    from reyn.web.server import app
-    paths = {getattr(r, "path", "") for r in app.routes}
-    assert "/webhook/slack" in paths
+    from reyn.plugins.sample_slack import register_router
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")  # signing OK, target missing
+
+    assert register_router({}) is None
+    assert register_router({"target_agent": ""}) is None
+
+
+def test_register_router_returns_none_when_signing_secret_missing(monkeypatch):
+    """Tier 2: ``register_router`` returns ``None`` when
+    ``SLACK_SIGNING_SECRET`` env var is unset — clear operator
+    error in logs without crashing reyn web.
+    """
+    from reyn.plugins.sample_slack import register_router
+    monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
+
+    assert register_router({"target_agent": "news_agent"}) is None
+
+
+def test_register_router_returns_apirouter_when_configured(monkeypatch):
+    """Tier 2: ``register_router`` returns a FastAPI ``APIRouter``
+    when both ``target_agent`` config + signing secret env are
+    present. The loader mounts this on the app.
+    """
+    from fastapi import APIRouter
+
+    from reyn.plugins.sample_slack import register_router
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")
+
+    router = register_router({"target_agent": "news_agent"})
+    assert isinstance(router, APIRouter)
