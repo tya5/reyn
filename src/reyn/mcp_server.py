@@ -539,6 +539,75 @@ def build_server(
 
         return [TextContent(type="text", text=f"error: unknown tool {name!r}")]
 
+    # ── resources/read (#385 β core impl sub-task 3d) ──────────────────
+    #
+    # External MCP clients (= Claude Desktop, Cursor, ...) receive path-
+    # refs in tool responses (= ``send_to_agent`` returning a result
+    # body that contains a ``reyn-tool-result://`` URI). When the client
+    # wants the full body, it calls ``resources/read(uri=...)``. This
+    # handler resolves the vendor-scheme URI to the local file via the
+    # same MediaStore boundary check as ``read_tool_result`` — same-
+    # host fs read, no HTTP indirection because the MCP server already
+    # IS on the producing host.
+
+    @server.read_resource()
+    async def _read_resource(uri):  # type: ignore[no-redef]
+        """Resolve a ``reyn-tool-result://<agent>/<artifact>`` URI to its
+        body for cross-protocol consumers (= external MCP clients).
+
+        Returns ``[ReadResourceContents(...)]`` — the SDK's non-
+        deprecated shape. Unsupported URI schemes and missing files
+        surface as ``text/plain`` content with an ``error: ...`` body
+        so the client still gets a structured response rather than a
+        transport error. Path-traversal escapes propagate as
+        PermissionError (= the MCP framework wraps as an error to the
+        client).
+        """
+        from mcp.server.lowlevel.helper_types import ReadResourceContents
+
+        from reyn.workspace.media_store import (
+            MediaStore,
+            MediaStoreConfig,
+            parse_resource_uri,
+        )
+        uri_str = str(uri)
+        parsed = parse_resource_uri(uri_str)
+        if parsed is None:
+            # Unsupported URI scheme (= not ``reyn-tool-result://...``).
+            # External MCP clients sometimes pass other schemes (= file://,
+            # https://); we explicitly only resolve our vendor scheme via
+            # this handler. For https:// URLs, the client should fetch
+            # directly (= the URL points at our own resources router).
+            return [ReadResourceContents(
+                content=(
+                    f"error: unsupported resource URI scheme: {uri_str!r}. "
+                    "Reyn MCP server resolves reyn-tool-result://<agent>/<artifact> only; "
+                    "for https:// URLs fetch directly via the resources router."
+                ),
+                mime_type="text/plain",
+            )]
+        agent_name, _artifact = parsed
+        # MediaStore is per-agent-identity, but the file is in a shared
+        # tool_results_dir. Construct ad-hoc with the URI-claimed agent
+        # name; the boundary check ensures the resolved path stays
+        # inside ``.reyn/tool-results/`` regardless.
+        from pathlib import Path
+        store = MediaStore(
+            MediaStoreConfig(),
+            project_root=Path.cwd(),
+            agent_name=agent_name,
+        )
+        body, found = store.read_tool_result_by_uri(uri_str)
+        if not found:
+            return [ReadResourceContents(
+                content=(
+                    f"error: tool result not found for URI {uri_str!r} "
+                    "(= deleted by user, or never existed on this Reyn instance)"
+                ),
+                mime_type="text/plain",
+            )]
+        return [ReadResourceContents(content=body, mime_type="text/plain")]
+
     return server
 
 
