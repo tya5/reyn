@@ -1491,6 +1491,24 @@ class ReynConfig:
     # FP-0009 Component B — cron-driven scheduled skill execution.
     # Empty by default; operator declares jobs in reyn.yaml ``cron.jobs``.
     cron: CronConfig = field(default_factory=CronConfig)
+    # FP-0041 #489 PR-D2 — external chat transport routing (= Slack /
+    # LINE / Discord etc.). Empty by default; operator declares
+    # transport → MCP tool mapping in reyn.yaml ``external_transports``.
+    # See ``reyn.chat.external_routing.ExternalTransportRouting``.
+    external_transports: "ExternalTransportRouting" = field(
+        default_factory=lambda: _empty_external_transports(),
+    )
+
+
+def _empty_external_transports():
+    """Lazy import shim for the default ``ExternalTransportRouting``.
+
+    Avoids importing ``reyn.chat.external_routing`` at module-load time
+    (= ``reyn.config`` is imported very early; the chat-side import
+    would create a cycle).
+    """
+    from reyn.chat.external_routing import ExternalTransportRouting
+    return ExternalTransportRouting()
 
 
 def _load_yaml(path: Path) -> dict:
@@ -1799,7 +1817,22 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         self_improvement=_build_self_improvement_config(merged.get("self_improvement")),
         action_retrieval=_build_action_retrieval_config(merged.get("action_retrieval")),
         cron=_build_cron_config(merged.get("cron")),
+        external_transports=_build_external_transports_config(
+            merged.get("external_transports"),
+        ),
     )
+
+
+def _build_external_transports_config(raw: object):
+    """Parse the ``external_transports:`` section (FP-0041 #489 PR-D2).
+
+    Defers to ``reyn.chat.external_routing.parse_external_transports``
+    which handles defensive parsing (= malformed entries silently
+    skipped). Lazy import to avoid the same circular dependency
+    addressed by ``_empty_external_transports``.
+    """
+    from reyn.chat.external_routing import parse_external_transports
+    return parse_external_transports(raw)
 
 
 def _build_voice_config(raw: object) -> VoiceConfig:
