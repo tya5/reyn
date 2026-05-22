@@ -32,7 +32,6 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.slash import suggest_for_unknown
 
-
 # Canonical names list used across tests so the assertions stay stable
 # even as new slash commands land in the real registry.
 _FIXTURE_NAMES = sorted([
