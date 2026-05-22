@@ -5,7 +5,7 @@ Pins the contract that plan completion drives router synthesis via the
 
 1. ``spawn_plan_task`` on clean exit enqueues a ``plan_completed`` inbox
    message (= not a direct ``agent`` outbox emit).
-2. ``_handle_plan_completed`` injects a ``[plan_completed]`` user-role
+2. ``_handle_plan_completed`` injects a ``[task_completed] kind=plan`` user-role
    message into history so the router LLM sees step_results.
 3. ``_handle_plan_completed`` calls ``_run_router_loop`` exactly once (=
    the synthesis turn).
@@ -123,11 +123,11 @@ async def test_handle_plan_completed_injects_user_message(
     tmp_path, monkeypatch,
 ) -> None:
     """Tier 2: FP-0025 C — _handle_plan_completed appends a user-role
-    [plan_completed] message to session.history carrying plan_id and
+    [task_completed] kind=plan message to session.history carrying plan_id and
     step_results text, so the router LLM sees step outputs.
 
     Observation: read session.history (public attribute) after the handler
-    returns; the last user-role message must contain ``[plan_completed]``
+    returns; the last user-role message must contain ``[task_completed] kind=plan``
     and the goal text.
     """
     monkeypatch.chdir(tmp_path)
@@ -155,13 +155,13 @@ async def test_handle_plan_completed_injects_user_message(
         "Expected at least one new history entry after _handle_plan_completed"
     )
 
-    # The injected message must be user-role and contain [plan_completed].
+    # The injected message must be user-role and contain [task_completed] kind=plan.
     injected = [
         m for m in session.history[history_before:]
-        if m.role == "user" and "[plan_completed]" in m.text
+        if m.role == "user" and "[task_completed] kind=plan" in m.text
     ]
     assert len(injected) >= 1, (
-        f"Expected a user-role [plan_completed] history entry; "
+        f"Expected a user-role [task_completed] kind=plan history entry; "
         f"new entries: {[m.text[:80] for m in session.history[history_before:]]!r}"
     )
 
@@ -252,9 +252,9 @@ async def test_handle_plan_completed_injects_step_failures_when_present(
 
     injected = [
         m for m in session.history[history_before:]
-        if m.role == "user" and "[plan_completed]" in m.text
+        if m.role == "user" and "[task_completed] kind=plan" in m.text
     ]
-    assert len(injected) >= 1, "Expected a [plan_completed] history entry"
+    assert len(injected) >= 1, "Expected a [task_completed] kind=plan history entry"
     msg = injected[0]
     assert "step_failures" in msg.text, (
         f"Expected 'step_failures' in injected message; got: {msg.text[:200]!r}"
@@ -277,7 +277,7 @@ async def test_handle_plan_completed_injects_step_failures_when_present(
 
     injected2 = [
         m for m in session.history[history_before2:]
-        if m.role == "user" and "[plan_completed]" in m.text
+        if m.role == "user" and "[task_completed] kind=plan" in m.text
     ]
     assert len(injected2) >= 1
     msg2 = injected2[0]

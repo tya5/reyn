@@ -72,14 +72,32 @@ def test_invoke_action_description_no_dead_priority_block() -> None:
     )
 
 
-def test_invoke_action_description_contains_optimism_bias() -> None:
-    """Tier 2: invoke_action description carries Optimism bias / errors verbatim rule.
+def test_invoke_action_description_carries_task_completed_status_semantics() -> None:
+    """Tier 2: invoke_action description carries the TASK_COMPLETED meaning,
+    including how the LLM should read non-'finished' status values.
 
-    B23-PRE-1: task_completed error handling moved from SP to invoke_action.description.
+    B23-PRE-1: task_completed handling moved from SP to
+    invoke_action.description.
+    B49 W1-S6 fix (2026-05-22): the prescriptive "MUST surface verbatim"
+    + "narrate in 1-2 sentences" + "Optimism bias" handling rules were
+    removed per the SP-conveys-meaning / LLM-decides-handling principle.
+    The description now lists the non-'finished' status values (=
+    ``loop_limit_exceeded``, ``phase_budget_exceeded``,
+    ``budget_exceeded``, ``error``) so the LLM knows their semantic and
+    can judge how to narrate.
     """
     desc = _INVOKE_ACTION_DESCRIPTION
-    # Either the phrase "Optimism bias" or the verbatim instruction
-    assert "Optimism" in desc or "verbatim" in desc or "MUST surface" in desc
+    assert "TASK_COMPLETED" in desc, (
+        f"description should anchor TASK_COMPLETED handling; got "
+        f"{desc[:400]!r}"
+    )
+    # The non-'finished' status values must be enumerated so the LLM
+    # knows what a failure status looks like.
+    for status_value in ("loop_limit_exceeded", "budget_exceeded", "error"):
+        assert status_value in desc, (
+            f"TASK_COMPLETED block should name status='{status_value}' so "
+            f"the LLM recognises non-success states; got {desc[:400]!r}"
+        )
 
 
 def test_invoke_action_description_contains_agent_delegation_pattern() -> None:

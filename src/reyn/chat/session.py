@@ -2919,19 +2919,28 @@ class ChatSession:
         data = payload.get("data") or {}
 
         # Build the user-role message text. Use a stable header so the
-        # router SP's completion-narration rule (Component C) can match
-        # on `[task_completed]` reliably. JSON-encode `data` so the LLM
-        # sees the actual fields (= avoids lossy string coercion).
+        # router SP's TASK_COMPLETED rule can match on ``[task_completed]``
+        # reliably. JSON-encode ``data`` so the LLM sees the actual fields
+        # (= avoids lossy string coercion).
+        #
+        # B49 W1-S6 fix (2026-05-22): the "task" abstraction unifies
+        # skill-run and plan completions (= same label, same SP handler,
+        # ``kind=`` field disambiguates). The prescriptive "summarize in
+        # 1-2 sentences" trailer was the dominant signal that drove the
+        # LLM to drop substantive content from its reply (= W1-S6 had
+        # direct_llm returning code that the LLM compressed away). Per
+        # the SP design principle "SP conveys meaning, LLM decides
+        # handling", the injection now carries only meaning fields; the
+        # SP TASK_COMPLETED rule explains what they mean and the LLM
+        # decides how to narrate.
         try:
             data_str = json.dumps(data, ensure_ascii=False, indent=2)
         except (TypeError, ValueError):
             data_str = repr(data)
         injected_text = (
-            f"[task_completed] chain_id={chain_id} run_id={run_id}\n"
+            f"[task_completed] kind=skill run_id={run_id} chain_id={chain_id}\n"
             f"skill: {skill_name}  status: {status}\n"
-            f"result: {data_str}\n\n"
-            "Please summarize what completed for the user in 1-2 sentences "
-            "per the post-invoke_skill narration rules in your instructions."
+            f"result: {data_str}"
         )
 
         self._append_history(ChatMessage(
@@ -3358,9 +3367,16 @@ class ChatSession:
         """FP-0025 C: narrate plan completion via one router LLM turn.
 
         Symmetric with _handle_skill_completed (FP-0012). Injects a
-        [plan_completed] user-role message into history so the router
-        LLM sees step_results and synthesises a user reply.
+        [task_completed] user-role message (kind=plan) into history so
+        the router LLM sees step_results and synthesises a user reply.
         """
+        # B49 W1-S6 fix (2026-05-22): unified "task" abstraction with
+        # skill completion. Both emit [task_completed] with kind= field
+        # for disambiguation; the SP TASK_COMPLETED rule covers both via
+        # the meaning of status + result fields, no prescriptive
+        # "summarize in 1-2 sentences" or "synthesize the step results"
+        # trailer (= those were handling prescriptions that pre-empted
+        # the LLM's own judgment).
         plan_id = payload.get("plan_id", "")
         chain_id = payload.get("chain_id") or _new_chain_id()
         goal = payload.get("goal", "")
@@ -3370,11 +3386,12 @@ class ChatSession:
             results_str = json.dumps(step_results, ensure_ascii=False, indent=2)
         except (TypeError, ValueError):
             results_str = repr(step_results)
+        # status='finished' is the implicit success state for plans; if any
+        # step failed, that surfaces via step_failures + the LLM sees both.
         injected_text = (
-            f"[plan_completed] plan_id={plan_id}\n"
-            f"goal: {goal}\n"
-            f"step_results:\n{results_str}\n\n"
-            "Please synthesize the step results into a complete response for the user."
+            f"[task_completed] kind=plan plan_id={plan_id} chain_id={chain_id}\n"
+            f"goal: {goal}  status: {'failed' if step_failures else 'finished'}\n"
+            f"step_results:\n{results_str}"
         )
         if step_failures:
             try:
