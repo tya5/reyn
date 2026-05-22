@@ -283,6 +283,12 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # mcp_drop_server op_runtime handler.
     "mcp.operation__drop_server": ("mcp_drop_server", _passthrough_args),
 
+    # validation category — lint op exposed to the router so users can request
+    # skill linting directly ("lint the foo skill").  skill_path accepts a
+    # skill name (resolved via the standard reyn/local → project → stdlib
+    # search path) or a workspace-relative directory path.
+    "validation__lint": ("lint", _passthrough_args),
+
     # exec category (FP-0017 sandboxed_exec, D14 visibility gating).
     "exec__sandboxed_exec": ("sandboxed_exec", _passthrough_args),
 }

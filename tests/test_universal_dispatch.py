@@ -579,6 +579,7 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("rag.operation__recall",      {"query": "q", "sources": ["s"]}),
     ("rag.operation__drop_source", {"source": "s"}),
     ("mcp.operation__drop_server", {"server": "x"}),
+    ("validation__lint",           {"skill_path": "index_events"}),
     ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),
 ]
 
