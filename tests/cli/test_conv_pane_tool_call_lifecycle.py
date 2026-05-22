@@ -184,3 +184,45 @@ def test_format_tool_result_truncates_long_string_input():
     out = _format_tool_result("x" * 500)
     assert out.endswith("...")
     assert len(out) <= 120
+
+
+def test_format_tool_result_drops_trailing_fields_to_keep_placeholders_atomic():
+    """Tier 2: ``<N chars>`` placeholder must survive whole — drop trailing
+    fields rather than truncating into the placeholder string.
+
+    Wave-#427 smoke detected ``content=<3 cha…`` (= placeholder broken
+    mid-string) when the joined result exceeded the body budget. The
+    fixed formatter drops trailing fields atomically; the placeholder
+    is either present in full or dropped entirely — never truncated
+    into a meaningless fragment.
+    """
+    # Many small fields plus a placeholder-eligible bulky one at the end
+    # — the assembled string blows past the budget, so trailing fields
+    # should be dropped while earlier ones survive intact.
+    result = {
+        "kind": "file",
+        "op": "read",
+        "path": "some/really/long/path/that/eats/up/many/cells.toml",
+        "status": "ok",
+        "exit_code": 0,
+        "extra_field_1": "value_one",
+        "extra_field_2": "value_two",
+        "content": "x" * 5000,
+    }
+    out = _format_tool_result(result)
+    # Budget cap honored.
+    assert len(out) <= 80
+    # No partial placeholder fragments — if `content=` appears, the full
+    # `<5000 chars>` must follow; otherwise it shouldn't appear at all.
+    if "content=" in out:
+        assert "<5000 chars>" in out, (
+            f"placeholder broken mid-string: {out!r}"
+        )
+    # Earlier, more-important fields preserved (= dict insertion order).
+    assert "kind=file" in out
+
+
+def test_format_tool_result_short_result_unchanged():
+    """Tier 2: a result that fits the budget passes through verbatim."""
+    out = _format_tool_result({"status": "ok", "exit_code": 0, "bytes": 1234})
+    assert out == "status=ok, exit_code=0, bytes=1234"

@@ -82,12 +82,24 @@ def _format_tool_args(args: dict | None) -> str:
     return ", ".join(parts)
 
 
+# Output budget for the assembled result snippet. ToolCallRow re-truncates
+# at terminal width for very narrow terminals, but the formatter itself
+# caps total length to keep ``<N chars>`` placeholder fields atomic — if
+# the cell-aware truncation downstream had to cut into a placeholder
+# (= ``content=<3 cha…``), the placeholder would lose its meaning.
+# Drop trailing fields whole instead of truncating mid-placeholder.
+_TOOL_RESULT_BUDGET_CHARS = 80
+
+
 def _format_tool_result(result) -> str:
     """Compact one-line repr of dispatcher result for the ToolCallRow row-2.
 
     Accepts dict / str / None; degrades to "" when result has nothing
-    presentable. The widget further truncates to terminal width, so
-    this just removes the bulky body fields and joins the rest.
+    presentable. Caps total length at ``_TOOL_RESULT_BUDGET_CHARS`` by
+    dropping trailing fields whole rather than truncating mid-string, so
+    ``<N chars>`` placeholders never get cut into incomprehensible
+    fragments (= ``content=<3 cha…`` instead of ``content=<3 chars>``
+    or the field dropped entirely).
     """
     if result is None:
         return ""
@@ -104,6 +116,13 @@ def _format_tool_result(result) -> str:
         if len(s) > 60:
             s = s[:57] + "..."
         parts.append(f"{key}={s}")
+    # Drop trailing fields whole until the joined string fits the budget.
+    # Preserves atomic shape of ``<N chars>`` placeholders + ``key=value``
+    # pairs — partial fields would be noise. Keeps ``status`` / earlier
+    # context fields first because dict iteration is insertion-order, and
+    # op handlers tend to emit ``status`` / primary signals first.
+    while parts and len(", ".join(parts)) > _TOOL_RESULT_BUDGET_CHARS:
+        parts.pop()
     return ", ".join(parts)
 
 
