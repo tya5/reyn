@@ -273,8 +273,22 @@ class ToolCallRow(Widget):
         return t
 
     def _build_line2(self) -> Text:
-        """``  ⎿ <result snippet>`` — empty Text when result not yet set."""
-        if not self._result_snippet:
+        """``  ⎿ <result snippet>`` or ``  ⎿ <error reason>`` (terminal-failed).
+
+        Line-2 content priority:
+          1. ``_result_snippet`` (= success / explicit body)
+          2. ``_reason`` (= failure / abort cause) when terminal state
+             is non-success — surfaces *why* the tool call failed so
+             the user doesn't have to switch to the events tab. Same
+             ``  ⎿ `` indent as success, but ``✗ <reason>`` body
+             prefixed with the failure glyph + styled in dim red /
+             dim grey (= aborted) so the visual cue carries across
+             both line 1 and line 2.
+          3. Nothing (= still running, or terminal-success with empty
+             result preview)
+        """
+        body, body_style = self._line2_body_and_style()
+        if not body:
             return Text("")
         try:
             total_width = int(getattr(self.size, "width", 0))
@@ -289,11 +303,27 @@ class ToolCallRow(Widget):
         body_budget = max(
             8, total_width - cell_len(_RESULT_INDENT) - _RIGHT_MARGIN_CELLS,
         )
-        snippet = self._truncate_to_cells(self._result_snippet, body_budget)
+        snippet = self._truncate_to_cells(body, body_budget)
         t = Text()
         t.append(_RESULT_INDENT, style="dim #666666")
-        t.append(snippet, style="dim")
+        t.append(snippet, style=body_style)
         return t
+
+    def _line2_body_and_style(self) -> tuple[str, str]:
+        """Decide what (if anything) to show on line 2 + its style.
+
+        Priority: result_snippet wins (= explicit positive body) over
+        the failure reason fallback. For aborted state, prefix the
+        reason with the ⊘ glyph so the line carries the same shape
+        cue as line 1's state-glyph.
+        """
+        if self._result_snippet:
+            return self._result_snippet, "dim"
+        if self._finished and not self._success and self._reason:
+            if self._aborted:
+                return f"⊘ {self._reason}", "dim #888888"
+            return f"✗ {self._reason}", "dim #ff6644"
+        return "", "dim"
 
     def _refresh(self) -> None:
         if self._line1 is not None:

@@ -131,3 +131,52 @@ def test_result_snippet_truncated_when_long() -> None:
     line2 = row._build_line2().plain
     assert "…" in line2
     assert "⎿" in line2  # indent marker preserved
+
+
+def test_failed_terminal_surfaces_reason_on_line2() -> None:
+    """Tier 2: ``finish_failure(reason=...)`` renders the reason on line 2.
+
+    F-B (wave-#427 follow-up): before this contract, a failed tool
+    call showed ``✗ tool(args) · 0.5s`` with empty line 2 — the user
+    had to switch to the right-panel events tab to see *why* the
+    call failed. Now the reason is inline so the conv pane carries
+    a complete failure narrative.
+    """
+    row = _row()
+    row.finish_failure(reason="timeout")
+    line2 = row._build_line2().plain
+    assert "⎿" in line2, "indent marker preserved"
+    assert "✗" in line2, "failure glyph mirrors line 1"
+    assert "timeout" in line2, "reason text visible"
+
+
+def test_aborted_terminal_surfaces_reason_with_circle_slash_on_line2() -> None:
+    """Tier 2: aborted state uses ``⊘`` glyph on line 2 (matching line 1)."""
+    row = _row()
+    row.finish_aborted(reason="user cancelled")
+    line2 = row._build_line2().plain
+    assert "⎿" in line2
+    assert "⊘" in line2, "aborted glyph mirrors line 1"
+    assert "user cancelled" in line2
+
+
+def test_failed_with_explicit_result_snippet_prefers_result() -> None:
+    """Tier 2: when both result_snippet and reason are present, result wins.
+
+    The hypothetical case (= a tool that fails but still returns a
+    structured payload). Result snippet is the more specific signal.
+    """
+    row = _row()
+    row.finish_failure(reason="non-zero exit", result_snippet="status=err, exit_code=1")
+    line2 = row._build_line2().plain
+    assert "status=err" in line2
+    # The reason text is NOT shown in this case — result snippet wins.
+    assert "non-zero exit" not in line2
+
+
+def test_failed_with_empty_reason_omits_line2() -> None:
+    """Tier 2: failure with no reason text → still empty line 2 (no orphan ✗)."""
+    row = _row()
+    row.finish_failure(reason="")
+    line2 = row._build_line2().plain
+    assert line2 == ""
