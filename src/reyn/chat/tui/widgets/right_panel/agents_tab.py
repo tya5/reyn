@@ -456,6 +456,18 @@ def render_agents(
     except Exception as exc:
         logger.warning("right_panel agents: registry.loaded_names() failed: %s", exc)
         loaded = set()
+    # Wave-10 follow-up H-F12: pin the attached agent to the top of the
+    # list. ``registry.list_names()`` returns sorted-alphabetical, so on
+    # a registry with 5+ agents the attached agent (= the one the user
+    # is currently chatting with, marked ``▶`` coral) could appear at
+    # position 3-5 and require j-key navigation to find. The "daily
+    # contact" agent should be immediately visible without scrolling —
+    # other TUI surfaces (= tmux session list, IDE active-tab) follow
+    # the same convention. The sort key keeps alphabetical order for
+    # the non-attached agents (= secondary sort) so the rest of the
+    # list still reads predictably.
+    if attached:
+        names = sorted(names, key=lambda n: (n != attached, n))
     now = _time.monotonic()
 
     agent_trees: list[Any] = []
