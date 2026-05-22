@@ -515,7 +515,7 @@ class PermissionResolver:
         return await self._prompt_file_access(path, scope, skill_name, "file.write", bus)
 
     async def startup_guard(
-        self, skill: "Skill", skill_name: str, bus: RequestBus,
+        self, skill: "Skill", skill_name: str, bus: "RequestBus | None",
     ) -> None:
         """
         Pre-flight permission check: scan all phase declarations, collect paths that
@@ -525,6 +525,21 @@ class PermissionResolver:
         Non-interactive runs require approvals to be in place beforehand: either
         pre-approved in reyn.yaml / reyn.local.yaml (layer 3) or persisted to
         .reyn/approvals.yaml from a prior interactive run (layer 2).
+
+        B49 W2-S5 fix (2026-05-22): ``bus`` may be ``None`` when the caller
+        is a non-interactive context (e.g. a preprocessor sub-skill run
+        invoked via ``run_skill`` op from inside ``iterate`` /
+        ``run_op``). If all permissions are already approved or the skill
+        declares none that need approval, the guard returns without using
+        the bus. If unapproved permissions are found and ``bus is None``,
+        a ``RuntimeError`` is raised with a clear message naming the
+        pending permissions so the caller can surface the
+        mis-configuration. Previously, ``run_orchestrator`` had an
+        unconditional pre-check ``if intervention_bus is None: raise``
+        that blocked any preprocessor sub-skill call when the resolver
+        was configured, regardless of whether prompts were actually
+        needed; that pre-check is removed and the None-handling moves
+        here, where it can branch on actual prompt necessity.
         """
         write_requests: list[dict] = []
         read_requests: list[dict] = []
@@ -610,6 +625,25 @@ class PermissionResolver:
 
         if not (write_requests or read_requests or python_requests):
             return
+
+        # B49 W2-S5 fix (2026-05-22): bus may be None in non-interactive
+        # contexts (= preprocessor sub-skill run). If we reach here,
+        # prompts are needed but no bus is available — surface a clear
+        # error rather than silently skipping approvals or crashing
+        # inside _prompt_*.
+        if bus is None:
+            pending = (
+                [f"file.read:{r['path']}" for r in read_requests]
+                + [f"file.write:{r['path']}" for r in write_requests]
+                + [f"python:{r['module']}:{r['function']}" for r in python_requests]
+            )
+            raise RuntimeError(
+                f"Skill '{skill_name}' has unapproved permissions "
+                f"({', '.join(pending)}) but no intervention_bus is "
+                f"available to prompt the user. Pre-approve via "
+                f"reyn.yaml or an interactive run before using this "
+                f"skill non-interactively."
+            )
 
         for req in read_requests:
             await self._prompt_file_access(
@@ -926,7 +960,7 @@ class PermissionResolver:
 
     async def require_python(
         self, decl: PermissionDecl, module: str, function: str,
-        bus: RequestBus,
+        bus: "RequestBus | None",
         skill_name: str = "",
     ) -> PythonPermission:
         """Resolve which python permission entry applies; raise if denied.
@@ -935,6 +969,16 @@ class PermissionResolver:
         startup_guard approval (saved per skill+module:function). Unsafe-mode
         steps additionally require unsafe_python_allowed=True (set by the
         --allow-unsafe-python CLI flag).
+
+        B49 W2-S5 fix (2026-05-22): ``bus`` may be ``None`` in
+        non-interactive contexts (= preprocessor / postprocessor python
+        step invoked from a sub-skill run). ``_approve`` short-circuits
+        before reaching the prompt path when the permission is
+        config-approved or saved/session-approved, so the bus is only
+        consulted when an interactive prompt is genuinely required.
+        With ``self._interactive=False`` and no prior approval,
+        ``_approve`` returns False without touching the bus, and this
+        method raises PermissionError as before.
         """
         matching = [
             p for p in decl.python

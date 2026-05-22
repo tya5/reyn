@@ -420,12 +420,17 @@ class PreprocessorExecutor:
         # Resolve permission for this (module, function). Without a resolver
         # (e.g. unit tests), default to a permissive pure-mode entry.
         if self._perm is not None:
-            if self._intervention_bus is None:
-                raise PreprocessorError(
-                    f"Phase '{phase_name}' preprocessor step[{index}] python: "
-                    f"intervention_bus not configured (cannot prompt for "
-                    f"python.{step.module}:{step.function})"
-                )
+            # B49 W2-S5 fix (2026-05-22): pass intervention_bus as-is; it
+            # may be None in non-interactive contexts (= preprocessor /
+            # postprocessor python step invoked from a sub-skill run).
+            # ``PermissionResolver._approve`` already returns True early
+            # when the permission is config-approved (= reyn.yaml
+            # ``python.safe: allow``) or session/saved-approved, without
+            # touching the bus. The pre-check that raised unconditionally
+            # blocked the config-approved path too. ``require_python``'s
+            # PermissionError still raises when interactive prompt is
+            # genuinely required but the bus is missing — see
+            # PermissionResolver._approve / _prompt for the routing.
             try:
                 perm = await self._perm.require_python(
                     self._skill.permissions, step.module, step.function,

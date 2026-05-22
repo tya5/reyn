@@ -45,8 +45,16 @@ schema:
         string when no phases were evaluated (e.g. the target skill failed
         before producing artifacts).
     spec_path:
-      type: string
-      description: Path to the eval spec being run (passed through from input).
+      # B49 W2-S5 fix (2026-05-22): allow null because the LLM emits
+      # null when no spec file was provided (= direct chat eval).
+      # Required-list removal in PR #403 alone was insufficient because
+      # this property-level type constraint still rejected null. Same
+      # nullable shape applied to case_run_result.yaml in the same PR.
+      type: [string, "null"]
+      description: |
+        Path to the eval spec being run (passed through from input).
+        Null when the input did not carry a spec_path (= direct chat
+        eval without a spec.md reference).
     summary:
       type: string
       description: |
