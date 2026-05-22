@@ -73,22 +73,24 @@ permissions:
   # shell: allow
 
 # ───────────────────────────────────────────────────────────────────────────
-# MCP servers (optional). Stdlib skills that depend on MCP need a
-# `filesystem` server. Uncomment below to enable, or see the full example at
-# cookbook/configs/with-mcp.yaml.  Run the server manually first to verify:
-#   npx -y @modelcontextprotocol/server-filesystem .
+# MCP servers (= op-managed, not edited here).
+#
+# Issue #470 (2026-05-22): MCP server registry lives in `.reyn/mcp.yaml`, not
+# in this file. The split matches the principle that `reyn.yaml` should carry
+# only **static deployment config** (= edit + restart to apply), while
+# runtime-mutable state lives under `.reyn/`. Sister convention to
+# `.reyn/approvals.yaml` (= dynamic permission state, ops-managed).
+#
+# Install / remove MCP servers via the CLI; the ops write to `.reyn/mcp.yaml`:
+#   reyn mcp install io.github.modelcontextprotocol/server-filesystem
+#   reyn mcp drop filesystem
+#
+# Migration: if you have legacy `mcp.servers` entries here from before #470,
+# they continue to load. Run `reyn config migrate-mcp` (or `--dry-run` first)
+# to move them to `.reyn/mcp.yaml` and remove from this file.
+#
 # Full setup guide: docs/guide/for-skill-authors/use-an-mcp-server.md
 # ───────────────────────────────────────────────────────────────────────────
-# mcp:
-#   servers:
-#     filesystem:
-#       type: stdio
-#       command: npx
-#       args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
-#     # git:
-#     #   type: stdio
-#     #   command: npx
-#     #   args: ["-y", "@modelcontextprotocol/server-git", "--repository", "."]
 """
 
 
