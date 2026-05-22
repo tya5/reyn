@@ -1662,6 +1662,17 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         project_local = _load_yaml(project_root / "reyn.local.yaml")
         merged = _merge(merged, project_local)
 
+        # Issue #470: dynamic MCP registry separated from static config.
+        # ``.reyn/mcp.yaml`` carries op-managed server entries; merged
+        # LAST so it overrides any operator-edited ``mcp.servers`` in
+        # reyn.yaml / reyn.local.yaml (= newer installs win, but
+        # legacy entries continue to load for backward compat).
+        # Shape: ``{"mcp": {"servers": {<name>: {<entry>}}}}`` — same
+        # as the section in reyn.yaml, so ``_merge`` handles it
+        # without special-casing.
+        dynamic_mcp = _load_yaml(project_root / ".reyn" / "mcp.yaml")
+        merged = _merge(merged, dynamic_mcp)
+
         # ADR-0031: <project>/.reyn/config.yaml is DEPRECATED (removed from
         # the 3-layer cascade).  Emit a one-time warning if the file exists so
         # users know to migrate.  The file is intentionally NOT loaded.

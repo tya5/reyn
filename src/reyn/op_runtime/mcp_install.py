@@ -62,13 +62,31 @@ def _short_name(server_id: str) -> str:
 
 
 def _scope_to_path(scope: str, project_root: Path) -> Path:
-    """Resolve the target config file path for the given scope."""
-    if scope == "local":
-        return project_root / "reyn.local.yaml"
-    elif scope == "project":
-        return project_root / "reyn.yaml"
-    else:  # "user"
-        return Path.home() / ".reyn" / "config.yaml"
+    """Resolve the target config file path for the given scope.
+
+    Issue #470 (2026-05-22): dynamic MCP server registry is being
+    separated from the static deployment config. New installs write
+    to ``.reyn/mcp.yaml`` regardless of ``scope`` — the scope flag
+    is retained as a no-op for CLI backward compat (= existing
+    ``reyn mcp install --scope X`` invocations don't break) but no
+    longer determines the write target.
+
+    Rationale: ``reyn.yaml`` semantics = "edit + restart" should
+    apply uniformly across all of its content. ``mcp.servers`` was
+    the only field that violated this by being op-mutated at
+    runtime — separating it into ``.reyn/mcp.yaml`` purifies the
+    invariant and matches the existing pattern where dynamic state
+    (= ``.reyn/approvals.yaml``) already lives under ``.reyn/``.
+
+    Backward compat (= preserved by ``_merge`` in config.py): if
+    the operator hand-wrote ``mcp.servers`` into reyn.yaml,
+    those entries continue to load. New installs land in the new
+    location; ``reyn config migrate-mcp`` (= follow-up) provides
+    explicit migration.
+    """
+    # Scope arg ignored — single canonical target for dynamic registry.
+    _ = scope  # noqa: F841 — retained on signature for CLI compat
+    return project_root / ".reyn" / "mcp.yaml"
 
 
 def _build_server_entry(pkg_raw: dict, env_keys: list[str]) -> dict:
