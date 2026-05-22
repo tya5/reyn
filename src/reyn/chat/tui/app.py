@@ -612,22 +612,36 @@ class ReynTUIApp(App):
             # FP-0011: skill_narrator removed → skill_done outbox kind gone.
             # ChatEventForwarder now forwards workflow_finished / workflow_aborted
             # as "skill done: <status>" so the row can stop spinning here.
-            status = text[len("skill done: "):].strip()
+            payload = text[len("skill done: "):].strip()
+            # C-F2 (wave-8): forwarder may append the abort reason as
+            # ``"aborted: <reason>"`` — split on the first colon so we
+            # extract both the bare status (= "finished" / "aborted")
+            # and the human-readable reason for the ``✗`` finish line.
+            # Bare ``"aborted"`` (= no reason) falls through to the
+            # legacy phase-count fallback below.
+            abort_reason = ""
+            if ": " in payload:
+                status, abort_reason = payload.split(": ", 1)
+                status = status.strip()
+                abort_reason = abort_reason.strip()
+            else:
+                status = payload
             # Wave-3 SK2: pass the phase-visit count as ``reason`` so
             # ``SkillActivityRow._build_finished`` renders the
-            # ``· N phase(s)`` suffix. Previously hard-coded
-            # ``reason=""`` suppressed the suffix entirely; the
-            # widget already supports the conditional render but had
-            # no caller setting the value. Read from
-            # ``_skill_exec`` which the ``phase started:`` branch
-            # populates throughout the run.
-            _visits = int(
-                (self._skill_exec.get(run_id) or {}).get("phase_visits", 0)
-            )
-            _reason = (
-                f"{_visits} phase{'s' if _visits != 1 else ''}"
-                if _visits > 0 else ""
-            )
+            # ``· N phase(s)`` suffix. C-F2 (wave-8): when the forwarder
+            # supplied an explicit abort reason, that wins over the
+            # phase count — the user wants to see "timeout" or
+            # "budget exceeded", not just "2 phases".
+            if abort_reason:
+                _reason = abort_reason
+            else:
+                _visits = int(
+                    (self._skill_exec.get(run_id) or {}).get("phase_visits", 0)
+                )
+                _reason = (
+                    f"{_visits} phase{'s' if _visits != 1 else ''}"
+                    if _visits > 0 else ""
+                )
             conv.finish_skill_row(
                 run_id, success=(status == "finished"), reason=_reason,
             )
