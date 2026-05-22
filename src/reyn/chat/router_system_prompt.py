@@ -152,19 +152,62 @@ def build_system_prompt(
     # (N5 empirical finding: gemini-2.5-flash-lite invented
     # search_actions when not in tools= → unknown_tool dispatcher
     # error → gave up without recovering via list_actions).
+    # FP-0034 §D14: ``search_actions`` is only in tools= when the
+    # embedding class is configured.  Build the wrapper chain dynamically
+    # so the SP routing hint matches the actual tools= shape.
     _wrapper_names = ["list_actions"]
     if search_actions_enabled:
         _wrapper_names.append("search_actions")
     _wrapper_names.extend(["describe_action", "invoke_action"])
-    _wrapper_line = (
-        f"{len(_wrapper_names)} universal wrappers: {' / '.join(_wrapper_names)}."
-        " Frequent actions also appear as direct aliases in"
-        " tools list — call them directly when you know the exact qualified name."
-    )
+    _wrapper_chain = " → ".join(_wrapper_names)
+
+    # V18 — 4-intent multi-step routing (replaces the legacy single-line
+    # wrapper introduction). Designed around how a human assistant
+    # actually disambiguates incoming requests: classify FIRST, then act,
+    # and when classification fails honestly, ask back rather than guess.
+    #
+    # Intent taxonomy:
+    #   1. Conversation        → reply without tools
+    #   2. Information question → lookup (Reyn docs / external / training)
+    #   3. Task / action       → invoke a catalog action
+    #   4. Ambiguous           → ask ONE clarifying question
+    #
+    # Why this shape (= chain-replay experiments documented at
+    # docs/deep-dives/journal/dogfood/known-future-challenges.md):
+    #   - "About Reyn itself" lives as a sub-case of intent 2, not its
+    #     own top-level intent — keeps SP O(1) regardless of how many
+    #     Reyn surfaces get added later.
+    #   - Multi-step routing is named explicitly so the LLM does not
+    #     treat the classification as a single-shot commitment.
+    #   - Ambiguous-ask path matches human-assistant baseline; previous
+    #     SP shapes never offered this and the LLM defaulted to guessing.
     parts.extend([
-        _wrapper_line,
+        "Decide what the user wants. Multi-step routing is fine — explore"
+        " briefly when the right path is uncertain, but don't loop.",
         "",
-        "For chitchat or self-questions, reply without tools.",
+        "**Conversation** (\"hi\", \"thanks\", \"who are you?\") → reply"
+        " directly, no tools.",
+        "",
+        "**A question with a substantive answer** — figure out where the"
+        " answer lives:",
+        "- About Reyn itself (how Reyn works, Reyn's CLI / runtime /"
+        " protocols / project conventions):"
+        " invoke_action(action_name=\"reyn.source__read\","
+        " args={\"path\": \"README.md\"}) → synthesize from README."
+        " (README has the overview + curated map of deep-dive paths;"
+        " chain to a specific doc if README points there.)",
+        "- About external / current information: web__search or"
+        " web__fetch.",
+        "- Already in your training: answer directly.",
+        "",
+        "**A task to perform** — pick the action:",
+        "- Obvious from the query (file__read for \"read this file\","
+        " reyn.source__read for \"open Reyn doc X\", web__fetch for a"
+        " specific URL, etc.): invoke directly.",
+        f"- Not obvious: {_wrapper_chain}.",
+        "",
+        "**Ambiguous or missing essential information** → ask ONE"
+        " clarifying question instead of guessing.",
         "",
     ])
 
