@@ -1520,6 +1520,21 @@ class ConversationView(Widget):
             log.scroll_to(y=target, animate=False)
         except Exception:
             pass
+        # Wave-10 G-F4: mark the jump as user-initiated so the next
+        # incoming chunk doesn't re-arm auto_scroll and snap the view
+        # back to the tail. ``scroll_page_up`` / ``scroll_line_up``
+        # already do this explicitly; ``_jump_to_relative_anchor``
+        # had been relying on ``_on_log_scroll_y`` to set the flag as
+        # a side effect of the scroll. The watcher path works for
+        # upward jumps but flips the flag back to False whenever
+        # ``at_bottom`` evaluates True — which can happen when the
+        # jump target sits within 1 line of ``max_scroll_y`` (= the
+        # last anchor in a recent session). The result was: Ctrl+P
+        # mid-stream → view jumped → next chunk's auto_scroll write
+        # immediately yanked the view back to the bottom, interrupting
+        # the user's turn-navigation read. Setting the flag here
+        # makes the behaviour match the explicit-scroll handlers.
+        self._user_scrolled = True
         # Show "turn N / M" feedback so users in long sessions can tell
         # where they are. Without this Ctrl+P/N scrolls silently and a
         # 90-turn history is just a parade of "21:55" headers with no
