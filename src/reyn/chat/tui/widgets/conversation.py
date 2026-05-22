@@ -66,7 +66,8 @@ _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
 _GLYPH_USER = "▶"
 _GLYPH_AGENT = "◆"
 _GLYPH_SYSTEM = "·"
-_FOLD_THRESHOLD_LINES = 30  # B3: agent replies above this fold inline
+_FOLD_THRESHOLD_LINES = 30  # B3: rendered-screen-line estimate above this folds inline
+_FOLD_WIDTH_FALLBACK = 73   # estimated body width when size.width is 0 (= 80 - _BODY_INDENT_COLS)
 # /copy ring-buffer depth. Far enough back that the user can grab "the
 # reply two turns ago" — the typical "wait, that one was useful" recovery
 # pattern — without growing memory unboundedly across long sessions.
@@ -594,6 +595,37 @@ class ConversationView(Widget):
 
     # ── B3 fold (long-reply truncation + /expand) ────────────────────────────
 
+    def _estimate_rendered_lines(self, lines: list[str]) -> int:
+        """Estimate the number of terminal-screen lines ``lines`` will occupy.
+
+        Each source line wraps to ``ceil(cell_len(line) / body_width)``
+        screen lines (or 1 if empty). The body column begins at
+        ``_BODY_INDENT_COLS``; we conservatively subtract that + a 2-cell
+        margin from the pane width. CJK / emoji are counted in display
+        cells (= 2 per glyph) via ``rich.cells.cell_len``. When the pane
+        is not yet mounted ``self.size.width`` is 0, in which case we
+        fall back to a typical 80-col body (73 cells after indent).
+        Markdown rendering may add extra lines (= headers, blockquotes,
+        code blocks add padding) — the estimate is a lower bound on
+        rendered height, which is the correct direction for the fold
+        guard (= over-fold a little is better than letting a 116-line
+        reply through).
+        """
+        try:
+            width = max(20, self.size.width - _BODY_INDENT_COLS - 2)
+        except Exception:
+            width = _FOLD_WIDTH_FALLBACK
+        if width <= 0:
+            width = _FOLD_WIDTH_FALLBACK
+        total = 0
+        for line in lines:
+            cells = cell_len(line)
+            if cells <= 0:
+                total += 1
+                continue
+            total += (cells + width - 1) // width
+        return total
+
     def _write_agent_markdown_with_fold(self, text: str) -> None:
         """Write `text` as Markdown into the log; truncate when it's too long.
 
@@ -618,7 +650,14 @@ class ConversationView(Widget):
         # user can tell the previous fold is no longer reachable.
         had_prev_fold = self._last_long_reply is not None
         lines = text.split("\n")
-        if len(lines) <= _FOLD_THRESHOLD_LINES:
+        # Wave-7 B-F2: fold decision uses an estimated rendered-screen-line
+        # count rather than raw source newlines. A reply with 29 newlines
+        # whose paragraphs wrap to 4 screen lines each would have rendered
+        # ~116 lines without folding under the old ``len(lines)`` check;
+        # conversely 31 single-word lines used to fold needlessly. The
+        # estimate is degrade-safe: when ``self.size.width`` is 0
+        # (= pre-mount), falls back to a typical 73-col body width.
+        if self._estimate_rendered_lines(lines) <= _FOLD_THRESHOLD_LINES:
             self._write_body(RichMarkdown(text))
             if had_prev_fold:
                 self._write_fold_expired_marker()
