@@ -197,6 +197,7 @@ def _get_registry():
                 events_config=config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,
+                multimodal_config=config.multimodal,
                 action_retrieval_config=config.action_retrieval,
                 embedding_config=config.embedding,
             )
