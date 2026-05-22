@@ -129,6 +129,12 @@ def render_keys(app: "App") -> str:
         ("k", "Scroll up (current tab)"),
         ("space", "Toggle preview pane"),
         ("c", "Copy current view (pending tab: claim cursor)"),
+        # A-F2 (wave-8): ``d`` is the primary pending-tab action (=
+        # discard the cursor's intervention) but was missing from
+        # _PANEL_EXPLICIT entirely, so a user on the pending tab had
+        # no way to discover it from the Keys tab. Surface it here
+        # alongside ``c=claim`` for symmetry.
+        ("d", "Discard cursor (pending tab)"),
     ]
     for key, desc in _PANEL_EXPLICIT:
         if key not in seen:
