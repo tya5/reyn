@@ -36,13 +36,12 @@ from typing import Any, Mapping
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _READ_TOOL_RESULT_DESCRIPTION = (
-    "Read the full body of a tool result previously summarised by a "
-    "path-ref preview (= web_fetch and similar). path: project-relative "
-    "path under .reyn/tool-results/. Returns the content body or an "
-    "error if the path is invalid or the file no longer exists. "
-    "offset / limit slice by line (0-indexed) — the same shape as "
-    "read_file / reyn_src_read / read_memory_body. max_bytes caps the "
-    "returned size after slicing (default 16384)."
+    "Read a tool_result_ref resource — the full content referenced by "
+    "a path_ref preview. Use when the preview does not contain the "
+    "content needed for what comes next. path: project-relative path "
+    "under .reyn/tool-results/. offset / limit slice by line (0-indexed) "
+    "— the same shape as read_file / reyn_src_read / read_memory_body. "
+    "max_bytes caps the returned size after slicing (default 16384)."
 )
 
 _READ_TOOL_RESULT_PARAMETERS: dict[str, Any] = {
