@@ -88,7 +88,16 @@ class ChatEventForwarder:
         self._enqueue("skill done: finished", source_run_id=data.get("run_id"))
 
     def on_workflow_aborted(self, data: dict) -> None:
-        self._enqueue("skill done: aborted", source_run_id=data.get("run_id"))
+        # C-F2 (wave-8): encode the abort reason into the trace text so
+        # ``SkillActivityRow``'s ``✗`` finish line can surface *why* the
+        # skill failed without the user having to switch to the events
+        # tab. Forwarded as ``"skill done: aborted: <reason>"``; the
+        # bare ``"skill done: aborted"`` form (= no reason field) stays
+        # supported for backward-compat in case any consumer relies on
+        # the old format.
+        reason = str(data.get("reason") or "").strip()
+        text = f"skill done: aborted: {reason}" if reason else "skill done: aborted"
+        self._enqueue(text, source_run_id=data.get("run_id"))
 
     # ── In-phase detail signals (skill internal progress) ────────────────────
     # Without these, the SkillActivityRow showed only the phase name
