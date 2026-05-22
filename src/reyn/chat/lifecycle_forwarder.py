@@ -122,5 +122,103 @@ class ChatLifecycleForwarder:
         except asyncio.QueueFull:
             pass
 
+    # ── Tool-call lifecycle (issue #427 wiring fix 2026-05-22) ───────────
+    # ``dispatch/dispatcher.py:200-274`` emits ``tool_called`` /
+    # ``tool_returned`` / ``tool_failed`` against the session's
+    # ``_chat_events`` log (= router-level). This forwarder is the
+    # subscriber of that log; per-skill ``ChatEventForwarder`` only sees
+    # the per-skill agent's event log and would never fire on these.
+    # Step 3 of issue #427 originally landed the handlers on the wrong
+    # forwarder class — wave-#427 smoke detected the gap, this PR moves
+    # them to the correct subscriber. See memory
+    # ``feedback_verify_existing_event_emission_before_adding`` for the
+    # subscriber-layer verification discipline.
+
+    def on_tool_called(self, data: dict) -> None:
+        """Bridge ``dispatch_tool``'s pre-event into a ``tool_call_started``
+        outbox message.
+
+        Source schema (= ``dispatch/dispatcher.py:200``):
+            {caller_kind, caller_id, tool, chain_id, args, args_hash}
+
+        ``args_hash`` is the deterministic correlation id we hand to the
+        TUI widget so it can match the eventual ``tool_call_completed`` /
+        ``tool_call_failed`` to this mount call.
+        """
+        self._enqueue_tool_call(
+            kind="tool_call_started",
+            data=data,
+            extra_meta={"args": data.get("args")},
+        )
+
+    def on_tool_returned(self, data: dict) -> None:
+        """Bridge ``dispatch_tool``'s post-event into a ``tool_call_completed``
+        outbox message.
+
+        Source schema (= ``dispatch/dispatcher.py:262``):
+            {caller_kind, caller_id, tool, chain_id, args_hash, result}
+        """
+        self._enqueue_tool_call(
+            kind="tool_call_completed",
+            data=data,
+            extra_meta={"result": data.get("result")},
+        )
+
+    def on_tool_failed(self, data: dict) -> None:
+        """Bridge ``dispatch_tool``'s failure event into a ``tool_call_failed``
+        outbox message.
+
+        Source schema (= ``dispatch/dispatcher.py:222``):
+            {caller_kind, caller_id, tool, chain_id, args_hash, error_kind, message}
+        """
+        self._enqueue_tool_call(
+            kind="tool_call_failed",
+            data=data,
+            extra_meta={
+                "error_kind": data.get("error_kind"),
+                "error_message": data.get("message"),
+            },
+        )
+
+    def _enqueue_tool_call(
+        self,
+        *,
+        kind: str,
+        data: dict,
+        extra_meta: dict,
+    ) -> None:
+        """Shared enqueue path for the three tool-call lifecycle outbox kinds.
+
+        Session-level forwarder has no own ``run_id`` / ``skill_name`` to
+        contribute — every meta field is sourced from the event payload
+        itself. Consumers (= the conv pane's ``_on_tool_call_*``) read
+        ``meta["op_id"]`` (= the deterministic ``args_hash``) to pair
+        start / end events; ``meta["tool"]`` carries the tool name for
+        display; ``args`` / ``result`` / ``error_*`` live in the
+        kind-specific extras.
+        """
+        tool_name = str(data.get("tool", ""))
+        meta: dict = {
+            "tool": tool_name,
+            "op_id": data.get("args_hash"),
+            "chain_id": data.get("chain_id"),
+            "caller_kind": data.get("caller_kind"),
+            "caller_id": data.get("caller_id"),
+        }
+        # Surface run_id when present so consumers can attribute the
+        # row to a parent skill thread (= sub-skill spawned tool calls
+        # carry the spawned skill's run_id from the dispatcher's caller_id).
+        run_id = data.get("run_id") or data.get("caller_id")
+        if run_id:
+            meta["run_id"] = run_id
+            meta["run_id_short"] = str(run_id)[-4:]
+        meta.update(extra_meta)
+        try:
+            self.outbox.put_nowait(
+                OutboxMessage(kind=kind, text=tool_name, meta=meta),
+            )
+        except asyncio.QueueFull:
+            pass
+
 
 __all__ = ["ChatLifecycleForwarder"]
