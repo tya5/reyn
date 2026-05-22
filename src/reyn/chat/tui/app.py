@@ -810,11 +810,45 @@ class ReynTUIApp(App):
             conv.hide_status()
 
         session = self._get_session()
+        # Wave-6 IV2: pending user interventions are "in-flight" from
+        # the user's POV. Without this branch, Ctrl+C while a permission
+        # prompt was on screen reported ``nothing in-flight to cancel``
+        # and the modal stayed up indefinitely. Handle iv cancellation
+        # BEFORE the session-None check because the visible widget
+        # removal must fire even when the session has detached (= rare
+        # but the conv pane still shows the stale modal otherwise).
+        cancelled_interventions = 0
+        interventions = (
+            getattr(session, "_interventions", None) if session is not None else None
+        )
+        if interventions is not None:
+            for iv in list(interventions.list_active()):
+                if interventions.cancel(iv.id):
+                    cancelled_interventions += 1
+        if conv is not None:
+            from .widgets.intervention import InterventionWidget
+            for widget in list(conv.query(InterventionWidget)):
+                try:
+                    widget.remove()
+                    if interventions is None:
+                        # No registry to cancel against — still count
+                        # the visible dismissal so the summary line
+                        # reflects what the user just saw disappear.
+                        cancelled_interventions += 1
+                except Exception:
+                    pass
         if session is None:
-            self._voice_status(
-                "(nothing to cancel — no session attached)",
-                style="dim #aa6666",
-            )
+            if cancelled_interventions:
+                self._voice_status(
+                    f"✗ cancelled {cancelled_interventions} "
+                    f"intervention{'s' if cancelled_interventions != 1 else ''}",
+                    style="bold #aa6666",
+                )
+            else:
+                self._voice_status(
+                    "(nothing to cancel — no session attached)",
+                    style="dim #aa6666",
+                )
             return
 
         # Issue #276 Phase B: remote (``--connect``) mode delegates the
@@ -905,6 +939,7 @@ class ReynTUIApp(App):
             cancelled_skills == 0
             and cancelled_plans == 0
             and cancelled_streams == 0
+            and cancelled_interventions == 0
         ):
             # Suppress repeat lines: when the user mashes Ctrl+C on an idle
             # session, log a single "nothing-in-flight cancel" then
@@ -939,6 +974,11 @@ class ReynTUIApp(App):
         if cancelled_streams:
             parts.append(
                 f"{cancelled_streams} stream{'s' if cancelled_streams != 1 else ''}"
+            )
+        if cancelled_interventions:
+            parts.append(
+                f"{cancelled_interventions} intervention"
+                f"{'s' if cancelled_interventions != 1 else ''}"
             )
         self._voice_status(
             f"✗ cancelled {' + '.join(parts)}", style="bold #aa6666",
