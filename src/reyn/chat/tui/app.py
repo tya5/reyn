@@ -928,11 +928,13 @@ class ReynTUIApp(App):
             for iv in list(interventions.list_active()):
                 if interventions.cancel(iv.id):
                     cancelled_interventions += 1
+        intervention_widgets_dismissed = 0
         if conv is not None:
             from .widgets.intervention import InterventionWidget
             for widget in list(conv.query(InterventionWidget)):
                 try:
                     widget.remove()
+                    intervention_widgets_dismissed += 1
                     if interventions is None:
                         # No registry to cancel against — still count
                         # the visible dismissal so the summary line
@@ -940,6 +942,16 @@ class ReynTUIApp(App):
                         cancelled_interventions += 1
                 except Exception:
                     pass
+        # Wave-9 E-F3: restore focus to the InputBar after dismissing
+        # one or more intervention widgets. ``InterventionWidget._submit``
+        # and ``_on_intervention_resolved`` both mirror this restore on
+        # their respective dismiss paths; without it here the Textual
+        # focus-walker picks the next focusable widget in DOM order on
+        # ``widget.remove()``, which on a Ctrl+C cancel typically lands
+        # on a SkillActivityRow or a right-panel element — the user's
+        # next keystroke goes nowhere and they must manually Tab back.
+        if intervention_widgets_dismissed and input_bar is not None:
+            input_bar.focus_input()
         if session is None:
             if cancelled_interventions:
                 self._voice_status(
