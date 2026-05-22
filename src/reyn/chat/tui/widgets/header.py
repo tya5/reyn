@@ -29,6 +29,39 @@ _MODEL_DATE_SUFFIX = re.compile(r"-(?:\d{8}|\d{4}-\d{1,2}-\d{1,2})$")
 _MODEL_LATEST_SUFFIX = re.compile(r"-latest$")
 
 
+def _cap_proximity_color(used: float | int, cap: float | int | None) -> str | None:
+    """Return amber / red style when ``used`` is close to ``cap``, else None.
+
+    B-F1 (wave-8): the header's token + cost segments use this to surface
+    cap-proximity at a glance. Returns:
+
+      - None  when no cap is set (= style=None → default ``#aaaaaa``)
+      - ``"#ffaa44"`` (amber) when used / cap >= 0.75
+      - ``"#ff4444"`` (red)   when used / cap >= 0.90
+
+    Thresholds mirror ``cost_tab._budget_bar`` so the visual gradient is
+    consistent across the header status line and the right-panel cost
+    tab's progress bar. The hard ``budget_warn`` lifecycle marker still
+    fires at 80 % per ``BudgetTracker.warn_ratio``; this softer header
+    gradient gives the user lead-time.
+    """
+    if cap is None:
+        return None
+    try:
+        cap_f = float(cap)
+        used_f = float(used)
+    except (TypeError, ValueError):
+        return None
+    if cap_f <= 0:
+        return None
+    ratio = used_f / cap_f
+    if ratio >= 0.90:
+        return "#ff4444"
+    if ratio >= 0.75:
+        return "#ffaa44"
+    return None
+
+
 def _shorten_model_id(model: str) -> str:
     """Return ``model`` with trailing date / ``-latest`` suffix stripped.
 
@@ -256,8 +289,16 @@ class ReynHeader(Widget):
         cost_str = f"${self._cost_usd:.4f}"
         if self._cost_cap is not None:
             cost_str += f" / ${self._cost_cap:.2f}"
-        parts.append((tok_str, None))
-        parts.append((cost_str, None))
+        # B-F1 (wave-8): cap-proximity color escalation. When budget caps
+        # are configured, the token / cost segments shift to amber at
+        # ≥ 75 % utilisation and to red at ≥ 90 % so the user has a
+        # live gradient cue without waiting for the hard
+        # ``[↑ budget warn: …]`` lifecycle marker at 80 %. Thresholds
+        # match the cost-tab's ``_budget_bar`` for cross-surface
+        # consistency. When no cap is configured, the field stays at
+        # the default ``#aaaaaa`` (= style=None falls through).
+        parts.append((tok_str, _cap_proximity_color(self._tokens_today, self._tokens_cap)))
+        parts.append((cost_str, _cap_proximity_color(self._cost_usd, self._cost_cap)))
         # Issue #277 — pending-ops badge. Inserted before the clock so
         # the canary stays in its expected (= rightmost) position.
         # Amber-style colour to signal "user attention soft-required".
