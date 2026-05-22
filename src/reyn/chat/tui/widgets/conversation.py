@@ -36,6 +36,7 @@ Cost suffix (A4):
 """
 from __future__ import annotations
 
+import logging
 import time
 
 from rich.cells import cell_len
@@ -46,6 +47,10 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import RichLog, Static
+
+# Wave-10 follow-up G-F15: module logger for the one-shot
+# Textual-API-change warning in ``_richlog_start_line``.
+logger = logging.getLogger(__name__)
 
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.tui._palette import _AMBER, _CORAL
@@ -309,6 +314,11 @@ class ConversationView(Widget):
         # One-shot flag so the "earlier history trimmed" warning fires at most
         # once per session (= the first time Ctrl+P/N is used after trim).
         self._trim_warned = False
+        # Wave-10 follow-up G-F15: one-shot flag for the "RichLog
+        # private API broke" warning in ``_richlog_start_line``. Prevents
+        # log spam when a Textual upgrade removes the ``_start_line``
+        # attribute we depend on for turn-navigation anchors.
+        self._start_line_warned = False
         # B3 — full text of the last truncated agent reply (or None when the
         # most recent reply fit within _FOLD_THRESHOLD_LINES).
         self._last_long_reply: str | None = None
@@ -801,7 +811,7 @@ class ConversationView(Widget):
         # ``_RICHLOG_MAX_LINES`` boundary never saw the "earlier history
         # trimmed" signal until they happened to hit Ctrl+P. The
         # ``_trim_warned`` flag keeps it strictly one-shot per session.
-        if not self._trim_warned and getattr(log, "_start_line", 0) > 0:
+        if not self._trim_warned and self._richlog_start_line(log) > 0:
             self._maybe_warn_about_trimmed_history(log)
 
     def _write_body(self, renderable: RenderableType) -> None:
@@ -1469,8 +1479,42 @@ class ConversationView(Widget):
         """Scroll the log to the next agent turn anchor."""
         self._jump_to_relative_anchor(+1)
 
-    @staticmethod
-    def _absolute_line_position(log: RichLog) -> int:
+    def _richlog_start_line(self, log: RichLog) -> int:
+        """Return ``log._start_line`` defensively (G-F15, wave-10 follow-up).
+
+        ``_start_line`` is a private RichLog attribute carrying the
+        cumulative dropped-lines counter — load-bearing for the
+        absolute-anchor system that powers Ctrl+P/N turn navigation.
+        Textual hasn't renamed or restructured this attribute in any
+        version we've tested, but relying on a private name means a
+        future upgrade could silently swap it for a new public
+        property. The bare ``getattr(log, "_start_line", 0)`` form
+        would quietly return 0, making all anchor positions degrade
+        to "treated as never-trimmed" — on a long session past the
+        ``_RICHLOG_MAX_LINES`` boundary, every Ctrl+P/N would then
+        land on the wrong line, and the trim-warning would never
+        fire either.
+
+        The helper logs a one-shot warning when the attribute is
+        missing so operators get a detectable signal that the
+        integration is broken. Behavioural fallback stays 0 (= same
+        as the bare ``getattr`` default) so a no-history session
+        keeps working.
+        """
+        value = getattr(log, "_start_line", None)
+        if value is None:
+            if not self._start_line_warned:
+                self._start_line_warned = True
+                logger.warning(
+                    "RichLog._start_line is missing — Textual API may "
+                    "have changed; turn-navigation anchors will degrade "
+                    "to treating all history as never-trimmed. Update "
+                    "the helper at conversation._richlog_start_line.",
+                )
+            return 0
+        return value
+
+    def _absolute_line_position(self, log: RichLog) -> int:
         """Return the absolute write-position (drop-aware) for the next line.
 
         ``log._start_line`` is RichLog's cumulative dropped-lines counter
@@ -1478,8 +1522,11 @@ class ConversationView(Widget):
         a monotonic absolute index that survives the ring-buffer trim —
         unlike the bare ``len(log.lines)`` value, which silently rebases
         the moment ``max_lines`` is exceeded.
+
+        Reads through ``_richlog_start_line`` for the one-shot
+        Textual-API-change warning (G-F15).
         """
-        return getattr(log, "_start_line", 0) + len(log.lines)
+        return self._richlog_start_line(log) + len(log.lines)
 
     def _resolve_anchors_to_current_view(self, log: RichLog) -> list[int]:
         """Project stored absolute anchors back into current ``log.lines`` indexes.
@@ -1489,7 +1536,7 @@ class ConversationView(Widget):
         log would scroll to whatever line happens to occupy that slot now,
         which is exactly the bug the bare-index version exhibited.
         """
-        start = getattr(log, "_start_line", 0)
+        start = self._richlog_start_line(log)
         return [a - start for a in self._turn_anchors if a - start >= 0]
 
     def _maybe_warn_about_trimmed_history(self, log: RichLog) -> None:
@@ -1511,7 +1558,7 @@ class ConversationView(Widget):
         """
         if self._trim_warned:
             return
-        start = getattr(log, "_start_line", 0)
+        start = self._richlog_start_line(log)
         if start <= 0:
             return
         self._trim_warned = True
