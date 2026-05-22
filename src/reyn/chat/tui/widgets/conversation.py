@@ -1112,6 +1112,12 @@ class ConversationView(Widget):
         )
         self.mount(box)
         self._error_boxes.append(box)
+        # C-F4 (wave-8): once ≥ 2 error boxes are stacked, surface the
+        # count via the sticky so the user can see at a glance that
+        # one Esc per box is the dismiss path. Single-error case keeps
+        # the existing ``"✗ error below ↓"`` cue (= no count noise for
+        # the common path).
+        self._maybe_show_error_count_status()
         # Same scroll-respect rule as ``mount_intervention``: when the
         # user has scrolled up to read prior context, an async error
         # arriving must not yank the view to the bottom; the error box
@@ -1162,7 +1168,36 @@ class ConversationView(Widget):
                 f"  ✗ {summary} (dismissed){trailer}",
                 style="dim #555555",
             ))
+            # C-F4 (wave-8): after dismiss the live count drops by 1.
+            # If still ≥ 2, refresh the count sticky to the new value;
+            # otherwise the count form is stale and we clear the
+            # sticky so it doesn't linger as "2 errors" when only 1
+            # (or 0) remains.
+            n = len(self._error_boxes)
+            if n >= 2:
+                self._maybe_show_error_count_status()
+            else:
+                self.hide_status()
             return
+
+    def _maybe_show_error_count_status(self) -> None:
+        """Surface the live ErrorBox count via the sticky when ≥ 2 stacked.
+
+        C-F4 (wave-8): the existing ``_MAX_VISIBLE_ERROR_BOXES = 3``
+        cap lets an error storm stack 3 boxes each requiring its own
+        Esc to dismiss. Before this helper there was no at-a-glance
+        count + no clue that Esc was the dismiss key. The sticky now
+        reads ``✗ N errors — Esc to dismiss`` when ≥ 2 boxes are
+        live. The < 2 case is intentionally untouched here so the
+        ``mount_error`` single-error sticky (``"✗ error below ↓"``)
+        is preserved; ``dismiss_last_error`` clears the stale count
+        sticky directly when it drops the live count below 2.
+        """
+        n = len(self._error_boxes)
+        if n >= 2:
+            self.show_status(
+                f"✗ {n} errors — Esc to dismiss", kind="general",
+            )
 
     # ── intervention mounting ─────────────────────────────────────────────────
 
