@@ -67,9 +67,9 @@ _GREP_FILES_DESCRIPTION = (
 
 _GLOB_FILES_DESCRIPTION = (
     "Find files matching a glob pattern (e.g. '**/*.py') under the agent's "
-    "read scope. Use this when you need to enumerate files by name pattern — "
-    "do NOT use list_directory for glob intent. "
-    "Returns a list of matching file paths."
+    "read scope. Use `**` to recurse into subdirectories. Use this when you "
+    "need to enumerate files by name pattern — do NOT use list_directory "
+    "for glob intent. Returns a list of matching file paths."
 )
 
 # Parameters JSON schemas must be byte-identical to the ToolSpec.parameters
@@ -181,7 +181,12 @@ _GLOB_FILES_PARAMETERS: dict[str, Any] = {
     "properties": {
         "pattern": {
             "type": "string",
-            "description": "Glob pattern (e.g. '**/*.py', 'src/**/*.md').",
+            "description": (
+                "Glob pattern. To match by name anywhere under a directory, "
+                "always include `**` (e.g. '**/*.py' or 'src/**/*.md'). "
+                "A bare name without `**` matches only at the exact root "
+                "level, not recursively."
+            ),
         },
         "path": {
             "type": "string",

@@ -49,13 +49,21 @@ scenarios:
   - id: file_glob_grep
     covers:
       - control-ir-ops/file
-    input: "Find all skill.md files under src/ that mention 'judge_output'."
+    # B49 W3-S2 fix (2026-05-22): replaced "judge_output" keyword with
+    # "preprocessor" so the scenario rubric is satisfiable against the
+    # actual repo state. The prior keyword had zero matches under any
+    # skill.md, making both rubric items structurally unreachable; the
+    # B49 failure observed was the LLM passing a bare-name glob pattern
+    # (= no `**`), which the companion fix to `file_glob` description
+    # addresses. With "preprocessor" the LLM can verify its glob is
+    # working by surfacing the matched paths in the reply.
+    input: "Find all skill.md files under src/ that mention 'preprocessor'."
     expected:
       reply:
         kind: judge
         rubric:
           - lists at least one file path containing skill.md
-          - mentions judge_output in relation to the found file(s)
+          - mentions preprocessor in relation to the found file(s)
       events:
         must_emit:
           - { type: routing_decided, count: ">=1" }
