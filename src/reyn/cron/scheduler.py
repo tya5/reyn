@@ -158,6 +158,89 @@ class CronScheduler:
     def get_job(self, name: str) -> CronJob | None:
         return self._jobs.get(name)
 
+    # ── FP-0041 #489 PR-B2: live mutation API ──────────────────────────
+    #
+    # These methods support the LLM-callable ``cron`` action category
+    # (= ``cron__register / unregister / enable / disable`` tools).
+    # All mutations happen on the current event loop — the scheduler's
+    # per-job tasks and the tool handlers share one asyncio loop in
+    # both ``reyn web`` and ``reyn cron run``, so no lock is needed.
+
+    async def add_job(self, job: CronJob) -> None:
+        """Register ``job`` and (if running + enabled) spawn its task.
+
+        Idempotency: if a job with the same name exists, it is replaced
+        (= the existing task is cancelled first to prevent ghost dispatch
+        from the stale schedule). Used by ``cron__register`` to swap
+        job definitions without restart.
+        """
+        existing_task = self._tasks.pop(job.name, None)
+        if existing_task is not None:
+            existing_task.cancel()
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(existing_task, return_exceptions=True),
+                    timeout=2.0,
+                )
+            except asyncio.TimeoutError:
+                pass
+        self._jobs[job.name] = job
+        if self._running and job.enabled:
+            task = asyncio.create_task(
+                self._run_job_loop(job),
+                name=f"cron:{job.name}",
+            )
+            self._tasks[job.name] = task
+
+    async def remove_job(self, name: str) -> bool:
+        """Cancel + drop the job ``name``. Returns True iff the job
+        existed and was removed."""
+        if name not in self._jobs:
+            return False
+        task = self._tasks.pop(name, None)
+        if task is not None:
+            task.cancel()
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(task, return_exceptions=True),
+                    timeout=2.0,
+                )
+            except asyncio.TimeoutError:
+                pass
+        del self._jobs[name]
+        return True
+
+    async def set_enabled(self, name: str, enabled: bool) -> bool:
+        """Toggle ``job.enabled``. When transitioning to enabled (and
+        the scheduler is running), spawn the task; to disabled, cancel
+        the running task. Returns True iff the job exists.
+
+        Used by ``cron__enable`` / ``cron__disable`` tools to pause /
+        resume jobs without removing them.
+        """
+        job = self._jobs.get(name)
+        if job is None:
+            return False
+        job.enabled = bool(enabled)
+        if not job.enabled:
+            task = self._tasks.pop(name, None)
+            if task is not None:
+                task.cancel()
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(task, return_exceptions=True),
+                        timeout=2.0,
+                    )
+                except asyncio.TimeoutError:
+                    pass
+        elif self._running and name not in self._tasks:
+            task = asyncio.create_task(
+                self._run_job_loop(job),
+                name=f"cron:{job.name}",
+            )
+            self._tasks[name] = task
+        return True
+
     async def run_now(self, name: str) -> bool:
         """Trigger one-off execution outside the schedule. Returns True iff
         job exists and runner is configured. Updates last_run_* fields."""
@@ -247,3 +330,28 @@ class CronScheduler:
             job.last_run_error = short_err
         finally:
             job.last_run_duration_seconds = time.monotonic() - start
+
+
+# ── FP-0041 #489 PR-B2: active scheduler registry ──────────────────────
+#
+# Module-level singleton so LLM-callable cron tools (= ``cron__register``
+# / unregister / enable / disable) can reach the live scheduler in the
+# same process. Set by whoever boots the scheduler (``reyn web``
+# lifespan or ``reyn cron run`` foreground), queried by tool handlers.
+#
+# Returns None when no scheduler is registered (= CLI subcommand other
+# than ``reyn cron run``, or process boot has not reached scheduler
+# init yet). Tool handlers degrade gracefully: write to ``.reyn/cron.yaml``
+# but skip live-update.
+_active_scheduler: "CronScheduler | None" = None
+
+
+def set_active_scheduler(scheduler: "CronScheduler | None") -> None:
+    """Register / unregister the process-wide active scheduler."""
+    global _active_scheduler
+    _active_scheduler = scheduler
+
+
+def get_active_scheduler() -> "CronScheduler | None":
+    """Return the active scheduler, or None when unset."""
+    return _active_scheduler

@@ -146,6 +146,11 @@ class PermissionDecl:
     # tear down user-configured servers. False = skill/agent did not
     # declare drop intent; require_mcp_drop_server() rejects immediately.
     mcp_drop_server: bool = False
+    # FP-0041 #489 PR-B2: cron-register gating. False = skill/agent did
+    # not declare cron registration intent; require_cron_register()
+    # rejects immediately. Covers register / unregister / enable /
+    # disable on the LLM-callable ``cron`` action category.
+    cron_register: bool = False
 
     @staticmethod
     def _parse_path_list(raw: object) -> list[dict]:
@@ -203,6 +208,7 @@ class PermissionDecl:
             mcp_install=bool(d.get("mcp_install", False)),
             index_drop=bool(d.get("index_drop", False)),
             mcp_drop_server=bool(d.get("mcp_drop_server", False)),
+            cron_register=bool(d.get("cron_register", False)),
         )
 
 
@@ -859,6 +865,57 @@ class PermissionResolver:
         ):
             raise PermissionError(
                 f"MCP server install of {server_id!r} denied by user."
+            )
+
+    async def require_cron_register(
+        self, decl: PermissionDecl, job_name: str, bus: RequestBus,
+    ) -> None:
+        """Gate cron-register-family ops (FP-0041 #489 PR-B2).
+
+        Covers all 4 mutating LLM-callable cron tools (``cron__register
+        / unregister / enable / disable``). The ``job_name`` arg is
+        included in the approval key so "yes always" remembers per
+        job — operator can selectively allow certain jobs without
+        granting blanket cron-edit authority.
+
+        Mirrors ``require_mcp_install`` shape:
+        1. Skill/agent must declare ``cron_register: true`` in its
+           permissions block. Not declared → raise immediately.
+        2. Config (any scope tier) may hard-allow or hard-deny.
+        3. Interactive prompt (or auto-approve via
+           ``REYN_CRON_REGISTER_AUTO_APPROVE``). Approval key
+           ``cron_register:<job_name>`` persisted to approvals.yaml.
+        """
+        import os
+
+        if not decl.cron_register:
+            raise PermissionError(
+                f"Cron register of {job_name!r} not declared in skill permissions. "
+                f"Add `permissions:\\n  cron_register: true` to the skill.md frontmatter."
+            )
+
+        if self._is_config_denied("cron_register"):
+            raise PermissionError(
+                f"Cron register of {job_name!r} denied by config "
+                f"(permissions.cron_register: deny)."
+            )
+        if self._is_config_approved("cron_register"):
+            return
+
+        approval_key = f"cron_register:{job_name}"
+
+        if os.environ.get("REYN_CRON_REGISTER_AUTO_APPROVE") == "1":
+            self._persist(approval_key, True)
+            return
+
+        if not await self._approve(
+            approval_key,
+            f"register cron job: {job_name!r}",
+            bus,
+            user_prompt=f"Allow cron register/edit for job {job_name!r}?",
+        ):
+            raise PermissionError(
+                f"Cron register of {job_name!r} denied by user."
             )
 
     async def require_index_drop(
