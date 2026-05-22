@@ -9,8 +9,11 @@ above SHARED / AGENT scopes.
 
 Contract pinned here:
 
-1. Empty / missing ``hot_list`` → no "HOT NOW" header in the rendered
-   output (= cold-start layout unchanged).
+1. Empty / missing ``hot_list`` → "HOT NOW" header still renders with
+   a dim ``(no router activity yet)`` placeholder underneath (wave-4
+   PC5: the section was changed from "omitted entirely when empty" to
+   "always-visible header" so the feature is discoverable on cold
+   start).
 2. Non-empty ``hot_list`` → "HOT NOW" header appears + each entry's
    qualified_name + freq lands in the output.
 3. ``flat_entries`` is NOT polluted with hot-list rows (they are
