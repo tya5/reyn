@@ -201,3 +201,97 @@ def test_resources_route_is_mounted_on_app():
         "/agents/" in p and "/tool-results/" in p
         for p in paths
     ), f"resources route not mounted; routes seen: {sorted(paths)}"
+
+
+# ── Browser hardening (#442) ───────────────────────────────────────────
+
+
+def test_cors_allow_origin_header_present_on_get(tmp_project: Path):
+    """Tier 2 (#442): a successful GET carries
+    ``Access-Control-Allow-Origin: *`` so cross-origin Browser
+    frontends can ``fetch(url)`` without preflight failure. This is
+    the core fix for the "implicit close was premature" retraction.
+    """
+    block = _mint_path_ref(tmp_project, content="x\n")
+    artifact = Path(block["path"]).name
+
+    response = _client().get(f"/agents/researcher/tool-results/{artifact}")
+
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "*"
+
+
+def test_content_disposition_inline_by_default(tmp_project: Path):
+    """Tier 2 (#442): default Content-Disposition is ``inline; filename="..."``
+    so Browsers render the body in-tab rather than triggering download.
+    Matches the "preview / read" UX path that the LLM-side dispatcher
+    uses too — opening the URL just shows the content.
+    """
+    block = _mint_path_ref(tmp_project, content="render me\n")
+    artifact = Path(block["path"]).name
+
+    response = _client().get(f"/agents/researcher/tool-results/{artifact}")
+
+    cd = response.headers.get("content-disposition", "")
+    assert cd.startswith("inline"), f"expected inline, got: {cd!r}"
+    assert f'filename="{artifact}"' in cd
+
+
+def test_content_disposition_attachment_when_download_query(tmp_project: Path):
+    """Tier 2 (#442): ``?download=1`` switches Content-Disposition to
+    ``attachment`` so Browsers trigger the download dialog. The
+    filename remains the artifact name (= mirrors the same-host fs
+    convention).
+    """
+    block = _mint_path_ref(tmp_project, content="save me\n")
+    artifact = Path(block["path"]).name
+
+    response = _client().get(
+        f"/agents/researcher/tool-results/{artifact}?download=1",
+    )
+
+    cd = response.headers.get("content-disposition", "")
+    assert cd.startswith("attachment"), f"expected attachment, got: {cd!r}"
+    assert f'filename="{artifact}"' in cd
+
+
+def test_options_preflight_returns_cors_headers(tmp_project: Path):
+    """Tier 2 (#442): OPTIONS preflight returns 204 + the CORS headers
+    a Browser needs to permit a subsequent cross-origin GET. Future-
+    proofing: most simple GETs don't need preflight today, but HTTP
+    libraries vary on when they send it, and a missing preflight
+    handler silently 405s on those clients.
+    """
+    response = _client().options(
+        "/agents/researcher/tool-results/anything.txt",
+    )
+
+    assert response.status_code == 204
+    assert response.headers.get("access-control-allow-origin") == "*"
+    assert "GET" in response.headers.get("access-control-allow-methods", "")
+
+
+def test_options_preflight_does_not_leak_agent_existence(tmp_project: Path):
+    """Tier 2 (#442): OPTIONS preflight returns 204 even for an
+    unregistered agent (= the preflight is "can I do this method+
+    origin combination", not "does this resource exist"). Prevents
+    using preflight as an enumeration channel — GET still 404s
+    properly on unknown agents.
+
+    The risk this defends against: a malicious page probing
+    ``/agents/<guess>/tool-results/x`` via preflight to enumerate
+    valid agent names. With preflight 204 regardless, the only
+    signal a probe gets is the GET response, which is rate-limit /
+    auth target territory.
+    """
+    response = _client().options(
+        "/agents/totally-unknown-agent/tool-results/whatever.txt",
+    )
+
+    # Returns 204 (= preflight successful), not 404
+    assert response.status_code == 204
+    # Compare to GET which DOES 404 on unknown agent (= existing test).
+    get_response = _client().get(
+        "/agents/totally-unknown-agent/tool-results/whatever.txt",
+    )
+    assert get_response.status_code == 404

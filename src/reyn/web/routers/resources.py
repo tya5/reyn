@@ -33,6 +33,34 @@ this very Reyn instance) is the dispatcher's responsibility on the
 consumer side; this router unconditionally serves the local file if it
 exists. Path-traversal escapes (= ``..`` etc.) are rejected via the
 same boundary check ``MediaStore.read_tool_result`` uses.
+
+Browser hardening (#442, 2026-05-22 follow-up after #385 sub-task 3
+"implicit close" retraction):
+
+* **CORS** — ``Access-Control-Allow-Origin: *`` is set so cross-origin
+  Browser frontends can ``fetch(url)`` against this route. Permissive
+  default — tighten via FastAPI's ``CORSMiddleware`` if an origin
+  allowlist becomes needed. The resource itself is already
+  identity-validated (= agent existence check + path-traversal
+  protection), so opening CORS doesn't widen the attack surface
+  beyond what an authenticated same-origin request can already do.
+* **Content-Disposition** — by default ``inline; filename="<artifact>"``
+  so the browser renders the body in a tab. Pass ``?download=1`` to
+  switch to ``attachment; filename="<artifact>"``, triggering the
+  download dialog instead. Consistent UX with how typical file-host
+  endpoints behave.
+* **/api/ prefix decision** — this route stays at top-level
+  ``/agents/<agent>/tool-results/<artifact>`` rather than moving under
+  ``/api``. Rationale: ``reyn web`` already has the mixed convention
+  (``/api/agents`` for REST CRUD, ``/a2a/agents`` for A2A protocol,
+  ``/mcp/*`` for MCP); a resource fetch surface that maps to the
+  filesystem layout (= mirrors ``.reyn/tool-results/``) is naturally
+  the third kind. The ``/api`` prefix is for the REST control plane
+  (= list / create / update), not for content fetch.
+* **Range request** — not implemented in this iteration. Tool results
+  are typically small text bodies; partial-fetch over Range would be
+  useful for large image artifacts but is a stretch goal tracked in
+  the same issue.
 """
 from __future__ import annotations
 
@@ -81,11 +109,32 @@ def _mime_for(artifact: str) -> str:
 # ── GET /agents/<agent>/tool-results/<artifact> ───────────────────────
 
 
+def _browser_headers(artifact: str, *, download: bool) -> dict[str, str]:
+    """Build the response header set for the Browser hardening (#442).
+
+    ``Access-Control-Allow-Origin: *`` — permissive CORS so cross-origin
+    Browser frontends can fetch. Tighten via FastAPI ``CORSMiddleware``
+    if an origin allowlist becomes needed.
+
+    ``Content-Disposition`` — ``inline; filename="..."`` for in-tab
+    render (default), ``attachment; filename="..."`` when ``?download=1``
+    triggers the download dialog. Filename is the artifact basename,
+    which is already validated to be inside ``tool_results_dir`` (= no
+    path-traversal injection via the disposition header).
+    """
+    disposition_kind = "attachment" if download else "inline"
+    return {
+        "access-control-allow-origin": "*",
+        "content-disposition": f'{disposition_kind}; filename="{artifact}"',
+    }
+
+
 @router.get("/agents/{agent_name}/tool-results/{artifact}")
 async def get_tool_result(
     agent_name: str,
     artifact: str,
     request: Request,  # noqa: ARG001 — kept for symmetry with a2a routes
+    download: int = 0,
     registry=Depends(get_registry),
 ) -> Response:
     """Serve a tool-result file by ``<agent>/<artifact>`` route.
@@ -94,7 +143,12 @@ async def get_tool_result(
     the artifact resolves inside ``.reyn/tool-results/`` (= 400 if a
     path-traversal escape is attempted, 404 if the file is absent /
     deleted by the user). Returns the body bytes with a best-effort
-    Content-Type derived from the artifact extension.
+    Content-Type derived from the artifact extension, plus the Browser
+    hardening headers from ``_browser_headers``.
+
+    Query parameter ``download``: when truthy (= ``?download=1``), the
+    Content-Disposition switches to ``attachment`` so Browsers trigger
+    the download dialog. Default is ``inline`` for in-tab render.
 
     Authentication: relies on whatever transport-layer protection
     ``reyn web`` is fronted by (= same posture as ``/a2a/agents/...``
@@ -139,4 +193,41 @@ async def get_tool_result(
             ),
         )
 
-    return Response(content=body, media_type=_mime_for(artifact))
+    return Response(
+        content=body,
+        media_type=_mime_for(artifact),
+        headers=_browser_headers(artifact, download=bool(download)),
+    )
+
+
+# ── OPTIONS /agents/<agent>/tool-results/<artifact> ─────────────────────
+#
+# CORS preflight: browsers send OPTIONS before non-simple cross-origin
+# requests (= ones with custom headers, credentials, or non-GET/POST
+# methods). For simple GETs the preflight isn't strictly required, but
+# adding the handler future-proofs the route against clients that send
+# preflight unconditionally (= some HTTP libraries do) and against
+# future header additions.
+
+
+@router.options("/agents/{agent_name}/tool-results/{artifact}")
+async def options_tool_result(
+    agent_name: str,  # noqa: ARG001 — preflight doesn't need agent existence check
+    artifact: str,  # noqa: ARG001 — preflight doesn't read the artifact
+) -> Response:
+    """CORS preflight response for ``GET /agents/<agent>/tool-results/<artifact>``.
+
+    Returns 204 + permissive CORS headers. Doesn't validate agent
+    existence so a probing client can't enumerate agents via preflight
+    (= the GET still 404s on unknown agents; preflight is just "is
+    this method+origin allowed").
+    """
+    return Response(
+        status_code=204,
+        headers={
+            "access-control-allow-origin": "*",
+            "access-control-allow-methods": "GET, OPTIONS",
+            "access-control-allow-headers": "*",
+            "access-control-max-age": "3600",
+        },
+    )
