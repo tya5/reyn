@@ -72,6 +72,24 @@ _SPAWN_ACK_MSG: dict[str, str] = {
 }
 
 
+# B49 plan-side spawn alignment (= #441 / #445 follow-up): the user-
+# friendly trailer that pairs with the `[task_spawned] kind=plan`
+# structured header. Plan dispatch is async (= ADR-0023 §2.1.1) so
+# behaviour mirrors skill spawn-ack: router exits after dispatch,
+# the LLM regains control on the next [task_completed] kind=plan
+# injection from session._handle_plan_completed.
+_PLAN_SPAWN_ACK_MSG: dict[str, str] = {
+    "ja": (
+        "プランをバックグラウンドで実行しています。"
+        " `/tasks` で進行状況を確認できます。"
+    ),
+    "en": (
+        "Plan is running in the background."
+        " Use `/tasks` to monitor progress."
+    ),
+}
+
+
 # NF-W7-B43-2: positive directive injected into the spawn-ack tool_result
 # content. Replaces the previous OS-synthetic spawn-ack outbox push +
 # early-exit pattern with the standard tool_call → tool_result → LLM
@@ -1662,6 +1680,81 @@ class RouterLoop:
                     if get_dispatch_kind(tc["function"]["name"]) == "async"
                 )
                 if async_count:
+                    # B49 plan-side spawn alignment (= #441 / #445
+                    # follow-up): when a plan tool dispatch is in the
+                    # async batch, push a ``[task_spawned] kind=plan``
+                    # structured header instead of the generic
+                    # "dispatched N async request" status. This makes
+                    # plan spawn-ack symmetric with skill spawn-ack
+                    # (= router_loop.py:1881 path), so the LLM history
+                    # carries a correlatable spawn record that pairs
+                    # with the later ``[task_completed] kind=plan
+                    # plan_id=<X>`` injection from
+                    # session._handle_plan_completed.
+                    # B49 plan-side retest discipline (= retest-before-PR
+                    # surfaced this bug): dispatch_tool() wraps all
+                    # invoker results as ``{"status": "ok", "data":
+                    # <raw_result>}`` (see dispatch/dispatcher.py), so
+                    # the spawned status is nested under ``data``. The
+                    # skill spawn-ack indices block (above) already
+                    # handles both forms; mirror that pattern here so
+                    # plan dispatch detection is symmetric.
+                    plan_idx = next(
+                        (
+                            i
+                            for i, (tc, r) in enumerate(zip(tool_calls, tool_results))
+                            if tc["function"]["name"] == "plan"
+                            and isinstance(r, dict)
+                            and (
+                                r.get("status") == "spawned"
+                                or (
+                                    isinstance(r.get("data"), dict)
+                                    and r["data"].get("status") == "spawned"
+                                )
+                            )
+                        ),
+                        None,
+                    )
+                    if plan_idx is not None:
+                        tc_plan = tool_calls[plan_idx]
+                        r_plan = tool_results[plan_idx]
+                        plan_spawn = (
+                            r_plan["data"]
+                            if isinstance(r_plan.get("data"), dict)
+                            else r_plan
+                        )
+                        plan_id = plan_spawn.get("plan_id", "")
+                        plan_chain_id = plan_spawn.get("chain_id", self.chain_id)
+                        n_steps = plan_spawn.get("n_steps", 0)
+                        try:
+                            plan_args = json.loads(
+                                tc_plan["function"].get("arguments") or "{}",
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            plan_args = {}
+                        plan_goal = plan_args.get("goal", "")
+                        header = (
+                            f"[task_spawned] kind=plan "
+                            f"plan_id={plan_id} chain_id={plan_chain_id}\n"
+                            f"goal: {plan_goal}  n_steps: {n_steps}"
+                        )
+                        lang = getattr(host, "output_language", None)
+                        trailer = _PLAN_SPAWN_ACK_MSG.get(
+                            lang, _PLAN_SPAWN_ACK_MSG["en"],
+                        )
+                        ack_text = f"{header}\n\n{trailer}"
+                        await self.host.put_outbox(
+                            kind="agent",
+                            text=ack_text,
+                            meta={
+                                "chain_id": self.chain_id,
+                                "source": "plan_spawn_ack",
+                            },
+                        )
+                        return self._total_usage
+                    # Non-plan async dispatch (= delegate_to_agent or
+                    # other async tools) falls back to the generic
+                    # status message.
                     plural = "s" if async_count > 1 else ""
                     await self.host.put_outbox(
                         kind="status",
