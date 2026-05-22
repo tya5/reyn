@@ -26,17 +26,13 @@ postprocessor:
     Caller-facing eval result: deterministic scoring fields are added by the
     python postprocessor step; the LLM-authored prose fields (summary,
     weakest_phase, spec_path) pass through unchanged.
-  output_schema:
-    type: object
-    properties:
-      passed:           {type: boolean}
-      overall_score:    {type: number, minimum: 0.0, maximum: 1.0}
-      passed_criteria:  {type: integer, minimum: 0}
-      total_criteria:   {type: integer, minimum: 0}
-      weakest_phase:    {type: string}
-      spec_path:        {type: string}
-      summary:          {type: string}
-    required: [passed, overall_score, passed_criteria, total_criteria, weakest_phase, summary]
+  # B48-NF-W2-S5 fix (2026-05-22): reference the artifact by name so the
+  # compiler wraps it into the full `{type, data}` envelope schema via
+  # `artifact_to_json_schema()`. Inline dict literals bypass the wrapping
+  # step, so PostprocessorExecutor.run()'s final validation fails with
+  # "required property missing" for every data field (= same trap as
+  # judge_phase B38-fix; this skill predates that convention).
+  output_schema: eval_result
   steps:
     - type: python
       module: ./postprocessor.py

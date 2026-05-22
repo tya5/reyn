@@ -1,0 +1,77 @@
+name: eval_result
+description: |
+  Caller-facing eval result. The `evaluate` phase produces the
+  `eval_result_raw` artifact (LLM-contract: criteria_results + prose
+  fields); the python postprocessor (`compute_eval_score`) adds the
+  deterministic scoring fields (passed, overall_score, passed_criteria,
+  total_criteria) by counting required-criteria results. This
+  envelope-shaped schema is referenced by `postprocessor.output_schema`
+  so the OS wraps it into `{type, data}` and the final validation
+  passes when the postprocessor return value lands in `data`.
+schema:
+  type: object
+  properties:
+    passed:
+      type: boolean
+      description: |
+        Whether the eval passed overall. True when every required
+        criterion is met; false when at least one required criterion
+        failed or the target run did not finish.
+    overall_score:
+      type: number
+      minimum: 0.0
+      maximum: 1.0
+      description: |
+        Fraction of required criteria that were met. 0.0 when the
+        target run failed; 1.0 when there are no required criteria
+        (vacuous pass).
+    passed_criteria:
+      type: integer
+      minimum: 0
+      description: Count of required criteria with met=true.
+    total_criteria:
+      type: integer
+      minimum: 0
+      description: Count of required criteria considered.
+    weakest_phase:
+      type: string
+      description: |
+        Name of the phase with the lowest score (passed through from
+        eval_result_raw). Empty string when no phases were judged.
+    spec_path:
+      type: string
+      description: Path to the eval spec being run.
+    summary:
+      type: string
+      description: |
+        2–3 sentence prose summary of what passed, what failed, and any
+        optional-criterion shortfalls.
+    criteria_results:
+      type: array
+      description: |
+        Per-criterion results passed through from eval_result_raw, so
+        callers can inspect individual judgments alongside the
+        aggregate scoring fields.
+      items:
+        type: object
+        properties:
+          phase_name: {type: string}
+          description: {type: string}
+          required:   {type: boolean}
+          met:        {type: boolean}
+          reason:     {type: string}
+        required: [phase_name, description, met, reason]
+    run_status:
+      type: string
+      description: |
+        Target skill run status, passed through from
+        case_run_result. "finished" on normal completion; any other
+        value signals the target run did not finish and the score is
+        short-circuited to passed=false, overall_score=0.0.
+  required:
+    - passed
+    - overall_score
+    - passed_criteria
+    - total_criteria
+    - weakest_phase
+    - summary
