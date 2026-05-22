@@ -43,6 +43,13 @@ _TICK_INTERVAL_S = 0.5  # elapsed-time refresh rate
 _ELAPSED_AMBER_S = 30.0
 _ELAPSED_RED_S = 60.0
 
+# Below this threshold the terminal-state row hides the elapsed segment
+# entirely (= `· 0.0s` was noise on fast file_read / cache hit / 等).
+# Still-running rows always show elapsed so the user has a "this is
+# alive" signal regardless of duration. Threshold is roughly the
+# tick interval — below it, `0.0s` is just rounding artifact.
+_ELAPSED_HIDE_THRESHOLD_S = 0.1
+
 # Indent column for the result line (= ``  ⎿ ``). Two spaces aligns the
 # result under the tool-name column of line 1 in the typical Latin glyph
 # width; CJK / emoji shift this but ⎿ is unambiguous-narrow so the
@@ -229,10 +236,15 @@ class ToolCallRow(Widget):
         return "".join(out) + ellipsis
 
     def _build_line1(self) -> Text:
-        """``<glyph> <tool>(<args>)  · <elapsed>`` — terminal-width-adaptive."""
+        """``<glyph> <tool>(<args>)  · <elapsed>`` — terminal-width-adaptive.
+
+        Elapsed segment is hidden when the row is in a terminal state AND
+        elapsed < ``_ELAPSED_HIDE_THRESHOLD_S`` (= ``0.0s`` is noise on
+        sub-100ms ops). Still-running rows always show elapsed so the
+        user has a "this is alive" signal regardless of duration.
+        """
         t = Text()
         glyph, glyph_style = self._state_glyph()
-        elapsed = self._elapsed_str()
 
         # Compute right-edge reservation: elapsed segment + `  · ` prefix
         # + right margin. The body (= glyph + tool + args) fills whatever
@@ -247,7 +259,10 @@ class ToolCallRow(Widget):
             # arithmetic produces sensible budgets instead of zeroing the
             # args field.
             total_width = 80
-        elapsed_segment = f"  · {elapsed}"
+        if self._finished and self._elapsed_s() < _ELAPSED_HIDE_THRESHOLD_S:
+            elapsed_segment = ""
+        else:
+            elapsed_segment = f"  · {self._elapsed_str()}"
         elapsed_cells = cell_len(elapsed_segment)
         body_budget = max(8, total_width - elapsed_cells - _RIGHT_MARGIN_CELLS)
 

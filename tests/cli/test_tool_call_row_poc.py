@@ -123,6 +123,52 @@ def test_long_args_truncated_with_ellipsis_within_terminal_width() -> None:
     assert "s" in line1  # elapsed survives
 
 
+def test_terminal_state_with_sub_100ms_elapsed_hides_segment() -> None:
+    """Tier 2: terminal-state row with elapsed < 0.1s hides ``· 0.0s`` noise.
+
+    F-D (wave-#427 follow-up): fast ops (= file_read cache hit / 等)
+    rendered ``· 0.0s`` which is noise — sub-100ms is below display
+    resolution. Hide the elapsed segment entirely when the row is
+    terminal AND elapsed is below the threshold.
+    """
+    from reyn.chat.tui.widgets.tool_call_row import ToolCallRow
+    row = ToolCallRow(tool_name="cached_op", args_repr="key=x")
+    # Force frozen elapsed to a sub-threshold value before finishing
+    # — avoids race against monotonic clock in test environment.
+    row._frozen_elapsed = 0.0
+    row.finish_success(result_snippet="ok")
+    # Re-pin frozen elapsed because finish_success captures current
+    # monotonic (= may have advanced past threshold during test setup).
+    row._frozen_elapsed = 0.0
+    line1 = row._build_line1().plain
+    assert "0.0s" not in line1, "sub-100ms elapsed should be hidden in terminal state"
+    # Tool name + glyph still visible.
+    assert "cached_op" in line1
+    assert "✓" in line1
+
+
+def test_running_state_always_shows_elapsed_even_at_zero() -> None:
+    """Tier 2: running rows ALWAYS show elapsed (= "alive" signal)."""
+    from reyn.chat.tui.widgets.tool_call_row import ToolCallRow
+    row = ToolCallRow(tool_name="slow_op", args_repr="key=x")
+    # Force frozen elapsed visible by NOT finishing — still running.
+    # Render and check elapsed appears regardless of value.
+    line1 = row._build_line1().plain
+    assert "s" in line1, "running row carries elapsed (= alive signal)"
+
+
+def test_terminal_state_above_threshold_shows_elapsed() -> None:
+    """Tier 2: terminal-state row with elapsed >= 0.1s still shows the
+    elapsed segment (= meaningful timing preserved)."""
+    from reyn.chat.tui.widgets.tool_call_row import ToolCallRow
+    row = ToolCallRow(tool_name="op", args_repr="")
+    row.finish_success(result_snippet="ok")
+    # Frozen elapsed has whatever monotonic captured; force above threshold.
+    row._frozen_elapsed = 0.5
+    line1 = row._build_line1().plain
+    assert "0.5s" in line1
+
+
 def test_result_snippet_truncated_when_long() -> None:
     """Tier 2: long result snippets get the same ``…`` treatment on line 2."""
     row = _row()
