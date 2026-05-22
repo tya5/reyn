@@ -1047,7 +1047,14 @@ class ConversationView(Widget):
 
     # ── cost suffix (A4) ──────────────────────────────────────────────────────
 
-    def render_cost_suffix(self, tokens: int, cost_usd: float, elapsed_s: float) -> None:
+    def render_cost_suffix(
+        self,
+        tokens: int,
+        cost_usd: float,
+        elapsed_s: float,
+        *,
+        partial: bool = False,
+    ) -> None:
         """Append a dim per-turn cost suffix, right-aligned. Caller decides when (opt-in).
 
         Three pieces are load-bearing:
@@ -1066,10 +1073,26 @@ class ConversationView(Widget):
         - Separator is ``│`` (U+2502, narrow, unambiguous width) rather
           than ``·`` (U+00B7, East Asian Width "Ambiguous") so Rich's
           cell-width accounting matches what the terminal actually paints.
+
+        ``partial=True`` prefixes each numeric segment with ``~`` and
+        appends ``  (skill still running)``. Wave-6 ST3 + wave-7 C-F6:
+        when the cost-suffix deferral cap fires while a skill is still
+        spinning, the snapshot under-reports the eventual total. Without
+        a visual marker, the user sees ``⌁ Nt │ $X.XXXX │ Ys`` and
+        treats it as the final number. The ``~`` + suffix make the
+        partial nature visible at a glance; a subsequent terminal-state
+        emit overrides this line with the final number.
         """
         from rich.padding import Padding
+        if partial:
+            body = (
+                f"⌁ ~{tokens}t │ ~${cost_usd:.4f} │ ~{elapsed_s:.1f}s"
+                "  (skill still running)"
+            )
+        else:
+            body = f"⌁ {tokens}t │ ${cost_usd:.4f} │ {elapsed_s:.1f}s"
         t = Text(
-            f"⌁ {tokens}t │ ${cost_usd:.4f} │ {elapsed_s:.1f}s",
+            body,
             style="dim #666666",
             justify="right",
         )

@@ -657,6 +657,10 @@ class ReynTUIApp(App):
                 ),
             )
             return
+        # Wave-7 C-F6: when the cap fires while a skill is still running,
+        # the snapshot under-reports the eventual total. Mark the line
+        # partial so the user knows to look for a follow-up emit.
+        partial = bool(self._skill_exec) and attempt >= _COST_SUFFIX_DEFER_MAX_ATTEMPTS
         try:
             snap = self._budget_tracker.snapshot()
             cost_now = float(snap.get("daily_cost_usd", 0.0))
@@ -670,7 +674,9 @@ class ReynTUIApp(App):
         if delta_cost == 0.0 and delta_tokens == 0:
             return
         try:
-            conv.render_cost_suffix(delta_tokens, delta_cost, elapsed)
+            conv.render_cost_suffix(
+                delta_tokens, delta_cost, elapsed, partial=partial,
+            )
         except Exception:
             pass
 
