@@ -141,7 +141,7 @@ def build_system_prompt(
     # wrappers + hot list direct aliases + plan + ask_user. All
     # per-kind tools (list_skills / read_file / web_search / etc.)
     # are routed via invoke_action(action_name="<category>__<entry>").
-    # The "## Action categories" section below covers the 13-category
+    # The "## Action categories" section below covers the 14-category
     # taxonomy. Drop the legacy 5-axis "intent" framing — wrapper-only
     # is binary Action / Reply.
     #
@@ -246,6 +246,9 @@ def build_system_prompt(
         )
         parts.append(
             "- **rag.operation** — RAG management (multi-source recall, drop_source)."
+        )
+        parts.append(
+            "- **validation** — DSL linting (lint a skill directory and report issues)."
         )
         parts.append(
             "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."

@@ -2,9 +2,9 @@
 
 Verifies that LINT ToolDefinition:
 - Produces correct output from render_for_router().
-- Has the correct gates (router=deny, phase=allow), purity, and category.
+- Has the correct gates (router=allow, phase=allow), purity, and category.
 - Registers without error and is the single registry entry for lint.
-- Is excluded from for_router() and included in for_phase().
+- Is included in both for_router() and for_phase().
 
 No mocks of collaborators. All tests use real ToolDefinition / ToolRegistry
 instances. No private state assertions.
@@ -56,9 +56,9 @@ def test_lint_router_render_exact_parameters():
 
 # ── 2. Gate invariants ────────────────────────────────────────────────────────
 
-def test_lint_gates_router_deny():
-    """Tier 2: LINT has gates.router=deny (phase-only capability)."""
-    assert LINT.gates.router == "deny"
+def test_lint_gates_router_allow():
+    """Tier 2: LINT has gates.router=allow (router-accessible via validation__lint)."""
+    assert LINT.gates.router == "allow"
 
 
 def test_lint_gates_phase_allow():
@@ -95,12 +95,12 @@ def test_registry_lookup_returns_lint_instance():
     assert found is LINT
 
 
-def test_registry_lint_not_in_for_router():
-    """Tier 2: LINT is excluded from registry.for_router() (gates.router=deny)."""
+def test_registry_lint_in_for_router():
+    """Tier 2: LINT appears in registry.for_router() (gates.router=allow)."""
     registry = ToolRegistry()
     registry.register(LINT)
     router_tools = registry.for_router()
-    assert LINT not in router_tools
+    assert LINT in router_tools
 
 
 def test_registry_lint_in_for_phase():

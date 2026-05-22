@@ -1,6 +1,9 @@
 """lint ToolDefinition — Wave 1 migration (ADR-0026 M3).
 
-Phase-only capability: gates.router="deny", gates.phase="allow".
+Router-accessible capability: gates.router="allow", gates.phase="allow".
+Exposed as ``validation__lint`` via invoke_action so the router can lint
+a skill directly from a user request ("lint the foo skill").
+
 The existing handler in src/reyn/op_runtime/lint.py is preserved
 and wrapped via a thin adapter that translates between the old
 (op, ctx, caller) signature and the new (args, ctx) signature.
@@ -12,12 +15,13 @@ from typing import Any, Mapping
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _LINT_DESCRIPTION = (
-    "Run the DSL linter on a skill directory and return "
-    "structured issue results. "
-    "skill_path: workspace-relative path to the skill "
-    "directory (e.g. \"reyn/local/my_skill\"). "
-    "Used by skill-building phases to verify their output "
-    "before finishing."
+    "Run the DSL linter on a skill and return structured issue results. "
+    "skill_path: identifier of the skill to lint. Accepts the qualified "
+    "action name as returned by list_actions(category=['skill']) "
+    "(= 'skill__<name>'), the bare skill name, or a workspace-relative "
+    "path to the skill directory. Skill names are resolved via the "
+    "standard search path (reyn/local → reyn/project → stdlib). "
+    "Returns passed, error_count, warning_count, and issues."
 )
 
 _LINT_PARAMETERS: dict[str, Any] = {
@@ -87,7 +91,7 @@ LINT = ToolDefinition(
     name="lint",
     description=_LINT_DESCRIPTION,
     parameters=_LINT_PARAMETERS,
-    gates=ToolGates(router="deny", phase="allow"),
+    gates=ToolGates(router="allow", phase="allow"),
     handler=_handle,
     category="validation",
     purity="read_only",   # lint reads + reports, no workspace mutation

@@ -13,7 +13,29 @@ from .context import OpContext
 async def handle(op: LintIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     from reyn.compiler.linter import lint_skill_dir
 
-    skill_dir = Path(op.skill_path)
+    # B49 W3-S6 fix (2026-05-22): accept the qualified action name format
+    # returned by ``list_actions(category=['skill'])`` (= ``skill__<name>``)
+    # so the LLM can pass discovery output verbatim, without inferring a
+    # prefix strip. Bare names and workspace-relative paths continue to
+    # work via the fallbacks below.
+    raw_skill_path = op.skill_path
+    if raw_skill_path.startswith("skill__"):
+        raw_skill_path = raw_skill_path[len("skill__"):]
+
+    skill_dir = Path(raw_skill_path)
+    if not (skill_dir / "skill.md").exists():
+        # Fallback: treat raw_skill_path as a short skill name and resolve
+        # it via the standard search path (reyn/local → reyn/project →
+        # stdlib). This covers both the qualified-name path (= prefix
+        # stripped above) and bare names passed by phase-side callers.
+        try:
+            from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path
+
+            resolved_dir, _ = resolve_skill_path(raw_skill_path)
+            skill_dir = resolved_dir
+        except Exception:
+            pass  # SkillNotFoundError or ImportError → fall through to error below
+
     if not (skill_dir / "skill.md").exists():
         return {
             "kind": "lint",

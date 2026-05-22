@@ -68,6 +68,7 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "reyn.source",
     "rag.corpus",
     "rag.operation",
+    "validation",
     "exec",
 )
 
@@ -542,7 +543,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
 
     if category in (
         "file", "web", "memory.operation", "reyn.source", "rag.operation",
-        "mcp.operation",
+        "mcp.operation", "validation",
     ):
         return _enumerate_static_category(category)
 

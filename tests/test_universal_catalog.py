@@ -44,9 +44,9 @@ from reyn.tools.universal_catalog import (
 # ── 1. CATEGORIES taxonomy ────────────────────────────────────────────────
 
 
-def test_categories_has_thirteen_entries() -> None:
-    """Tier 2: FP-0034 §D18 master taxonomy has 13 categories."""
-    assert len(CATEGORIES) == 13
+def test_categories_has_fourteen_entries() -> None:
+    """Tier 2: FP-0034 §D18 master taxonomy has 14 categories (validation added)."""
+    assert len(CATEGORIES) == 14
 
 
 def test_categories_master_table_order() -> None:
@@ -67,6 +67,7 @@ def test_categories_master_table_order() -> None:
         "reyn.source",
         "rag.corpus",
         "rag.operation",
+        "validation",
         "exec",
     )
 
@@ -337,14 +338,14 @@ def test_visible_categories_drops_exec_when_sandbox_noop() -> None:
     """Tier 2: visible_categories excludes 'exec' when sandbox=noop."""
     vis = visible_categories(sandbox_backend="noop")
     assert "exec" not in vis
-    assert len(vis) == 12  # 13 - exec
+    assert len(vis) == 13  # 14 - exec
 
 
 def test_visible_categories_includes_exec_when_sandbox_real() -> None:
     """Tier 2: visible_categories includes 'exec' when real backend present."""
     vis = visible_categories(sandbox_backend="seatbelt")
     assert "exec" in vis
-    assert len(vis) == 13
+    assert len(vis) == 14
 
 
 def test_visible_categories_drops_exec_when_sandbox_none() -> None:
