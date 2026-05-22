@@ -60,6 +60,13 @@ _TOOL_ARG_BULKY_FIELDS = frozenset({
     "content", "new_string", "old_string", "body", "preview",
 })
 
+# Keys to skip when formatting tool result for line-2 display: they're
+# already encoded in the tool name on line 1 (= ``file__read(...)``
+# already carries ``kind=file`` + ``op=read``). Surfacing them again
+# in the result snippet is noise that pushes more-informative fields
+# (= ``status`` / ``exit_code`` / specific data) off the truncated line.
+_TOOL_RESULT_REDUNDANT_KEYS = frozenset({"kind", "op"})
+
 
 def _format_tool_args(args: dict | None) -> str:
     """Compact ``key=value, ...`` repr of dispatcher args for ToolCallRow.
@@ -97,6 +104,8 @@ def _format_tool_result(result) -> str:
         return str(result)[:120]
     parts: list[str] = []
     for key, value in result.items():
+        if key in _TOOL_RESULT_REDUNDANT_KEYS:
+            continue
         if key in _TOOL_ARG_BULKY_FIELDS and isinstance(value, str) and len(value) > 24:
             parts.append(f"{key}=<{len(value)} chars>")
             continue

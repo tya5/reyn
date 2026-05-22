@@ -179,6 +179,32 @@ def test_format_tool_result_collapses_bulky_body():
     assert "<5000 chars>" in out
 
 
+def test_format_tool_result_skips_redundant_kind_and_op_keys():
+    """Tier 2: ``kind`` and ``op`` fields are already encoded in the tool
+    name on line 1 — surfacing them again in the result snippet is noise.
+
+    F-C (wave-#427 follow-up): smoke output showed
+    ``kind=file, op=read, path=..., status=ok, ...`` consuming half the
+    line width with information the user already has from line 1's
+    ``file__read(...)``. Skipping them lets ``status`` / ``exit_code``
+    / specific result fields land in the visible budget instead.
+    """
+    out = _format_tool_result({
+        "kind": "file",
+        "op": "read",
+        "status": "ok",
+        "exit_code": 0,
+        "path": "/tmp/x.txt",
+    })
+    # Redundant keys are gone.
+    assert "kind=" not in out
+    assert "op=" not in out
+    # Informative fields remain.
+    assert "status=ok" in out
+    assert "exit_code=0" in out
+    assert "path=/tmp/x.txt" in out
+
+
 def test_format_tool_result_truncates_long_string_input():
     """Tier 2: very long plain-string result gets ellipsised."""
     out = _format_tool_result("x" * 500)
