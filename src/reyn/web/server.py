@@ -175,6 +175,7 @@ from reyn.web.routers import agents as _agents_router  # noqa: E402
 from reyn.web.routers import budget as _budget_router  # noqa: E402
 from reyn.web.routers import mcp as _mcp_router  # noqa: E402
 from reyn.web.routers import permissions as _perms_router  # noqa: E402
+from reyn.web.routers import resources as _resources_router  # noqa: E402
 from reyn.web.routers import runs as _runs_router  # noqa: E402
 from reyn.web.routers import skills as _skills_router  # noqa: E402
 from reyn.web.routers import topologies as _topos_router  # noqa: E402
@@ -210,6 +211,13 @@ except ImportError:  # pragma: no cover — `[mcp]` extra not installed
 # and converse via JSON-RPC 2.0 POST /a2a/agents/<name>. Same backing
 # impl as MCP (send_to_agent_impl), different wire protocol.
 app.include_router(_a2a_router.router)
+
+# #385 β core impl sub-task 3: HTTP fetch surface for path_ref bodies
+# (= GET /agents/<agent>/tool-results/<artifact>). Cross-host consumers
+# (= A2A peers, MCP `resources/read` adapter, browser, curl) resolve a
+# resource_uri / url to a body via plain HTTP GET — fills the A2A
+# spec gap for resource fetch with the industry-standard pattern.
+app.include_router(_resources_router.router)
 
 # ── WebSocket routes ────────────────────────────────────────────────────────
 
