@@ -173,7 +173,7 @@ class MediaStore:
     shape mirror; see issue #383). The corresponding ``read_*`` methods
     do the inverse lookup with workspace-boundary validation.
 
-    Path-ref shape (#385 β core impl sub-task 1, 2026-05-22 frozen
+    Path-ref shape (#385 β core impl sub-task 1+3b, 2026-05-22 frozen
     contract): when ``agent_name`` is supplied at construction, save_*
     returns the extended shape that carries cross-host routing fields::
 
@@ -183,15 +183,21 @@ class MediaStore:
           "resource_uri": "reyn-tool-result://<agent_name>/<filename>",
           "source_agent": "<agent_name>",     # durable identity for dispatch
           "source_chain_id": "<chain_id>",    # audit annotation only (optional)
+          # When ``base_url`` is ALSO set (= sub-task 3b cross-host
+          # transport surface):
+          "url": "<base_url>/agents/<agent_name>/tool-results/<filename>",
           "mime_type": "...",
           "content_hash": "sha256:...",
         }
 
     When ``agent_name`` is omitted (= legacy call sites, test stubs),
     save_* returns the pre-β shape (= no resource_uri / source_agent /
-    source_chain_id, just ``path``). Consumers must treat the cross-host
-    fields as optional: when present, the dispatcher CAN route across
-    hosts; when absent, only the same-host ``path`` is available.
+    source_chain_id / url, just ``path``). Consumers must treat the
+    cross-host fields as optional: when ``url`` is present a consumer
+    can HTTP GET it cross-host; when only ``resource_uri`` is present
+    the consumer knows the identity but has no transport (= producer
+    deployed without ``reyn web`` or without ``multimodal.base_url``
+    set); when neither is present, only the same-host ``path`` works.
 
     Cross-host RPC routing (sub-task 3 of the β core impl) is NOT
     implemented in this sub-task — ``read_tool_result_by_uri`` raises
@@ -206,6 +212,7 @@ class MediaStore:
         *,
         project_root: Path,
         agent_name: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         self._config = config or MediaStoreConfig()
         self._project_root = project_root.resolve()
@@ -216,6 +223,12 @@ class MediaStore:
             self._project_root / self._config.tool_results_dir
         ).resolve()
         self._agent_name = agent_name or None
+        # #385 β sub-task 3b: when set, save_* augments path-refs with a
+        # ``url`` field pointing at this Reyn instance's resources router
+        # (= ``<base_url>/agents/<agent>/tool-results/<artifact>``) so
+        # cross-host consumers can fetch via standard HTTP GET. Unset →
+        # no ``url`` minted, same-host fast-path only.
+        self._base_url = (base_url or "").rstrip("/") or None
 
     # ── Image storage (= .reyn/media/) ────────────────────────────────
 
@@ -342,6 +355,11 @@ class MediaStore:
         with their original expectations. The added fields are purely
         additive; the ``path`` fast-path stays usable for same-host
         consumers regardless.
+
+        When ``base_url`` is also set (= #385 β sub-task 3b), augments
+        further with a ``url`` field — the HTTP fetch URL for cross-
+        host consumers. Without ``base_url`` only ``resource_uri`` is
+        emitted (= vendor-scheme identifier, no fetch location).
         """
         if not self._agent_name:
             return
@@ -349,6 +367,11 @@ class MediaStore:
         block["source_agent"] = self._agent_name
         if chain_id:
             block["source_chain_id"] = chain_id
+        if self._base_url:
+            block["url"] = (
+                f"{self._base_url}/agents/{self._agent_name}"
+                f"/tool-results/{filename}"
+            )
 
     def read_tool_result_by_uri(self, uri: str) -> tuple[str, bool]:
         """Resolve a ``reyn-tool-result://...`` URI and read the body.

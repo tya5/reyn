@@ -1014,9 +1014,15 @@ class ChatSession:
                 # #385 β core impl sub-task 1: path-refs minted by this
                 # session carry resource_uri / source_agent so cross-host
                 # consumers (= other agents via A2A / MCP / Browser) can
-                # dispatch back here. Sub-task 3 wires the actual cross-
-                # host RPC; here we just stamp the identity.
+                # dispatch back here.
                 agent_name=agent_name,
+                # #385 β core impl sub-task 3b: when this Reyn instance
+                # is reachable over HTTP (= operator sets
+                # ``multimodal.base_url`` in reyn.yaml), path-refs also
+                # carry a ``url`` field pointing at the resources
+                # router so cross-host consumers can HTTP GET the body.
+                # When unset, only same-host ``path`` is available.
+                base_url=multimodal_config.base_url,
             )
         else:
             self._media_store = None

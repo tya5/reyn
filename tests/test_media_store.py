@@ -472,6 +472,126 @@ def test_multiple_saved_tool_results_all_retained(tmp_path):
     assert len(files) == 10
 
 
+# ── url field (#385 β core impl sub-task 3b) ──────────────────────────
+
+
+def test_save_without_base_url_omits_url_field(tmp_path):
+    """Tier 2: when no ``base_url`` is configured, save_tool_result
+    omits the ``url`` field — cross-host fetch is impossible (= no
+    transport address known), so we don't lie about it. Same-host
+    consumers still get ``path`` and same-host ``resource_uri``.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="researcher",
+    )
+    block = store.save_tool_result("body", mime_type="text/plain")
+    assert "url" not in block
+    # Other cross-host fields still present (= identity exists, just no transport).
+    assert "resource_uri" in block
+    assert block["source_agent"] == "researcher"
+
+
+def test_save_with_base_url_emits_url_field(tmp_path):
+    """Tier 2: when ``base_url`` is set, save_tool_result mints a
+    ``url`` field pointing at the resources router on the producing
+    Reyn instance. This is the HTTP fetch URL cross-host consumers
+    (= A2A peers, MCP clients, browsers) use to GET the body.
+    """
+    store = MediaStore(
+        MediaStoreConfig(),
+        project_root=tmp_path,
+        agent_name="researcher",
+        base_url="https://reyn.example.com",
+    )
+    block = store.save_tool_result(
+        "body", mime_type="text/plain", chain_id="c1", tool="web_fetch", seq=1,
+    )
+
+    assert "url" in block
+    filename = Path(block["path"]).name
+    expected = f"https://reyn.example.com/agents/researcher/tool-results/{filename}"
+    assert block["url"] == expected
+
+
+def test_save_with_base_url_but_no_agent_name_still_omits_url(tmp_path):
+    """Tier 2: ``url`` requires BOTH ``base_url`` AND ``agent_name`` —
+    the URL path needs the agent segment. Without an identity, the URL
+    can't be addressed; we don't fabricate a path with placeholder.
+    """
+    store = MediaStore(
+        MediaStoreConfig(),
+        project_root=tmp_path,
+        agent_name=None,
+        base_url="https://reyn.example.com",
+    )
+    block = store.save_tool_result("body", mime_type="text/plain")
+    assert "url" not in block
+
+
+def test_base_url_trailing_slash_is_trimmed(tmp_path):
+    """Tier 2: ``base_url`` is normalised by stripping trailing slashes
+    so the assembled URL never has ``//`` between the host and the
+    path segment. Defensive against operator yaml inputs like
+    ``"https://reyn.example.com/"``.
+    """
+    store = MediaStore(
+        MediaStoreConfig(),
+        project_root=tmp_path,
+        agent_name="me",
+        base_url="https://reyn.example.com/",
+    )
+    block = store.save_tool_result("body", mime_type="text/plain")
+    # No "//" in the path portion (= host stays separated by single /).
+    assert "//agents/" not in block["url"]
+    assert block["url"].startswith("https://reyn.example.com/agents/me/tool-results/")
+
+
+def test_save_image_also_carries_url_when_base_url_set(tmp_path):
+    """Tier 2: the ``url`` augmentation applies uniformly to both
+    save_image and save_tool_result — the path-ref contract is the
+    same shape regardless of media type. (Same intent as the
+    ``resource_uri`` / ``source_agent`` parity test.)
+    """
+    store = MediaStore(
+        MediaStoreConfig(),
+        project_root=tmp_path,
+        agent_name="vision",
+        base_url="https://reyn.example.com",
+    )
+    block = store.save_image(
+        b"\x89PNG\r\n", mime_type="image/png", chain_id="c2",
+    )
+
+    assert "url" in block
+    assert block["url"].startswith(
+        "https://reyn.example.com/agents/vision/tool-results/",
+    )
+
+
+def test_multimodal_config_parses_base_url_from_yaml():
+    """Tier 2: ``multimodal:`` yaml section accepts a ``base_url`` key,
+    parsed as an optional string (= None when absent). This is the
+    operator-facing surface for enabling cross-host path_ref URLs.
+    """
+    from reyn.config import _build_multimodal_config
+
+    with_url = _build_multimodal_config(
+        {"base_url": "https://reyn.example.com"},
+    )
+    assert with_url.base_url == "https://reyn.example.com"
+
+    without_url = _build_multimodal_config({})
+    assert without_url.base_url is None
+
+    # Trailing slash stripped at the config layer too (= same posture as
+    # MediaStore constructor) so downstream consumers don't need to
+    # re-normalise.
+    trailing = _build_multimodal_config(
+        {"base_url": "https://reyn.example.com/"},
+    )
+    assert trailing.base_url == "https://reyn.example.com"
+
+
 def test_saved_file_survives_when_no_one_reads_for_a_while(tmp_path):
     """Tier 2: Phase 1 invariant — passive time does NOT cause eviction.
 
