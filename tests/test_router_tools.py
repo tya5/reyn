@@ -38,6 +38,11 @@ EXPECTED_TOOL_NAMES = [
     # web_fetch is always exposed (E2) — FP-0022: catalog-level gate removed;
     # authorization now at handler level via PermissionResolver._approve().
     "web_fetch",
+    # read_tool_result (E3) — companion to web_fetch preview path. Added in
+    # B49 Step 2 v6 fix (2026-05-22): registered in tools/__init__.py but
+    # build_tools() was never surfacing it, so the lazy-expand half of the
+    # preview-driven design was undeployed for router-side use.
+    "read_tool_result",
     # plan (G1) — always exposed; LLM opts in for complex queries.
     "plan",
     # reyn_src_* are always exposed (F1, F2) — they read Reyn's own
@@ -93,16 +98,18 @@ MCP_TOOL_NAMES = {"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"}
 SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
-def test_build_tools_returns_18_tools_when_no_extras():
+def test_build_tools_returns_19_tools_when_no_extras():
     """No file / MCP extras: 11 baseline + web_search (E1, always on)
     + web_fetch (E2, FP-0022: always on, handler-level approval)
+    + read_tool_result (E3, B49 Step 2 v6 fix: lazy-expand half of the
+    preview-driven design, surfaced for router-side use)
     + reyn_src_list + reyn_src_read (F1/F2, always on)
     + plan (G1, always on) + recall + drop_source (H1/H2, always on).
-    All file-class tools and MCP remain gated, so 18 total
-    at the unconfigured baseline (FP-0022 adds web_fetch to baseline).
+    All file-class tools and MCP remain gated, so 19 total at the
+    unconfigured baseline.
     """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    assert len(tools) == 18, f"Expected 18 tools, got {len(tools)}"
+    assert len(tools) == 19, f"Expected 19 tools, got {len(tools)}"
 
 
 def test_tool_order_is_deterministic():
@@ -268,9 +275,10 @@ def test_mcp_tools_present_when_servers_configured():
 
 def test_total_tool_count_with_full_permissions():
     """Full file + MCP permissions → 11 baseline + 4 file C1-C4
-    + 2 web E1+E2 (both always on since FP-0022) + 4 MCP D1-D4
+    + 3 web E1+E2+E3 (web_search + web_fetch always on since FP-0022;
+    read_tool_result added in B49 Step 2 v6 fix) + 4 MCP D1-D4
     + 2 reyn_src F1-F2 + 1 plan G1
-    + 2 RAG H1-H2 (recall + drop_source) = 26 tools total.
+    + 2 RAG H1-H2 (recall + drop_source) = 27 tools total.
     FP-0032: D4 describe_mcp_tool added alongside D1-D3.
     web_fetch_allowed param is kept for backward compat but now a no-op.
     """
@@ -281,7 +289,7 @@ def test_total_tool_count_with_full_permissions():
         mcp_servers=SAMPLE_MCP_SERVERS,
         web_fetch_allowed=True,
     )
-    assert len(tools) == 26, f"Expected 26 tools with full permissions, got {len(tools)}"
+    assert len(tools) == 27, f"Expected 27 tools with full permissions, got {len(tools)}"
 
 
 # ── Gemini-safe schema checks apply to new tools too ──────────────────────────
