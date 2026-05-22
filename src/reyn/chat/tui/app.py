@@ -47,6 +47,14 @@ if TYPE_CHECKING:
 # Ctrl+C presses within this many seconds are absorbed silently.
 _IDLE_CANCEL_DEDUP_S = 1.5
 
+# Wave-6 ST3: cost-suffix deferral while skills / plans are still
+# spinning. We retry the snapshot every ``INTERVAL_S`` for up to
+# ``MAX_ATTEMPTS`` total seconds before falling back to a write
+# with whatever the budget tracker shows. The cap prevents an
+# infinitely-running skill from suppressing the cost line forever.
+_COST_SUFFIX_DEFER_INTERVAL_S = 1.0
+_COST_SUFFIX_DEFER_MAX_ATTEMPTS = 30
+
 
 class ReynTUIApp(App):
     """Main Textual application for `reyn chat`."""
@@ -616,11 +624,38 @@ class ReynTUIApp(App):
             self._push_exec_state()
             self._last_focal_tab = "agents"
 
-    def _maybe_render_cost_suffix(self, conv: ConversationView) -> None:
-        """A4 — emit a dim per-turn cost suffix line when /cost-inline is on."""
+    def _maybe_render_cost_suffix(
+        self, conv: ConversationView, *, attempt: int = 0,
+    ) -> None:
+        """A4 — emit a dim per-turn cost suffix line when /cost-inline is on.
+
+        Wave-6 ST3: defer the write while any skill / plan from this
+        turn is still running. The agent-reply outbox fires when the
+        LLM text reply lands, but post-reply phases (plan aggregator,
+        chat_router final follow-up, compaction) continue to spend
+        tokens. Writing at agent-reply time pinned a snapshot 5-10 s
+        earlier than the user's perceived "turn finished" moment, so
+        the ``⌁ Nt │ $X.XXXX │ Ys`` line under-reported the real total.
+
+        Strategy: peek at ``self._skill_exec`` (= map of run_id →
+        live skill snapshot maintained by ``_handle_trace_for_skill_row``).
+        Non-empty = at least one skill row is still spinning. Defer
+        by 1 s and re-attempt, up to ``_COST_SUFFIX_DEFER_MAX_ATTEMPTS``
+        times. If the cap is reached (= a skill is genuinely long-
+        running and the cost suffix would otherwise never fire) write
+        with what we have to preserve the previous always-visible UX.
+        """
         if not self._cost_inline_enabled:
             return
         if self._budget_tracker is None:
+            return
+        if attempt < _COST_SUFFIX_DEFER_MAX_ATTEMPTS and self._skill_exec:
+            self.set_timer(
+                _COST_SUFFIX_DEFER_INTERVAL_S,
+                lambda: self._maybe_render_cost_suffix(
+                    conv, attempt=attempt + 1,
+                ),
+            )
             return
         try:
             snap = self._budget_tracker.snapshot()
