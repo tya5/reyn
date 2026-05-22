@@ -713,7 +713,18 @@ class OutboxRouter:
             conv.hide_status()
         except Exception:
             pass
-        iv_id = msg.meta.get("iv_id", "")
+        # Wave-9 E-F1: accept either ``intervention_id`` (= the key used
+        # by ``_on_intervention`` and by the service's mount + cancel
+        # emits) or ``iv_id`` (= the legacy key used by the resolved
+        # emit only). Reading both with ``intervention_id`` preferred
+        # makes the TUI immune to which key any future producer chooses
+        # — without this, a one-line rename on the service side would
+        # silently leak InterventionWidget orphans (= the lookup at
+        # ``query_one(#iv_…)`` would miss, ``except Exception: pass``
+        # would swallow it, and the widget would stay mounted with no
+        # way to remove it). Same id field, two historical names,
+        # picked here in canonical-key order.
+        iv_id = msg.meta.get("intervention_id") or msg.meta.get("iv_id", "")
         widget_id = f"iv_{iv_id[:8]}"
         try:
             widget = self._app.query_one(f"#{widget_id}")
