@@ -321,10 +321,25 @@ class RightPanel(Widget):
 
         Called from app._push_exec_state() whenever a trace event arrives.
         Triggers a re-render only when the agents tab is visible.
+
+        Wave-10 follow-up H-F3: when the preview pane is open on a
+        running-skill / running-plan row, refresh it too. Pre-fix the
+        main tree updated correctly (= ``_invalidate`` → ``_panel_markup``
+        → ``render_agents`` rebuilt ``_agents_items`` in place), but the
+        preview pane snapshot was frozen to whatever
+        ``_show_*_in_preview`` had last captured (= last navigation /
+        Space toggle). A user watching a long skill saw the main tree
+        tick ``elapsed: 104s`` while the preview still read
+        ``elapsed: 42s`` from when they opened it — undermining the
+        preview's role as "the detail view of the live run". Other
+        live-tick consumers (no other tab uses ``_exec_state``) are
+        unaffected; the guard scopes the refresh to ``agents`` only.
         """
         self._exec_state = dict(state)
         if self._panel_type == "agents":
             self._invalidate()
+            if self._preview_visible:
+                self._update_preview()
 
     def update_hot_list(self, ranking: list[dict]) -> None:
         """Receive the latest ARS hot-list ranking from the TUI app.
