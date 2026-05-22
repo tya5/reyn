@@ -102,6 +102,7 @@ reyn = "reyn._cli:main"
 # External plugins register the same way via their own pyproject.toml.
 [project.entry-points."reyn.webhooks"]
 sample_slack = "reyn.plugins.sample_slack:register_router"
+sample_line = "reyn.plugins.sample_line:register_router"
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
