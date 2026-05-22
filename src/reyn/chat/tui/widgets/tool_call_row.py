@@ -64,6 +64,35 @@ _RESULT_INDENT = "  ⎿ "
 _RIGHT_MARGIN_CELLS = 6
 
 
+def _maybe_middle_elide(name: str, max_cells: int) -> str:
+    """Middle-elide a qualified tool name so head + tail stay visible.
+
+    For ``mcp__server__tool_name`` with budget 18, returns
+    ``mcp__…__tool_name``. The first and last segments carry the most
+    identity signal (= provider prefix + verb); middle segments
+    (= server / namespace) are the disposable part.
+
+    Falls back to plain tail-truncate when:
+    - name doesn't contain ``__`` (= no qualified shape)
+    - name has fewer than 3 segments (= no middle to elide)
+    - even the elided form exceeds the budget (= rare; budget very tight)
+    """
+    if cell_len(name) <= max_cells:
+        return name
+    sep = "__"
+    if sep not in name:
+        return name  # caller falls through to its own truncation
+    parts = name.split(sep)
+    if len(parts) < 3:
+        return name
+    elided = f"{parts[0]}{sep}…{sep}{parts[-1]}"
+    if cell_len(elided) <= max_cells:
+        return elided
+    # Even compressed form too long — give up, let caller's tail-truncate
+    # (= cell-aware ellipsis on the full name) take over.
+    return name
+
+
 class ToolCallRow(Widget):
     """One inline tool-call row that updates in-place until terminal state.
 
@@ -292,7 +321,19 @@ class ToolCallRow(Widget):
         # Truncation order: shrink args first (= most disposable).
         glyph_with_space = f"{glyph} "
         glyph_cells = cell_len(glyph_with_space)
-        tool_open = f"{self._tool_name}("
+        # F-E: when the tool name itself is so long that args have no
+        # room to render, middle-elide qualified names
+        # (``mcp__server__tool_name`` → ``mcp__…__tool_name``) so args
+        # still get a usable budget. Plain names without ``__`` fall
+        # through to the existing args-first truncation.
+        framing_cells = glyph_cells + 2  # 2 = "(" + ")"
+        # Reserve at least 8 cells for args so very long tool names
+        # trigger middle-elide before args get fully ejected.
+        max_tool_budget = max(0, body_budget - framing_cells - 8)
+        tool_display = self._tool_name
+        if max_tool_budget > 0 and cell_len(tool_display) > max_tool_budget:
+            tool_display = _maybe_middle_elide(tool_display, max_tool_budget)
+        tool_open = f"{tool_display}("
         tool_close = ")"
         tool_open_cells = cell_len(tool_open)
         tool_close_cells = cell_len(tool_close)

@@ -304,6 +304,9 @@ def test_format_tool_result_drops_trailing_fields_to_keep_placeholders_atomic():
     # Many small fields plus a placeholder-eligible bulky one at the end
     # — the assembled string blows past the budget, so trailing fields
     # should be dropped while earlier ones survive intact.
+    # Note: ``kind`` + ``op`` are skipped by ``_format_tool_result`` per
+    # F-C (PR #448), so the surviving earlier field is ``path`` (= first
+    # non-redundant key in dict order).
     result = {
         "kind": "file",
         "op": "read",
@@ -323,8 +326,9 @@ def test_format_tool_result_drops_trailing_fields_to_keep_placeholders_atomic():
         assert "<5000 chars>" in out, (
             f"placeholder broken mid-string: {out!r}"
         )
-    # Earlier, more-important fields preserved (= dict insertion order).
-    assert "kind=file" in out
+    # Earlier, more-important fields preserved (= ``path`` is the first
+    # non-redundant field after F-C's kind/op skip).
+    assert "path=" in out
 
 
 def test_format_tool_result_short_result_unchanged():
