@@ -1825,7 +1825,19 @@ class ConversationView(Widget):
         # Reset header-grouping + turn anchors + fold stash
         self._last_speaker = ""
         self._last_speaker_at = 0.0
-        self._last_header_date = ""
+        # Wave-10 follow-up G-F13: preserve today's date as the
+        # "last separator date" so a same-day Ctrl+L doesn't emit
+        # another ``── YYYY-MM-DD ──`` separator on the next message.
+        # The separator is a *day-boundary* marker, not a session-start
+        # marker — emitting it every clear made it appear multiple
+        # times per day purely because the user cleared the pane.
+        # ``""`` is the cold-start value (= "no date written yet"), and
+        # the first message's ``_maybe_write_header`` would emit the
+        # separator unconditionally. Setting to today's date makes that
+        # branch a no-op for same-day clears while leaving day-crossing
+        # clears (= rare but possible if the user clears around midnight)
+        # correct.
+        self._last_header_date = time.strftime("%Y-%m-%d")
         self._last_turn_flash = None
         self._last_boundary_flash = None
         self._turn_anchors.clear()
