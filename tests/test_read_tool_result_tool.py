@@ -123,8 +123,12 @@ def test_read_tool_result_truncates_when_above_max_bytes(tmp_path):
 
 
 def test_read_tool_result_missing_path_arg_returns_error(tmp_path):
-    """Tier 2: empty / missing ``path`` argument surfaces a structured
-    error without touching the filesystem.
+    """Tier 2: empty / missing ``path`` AND ``resource_uri`` surfaces a
+    structured error without touching the filesystem.
+
+    The error message names both identifiers — the schema is
+    "exactly one of path or resource_uri", and the LLM's correction path
+    needs to know which alternative is acceptable.
     """
     store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
     ctx = _ctx_with_media_store(store)
@@ -132,7 +136,8 @@ def test_read_tool_result_missing_path_arg_returns_error(tmp_path):
     result = asyncio.run(_handle({}, ctx))
 
     assert result["status"] == "error"
-    assert "path is required" in result["error"]
+    assert "path" in result["error"]
+    assert "resource_uri" in result["error"]
 
 
 def test_read_tool_result_outside_tool_results_dir_rejected(tmp_path):
@@ -299,3 +304,124 @@ def test_read_tool_result_no_slice_args_is_unchanged_behaviour(tmp_path):
     assert result["status"] == "ok"
     assert result["content"] == "alpha\nbeta\ngamma\n"
     assert result["truncated"] is False
+
+
+# ── resource_uri input (= #385 β core impl sub-task 1 dispatcher) ──────
+
+
+def _populate_with_agent_name(
+    tmp_path: Path, agent_name: str, content: str = "hello\nworld\n",
+) -> tuple[MediaStore, dict]:
+    """Build a MediaStore WITH agent_name, write a tool result, return
+    (store, full path-ref block). Block includes resource_uri because
+    agent_name was set at construction.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name=agent_name,
+    )
+    block = store.save_tool_result(
+        content, mime_type="text/plain",
+        chain_id="abc123", tool="web_fetch", seq=1,
+    )
+    return store, block
+
+
+def test_read_tool_result_accepts_resource_uri_same_host(tmp_path):
+    """Tier 2: a path-ref's ``resource_uri`` can be passed in place of
+    ``path``; same-host dispatch resolves through MediaStore's
+    ``read_tool_result_by_uri`` and returns the body.
+    """
+    store, block = _populate_with_agent_name(tmp_path, "researcher")
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle({"resource_uri": block["resource_uri"]}, ctx),
+    )
+
+    assert result["status"] == "ok"
+    assert result["content"] == "hello\nworld\n"
+    # Identifier echo = resource_uri (= what the LLM supplied), not path.
+    assert result["path"] == block["resource_uri"]
+
+
+def test_read_tool_result_cross_host_resource_uri_returns_stub_error(tmp_path):
+    """Tier 2: a resource_uri whose source_agent doesn't match the local
+    store's identity returns a structured error (= sub-task 3 will lift
+    this; the stub message is the dispatcher contract today).
+    """
+    # Local store identity = "local-agent"; URI claims source = "remote".
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="local-agent",
+    )
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle(
+            {"resource_uri": "reyn-tool-result://remote/some-file.txt"},
+            ctx,
+        ),
+    )
+
+    assert result["status"] == "error"
+    assert "cross-host" in result["error"]
+
+
+def test_read_tool_result_invalid_resource_uri_returns_error(tmp_path):
+    """Tier 2: a malformed resource_uri surfaces a structured error
+    rather than crashing.
+    """
+    store, _ = _populate_with_agent_name(tmp_path, "me")
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle({"resource_uri": "not-a-real-uri"}, ctx),
+    )
+
+    assert result["status"] == "error"
+    assert "invalid" in result["error"].lower() or "resource_uri" in result["error"]
+
+
+def test_read_tool_result_rejects_both_path_and_resource_uri(tmp_path):
+    """Tier 2: the schema is "exactly one of"; supplying both is a
+    contract violation that surfaces as a structured error.
+    """
+    store, block = _populate_with_agent_name(tmp_path, "me")
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle(
+            {
+                "path": block["path"],
+                "resource_uri": block["resource_uri"],
+            },
+            ctx,
+        ),
+    )
+
+    assert result["status"] == "error"
+    assert "exactly one" in result["error"]
+
+
+def test_read_tool_result_resource_uri_supports_offset_limit_slice(tmp_path):
+    """Tier 2: the same line-slice contract applies when the read goes
+    through ``resource_uri`` — offset/limit are orthogonal to the
+    addressing mode (path vs URI).
+    """
+    store, block = _populate_with_agent_name(
+        tmp_path, "me", content="L0\nL1\nL2\nL3\nL4\n",
+    )
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle(
+            {
+                "resource_uri": block["resource_uri"],
+                "offset": 1,
+                "limit": 2,
+            },
+            ctx,
+        ),
+    )
+
+    assert result["status"] == "ok"
+    assert result["content"] == "L1\nL2\n"

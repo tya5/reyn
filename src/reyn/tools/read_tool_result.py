@@ -39,7 +39,10 @@ _READ_TOOL_RESULT_DESCRIPTION = (
     "Read a tool_result_ref resource — the full content referenced by "
     "a path_ref preview. Use when the preview does not contain the "
     "content needed for what comes next. path: project-relative path "
-    "under .reyn/tool-results/. offset / limit slice by line (0-indexed) "
+    "under .reyn/tool-results/. resource_uri: cross-host capable "
+    "alternative to path (reyn-tool-result://<agent>/<artifact>); pass "
+    "this when the path_ref carries one. Exactly one of path or "
+    "resource_uri is required. offset / limit slice by line (0-indexed) "
     "— the same shape as read_file / reyn_src_read / read_memory_body. "
     "max_bytes caps the returned size after slicing (default 16384)."
 )
@@ -48,6 +51,16 @@ _READ_TOOL_RESULT_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "path": {"type": "string"},
+        "resource_uri": {
+            "type": "string",
+            "description": (
+                "Cross-host capable handle "
+                "(reyn-tool-result://<agent>/<artifact>). Alternative "
+                "to `path` for path-refs that carry a resource_uri. "
+                "Same-host resolution today; cross-host RPC support is "
+                "tracked under #385 β core impl sub-task 3."
+            ),
+        },
         "offset": {
             "type": "integer",
             "description": (
@@ -64,7 +77,10 @@ _READ_TOOL_RESULT_PARAMETERS: dict[str, Any] = {
         },
         "max_bytes": {"type": "integer"},
     },
-    "required": ["path"],
+    # Neither path nor resource_uri is in `required` — exactly-one-of is
+    # enforced by the handler. JSON Schema oneOf is hard for LLMs to
+    # consume reliably; the description carries the semantic rule and
+    # the handler returns a structured error if both / neither are given.
 }
 
 
@@ -80,10 +96,25 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     from reyn.permissions.permissions import PermissionDecl
 
     path = str(args.get("path", "") or "").strip()
-    if not path:
+    resource_uri = str(args.get("resource_uri", "") or "").strip()
+
+    # Exactly-one-of contract (= the schema description). Both / neither
+    # surface as structured errors so the LLM can correct without crash.
+    if not path and not resource_uri:
         return {
             "status": "error",
-            "error": "path is required (project-relative under .reyn/tool-results/)",
+            "error": (
+                "either path (project-relative under .reyn/tool-results/) "
+                "or resource_uri (reyn-tool-result://<agent>/<artifact>) "
+                "is required"
+            ),
+        }
+    if path and resource_uri:
+        return {
+            "status": "error",
+            "error": (
+                "pass exactly one of path or resource_uri, not both"
+            ),
         }
 
     rs = ctx.router_state
@@ -109,15 +140,27 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             ),
         }
 
+    # Same-host fs read for path; resource_uri dispatches through
+    # ``read_tool_result_by_uri`` which raises ValueError on cross-host
+    # URIs (= sub-task 3 will lift this; today the stub error is the
+    # contract). PermissionError covers path-traversal escapes.
     try:
-        content, found = legacy_ctx.media_store.read_tool_result(path)
-    except PermissionError as exc:
+        if resource_uri:
+            content, found = legacy_ctx.media_store.read_tool_result_by_uri(
+                resource_uri,
+            )
+        else:
+            content, found = legacy_ctx.media_store.read_tool_result(path)
+    except (PermissionError, ValueError) as exc:
         return {"status": "error", "error": str(exc)}
 
     if not found:
+        # Echo whichever identifier the LLM supplied so it can correlate
+        # the not_found with its prior request without bookkeeping.
+        identifier = resource_uri or path
         return {
             "status": "not_found",
-            "path": path,
+            "path": identifier,
             "error": "tool result file does not exist or was deleted",
         }
 
@@ -146,6 +189,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     encoded = content.encode("utf-8")
     total_bytes = len(encoded)
+    # Echo whichever identifier the LLM supplied so it can correlate
+    # the response with its prior request without bookkeeping (= same
+    # pattern as the not_found branch above).
+    identifier = resource_uri or path
     if max_bytes > 0 and total_bytes > max_bytes:
         # Truncate on a UTF-8 boundary by using ``errors="replace"``. The
         # LLM still gets the head of the body; the tail is reachable by
@@ -153,7 +200,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         truncated = encoded[:max_bytes].decode("utf-8", errors="replace")
         return {
             "status": "ok",
-            "path": path,
+            "path": identifier,
             "content": truncated,
             "truncated": True,
             "max_bytes": max_bytes,
@@ -161,7 +208,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         }
     return {
         "status": "ok",
-        "path": path,
+        "path": identifier,
         "content": content,
         "truncated": False,
         "total_bytes": total_bytes,
