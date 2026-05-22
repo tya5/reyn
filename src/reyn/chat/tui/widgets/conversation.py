@@ -1546,7 +1546,7 @@ class ConversationView(Widget):
             idx = anchors.index(target)
         except ValueError:
             return
-        self._flash_turn_position(idx + 1, len(anchors))
+        self._flash_turn_position(idx + 1, len(anchors), delta=delta)
 
     def _flash_boundary_hint(self, direction: str) -> None:
         """Surface a ``↑ beginning of history`` / ``↓ end of history`` cue.
@@ -1589,8 +1589,16 @@ class ConversationView(Widget):
         # accent) without preempting an active ``⟳ thinking…``.
         self.show_status(text, kind="general")
 
-    def _flash_turn_position(self, n: int, total: int) -> None:
-        """Surface ``↑ turn N / M`` feedback for Ctrl+P/N navigation.
+    def _flash_turn_position(self, n: int, total: int, delta: int = -1) -> None:
+        """Surface ``↑/↓ turn N / M`` feedback for Ctrl+P/N navigation.
+
+        ``delta`` selects the direction arrow: negative (Ctrl+P / backward
+        toward earlier history) → ``↑``, positive (Ctrl+N / forward
+        toward newer history) → ``↓``. Pre-fix the arrow was hard-coded
+        to ``↑`` regardless of direction (G-F5, wave-10) — pressing
+        Ctrl+N to advance forward through turns showed
+        ``↑ turn 5 / 8``, which contradicts the actual movement and
+        misleads users who use the arrow as a navigation cue.
 
         Deduped by ``_last_turn_flash`` so rapid Ctrl+P/N presses that
         land on the same anchor don't spam the surface with identical
@@ -1622,7 +1630,8 @@ class ConversationView(Widget):
         # dedup so the next time the user hits the edge they get the
         # hint fresh (= "user navigated away from the boundary").
         self._last_boundary_flash = None
-        self.show_status(f"↑ turn {n} / {total}", kind="general")
+        arrow = "↑" if delta < 0 else "↓"
+        self.show_status(f"{arrow} turn {n} / {total}", kind="general")
 
     def clear(self) -> None:
         """Ctrl+L: clear the log + reset state. Does not affect engine state."""
