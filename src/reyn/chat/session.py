@@ -1557,6 +1557,84 @@ class ChatSession:
         with self.history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
 
+    def notify_state_change(
+        self, summary: str, *, source: str | None = None,
+    ) -> None:
+        """Emit a state-change event as a first-class chat history entry
+        (#398 v4 design contract, 2026-05-22 frozen).
+
+        Used by Reyn-internal modules (= permission_manager, mcp_install,
+        config_watcher, sp_loader, ...) to tell the LLM that the world
+        outside its turn-by-turn view has changed — e.g. a permission
+        was granted, a new MCP server installed, config edited. Without
+        this signal the LLM is locked into in-context learning from
+        prior turns (= #352 refusal trap pattern).
+
+        Storage shape:
+          - ``role="system"`` — per user judgment "むやみに増やすべきでない、
+            system あるならそれで" (= no new role values, reuse existing
+            system role for LLM-wire compatibility).
+          - ``meta.kind="state_change"`` — distinguishes from genuine
+            system-prompt history entries; downstream consumers (TUI,
+            replay, future compactor) dispatch on this. ``meta`` is an
+            annotation, not a role — adding it doesn't violate the
+            "don't add new roles" rule.
+          - ``meta.source=<emitter>`` — optional emitter identity for
+            audit / debugging (= e.g. "permission_manager"). When None,
+            the meta key is omitted to keep the storage minimal.
+
+        Compaction behaviour (= #398 v4 Q3 decision):
+          state_change entries are NOT consumed by ``chat_compactor``
+          (= CompactionController filters ``role in ("user","agent")``;
+          system-role entries are never candidates). Per-event
+          preservation is implicit. Phase 2 trigger for threshold-based
+          collapse activates when measurement shows real history bloat.
+
+        Audit cross-ref (= #398 v4 Q4 decision):
+          No ``meta.event_log_seq`` back-link. The underlying state
+          change is already in ``events.jsonl`` (= each emitter has its
+          own audit event there); timestamp + source correlation
+          suffices for forensic replay without bloating chat history.
+
+        Emission API surface (= #398 v4 Q2 decision):
+          Single method, no builder. Batched emission is a Phase 2
+          consideration if measurement shows N-per-call patterns.
+
+        Parameters
+        ----------
+        summary:
+            Human-readable one-line state change (= what the LLM reads).
+            Example: ``"Permission for mcp.sqlite was granted."``,
+            ``"MCP server 'github' was installed."``,
+            ``"Reyn configuration was updated."``.
+        source:
+            Optional emitter identifier (= module / subsystem name).
+            Stored on ``meta.source`` for audit. Not LLM-visible —
+            the LLM reads only ``summary`` text.
+        """
+        meta: dict = {"kind": "state_change"}
+        if source:
+            meta["source"] = source
+        msg = ChatMessage(
+            role="system",
+            content=summary,
+            ts=_now_iso(),
+            meta=meta,
+        )
+        self._append_history(msg)
+        # Observability event for measurement / debugging (= sub-task 6
+        # measurement pipeline can count state_change emission frequency
+        # by source without scraping the chat history).
+        try:
+            self._chat_events.emit(
+                "state_change_notified",
+                summary=summary,
+                source=source or "",
+            )
+        except Exception:
+            # Defensive: observability must not crash the API.
+            pass
+
     def _append_history_for_handler(
         self, role: str, text: str, ts: str, meta: dict,
     ) -> None:
