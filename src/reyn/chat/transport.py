@@ -73,11 +73,34 @@ class SystemRef:
     """
 
 
+@dataclass(frozen=True)
+class ExternalRef:
+    """External chat transport routed via an MCP tool call (FP-0041 #489 PR-C).
+
+    Used when an inbound webhook handler (= Slack/LINE/Discord/etc.,
+    landing in PR-D / PR-E) encodes the reply destination on the
+    inbox envelope. The outbox routing layer (= future PR-D wiring)
+    matches ``transport`` to a configured MCP tool (= e.g.
+    ``slack__chat_postMessage``) and dispatches the reply text +
+    destination metadata to that tool.
+
+    Fields:
+      transport: short transport name (= "slack" / "line" / "discord").
+        Maps to an MCP tool via ``ExternalTransportRouting`` config.
+      destination: opaque transport-specific routing dict (= e.g.
+        {"channel": "C123", "thread_ts": "1234.5678"} for Slack,
+        {"user_id": "U456"} for LINE). Forwarded to the MCP tool as
+        args via the configured args template.
+    """
+    transport: str
+    destination: dict
+
+
 # ---------------------------------------------------------------------------
 # Union alias
 # ---------------------------------------------------------------------------
 
-TransportRef = TuiRef | McpRef | A2aRef | AgentRef | SystemRef
+TransportRef = TuiRef | McpRef | A2aRef | AgentRef | SystemRef | ExternalRef
 
 __all__ = [
     "TransportRef",
@@ -86,4 +109,5 @@ __all__ = [
     "A2aRef",
     "AgentRef",
     "SystemRef",
+    "ExternalRef",
 ]
