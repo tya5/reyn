@@ -950,6 +950,30 @@ class ConversationView(Widget):
         row.finish_failure(reason=error)
         self._flush_tool_call_row(row)
 
+    def abort_tool_call_rows(self, reason: str = "cancelled") -> int:
+        """Transition every live tool-call row to the aborted terminal.
+
+        Called from ``ReynTUIApp.action_cancel_inflight`` so Ctrl+C
+        doesn't leave orphan ``●`` spinners frozen in scroll history
+        when the underlying skill task is cancelled mid-tool_call.
+        Returns the count of rows that were live + sealed (= 0 when
+        no tool_calls were in flight). Mirrors the streaming-row +
+        skill-row seal sweeps that precede it in ``action_cancel_inflight``.
+        """
+        cancelled = 0
+        for op_id in list(self._tool_call_rows.keys()):
+            row = self._tool_call_rows.pop(op_id, None)
+            if row is None:
+                continue
+            try:
+                row.finish_aborted(reason=reason)
+                self._flush_tool_call_row(row)
+                cancelled += 1
+            except Exception:
+                # Defensive: don't let one bad row stop the sweep.
+                pass
+        return cancelled
+
     def _flush_tool_call_row(self, row: ToolCallRow) -> None:
         """Render the row's two-line shape into the RichLog and unmount.
 
