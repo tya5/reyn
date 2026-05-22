@@ -53,8 +53,14 @@ async def test_agents_header_surfaces_space_and_c_hints() -> None:
 async def test_agents_header_hint_matches_memory_idiom() -> None:
     """Tier 2: agents + memory headers carry the same set of action hints.
 
-    Same keybindings → same advertised affordances. Pins the
+    Shared keybindings → same advertised affordances. Pins the
     cross-tab consistency contract that H-F2 closes.
+
+    Wave-10 follow-up H-F11 added the agents-specific ``a=attach``
+    shortcut, so agents now ADVERTISES the memory hint set plus the
+    agents-specific extras. The cross-tab contract is "the shared
+    actions all appear in both" (= superset relation), not strict
+    equality.
     """
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import RightPanel
@@ -64,15 +70,23 @@ async def test_agents_header_hint_matches_memory_idiom() -> None:
         await pilot.pause()
         panel = app.query_one(RightPanel)
         panel._panel_type = "memory"
-        memory_hint_segment = panel._panel_header_markup().split("[#555555]")[-1]
+        memory_markup = panel._panel_header_markup()
         panel._panel_type = "agents"
-        agents_hint_segment = panel._panel_header_markup().split("[#555555]")[-1]
-        # Same actions advertised (= the trailing ``[/]`` markup chunk
-        # is identical between the two headers).
-        assert memory_hint_segment == agents_hint_segment, (
-            f"agents and memory headers should advertise identical hints; "
-            f"memory={memory_hint_segment!r}, agents={agents_hint_segment!r}"
-        )
+        agents_markup = panel._panel_header_markup()
+        # Shared affordances ("space=open", "c=copy", "j↓ k↑") appear
+        # in BOTH headers (= cross-tab consistency for the bindings
+        # that work the same way).
+        for shared in ("j↓ k↑", "space=open", "c=copy"):
+            assert shared in memory_markup, (
+                f"memory hint should include {shared!r}; got {memory_markup!r}"
+            )
+            assert shared in agents_markup, (
+                f"agents hint should include {shared!r}; got {agents_markup!r}"
+            )
+        # Agents has an additional tab-specific action that memory
+        # does not (= ``a=attach``, the H-F11 follow-up).
+        assert "a=attach" in agents_markup
+        assert "a=attach" not in memory_markup
 
 
 @pytest.mark.asyncio

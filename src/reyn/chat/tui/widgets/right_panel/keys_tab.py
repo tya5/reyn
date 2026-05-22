@@ -135,6 +135,11 @@ def render_keys(app: "App") -> str:
         # no way to discover it from the Keys tab. Surface it here
         # alongside ``c=claim`` for symmetry.
         ("d", "Discard cursor (pending tab)"),
+        # H-F11 (wave-10 follow-up): ``a`` on the Agents tab prefills
+        # ``/attach <name>`` into the InputBar for the cursor's agent.
+        # Same "per-tab action" idiom as the pending-tab ``d`` / ``c``
+        # discard / claim shortcuts.
+        ("a", "Attach to cursor agent (agents tab)"),
     ]
     for key, desc in _PANEL_EXPLICIT:
         if key not in seen:

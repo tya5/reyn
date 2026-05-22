@@ -505,6 +505,20 @@ class RightPanel(Widget):
                 self._pending_move(-1)
             else:
                 self._scroll_panel(-1)
+        elif event.key == "a" and self._panel_type == "agents":
+            # Wave-10 follow-up H-F11: Agents tab `a` = switch to the
+            # cursor's agent. Mirrors the per-tab action idiom landed
+            # by the pending tab's ``d`` / ``c`` keys: a single letter
+            # owned by the tab whose semantics make sense only there.
+            # MVP: prefill ``/attach <name>`` into the InputBar (same
+            # handoff pattern as Docs tab ``/`` → ``/docs-filter``);
+            # the user confirms with Enter, the existing slash command
+            # dispatches. Direct ``session.attach`` calls bypass the
+            # OS-level event log + permission checks the slash route
+            # already gates through, so the prefill path is the
+            # correct architectural seam.
+            event.prevent_default()
+            self._prefill_attach_for_cursor()
         elif event.key == "d" and self._panel_type == "pending":
             # Issue #277 — Pending tab `d` = discard the cursor's iv.
             event.prevent_default()
@@ -1593,6 +1607,51 @@ class RightPanel(Widget):
         except Exception as exc:
             logger.warning("right_panel copy status failed: %s", exc)
 
+    def _prefill_attach_for_cursor(self) -> None:
+        """`a` on the Agents tab — pre-fill ``/attach <cursor name>``.
+
+        Wave-10 follow-up H-F11. Reads the cursor's flat_item; when
+        the row is an ``"agent"`` kind, prefills the InputBar with
+        ``/attach <agent-name>``. On any other cursor (= running /
+        recent skill / plan rows), the prefill is silently skipped
+        — the action is only meaningful on the agent-label row.
+
+        Switching to the currently-attached agent is harmless (= the
+        slash command treats it as a no-op), so the test for "this
+        is the attached agent already" lives in the slash command,
+        not here.
+        """
+        if not self._agents_items:
+            return
+        idx = max(0, min(len(self._agents_items) - 1, self._agents_cursor))
+        item = self._agents_items[idx]
+        if item.get("kind") != "agent":
+            # The agents tab's cursor walks ALL rows (= agents +
+            # running/recent skills/plans). ``a`` only makes sense
+            # on the agent-label row; for other rows, silently no-op
+            # rather than dispatching a meaningless ``/attach`` for
+            # a skill name.
+            return
+        name = str(item.get("name", "")).strip()
+        if not name:
+            return
+        from .. import InputBar  # late import → avoid cycle
+        try:
+            inputbar = self.app.query_one("#inputbar", InputBar)
+        except Exception as exc:
+            logger.warning("right_panel prefill attach failed: %s", exc)
+            return
+        prefill = f"/attach {name}"
+        try:
+            ta = inputbar.query_one("#input")
+            ta.load_text(prefill)
+            # Move cursor to end so the user can Enter immediately or
+            # edit (= rename agent, etc.) without skipping whitespace.
+            ta.move_cursor((0, len(prefill)))
+            inputbar.focus_input()
+        except Exception as exc:
+            logger.warning("right_panel prefill attach focus failed: %s", exc)
+
     def _prefill_docs_filter(self) -> None:
         """`/` on the Docs tab — focus InputBar and pre-fill `/docs-filter `.
 
@@ -1906,14 +1965,14 @@ class RightPanel(Widget):
             return f"[bold {_CORAL}]Key Bindings[/]  [#555555]j↓ k↑[/]"
         if self._panel_type == "agents":
             # Wave-10 H-F2: surface ``space=open c=copy`` so the cursor's
-            # most useful actions are discoverable from the header. Pre-fix
-            # the agents tab advertised only ``j↓ k↑``, leaving first-time
-            # users to discover Space / c by reading the Keys tab — even
-            # though both bindings work here exactly as in the Memory tab
-            # (which DOES surface them). Matches Memory's hint shape.
+            # most useful actions are discoverable from the header.
+            # Wave-10 follow-up H-F11: also surface ``a=attach`` — the
+            # agents tab's per-tab action that prefills ``/attach
+            # <name>`` for switching the attached agent. Matches the
+            # Pending tab's ``d=discard c=claim`` per-tab hint shape.
             return (
                 f"[bold {_CORAL}]Agents[/]"
-                f"  [#555555]j↓ k↑ space=open c=copy[/]"
+                f"  [#555555]j↓ k↑ space=open c=copy a=attach[/]"
             )
         if self._panel_type == "memory":
             return (
