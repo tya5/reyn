@@ -61,8 +61,12 @@ scenarios:
         must_emit: []
         must_not_emit:
           - { type: permission_denied }
-      artifacts:
-        - { skill: direct_llm, present: true }
+      # B49 W1-S2 fix (2026-05-22): artifact requirement removed (= same
+      # pattern as #399 W1-S1/S6/S7 closure). Router may answer the
+      # factual question inline via web__search + summary without
+      # dispatching direct_llm — rubric is the verdict, not the
+      # implementation path. Forcing direct_llm dispatch incentivises
+      # unnecessary skill invocation.
       # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
         verified: 0.25
@@ -118,7 +122,13 @@ scenarios:
         must_emit:
           - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
-          - { type: skill_run_completed, status: success }
+          # B49 W1-S4 fix (2026-05-22): the emitted status value is
+          # "finished" (= SkillRunResult.status Literal in
+          # `src/reyn/kernel/runtime_types.py`); "success" was a
+          # scenario-yaml typo with no matching emit path. Switched to
+          # the actual successful-terminal value so the must_emit
+          # constraint is satisfiable.
+          - { type: skill_run_completed, status: finished }
         must_not_emit:
           - { type: permission_denied }
       artifacts:
