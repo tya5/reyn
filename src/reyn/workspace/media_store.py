@@ -104,6 +104,34 @@ class MediaStoreConfig:
     tool_results_dir: str = ".reyn/tool-results"
 
 
+# #385 β core impl sub-task 1: cross-host capable resource URI scheme.
+# A path-ref minted with ``agent_name`` set carries this scheme so a
+# downstream consumer (= another agent / a different host) can dispatch
+# back to the producing agent's MediaStore. Sub-task 3 will wire the
+# cross-host RPC; this sub-task lands the schema + same-host resolution.
+_RESOURCE_URI_SCHEME = "reyn-tool-result://"
+
+
+def parse_resource_uri(uri: str) -> tuple[str, str] | None:
+    """Parse a ``reyn-tool-result://<agent>/<artifact>`` URI.
+
+    Returns ``(agent, artifact)`` on a successful parse, or ``None`` when
+    the input doesn't match the expected scheme / shape. The artifact
+    portion may itself contain ``/`` (= not consumed by the split) so
+    nested-path artifacts remain addressable; ``agent`` is always the
+    single segment between the scheme and the first ``/``.
+    """
+    if not isinstance(uri, str) or not uri.startswith(_RESOURCE_URI_SCHEME):
+        return None
+    rest = uri[len(_RESOURCE_URI_SCHEME):]
+    if "/" not in rest:
+        return None
+    agent, artifact = rest.split("/", 1)
+    if not agent or not artifact:
+        return None
+    return agent, artifact
+
+
 class MediaStore:
     """Path-ref'd file storage for multimodal media + tool result text.
 
@@ -112,6 +140,32 @@ class MediaStore:
     ``ChatMessage.content`` list (= part of the OpenAI/Anthropic wire
     shape mirror; see issue #383). The corresponding ``read_*`` methods
     do the inverse lookup with workspace-boundary validation.
+
+    Path-ref shape (#385 β core impl sub-task 1, 2026-05-22 frozen
+    contract): when ``agent_name`` is supplied at construction, save_*
+    returns the extended shape that carries cross-host routing fields::
+
+        {
+          "type": "tool_result_ref" | "image",
+          "path": "<project-relative>",       # same-host fast-path
+          "resource_uri": "reyn-tool-result://<agent_name>/<filename>",
+          "source_agent": "<agent_name>",     # durable identity for dispatch
+          "source_chain_id": "<chain_id>",    # audit annotation only (optional)
+          "mime_type": "...",
+          "content_hash": "sha256:...",
+        }
+
+    When ``agent_name`` is omitted (= legacy call sites, test stubs),
+    save_* returns the pre-β shape (= no resource_uri / source_agent /
+    source_chain_id, just ``path``). Consumers must treat the cross-host
+    fields as optional: when present, the dispatcher CAN route across
+    hosts; when absent, only the same-host ``path`` is available.
+
+    Cross-host RPC routing (sub-task 3 of the β core impl) is NOT
+    implemented in this sub-task — ``read_tool_result_by_uri`` raises
+    ``ValueError`` when the URI's source_agent doesn't match this
+    store's identity, with a clear "cross-host not yet supported"
+    message so the read_tool_result handler can surface a stub error.
     """
 
     def __init__(
@@ -119,6 +173,7 @@ class MediaStore:
         config: MediaStoreConfig | None = None,
         *,
         project_root: Path,
+        agent_name: str | None = None,
     ) -> None:
         self._config = config or MediaStoreConfig()
         self._project_root = project_root.resolve()
@@ -128,6 +183,7 @@ class MediaStore:
         self._tool_results_dir = (
             self._project_root / self._config.tool_results_dir
         ).resolve()
+        self._agent_name = agent_name or None
 
     # ── Image storage (= .reyn/media/) ────────────────────────────────
 
@@ -157,12 +213,14 @@ class MediaStore:
         filename = f"{_timestamp()}-{chain_short}-{tool_token}-{seq}{ext}"
         path = self._media_dir / filename
         path.write_bytes(data)
-        return {
+        block: dict = {
             "type": "image",
             "path": str(path.relative_to(self._project_root)),
             "mime_type": mime_type,
             "content_hash": "sha256:" + hashlib.sha256(data).hexdigest(),
         }
+        self._attach_cross_host_fields(block, filename=filename, chain_id=chain_id)
+        return block
 
     def read_image(self, path_str: str) -> tuple[bytes, bool]:
         """Read image binary by project-relative path.
@@ -212,12 +270,14 @@ class MediaStore:
         filename = f"{_timestamp()}-{chain_short}-{tool_token}-{seq}{ext}"
         path = self._tool_results_dir / filename
         path.write_text(content, encoding="utf-8")
-        return {
+        block: dict = {
             "type": "tool_result_ref",
             "path": str(path.relative_to(self._project_root)),
             "mime_type": mime_type,
             "content_hash": "sha256:" + hashlib.sha256(content.encode()).hexdigest(),
         }
+        self._attach_cross_host_fields(block, filename=filename, chain_id=chain_id)
+        return block
 
     def read_tool_result(self, path_str: str) -> tuple[str, bool]:
         """Read tool result text by project-relative path.
@@ -236,6 +296,87 @@ class MediaStore:
         if not full.exists():
             return "", False
         return full.read_text(encoding="utf-8"), True
+
+    # ── Cross-host routing (#385 β core impl sub-task 1) ──────────────
+
+    def _attach_cross_host_fields(
+        self, block: dict, *, filename: str, chain_id: str,
+    ) -> None:
+        """Augment a path-ref block with resource_uri / source_agent /
+        source_chain_id when this store has an ``agent_name`` identity.
+
+        No-op when ``agent_name`` is unset — leaves the block in the
+        pre-β shape so legacy call sites and test stubs keep working
+        with their original expectations. The added fields are purely
+        additive; the ``path`` fast-path stays usable for same-host
+        consumers regardless.
+        """
+        if not self._agent_name:
+            return
+        block["resource_uri"] = f"{_RESOURCE_URI_SCHEME}{self._agent_name}/{filename}"
+        block["source_agent"] = self._agent_name
+        if chain_id:
+            block["source_chain_id"] = chain_id
+
+    def read_tool_result_by_uri(self, uri: str) -> tuple[str, bool]:
+        """Resolve a ``reyn-tool-result://...`` URI and read the body.
+
+        Same-host case (= the URI's source_agent matches this store's
+        ``agent_name``): the artifact portion is interpreted as a filename
+        inside ``tool_results_dir`` and read like ``read_tool_result``.
+
+        Cross-host case (= source_agent differs): raises ``ValueError``
+        with a "cross-host not yet supported" message. The actual RPC
+        routing lands in sub-task 3 of the #385 β core impl; this
+        sub-task's contract is the schema + same-host resolution + a
+        clear stub error for the dispatcher to surface.
+
+        Malformed URI: raises ``ValueError`` with the offending input.
+        Missing file: returns ``("", False)`` matching
+        ``read_tool_result``'s past-EOF / deleted-file convention.
+        """
+        parsed = parse_resource_uri(uri)
+        if parsed is None:
+            raise ValueError(
+                f"invalid resource_uri (expected "
+                f"{_RESOURCE_URI_SCHEME}<agent>/<artifact>): {uri!r}"
+            )
+        agent, artifact = parsed
+        if not self._agent_name:
+            raise ValueError(
+                "this MediaStore has no agent_name configured; "
+                "cannot resolve cross-host resource URIs"
+            )
+        if agent != self._agent_name:
+            raise ValueError(
+                f"cross-host resource_uri (source_agent={agent!r}) is not "
+                "yet supported in this build (= sub-task 3 of #385 β core "
+                f"impl). This store's identity is {self._agent_name!r}."
+            )
+        # Same-host: the artifact is a filename inside tool_results_dir.
+        # Delegate to read_tool_result with the project-relative path so
+        # workspace-boundary validation runs through the existing path.
+        try:
+            rel_path = str(
+                (self._tool_results_dir / artifact).relative_to(
+                    self._project_root,
+                ),
+            )
+        except ValueError as exc:
+            raise ValueError(
+                f"artifact {artifact!r} resolves outside tool_results_dir"
+            ) from exc
+        return self.read_tool_result(rel_path)
+
+    @property
+    def agent_name(self) -> str | None:
+        """Agent identity bound to this store (= source_agent for path-refs).
+
+        ``None`` when the store was constructed without an identity (=
+        legacy / test stubs). Consumers that need to render cross-host
+        capable path-refs MUST construct the store with this set.
+        """
+        return self._agent_name
 
     # ── Introspection ─────────────────────────────────────────────────
 

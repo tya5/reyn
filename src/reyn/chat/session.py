@@ -1011,6 +1011,12 @@ class ChatSession:
                     tool_results_dir=multimodal_config.tool_results_dir,
                 ),
                 project_root=Path.cwd(),
+                # #385 β core impl sub-task 1: path-refs minted by this
+                # session carry resource_uri / source_agent so cross-host
+                # consumers (= other agents via A2A / MCP / Browser) can
+                # dispatch back here. Sub-task 3 wires the actual cross-
+                # host RPC; here we just stamp the identity.
+                agent_name=agent_name,
             )
         else:
             self._media_store = None

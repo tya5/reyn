@@ -202,3 +202,209 @@ def test_custom_dirs_via_config(tmp_path):
     txt = store.save_tool_result("y", mime_type="text/plain")
     assert img["path"].startswith(".alt/img/")
     assert txt["path"].startswith(".alt/text/")
+
+
+# ── Cross-host capable path-ref shape (#385 β core impl sub-task 1) ────
+
+
+def test_save_tool_result_without_agent_name_keeps_legacy_shape(tmp_path):
+    """Tier 2: when MediaStore has no ``agent_name``, save_tool_result
+    returns the pre-β path-ref shape (= no resource_uri / source_agent /
+    source_chain_id). Backward compat for legacy callers and test stubs.
+    """
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    block = store.save_tool_result("body", mime_type="text/plain", chain_id="c1")
+
+    assert "resource_uri" not in block
+    assert "source_agent" not in block
+    assert "source_chain_id" not in block
+    # Legacy fields still present.
+    assert block["type"] == "tool_result_ref"
+    assert "path" in block
+    assert "content_hash" in block
+
+
+def test_save_tool_result_with_agent_name_emits_cross_host_fields(tmp_path):
+    """Tier 2: when MediaStore is constructed with ``agent_name``,
+    save_tool_result emits resource_uri + source_agent + source_chain_id
+    so cross-host consumers can dispatch back to the producing agent
+    (#385 β core impl frozen contract, 2026-05-22).
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="researcher",
+    )
+    block = store.save_tool_result(
+        "body", mime_type="text/plain", chain_id="chain42",
+    )
+
+    assert block["source_agent"] == "researcher"
+    assert block["source_chain_id"] == "chain42"
+    # resource_uri = reyn-tool-result://<agent>/<filename>; filename is
+    # the basename of the same-host path field.
+    assert block["resource_uri"].startswith("reyn-tool-result://researcher/")
+    filename = Path(block["path"]).name
+    assert block["resource_uri"].endswith("/" + filename)
+    # Same-host path is still there as the fast-path fallback.
+    assert block["path"].startswith(".reyn/tool-results/")
+
+
+def test_save_image_with_agent_name_also_carries_resource_uri(tmp_path):
+    """Tier 2: the cross-host field augmentation applies uniformly to
+    both save_image and save_tool_result — the path-ref contract is the
+    same shape regardless of media type.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="vision",
+    )
+    block = store.save_image(b"\x89PNG\r\n", mime_type="image/png", chain_id="c2")
+
+    assert block["source_agent"] == "vision"
+    assert block["resource_uri"].startswith("reyn-tool-result://vision/")
+    assert "source_chain_id" in block
+
+
+def test_save_with_agent_name_but_no_chain_id_omits_audit_field(tmp_path):
+    """Tier 2: ``source_chain_id`` is an audit annotation, optional. When
+    no chain_id is supplied, the field is omitted rather than emitted
+    as empty/null — the path-ref stays minimal.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="agentX",
+    )
+    block = store.save_tool_result("body", mime_type="text/plain")
+
+    assert "source_agent" in block
+    assert "resource_uri" in block
+    assert "source_chain_id" not in block
+
+
+# ── parse_resource_uri ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "uri,expected",
+    [
+        ("reyn-tool-result://agent/artifact.txt", ("agent", "artifact.txt")),
+        (
+            "reyn-tool-result://researcher/20260522T010203-abc123-web_fetch-1.txt",
+            ("researcher", "20260522T010203-abc123-web_fetch-1.txt"),
+        ),
+        # Nested-path artifacts: only the FIRST '/' is the agent boundary.
+        (
+            "reyn-tool-result://a/nested/path/in/artifact",
+            ("a", "nested/path/in/artifact"),
+        ),
+    ],
+)
+def test_parse_resource_uri_valid(uri, expected):
+    """Tier 2: well-formed URIs split into (agent, artifact)."""
+    from reyn.workspace.media_store import parse_resource_uri
+
+    assert parse_resource_uri(uri) == expected
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "",
+        "not-a-uri",
+        "http://example.com/x",
+        "reyn-tool-result://",        # no agent, no artifact
+        "reyn-tool-result://agent",   # no artifact, no slash
+        "reyn-tool-result:///artifact",  # empty agent
+        "reyn-tool-result://agent/",  # empty artifact
+    ],
+)
+def test_parse_resource_uri_invalid_returns_none(uri):
+    """Tier 2: malformed URIs return None (= not an exception). The
+    handler treats None as a structured-error signal.
+    """
+    from reyn.workspace.media_store import parse_resource_uri
+
+    assert parse_resource_uri(uri) is None
+
+
+# ── read_tool_result_by_uri (same-host + cross-host stub) ──────────────
+
+
+def test_read_tool_result_by_uri_same_host_round_trip(tmp_path):
+    """Tier 2: a path-ref minted by this store can be re-read by its own
+    ``resource_uri`` — same-host fast-path through the URI dispatcher.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+    )
+    block = store.save_tool_result("hello\nworld\n", mime_type="text/plain")
+    out, found = store.read_tool_result_by_uri(block["resource_uri"])
+
+    assert found is True
+    assert out == "hello\nworld\n"
+
+
+def test_read_tool_result_by_uri_cross_host_raises_stub_error(tmp_path):
+    """Tier 2: when the URI's source_agent doesn't match this store's
+    identity, ``read_tool_result_by_uri`` raises ValueError with a clear
+    "cross-host not yet supported" message. Sub-task 3 of the #385 β
+    core impl will lift this; the stub is the dispatcher contract.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="local",
+    )
+    other_uri = "reyn-tool-result://remote/some-artifact.txt"
+
+    with pytest.raises(ValueError, match="cross-host"):
+        store.read_tool_result_by_uri(other_uri)
+
+
+def test_read_tool_result_by_uri_invalid_uri_raises(tmp_path):
+    """Tier 2: a malformed URI raises ValueError (= structured error,
+    not a silent miss). The handler relays the message to the LLM.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+    )
+
+    with pytest.raises(ValueError, match="invalid resource_uri"):
+        store.read_tool_result_by_uri("not-a-uri")
+
+
+def test_read_tool_result_by_uri_missing_agent_name_raises(tmp_path):
+    """Tier 2: a store constructed WITHOUT agent_name can't resolve
+    cross-host URIs (= it has no identity to compare against). Raises
+    ValueError to make the misconfiguration visible.
+    """
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+
+    with pytest.raises(ValueError, match="no agent_name"):
+        store.read_tool_result_by_uri(
+            "reyn-tool-result://anyone/something.txt",
+        )
+
+
+def test_read_tool_result_by_uri_missing_file_returns_not_found(tmp_path):
+    """Tier 2: a syntactically valid same-host URI for a file that doesn't
+    exist returns ``("", False)`` — matches the past-EOF / deleted-file
+    convention of the path-based ``read_tool_result``.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+    )
+    out, found = store.read_tool_result_by_uri(
+        "reyn-tool-result://me/never-written.txt",
+    )
+
+    assert out == ""
+    assert found is False
+
+
+def test_agent_name_property_returns_set_identity(tmp_path):
+    """Tier 2: the ``agent_name`` property mirrors the constructor arg
+    so dispatchers / introspection code can verify which identity a
+    given MediaStore instance carries.
+    """
+    no_id = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    with_id = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="alpha",
+    )
+    assert no_id.agent_name is None
+    assert with_id.agent_name == "alpha"
