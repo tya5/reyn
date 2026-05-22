@@ -667,6 +667,39 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# #398 v4 emitter family — events-log subscriber dispatch table.
+#
+# Maps known emitter event types to (source, template) tuples used by
+# ``ChatSession._on_chat_event_for_state_change`` to convert events
+# into ``notify_state_change`` calls. Adding a new emitter is one
+# entry here + the emitter emitting its event on the session's
+# events log (= OpContext.events, bound to ``_chat_events`` for
+# chat router-initiated ops).
+#
+# ``template`` is a ``str.format``-compatible string; the event's
+# ``data`` dict is passed as kwargs. Missing keys (= malformed event
+# payload) are silently skipped — observability must not crash the
+# events bus.
+#
+# Sister mechanism: PermissionResolver._on_persist_callbacks (= the
+# permission_manager emitter wiring landed in PR #456). The two
+# mechanisms coexist because their natural integration points differ:
+# permission_manager is a singleton service across sessions and
+# benefits from a direct subscriber list; op_runtime ops already emit
+# session-scoped events so the events log is the natural seam.
+_STATE_CHANGE_EVENT_MAPPINGS: dict[str, tuple[str, str]] = {
+    # MCP server install success (= ``reyn.op_runtime.mcp_install``
+    # emits this on the events log after writing the config).
+    "mcp_server_installed": (
+        "mcp_install",
+        "MCP server '{server_name}' was installed.",
+    ),
+    # Future emitter slots (= add when wired):
+    # "config_reloaded":  ("config_watcher", "Reyn configuration was updated."),
+    # "sp_version_changed": ("sp_loader",   "Agent system prompt was updated to version {version}."),
+}
+
+
 def _run_short(run_id: str) -> str:
     """Last 4 chars of a chat-side run_id, used as a display tag."""
     return run_id[-4:] if run_id else ""
@@ -1245,6 +1278,15 @@ class ChatSession:
         # at different scopes.
         from reyn.chat.lifecycle_forwarder import ChatLifecycleForwarder
         self._chat_events.add_subscriber(ChatLifecycleForwarder(self.outbox))
+        # #398 v4 emitter family — generic events-log subscriber that
+        # converts known op-emitted events (= mcp_server_installed,
+        # future: config_reloaded / sp_version_changed) to
+        # ``state_change`` history entries via the
+        # ``_STATE_CHANGE_EVENT_MAPPINGS`` dispatch table. Sister to
+        # the permission_manager direct-callback wiring (= PR #456).
+        self._chat_events.add_subscriber(
+            self._on_chat_event_for_state_change,
+        )
 
         # PR-refactor-session-1 wave 3 PR1: per-session budget adapter.
         # Absorbs total_usage / total_cost_usd / router-cap state that
@@ -1568,6 +1610,39 @@ class ChatSession:
         self.history.append(msg)
         with self.history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
+
+    def _on_chat_event_for_state_change(self, event) -> None:
+        """Generic events-log subscriber that converts known emitter events
+        to ``state_change`` history entries (= #398 v4 emitter family).
+
+        The chat router's ``OpContext.events`` is bound to this session's
+        ``_chat_events`` (= session.py make_router_op_context). When the
+        LLM invokes an op like ``mcp_install`` and the op emits its
+        success event, this subscriber sees it and mints the
+        corresponding state_change so the LLM's next turn sees the
+        world-state change without a separate plumbing path per
+        emitter.
+
+        Extension shape (= one dict entry per new emitter):
+          ``_STATE_CHANGE_EVENT_MAPPINGS[event_type] = (source, template)``
+        where ``template`` is a ``str.format``-compatible string and
+        receives the event's ``data`` dict as kwargs. New emitters
+        only need to (a) emit a known event type on the chat events
+        log and (b) register their (source, template) in the mapping.
+
+        Defensive: malformed event payloads (= missing template keys,
+        wrong types) are silently skipped — observability must not
+        crash the events bus or downstream subscribers.
+        """
+        mapping = _STATE_CHANGE_EVENT_MAPPINGS.get(getattr(event, "type", ""))
+        if mapping is None:
+            return
+        source, template = mapping
+        try:
+            summary = template.format(**(event.data or {}))
+        except (KeyError, ValueError, AttributeError):
+            return
+        self.notify_state_change(summary, source=source)
 
     def _on_permission_persisted(self, key: str, approved: bool) -> None:
         """PermissionResolver subscriber — convert grant/revoke to a
