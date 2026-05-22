@@ -660,7 +660,14 @@ class ConversationView(Widget):
         # show" while /expand itself silently no-ops. Flag it inline so the
         # user can tell the previous fold is no longer reachable.
         had_prev_fold = self._last_long_reply is not None
-        lines = text.split("\n")
+        # Wave-10 follow-up G-F11: ``splitlines()`` instead of
+        # ``split("\n")`` so CRLF / CR endings normalise correctly.
+        # ``split("\n")`` leaves a trailing ``\r`` on each CRLF line,
+        # which can confuse Rich's markup parser at preview-slice
+        # boundaries and produces stray carriage-return characters
+        # in the fold-hint count's source. ``_render_system_message``
+        # already uses ``splitlines()``; this aligns the two paths.
+        lines = text.splitlines()
         # Wave-7 B-F2: fold decision uses an estimated rendered-screen-line
         # count rather than raw source newlines. A reply with 29 newlines
         # whose paragraphs wrap to 4 screen lines each would have rendered
