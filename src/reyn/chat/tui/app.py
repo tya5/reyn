@@ -652,6 +652,19 @@ class ReynTUIApp(App):
             self._skill_exec.pop(run_id, None)
             self._push_exec_state()
             self._last_focal_tab = "agents"
+            # Wave-9 D-F11: release the input-bar lock when the last
+            # tracked skill finishes. Sub-skills popping during a
+            # nested run keep the lock held — only the empty state
+            # signals "turn is fully done, safe to accept a new
+            # submit". ``_on_stream_end`` is the other unlock path
+            # (covers streaming turns that don't necessarily route
+            # through ``_skill_exec``); both are idempotent so calling
+            # twice in a turn is harmless.
+            if not self._skill_exec:
+                try:
+                    self.query_one("#inputbar", InputBar).set_in_flight(False)
+                except Exception:
+                    pass
 
     def _maybe_render_cost_suffix(
         self, conv: ConversationView, *, attempt: int = 0,
@@ -761,11 +774,24 @@ class ReynTUIApp(App):
             # the intercept keeps a single source of truth for the slash
             # dispatch path.
             # Dispatch to session._maybe_handle_slash (which uses registry)
-            if session is not None:
-                await session._maybe_handle_slash(text)
-            else:
-                # No session — still try the registry
-                await self._dispatch_slash_no_session(text, conv)
+            try:
+                if session is not None:
+                    await session._maybe_handle_slash(text)
+                else:
+                    # No session — still try the registry
+                    await self._dispatch_slash_no_session(text, conv)
+            finally:
+                # Wave-9 D-F11: slash commands are synchronous from the
+                # user's POV — once ``_maybe_handle_slash`` returns the
+                # turn is over, so release the in-flight lock the
+                # ``InputBar._submit`` set. Without this, a slash submit
+                # would leave the input bar locked until the next
+                # stream_end (which may never come for a pure slash
+                # turn).
+                try:
+                    self.query_one("#inputbar", InputBar).set_in_flight(False)
+                except Exception:
+                    pass
         else:
             if session is not None:
                 # Optimistic sticky: the skill_runner emits its first
@@ -878,6 +904,13 @@ class ReynTUIApp(App):
             conv = None
         if conv is not None:
             conv.hide_status()
+        # Wave-9 D-F11: Ctrl+C unconditionally releases the in-flight
+        # lock so the user can immediately submit a new prompt. Even if
+        # no skills were actually cancelled (= the lock was set
+        # spuriously, or a stream_end was missed), Ctrl+C is the
+        # documented escape hatch from a stuck state.
+        if input_bar is not None:
+            input_bar.set_in_flight(False)
 
         session = self._get_session()
         # Wave-6 IV2: pending user interventions are "in-flight" from

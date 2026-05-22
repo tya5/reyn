@@ -74,6 +74,12 @@ class InputBar(Widget):
         color: #555555;
         padding: 0 2;
     }
+    InputBar.in-flight TextArea {
+        color: #666666;
+    }
+    InputBar.in-flight #hints {
+        color: #886633;
+    }
     """
 
     # ── messages ──────────────────────────────────────────────────────────────
@@ -111,6 +117,13 @@ class InputBar(Widget):
         # ``row_count`` Up presses to advance one history step.
         # Cleared on ``TextArea.Changed`` (= user edit).
         self._restore_pristine: bool = False
+        # Wave-9 D-F11: lock state for the in-flight turn. While True,
+        # ``_submit`` returns early without posting ``UserSubmitted`` or
+        # clearing the TextArea — so a fast Enter / Enter sequence
+        # doesn't dispatch two LLM calls for the same prompt. App-side
+        # callers toggle it via ``set_in_flight``: True at submit
+        # time, False at stream_end / cancel / slash-return.
+        self._in_flight: bool = False
 
     def compose(self) -> ComposeResult:
         # Picker docked above TextArea (compose order matters: top-down).
@@ -147,6 +160,28 @@ class InputBar(Widget):
             self.query_one("#input", TextArea).focus()
         except Exception:
             pass
+
+    def set_in_flight(self, in_flight: bool) -> None:
+        """Toggle the in-flight lock (D-F11, wave-9).
+
+        While in-flight, ``_submit`` returns early so a second Enter
+        keypress during an LLM response in flight doesn't dispatch a
+        duplicate ``UserSubmitted`` message (= double LLM call, doubled
+        cost, conv-pane noise). The ``.in-flight`` CSS class dims the
+        TextArea text and the hint footer so the lock is visible.
+
+        Idempotent — calling with the same value is a no-op. The lock
+        is set by ``_submit`` immediately after a successful post, and
+        cleared by the App at lifecycle points (stream_end, skill done
+        with empty queue, action_cancel_inflight, slash-command return).
+        """
+        if self._in_flight == in_flight:
+            return
+        self._in_flight = in_flight
+        if in_flight:
+            self.add_class("in-flight")
+        else:
+            self.remove_class("in-flight")
 
     def append_text(self, text: str) -> None:
         """Append text to the current input (used by voice dictation).
@@ -524,6 +559,15 @@ class InputBar(Widget):
         text = ta.text.strip()
         if not text:
             return
+        # Wave-9 D-F11: while a prior turn is still in flight, swallow
+        # the Enter without posting / clearing. The typed text stays so
+        # the user can edit and re-submit once the lock releases (e.g.
+        # via stream_end). Without this guard, hitting Enter twice
+        # quickly while an LLM call is in progress dispatches the same
+        # prompt twice → doubled spend + duplicated reply in the conv
+        # pane.
+        if self._in_flight:
+            return
         if not self._history or self._history[-1] != text:
             self._history.append(text)
         self._history_idx = -1
@@ -534,6 +578,13 @@ class InputBar(Widget):
         except Exception:
             pass
         self.post_message(self.UserSubmitted(text))
+        # Lock immediately — the App handler will unlock at the next
+        # lifecycle boundary (stream end / cancel / slash return).
+        # Setting after ``post_message`` is fine because Textual
+        # processes message queues serially: a second Enter pressed
+        # before this line lands would have already been routed to the
+        # same handler and exited at ``if self._in_flight`` above.
+        self.set_in_flight(True)
 
     def _history_up(self, ta: TextArea) -> None:
         if not self._history:

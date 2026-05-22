@@ -589,6 +589,18 @@ class OutboxRouter:
         app._maybe_refresh_status(header)
         # A4: render per-turn cost suffix when opt-in is enabled
         app._maybe_render_cost_suffix(conv)
+        # Wave-9 D-F11: release the input-bar lock at the end of the
+        # last live stream. Concurrent streams keep the lock held —
+        # only when ``_current_stream_id`` is cleared (= no live
+        # stream remaining) is the user safe to submit again. The
+        # "skill done" branch in ``_handle_trace_for_skill_row`` is
+        # the other unlock path; both are idempotent.
+        if app._current_stream_id is None:
+            try:
+                from .widgets import InputBar  # local import — avoid cycle
+                app.query_one("#inputbar", InputBar).set_in_flight(False)
+            except Exception:
+                pass
 
     def _on_intervention(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
