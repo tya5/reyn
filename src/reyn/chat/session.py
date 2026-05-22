@@ -3239,7 +3239,16 @@ class ChatSession:
         args = parts[1] if len(parts) > 1 else ""
         slash_cmd = REGISTRY.get(cmd)
         if slash_cmd is None:
-            known = ", ".join(f"/{n}" for n in REGISTRY.names())
+            # Suggest the 3 closest matches rather than dumping the full
+            # 20+ command catalog into the ErrorBox header (= the box caps
+            # at 72 cells and the previous list truncated mid-name at
+            # ``try: /agent, /agents, /answer, /attach,``, hiding the
+            # actionable tail). ``suggest_for_unknown`` is a pure helper
+            # in ``reyn.chat.slash`` so the suggestion contract is
+            # directly testable without the surrounding session machinery.
+            from reyn.chat.slash import suggest_for_unknown
+            suggestions = suggest_for_unknown(cmd)
+            known = ", ".join(f"/{n}" for n in suggestions)
             # ``kind="error"`` so the TUI mounts an ErrorBox (= red ✗ icon,
             # collapsible, Esc-to-dismiss). The previous ``kind="system"``
             # rendered as a dim grey line indistinguishable from a successful
