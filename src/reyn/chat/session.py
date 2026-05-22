@@ -1186,6 +1186,21 @@ class ChatSession:
         # agent now) can emit a state_change history entry. None until
         # the first attributed turn is dispatched.
         self._last_sender: str | None = None
+        # FP-0041 (#489) PR-D2: humanic reply attribution.
+        # When an inbox payload carries a ``reply_to`` (= ExternalRef
+        # / A2aRef / etc. encoded by the inbound handler), the dispatch
+        # attribution captures it here so subsequent agent replies via
+        # ``_put_outbox`` default to that reply_to. Cleared / replaced
+        # at each sender transition.
+        self._last_reply_to: Any = None
+        # FP-0041 (#489) PR-D2: outbox interceptor for external transport.
+        # An async callable ``(OutboxMessage) -> bool`` invoked from
+        # ``_put_outbox`` before queueing. When it returns True, the
+        # message is consumed by the interceptor (= dispatched to e.g.
+        # Slack via MCP) and NOT queued for TUI display. Set by web
+        # lifespan / session factory when external transports are
+        # configured; ``None`` skips interception (= default).
+        self._outbox_interceptor: Any = None
         # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
         # EmbeddingProvider once per session when the operator has
         # configured ``action_retrieval.embedding_class``.  Both stay
@@ -1728,6 +1743,15 @@ class ChatSession:
         """
         if not isinstance(payload, dict):
             return
+        # FP-0041 #489 PR-D2: capture reply_to from payload regardless
+        # of sender transition (= even a same-sender follow-up may have
+        # a new reply_to, e.g. different Slack thread). When the payload
+        # doesn't carry reply_to, the previous value is preserved (=
+        # downstream interceptor handles the "no reply_to" case by
+        # falling through to the default surface).
+        reply_to = payload.get("reply_to")
+        if reply_to is not None:
+            self._last_reply_to = reply_to
         new_sender = payload.get("sender")
         if not new_sender or not isinstance(new_sender, str):
             return
@@ -2464,7 +2488,40 @@ class ChatSession:
         `intervention`/`error`/`__end__` are kept so they reach the user
         when re-attached or remain in history (history append happens
         independently in callers).
+
+        FP-0041 #489 PR-D2: outbox reply_to + external transport interceptor.
+          - When ``msg.reply_to`` is unset and the session has a recent
+            inbox-captured ``_last_reply_to``, the outbox message
+            inherits it (= so the agent's reply automatically routes
+            back to the producer's transport without each emit site
+            needing to know).
+          - When ``msg.reply_to`` is an external transport (=
+            ``ExternalRef``) and an outbox interceptor is registered,
+            the interceptor is invoked. If it returns ``True``, the
+            message is treated as fully handled (= dispatched to e.g.
+            Slack via MCP) and NOT queued for TUI display. If it
+            returns ``False`` or raises, the message falls through to
+            the normal queue path (= defensive: a failed external
+            dispatch surfaces to TUI rather than silently disappearing).
         """
+        # PR-D2: default reply_to from last captured inbox reply_to.
+        if msg.reply_to is None and self._last_reply_to is not None:
+            from dataclasses import replace
+            msg = replace(msg, reply_to=self._last_reply_to)
+        # PR-D2: external transport interceptor.
+        if self._outbox_interceptor is not None:
+            from reyn.chat.transport import ExternalRef
+            if isinstance(msg.reply_to, ExternalRef):
+                try:
+                    handled = await self._outbox_interceptor(msg)
+                except Exception:
+                    logger.exception(
+                        "outbox interceptor raised for reply_to=%r; "
+                        "falling through to queue", msg.reply_to,
+                    )
+                    handled = False
+                if handled:
+                    return
         if not self.is_attached and msg.kind in {"status", "trace"}:
             return
         await self.outbox.put(msg)

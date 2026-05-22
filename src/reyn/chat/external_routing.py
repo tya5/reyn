@@ -271,11 +271,93 @@ async def route_to_mcp(
     )
 
 
+# ── Outbox interceptor factory (= FP-0041 #489 PR-D2 wiring) ───────────
+
+
+# OutboxMessage type is imported lazily inside the factory to avoid a
+# circular import (= chat.outbox imports transport; this module
+# imports nothing from chat to keep it pure for unit tests).
+
+
+def make_outbox_interceptor(
+    *,
+    routing: ExternalTransportRouting,
+    mcp_dispatcher: Callable[[str, dict], Awaitable[Any]],
+    dispatchable_kinds: tuple[str, ...] = ("agent",),
+) -> Callable[[Any], Awaitable[bool]]:
+    """Build an outbox interceptor for FP-0041 PR-D2 wiring.
+
+    Returns an async ``(OutboxMessage) -> bool`` callable to register
+    on ``ChatSession._outbox_interceptor``. When invoked:
+
+      1. If ``msg.reply_to`` is not an ``ExternalRef`` → return False
+         (= caller falls through to normal outbox queue).
+      2. If ``msg.kind`` is not in ``dispatchable_kinds`` → return False
+         (= status/trace/__end__/intervention are display-only, not
+         relayed to the external transport).
+      3. Otherwise dispatch via ``route_to_mcp``. On ``status="ok"``
+         or ``status="error"`` (= operator-visible via logs) the
+         message is consumed (= return True).
+         On ``status="unconfigured"`` the message falls through (=
+         return False) so the TUI gets a visible signal that the
+         operator config is incomplete.
+
+    The interceptor swallows ``route_to_mcp`` exceptions internally
+    (= ``route_to_mcp`` already converts dispatcher exceptions to
+    ``RouteResult(status="error", ...)``), so it never raises out to
+    the session.
+
+    Parameters
+    ----------
+    routing:
+        Parsed ``ExternalTransportRouting`` config (= mapping from
+        transport name to MCP tool + args template).
+    mcp_dispatcher:
+        Async callable ``(mcp_tool_name, args) -> result`` that
+        invokes the actual MCP tool. Supplied by the caller (= web
+        lifespan / session factory) and closes over the session's
+        MCP client.
+    dispatchable_kinds:
+        Outbox message kinds that should be relayed to external
+        transport. Default ``("agent",)`` — only the LLM-produced
+        reply is sent to Slack/LINE/etc., NOT the various status /
+        trace / intervention / __end__ display markers that don't
+        belong in an external chat surface.
+    """
+    from reyn.chat.transport import ExternalRef
+
+    async def _interceptor(msg: Any) -> bool:
+        reply_to = getattr(msg, "reply_to", None)
+        if not isinstance(reply_to, ExternalRef):
+            return False
+        if getattr(msg, "kind", None) not in dispatchable_kinds:
+            return False
+        text = getattr(msg, "text", "") or ""
+        result = await route_to_mcp(
+            reply_to.transport,
+            dict(reply_to.destination),
+            text,
+            routing=routing,
+            mcp_dispatcher=mcp_dispatcher,
+        )
+        if result.status == "unconfigured":
+            # Let it fall through to the normal queue path so the
+            # operator sees something in TUI / log instead of silent
+            # drop. ``route_to_mcp`` already logged the detail.
+            return False
+        # ok / error → consumed. error means we tried; surfacing on
+        # TUI on every Slack post failure would be noisy.
+        return True
+
+    return _interceptor
+
+
 __all__ = [
     "ExternalTransportEntry",
     "ExternalTransportRouting",
     "RouteResult",
     "build_mcp_args",
+    "make_outbox_interceptor",
     "parse_external_transports",
     "route_to_mcp",
 ]
