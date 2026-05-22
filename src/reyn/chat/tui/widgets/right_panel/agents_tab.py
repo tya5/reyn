@@ -575,7 +575,7 @@ def render_agents(
                     elapsed_style = "bold #ffaa44"
                 else:
                     elapsed_style = "#888888"
-                skill_label.append(f"[{elapsed:3d}s] ", style=elapsed_style)
+                skill_label.append(f"{elapsed:3d}s  ", style=elapsed_style)
                 skill_label.append(
                     info.get("skill_name", "?"),
                     style=name_style or "#dddddd",

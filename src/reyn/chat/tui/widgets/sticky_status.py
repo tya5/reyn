@@ -26,7 +26,6 @@ _TICK_INTERVAL_S = 0.1  # elapsed timer refresh rate
 
 _GLYPHS: dict[str, str] = {
     "thinking": "⟳",
-    "tool": "⚙",
     "general": "●",
 }
 
@@ -116,9 +115,9 @@ class StickyStatus(Static):
         # red — confusable with error indicators. The thinking sticky shows
         # while the agent is working, so route its glyph through _AMBER
         # (which degrades to ANSI yellow / bright yellow) — neutrally
-        # signalling "in progress" rather than "alert". Other kinds (tool,
-        # general) keep _CORAL since they're typically transient flashes,
-        # not the load-bearing "is the agent working?" indicator.
+        # signalling "in progress" rather than "alert". The other kind
+        # (general) keeps _CORAL since it's a transient flash, not the
+        # load-bearing "is the agent working?" indicator.
         glyph_color = _AMBER if self._kind == "thinking" else _CORAL
         # Total cells in the fixed-width suffix segments so we can truncate
         # the body when narrow terminals would otherwise clip the
