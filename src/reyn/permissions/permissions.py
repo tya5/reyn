@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from reyn.intervention_choices import (
     ALWAYS,
@@ -235,6 +235,15 @@ class PermissionResolver:
         if trusted_python_allowed is not None:
             unsafe_python_allowed = trusted_python_allowed
         self._unsafe_python_allowed = unsafe_python_allowed
+        # #398 v4 emitter wiring: subscribers fired when ``_persist`` lands
+        # an approval (= "always allow") or revoke decision to approvals.yaml.
+        # ChatSession registers a callback that mints a ``state_change``
+        # history entry so the LLM sees "permission for X was
+        # granted/revoked" in its next turn — directly mitigates the
+        # #352 in-context-learning refusal trap. PermissionResolver is
+        # shared across sessions; each ChatSession registers its own
+        # callback so a project-wide grant notifies every active session.
+        self._on_persist_callbacks: list[Callable[[str, bool], None]] = []
 
     # ── Persistence ──────────────────────────────────────────────────────────
 
@@ -266,6 +275,57 @@ class PermissionResolver:
             )
         except Exception:
             pass
+        # #398 v4 emitter wiring: notify subscribers (= ChatSession
+        # instances that registered themselves) so the LLM sees the
+        # permission change as a ``state_change`` history entry next
+        # turn. Iterate a snapshot so a callback that unregisters
+        # itself mid-iteration doesn't trip the loop. Each callback is
+        # wrapped in try/except — observability must not break the
+        # core persistence path.
+        for cb in list(self._on_persist_callbacks):
+            try:
+                cb(key, approved)
+            except Exception:
+                # Defensive: bad subscriber (= dead session reference,
+                # callback bug) must not crash _persist.
+                pass
+
+    # ── #398 v4 emitter wiring (= state_change subscriber API) ──────────────
+
+    def register_on_persist(
+        self, callback: Callable[[str, bool], None],
+    ) -> None:
+        """Subscribe to ``_persist`` events for emitter wiring (= #398 v4).
+
+        ``callback(key, approved)`` is invoked after the approval is
+        written to ``approvals.yaml``. Used by ChatSession to mint
+        a ``state_change`` history entry per ``notify_state_change``
+        so the LLM sees the permission update in its next turn
+        (= directly mitigates the #352 in-context-learning refusal
+        trap pattern).
+
+        Multiple ChatSessions can register the same shared resolver
+        so a project-wide grant notifies every active session
+        independently.
+        """
+        self._on_persist_callbacks.append(callback)
+
+    def unregister_on_persist(
+        self, callback: Callable[[str, bool], None],
+    ) -> bool:
+        """Detach a previously registered callback.
+
+        Returns True iff the callback was found and removed. Use this
+        on ChatSession shutdown to prevent dead-session callbacks from
+        accumulating in long-running PermissionResolver instances
+        (= the shared singleton model in ``reyn web`` / ``reyn run``
+        sessions outlive individual ChatSessions).
+        """
+        try:
+            self._on_persist_callbacks.remove(callback)
+            return True
+        except ValueError:
+            return False
 
     # ── Config check ─────────────────────────────────────────────────────────
 
