@@ -1650,15 +1650,18 @@ class ConversationView(Widget):
         inward (= turn-flash fires), the dedup clears so re-hitting
         the boundary later flashes again.
 
-        Writes BOTH to the conv log (= permanent breadcrumb) AND to
-        StickyStatus (= immediately visible regardless of scroll
-        position). The log line alone wasn't enough because the
-        end-boundary case fires when the user is scrolled to the
-        last anchor — the new line at log-bottom is below the
-        viewport and invisible. This is the same family of issue
-        flagged by FS1 (turn N/M flash visibility); the sticky
-        surface here gives FS2 immediate readability without
-        depending on the FS1 follow-up.
+        Wave-10 follow-up G-F9: was previously dual-write (=
+        ``_write_log`` permanent breadcrumb + ``show_status``
+        sticky). The log line polluted scrollback — alternating
+        Ctrl+P / Ctrl+N at boundaries wrote two new ``↑ beginning``
+        / ``↓ end`` lines on every direction change, accumulating
+        as navigation artifacts indistinguishable from actual
+        conversation content. ``_flash_turn_position`` already
+        switched to sticky-only after FS1 fixed the visibility
+        gap; the sticky is docked at the conv pane's bottom and is
+        ALWAYS visible regardless of scroll position, so the log
+        line was redundant rather than a fallback. Drop the log
+        write; sticky alone is sufficient.
         """
         if direction == "start":
             text = "↑ beginning of history"
@@ -1672,12 +1675,10 @@ class ConversationView(Widget):
         # Clear the turn-flash dedup so a subsequent in-bounds
         # Ctrl+P/N re-flashes the turn number cleanly.
         self._last_turn_flash = None
-        # Permanent breadcrumb in the log (= readable when scrolled
-        # to bottom; matches the existing turn-flash convention).
-        self._write_log(Text(f"  {text}", style="dim italic #666666"))
-        # Immediate sticky cue — visible regardless of scroll
+        # Sticky-only surface — visible regardless of scroll
         # position. ``kind="general"`` reads as advisory (= grey
-        # accent) without preempting an active ``⟳ thinking…``.
+        # accent) without preempting an active ``⟳ thinking…``
+        # (= the wave-10 G-F8 + I-F8 priority guard handles that).
         self.show_status(text, kind="general")
 
     def _flash_turn_position(self, n: int, total: int, delta: int = -1) -> None:
