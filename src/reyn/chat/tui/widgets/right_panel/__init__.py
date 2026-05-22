@@ -618,6 +618,11 @@ class RightPanel(Widget):
             return bool(self._memory_entries)
         if self._panel_type == "agents":
             return bool(self._agents_items)
+        # A-F1 (wave-8): pending tab now has preview pane integration
+        # so the user can see the full intervention detail without
+        # claiming first.
+        if self._panel_type == "pending":
+            return bool(self._pending_items)
         return False
 
     def _update_preview(self) -> None:
@@ -631,6 +636,8 @@ class RightPanel(Widget):
                 self._show_memory_in_preview(pane)
             elif self._panel_type == "agents" and self._agents_items:
                 self._show_agent_in_preview(pane)
+            elif self._panel_type == "pending" and self._pending_items:
+                self._show_pending_in_preview(pane)
             else:
                 pane.clear()
         except Exception as exc:
@@ -782,6 +789,55 @@ class RightPanel(Widget):
         except Exception as exc:
             logger.warning("right_panel scroll_memory_into_view failed: %s", exc)
 
+    def _show_pending_in_preview(self, pane: _PreviewPane) -> None:
+        """Render the cursor's pending intervention as structured text.
+
+        A-F1 (wave-8): before this preview path, ``Space`` on the
+        pending tab silently did nothing — ``_has_previewable_content``
+        returned False and the preview-pane open was suppressed. The
+        user had to claim the intervention to a local channel just to
+        see the full prompt detail. Now the preview shows the same
+        fields the list row carries (kind / id / origin / age / summary)
+        plus the full ``detail`` body which the row truncates.
+        """
+        if not self._pending_items:
+            pane.clear()
+            return
+        idx = max(0, min(len(self._pending_items) - 1, self._pending_cursor))
+        item = self._pending_items[idx]
+        from rich.console import Group as RichGroup
+        from rich.text import Text as RichText
+        head = RichText()
+        kind = str(item.get("kind") or "?")
+        iv_id = str(item.get("id") or "")
+        head.append(kind, style="bold " + _CORAL)
+        if iv_id:
+            head.append("  ")
+            head.append(iv_id[:8], style="dim")
+        # Provenance fields go on subsequent lines as ``key: value`` for
+        # scan-ability — matches the YAML idiom used by the events
+        # preview without the full YAML overhead.
+        head.append("\n")
+        origin = str(item.get("origin_channel_id") or "")
+        if origin:
+            head.append("origin: ", style="dim #888888")
+            head.append(origin, style="#aaaaaa")
+            head.append("\n")
+        created = str(item.get("created_at") or "")
+        if created:
+            head.append("created_at: ", style="dim #888888")
+            head.append(created, style="#aaaaaa")
+            head.append("\n")
+        summary = str(item.get("summary") or "")
+        if summary:
+            head.append("\n")
+            head.append(summary, style="#dddddd")
+            head.append("\n")
+        detail = str(item.get("detail") or "")
+        body = RichText(detail, style="dim") if detail else RichText("")
+        title = iv_id[:8] if iv_id else kind
+        pane.show_text(title, RichGroup(head, body))
+
     def _show_memory_in_preview(self, pane: _PreviewPane) -> None:
         """Render the cursor's memory entry's body as Markdown in the preview."""
         if not self._memory_entries:
@@ -808,7 +864,11 @@ class RightPanel(Widget):
     # ── pending tab cursor + actions (issue #277) ────────────────────────────
 
     def _pending_move(self, delta: int) -> None:
-        """Move the Pending tab cursor; wrap around modulo list length."""
+        """Move the Pending tab cursor; wrap around modulo list length.
+
+        A-F1 (wave-8): if preview pane is open, sync to the new cursor's
+        intervention — same pattern as ``_events_move`` / ``_memory_move``.
+        """
         n = len(self._pending_items)
         if n == 0:
             self._pending_cursor = 0
@@ -816,6 +876,8 @@ class RightPanel(Widget):
         self._pending_cursor = (self._pending_cursor + delta) % n
         self._invalidate()
         self._scroll_pending_into_view()
+        if self._preview_visible:
+            self._update_preview()
 
     def _pending_action_discard(self) -> None:
         """Discard the iv at the current cursor.
@@ -1746,9 +1808,11 @@ class RightPanel(Widget):
             # Issue #277 — Pending tab keybinds: j/k cursor +
             # ``d`` discard + ``c`` claim. Mirrors the Memory tab
             # 1-key action idiom (= `c=copy`).
+            # A-F1 (wave-8): sp=open surfaces the intervention's full
+            # detail in the preview pane, same idiom as events / memory.
             return (
                 f"[bold {_CORAL}]Pending[/]"
-                f"  [#555555]j↓ k↑ d=discard c=claim[/]"
+                f"  [#555555]j↓ k↑ sp=open d=discard c=claim[/]"
             )
         if self._panel_type == "events":
             filter_name, _ = _FILTER_GROUPS[self._event_filter_idx]
