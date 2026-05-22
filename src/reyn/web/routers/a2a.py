@@ -400,14 +400,32 @@ async def _handle_message_send(
     # spawn-ack returns but no subsequent request arrives to drive the
     # skill_completion_injected inbox drain, so the run becomes a silent
     # tombstone (B42 W6-S6 reproduction).
+    #
+    # B48-NF-W2-S2 fix (2026-05-22): only escalate to Task when the
+    # already-harvested reply text is empty. When the LLM produced an
+    # early ack (= ``reply_text`` non-empty, e.g. "skill creation
+    # started — wait for completion") before the timeout fired, prefer
+    # the Message envelope so the caller actually sees that ack — the
+    # prior unconditional escalation discarded it and the caller
+    # observed ``(empty)`` reply (W2-S2 = ``skill_builder_web_summariser``
+    # 3/3 deterministic in B48). The skill's eventual completion
+    # narration still lands on the next ``message/send`` to the same
+    # agent via ``skill_completion_injected`` inbox drain — preserving
+    # B42-NF-W6-2's intent (= no silent tombstone) without dropping the
+    # spawn-ack text on the floor.
     running_ids = result.get("running_skill_run_ids") or []
-    if result.get("partial") and running_ids:
+    reply_text = result.get("reply", "")
+    if (
+        not reply_text.strip()
+        and result.get("partial")
+        and running_ids
+    ):
         return await _escalate_to_task(
             req_id, agent_name, running_ids, registry, run_registry,
         )
 
     reply_msg = _build_message_response(
-        reply_text=result.get("reply", ""),
+        reply_text=reply_text,
         partial=bool(result.get("partial", False)),
     )
     return _jsonrpc_result(req_id, reply_msg)

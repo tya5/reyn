@@ -32,6 +32,7 @@ import pytest
 
 from reyn.web.routers.a2a import (
     _await_skill_completion,
+    _handle_message_send,
     _harvest_completion_narration,
 )
 from reyn.web.run_registry import RunRegistry
@@ -247,6 +248,153 @@ def test_run_registry_update_failure_path_sets_error():
 # ---------------------------------------------------------------------------
 # Task envelope shape (= A2A spec v0.2.0 discriminator)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# _handle_message_send escalation predicate (B48-NF-W2-S2 fix)
+# ---------------------------------------------------------------------------
+
+
+class _StubSendImpl:
+    """Patches ``send_to_agent_impl`` so escalation-path tests can drive
+    the handler without spinning up a session. Stores the result dict
+    the patched implementation returns.
+    """
+
+    def __init__(self, result: dict):
+        self._result = result
+
+    async def __call__(self, registry, *, agent_name, message, timeout):
+        return self._result
+
+
+@pytest.mark.asyncio
+async def test_escalation_skipped_when_reply_text_nonempty(monkeypatch):
+    """Tier 2 (B48-NF-W2-S2 fix): when ``send_to_agent_impl`` returns a
+    non-empty ``reply`` AND ``partial=True`` AND a still-running skill,
+    the handler must return a **Message envelope carrying that reply**
+    — not escalate to a Task envelope that drops the text.
+
+    Before the fix the handler escalated unconditionally on
+    ``partial AND running_ids``, discarding the early ack and surfacing
+    ``(empty)`` to the caller (B48 W2-S2 = ``skill_builder_web_summariser``
+    3/3 deterministic reproduction).
+    """
+    import reyn.web.routers.a2a as a2a_mod
+
+    stub = _StubSendImpl({
+        "reply": "Skill creation started — wait for completion.",
+        "partial": True,
+        "agent": "alice",
+        "running_skill_run_ids": ["run-skill-builder-1"],
+    })
+    monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
+
+    result = await _handle_message_send(
+        req_id=1,
+        params={
+            "message": {
+                "parts": [{"kind": "text", "text": "build a skill"}],
+            },
+        },
+        agent_name="alice",
+        registry=object(),  # unused — stub bypasses session lookup
+        run_registry=RunRegistry(),
+    )
+
+    assert result["jsonrpc"] == "2.0"
+    envelope = result["result"]
+    assert envelope["kind"] == "message", (
+        f"Expected Message envelope (early reply preserved), got "
+        f"{envelope.get('kind')!r}. Escalation must skip when "
+        f"reply_text is non-empty."
+    )
+    # The reply text must be present in parts[0].text — this is the
+    # invariant the B48 W2-S2 bug violated.
+    parts = envelope["parts"]
+    assert parts[0]["text"] == "Skill creation started — wait for completion."
+    # ``partial`` metadata still surfaces so the caller can poll if it
+    # wants more — the skill keeps running in the background.
+    assert envelope["metadata"]["partial"] is True
+
+
+@pytest.mark.asyncio
+async def test_escalation_still_fires_when_reply_text_empty(monkeypatch):
+    """Tier 2: when no early reply landed before the timeout (= empty
+    ``reply``) and a skill is still running, the handler MUST escalate
+    to a Task envelope — preserves B42-NF-W6-2's intent (= no silent
+    tombstone for callers that didn't poll back).
+    """
+    import reyn.web.routers.a2a as a2a_mod
+
+    stub = _StubSendImpl({
+        "reply": "",
+        "partial": True,
+        "agent": "alice",
+        "running_skill_run_ids": ["run-skill-builder-2"],
+    })
+    monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
+
+    # _escalate_to_task tries to fetch the session; patch _get_session_for_monitor
+    # to return a minimal stand-in so the monitor task can be created.
+    monkeypatch.setattr(
+        a2a_mod, "_get_session_for_monitor",
+        lambda registry, agent_name: _Session(),
+    )
+
+    result = await _handle_message_send(
+        req_id=2,
+        params={
+            "message": {
+                "parts": [{"kind": "text", "text": "spawn something async"}],
+            },
+        },
+        agent_name="alice",
+        registry=object(),
+        run_registry=RunRegistry(),
+    )
+
+    envelope = result["result"]
+    assert envelope["kind"] == "task", (
+        f"Expected Task envelope (empty reply + still-running skill), "
+        f"got {envelope.get('kind')!r}. B42-NF-W6-2 path must remain "
+        f"active for the no-reply case."
+    )
+    assert envelope["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_escalation_skipped_when_whitespace_only_reply(monkeypatch):
+    """Tier 2: whitespace-only reply counts as empty (``.strip()`` matters).
+    A trailing-newline-only response is not a real ack, so the escalation
+    branch should still run when a skill is in flight.
+    """
+    import reyn.web.routers.a2a as a2a_mod
+
+    stub = _StubSendImpl({
+        "reply": "   \n  ",
+        "partial": True,
+        "agent": "alice",
+        "running_skill_run_ids": ["run-1"],
+    })
+    monkeypatch.setattr(a2a_mod, "send_to_agent_impl", stub)
+    monkeypatch.setattr(
+        a2a_mod, "_get_session_for_monitor",
+        lambda registry, agent_name: _Session(),
+    )
+
+    result = await _handle_message_send(
+        req_id=3,
+        params={
+            "message": {"parts": [{"kind": "text", "text": "go"}]},
+        },
+        agent_name="alice",
+        registry=object(),
+        run_registry=RunRegistry(),
+    )
+
+    envelope = result["result"]
+    assert envelope["kind"] == "task"
 
 
 def test_task_envelope_carries_kind_field_for_a2a_discrimination():
