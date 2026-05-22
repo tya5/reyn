@@ -455,8 +455,21 @@ class ConversationView(Widget):
     def _maybe_write_header(self, speaker: str, label_text: str,
                              name_style: str, dash_style: str) -> None:
         """Write a header line only when the speaker changes or the gap is
-        larger than _GROUP_WINDOW_S. Stores the new state."""
-        now = time.monotonic()
+        larger than _GROUP_WINDOW_S. Stores the new state.
+
+        Wave-10 follow-up G-F7: ``time.time()`` (wall clock) rather
+        than ``time.monotonic()``. The header's visible HH:MM
+        timestamp uses ``time.strftime`` (= wall clock), so grouping
+        the *same* timeline keeps the displayed timestamp and the
+        grouping decision in lockstep. ``monotonic`` doesn't advance
+        during system sleep on every platform (= CLOCK_MONOTONIC vs
+        CLOCK_BOOTTIME differ across Linux / macOS) — after a
+        sleep/wake cycle, two messages can show wall-clock timestamps
+        an hour apart yet share a grouping bucket simply because
+        monotonic registered no progress. Wall clock matches the
+        user-visible timeline exactly.
+        """
+        now = time.time()
         same_speaker = (speaker == self._last_speaker)
         within_window = (now - self._last_speaker_at) < _GROUP_WINDOW_S
         if not (same_speaker and within_window):
