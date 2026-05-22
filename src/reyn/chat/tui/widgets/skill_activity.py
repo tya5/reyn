@@ -100,6 +100,14 @@ class SkillActivityRow(Widget):
         # stuck. The detail is replaced each event and cleared on phase
         # change (= the new phase's detail context starts fresh).
         self._detail: str = ""
+        # Persistent plan-step badge (e.g. "plan 2/5") for sub-skills
+        # spawned by a planner. The forwarder emits the badge once per
+        # run_id via ``set_detail`` with a "plan N/M" payload; on first
+        # arrival we extract it into ``_plan_step_label`` so it survives
+        # subsequent ``set_detail`` (llm:/act:) and ``set_phase`` calls.
+        # Without this, the plan context was visible for the first
+        # in-phase signal only and then silently disappeared.
+        self._plan_step_label: str = ""
 
         # Finish state
         self._finished = False
@@ -148,7 +156,17 @@ class SkillActivityRow(Widget):
         the detail segment. Typical sources: forwarder ``on_llm_called``
         (= ``"llm: <model>"``) or ``on_act_executed``
         (= ``"act: <N> ops"``).
+
+        ``"plan N/M"`` is a special case: the forwarder emits it once
+        per sub-skill mount to communicate plan-step attribution. We
+        route it into the persistent ``_plan_step_label`` slot instead
+        of the ephemeral ``_detail`` so it survives the next in-phase
+        signal and the next ``set_phase`` call.
         """
+        if detail.startswith("plan ") and "/" in detail:
+            self._plan_step_label = detail
+            self._refresh()
+            return
         self._detail = detail
         self._refresh()
 
@@ -205,6 +223,14 @@ class SkillActivityRow(Widget):
         else:
             elapsed_style = "dim"
         t.append(f"  {secs:.1f}s", style=elapsed_style)
+        # Persistent plan-step badge — appears between elapsed and detail
+        # so the user always knows "this skill is plan step 2/5" even after
+        # the in-phase detail has been overwritten by the next llm: / act:
+        # signal or cleared by a phase advance.
+        if self._plan_step_label:
+            t.append("  [", style="dim")
+            t.append(self._plan_step_label, style=f"dim {_CORAL}")
+            t.append("]", style="dim")
         # In-phase detail ("llm: opus-4-5", "act: 3 ops", etc.). Dim so
         # it doesn't compete with the phase name, separated from elapsed
         # by ``  ⤷`` so the eye can grok "this is the inner-most thing
