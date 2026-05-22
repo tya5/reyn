@@ -169,6 +169,49 @@ def test_terminal_state_above_threshold_shows_elapsed() -> None:
     assert "0.5s" in line1
 
 
+def test_long_qualified_tool_name_middle_elides_for_args_budget() -> None:
+    """Tier 2: ``mcp__server__tool_name(args)`` middle-elides when over budget.
+
+    F-E (wave-#427 follow-up): before this fix, very long qualified
+    tool names ate all of the body budget, leaving args with 0
+    cells (= args fully truncated to "…"). Middle-elide keeps the
+    head + tail of the qualified name so args still get a usable
+    budget.
+    """
+    from reyn.chat.tui.widgets.tool_call_row import (
+        ToolCallRow,
+        _maybe_middle_elide,
+    )
+
+    # Unit test the helper directly — easier to verify shape than
+    # integration through _build_line1's budget arithmetic.
+    name = "mcp__some_long_server_namespace__do_the_thing_now"
+    # Budget large enough for ``mcp__…__do_the_thing_now`` (= 24 cells).
+    elided = _maybe_middle_elide(name, max_cells=30)
+    # Head + tail preserved, middle replaced with ``…``.
+    assert elided.startswith("mcp__")
+    assert elided.endswith("__do_the_thing_now")
+    assert "…" in elided
+    # Plain (non-qualified) names fall through unchanged.
+    assert _maybe_middle_elide("short_name", max_cells=20) == "short_name"
+    # Short names under budget are returned verbatim.
+    assert _maybe_middle_elide("a__b__c", max_cells=100) == "a__b__c"
+    # Two-segment names (= no middle to elide) also fall through.
+    assert _maybe_middle_elide("only__two", max_cells=5) == "only__two"
+    # When even the elided form exceeds the budget, helper bails to the
+    # original name (caller's tail-truncate then takes over).
+    assert _maybe_middle_elide(name, max_cells=10) == name
+
+    # Integration: ToolCallRow with a very long qualified name still
+    # surfaces both prefix and suffix of the name in line 1.
+    row = ToolCallRow(
+        tool_name=name, args_repr="param1=value1",
+    )
+    line1 = row._build_line1().plain
+    assert "mcp" in line1, "prefix segment of qualified name survives"
+    assert "do_the_thing_now" in line1, "tail segment of qualified name survives"
+
+
 def test_result_snippet_truncated_when_long() -> None:
     """Tier 2: long result snippets get the same ``…`` treatment on line 2."""
     row = _row()
