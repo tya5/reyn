@@ -519,6 +519,25 @@ class ReynTUIApp(App):
             phase = text[len("phase started: "):].strip()
             existing["phase"] = phase
             existing["phase_visits"] = existing.get("phase_visits", 0) + 1
+        # Text pattern: "detail: plan N/M" (= ChatEventForwarder one-shot
+        # plan-step badge emit, see forwarder.on_phase_started). Capture
+        # the N/M values into _skill_exec so the right-panel agents tab
+        # can render a [plan N/M] badge alongside the running skill row
+        # — same data wave-7 PR #418 routed into SkillActivityRow's
+        # persistent slot for the conv pane. C-F2 from the wave-7
+        # Topic C exploration.
+        if text.startswith("detail: plan ") and "/" in text:
+            badge = text[len("detail: "):].strip()
+            tail = badge[len("plan "):]
+            if "/" in tail:
+                head, _, rest = tail.partition("/")
+                # rest may have trailing words; take the leading int run.
+                n_total_str = rest.split()[0] if rest else ""
+                try:
+                    existing["plan_n_done"] = int(head)
+                    existing["plan_n_total"] = int(n_total_str)
+                except (ValueError, IndexError):
+                    pass
 
     def _push_exec_state(self) -> None:
         """Forward current _skill_exec snapshot to RightPanel for live display."""
