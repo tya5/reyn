@@ -1878,8 +1878,52 @@ class RouterLoop:
                         # downstream consumers, no LLM composition for
                         # this turn). The in-context-learning attractor
                         # the new path closes is still present here.
+                        #
+                        # B49 W1-S6 follow-up (2026-05-22): prepend a
+                        # structured ``[task_spawned] kind=skill ...``
+                        # header so the LLM history carries a machine-
+                        # correlatable spawn record that pairs with the
+                        # later ``[task_completed] kind=skill run_id=<X>``
+                        # injection. The user-friendly trailer
+                        # (``_SPAWN_ACK_MSG``) is preserved as the second
+                        # paragraph; the user still reads the human
+                        # message, the LLM also sees the structured
+                        # header for correlation. SP TASK_SPAWNED rule
+                        # explains the header's meaning. Plan spawn-side
+                        # alignment is deferred to a follow-up (= plan
+                        # tool dispatch path currently continues the
+                        # router instead of pushing a spawn-ack, which
+                        # is a separate behaviour change beyond the
+                        # format-only fix here).
+                        first_idx = _spawn_ack_indices[0]
+                        tc_first = tool_calls[first_idx]
+                        r_first = tool_results[first_idx]
+                        spawn_data = (
+                            r_first["data"]
+                            if isinstance(r_first.get("data"), dict)
+                            else r_first
+                        )
+                        spawn_run_id = spawn_data.get("run_id", "")
+                        spawn_chain_id = spawn_data.get("chain_id", self.chain_id)
+                        try:
+                            spawn_args = json.loads(
+                                tc_first["function"].get("arguments") or "{}",
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            spawn_args = {}
+                        spawn_skill = (
+                            spawn_args.get("name")
+                            or spawn_args.get("action_name")
+                            or ""
+                        )
+                        header = (
+                            f"[task_spawned] kind=skill "
+                            f"run_id={spawn_run_id} chain_id={spawn_chain_id}\n"
+                            f"skill: {spawn_skill}"
+                        )
                         lang = getattr(host, "output_language", None)
-                        ack_text = _SPAWN_ACK_MSG.get(lang, _SPAWN_ACK_MSG["en"])
+                        trailer = _SPAWN_ACK_MSG.get(lang, _SPAWN_ACK_MSG["en"])
+                        ack_text = f"{header}\n\n{trailer}"
                         await host.put_outbox(
                             kind="agent",
                             text=ack_text,
