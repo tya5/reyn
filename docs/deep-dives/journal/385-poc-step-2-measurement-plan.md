@@ -1,9 +1,44 @@
 # Issue #385 PoC — Step 2 Measurement Plan
 
-**Status**: Draft (= tui-coder authored 2026-05-22, sandbox_2 review pending).
+**Status**: Active — Step 1 foundation landed (PR #396), design contract
+[frozen 2026-05-22](https://github.com/tya5/reyn/issues/385#issuecomment-4514611036),
+B49 dispatch pending sandbox_2.
 **Owner**: tui-coder (Step 2 measurement design) + sandbox_2 (dogfood execution).
 **Depends on**: PR #396 merged (Step 1 foundation = web_fetch preview + read_tool_result + MediaStore reuse).
 **Persists**: [Step 2 design comment](https://github.com/tya5/reyn/issues/385#issuecomment-4510287573) on issue #385.
+
+## Status update — 2026-05-22 post-frozen-contract
+
+Two decisions landed AFTER this doc's initial author pass; both are
+recorded here so sandbox_2 (= B49 executor) and any new reader can pick
+up the current state from this artifact alone without scrolling
+issue #385:
+
+1. **Design contract frozen** (= [e2e-coder comment](https://github.com/tya5/reyn/issues/385#issuecomment-4514611036),
+   user `OK で先に進めて` ack):
+   path_ref shape locked with `resource_uri = reyn-tool-result://<agent>/<artifact>`,
+   Phase 1 persistence (a) `no auto-GC`, `agent_id = agent name` (durable
+   identity, not chain_id), 4 LLM-actionable error states (`not_found` /
+   `expired` / `hash_mismatch` / `unauthorized`).
+2. **Wire scheme refinement in arbitration** (= [e2e-coder comment](https://github.com/tya5/reyn/issues/385#issuecomment-4516036105),
+   user direction `現実装関係なく恥ずかしくない、 素直な scheme にして`):
+   proposal to replace the vendor `reyn-tool-result://` scheme with a
+   plain HTTPS URL (`https://<host>/agents/<agent>/resources/<artifact>`).
+   Sub-task 3 (= cross-host RPC) is gated on this arbitration; the
+   refinement is **wire-shape only**, not metric-defining.
+
+**Implication for B49 (= this measurement plan)**: NONE on the metric
+side. Read-skip-rate / expand-rate / cost-delta / paraphrase-fidelity
+all operate on the OP layer (`web_fetch_completed` →
+`read_tool_result` decided-or-skipped). The wire shape (`resource_uri`
+vs `url` field, vendor scheme vs HTTPS) is consumed only by the
+producer / consumer infrastructure underneath, not by the metric
+detectors. sandbox_2 can run B49 against the current build without
+waiting for the scheme arbitration to resolve.
+
+The Open Questions section near the bottom of this doc is still the
+right list to discuss with sandbox_2 during dispatch; nothing in the
+above two updates resolves any of those Q1-Q5.
 
 This document is the long-form workspace artifact for Step 2 of the
 cluster type 5 path established in [feedback_cluster_type_5_pattern](https://github.com/tya5/reyn/issues/385#issuecomment-4509061835)
