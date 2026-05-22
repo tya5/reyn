@@ -173,6 +173,30 @@ async def test_keys_tab_renders_h_l_resize_keys() -> None:
 
 
 @pytest.mark.asyncio
+async def test_keys_tab_lists_pending_d_discard_action() -> None:
+    """Tier 2 A-F2 (wave-8): the pending-tab ``d=discard`` action is
+    listed in the PANEL section so users can discover it from the Keys
+    tab without reading the pending tab's own header.
+
+    Before A-F2, ``_PANEL_EXPLICIT`` listed ``c`` (= claim) but not ``d``
+    (= discard). The pending tab's primary destructive action was
+    invisible in the Keys tab — only the gentler ``c=claim`` showed.
+    """
+    app = ReynTUIApp(
+        registry=None,
+        agent_name="test",
+        model="test",
+        budget_tracker=None,
+    )
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        rendered = render_keys(app)
+        assert "Discard cursor (pending tab)" in rendered, (
+            f"Keys tab must render the pending-tab d=discard hint; got:\n{rendered}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_h_l_resize_keys_group_under_panel_section() -> None:
     """Tier 2: ``h`` and ``l`` resize keys land in the PANEL group.
 
