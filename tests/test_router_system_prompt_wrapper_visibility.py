@@ -48,16 +48,21 @@ _BASE = {
 # ---------------------------------------------------------------------------
 
 
-def test_search_actions_enabled_true_includes_search_actions_in_wrapper_line() -> None:
-    """Tier 2: search_actions_enabled=True → SP wrapper line says '4 universal wrappers'
-    and names search_actions.
+def test_search_actions_enabled_true_includes_search_actions_in_wrapper_chain() -> None:
+    """Tier 2: search_actions_enabled=True → SP names search_actions in the
+    Capabilities routing chain.
 
-    This is the path when action_retrieval.embedding_class is configured and
-    the ActionEmbeddingIndex is_ready(). The SP matches the tools= shape.
+    V18 SP replaced the legacy "N universal wrappers:" introductory line
+    with a 4-intent multi-step routing block; the wrapper chain now
+    appears as "list_actions → search_actions → describe_action → invoke_action"
+    inside intent 3 (task / action) under the "Not obvious" sub-bullet.
+    The contract enforced here: when search_actions is wired in tools=,
+    its name appears in the SP so the LLM has the right vocabulary; when
+    it is not wired, its name MUST be absent (N5 hallucination guard).
     """
     sp = build_system_prompt(**_BASE, search_actions_enabled=True)
     assert "search_actions" in sp
-    assert "4 universal wrappers:" in sp
+    assert "list_actions → search_actions" in sp
 
 
 def test_search_actions_enabled_true_includes_four_wrapper_names() -> None:
@@ -95,15 +100,22 @@ def test_search_actions_enabled_false_omits_search_actions_from_sp() -> None:
     assert "search_actions" not in sp
 
 
-def test_search_actions_enabled_false_says_three_wrappers() -> None:
-    """Tier 2: search_actions_enabled=False → SP says '3 universal wrappers'.
+def test_search_actions_enabled_false_omits_search_actions_from_chain() -> None:
+    """Tier 2: search_actions_enabled=False → wrapper chain in SP omits
+    search_actions entirely.
 
-    The count must match the actual tools= shape so the LLM has no incentive
-    to expect a fourth wrapper.
+    V18 SP replaced the legacy "N universal wrappers:" introductory line
+    with a 4-intent multi-step routing block. The chain expression
+    (= "list_actions → describe_action → invoke_action" when disabled,
+    "list_actions → search_actions → describe_action → invoke_action"
+    when enabled) is what matches tools= shape now; the count phrasing
+    is gone. Contract: search_actions must not appear in SP when the
+    embedding class isn't configured (N5 hallucination guard).
     """
     sp = build_system_prompt(**_BASE, search_actions_enabled=False)
-    assert "3 universal wrappers:" in sp
-    assert "4 universal wrappers:" not in sp
+    assert "search_actions" not in sp
+    # The disabled chain shape: list_actions chained directly to describe_action
+    assert "list_actions → describe_action → invoke_action" in sp
 
 
 def test_search_actions_enabled_false_three_wrapper_names_present() -> None:
@@ -153,7 +165,9 @@ def test_default_includes_search_actions() -> None:
 
     Existing fixtures were recorded with 'search_actions' in the SP. The
     default (True) must preserve this so fixture replay keys stay valid.
+    V18 SP carries search_actions inside the Capabilities chain
+    expression rather than the legacy "N universal wrappers:" line.
     """
     sp = build_system_prompt(**_BASE)
     assert "search_actions" in sp
-    assert "4 universal wrappers:" in sp
+    assert "list_actions → search_actions" in sp

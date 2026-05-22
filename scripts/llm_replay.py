@@ -760,6 +760,416 @@ async def _shutdown_logging() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Multi-turn chain mode (= patch + loop until finish=stop)
+# ---------------------------------------------------------------------------
+#
+# A minimal, self-contained tool executor — supports the subset of router
+# tools needed for self-knowledge / discovery chains (list_actions /
+# describe_action / invoke_action(reyn.source__*) / file__* / reyn.source__*).
+# Tools not in this subset return {"status": "unavailable", ...} so the LLM
+# can react without crashing.
+#
+# Design constraints:
+#   - No ToolContext / RouterCallerState wiring (= avoid full Reyn runtime).
+#   - Enumerate static catalog directly from universal_dispatch._OPERATION_RULES.
+#   - Filesystem reads are bounded to *cwd* (= the repo root usually).
+
+_CHAIN_STATIC_CATEGORIES = (
+    "file", "web", "memory.operation", "reyn.source",
+    "rag.operation", "mcp.operation", "validation",
+)
+
+
+def _chain_enumerate_static() -> list[dict[str, str]]:
+    """Enumerate all static actions from _OPERATION_RULES."""
+    try:
+        from reyn.tools.universal_dispatch import _OPERATION_RULES
+    except Exception:
+        return []
+    items: list[dict[str, str]] = []
+    for qn in sorted(_OPERATION_RULES.keys()):
+        items.append({
+            "qualified_name": qn,
+            "short_description": f"({qn.split('__', 1)[0]} action) {qn.split('__', 1)[-1]}",
+        })
+    return items
+
+
+async def _exec_list_actions(args: dict) -> dict:
+    """list_actions: enumerate + filter (static categories only)."""
+    items = _chain_enumerate_static()
+    cat_filter = args.get("category") or []
+    if isinstance(cat_filter, str):
+        cat_filter = [cat_filter]
+    if cat_filter:
+        items = [
+            it for it in items
+            if it["qualified_name"].split("__", 1)[0] in cat_filter
+        ]
+    text_filter = (args.get("filter") or "").lower()
+    if text_filter:
+        items = [
+            it for it in items
+            if text_filter in it["qualified_name"].lower()
+            or text_filter in it["short_description"].lower()
+        ]
+    items.sort(key=lambda it: it["qualified_name"])
+    offset = max(0, int(args.get("offset", 0) or 0))
+    limit = max(1, int(args.get("limit", 20) or 20))
+    total = len(items)
+    page = items[offset:offset + limit]
+    return {"items": page, "total": total}
+
+
+_REYN_SOURCE_READ_DESCRIBE = (
+    # Production _REYN_SRC_READ_DESCRIPTION (reyn_src.py) verbatim.
+    # No MUST language at the describe boundary — weak LLMs empty-stop
+    # on MUST overload here; the SP-level Capabilities routing arrows
+    # carry the chain instead.
+    "Read a text file from Reyn's own repository by an exact "
+    "repo-root-relative path. Use for: (a) reading a specific file the "
+    "user named (e.g. README.md, src/reyn/chat/...), or (b) navigating "
+    "Reyn's source / docs when NO indexed source covers the topic. "
+    "Fallback entry point: reyn_src_read(\"README.md\") for the overview + "
+    "curated map of deep-dive paths."
+)
+
+
+async def _exec_describe_action(args: dict) -> dict:
+    """describe_action: return action_name + brief description + schema hint."""
+    action_name = args.get("action_name", "")
+    try:
+        from reyn.tools.universal_dispatch import _OPERATION_RULES
+    except Exception:
+        _OPERATION_RULES = {}
+    if action_name not in _OPERATION_RULES:
+        return {"status": "error", "error": {"kind": "unknown_action",
+                "message": f"action {action_name!r} not in catalog"}}
+    op_name, _ = _OPERATION_RULES[action_name]
+    # Strengthen description for reyn.source__read with explicit next-step
+    # directive; other actions get the stub description.
+    if action_name == "reyn.source__read":
+        description = _REYN_SOURCE_READ_DESCRIBE
+    else:
+        description = (
+            f"Action {action_name} dispatches to op {op_name}. "
+            f"Call via invoke_action(action_name={action_name!r}, args={{...}})."
+        )
+    return {
+        "action_name": action_name,
+        "op": op_name,
+        "description": description,
+        "parameters_hint": "See reyn.op_runtime.registry for per-op schema.",
+    }
+
+
+def _resolve_chain_path(path: str, cwd: Path) -> Path | None:
+    """Resolve a repo-relative path against cwd, bounded to cwd."""
+    if not path:
+        return None
+    p = (cwd / path).resolve()
+    try:
+        p.relative_to(cwd.resolve())
+    except ValueError:
+        return None
+    return p
+
+
+async def _exec_file_read(args: dict, *, cwd: Path) -> dict:
+    """Read a text file by repo-relative path."""
+    path = args.get("path", "")
+    p = _resolve_chain_path(path, cwd)
+    if p is None or not p.is_file():
+        return {"status": "error", "error": {"kind": "not_found",
+                "message": f"path not found: {path}"}}
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return {"status": "error", "error": {"kind": "read_error",
+                "message": str(exc)}}
+    offset = int(args.get("offset", 0) or 0)
+    limit = args.get("limit")
+    if offset or limit:
+        lines = text.splitlines(keepends=True)
+        end = offset + int(limit) if limit else None
+        text = "".join(lines[offset:end])
+    return {"status": "ok", "data": {"path": path, "content": text}}
+
+
+async def _exec_file_list(args: dict, *, cwd: Path) -> dict:
+    """List entries under a path."""
+    path = args.get("path", "") or ""
+    p = _resolve_chain_path(path, cwd) if path else cwd
+    if p is None or not p.is_dir():
+        return {"status": "error", "error": {"kind": "not_found",
+                "message": f"dir not found: {path}"}}
+    items = []
+    for child in sorted(p.iterdir()):
+        items.append({"name": child.name,
+                      "type": "dir" if child.is_dir() else "file"})
+    return {"status": "ok", "data": {"path": path, "items": items}}
+
+
+async def _exec_invoke_action(action_name: str, inner_args: dict, *, cwd: Path) -> dict:
+    """Route invoke_action to the chain-supported subset."""
+    if action_name in ("reyn.source__read", "file__read"):
+        return await _exec_file_read(inner_args, cwd=cwd)
+    if action_name in ("reyn.source__list", "file__list"):
+        return await _exec_file_list(inner_args, cwd=cwd)
+    if action_name.startswith("web__"):
+        return {"status": "unavailable",
+                "message": f"{action_name} not supported in chain replay (live web)"}
+    if action_name.startswith("skill__"):
+        return {"status": "unavailable",
+                "message": f"{action_name}: skill execution not supported in chain replay"}
+    if action_name.startswith("agent.peer__"):
+        return {"status": "unavailable",
+                "message": f"{action_name}: peer dispatch not supported in chain replay"}
+    return {"status": "unavailable",
+            "message": f"{action_name} not implemented in chain replay"}
+
+
+_REYN_SELF_KEYWORDS = (
+    "a2a", "agent.peer", "agent card", "json-rpc", "message/send",
+    "mcp", "reyn web", "reyn run", "reyn chat", "reyn mcp", "reyn auth",
+    "reyn source", "cli", "workspace", "skill", "phase", "event log",
+    "permission", "runtime", "integration", "how does reyn", "what is",
+)
+
+
+def _query_is_reyn_self(query: str) -> bool:
+    q = (query or "").lower()
+    return any(k in q for k in _REYN_SELF_KEYWORDS)
+
+
+async def _exec_search_actions(args: dict) -> dict:
+    """search_actions stub — semantic search over actions.
+
+    For chain-replay: when the query is Reyn-self-flavored, surface
+    reyn.source__read as the top recommendation; otherwise return empty.
+    Production uses embeddings; we approximate by keyword class.
+    """
+    query = args.get("query", "")
+    if _query_is_reyn_self(query):
+        return {
+            "items": [
+                {
+                    "qualified_name": "reyn.source__read",
+                    "short_description": (
+                        "Read a text file from Reyn's own repository — README.md "
+                        "for the canonical overview + curated map of deep-dive paths."
+                    ),
+                    "score": 0.87,
+                },
+                {
+                    "qualified_name": "reyn.source__list",
+                    "short_description": "List entries under a path inside Reyn's own repository.",
+                    "score": 0.71,
+                },
+            ],
+            "total": 2,
+        }
+    return {"items": [], "total": 0}
+
+
+async def _exec_recall(args: dict, *, cwd: Path) -> dict:
+    """recall stub — RAG semantic search over indexed sources.
+
+    For chain-replay: when the query looks Reyn-self-flavored, return
+    a relevant README chunk so the LLM can synthesize directly.
+    Production uses an embedding index; we approximate.
+    """
+    query = args.get("query", "")
+    if _query_is_reyn_self(query):
+        readme = cwd / "README.md"
+        if readme.is_file():
+            text = readme.read_text(encoding="utf-8", errors="replace")
+            return {
+                "items": [
+                    {
+                        "source": "README.md",
+                        "chunk_id": "readme-overview",
+                        "score": 0.84,
+                        "content": text[:8000],
+                    }
+                ],
+                "total": 1,
+            }
+    return {"items": [], "total": 0}
+
+
+async def _exec_chain_tool(name: str, args: dict, *, cwd: Path) -> dict:
+    """Top-level chain tool dispatch."""
+    if name == "list_actions":
+        return await _exec_list_actions(args)
+    if name == "describe_action":
+        return await _exec_describe_action(args)
+    if name == "search_actions":
+        return await _exec_search_actions(args)
+    if name == "recall":
+        return await _exec_recall(args, cwd=cwd)
+    if name == "invoke_action":
+        action_name = args.get("action_name", "")
+        # Route invoke_action(rag.operation__recall, ...) to recall handler
+        if action_name == "rag.operation__recall":
+            return await _exec_recall(args.get("args", {}) or {}, cwd=cwd)
+        return await _exec_invoke_action(
+            action_name, args.get("args", {}) or {}, cwd=cwd,
+        )
+    if name in ("file__read", "reyn.source__read"):
+        return await _exec_file_read(args, cwd=cwd)
+    if name in ("file__list", "reyn.source__list"):
+        return await _exec_file_list(args, cwd=cwd)
+    if name in ("web__search", "web__fetch"):
+        return {"status": "unavailable",
+                "message": f"{name} not supported in chain replay (live web)"}
+    if name in ("plan", "read_tool_result"):
+        return {"status": "unavailable",
+                "message": f"{name} not supported in chain replay"}
+    return {"status": "unavailable",
+            "message": f"{name} not implemented in chain replay"}
+
+
+def _fmt_tool_call_summary(tc: dict) -> str:
+    name = tc.get("function", {}).get("name", "?")
+    raw = tc.get("function", {}).get("arguments", "")
+    if len(raw) > 220:
+        raw = raw[:220] + "..."
+    return f"{name}({raw})"
+
+
+async def _run_chain(
+    request_id: str,
+    trace_path: Path,
+    *,
+    model_override: str | None,
+    temperature_override: float | None,
+    max_tokens_override: int | None,
+    patch_exprs: list[str] | None,
+    max_turns: int,
+    cwd: Path,
+    full: bool,
+    acompletion_fn: Any = None,
+) -> None:
+    """Multi-turn chain replay: loop until finish=stop or max_turns."""
+    records = _load_jsonl(trace_path)
+    req, _ = _find_record(records, request_id)
+    if req is None:
+        print(f"error: request_id not found in trace: {request_id}", file=sys.stderr)
+        sys.exit(1)
+
+    original_model = req.get("model", "?")
+    model = model_override if model_override else original_model
+
+    payload: dict = {
+        "messages": list(req.get("messages") or []),
+        "tools": list(req.get("tools") or []) if req.get("tools") else None,
+        "tool_choice": req.get("tool_choice"),
+        "sampling_params": dict(req.get("sampling_params") or {}),
+    }
+    if patch_exprs:
+        try:
+            applied = _apply_patches(payload, patch_exprs)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        if applied:
+            _print_applied_patches(applied)
+
+    if temperature_override is not None:
+        payload["sampling_params"]["temperature"] = temperature_override
+    if max_tokens_override is not None:
+        payload["sampling_params"]["max_tokens"] = max_tokens_override
+
+    messages: list[dict] = payload["messages"]
+    tools = payload["tools"] or None
+
+    print("=== Multi-turn chain replay ===")
+    print(f"  request_id: {request_id}")
+    print(f"  model:      {model}")
+    print(f"  max_turns:  {max_turns}")
+    print(f"  cwd:        {cwd}")
+    print(f"  start msgs: {len(messages)}")
+    print()
+
+    final_content: str | None = None
+    final_finish: str | None = None
+
+    for turn in range(1, max_turns + 1):
+        result = await _single_call(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice=payload["tool_choice"],
+            sampling_params=payload["sampling_params"],
+            acompletion_fn=acompletion_fn,
+        )
+        usage = result.get("usage", {}) or {}
+        print(f"--- turn {turn} ---  finish={result['finish_reason']}  "
+              f"out={usage.get('completion_tokens', '?')}")
+
+        tool_calls = result.get("tool_calls") or []
+        for tc in tool_calls:
+            print(f"  → {_fmt_tool_call_summary(tc)}")
+
+        content = result.get("content") or ""
+        if content:
+            display = content if full or len(content) <= 400 else content[:400] + "...[truncated]"
+            print(f"  content: {display}")
+
+        final_content = content or final_content
+        final_finish = result["finish_reason"]
+
+        if result["finish_reason"] == "stop":
+            print()
+            print("=== Chain complete (finish=stop) ===")
+            print()
+            if final_content:
+                print(final_content if full else final_content[:2500])
+            return
+
+        if not tool_calls:
+            print("  (no tool_calls but finish != stop — breaking)")
+            break
+
+        # Append assistant message + tool results
+        messages.append({
+            "role": "assistant",
+            "content": content,
+            "tool_calls": tool_calls,
+        })
+        for tc in tool_calls:
+            tool_name = tc["function"]["name"]
+            raw_args = tc["function"]["arguments"]
+            try:
+                tool_args = json.loads(raw_args) if raw_args else {}
+            except json.JSONDecodeError as exc:
+                tool_result: dict = {"status": "error", "error": {
+                    "kind": "invalid_args_json",
+                    "message": f"json parse error: {exc}",
+                }}
+            else:
+                tool_result = await _exec_chain_tool(tool_name, tool_args, cwd=cwd)
+            preview = json.dumps(tool_result, ensure_ascii=False)
+            if len(preview) > 220:
+                preview = preview[:220] + "..."
+            print(f"  ← {tool_name}: {preview}")
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": json.dumps(tool_result, ensure_ascii=False),
+            })
+        print()
+
+    print(f"=== Chain max_turns ({max_turns}) reached without finish=stop ===")
+    print(f"  last finish_reason: {final_finish}")
+    if final_content:
+        print()
+        print("Last content:")
+        print(final_content if full else final_content[:2500])
+
+
 async def _run(
     request_id: str,
     trace_path: Path,
@@ -1071,6 +1481,33 @@ def main() -> None:
             "Limit --from-attractor to the first N attractor request_ids (default: all)."
         ),
     )
+    # --chain group (multi-turn replay)
+    parser.add_argument(
+        "--chain",
+        action="store_true",
+        default=False,
+        help=(
+            "Multi-turn chain replay — loop until finish=stop or --max-turns. "
+            "Tool calls dispatched via a minimal executor (list_actions / "
+            "describe_action / invoke_action(reyn.source__*/file__*) / file ops). "
+            "Unsupported tools return {status:unavailable} so the LLM can react."
+        ),
+    )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=8,
+        help="Max turn limit for --chain (default: 8)",
+    )
+    parser.add_argument(
+        "--cwd",
+        type=str,
+        default=".",
+        help=(
+            "Repo / file root for chain-mode file reads (default: '.')."
+            " All reyn.source__read / file__read paths resolved against this."
+        ),
+    )
     args = parser.parse_args()
 
     trace_path = Path(args.trace)
@@ -1105,7 +1542,21 @@ def main() -> None:
         return
 
     if args.request_id is None:
-        parser.error("request_id is required unless --from-attractor is used")
+        parser.error("request_id is required unless --from-attractor or --chain is used")
+
+    if args.chain:
+        asyncio.run(_run_chain(
+            request_id=args.request_id,
+            trace_path=trace_path,
+            model_override=args.model_override,
+            temperature_override=args.temperature,
+            max_tokens_override=args.max_tokens,
+            patch_exprs=args.patch or [],
+            max_turns=args.max_turns,
+            cwd=Path(args.cwd).resolve(),
+            full=args.full,
+        ))
+        return
 
     asyncio.run(_run(
         request_id=args.request_id,

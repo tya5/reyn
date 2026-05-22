@@ -45,6 +45,10 @@ from typing import Any, Mapping
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _READ_TOOL_RESULT_DESCRIPTION = (
+    "PATH SCOPE: ONLY for tool_result_ref resources under "
+    ".reyn/tool-results/ (= artifact refs from prior tool calls). "
+    "NEVER for regular source / project files — use file__read or "
+    "invoke_action(reyn.source__read) for those instead. "
     "Read a tool_result_ref resource — the full content referenced by "
     "a path_ref preview. Use when the preview does not contain the "
     "content needed for what comes next. Exactly ONE of path / "
