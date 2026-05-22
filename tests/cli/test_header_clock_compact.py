@@ -51,18 +51,26 @@ def test_now_text_fits_8_cells() -> None:
 
 
 def test_format_status_contains_compact_clock_not_full_date() -> None:
-    """Tier 2: ``_format_status`` surfaces ``HH:MM:SS`` and NOT ``YYYY-``.
+    """Tier 2: ``_format_status`` surfaces ``HH:MM:SS`` and NOT ``YYYY-MM-DD``.
 
     Defends against a refactor that re-introduces a full-date format in
     a different helper (e.g. ``_now_text_long``) and accidentally wires
     it into the header again.
+
+    The prior assertion used ``"20" not in plain`` as a year-prefix
+    guard, but the substring ``"20"`` also appears in the compact
+    ``HH:MM:SS`` clock during the 20:00-20:59 hour band — so the
+    test reliably failed during evening CI runs even though the
+    header was correct. Replace with a regex that matches only the
+    actual ``YYYY-MM-DD`` shape we're defending against
+    (= no false-positive on a 2-digit hour value).
     """
     header = ReynHeader(agent_name="test", model="test")
     status = header._format_status()
     plain = str(status)
-    # No year prefix in the visible status text.
-    assert "20" not in plain or " 20" not in plain, (
-        f"clock must not include a year-shaped prefix; got {plain!r}"
+    # No YYYY-MM-DD date prefix in the visible status text.
+    assert not re.search(r"\d{4}-\d{2}-\d{2}", plain), (
+        f"clock must not include a YYYY-MM-DD date prefix; got {plain!r}"
     )
     # The compact clock pattern should be findable.
     assert re.search(r"\d{2}:\d{2}:\d{2}", plain), (
