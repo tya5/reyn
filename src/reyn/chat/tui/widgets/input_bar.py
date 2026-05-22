@@ -441,6 +441,19 @@ class InputBar(Widget):
         # who stopped reading after the first few rows never saw the
         # high-value entries.
         matches.sort(key=lambda c: c.name)
+        # Wave-6 SL1: on the bare "/" open (= no filter token), promote
+        # /help to the top of the visible list. The picker shows only
+        # the first ``_MAX_VISIBLE`` rows (= 8), so alphabetical order
+        # alone pushed /help into the "+15 more — keep typing to
+        # filter" overflow, invisible to users who don't know the
+        # command name. Filtered opens (= token non-empty) keep the
+        # alphabetical order so muscle memory transfers from /help.
+        if not token:
+            help_cmd = next(
+                (c for c in matches if c.name == "help"), None,
+            )
+            if help_cmd is not None:
+                matches = [help_cmd] + [c for c in matches if c is not help_cmd]
         picker.set_matches(matches)
 
     def _run_completer(
