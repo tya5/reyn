@@ -120,6 +120,16 @@ class ReynTUIApp(App):
         # required, complement to the existing anchor-based Ctrl+P/N).
         Binding("pageup", "conv_scroll_page_up", "Scroll up", priority=True, show=False),
         Binding("pagedown", "conv_scroll_page_down", "Scroll down", priority=True, show=False),
+        # Line-granularity + jump-to-tail scroll keys. Alt-prefixed so
+        # they don't collide with the input bar's Up/Down history bindings
+        # or with TextArea's End=end-of-line. Complements the existing
+        # page-step keys when a PageUp overshoots and the user wants to
+        # nudge the viewport by a single line. Alt+End re-arms auto-scroll
+        # so the next streaming message follows along again without
+        # waiting for a manual PageDown chain.
+        Binding("alt+up", "conv_scroll_line_up", "Scroll up 1 line", priority=True, show=False),
+        Binding("alt+down", "conv_scroll_line_down", "Scroll down 1 line", priority=True, show=False),
+        Binding("alt+end", "conv_scroll_end", "Scroll to bottom", priority=True, show=False),
     ]
 
     _REYN_THEME = Theme(
@@ -1093,6 +1103,30 @@ class ReynTUIApp(App):
         try:
             conv = self.query_one("#conversation", ConversationView)
             conv.scroll_page_down()
+        except Exception:
+            pass
+
+    def action_conv_scroll_line_up(self) -> None:
+        """Alt+Up — scroll the conv log up one line without changing focus."""
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.scroll_line_up()
+        except Exception:
+            pass
+
+    def action_conv_scroll_line_down(self) -> None:
+        """Alt+Down — scroll the conv log down one line without changing focus."""
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.scroll_line_down()
+        except Exception:
+            pass
+
+    def action_conv_scroll_end(self) -> None:
+        """Alt+End — jump to the conv log tail and re-arm auto-scroll."""
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.scroll_to_bottom()
         except Exception:
             pass
 
