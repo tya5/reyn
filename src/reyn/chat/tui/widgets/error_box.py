@@ -225,12 +225,44 @@ class ErrorBox(Widget):
     # ── interaction ───────────────────────────────────────────────────────────
 
     def on_click(self) -> None:
-        """Toggle expanded/collapsed state."""
-        self._expanded = not self._expanded
-        self.toggle_class("-expanded")
-        # Update the header arrow indicator
+        """Toggle expanded/collapsed state atomically.
+
+        Wave-10 follow-up I-F9: previously the three operations
+        (``_expanded`` flip, ``toggle_class("-expanded")``, header
+        ``update``) were three independent statements. The header
+        update was wrapped in a bare ``try / except Exception: pass``,
+        but the class toggle was not — and the ``_expanded`` flag was
+        flipped BEFORE either DOM operation. Net effect on partial
+        failure: the widget's internal state said "expanded" but the
+        DOM state (= the CSS class controlling the body's display
+        AND the arrow glyph in the header) stayed unchanged. The
+        next click would then re-flip ``_expanded`` while the DOM
+        was still in the original state, doubling the drift.
+
+        Rewritten as: capture old state → attempt both DOM mutations
+        in a single try → on success, flip ``_expanded``; on failure,
+        roll back any partial DOM mutation so the widget stays in a
+        coherent state.
+        """
+        new_expanded = not self._expanded
         try:
-            header = self.query_one(".eb-header", Label)
-            header.update(self._header_text())
+            self.toggle_class("-expanded")
+            old_expanded = self._expanded
+            self._expanded = new_expanded
+            try:
+                header = self.query_one(".eb-header", Label)
+                header.update(self._header_text())
+            except Exception:
+                # Header update failed AFTER toggle_class succeeded — roll
+                # both back so the widget stays internally consistent.
+                self._expanded = old_expanded
+                try:
+                    self.toggle_class("-expanded")
+                except Exception:
+                    # Best-effort rollback; widget mid-teardown is the
+                    # only realistic failure here.
+                    pass
         except Exception:
+            # toggle_class itself failed — _expanded was not flipped,
+            # so no state drift.
             pass
