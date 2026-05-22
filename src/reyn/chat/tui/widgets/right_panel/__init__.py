@@ -141,6 +141,13 @@ class RightPanel(Widget):
         self._events_filelist_cache: list = []
         self._events_cursor: int = 0
         self._events_visible: list[dict] = []
+        # y-coord (0-indexed line) of each event's headline row in the
+        # rendered output. Populated by `render_events`; used by
+        # `_scroll_events_into_view` so chain-switch blank lines + the
+        # extra ``↳`` reply line on ``user_message_received`` rows don't
+        # drift the viewport off the cursor (A-F3, wave-8). Same idiom
+        # as ``_memory_entry_ys`` / ``_agents_item_ys``.
+        self._events_event_ys: list[int] = []
         # Memory tab state — flat cursor over all entries
         self._memory_cursor: int = 0
         self._memory_entries: list[Any] = []
@@ -658,11 +665,17 @@ class RightPanel(Widget):
     def _scroll_events_into_view(self) -> None:
         """Scroll #panel-scroll so the events cursor line is visible.
 
-        Each event renders as one row (PR #79 trimmed timestamp to
-        HH:MM:SS; the type fits next to it on the same line). The
-        ``user_message_received`` rows have an extra `↳` reply line —
-        approximated as 1 here; the small over-/under-scroll on those
-        is barely noticeable.
+        Events render with variable height: chain switches insert a
+        blank separator line between groups, and
+        ``user_message_received`` rows have an extra ``↳`` reply line
+        below the headline. The pre-A-F3 arithmetic projection
+        (``y = 1 + cursor``) under-scrolled by the count of intervening
+        chain-switch + reply lines, so after a few chains the cursor
+        sat below the viewport with no visible movement on j/k.
+
+        ``render_events`` records the exact y of each event's
+        headline row in ``_events_event_ys``; we look it up here.
+        Same idiom as the memory- and agents-tab fixes.
         """
         try:
             vs = self.query_one("#panel-scroll", VerticalScroll)
@@ -670,8 +683,10 @@ class RightPanel(Widget):
             visible = vs.size.height
             if visible <= 0:
                 return
-            # Assume 1 line per event; +1 for content padding-top.
-            y = 1 + self._events_cursor
+            if not (0 <= self._events_cursor < len(self._events_event_ys)):
+                return
+            # +1 for content padding-top, matching the memory-tab fix.
+            y = 1 + self._events_event_ys[self._events_cursor]
             if y < current:
                 vs.scroll_to(y=y, animate=False)
             elif y >= current + visible:
@@ -1784,7 +1799,7 @@ class RightPanel(Widget):
             if self._panel_type == "keys":
                 return render_keys(self.app)
             if self._panel_type == "events":
-                rendered, windowed = render_events(
+                rendered, windowed, event_ys = render_events(
                     self._project_root,
                     self._event_filter_idx,
                     self._event_tail_idx,
@@ -1793,6 +1808,7 @@ class RightPanel(Widget):
                     filelist_cache=self._events_filelist_cache,
                 )
                 self._events_visible = windowed
+                self._events_event_ys = event_ys
                 if self._events_cursor >= len(windowed):
                     self._events_cursor = max(0, len(windowed) - 1)
                 return rendered

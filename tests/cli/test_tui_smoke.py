@@ -838,7 +838,7 @@ async def test_events_tab_returns_in_timestamp_order(tmp_path):
         encoding="utf-8",
     )
 
-    _, visible = render_events(
+    _, visible, _ys = render_events(
         tmp_path, event_filter_idx=0, event_tail_idx=0, cursor=0,
         cache={}, filelist_cache=None,
     )

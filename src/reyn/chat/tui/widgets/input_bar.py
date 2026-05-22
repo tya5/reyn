@@ -573,9 +573,9 @@ class InputBar(Widget):
 
     def _build_hint(self) -> str:
         # Fits in 80 cols (= ≤72 cells incl. 2-space left margin) so the
-        # tail "Ctrl+P/N turn" doesn't get clipped on default terminals.
-        # Dropped Ctrl+J nl / Ctrl+O / Ctrl+R / Ctrl+\ — all remain
-        # discoverable via the Keys tab (Ctrl+B).
+        # tail key doesn't get clipped on default terminals. Ctrl+O /
+        # Ctrl+R / Ctrl+\ / Ctrl+P/N remain discoverable via the Keys
+        # tab (Ctrl+B).
         #
         # Wave-2 K4: ``Ctrl+C cancel`` swapped in for ``Ctrl+D quit`` —
         # cancel is the highest-frequency interactive key during active
@@ -584,7 +584,17 @@ class InputBar(Widget):
         # terminal-EOF convention users carry in from the shell. Both
         # remain in the Keys tab; the always-visible footer should
         # advertise the in-session-frequent key, not the universal one.
+        #
+        # Wave-9 D-F8: ``Ctrl+J nl`` surfaced next to ``Enter send`` so a
+        # first-time user can see HOW to enter a multi-line prompt
+        # without first opening the Keys tab. Previously the footer
+        # advertised only ``Enter send`` and users hit Enter expecting
+        # newline (= the natural assumption for code/instruction
+        # blocks), submitting half-typed prompts. ``Ctrl+P/N turn`` is
+        # dropped from the footer — turn navigation is a power-user
+        # convenience, multi-line entry is a daily first-encounter
+        # need.
         return (
-            "  Enter send │ Ctrl+C cancel │ Ctrl+L clear │ "
-            "Ctrl+B panel │ Ctrl+P/N turn"
+            "  Enter send │ Ctrl+J nl │ Ctrl+C cancel │ "
+            "Ctrl+L clear │ Ctrl+B panel"
         )
