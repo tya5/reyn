@@ -1,0 +1,133 @@
+"""Tier 2: ToolCallRow widget shape + state transitions (issue #427 PoC).
+
+Pins the user-visible contract:
+
+1. Running: ``● <tool>(<args>)  · <elapsed>`` on line 1, empty line 2 until
+   ``set_result`` is called.
+2. ``set_result(snippet)`` populates line 2 with ``  ⎿ <snippet>``.
+3. Terminal states: ``finish_success`` → ``✓``, ``finish_failure`` → ``✗``,
+   ``finish_aborted`` → ``⊘``.
+4. Post-terminal: ``set_result`` and further ``finish_*`` calls are
+   ignored (= frozen).
+5. Long args are truncated with ``…`` to fit within terminal width.
+
+All assertions go through public render surfaces (= ``_build_line1().plain``
++ ``_build_line2().plain``) per CLAUDE.md testing policy ("NEVER assert
+on private state. Use the public surface or a snapshot()-style read").
+
+The widget is constructed without mounting it inside a Textual app —
+``_refresh`` returns early when its Static children are None, so the
+internal state can be driven directly against the public API and
+verified via the render helpers, the same way ``test_skill_activity_plan_step_persist``
+exercises ``SkillActivityRow``.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_SRC = Path(__file__).parent.parent.parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+
+def _row(tool_name: str = "web_fetch", args_repr: str = "url=https://example.com"):
+    """Construct an unmounted ToolCallRow for direct API exercise."""
+    from reyn.chat.tui.widgets.tool_call_row import ToolCallRow
+    return ToolCallRow(tool_name=tool_name, args_repr=args_repr)
+
+
+def test_running_line1_contains_glyph_tool_args_and_elapsed() -> None:
+    """Tier 2: initial running render carries all four primary segments."""
+    row = _row(tool_name="web_fetch", args_repr="url=https://example.com")
+    line1 = row._build_line1().plain
+    assert "●" in line1, "running state-glyph"
+    assert "web_fetch" in line1, "tool name"
+    assert "url=https://example.com" in line1, "args"
+    assert "s" in line1, "elapsed segment (e.g. '0.0s')"
+
+
+def test_line2_empty_until_set_result_called() -> None:
+    """Tier 2: line 2 is empty when no result snippet has arrived yet."""
+    row = _row()
+    assert row._build_line2().plain == ""
+    row.set_result("body length 1.2 KB")
+    line2 = row._build_line2().plain
+    assert "⎿" in line2, "result indent marker"
+    assert "body length 1.2 KB" in line2, "snippet present"
+
+
+def test_finish_success_transitions_to_check_glyph() -> None:
+    """Tier 2: success terminal renders ``✓`` instead of ``●``."""
+    row = _row()
+    row.finish_success(result_snippet="200 OK")
+    line1 = row._build_line1().plain
+    assert "✓" in line1
+    assert "●" not in line1
+    line2 = row._build_line2().plain
+    assert "200 OK" in line2
+
+
+def test_finish_failure_transitions_to_cross_glyph() -> None:
+    """Tier 2: failure terminal renders ``✗``."""
+    row = _row()
+    row.finish_failure(reason="timeout")
+    line1 = row._build_line1().plain
+    assert "✗" in line1
+    assert "●" not in line1
+
+
+def test_finish_aborted_transitions_to_circle_slash_glyph() -> None:
+    """Tier 2: aborted terminal renders ``⊘`` (= distinct from ✗)."""
+    row = _row()
+    row.finish_aborted()
+    line1 = row._build_line1().plain
+    assert "⊘" in line1
+    assert "✗" not in line1
+    assert "●" not in line1
+
+
+def test_post_terminal_set_result_and_finish_are_ignored() -> None:
+    """Tier 2: once terminal, further state mutations don't change render."""
+    row = _row()
+    row.finish_success(result_snippet="first")
+    line1_after_first = row._build_line1().plain
+    line2_after_first = row._build_line2().plain
+    row.set_result("second-result-should-be-ignored")
+    row.finish_failure(reason="this-should-also-be-ignored")
+    assert row._build_line1().plain == line1_after_first, (
+        "line 1 (= state glyph + elapsed) must be frozen"
+    )
+    assert row._build_line2().plain == line2_after_first, (
+        "line 2 (= result snippet) must be frozen"
+    )
+    assert "second-result-should-be-ignored" not in row._build_line2().plain
+    assert "✗" not in row._build_line1().plain
+
+
+def test_long_args_truncated_with_ellipsis_within_terminal_width() -> None:
+    """Tier 2: args that overflow the line collapse to an ``…`` suffix.
+
+    The widget's ``self.size.width`` is 0 (= not mounted), which the
+    truncation helper handles by falling back to an 80-cell target.
+    A 200-character args string at 80-cell width is guaranteed to
+    require truncation regardless of margin / glyph / elapsed sizing.
+    """
+    long_args = "url=" + ("a" * 200)
+    row = _row(tool_name="web_fetch", args_repr=long_args)
+    line1 = row._build_line1().plain
+    assert "…" in line1, "ellipsis appears when args overflow line width"
+    # The tool name + elapsed still survive truncation (= args is the
+    # disposable segment, never the framing).
+    assert "web_fetch" in line1
+    assert "s" in line1  # elapsed survives
+
+
+def test_result_snippet_truncated_when_long() -> None:
+    """Tier 2: long result snippets get the same ``…`` treatment on line 2."""
+    row = _row()
+    long_result = "x" * 200
+    row.set_result(long_result)
+    line2 = row._build_line2().plain
+    assert "…" in line2
+    assert "⎿" in line2  # indent marker preserved
