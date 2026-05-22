@@ -624,3 +624,138 @@ def test_emits_event_with_status_not_found(tmp_path):
     payload = _only_tool_result_read(events)[0]
     assert payload["status"] == "not_found"
     assert payload["identifier"] == fake_rel
+
+
+# ── content_hash verify (#385 β core impl sub-task 4) ─────────────────
+
+
+def test_content_hash_match_returns_ok(tmp_path):
+    """Tier 2: when the LLM passes the path_ref's exact content_hash,
+    verification succeeds and the read returns ``status=ok``.
+    """
+    store, block = _populate_with_agent_name(tmp_path, "me", content="hello\n")
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle(
+            {"path": block["path"], "content_hash": block["content_hash"]},
+            ctx,
+        ),
+    )
+
+    assert result["status"] == "ok"
+    assert result["content"] == "hello\n"
+
+
+def test_content_hash_mismatch_returns_error(tmp_path):
+    """Tier 2: an incorrect content_hash surfaces ``status=error`` with
+    ``hash_mismatch`` error_kind plus expected + actual hashes — covers
+    file mutation after path_ref minting OR transport corruption.
+    """
+    store, block = _populate_with_agent_name(tmp_path, "me", content="real\n")
+    bogus_hash = "sha256:" + "0" * 64
+    events = _StubEvents()
+    ctx = _ctx_with_media_store(store, events=events)
+
+    result = asyncio.run(
+        _handle(
+            {"path": block["path"], "content_hash": bogus_hash},
+            ctx,
+        ),
+    )
+
+    assert result["status"] == "error"
+    assert "mismatch" in result["error"]
+    # Both hashes surfaced on the response so the LLM can diagnose.
+    assert result["expected_hash"] == bogus_hash
+    assert result["actual_hash"] == block["content_hash"]
+    # Event payload tags the kind + carries both hashes for measurement.
+    payload = _only_tool_result_read(events)[0]
+    assert payload["status"] == "error"
+    assert payload["error_kind"] == "hash_mismatch"
+    assert payload["expected_hash"] == bogus_hash
+    assert payload["actual_hash"] == block["content_hash"]
+
+
+def test_content_hash_absent_skips_verify_backward_compat(tmp_path):
+    """Tier 2: omitting ``content_hash`` skips verification entirely —
+    backward compat for callers that don't carry the hash. Body is
+    returned as-is.
+    """
+    store, path_ref = _populate_tool_result(tmp_path, "body\n")
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(_handle({"path": path_ref}, ctx))
+
+    assert result["status"] == "ok"
+    assert result["content"] == "body\n"
+
+
+def test_content_hash_accepts_bare_hex_no_prefix(tmp_path):
+    """Tier 2: ``content_hash`` accepts either ``sha256:<hex>`` (= the
+    path_ref's exact form) or bare ``<hex>`` (= LLM might pass just the
+    hex after extracting it). Both normalise to the same comparison.
+    """
+    store, block = _populate_with_agent_name(tmp_path, "me", content="x\n")
+    # Strip the "sha256:" prefix to verify the bare-hex acceptance.
+    bare_hex = block["content_hash"].removeprefix("sha256:")
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle(
+            {"path": block["path"], "content_hash": bare_hex},
+            ctx,
+        ),
+    )
+
+    assert result["status"] == "ok"
+
+
+def test_content_hash_verifies_against_full_body_not_sliced(tmp_path):
+    """Tier 2: hash is computed over the FULL body (= before slice /
+    truncate). Passing offset/limit alongside a valid content_hash
+    still succeeds, because the slice is applied AFTER verification.
+
+    Defence against an attractor where verify-after-slice would force
+    callers to compute a different hash for every slice request.
+    """
+    body = "L0\nL1\nL2\nL3\nL4\n"
+    store, block = _populate_with_agent_name(tmp_path, "me", content=body)
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle(
+            {
+                "path": block["path"],
+                "content_hash": block["content_hash"],  # full-body hash
+                "offset": 1, "limit": 2,
+            },
+            ctx,
+        ),
+    )
+
+    assert result["status"] == "ok"
+    # Slice still applied — returned content is the windowed subset.
+    assert result["content"] == "L1\nL2\n"
+
+
+def test_content_hash_works_with_resource_uri_too(tmp_path):
+    """Tier 2: verification path is the same whether the read came in
+    via ``path`` or ``resource_uri`` — the body is the same body in
+    both cases, so the hash check applies uniformly.
+    """
+    store, block = _populate_with_agent_name(tmp_path, "me", content="hi\n")
+    ctx = _ctx_with_media_store(store)
+
+    result = asyncio.run(
+        _handle(
+            {
+                "resource_uri": block["resource_uri"],
+                "content_hash": block["content_hash"],
+            },
+            ctx,
+        ),
+    )
+
+    assert result["status"] == "ok"
+    assert result["content"] == "hi\n"

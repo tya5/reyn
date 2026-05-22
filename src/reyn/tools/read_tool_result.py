@@ -22,12 +22,21 @@ line count taken. Slice happens before ``max_bytes`` truncation so the
 byte cap applies to the resulting sliced content (= two orthogonal axes
 for partial-read shape control).
 
+Integrity verification (= #385 β core impl sub-task 4): when the LLM
+supplies ``content_hash`` (= the value from the path_ref it received),
+the handler hashes the FULL body (= before slice / truncate) with
+SHA-256 and compares to the expected. Mismatch surfaces as
+``status="error"`` with ``error_kind="hash_mismatch"`` — covers both
+"file mutated since path_ref was minted" (= same-host) and "transport
+corruption" (= future cross-host RPC). Omit ``content_hash`` to skip
+verify (= backward compat for callers that don't carry the hash).
+
 Out of scope (= follow-up work):
 
   - search-within-result (= ``grep_tool_result(path, pattern)``).
   - cleanup policy enforcement (= LLM cannot delete; user-managed).
-  - cross-host RPC routing via ``resource_uri`` (= #385 β core impl,
-    gated on Step 2 measurement success path confirmation).
+  - cross-host RPC routing via ``resource_uri`` (= #385 β core impl
+    sub-task 3, gated on the cross-host sequencing thread).
 """
 from __future__ import annotations
 
@@ -44,7 +53,9 @@ _READ_TOOL_RESULT_DESCRIPTION = (
     "this when the path_ref carries one. Exactly one of path or "
     "resource_uri is required. offset / limit slice by line (0-indexed) "
     "— the same shape as read_file / reyn_src_read / read_memory_body. "
-    "max_bytes caps the returned size after slicing (default 16384)."
+    "max_bytes caps the returned size after slicing (default 16384). "
+    "content_hash: optional SHA-256 from the path_ref; when supplied, "
+    "the read body's hash is verified and a mismatch returns an error."
 )
 
 _READ_TOOL_RESULT_PARAMETERS: dict[str, Any] = {
@@ -76,6 +87,18 @@ _READ_TOOL_RESULT_PARAMETERS: dict[str, Any] = {
             ),
         },
         "max_bytes": {"type": "integer"},
+        "content_hash": {
+            "type": "string",
+            "description": (
+                "Optional SHA-256 to verify body integrity. Accepted "
+                "formats: 'sha256:<hex>' (= the path_ref's exact form) "
+                "or just '<hex>'. When supplied, the read body's hash "
+                "is compared to this value; mismatch returns status="
+                "error with error_kind=hash_mismatch. Omit to skip "
+                "verification (= backward compat for callers without "
+                "the hash)."
+            ),
+        },
     },
     # Neither path nor resource_uri is in `required` — exactly-one-of is
     # enforced by the handler. JSON Schema oneOf is hard for LLMs to
@@ -108,8 +131,12 @@ def _emit_event(ctx: ToolContext, **fields: Any) -> None:
     On status="error":
       ``error_kind``     — "missing_args" | "both_supplied" |
                            "media_store_unconfigured" | "invalid_uri" |
-                           "cross_host_stub" | "path_traversal" | "other"
+                           "cross_host_stub" | "path_traversal" |
+                           "hash_mismatch" | "other"
       ``error``          — the message surfaced to the LLM
+      ``expected_hash`` / ``actual_hash`` — present only when
+                           error_kind="hash_mismatch", normalised to the
+                           "sha256:<hex>" form
     """
     try:
         ctx.events.emit("tool_result_read", **fields)
@@ -122,6 +149,19 @@ def _source_agent_from_uri(resource_uri: str) -> str | None:
     from reyn.workspace.media_store import parse_resource_uri
     parsed = parse_resource_uri(resource_uri)
     return parsed[0] if parsed else None
+
+
+def _normalise_hash(value: str) -> str:
+    """Return ``sha256:<hex>`` form, accepting either prefixed or bare hex.
+
+    Comparisons in :func:`_handle` happen against the normalised form so
+    callers can pass the path_ref's exact ``content_hash`` value (=
+    ``"sha256:<hex>"``) or just the hex without the prefix.
+    """
+    value = value.strip().lower()
+    if value.startswith("sha256:"):
+        return value
+    return f"sha256:{value}"
 
 
 async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -242,6 +282,38 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             "path": identifier,
             "error": "tool result file does not exist or was deleted",
         }
+
+    # Integrity verify (= #385 β core impl sub-task 4). Hash is computed
+    # against the FULL body (= before slice / truncate) so the
+    # comparison matches the path_ref's content_hash exactly. When the
+    # LLM omits content_hash, verification is skipped (= backward
+    # compat). When supplied, mismatch returns hash_mismatch with both
+    # expected and actual hashes so the LLM can diagnose (= file
+    # mutated after path_ref was minted, transport corruption, etc.).
+    expected_hash_raw = str(args.get("content_hash", "") or "").strip()
+    if expected_hash_raw:
+        import hashlib
+        actual_hash = "sha256:" + hashlib.sha256(
+            content.encode("utf-8"),
+        ).hexdigest()
+        expected_hash = _normalise_hash(expected_hash_raw)
+        if actual_hash != expected_hash:
+            err = (
+                f"content_hash mismatch: expected {expected_hash}, "
+                f"got {actual_hash}"
+            )
+            _emit_event(
+                ctx, status="error", error_kind="hash_mismatch",
+                identifier_kind=identifier_kind, identifier=identifier,
+                expected_hash=expected_hash, actual_hash=actual_hash,
+                error=err,
+            )
+            return {
+                "status": "error",
+                "error": err,
+                "expected_hash": expected_hash,
+                "actual_hash": actual_hash,
+            }
 
     offset_raw = args.get("offset")
     limit_raw = args.get("limit")
