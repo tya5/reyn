@@ -112,6 +112,11 @@ class SkillActivityRow(Widget):
         # Finish state
         self._finished = False
         self._success = True
+        # C-F5 (wave-8): distinguishes user-initiated cancellation from
+        # system failure. When ``True``, ``_build_finished`` renders the
+        # ⊘ glyph in dim grey instead of the ✗ glyph in red. Set by
+        # ``finish(..., aborted=True)`` from ``action_cancel_inflight``.
+        self._aborted = False
         self._reason = ""
 
         # Timer
@@ -170,13 +175,28 @@ class SkillActivityRow(Widget):
         self._detail = detail
         self._refresh()
 
-    def finish(self, success: bool = True, reason: str = "") -> None:
-        """Transition to the completed line and stop the timer."""
+    def finish(
+        self,
+        success: bool = True,
+        reason: str = "",
+        *,
+        aborted: bool = False,
+    ) -> None:
+        """Transition to the completed line and stop the timer.
+
+        ``aborted=True`` (C-F5, wave-8) marks the finish as user-initiated
+        cancellation rather than a system failure — renders as ``⊘`` in
+        dim grey instead of ``✗`` in red. Use ``aborted=True`` from
+        ``action_cancel_inflight``; leave it False for failures coming
+        from workflow_aborted / exception paths so the user can tell
+        "I cancelled" from "the system failed".
+        """
         if self._finished:
             return
         self._finished = True
         self._running = False
         self._success = success
+        self._aborted = aborted
         self._reason = reason
         self._refresh()
 
@@ -263,6 +283,21 @@ class SkillActivityRow(Widget):
             # focal tab so it lands on agents/events automatically.
             t.append("  · ", style="dim")
             t.append("Ctrl+B → agents", style="dim")
+        elif self._aborted:
+            # C-F5 (wave-8): user-initiated cancellation gets the ⊘
+            # glyph in dim grey, distinguishing intent from a system
+            # failure. Same shape design as ToolCallRow's aborted
+            # state — color + glyph as a redundant cue.
+            t.append("⊘ ", style="dim #888888")
+            t.append(
+                f"{self._skill_name}#{self._short_id}",
+                style="dim",
+            )
+            t.append("  · ", style="dim")
+            cancel_msg = (
+                f"cancelled: {self._reason}" if self._reason else "cancelled"
+            )
+            t.append(cancel_msg, style="dim")
         else:
             t.append("✗ ", style="bold red")
             t.append(
