@@ -188,11 +188,22 @@ class StickyStatus(Static):
             glyph_color = "bold #aa6666"
         else:
             glyph_color = _CORAL
+        # Wave-10 follow-up I-F2: elapsed suffix is only meaningful for
+        # the ``thinking`` kind (= the user genuinely wants to know how
+        # long the agent has been working). For ``general`` (turn-flash,
+        # boundary hint, breadcrumb) and ``error`` (one-shot failure
+        # notice), elapsed is noise — a turn flash like
+        # ``↑ turn 3 / 8  · 1.4s`` reads as "this turn marker has been
+        # showing for 1.4s", which the user neither needs nor expects.
+        # The internal ``_start`` is still refreshed on every ``show()``
+        # so the value is meaningful for any future kind that opts in.
         # Total cells in the fixed-width suffix segments so we can truncate
         # the body when narrow terminals would otherwise clip the
         # ``Ctrl+C cancel`` hint behind the right edge.
         glyph_cells = cell_len(self._glyph) + 1  # ``<glyph> ``
-        elapsed_suffix = f" · {elapsed:.1f}s"
+        elapsed_suffix = (
+            f" · {elapsed:.1f}s" if self._kind == "thinking" else ""
+        )
         elapsed_cells = cell_len(elapsed_suffix)
         cancel_suffix = "  · Ctrl+C cancel" if self._kind == "thinking" else ""
         cancel_cells = cell_len(cancel_suffix)
@@ -217,7 +228,8 @@ class StickyStatus(Static):
         t = Text()
         t.append(self._glyph + " ", style=glyph_color)
         t.append(body, style="dim italic")
-        t.append(elapsed_suffix, style="dim italic")
+        if elapsed_suffix:
+            t.append(elapsed_suffix, style="dim italic")
         if cancel_suffix:
             t.append(cancel_suffix, style="dim italic")
         self.update(t)
