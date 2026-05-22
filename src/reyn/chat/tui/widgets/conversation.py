@@ -1359,11 +1359,21 @@ class ConversationView(Widget):
         return [a - start for a in self._turn_anchors if a - start >= 0]
 
     def _maybe_warn_about_trimmed_history(self, log: RichLog) -> None:
-        """Surface a one-shot dim status when older history has been trimmed.
+        """Surface a one-shot warning when older history has been trimmed.
 
         We only fire once per session — repeated Ctrl+P presses past the
-        top would otherwise spam the sticky status with the same message.
-        ``/clear`` resets the flag so a fresh session can warn again.
+        top would otherwise spam the message. ``/clear`` resets the
+        flag so a fresh session can warn again.
+
+        Wave-10 G-F8: the warning previously wrote ONLY to the sticky
+        status. The same call stack then invoked ``_flash_turn_position``
+        which overwrote the sticky with ``↑ turn 1 / N`` before the user
+        could read the warning — effectively making it invisible. The
+        sticky path is kept as a glance-cue, but the load-bearing
+        record now lives in the log as a permanent dim line so the user
+        can find it in scrollback even after the sticky has been
+        replaced. Same idiom as ``_render_system_message`` for one-shot
+        notices that must survive subsequent sticky updates.
         """
         if self._trim_warned:
             return
@@ -1371,13 +1381,19 @@ class ConversationView(Widget):
         if start <= 0:
             return
         self._trim_warned = True
+        warning_text = f"↑ earlier history trimmed ({start:,} lines)"
+        # Permanent log line — survives the turn-flash sticky overwrite.
+        try:
+            self._write_log(Text(f"  {warning_text}", style="dim italic #888888"))
+        except Exception:
+            pass
+        # Sticky glance-cue — may be overwritten by the next status
+        # update, but useful at the moment the user actually hit the
+        # boundary.
         sticky = self._sticky()
         if sticky is not None:
             try:
-                sticky.show(
-                    f"↑ earlier history trimmed ({start:,} lines)",
-                    kind="general",
-                )
+                sticky.show(warning_text, kind="general")
             except Exception:
                 pass
 
