@@ -979,8 +979,80 @@ class RightPanel(Widget):
             self._preview_recent_skill(pane, item)
         elif kind == "recent_plan":
             self._preview_recent_plan(pane, item)
+        elif kind == "agent":
+            # Wave-10 H-F1: agent-label row preview. Pre-fix this branch
+            # fell through to ``pane.clear()``, leaving the preview pane
+            # blank — the user saw Space "work" (pane layout shifted)
+            # but got no content, a silent no-op confusing for a tab
+            # whose other rows render rich previews. Now we show a
+            # compact summary (name + status + attached/loaded flags +
+            # in-flight counts) so opening an agent row tells the user
+            # what that agent is doing right now.
+            self._preview_agent(pane, item)
         else:
             pane.clear()
+
+    def _preview_agent(self, pane: _PreviewPane, item: dict) -> None:
+        """Compact summary for an agent-label row (H-F1, wave-10).
+
+        Renders:
+          - name (bold coral if attached, else white)
+          - status (running / ready / idle) derived from the live
+            ``_exec_state`` (= running skills) and the
+            ``loaded`` flag on the flat-item
+          - count of in-flight skills / plans
+          - "attached" / "loaded" boolean status
+
+        Sources are the same ones ``render_agents`` uses to build the
+        agent-label row, so the preview never disagrees with the
+        tree line above it.
+        """
+        from rich.console import Group as RichGroup
+        from rich.text import Text as RichText
+        name = str(item.get("name", "?"))
+        is_attached = bool(item.get("attached", False))
+        is_loaded = bool(item.get("loaded", False))
+        # Count in-flight skills for this agent from the live state.
+        running_skills = [
+            rid for rid, info in self._exec_state.items()
+            if info.get("agent_name") == name
+        ]
+        has_work = bool(running_skills)
+        if has_work:
+            status_glyph, status_text, status_style = (
+                "● ", "running", "#44cc88",
+            )
+        elif is_loaded:
+            status_glyph, status_text, status_style = (
+                "◐ ", "ready", "#aaaa55",
+            )
+        else:
+            status_glyph, status_text, status_style = (
+                "○ ", "idle", "#555555",
+            )
+        head = RichText()
+        head.append(name, style=("bold " + _CORAL) if is_attached else "#dddddd")
+        head.append("  ")
+        head.append(status_glyph + status_text, style=status_style)
+        head.append("\n")
+        head.append("attached: ", style="dim")
+        head.append("yes" if is_attached else "no", style="#dddddd")
+        head.append("\n")
+        head.append("loaded: ", style="dim")
+        head.append("yes" if is_loaded else "no", style="#dddddd")
+        head.append("\n")
+        head.append("running skills: ", style="dim")
+        head.append(str(len(running_skills)), style="#dddddd")
+        if running_skills:
+            head.append("\n")
+            head.append("  ", style="dim")
+            head.append(
+                ", ".join(rid[:8] for rid in running_skills[:4]),
+                style="dim #aaaaaa",
+            )
+            if len(running_skills) > 4:
+                head.append(f", +{len(running_skills) - 4} more", style="dim")
+        pane.show_text(name, RichGroup(head))
 
     def _preview_running_skill(self, pane: _PreviewPane, item: dict) -> None:
         """Live snapshot for an in-flight skill run."""
