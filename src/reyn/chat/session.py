@@ -986,6 +986,18 @@ class ChatSession:
         self.model = model
         self._resolver = resolver or ModelResolver({})
         self._perm = permission_resolver
+        # #398 v4 emitter wiring (= permission_manager → state_change).
+        # Subscribe to ``_persist`` events on the shared PermissionResolver
+        # so a permission grant / revoke mints a state_change history
+        # entry in this session — the LLM sees "permission for X was
+        # granted" in its next turn and breaks out of the #352 refusal
+        # trap. Stored as a bound method so the same reference can be
+        # unregistered on session shutdown.
+        if self._perm is not None and hasattr(self._perm, "register_on_persist"):
+            self._on_perm_persist_cb = self._on_permission_persisted
+            self._perm.register_on_persist(self._on_perm_persist_cb)
+        else:
+            self._on_perm_persist_cb = None
         _safety = safety or SafetyConfig()
         self._safety = _safety
         # FP-0017 follow-up: declarative sandbox config (reyn.yaml `sandbox:`).
@@ -1557,6 +1569,25 @@ class ChatSession:
         with self.history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
 
+    def _on_permission_persisted(self, key: str, approved: bool) -> None:
+        """PermissionResolver subscriber — convert grant/revoke to a
+        ``state_change`` history entry (= #398 v4 emitter wiring,
+        #352 in-context-learning refusal trap mitigation).
+
+        The LLM reading the next turn's prompt sees this as a
+        ``role="system"`` entry containing "Permission for '<key>' was
+        granted." (or revoked) — breaking out of the prior-refusal
+        learning pattern by surfacing the world-state change.
+
+        Phrasing uses single quotes around the key so the human-
+        readable summary stays unambiguous when the key contains
+        dots / colons (= common in Reyn approval keys like
+        ``mcp.servers.sqlite`` or ``file.write:/path``).
+        """
+        verb = "granted" if approved else "revoked"
+        summary = f"Permission for '{key}' was {verb}."
+        self.notify_state_change(summary, source="permission_manager")
+
     def notify_state_change(
         self, summary: str, *, source: str | None = None,
     ) -> None:
@@ -1768,6 +1799,17 @@ class ChatSession:
 
     async def shutdown(self) -> None:
         # `shutdown` is a control signal, not recovery state — skip WAL/snapshot.
+        # #398 v4 emitter wiring cleanup: unregister the
+        # permission-persist subscriber so dead-session references
+        # don't accumulate in the shared PermissionResolver. Defensive
+        # — the resolver may have been replaced or never have had the
+        # method; in either case unregister is a no-op.
+        if self._on_perm_persist_cb is not None and self._perm is not None:
+            try:
+                self._perm.unregister_on_persist(self._on_perm_persist_cb)
+            except Exception:
+                pass
+            self._on_perm_persist_cb = None
         await self.inbox.put(("shutdown", {}))
 
     # ── PR21: state persistence helpers (WAL + snapshot) ─────────────────────
