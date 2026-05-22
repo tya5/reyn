@@ -65,6 +65,57 @@ The two processes are independent. Stopping one does not affect the other.
 
 ---
 
+## TUI keyboard shortcuts
+
+The TUI footer shows a five-key strip — handy at a glance but not exhaustive.
+Press `Ctrl+B` to open the right panel and switch to the **Keys** tab for the
+full live list (the tab reflects the actual bindings the app is loaded with,
+including any voice-mode keys when recording).
+
+The shortcuts you reach for daily:
+
+### Input
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Send the current prompt |
+| `Ctrl+J` | Insert a newline (paste a multi-line prompt) |
+| `Ctrl+U` | Clear the input buffer (single- or multi-line) |
+| `↑` / `↓` | Walk through past prompts (when the slash picker is closed) |
+| `Tab` | Confirm-without-send when the slash picker is open |
+| `Esc` | Dismiss the slash picker / docs filter / pending hint |
+
+### Conversation
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+P` / `Ctrl+N` | Jump to the previous / next turn header |
+| `Ctrl+L` | Clear the conversation pane (engine state untouched) |
+| `Ctrl+C` | Cancel the in-flight skill / LLM call / intervention modal |
+
+### Right panel
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+B` | Toggle the right panel |
+| `Ctrl+W` | Cycle to the next tab (Keys → Events → Agents → Memory → Cost → Docs → Pending) |
+| `h` / `l` | Widen / narrow the panel |
+| `j` / `k` | Scroll the current tab |
+| `space` | Toggle the preview pane for the cursor row (works on most tabs) |
+| `c` | Copy the current view; on the Pending tab, claim the cursor's intervention |
+
+### Quit
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+D` | Quit the TUI (also `/quit`) |
+
+> Slash commands like `/copy`, `/expand`, `/cancel`, `/list`, `/skill`, `/plan`,
+> `/agents`, `/attach`, `/tasks` are documented in the
+> [`reyn chat` reference](../../reference/cli/chat.md#slash-commands).
+
+---
+
 ## A2A endpoint (advanced)
 
 The web server also exposes an [A2A](../../concepts/a2a.md) JSON-RPC endpoint for programmatic access and agent-to-agent communication:
