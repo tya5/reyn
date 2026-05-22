@@ -16,6 +16,7 @@ Press Esc to dismiss (handled by ConversationView / app.py via the
 """
 from __future__ import annotations
 
+from rich.cells import cell_len as _cell_len
 from rich.markup import escape as _markup_escape
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -158,8 +159,25 @@ class ErrorBox(Widget):
         # tail (when present) lives on its own ``.eb-inline-hint`` label,
         # so don't include it in the header truncation budget.
         first_line = self._first_line_for_header
-        if len(first_line) > 72:
-            msg = first_line[:71] + "…"
+        # Wave-10 follow-up I-F4: cell-aware truncation. ``len()`` counts
+        # code points, but the header is rendered in a 1-line ``Label``
+        # whose visual budget is measured in terminal cells. CJK / emoji
+        # consume 2 cells per character, so a 72-code-point CJK header
+        # is ~144 cells — far past the typical conv-pane width — and
+        # silently wraps to a second line, breaking the ``height: 1``
+        # CSS contract. Match the sticky_status / events_tab idiom
+        # (= ``rich.cells.cell_len`` for budget, walk char-by-char to
+        # build the truncated body so each ``…`` reservation is exact).
+        if _cell_len(first_line) > 72:
+            out_chars: list[str] = []
+            used = 0
+            for ch in first_line:
+                w = _cell_len(ch)
+                if used + w > 71:  # reserve 1 cell for "…"
+                    break
+                out_chars.append(ch)
+                used += w
+            msg = "".join(out_chars) + "…"
         else:
             msg = first_line
         msg = _markup_escape(msg)
