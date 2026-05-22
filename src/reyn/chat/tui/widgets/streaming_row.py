@@ -129,6 +129,14 @@ class StreamingRow(Widget):
         # of the session — a 20-turn dogfood produced 20 × 60 = 1200 dead
         # callbacks/s on the event loop.
         self._interval_handle = None  # type: ignore[assignment]
+        # Wave-9 F-F11: set when ``append()`` adds tokens (= the row's
+        # rendered height may grow). Consumed by ``_flush_render`` to
+        # gate the ``scroll_visible`` call so we only scroll on actual
+        # content growth, not on cursor-blink ticks. Without the gate
+        # the row would scroll-into-view 60 times per second during
+        # idle blink — wasted work and a potential fight with the
+        # user's intentional scroll-up.
+        self._height_dirty: bool = False
 
     def compose(self) -> ComposeResult:
         self._static = Static(id="streaming_text")
@@ -160,6 +168,23 @@ class StreamingRow(Widget):
         if self._dirty and self._static is not None:
             self._dirty = False
             self._static.update(self._build_renderable())
+            # Wave-9 F-F11: keep the growing row visible. ``StreamingRow``
+            # is mounted as a sibling of the RichLog (not as a log line),
+            # and ``RichLog.auto_scroll`` doesn't track sibling height
+            # changes. On a short conversation the row's bottom slips
+            # below the viewport as tokens wrap onto new lines, forcing
+            # the user to manually scroll to see new content arrive.
+            # ``scroll_visible`` walks up to the nearest scrollable
+            # ancestor and brings this row into view. Gated by
+            # ``_height_dirty`` so cursor-blink ticks (= rendered output
+            # changed but height did NOT) don't fire 60 redundant
+            # scroll calls per second.
+            if self._height_dirty:
+                self._height_dirty = False
+                try:
+                    self.scroll_visible(animate=False)
+                except Exception:
+                    pass
 
     def _stop_interval(self) -> None:
         """Cancel the 16 ms render-coalescing interval, if running.
@@ -229,6 +254,11 @@ class StreamingRow(Widget):
         # of chunks on every render tick.
         self._accumulated += text
         self._dirty = True
+        # Wave-9 F-F11: mark the row's height as "may have grown" so the
+        # next ``_flush_render`` triggers ``scroll_visible``. Set here
+        # (= where new tokens actually arrive) rather than on every
+        # cursor blink, so idle re-renders don't spam scroll calls.
+        self._height_dirty = True
 
     def seal(self) -> None:
         """Mark the stream as complete and swap to a Markdown widget.
