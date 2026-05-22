@@ -219,6 +219,7 @@ from reyn.web.routers import skills as _skills_router  # noqa: E402
 from reyn.web.routers import topologies as _topos_router  # noqa: E402
 from reyn.web.routers import web_config as _web_config_router  # noqa: E402
 from reyn.web.routers import web_data as _web_data_router  # noqa: E402
+from reyn.web.routers import webhook_slack as _webhook_slack_router  # noqa: E402
 
 app.include_router(_agents_router.router, prefix="/api")
 app.include_router(_skills_router.router, prefix="/api")
@@ -228,6 +229,11 @@ app.include_router(_perms_router.router, prefix="/api")
 app.include_router(_budget_router.router, prefix="/api")
 app.include_router(_web_config_router.router, prefix="/api")
 app.include_router(_web_data_router.router, prefix="/api")
+# FP-0041 #489 PR-D: Slack inbound webhook (= chat-transport).
+# Route is /webhook/slack at the top level (= no /api prefix) so the
+# URL operators paste into Slack's Event Subscriptions matches the
+# documented industry convention.
+app.include_router(_webhook_slack_router.router)
 
 # MCP-over-SSE: GET /mcp/sse (event stream) + POST /mcp/messages (client → server).
 # The router carries the GET; the POST endpoint is a Starlette Mount because
