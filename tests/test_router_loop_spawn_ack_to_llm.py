@@ -222,11 +222,22 @@ async def test_spawn_ack_to_llm_env_off_keeps_default_outbox_path(monkeypatch):
         f"Default path: exactly 1 LLM call (early-exit on spawn-ack); "
         f"got {scripted.call_count}"
     )
-    # Outbox holds the OS-synthetic spawn-ack with meta.source="spawn_ack"
+    # Outbox holds the OS-synthetic spawn-ack with meta.source="spawn_ack".
+    # B49 W1-S6 follow-up: the spawn-ack text now carries a structured
+    # ``[task_spawned] kind=skill ...`` header so the LLM can correlate
+    # with the later ``[task_completed]`` injection. The user-friendly
+    # trailer (= _SPAWN_ACK_MSG) is preserved as the second paragraph.
     assert len(host.outbox) == 1
     out = host.outbox[0]
-    assert out["text"] == _SPAWN_ACK_MSG["en"]
     assert out["meta"].get("source") == "spawn_ack"
+    assert "[task_spawned] kind=skill" in out["text"], (
+        f"spawn-ack must carry the structured header for correlation; "
+        f"got {out['text']!r}"
+    )
+    assert _SPAWN_ACK_MSG["en"] in out["text"], (
+        f"spawn-ack must preserve the user-friendly trailer; got "
+        f"{out['text']!r}"
+    )
 
 
 @pytest.mark.asyncio
