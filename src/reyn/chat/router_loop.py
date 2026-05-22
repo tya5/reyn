@@ -2884,7 +2884,14 @@ class RouterLoop:
                     items.append({"slug": slug, "name": name, "description": desc})
         return items
 
-    async def _read_memory_body(self, layer: str, slug: str) -> dict:
+    async def _read_memory_body(
+        self,
+        layer: str,
+        slug: str,
+        *,
+        offset: int | None = None,
+        limit: int | None = None,
+    ) -> dict:
         """Read the full body of a memory entry.
 
         Memory files are stored as Markdown with a YAML frontmatter (= the
@@ -2914,8 +2921,17 @@ class RouterLoop:
         path = self.host.memory_path(layer, slug)
         try:
             content = await self.host.file_read(path)
+            body = _strip_frontmatter(content)
+            if offset is not None or limit is not None:
+                lines = body.splitlines(keepends=True)
+                start = max(0, offset or 0)
+                sliced = (
+                    lines[start:start + limit] if limit is not None
+                    else lines[start:]
+                )
+                body = "".join(sliced)
             return {
-                "content": _strip_frontmatter(content),
+                "content": body,
                 "layer": layer,
                 "slug": slug,
             }

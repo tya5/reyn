@@ -143,8 +143,21 @@ def list_entries(root: Path, target: Path, path_arg: str) -> dict:
     return {"path": rel if rel != "." else "", "entries": entries}
 
 
-def read_text(target: Path, path_arg: str) -> dict:
-    """Build the ``reyn_src_read`` result dict for ``target``."""
+def read_text(
+    target: Path,
+    path_arg: str,
+    *,
+    offset: int | None = None,
+    limit: int | None = None,
+) -> dict:
+    """Build the ``reyn_src_read`` result dict for ``target``.
+
+    When ``offset`` or ``limit`` is provided, the file is line-streamed
+    so the 256-KB byte cap is bypassed: only the requested slice is
+    materialised, and a giant file can be partially read without an
+    error. Without a slice, the cap applies as before to keep an
+    accidental binary / generated artifact from blowing up LLM context.
+    """
     if target.is_dir():
         return {
             "error": (
@@ -156,16 +169,31 @@ def read_text(target: Path, path_arg: str) -> dict:
         size = target.stat().st_size
     except OSError as exc:
         return {"error": f"reyn_src_read: stat failed: {exc}"}
-    if size > _MAX_READ_BYTES:
+    sliced = offset is not None or limit is not None
+    if not sliced and size > _MAX_READ_BYTES:
         return {
             "error": (
                 f"reyn_src_read: {path_arg!r} is {size} bytes, "
                 f"larger than the {_MAX_READ_BYTES}-byte cap. Read a "
-                "smaller file or list its directory first."
+                "smaller file, pass `offset` / `limit` to slice it, "
+                "or list its directory first."
             ),
         }
     try:
-        content = target.read_text(encoding="utf-8")
+        if sliced:
+            start = max(0, offset or 0)
+            end = (start + limit) if limit is not None else None
+            collected: list[str] = []
+            with target.open("r", encoding="utf-8") as f:
+                for i, line in enumerate(f):
+                    if i < start:
+                        continue
+                    if end is not None and i >= end:
+                        break
+                    collected.append(line)
+            content = "".join(collected)
+        else:
+            content = target.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return {
             "error": (

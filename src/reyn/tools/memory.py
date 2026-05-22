@@ -97,6 +97,21 @@ _READ_MEMORY_BODY_PARAMETERS: dict[str, Any] = {
             "enum": ["shared", "agent"],
         },
         "slug": {"type": "string"},
+        "offset": {
+            "type": "integer",
+            "description": (
+                "Line number to start reading from (0-indexed), counted "
+                "against the body after the YAML frontmatter is stripped. "
+                "Omit to start at the beginning."
+            ),
+        },
+        "limit": {
+            "type": "integer",
+            "description": (
+                "Number of lines to read from `offset`. "
+                "Omit to read through end of body."
+            ),
+        },
     },
     "required": ["layer", "slug"],
 }
@@ -365,6 +380,24 @@ async def _handle_list_memory(
     return items
 
 
+def _slice_body_lines(
+    content: str, offset: int | None, limit: int | None,
+) -> str:
+    """Apply line-based offset/limit slicing to memory body text.
+
+    Mirrors ``op_runtime/file.py`` read-op slicing semantics so the
+    three "read one entry" surfaces (= ``read_file`` / ``reyn_src_read``
+    / ``read_memory_body``) behave identically when given the same
+    offset/limit values.
+    """
+    if offset is None and limit is None:
+        return content
+    lines = content.splitlines(keepends=True)
+    start = max(0, offset or 0)
+    sliced = lines[start:start + limit] if limit is not None else lines[start:]
+    return "".join(sliced)
+
+
 async def _handle_read_memory_body(
     args: Mapping[str, Any], ctx: ToolContext
 ) -> ToolResult:
@@ -377,11 +410,21 @@ async def _handle_read_memory_body(
     Fallback: read the body file via ``ctx.workspace.read_file`` and
     strip the YAML frontmatter (= same G12 attractor fix logic as the
     router helper).
+
+    Optional ``offset`` / ``limit`` line-slice args apply against the
+    body **after** frontmatter is stripped — so the offset counts the
+    content the LLM would actually see.
     """
+    offset_raw = args.get("offset")
+    limit_raw = args.get("limit")
+    offset = int(offset_raw) if offset_raw is not None else None
+    limit = int(limit_raw) if limit_raw is not None else None
+
     rs = ctx.router_state
     if rs is not None and rs.read_memory_body_fn is not None:
         return await rs.read_memory_body_fn(
             args.get("layer", ""), args.get("slug", ""),
+            offset=offset, limit=limit,
         )
 
     layer = args.get("layer", "")
@@ -395,8 +438,9 @@ async def _handle_read_memory_body(
         content, found = ctx.workspace.read_file(str(body_path))
         if not found:
             return {"error": f"memory entry not found: {slug}", "layer": layer, "slug": slug}
+        body = _strip_frontmatter(content)
         return {
-            "content": _strip_frontmatter(content),
+            "content": _slice_body_lines(body, offset, limit),
             "layer": layer,
             "slug": slug,
         }
