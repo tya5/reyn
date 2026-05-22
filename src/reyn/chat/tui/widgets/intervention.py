@@ -58,13 +58,27 @@ class InterventionWidget(Widget):
         margin-top: 0;
     }
     InterventionWidget Button {
+        /* Wave-6 IV4: tight chip sizing so all 5 buttons fit on a single
+           row even when ``Ctrl+B`` opens the right panel and cuts the
+           conv pane width roughly in half. ``min-width: 6`` is the
+           shortest hotkey-format label (``"[y]es"``) + 1-cell breathing
+           room; ``padding: 0`` removes the previous 2-cell side padding.
+           Width is ``auto`` so longer labels (``"[A]lways"``,
+           ``"free response…"``) expand to fit their text without
+           forcing the shorter chips wider. Inter-chip gap drops from
+           ``margin: 0 1 0 0`` to a single space between labels
+           (= preserved by the existing 1-cell padding-x). Net width
+           budget at default labels: ~42 cells (= ``5 + 8 + 4 + 7 +
+           14 + 4-cell gap``), fits comfortably in a 50-cell narrow
+           pane. */
         margin: 0 1 0 0;
         background: $primary;
         color: #ffffff;
         border: none;
-        padding: 0 2;
+        padding: 0;
         height: 1;
-        min-width: 10;
+        width: auto;
+        min-width: 6;
     }
     InterventionWidget Button:hover {
         background: #e0664e;
