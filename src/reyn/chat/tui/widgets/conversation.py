@@ -682,7 +682,24 @@ class ConversationView(Widget):
             self._last_long_reply = None
             return
         preview = "\n".join(lines[:_FOLD_THRESHOLD_LINES])
-        remaining = len(lines) - _FOLD_THRESHOLD_LINES
+        # Wave-10 follow-up G-F6: report the rendered-screen-line count
+        # of the suppressed tail, not the raw source-line count. The
+        # fold decision (= ``_estimate_rendered_lines(lines) >
+        # _FOLD_THRESHOLD_LINES``) was already in rendered-line space,
+        # but the hint message used ``len(lines) -
+        # _FOLD_THRESHOLD_LINES`` which is raw source-line count. Net
+        # effect: a reply with paragraphs that wrap to 4 screen lines
+        # each would report ``"12 more lines"`` when the actual hidden
+        # body is ~48 screen lines (= user expected a short tail,
+        # ``/expand`` reveals a screenful). Conversely, 60 single-word
+        # source lines past position 30 reported ``"60 more lines"``
+        # but rendered as just ~60 screen lines (= the report happens
+        # to be accurate when wrap doesn't fire, which is the minority
+        # case). Routing the count through ``_estimate_rendered_lines``
+        # uses the same metric for both the gate and the user-facing
+        # count → no surprise on ``/expand``.
+        tail_lines = lines[_FOLD_THRESHOLD_LINES:]
+        remaining = self._estimate_rendered_lines(tail_lines)
         self._write_body(RichMarkdown(preview))
         hint = Text()
         hint.append(
