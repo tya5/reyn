@@ -89,6 +89,10 @@ async def test_complete_tool_call_row_unmounts_live_widget():
 
     F-H min-display-time defers flush by up to 0.3s for very fast ops;
     the test waits past the threshold so the deferred unmount completes.
+    The pause margin is sized generously (= 0.6s, 2× the F-H threshold)
+    so CI runners under event-loop load can still meet the deadline
+    without flaking — previously a 0.4s margin failed intermittently
+    on Python 3.11 / 3.12 GitHub Actions runs during high concurrency.
     """
     app = _ConvOnlyApp()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -98,8 +102,9 @@ async def test_complete_tool_call_row_unmounts_live_widget():
         await pilot.pause()
         assert len(list(conv.query(ToolCallRow))) == 1
         conv.complete_tool_call_row("op-b", result_snippet="200 OK 1.2KB")
-        # Wait for F-H min-display-time deferral to elapse.
-        await pilot.pause(0.4)
+        # Wait well past the F-H min-display-time deferral so the
+        # deferred unmount has a generous margin even under CI load.
+        await pilot.pause(0.6)
         # Row is unmounted after flush.
         assert len(list(conv.query(ToolCallRow))) == 0
 
@@ -114,8 +119,11 @@ async def test_fail_tool_call_row_unmounts_live_widget_and_records_error():
         conv.start_tool_call_row("op-c", "shell")
         await pilot.pause()
         conv.fail_tool_call_row("op-c", error="timeout")
-        # Wait for F-H min-display-time deferral.
-        await pilot.pause(0.4)
+        # Generous margin past the F-H 0.3s deferral so CI load doesn't
+        # leave the row mounted past the assertion (= the 0.4s prior
+        # margin was too tight under Python 3.11/3.12 GitHub Actions
+        # concurrency).
+        await pilot.pause(0.6)
         assert len(list(conv.query(ToolCallRow))) == 0
 
 
@@ -124,6 +132,17 @@ async def test_fast_tool_call_defers_flush_so_row_stays_visible_briefly():
     """Tier 2 F-H: very fast ops (= mount + complete in same tick) defer
     the flush so the user can perceive the row before it transitions
     to RichLog history.
+
+    The "row is still visible briefly" check is performed
+    SYNCHRONOUSLY (= no ``await``) immediately after
+    ``complete_tool_call_row`` returns. The set_timer callback that
+    unmounts the row only runs on a subsequent event-loop yield, so
+    by not yielding we get a deterministic "deferred-flush is armed"
+    signal without timing fragility. The prior
+    ``await pilot.pause(0.05)`` was intended as "less than 0.3s"
+    but on slow CI the cumulative wall time between mount and the
+    pause assertion exceeded 0.3s — the timer fired during the
+    pause and the assertion ``len == 1`` saw 0 instead.
     """
     app = _ConvOnlyApp()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -133,14 +152,19 @@ async def test_fast_tool_call_defers_flush_so_row_stays_visible_briefly():
         await pilot.pause()
         # Complete immediately — F-H should defer the flush.
         conv.complete_tool_call_row("op-fast", result_snippet="ok")
-        # Brief pause — less than the min-display threshold; row should
-        # still be visible because the flush is deferred.
-        await pilot.pause(0.05)
+        # Synchronous check: without yielding, the set_timer callback
+        # cannot have fired, so the row must still be mounted. If the
+        # deferred-flush was not armed (= the F-H mechanism broke),
+        # ``complete_tool_call_row`` would have synchronously unmounted
+        # the row via ``_do_flush_tool_call_row`` and this would fail.
         assert len(list(conv.query(ToolCallRow))) == 1, (
-            "fast row stays mounted briefly so it's perceivable"
+            "fast row stays mounted briefly so it's perceivable "
+            "(= the F-H deferred-flush should be set; the row "
+            "should NOT unmount synchronously on complete)"
         )
-        # Wait past the threshold — row should be flushed by now.
-        await pilot.pause(0.4)
+        # Wait past the threshold with generous CI margin — row
+        # should be flushed by now.
+        await pilot.pause(0.6)
         assert len(list(conv.query(ToolCallRow))) == 0
 
 
