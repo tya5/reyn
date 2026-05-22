@@ -26,11 +26,34 @@ synthetic follow-up builder) reads the path, encodes, and embeds the
 binary as a data URL ONLY when sending to the model. Storage stays
 light; the LLM sees the materialised form.
 
-Out of scope for PR-C (F1-B):
-  - Preview generator (= deferred to PR-D / #385 PoC).
-  - ``read_tool_result(path)`` action (= deferred to PR-D).
-  - Cleanup policy (TTL / max-N / session boundary) — files accumulate
-    until the user deletes them. Deferred to PR-D.
+Lifecycle policy (#385 β core impl sub-task 5, 2026-05-22 frozen
+contract Phase 1 = "(a) Persistent until user delete"):
+
+  - **No auto-GC.** Files written by ``save_*`` remain on disk until a
+    user / operator deletes them out-of-band (= ``rm``, file explorer,
+    cleanup script). The MediaStore class does NOT enforce TTL,
+    max-N, session-end cleanup, or any other automatic eviction.
+  - **Cross-turn / cross-session re-access supported.** A path-ref
+    minted in user turn 1 remains valid in user turn 2 / next chat
+    session / a forwarded A2A peer's expand — the file is still there.
+    (See Q1 of the frozen contract: ``agent_id = agent name`` durable
+    identity, not per-turn ``chain_id``.)
+  - **Disk usage grows unboundedly.** Documented operational caveat —
+    operators are expected to ``ls -la .reyn/tool-results/`` and clean
+    up periodically. The browsable filename convention makes manual
+    audit straightforward.
+  - **Phase 2 reservation.** When measurement surfaces a real disk
+    pressure or stale-handle problem (= not just hypothetical), Phase 2
+    adds a config-driven policy: TTL / LRU / session-end / mixed. The
+    reyn.yaml ``multimodal:`` block is the natural insertion point;
+    no schema reservation made today (= YAGNI). The ``MediaStoreConfig``
+    dataclass is the future extension surface.
+
+Out of scope (= future work):
+  - Phase 2 cleanup policy (= TTL / max-N / session boundary). Trigger
+    is measurement evidence, not hypothesis.
+  - Cross-host RPC dispatcher for ``resource_uri`` (= #385 β core
+    impl sub-task 3, pending scheme arbitration).
 """
 from __future__ import annotations
 
@@ -99,6 +122,15 @@ class MediaStoreConfig:
     convention chosen in issue #383 / #385:
         ``.reyn/media``        for image binary
         ``.reyn/tool-results`` for text-y tool result dumps
+
+    Phase 1 (= "(a) Persistent until user delete", #385 β sub-task 5):
+    no cleanup-policy fields here today — the storage is intentionally
+    unbounded, audit is via on-disk inspection. Phase 2 (= TTL / max-N /
+    session-end / mixed) extends this dataclass when measurement
+    surfaces a real disk-pressure or stale-handle problem. The
+    extension surface is documented to keep the future addition out of
+    the public-API surprise zone, but no fields are reserved today
+    (= YAGNI; field shape is a Phase 2 design decision).
     """
     media_dir: str = ".reyn/media"
     tool_results_dir: str = ".reyn/tool-results"
