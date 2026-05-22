@@ -1744,7 +1744,16 @@ class RightPanel(Widget):
         if self._panel_type == "keys":
             return f"[bold {_CORAL}]Key Bindings[/]  [#555555]j↓ k↑[/]"
         if self._panel_type == "agents":
-            return f"[bold {_CORAL}]Agents[/]  [#555555]j↓ k↑[/]"
+            # Wave-10 H-F2: surface ``space=open c=copy`` so the cursor's
+            # most useful actions are discoverable from the header. Pre-fix
+            # the agents tab advertised only ``j↓ k↑``, leaving first-time
+            # users to discover Space / c by reading the Keys tab — even
+            # though both bindings work here exactly as in the Memory tab
+            # (which DOES surface them). Matches Memory's hint shape.
+            return (
+                f"[bold {_CORAL}]Agents[/]"
+                f"  [#555555]j↓ k↑ space=open c=copy[/]"
+            )
         if self._panel_type == "memory":
             return (
                 f"[bold {_CORAL}]Memory[/]"
