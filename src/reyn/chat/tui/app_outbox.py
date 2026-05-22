@@ -53,6 +53,60 @@ def _is_plan_sourced_body(body: str) -> bool:
     return any(stripped.startswith(p) for p in _PLAN_SOURCED_BODY_PREFIXES)
 
 
+# Bulky / free-form keys we want to summarise rather than inline in the
+# ToolCallRow's args / result line. Same set the forwarder/op_runtime
+# helpers use — keeps the visual contract consistent across surfaces.
+_TOOL_ARG_BULKY_FIELDS = frozenset({
+    "content", "new_string", "old_string", "body", "preview",
+})
+
+
+def _format_tool_args(args: dict | None) -> str:
+    """Compact ``key=value, ...`` repr of dispatcher args for ToolCallRow.
+
+    Returns "" when ``args`` is empty / non-dict — ToolCallRow renders
+    the tool name with empty parens in that case. Bulky string fields
+    collapse to ``<N chars>`` so the line stays short.
+    """
+    if not isinstance(args, dict) or not args:
+        return ""
+    parts: list[str] = []
+    for key, value in args.items():
+        if key in _TOOL_ARG_BULKY_FIELDS and isinstance(value, str) and len(value) > 24:
+            parts.append(f"{key}=<{len(value)} chars>")
+            continue
+        s = str(value)
+        if len(s) > 60:
+            s = s[:57] + "..."
+        parts.append(f"{key}={s}")
+    return ", ".join(parts)
+
+
+def _format_tool_result(result) -> str:
+    """Compact one-line repr of dispatcher result for the ToolCallRow row-2.
+
+    Accepts dict / str / None; degrades to "" when result has nothing
+    presentable. The widget further truncates to terminal width, so
+    this just removes the bulky body fields and joins the rest.
+    """
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        return result[:117] + "..." if len(result) > 120 else result
+    if not isinstance(result, dict):
+        return str(result)[:120]
+    parts: list[str] = []
+    for key, value in result.items():
+        if key in _TOOL_ARG_BULKY_FIELDS and isinstance(value, str) and len(value) > 24:
+            parts.append(f"{key}=<{len(value)} chars>")
+            continue
+        s = str(value)
+        if len(s) > 60:
+            s = s[:57] + "..."
+        parts.append(f"{key}={s}")
+    return ", ".join(parts)
+
+
 # Re-export for backward compatibility — moved to a shared module so the
 # right_panel widgets can use it without creating an import cycle through
 # app_outbox.
@@ -100,6 +154,12 @@ class OutboxRouter:
             # workflow_aborted events) and handled in app._handle_trace_for_skill_row.
             "error":                    self._on_error,
             "hot_list_updated":         self._on_hot_list_updated,
+            # Issue #427 step 4: tool-call lifecycle from ChatEventForwarder
+            # (= step 3). Mount a ToolCallRow on _started, finalise
+            # on _completed / _failed, keyed by op_id.
+            "tool_call_started":        self._on_tool_call_started,
+            "tool_call_completed":      self._on_tool_call_completed,
+            "tool_call_failed":         self._on_tool_call_failed,
         }
 
     # ── transient sticky helpers ──────────────────────────────────────────────
@@ -711,6 +771,67 @@ class OutboxRouter:
         # Reset on the next user submit.
         self._app.set_title_state("error")
         self._app.alert()
+
+    # ── Tool-call lifecycle (issue #427 step 4) ───────────────────────────────
+
+    def _on_tool_call_started(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """``tool_call_started`` — mount a ToolCallRow for this op_id.
+
+        ``meta`` carries the dispatcher-side payload bridged by
+        ``ChatEventForwarder.on_tool_called``:
+            {tool, op_id, args, chain_id, run_id, ...}
+
+        Render ``args`` as a compact ``key=value`` line (= the same shape
+        ToolCallRow's truncation helper expects). The conv pane keys
+        the row off ``op_id`` so the eventual completed / failed
+        message can find it back.
+        """
+        meta = msg.meta or {}
+        op_id = str(meta.get("op_id") or "")
+        tool_name = str(meta.get("tool") or msg.text or "tool")
+        args = meta.get("args") or {}
+        try:
+            conv.start_tool_call_row(
+                op_id, tool_name, args_repr=_format_tool_args(args),
+            )
+        except Exception:
+            pass
+
+    def _on_tool_call_completed(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """``tool_call_completed`` — finalise the row to its success terminal."""
+        meta = msg.meta or {}
+        op_id = str(meta.get("op_id") or "")
+        result = meta.get("result")
+        try:
+            conv.complete_tool_call_row(
+                op_id, result_snippet=_format_tool_result(result),
+            )
+        except Exception:
+            pass
+
+    def _on_tool_call_failed(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """``tool_call_failed`` — finalise the row to its failure terminal."""
+        meta = msg.meta or {}
+        op_id = str(meta.get("op_id") or "")
+        error_kind = str(meta.get("error_kind") or "")
+        error_msg = str(meta.get("error_message") or "")
+        # Prefer "kind: message" when both present; fall back to whichever
+        # one is non-empty. Keeps the row's error display informative even
+        # when the dispatcher omits one of the two fields.
+        if error_kind and error_msg:
+            reason = f"{error_kind}: {error_msg}"
+        else:
+            reason = error_kind or error_msg or "failed"
+        try:
+            conv.fail_tool_call_row(op_id, error=reason)
+        except Exception:
+            pass
 
     def _on_hot_list_updated(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,

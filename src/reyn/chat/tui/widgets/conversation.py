@@ -55,6 +55,7 @@ from .intervention import InterventionWidget
 from .skill_activity import SkillActivityRow
 from .sticky_status import StickyStatus
 from .streaming_row import StreamingRow
+from .tool_call_row import ToolCallRow
 
 _DASH_TOTAL = 38  # matches the banner separator width
 _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
@@ -268,6 +269,11 @@ class ConversationView(Widget):
         super().__init__(id=id)
         self._stream_rows: dict[str, StreamingRow] = {}
         self._skill_rows: dict[str, SkillActivityRow] = {}
+        # Issue #427 step 4: per-tool_call inline rows keyed by op_id
+        # (= dispatch_tool's args_hash, propagated via forwarder OutboxMessage
+        # meta). Mounted on tool_call_started, finalised on
+        # tool_call_completed / tool_call_failed.
+        self._tool_call_rows: dict[str, ToolCallRow] = {}
         # Header-grouping state (B1)
         self._last_speaker: str = ""
         self._last_speaker_at: float = 0.0
@@ -865,6 +871,89 @@ class ConversationView(Widget):
         row = self._skill_rows.get(run_id)
         if row is not None:
             row.set_detail(detail)
+
+    # ── Tool-call rows (issue #427 step 4) ───────────────────────────────────
+
+    def start_tool_call_row(
+        self,
+        op_id: str,
+        tool_name: str,
+        *,
+        args_repr: str = "",
+    ) -> ToolCallRow | None:
+        """Mount a ToolCallRow for ``op_id`` if one isn't already present.
+
+        Returns the row (existing or newly mounted). ``op_id`` is the
+        ``args_hash`` propagated through the forwarder; it correlates the
+        eventual ``tool_call_completed`` / ``tool_call_failed`` outbox
+        message back to this row. Empty ``op_id`` short-circuits to
+        None (= consumer with no correlation id falls back to silent
+        suppression rather than mounting an unkeyed row that can never
+        be finalised).
+        """
+        if not op_id:
+            return None
+        existing = self._tool_call_rows.get(op_id)
+        if existing is not None:
+            return existing
+        self._consume_empty_hint()
+        row = ToolCallRow(
+            tool_name=tool_name,
+            args_repr=args_repr,
+            id=f"toolcall_{op_id[:8]}",
+        )
+        self._tool_call_rows[op_id] = row
+        self.mount(row)
+        return row
+
+    def complete_tool_call_row(
+        self, op_id: str, *, result_snippet: str = "",
+    ) -> None:
+        """Transition the row keyed by ``op_id`` to the success terminal.
+
+        Mirrors ``finish_skill_row`` semantics: finalise the row, flush
+        its rendered shape into the RichLog so scrollback / Ctrl+P/N
+        can reach it, then unmount the live widget to bound DOM growth
+        across long sessions. No-op when no row is mounted for ``op_id``
+        (e.g. the start message was lost or the row was already
+        finalised by a prior terminal).
+        """
+        row = self._tool_call_rows.pop(op_id, None)
+        if row is None:
+            return
+        row.finish_success(result_snippet=result_snippet or None)
+        self._flush_tool_call_row(row)
+
+    def fail_tool_call_row(self, op_id: str, *, error: str = "") -> None:
+        """Transition the row keyed by ``op_id`` to the failure terminal."""
+        row = self._tool_call_rows.pop(op_id, None)
+        if row is None:
+            return
+        row.finish_failure(reason=error)
+        self._flush_tool_call_row(row)
+
+    def _flush_tool_call_row(self, row: ToolCallRow) -> None:
+        """Render the row's two-line shape into the RichLog and unmount.
+
+        Same flush pattern as ``finish_skill_row`` (= finished line goes
+        to scroll history, live widget removed). The row's render
+        helpers are pure over its state, so reading them after the
+        finish_* call captures the terminal shape.
+        """
+        try:
+            line1 = row._build_line1()
+            line2 = row._build_line2()
+            self._write_body(line1)
+            if line2.plain:
+                self._write_body(line2)
+            row.remove()
+        except Exception:
+            # Same defensive stance as finish_skill_row: a flush
+            # failure leaves the row mounted (= breadcrumb stays
+            # visible) rather than blowing up the outbox loop.
+            pass
+
+    # ── SkillActivityRow (issue #210 / wave-7 #418) ───────────────────────────
 
     def finish_skill_row(
         self, run_id: str, *, success: bool = True, reason: str = "",
