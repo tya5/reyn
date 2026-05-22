@@ -263,9 +263,8 @@ class ConversationView(Widget):
     }
     """
 
-    def __init__(self, *, scroll_end: bool = True, id: str | None = None) -> None:
+    def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
-        self._scroll_end = scroll_end
         self._stream_rows: dict[str, StreamingRow] = {}
         self._skill_rows: dict[str, SkillActivityRow] = {}
         # Header-grouping state (B1)
