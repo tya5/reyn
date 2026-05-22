@@ -434,8 +434,20 @@ class RightPanel(Widget):
             # the App's escape binding is gated by ``check_action`` which
             # returns False when nothing else (recording, error box) is
             # interceptable. Tab cycling stays; this is purely the exit.
+            # A-F4 (wave-8): when the docs tab has an active filter,
+            # Esc clears the filter in place instead of dropping focus
+            # back to the input bar. Without this, the only clear path
+            # was running ``/docs-filter`` (with no argument) — a
+            # mechanical 4-step (=  press `/`, delete pre-fill,
+            # submit empty). Esc-to-clear matches the standard
+            # "back out one level" affordance and keeps focus where
+            # the user just was.
             event.prevent_default()
             event.stop()
+            if self._panel_type == "docs" and self._docs_filter:
+                self._docs_filter = ""
+                self._invalidate()
+                return
             from .. import InputBar  # late import → avoid cycle
             try:
                 self.app.query_one("#inputbar", InputBar).focus_input()

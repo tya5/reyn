@@ -66,9 +66,14 @@ def render_docs(
 
     lines: list[str] = []
     if docs_filter:
+        # A-F4 (wave-8): hint advertises Esc as the direct clear path.
+        # Pre-A-F4, the only clear flow was ``/docs-filter`` (no arg) — a
+        # 4-step (press `/`, delete prefill, submit empty) that no other
+        # filter UI requires. ``RightPanel.on_key`` now clears in place
+        # on Esc when ``_docs_filter`` is non-empty.
         lines.append(
             f"[#aaaaaa]  filter: [/][{_CORAL}]{_esc(docs_filter)}[/]"
-            f"[#555555]  (clear via /docs-filter)[/]"
+            f"[#555555]  (Esc to clear)[/]"
         )
         lines.append("")
     if not groups:
