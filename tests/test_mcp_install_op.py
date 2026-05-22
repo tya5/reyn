@@ -301,8 +301,11 @@ def test_env_overrides_skip_prompt_and_persist_secret(tmp_path):
     assert "EXAMPLE_API_KEY" in secrets_text
     assert "my-secret-value" in secrets_text
 
-    # Config file written with ${KEY} reference, not raw value
-    config_path = tmp_path / "reyn.local.yaml"
+    # Config file written with ${KEY} reference, not raw value.
+    # Issue #470 (2026-05-22): write target is now ``.reyn/mcp.yaml``
+    # regardless of the op's ``scope`` arg — separating dynamic MCP
+    # registry from static deployment config.
+    config_path = tmp_path / ".reyn" / "mcp.yaml"
     assert config_path.exists()
     import yaml
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -356,83 +359,54 @@ def test_secret_value_not_in_event(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_scope_local_writes_to_reyn_local_yaml(tmp_path):
-    """Tier 2: scope='local' writes to <project>/reyn.local.yaml."""
-    resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
-    bus = _AutoApproveInterventionBus()
-    ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
+def test_install_writes_to_dynamic_mcp_yaml_regardless_of_scope(tmp_path):
+    """Tier 2 (#470 2026-05-22 contract reversal): scope arg is now a
+    no-op — every install writes to ``.reyn/mcp.yaml`` regardless of
+    whether the LLM passes ``scope="local"`` / ``"project"`` / ``"user"``
+    / nothing. The architectural decision is "one canonical dynamic
+    registry location" (= separates op-mutated MCP servers from
+    static deployment config in reyn.yaml).
 
-    op = MCPInstallIROp(
-        kind="mcp_install",
-        server_id="io.github.modelcontextprotocol/server-filesystem",
-        scope="local",
-    )
+    Renamed + consolidated from three prior tests
+    (test_scope_local_writes_to_reyn_local_yaml /
+    test_scope_project_writes_to_reyn_yaml /
+    test_scope_user_writes_to_home_reyn_config) that pinned the
+    pre-#470 per-scope routing. Per ``feedback_contract_reversal_rewrites_tests``,
+    the rewrite (not patch) makes the contract change visible at
+    review.
+    """
+    for scope in ("local", "project", "user"):
+        resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
+        decl = PermissionDecl(mcp_install=True)
+        bus = _AutoApproveInterventionBus()
+        ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-            result = _run(mcp_install_handle(op, ctx, "control_ir"))
+        op = MCPInstallIROp(
+            kind="mcp_install",
+            server_id="io.github.modelcontextprotocol/server-filesystem",
+            scope=scope,
+        )
 
-    assert result["status"] == "ok"
-    expected_path = tmp_path / "reyn.local.yaml"
-    assert result["installed_path"] == str(expected_path)
-    assert expected_path.exists()
+        with mock.patch("shutil.which", return_value="/usr/bin/npx"):
+            with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
+                result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
+        expected_path = tmp_path / ".reyn" / "mcp.yaml"
+        assert result["status"] == "ok"
+        assert result["installed_path"] == str(expected_path), (
+            f"scope={scope!r} should write to .reyn/mcp.yaml; got {result['installed_path']}"
+        )
+        assert expected_path.exists()
 
-def test_scope_project_writes_to_reyn_yaml(tmp_path):
-    """Tier 2: scope='project' writes to <project>/reyn.yaml."""
-    resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
-    bus = _AutoApproveInterventionBus()
-    ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
-
-    op = MCPInstallIROp(
-        kind="mcp_install",
-        server_id="io.github.modelcontextprotocol/server-filesystem",
-        scope="project",
-    )
-
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-            result = _run(mcp_install_handle(op, ctx, "control_ir"))
-
-    assert result["status"] == "ok"
-    expected_path = tmp_path / "reyn.yaml"
-    assert result["installed_path"] == str(expected_path)
-    assert expected_path.exists()
-
-    import yaml
-    written = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
-    assert "mcp" in written
-    assert "servers" in written["mcp"]
-
-
-def test_scope_user_writes_to_home_reyn_config(tmp_path, monkeypatch):
-    """Tier 2: scope='user' writes to ~/.reyn/config.yaml (mocked home)."""
-    # Redirect home to tmp_path to avoid polluting real ~/.reyn/config.yaml
-    fake_home = tmp_path / "fake_home"
-    fake_home.mkdir()
-    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
-
-    resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
-    bus = _AutoApproveInterventionBus()
-    ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
-
-    op = MCPInstallIROp(
-        kind="mcp_install",
-        server_id="io.github.modelcontextprotocol/server-filesystem",
-        scope="user",
-    )
-
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-            result = _run(mcp_install_handle(op, ctx, "control_ir"))
-
-    assert result["status"] == "ok"
-    expected_path = fake_home / ".reyn" / "config.yaml"
-    assert result["installed_path"] == str(expected_path)
-    assert expected_path.exists()
+        # The minted shape carries the ``{mcp: {servers: {...}}}`` wrapper
+        # so the existing config loader's ``_merge`` handles it without
+        # special-casing.
+        import yaml
+        written = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+        assert "mcp" in written
+        assert "servers" in written["mcp"]
+        # Clean up between iterations so subsequent scope tests start fresh.
+        expected_path.unlink()
 
 
 # ---------------------------------------------------------------------------

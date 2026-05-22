@@ -43,7 +43,20 @@ from .context import OpContext
 
 
 def _scope_to_path(scope: str, project_root: Path) -> Path:
-    """Resolve the target config file path for the given scope."""
+    """Resolve the target config file path for the given scope.
+
+    Issue #470 (2026-05-22): for the NEW dynamic registry location
+    (``"dynamic"``), this returns ``.reyn/mcp.yaml``. Legacy scopes
+    are retained so ``_detect_scope`` can walk older config files
+    that still carry ``mcp.servers`` from before the separation.
+
+    Migration order in ``_detect_scope`` queries ``"dynamic"`` first
+    so new installs are dropped from the canonical location; older
+    hand-edited entries in reyn.yaml / reyn.local.yaml / user config
+    remain droppable via the legacy paths.
+    """
+    if scope == "dynamic":
+        return project_root / ".reyn" / "mcp.yaml"
     if scope == "local":
         return project_root / "reyn.local.yaml"
     if scope == "project":
@@ -79,8 +92,16 @@ def _detect_scope(server: str, project_root: Path) -> str | None:
     """Walk scope tiers to find the first that contains ``server``.
 
     Returns the scope name or None when the server is absent from all.
+    Issue #470 (2026-05-22): ``"dynamic"`` (= ``.reyn/mcp.yaml``) is
+    queried first because that's the canonical location for new
+    installs. Older hand-edited entries in ``reyn.yaml`` /
+    ``reyn.local.yaml`` / ``~/.reyn/config.yaml`` remain droppable
+    via the legacy walk order — backward compat preserved.
+
+    All scopes share the same ``{"mcp": {"servers": {...}}}`` shape
+    so the lookup logic is uniform; only the file location differs.
     """
-    for scope in ("local", "project", "user"):
+    for scope in ("dynamic", "local", "project", "user"):
         cfg = _read_yaml_config(_scope_to_path(scope, project_root))
         servers = (
             cfg.get("mcp", {}).get("servers", {})
