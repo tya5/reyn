@@ -2220,6 +2220,14 @@ class RouterLoop:
         # that the read-only handlers don't consult (= behavior preserved).
         "reyn_src_list", "reyn_src_read",
         "web_search", "web_fetch",
+        # B49 Step 2 verify (2026-05-22, post-PR #424): `read_tool_result`
+        # was surfaced to the router LLM via `router_tools.build_tools()`
+        # E3, but execution dispatch was missing here. The LLM saw the
+        # tool, called it (= 2/3 shots in N=3 verify), then hit
+        # `{"error": "unhandled tool: read_tool_result"}` → router empty
+        # response → empty reply. Dispatch wiring belongs in the same
+        # registry-path family as web_fetch / read_file / recall.
+        "read_tool_result",
         # Phase 3.5-A+C — file cluster.  Handlers consume
         # RouterCallerState.op_context_factory (= host.make_router_op_context)
         # so op_runtime sees the operator-declared PermissionDecl /
