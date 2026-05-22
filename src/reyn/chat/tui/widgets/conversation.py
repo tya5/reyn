@@ -1260,41 +1260,60 @@ class ConversationView(Widget):
         stays visible in scroll history. ``(see events)`` is appended
         only when the error originated from a skill / run (= the same
         ``has_trace`` gate the ErrorBox's own ``.eb-hint`` label uses).
+
+        Wave-10 follow-up I-F3: previously this used a ``while`` loop
+        that would ``continue`` past boxes whose ``remove()`` raised
+        — silently swallowing the breadcrumb for the actual "most
+        recently mounted" box AND falling through to write a
+        breadcrumb for the NEXT-most-recent one instead. The docstring
+        promised "the most recently mounted" singular; the
+        implementation was "the most recently mounted that can be
+        removed without raising", with the breadcrumb pointing at the
+        wrong box on remove failure.
+
+        Restructured to a single iteration: pop the most recent box,
+        write its breadcrumb FIRST (= the load-bearing record per the
+        F2 intent), then best-effort ``remove()``. Removal failure no
+        longer affects the breadcrumb path.
         """
-        while self._error_boxes:
-            box = self._error_boxes.pop()
-            # Capture the summary BEFORE removal — `box` is invalidated
-            # by `remove()` and we still want to write the breadcrumb
-            # even if removal raises (= the widget was already gone).
-            first_line, _sep, _rest = (getattr(box, "_message", "") or "").partition("\n")
-            if len(first_line) > 72:
-                summary = first_line[:71] + "…"
-            else:
-                summary = first_line
-            has_trace = bool(
-                getattr(box, "_skill_name", "") or getattr(box, "_run_id_short", "")
-            )
-            try:
-                box.remove()
-            except Exception:
-                continue  # already removed, try next
-            trailer = " (see events)" if has_trace else ""
-            from rich.text import Text as _RichText
-            self._write_log(_RichText(
-                f"  ✗ {summary} (dismissed){trailer}",
-                style="dim #555555",
-            ))
-            # C-F4 (wave-8): after dismiss the live count drops by 1.
-            # If still ≥ 2, refresh the count sticky to the new value;
-            # otherwise the count form is stale and we clear the
-            # sticky so it doesn't linger as "2 errors" when only 1
-            # (or 0) remains.
-            n = len(self._error_boxes)
-            if n >= 2:
-                self._maybe_show_error_count_status()
-            else:
-                self.hide_status()
+        if not self._error_boxes:
             return
+        box = self._error_boxes.pop()
+        first_line, _sep, _rest = (getattr(box, "_message", "") or "").partition("\n")
+        if len(first_line) > 72:
+            summary = first_line[:71] + "…"
+        else:
+            summary = first_line
+        has_trace = bool(
+            getattr(box, "_skill_name", "") or getattr(box, "_run_id_short", "")
+        )
+        trailer = " (see events)" if has_trace else ""
+        from rich.text import Text as _RichText
+        # Write the breadcrumb FIRST so it lands regardless of whether
+        # the subsequent remove() succeeds. The F2 intent is "scroll
+        # history retains the failure context"; the DOM remove is
+        # secondary cleanup.
+        self._write_log(_RichText(
+            f"  ✗ {summary} (dismissed){trailer}",
+            style="dim #555555",
+        ))
+        try:
+            box.remove()
+        except Exception:
+            # Already removed / DOM teardown in progress / etc. The
+            # breadcrumb is in the log; that's the user-visible
+            # contract.
+            pass
+        # C-F4 (wave-8): after dismiss the live count drops by 1.
+        # If still ≥ 2, refresh the count sticky to the new value;
+        # otherwise the count form is stale and we clear the
+        # sticky so it doesn't linger as "2 errors" when only 1
+        # (or 0) remains.
+        n = len(self._error_boxes)
+        if n >= 2:
+            self._maybe_show_error_count_status()
+        else:
+            self.hide_status()
 
     def _maybe_show_error_count_status(self) -> None:
         """Surface the live ErrorBox count via the sticky when ≥ 2 stacked.
