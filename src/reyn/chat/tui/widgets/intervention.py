@@ -377,6 +377,15 @@ class InterventionWidget(Widget):
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
+        # Wave-9 E-F2: reject empty / whitespace-only answers. Without
+        # this guard, an accidental Enter on the blank field dispatched
+        # ``""`` to ``deliver_answer`` — which then either silently
+        # mismatched ``match_choice`` (= agent stuck waiting for a real
+        # answer) or routed an empty string into the conversation. The
+        # Input retains focus + placeholder so the user can type and
+        # submit for real.
+        if not event.value.strip():
+            return
         await self._submit(event.value)
 
     async def _submit(self, answer: str) -> None:
