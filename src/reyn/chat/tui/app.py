@@ -1010,8 +1010,14 @@ class ReynTUIApp(App):
             if conv is not None and self._skill_exec:
                 for run_id in list(self._skill_exec.keys()):
                     try:
+                        # C-F5 (wave-8): aborted=True → ⊘ glyph (not ✗)
+                        # so user-initiated cancel reads visually distinct
+                        # from a system failure.
                         conv.finish_skill_row(
-                            run_id, success=False, reason="cancelled (remote)",
+                            run_id,
+                            success=False,
+                            reason="cancelled (remote)",
+                            aborted=True,
                         )
                     except Exception:
                         pass
@@ -1045,8 +1051,13 @@ class ReynTUIApp(App):
         if conv is not None and self._skill_exec:
             for run_id in list(self._skill_exec.keys()):
                 try:
+                    # C-F5 (wave-8): aborted=True → ⊘ glyph (not ✗) for
+                    # user-initiated cancel.
                     conv.finish_skill_row(
-                        run_id, success=False, reason="cancelled",
+                        run_id,
+                        success=False,
+                        reason="cancelled",
+                        aborted=True,
                     )
                 except Exception:
                     pass

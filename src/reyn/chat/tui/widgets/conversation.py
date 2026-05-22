@@ -1085,7 +1085,12 @@ class ConversationView(Widget):
     # ── SkillActivityRow (issue #210 / wave-7 #418) ───────────────────────────
 
     def finish_skill_row(
-        self, run_id: str, *, success: bool = True, reason: str = "",
+        self,
+        run_id: str,
+        *,
+        success: bool = True,
+        reason: str = "",
+        aborted: bool = False,
     ) -> None:
         """Transition the row to ``✓ / ✗`` and roll it into the scroll log.
 
@@ -1109,7 +1114,7 @@ class ConversationView(Widget):
         row = self._skill_rows.pop(run_id, None)
         if row is None:
             return
-        row.finish(success=success, reason=reason)
+        row.finish(success=success, reason=reason, aborted=aborted)
         try:
             finished_text = row._build_finished()
             self._write_body(finished_text)
