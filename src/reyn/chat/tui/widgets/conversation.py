@@ -823,6 +823,55 @@ class ConversationView(Widget):
             pass
         return full
 
+    def end_stream_cancelled(self, msg_id: str) -> str:
+        """Seal a cancelled stream and write a visually-differentiated partial.
+
+        Wave-9 F-F7: the previous cancel path called ``end_stream``
+        which committed the partial text via the same
+        ``_write_agent_markdown_with_fold`` formatting used for
+        complete replies, then appended a separate ``"  ⌁ cancelled"``
+        suffix line. Scrolling back through history the user couldn't
+        tell which was a cancelled fragment vs a real reply — the
+        partial rendered with full Markdown styling (= bold / headers /
+        code blocks / etc.), and the dim suffix was easy to miss
+        because it sat below the visible region for any reply taller
+        than the viewport.
+
+        The cancelled path now:
+          - emits a clear ``✗ cancelled (partial reply):`` header BEFORE
+            the partial text, in bold dim-red so it sits in the
+            user's eyeline at the top of the fragment
+          - renders the partial body as plain dim italic text (no
+            Markdown). Partial text usually has half-closed code
+            fences / unclosed lists / broken bold spans, so Markdown
+            rendering produced wrong styling anyway — the dim plain
+            text reads as "incomplete fragment".
+
+        The normal ``end_stream`` path is unchanged; only the explicit
+        cancel call site in ``action_cancel_inflight`` routes through
+        here.
+        """
+        row = self._stream_rows.pop(msg_id, None)
+        if row is None:
+            return ""
+        full = row.full_text()
+        row.seal()
+        self.hide_status()
+        if full:
+            try:
+                self._log().write(
+                    Text("✗ cancelled (partial reply):", style="bold #aa6666"),
+                )
+                self._write_body(Text(full, style="dim italic #888888"))
+            except Exception:
+                self._log().write(Text(full))
+        self._log().write(Text(""))
+        try:
+            row.remove()
+        except Exception:
+            pass
+        return full
+
     # ── skill activity rows (C1+A1) ──────────────────────────────────────────
 
     def start_skill_row(

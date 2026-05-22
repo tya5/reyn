@@ -1039,13 +1039,16 @@ class ReynTUIApp(App):
         # end_stream() mutates conv._stream_rows.
         cancelled_streams = 0
         if conv is not None:
-            from rich.text import Text as _RichText
+            # Wave-9 F-F7: route through ``end_stream_cancelled`` so the
+            # partial text gets the dim italic + "✗ cancelled (partial
+            # reply):" header treatment instead of being committed with
+            # the same Markdown styling as a finished reply (with only
+            # a small dim suffix that's easy to miss when the partial
+            # fills the viewport). The summary line emitted below still
+            # reports ``cancelled_streams``.
             for msg_id in list(conv._stream_rows.keys()):
                 try:
-                    conv.end_stream(msg_id)
-                    conv._write_log(
-                        _RichText("  ⌁ cancelled", style="dim italic #888888"),
-                    )
+                    conv.end_stream_cancelled(msg_id)
                     cancelled_streams += 1
                 except Exception:
                     pass
