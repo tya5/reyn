@@ -27,6 +27,18 @@ _TICK_INTERVAL_S = 0.1  # elapsed timer refresh rate
 _GLYPHS: dict[str, str] = {
     "thinking": "⟳",
     "general": "●",
+    # Wave-10 I-F1: ``"error"`` was passed by 7+ call sites
+    # (``app_outbox._show_transient_status`` for ``/copy`` failures,
+    # ``ws_client`` reconnection notices, right_panel preview-error
+    # surface) but had no entry here, so ``show()`` silently
+    # fell back to ``"thinking"`` (= the ⟳ amber glyph). An error
+    # message rendered with the same shape and color as the
+    # ``⟳ thinking…`` live indicator was easy to read as "the agent
+    # is still working" rather than "an action failed". ``✗`` is
+    # the same glyph used by ToolCallRow / SkillActivityRow for
+    # failure terminals, so the cross-surface vocabulary stays
+    # uniform.
+    "error": "✗",
 }
 
 # Wave-10 G-F8 + I-F8: overwrite-priority hierarchy.
@@ -52,6 +64,14 @@ _GLYPHS: dict[str, str] = {
 _KIND_PRIORITY: dict[str, int] = {
     # Live load-bearing state — must not be displaced by transients.
     "thinking": 100,
+    # Wave-10 I-F1: critical transient signal — an action failed and
+    # the user needs to notice. Higher than ``general`` (= routine
+    # breadcrumbs / turn-position flashes shouldn't overwrite an
+    # error the user hasn't read yet) but lower than ``thinking`` —
+    # if the LLM is mid-call, the live indicator stays visible and
+    # the error log line in the conv pane remains the load-bearing
+    # record.
+    "error": 80,
     # Transient flashes / breadcrumbs / one-shot notices.
     "general": 50,
 }
@@ -158,10 +178,16 @@ class StickyStatus(Static):
         # red — confusable with error indicators. The thinking sticky shows
         # while the agent is working, so route its glyph through _AMBER
         # (which degrades to ANSI yellow / bright yellow) — neutrally
-        # signalling "in progress" rather than "alert". The other kind
-        # (general) keeps _CORAL since it's a transient flash, not the
-        # load-bearing "is the agent working?" indicator.
-        glyph_color = _AMBER if self._kind == "thinking" else _CORAL
+        # signalling "in progress" rather than "alert". The error kind
+        # WANTS to read as alert, so bold red (#aa6666). General keeps
+        # _CORAL since it's a transient flash, not the load-bearing "is
+        # the agent working?" indicator.
+        if self._kind == "thinking":
+            glyph_color = _AMBER
+        elif self._kind == "error":
+            glyph_color = "bold #aa6666"
+        else:
+            glyph_color = _CORAL
         # Total cells in the fixed-width suffix segments so we can truncate
         # the body when narrow terminals would otherwise clip the
         # ``Ctrl+C cancel`` hint behind the right edge.
