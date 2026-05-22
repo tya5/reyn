@@ -189,7 +189,15 @@ def test_cron_list_shows_header_columns(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """Tier 2: run_list output contains NAME, SKILL, SCHEDULE, ENABLED, NEXT RUN headers."""
+    """Tier 2: run_list output contains NAME, TARGET, SCHEDULE, ENABLED,
+    NEXT RUN headers.
+
+    FP-0041 #489 PR-B contract reversal (= 2026-05-23): the column
+    previously labelled ``SKILL`` is now ``TARGET`` because each row
+    can show either the legacy skill name OR the message-based target
+    agent (= ``→<agent_name>``). Renamed per
+    ``feedback_contract_reversal_rewrites_tests``.
+    """
     import reyn.config as _cfg_mod
     from reyn.cli.commands.cron import run_list
 
@@ -199,7 +207,7 @@ def test_cron_list_shows_header_columns(
     run_list(argparse.Namespace())
 
     captured = capsys.readouterr()
-    for col in ("NAME", "SKILL", "SCHEDULE", "ENABLED", "NEXT RUN"):
+    for col in ("NAME", "TARGET", "SCHEDULE", "ENABLED", "NEXT RUN"):
         assert col in captured.out
 
 

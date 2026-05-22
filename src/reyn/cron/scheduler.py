@@ -15,16 +15,38 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CronJob:
-    """One scheduled skill execution (FP-0009 Component B).
+    """One scheduled execution (FP-0009 Component B + FP-0041 #489 PR-B).
 
-    Mutable on the scheduler side: ``last_run_at`` / ``last_run_status`` /
-    ``last_run_error`` / ``next_run_at`` are updated after each fire.
+    Two execution shapes co-exist:
+
+      - **Message-based** (= FP-0041 PR-B, recommended): set ``to`` (=
+        target agent name) and ``message`` (= free-form text). The
+        scheduler dispatches the message to the agent's inbox with
+        ``sender="cron:<name>"`` so the LLM reads it as a normal
+        attributed turn from a scheduled trigger.
+
+      - **Skill-based** (= legacy FP-0009): set ``skill`` (= skill name).
+        The scheduler runs the skill directly via ``Agent.run``. Kept
+        for backward compatibility with existing ``reyn.yaml``
+        configurations.
+
+    Exactly one shape should be set per job. If both ``skill`` AND
+    ``to`` are set, the message-based path wins (= ``skill`` is
+    ignored with a warning). If neither is set, the job is invalid.
+
+    Mutable on the scheduler side: ``last_run_at`` / ``last_run_status``
+    / ``last_run_error`` / ``next_run_at`` are updated after each fire.
     """
 
     name: str               # job identifier, unique within scheduler
-    skill: str              # skill name to run via Agent.run
     schedule: str           # cron expression, 5-field (e.g. "0 */6 * * *")
+    # ── message-based (FP-0041 PR-B, recommended) ─────────────────
+    to: str | None = None       # target agent name
+    message: str | None = None  # free-form text dispatched to agent.inbox
+    # ── skill-based (FP-0009 legacy, backward compat) ──────────────
+    skill: str | None = None    # skill name to run via Agent.run
     input: dict = field(default_factory=dict)
+    # ── shared ─────────────────────────────────────────────────────
     enabled: bool = True
     last_run_at: datetime | None = None
     last_run_status: str | None = None   # "ok" | "error" | "cancelled" | None
@@ -32,10 +54,16 @@ class CronJob:
     next_run_at: datetime | None = None
     last_run_duration_seconds: float | None = None
 
+    def is_message_based(self) -> bool:
+        """True if this job uses the message-based shape (= ``to + message``)."""
+        return bool(self.to and self.message)
+
     def to_dict(self) -> dict:
         """JSON-safe shape for `reyn cron list` and `reyn cron status`."""
         return {
             "name": self.name,
+            "to": self.to,
+            "message": self.message,
             "skill": self.skill,
             "schedule": self.schedule,
             "input": self.input,

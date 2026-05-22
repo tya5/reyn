@@ -29,14 +29,19 @@ logger = logging.getLogger(__name__)
 def _make_cron_runner():
     """Return an async callable that executes a CronJob headlessly.
 
-    Resolves the skill by name (project → local → stdlib lookup) and runs
-    it through Agent.run with sane defaults drawn from load_config().
+    FP-0009 Component B + FP-0041 #489 PR-B: dispatches based on job
+    shape via ``build_default_runner``.
 
-    TODO: wire full headless-run options (shell_allowed, output_language,
-    permission_resolver, mcp_servers, etc.) mirroring cli/commands/run.py
-    once cron-specific config surface is defined (FP-0009 follow-up).
+      - Skill-based legacy: resolves the skill by name and runs through
+        ``Agent.run`` with sane defaults from ``load_config()``.
+      - Message-based (FP-0041): pushes message into target agent's
+        inbox via ``AgentRegistry.ensure_running``, with
+        ``sender="cron:<name>"`` envelope so the agent reads it as a
+        normal attributed turn from a scheduled trigger.
     """
-    async def _runner(job) -> str:
+    from reyn.cron.runners import build_default_runner
+
+    async def _legacy_skill_runner(job) -> str:
         from pathlib import Path as _Path
 
         from reyn.agent import Agent
@@ -74,7 +79,29 @@ def _make_cron_runner():
         result = await agent.run(skill, dict(job.input))
         return "ok" if result.ok else "error"
 
-    return _runner
+    async def _inbox_pusher(to: str, envelope: dict) -> str:
+        """Deliver ``envelope`` to agent ``to`` via the registry.
+
+        Uses ``ensure_running`` so the agent's router loop is live to
+        consume the inbox put — same pattern A2A uses. The envelope
+        is dispatched as ``kind="user"`` so the LLM processes the
+        text as a turn; PR-A sender attribution emits the
+        ``[context shift]`` state_change entry from the
+        ``sender="cron:<name>"`` field.
+        """
+        from reyn.web.deps import _get_registry
+        registry = _get_registry()
+        try:
+            session = await registry.ensure_running(to)
+        except FileNotFoundError:
+            return "error"
+        await session._put_inbox("user", dict(envelope))
+        return "ok"
+
+    return build_default_runner(
+        legacy_skill_runner=_legacy_skill_runner,
+        inbox_pusher=_inbox_pusher,
+    )
 
 
 @asynccontextmanager
@@ -106,8 +133,10 @@ async def _lifespan(app: FastAPI):
         cron_jobs = [
             CronJob(
                 name=j.name,
-                skill=j.skill,
                 schedule=j.schedule,
+                to=j.to,
+                message=j.message,
+                skill=j.skill,
                 input=dict(j.input),
                 enabled=j.enabled,
             )
