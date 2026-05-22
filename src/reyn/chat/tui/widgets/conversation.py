@@ -1654,6 +1654,22 @@ class ConversationView(Widget):
             except Exception:
                 pass
         self._tool_call_rows.clear()
+        # Wave-10 G-F2: sweep any pending InterventionWidget children too.
+        # ``mount_intervention`` adds the widget via ``self.mount(widget)``
+        # with no tracking list, so the only way to find them at clear()
+        # time is ``self.query(InterventionWidget)``. Without this sweep,
+        # a Ctrl+L while an intervention modal is open leaves the chip
+        # buttons floating on a blank pane — the user can still "answer"
+        # the question, firing the answer_callback against a session
+        # context the user just cleared (= acting on stale UI state). The
+        # sticky ``⚑ intervention below ↓`` set by ``mount_intervention``
+        # is already hidden by the ``hide_status`` call below; this loop
+        # removes the visible widget too.
+        for widget in list(self.query(InterventionWidget)):
+            try:
+                widget.remove()
+            except Exception:
+                pass
         # Reset header-grouping + turn anchors + fold stash
         self._last_speaker = ""
         self._last_speaker_at = 0.0
