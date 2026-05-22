@@ -118,6 +118,7 @@ def _run_single_iteration(
     target_tool: str,
     iteration: int,
     timeout_seconds: int,
+    model_class: str | None = None,
 ) -> IterationResult:
     """Execute one ``reyn chat --cui --no-restore`` cycle and harvest result.
 
@@ -133,9 +134,12 @@ def _run_single_iteration(
     pre_existing = set(
         events_root.rglob("*.jsonl")
     ) if events_root.exists() else set()
+    cmd = ["reyn", "chat", agent, "--cui", "--no-restore"]
+    if model_class:
+        cmd.extend(["--model", model_class])
     try:
         proc = subprocess.run(
-            ["reyn", "chat", agent, "--cui", "--no-restore"],
+            cmd,
             input=prompt + "\n/quit\n",
             text=True, capture_output=True,
             cwd=str(project_root), timeout=timeout_seconds,
@@ -196,6 +200,15 @@ def main(argv: list[str] | None = None) -> int:
         "--timeout", type=int, default=60,
         help="Per-iteration timeout (seconds).",
     )
+    parser.add_argument(
+        "--model", default=None,
+        help=(
+            "Model class to pass to ``reyn chat --model``. Default unset "
+            "(= uses reyn.yaml's top-level ``model:`` setting). Useful "
+            "for A/B comparing weak vs strong model behaviour on the "
+            "same fixture."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.history_fixture == "empty":
@@ -229,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
             target_tool=args.tool,
             iteration=i,
             timeout_seconds=args.timeout,
+            model_class=args.model,
         )
         results.append(result)
         print(
