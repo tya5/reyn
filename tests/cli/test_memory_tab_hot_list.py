@@ -139,3 +139,82 @@ def test_hot_list_overflow_marker(tmp_path):
     )
     # 12 entries; cap is 8 in the renderer → 4 should be hidden.
     assert "more" in rendered
+
+
+def test_hot_list_renders_relative_time_when_last_ts_valid(tmp_path):
+    """Tier 2: a valid ``last_ts`` float surfaces a relative-time hint.
+
+    The ARS forwarder emits ``last_ts`` as a Unix-epoch float (see
+    ``ActionUsageTracker.full_ranking``). Without this hint the user
+    has no way to tell whether the ranking is fresh or stale — same
+    ``×N`` count can mean "this turn" or "yesterday".
+    """
+    import time as _time
+
+    from reyn.chat.tui.widgets.right_panel.memory_tab import render_memory
+
+    hot = [
+        {
+            "qualified_name": "skill__direct_llm",
+            "freq": 5,
+            "last_ts": _time.time() - 90,  # 90 seconds ago → "1m ago"
+        }
+    ]
+    rendered, _flat, _ys = render_memory(
+        _project_with_empty_memory(tmp_path), cursor=0, hot_list=hot,
+    )
+    # The exact suffix wording is not pinned — only that *some* relative
+    # marker ("ago" substring) appears. Tolerates 89s / 90s / 91s timing
+    # drift between the test and the renderer.
+    assert "ago" in rendered
+
+
+def test_hot_list_skips_zero_freq_entries(tmp_path):
+    """Tier 2: entries with ``freq <= 0`` are filtered out.
+
+    ``freq=0`` next to a fire emoji ("🔥 skill__foo ×0") is visually
+    contradictory. The ranking semantics are "skill has been used N
+    times in the relevant window"; a zero count means the skill is no
+    longer hot and should not appear under HOT NOW at all.
+    """
+    from reyn.chat.tui.widgets.right_panel.memory_tab import render_memory
+
+    hot = [
+        {"qualified_name": "skill__alive", "freq": 3, "last_ts": ""},
+        {"qualified_name": "skill__evicted", "freq": 0, "last_ts": ""},
+        {"qualified_name": "skill__negative", "freq": -1, "last_ts": ""},
+    ]
+    rendered, _flat, _ys = render_memory(
+        _project_with_empty_memory(tmp_path), cursor=0, hot_list=hot,
+    )
+    assert "skill__alive" in rendered
+    assert "skill__evicted" not in rendered
+    assert "skill__negative" not in rendered
+
+
+def test_other_bucket_entries_render_description(tmp_path):
+    """Tier 2: ``OTHER``-bucket entries surface their description line.
+
+    The typed buckets (USER / FEEDBACK / PROJECT / REFERENCE) render
+    ``description`` underneath the name when populated. Entries whose
+    ``type`` falls outside the four canonical types land in OTHER and
+    must use the same render shape — otherwise the OTHER section
+    becomes silently lower-fidelity than the typed ones.
+    """
+    from reyn.chat.tui.widgets.right_panel.memory_tab import render_memory
+
+    # Plant one memory file with type="custom" so it lands in OTHER.
+    mem_dir = tmp_path / ".reyn" / "memory"
+    mem_dir.mkdir(parents=True, exist_ok=True)
+    (mem_dir / "custom_thing.md").write_text(
+        "---\nname: custom-thing\ndescription: a non-standard memory type\n"
+        "metadata:\n  type: custom\n---\n\nbody text\n",
+        encoding="utf-8",
+    )
+
+    rendered, _flat, _ys = render_memory(
+        tmp_path, cursor=0, hot_list=None,
+    )
+    assert "OTHER" in rendered
+    assert "custom-thing" in rendered
+    assert "a non-standard memory type" in rendered

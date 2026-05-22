@@ -1,6 +1,7 @@
 """Memory tab — renders shared and per-agent memory entries with cursor."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,31 @@ _TYPE_COLORS: dict[str, str] = {
 
 
 _HOT_LIST_MAX_VISIBLE = 8
+
+
+def _fmt_ago(last_ts: Any) -> str:
+    """Best-effort relative-time string for the hot-list ``last_ts`` field.
+
+    The ARS forwarder emits ``last_ts`` as a Unix-epoch float (see
+    ``ActionUsageTracker.full_ranking``). Returns an empty string when
+    the value is missing, unparseable, or in the future — callers append
+    a dim suffix only when this returns non-empty so the layout stays
+    intact for older payloads that omitted the field.
+    """
+    try:
+        ts = float(last_ts)
+    except (TypeError, ValueError):
+        return ""
+    delta = time.time() - ts
+    if delta < 0 or ts <= 0:
+        return ""
+    if delta < 60:
+        return f"{int(delta)}s ago"
+    if delta < 3600:
+        return f"{int(delta // 60)}m ago"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h ago"
+    return f"{int(delta // 86400)}d ago"
 
 
 def render_memory(
@@ -71,9 +97,13 @@ def render_memory(
                 continue
             if not name:
                 continue
+            if freq <= 0:
+                continue
+            ago = _fmt_ago(entry.get("last_ts") if hasattr(entry, "get") else None)
+            ago_suffix = f"  [#555555]{ago}[/]" if ago else ""
             lines.append(
                 f"[#ffaa44]    🔥 [/][#dddddd]{_esc(name)}[/]  "
-                f"[#666666]×{freq}[/]"
+                f"[#666666]×{freq}[/]{ago_suffix}"
             )
         overflow = len(hot_list) - _HOT_LIST_MAX_VISIBLE
         if overflow > 0:
@@ -132,6 +162,8 @@ def render_memory(
                 indent = f"[bold {_CORAL}]    ▶ [/]" if is_cursor else "      "
                 name_style = f"bold {_CORAL}" if is_cursor else "#dddddd"
                 lines.append(f"{indent}[{name_style}]{_esc(e.name)}[/]")
+                if e.description:
+                    lines.append(f"[#555555]        {_esc(e.description)}[/]")
         lines.append("")
 
     # Shared memory
