@@ -7,8 +7,12 @@ schema:
       type: string
       description: Name of the test case that was run.
     spec_path:
-      type: string
-      description: Path to the eval.md spec (passed through for final output).
+      # B49 W2-S5 fix (2026-05-22): nullable to mirror eval_result_raw —
+      # the LLM emits null when the input did not carry a spec_path.
+      type: [string, "null"]
+      description: |
+        Path to the eval.md spec (passed through for final output).
+        Null when the input did not carry a spec_path.
     run_status:
       type: string
       description: Status returned by the target skill run ('finished', 'loop_limit_exceeded', 'aborted', etc.).
@@ -25,4 +29,9 @@ schema:
             type: object
             description: phase_eval_request data (phase_name, artifact_type, artifact_path, criteria).
         required: [type, data]
-  required: [case_name, spec_path, run_status, eval_requests]
+  # B49 W2-S5 fix (2026-05-22): spec_path is pass-through only — the
+  # LLM emits null when no spec file was provided (= direct chat eval).
+  # Same pattern already applied to eval_result_raw via PR #403. Removing
+  # from required so validation does not fail on null; field stays in
+  # properties so the LLM can still fill it when known.
+  required: [case_name, run_status, eval_requests]

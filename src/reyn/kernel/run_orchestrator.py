@@ -431,11 +431,16 @@ class RunOrchestrator:
         Raises WorkflowAbortedError on unrecoverable LLM abort.
         """
         if self._perm:
-            if self._intervention_bus is None:
-                raise RuntimeError(
-                    "permission_resolver requires intervention_bus on OSRuntime; "
-                    "wire one via Agent(intervention_bus=...)"
-                )
+            # B49 W2-S5 fix (2026-05-22): pass intervention_bus as-is; it
+            # may be None in non-interactive contexts (= preprocessor
+            # sub-skill runs invoked via ``run_skill`` op from inside
+            # ``iterate`` / ``run_op``). ``startup_guard`` handles the
+            # None case: if all permissions are already approved it
+            # returns early without using the bus; if unapproved
+            # permissions are found it raises ``RuntimeError`` with a
+            # clear message. This removes the pre-check that blocked
+            # sub-skills invoked from preprocessors whenever
+            # permission_resolver was set.
             await self._perm.startup_guard(
                 self._skill, self._skill.name, self._intervention_bus,
             )
