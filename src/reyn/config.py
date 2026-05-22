@@ -1151,16 +1151,28 @@ class ActionRetrievalConfig:
 
 @dataclass
 class CronJobConfig:
-    """One ``cron.jobs[]`` entry (FP-0009 Component B).
+    """One ``cron.jobs[]`` entry (FP-0009 Component B + FP-0041 #489 PR-B).
 
     Maps directly onto ``CronJob`` consumed by ``CronScheduler``; this
-    config-side dataclass exists to keep the reyn.yaml parsing layer
+    config-side dataclass exists to keep the YAML parsing layer
     independent of the runtime layer.
+
+    Two execution shapes co-exist (= FP-0041 #489 PR-B):
+
+      - **Message-based** (recommended): ``to`` + ``message``. Cron
+        dispatches the message to the target agent's inbox with
+        ``sender="cron:<name>"`` envelope.
+      - **Skill-based** (legacy): ``skill``. Cron runs the skill
+        directly via ``Agent.run`` (= FP-0009 original shape).
+
+    Exactly one shape per job. Validation rejects both / neither.
     """
 
     name: str
-    skill: str
     schedule: str   # 5-field cron expression
+    to: str | None = None        # message-based: target agent name
+    message: str | None = None   # message-based: free-form text
+    skill: str | None = None     # skill-based legacy: skill name
     input: dict = field(default_factory=dict)
     enabled: bool = True
 
@@ -1179,12 +1191,20 @@ class CronConfig:
 
 
 def _build_cron_config(raw: object) -> CronConfig:
-    """Parse the ``cron:`` section from reyn.yaml.
+    """Parse the ``cron:`` section from reyn.yaml / ``.reyn/cron.yaml``.
 
-    Shape::
+    Shape (FP-0009 + FP-0041 #489 PR-B)::
 
         cron:
           jobs:
+            # Message-based (FP-0041 recommended):
+            - name: morning_news
+              to: news_agent
+              message: "今日の主要ニュースをまとめて"
+              schedule: "0 9 * * *"
+              enabled: true
+
+            # Skill-based (FP-0009 legacy, backward compat):
             - name: index_events_hourly
               skill: index_events
               schedule: "0 */6 * * *"
@@ -1192,9 +1212,10 @@ def _build_cron_config(raw: object) -> CronConfig:
               enabled: true
 
     ``None`` / missing block / empty dict → ``CronConfig(jobs=[])``.
-    Validates ``name``, ``skill``, and ``schedule`` are non-empty strings;
-    raises ``ValueError`` naming the offending entry on validation failure.
-    Unknown extra fields are ignored (= forward-compatible).
+    Validates ``name`` + ``schedule`` are non-empty strings + exactly
+    one of (``skill``) OR (``to`` + ``message``) is set per entry.
+    Raises ``ValueError`` naming the offending entry on validation
+    failure. Unknown extra fields are ignored (= forward-compatible).
     """
     if raw is None:
         return CronConfig()
@@ -1215,17 +1236,30 @@ def _build_cron_config(raw: object) -> CronConfig:
                 f"cron.jobs[{i}]: 'name' must be a non-empty string "
                 f"(got {name!r})"
             )
-        skill = entry.get("skill")
-        if not skill or not isinstance(skill, str):
-            raise ValueError(
-                f"cron.jobs[{i}] (name={name!r}): 'skill' must be a non-empty string "
-                f"(got {skill!r})"
-            )
         schedule = entry.get("schedule")
         if not schedule or not isinstance(schedule, str):
             raise ValueError(
                 f"cron.jobs[{i}] (name={name!r}): 'schedule' must be a non-empty string "
                 f"(got {schedule!r})"
+            )
+        # FP-0041 #489 PR-B: shape selection — message-based vs skill-based.
+        skill = entry.get("skill")
+        to = entry.get("to")
+        message = entry.get("message")
+        has_skill = bool(skill) and isinstance(skill, str)
+        has_message_shape = (
+            bool(to) and isinstance(to, str)
+            and bool(message) and isinstance(message, str)
+        )
+        if has_skill and has_message_shape:
+            raise ValueError(
+                f"cron.jobs[{i}] (name={name!r}): cannot set both "
+                f"'skill' and 'to'/'message' (= choose one shape)."
+            )
+        if not has_skill and not has_message_shape:
+            raise ValueError(
+                f"cron.jobs[{i}] (name={name!r}): must set either "
+                f"'skill' (legacy) OR 'to' + 'message' (= recommended)."
             )
         raw_input = entry.get("input") or {}
         if not isinstance(raw_input, dict):
@@ -1233,8 +1267,10 @@ def _build_cron_config(raw: object) -> CronConfig:
         enabled = bool(entry.get("enabled", True))
         jobs.append(CronJobConfig(
             name=name,
-            skill=skill,
             schedule=schedule,
+            to=to if has_message_shape else None,
+            message=message if has_message_shape else None,
+            skill=skill if has_skill else None,
             input=dict(raw_input),
             enabled=enabled,
         ))
@@ -1502,6 +1538,25 @@ def _merge(base: dict, override: dict) -> dict:
             existing_servers = existing.get("servers", {}) if isinstance(existing, dict) else {}
             new_servers = val.get("servers", {}) if isinstance(val, dict) else {}
             result["mcp"] = {**existing, "servers": {**existing_servers, **new_servers}}
+        elif key == "cron" and isinstance(val, dict):
+            # FP-0041 #489 PR-B: cron jobs merge by name — dynamic
+            # entries (= .reyn/cron.yaml) win on collision with legacy
+            # entries (= reyn.yaml cron.jobs[]). Preserves operator
+            # hand-edited entries + runtime-registered entries side
+            # by side without dropping either.
+            existing = result.get("cron", {})
+            existing_jobs = existing.get("jobs", []) if isinstance(existing, dict) else []
+            new_jobs = val.get("jobs", []) if isinstance(val, dict) else []
+            # Build name-keyed dict for union: existing first, then
+            # new overrides (= last write wins).
+            by_name: dict = {}
+            for j in existing_jobs:
+                if isinstance(j, dict) and j.get("name"):
+                    by_name[j["name"]] = j
+            for j in new_jobs:
+                if isinstance(j, dict) and j.get("name"):
+                    by_name[j["name"]] = j
+            result["cron"] = {**existing, "jobs": list(by_name.values())}
         elif key == "chat" and isinstance(val, dict):
             existing = result.get("chat", {})
             if not isinstance(existing, dict):
@@ -1672,6 +1727,18 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # without special-casing.
         dynamic_mcp = _load_yaml(project_root / ".reyn" / "mcp.yaml")
         merged = _merge(merged, dynamic_mcp)
+
+        # FP-0041 #489 PR-B: dynamic cron registry separated from static
+        # config (= same #470 invariant: ``reyn.yaml`` = edit + restart,
+        # ``.reyn/`` = runtime mutable). ``.reyn/cron.yaml`` carries
+        # cron jobs registered at runtime via the future LLM-callable
+        # cron tool (PR-B2 follow-up). Merged LAST so newer dynamic
+        # entries win on name collision with operator-edited
+        # ``reyn.yaml`` cron jobs.
+        # Shape: ``{"cron": {"jobs": [...]}}`` — same as reyn.yaml
+        # cron section. Job-list union via _merge's cron handling.
+        dynamic_cron = _load_yaml(project_root / ".reyn" / "cron.yaml")
+        merged = _merge(merged, dynamic_cron)
 
         # ADR-0031: <project>/.reyn/config.yaml is DEPRECATED (removed from
         # the 3-layer cascade).  Emit a one-time warning if the file exists so

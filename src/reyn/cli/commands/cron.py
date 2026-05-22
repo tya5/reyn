@@ -89,13 +89,20 @@ def _load_jobs() -> list:
 
 
 def _jobs_to_cron_jobs(job_configs) -> list:
-    """Convert CronJobConfig entries to CronJob instances."""
+    """Convert CronJobConfig entries to CronJob instances.
+
+    Both message-based (= ``to`` + ``message``) and legacy skill-based
+    (= ``skill``) shapes pass through; CronJob carries all three fields
+    and the runner dispatches based on ``is_message_based()``.
+    """
     from reyn.cron import CronJob
     return [
         CronJob(
             name=jc.name,
-            skill=jc.skill,
             schedule=jc.schedule,
+            to=jc.to,
+            message=jc.message,
+            skill=jc.skill,
             input=dict(jc.input),
             enabled=jc.enabled,
         )
@@ -117,13 +124,19 @@ def _print_list_table(jobs: list, *, show_last_run: bool = False) -> None:
         print("(no jobs configured)")
         return
 
-    # Pre-compute next_run_at for each job
+    # Pre-compute next_run_at for each job. FP-0041 #489 PR-B: target
+    # column shows the agent (= message-based) or the skill (= legacy)
+    # so operators can tell at a glance what each job dispatches.
     rows = []
     for job in jobs:
         next_str = _compute_next_run(job)
+        if job.is_message_based():
+            target = f"→{job.to}"
+        else:
+            target = job.skill or "-"
         row = {
             "name": job.name,
-            "skill": job.skill,
+            "skill": target,
             "schedule": job.schedule,
             "enabled": "true" if job.enabled else "false",
             "next_run": next_str,
@@ -138,7 +151,7 @@ def _print_list_table(jobs: list, *, show_last_run: bool = False) -> None:
     w_name = max(len(r["name"]) for r in rows)
     w_name = max(w_name, 4)  # "NAME"
     w_skill = max(len(r["skill"]) for r in rows)
-    w_skill = max(w_skill, 5)  # "SKILL"
+    w_skill = max(w_skill, 6)  # "TARGET"
     w_sched = max(len(r["schedule"]) for r in rows)
     w_sched = max(w_sched, 8)  # "SCHEDULE"
     w_enabled = 7  # "ENABLED"
@@ -153,7 +166,7 @@ def _print_list_table(jobs: list, *, show_last_run: bool = False) -> None:
         w_lre = max(len(r["last_run_error"]) for r in rows)
         w_lre = max(w_lre, 10)  # "LAST ERROR"
         header = (
-            f"{'NAME':<{w_name}}  {'SKILL':<{w_skill}}  "
+            f"{'NAME':<{w_name}}  {'TARGET':<{w_skill}}  "
             f"{'SCHEDULE':<{w_sched}}  {'ENABLED':<{w_enabled}}  "
             f"{'NEXT RUN':<{w_next}}  {'LAST RUN AT':<{w_lra}}  "
             f"{'LAST STATUS':<{w_lrs}}  {'LAST ERROR':<{w_lre}}"
@@ -169,7 +182,7 @@ def _print_list_table(jobs: list, *, show_last_run: bool = False) -> None:
             )
     else:
         header = (
-            f"{'NAME':<{w_name}}  {'SKILL':<{w_skill}}  "
+            f"{'NAME':<{w_name}}  {'TARGET':<{w_skill}}  "
             f"{'SCHEDULE':<{w_sched}}  {'ENABLED':<{w_enabled}}  "
             f"{'NEXT RUN':<{w_next}}"
         )
@@ -249,17 +262,22 @@ async def _run_scheduler() -> None:
 
 
 def _build_runner():
-    """Return the async runner function that executes a CronJob via Agent.run."""
+    """Return the async runner function that executes a CronJob.
 
-    async def _runner(job) -> None:
-        """Execute one CronJob using the headless Agent.run path."""
+    FP-0009 + FP-0041 #489 PR-B: standalone CLI mode supports the
+    legacy skill-based shape only (= ``inbox_pusher=None`` since there
+    is no AgentRegistry context in ``reyn cron run`` foreground). Use
+    ``reyn web`` for message-based jobs.
+    """
+    from reyn.cron.runners import build_default_runner
+
+    async def _legacy_skill_runner(job) -> str:
         from reyn.agent import Agent
         from reyn.cli.commands.run import _build_permission_resolver
         from reyn.cli.logger_factory import make_logger
         from reyn.cli.skill_loader import resolve_skill_path
         from reyn.compiler import load_dsl_skill
         from reyn.config import _find_project_root, load_config, load_project_context
-        from reyn.llm.llm import run_async
         from reyn.llm.model_resolver import ModelResolver
         from reyn.user_intervention import StdinInterventionBus
 
@@ -294,10 +312,16 @@ def _build_runner():
         skill = load_dsl_skill(str(skill_md), skill_root=str(skill_root))
         initial_input = job.input if job.input else {}
 
-        result = run_async(agent.run(skill, initial_input))
+        result = await agent.run(skill, initial_input)
         if not result.ok:
             raise RuntimeError(
                 f"Skill {job.skill!r} ended with status {result.status!r}"
             )
+        return "ok"
 
-    return _runner
+    # Standalone CLI has no AgentRegistry → message-based jobs warn
+    # and skip (= operator should use ``reyn web`` for them).
+    return build_default_runner(
+        legacy_skill_runner=_legacy_skill_runner,
+        inbox_pusher=None,
+    )
