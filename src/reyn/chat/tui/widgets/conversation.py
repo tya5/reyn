@@ -858,6 +858,20 @@ class ConversationView(Widget):
         row.seal()
         self.hide_status()
         if full:
+            # Wave-10 G-F10: stash the partial in the recent-replies ring
+            # buffer so ``/copy`` after a cancel returns the fragment the
+            # user just saw streaming. Pre-fix only the normal
+            # ``end_stream`` path routed through
+            # ``_write_agent_markdown_with_fold`` (= the only writer to
+            # ``_recent_replies``), so a cancel left the buffer carrying
+            # whatever reply ran two turns earlier — ``/copy`` returned
+            # the wrong content with no signal that the cancelled
+            # fragment was unrecoverable. Capping mirrors the
+            # ``_write_agent_markdown_with_fold`` cap (= one source of
+            # truth for the buffer's bounded size).
+            self._recent_replies.append(full)
+            if len(self._recent_replies) > _RECENT_REPLIES_MAX:
+                self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
             try:
                 self._log().write(
                     Text("✗ cancelled (partial reply):", style="bold #aa6666"),
