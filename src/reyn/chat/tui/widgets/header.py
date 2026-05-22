@@ -13,6 +13,7 @@ import re
 import time
 from dataclasses import dataclass
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.message import Message
@@ -135,6 +136,86 @@ class ReynHeader(Widget):
         except Exception:
             pass
 
+    def _maybe_truncate_agent_name(self) -> str:
+        """Truncate ``_agent_name`` so the assembled status fits the cell.
+
+        Computes the cell-width of every other status field (model,
+        tokens, cost, optional pending badge, clock) plus the ``  │  ``
+        separators (5 cells each), subtracts from the widget's status
+        cell width (= total widget width minus the title cell), and
+        clips the agent name to whatever room remains. Appends ``…``
+        when truncated. When ``self.size.width`` is 0 (= pre-mount) the
+        name is returned verbatim — the next ``_tick_clock`` refresh
+        will recompute once layout is known. A minimum of 3 cells is
+        always reserved for the agent name so the field doesn't
+        disappear entirely on extreme widths.
+        """
+        name = self._agent_name
+        if not name:
+            return name
+        try:
+            total_width = self.size.width
+        except Exception:
+            total_width = 0
+        if total_width <= 0:
+            return name
+        # Title cell ≈ 1 (left pad) + cell_len("Reyn") + 1 (right pad)
+        # — matches the Label("Reyn", id="title") composed above. Hard-
+        # coded here rather than re-querying the DOM because _format_status
+        # is called from _tick_clock every second.
+        title_cells = 2 + cell_len("Reyn")
+        # Right-side status pad is 0 1 (= 1 cell on each side, see
+        # DEFAULT_CSS ``#status padding: 0 1``).
+        status_pad = 2
+        available = total_width - title_cells - status_pad
+        if available <= 0:
+            return name
+        # Cell-width of everything else this _format_status emits.
+        other_cells = 0
+        if self._model:
+            other_cells += cell_len(_shorten_model_id(self._model))
+        tok_str = f"{self._tokens_today:,}"
+        if self._tokens_cap is not None:
+            tok_str += f" / {self._tokens_cap:,}"
+        tok_str += " tok"
+        other_cells += cell_len(tok_str)
+        cost_str = f"${self._cost_usd:.4f}"
+        if self._cost_cap is not None:
+            cost_str += f" / ${self._cost_cap:.2f}"
+        other_cells += cell_len(cost_str)
+        if self._stalled_count > 0:
+            other_cells += cell_len(f"[{self._stalled_count} pending]")
+        other_cells += cell_len(self._now_text())
+        # Separator count: number of joins between parts. With
+        # agent_name included, parts = 1 (agent) + (1 if model) + 2
+        # (tokens, cost) + (1 if stalled) + 1 (clock).
+        part_count = 1 + (1 if self._model else 0) + 2 + (
+            1 if self._stalled_count > 0 else 0
+        ) + 1
+        separator_cells = max(0, part_count - 1) * cell_len("  │  ")
+        budget = available - other_cells - separator_cells
+        if budget >= cell_len(name):
+            return name
+        if budget < 3:
+            # Reserve at least 3 cells so the name isn't fully eaten.
+            budget = 3
+        # Walk the name char-by-char in cell space; stop when adding
+        # the next char would exceed budget − 1 (= keep room for the
+        # ellipsis cell).
+        ellipsis = "…"
+        max_body = budget - cell_len(ellipsis)
+        if max_body <= 0:
+            return ellipsis
+        out: list[str] = []
+        used = 0
+        for ch in name:
+            ch_cells = cell_len(ch)
+            if used + ch_cells > max_body:
+                break
+            out.append(ch)
+            used += ch_cells
+        return "".join(out) + ellipsis
+
     def _format_status(self) -> Text:
         """Build the right-side status as a Rich Text with dim │ separators.
 
@@ -146,12 +227,22 @@ class ReynHeader(Widget):
         changes within a session, so de-emphasising it keeps the user's
         eye on the per-turn metrics that DO change — tokens, cost, and
         the clock canary at the right edge.
+
+        Narrow-terminal truncation: when the assembled status's total
+        cell-width would exceed the widget's available width (= title
+        cell already accounted for), ``_agent_name`` is the field
+        truncated first. Rationale: it is (a) the field most likely to
+        be long (full agent names can run 20+ cells), (b) the least
+        time-sensitive (= changes rarely, doesn't carry per-turn
+        information), and (c) the leftmost — keeping the clock canary,
+        cost, and pending badge at the right edge intact for
+        glance-reading.
         """
         # (text, style) tuples — style=None falls back to the widget's
         # default text color (#aaaaaa, see DEFAULT_CSS above).
         parts: list[tuple[str, str | None]] = []
         if self._agent_name:
-            parts.append((self._agent_name, None))
+            parts.append((self._maybe_truncate_agent_name(), None))
         if self._model:
             parts.append((_shorten_model_id(self._model), "dim #888888"))
         tok_str = f"{self._tokens_today:,}"
