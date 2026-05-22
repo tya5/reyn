@@ -335,3 +335,62 @@ def test_format_tool_result_short_result_unchanged():
     """Tier 2: a result that fits the budget passes through verbatim."""
     out = _format_tool_result({"status": "ok", "exit_code": 0, "bytes": 1234})
     assert out == "status=ok, exit_code=0, bytes=1234"
+
+
+# ── abort_tool_call_rows sweep (C-F1 wave-8) ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_abort_tool_call_rows_seals_live_rows_with_aborted_terminal():
+    """Tier 2 C-F1: ``abort_tool_call_rows`` finishes every live row as ⊘.
+
+    The intended call site is ``ReynTUIApp.action_cancel_inflight``;
+    without this sweep, in-flight tool_call widgets stayed mounted as
+    ``●`` spinners and eventually got flushed to RichLog still in the
+    running state (= frozen spinner in scroll history).
+    """
+    app = _ConvOnlyApp()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        conv.start_tool_call_row("op-1", "read_file", args_repr="path=/a")
+        conv.start_tool_call_row("op-2", "web_fetch", args_repr="url=...")
+        await pilot.pause()
+        assert len(list(conv.query(ToolCallRow))) == 2
+        cancelled = conv.abort_tool_call_rows(reason="cancelled")
+        assert cancelled == 2
+        # Allow F-H min-display-time deferral to elapse before checking
+        # the unmount — same wait pattern the other lifecycle tests use.
+        await pilot.pause(0.4)
+        assert len(list(conv.query(ToolCallRow))) == 0
+
+
+@pytest.mark.asyncio
+async def test_abort_tool_call_rows_returns_zero_when_no_live_rows():
+    """Tier 2: idempotent — no live rows → returns 0, no exception."""
+    app = _ConvOnlyApp()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        # No start_tool_call_row called — registry empty.
+        assert conv.abort_tool_call_rows(reason="cancelled") == 0
+
+
+@pytest.mark.asyncio
+async def test_abort_tool_call_rows_after_complete_is_noop():
+    """Tier 2: rows already in a terminal state are not double-counted.
+
+    ``complete_tool_call_row`` pops the row out of ``_tool_call_rows``
+    before the deferred flush, so ``abort_tool_call_rows`` should
+    find an empty registry and return 0.
+    """
+    app = _ConvOnlyApp()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        conv.start_tool_call_row("op-c", "read_file")
+        await pilot.pause()
+        conv.complete_tool_call_row("op-c", result_snippet="ok")
+        # Even before the F-H deferred flush elapses, the row is already
+        # popped from the registry so abort sees nothing.
+        assert conv.abort_tool_call_rows(reason="cancelled") == 0

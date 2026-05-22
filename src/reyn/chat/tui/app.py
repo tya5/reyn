@@ -1017,6 +1017,12 @@ class ReynTUIApp(App):
                         pass
                     self._skill_exec.pop(run_id, None)
                 self._push_exec_state()
+            # C-F1: seal in-flight ToolCallRow widgets too. Without this
+            # sweep, any tool_call that was mid-run when Ctrl+C fires
+            # leaves an orphan ``●`` spinner in scroll history with no
+            # terminal glyph — the user sees a frozen running indicator.
+            if conv is not None:
+                conv.abort_tool_call_rows(reason="cancelled (remote)")
             return
 
         cancelled_skills = 0
@@ -1067,11 +1073,23 @@ class ReynTUIApp(App):
                 except Exception:
                     pass
 
+        # C-F1: seal any live ToolCallRow widgets so mid-run tool_calls
+        # don't leave orphan ``●`` spinners in scroll history. The skill
+        # task cancellation above doesn't emit a ``tool_failed`` event
+        # for the in-flight call, so without this sweep the row never
+        # reaches a terminal state. The row's frozen elapsed + ⊘ glyph
+        # land in RichLog history (= matches the streaming-row pattern
+        # just above).
+        cancelled_tool_calls = 0
+        if conv is not None:
+            cancelled_tool_calls = conv.abort_tool_call_rows(reason="cancelled")
+
         if (
             cancelled_skills == 0
             and cancelled_plans == 0
             and cancelled_streams == 0
             and cancelled_interventions == 0
+            and cancelled_tool_calls == 0
         ):
             # Suppress repeat lines: when the user mashes Ctrl+C on an idle
             # session, log a single "nothing-in-flight cancel" then
@@ -1111,6 +1129,11 @@ class ReynTUIApp(App):
             parts.append(
                 f"{cancelled_interventions} intervention"
                 f"{'s' if cancelled_interventions != 1 else ''}"
+            )
+        if cancelled_tool_calls:
+            parts.append(
+                f"{cancelled_tool_calls} tool_call"
+                f"{'s' if cancelled_tool_calls != 1 else ''}"
             )
         self._voice_status(
             f"✗ cancelled {' + '.join(parts)}", style="bold #aa6666",
