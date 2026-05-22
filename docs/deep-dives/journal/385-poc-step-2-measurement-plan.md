@@ -21,12 +21,67 @@ quantifies whether the LLM actually leverages the preview-first design
 design fails its hypothesis).
 
 Four metrics, ~5 scenarios × N=10 per metric, ~$0.10-0.15 per N=10
-cycle for the judge layer. Step 3 decision rule:
+cycle for the judge layer. Step 3 decision rule (= **updated
+2026-05-22**, see ``Step 3 scope narrowing`` section below):
 
 - ``read_skip_rate > 50% AND cost_delta saves > 20% AND
-  paraphrase_fidelity_score ≥ baseline`` → wave-N cluster 化
+  paraphrase_fidelity_score ≥ baseline`` → **keep + improve**
+  the web_fetch preview-driven design (= prompt tuning, preview
+  generator polish, TUI inline-fold UX wave); also unlock A2A
+  path-ref materialise design (= cross-consumer reachability)
 - otherwise → preview quality reinvest OR pivot to (E)
   markdown-template alternative (= issue #393)
+
+**Not on the Step 3 path**: generalising preview-driven design to
+``file_read`` / ``grep`` (= confirmed user direction 2026-05-22 per
+the 3-criteria check below). See ``Step 3 scope narrowing``.
+
+## Step 3 scope narrowing (= 2026-05-22 user judgment)
+
+Preview-driven design has unique user-facing value only when all
+three of the following criteria are met (= see
+``feedback_preview_driven_3_criteria`` memory):
+
+1. **content is inherently external** — user / other UI surfaces
+   (A2A / MCP / CLI / Browser) lack independent access. = user
+   can ONLY see this content via the LLM, so paraphrase noise
+   is hidden.
+2. **size is unpredictable + can be large** — 1 KB to multi-MB.
+3. **LLM paraphrase noise is a UX hazard** — number drift,
+   subject inversion, over-summarisation, fabrication risks
+   on long-form prose content.
+
+Checked against the natural candidate tools:
+
+| tool | (1) external | (2) size unpredictable | (3) paraphrase hazard | verdict |
+|---|---|---|---|---|
+| ``web_fetch`` | yes (= remote HTTP body) | yes (1 KB - MB) | yes (= HTML prose) | ✓ **PoC target** |
+| ``file_read`` | no (= workspace fs; user can ``cat`` directly) | no (= ``offset/limit`` pagination exists) | no (= user has original) | ✗ **out of scope** |
+| ``grep`` | no (= local) | no (= structured hit list) | no (= matched line structure) | ✗ **out of scope** |
+| ``web_search`` | yes | small / structured already | low (= title+snippet) | n/a (= already preview-shaped) |
+
+**"LLM-only cost reduction" does NOT count as unique value** —
+every tool benefits from less context tokens, but justifying
+preview-driven architecture complexity requires the
+paraphrase-noise mitigation that's exclusive to externally-sourced
+content the user can't independently verify.
+
+cross-consumer angle reinforces this: criterion (1) ``inherently
+external'' is what makes preview-only viable across A2A / MCP /
+CLI / Browser — for tools where the user already has direct
+access, the preview-driven layer adds complexity without UX
+payoff.
+
+Therefore Step 3 (= "expand" in cluster type 5
+``foundation + measure + expand``) is narrowed to:
+
+- **keep the web_fetch implementation as the sole preview-driven
+  tool** — improve preview quality, TUI display affordance, etc.
+- **unlock A2A path-ref materialise design** (= cross-consumer
+  reachability for the web_fetch path-ref — separate follow-up
+  issue to scope)
+- **do NOT generalise to file_read / grep / other in-workspace
+  tools**.
 
 ## Hypothesis
 
@@ -373,9 +428,14 @@ Step 2.4: aggregate metrics, draft B49 retrospective with effect-size report
   ↓
 Step 2.5 (Step 3 trigger):
   read_skip_rate > 50% AND cost_delta saves > 20% AND fidelity ≥ baseline
-    → wave-N cluster 化 (file_read + grep + etc.)
+    → keep + improve (= web_fetch preview generator polish,
+      TUI inline-fold UX wave, A2A path-ref materialise follow-up)
   otherwise
     → preview quality review OR pivot to issue #393 (E)
+
+Note: Step 3 does NOT include generalising to file_read / grep
+(= see ``Step 3 scope narrowing`` above; user direction
+2026-05-22 per 3-criteria check).
 ```
 
 ## Open questions for sandbox_2 review
