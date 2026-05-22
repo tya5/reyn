@@ -667,6 +667,74 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# FP-0041 (#489) PR-A: humanic dispatch attribution helper.
+#
+# Sender envelope strings follow ``<transport>:<id>[:<display>]``. This
+# helper produces a human-readable label for inclusion in state_change
+# summaries so the LLM sees "bob (Slack)" instead of "slack:U456:bob".
+# Unknown / malformed senders fall through to the raw string.
+_SENDER_TRANSPORT_DISPLAY = {
+    "user":     "user",
+    "slack":    "Slack",
+    "line":     "LINE",
+    "cron":     "scheduled cron job",
+    "a2a":      "peer agent",
+    "webhook":  "external webhook",
+}
+
+
+def _format_sender_label(sender: str | None) -> str:
+    """Format a sender envelope string for LLM-visible state_change text.
+
+    Examples
+    --------
+    ``"slack:U456:bob"`` → ``"bob (Slack)"``
+    ``"slack:U456"`` → ``"slack user U456"``
+    ``"cron:morning_news"`` → ``"scheduled cron job 'morning_news'"``
+    ``"user:tui"`` → ``"user (TUI)"``
+    ``"a2a:news_agent"`` → ``"peer agent 'news_agent'"``
+    ``None`` → ``"an unknown sender"`` (= used in first-turn pre-state)
+
+    Falls through to the raw string when the transport is not in the
+    known list — keeps the dispatch resilient to new sources added by
+    future PRs without label updates here.
+    """
+    if sender is None:
+        return "an unknown sender"
+    parts = sender.split(":", 2)
+    if not parts or not parts[0]:
+        return sender
+    transport = parts[0]
+    rest = parts[1:] if len(parts) > 1 else []
+    transport_label = _SENDER_TRANSPORT_DISPLAY.get(transport)
+    if transport_label is None:
+        return sender
+    if transport == "user":
+        # ``user:tui`` / ``user:web`` / ``user:cli`` → "user (TUI)" etc.
+        surface = rest[0].upper() if rest else ""
+        return f"user ({surface})" if surface else "user"
+    if transport == "slack" or transport == "line":
+        # Prefer display name when present, fall back to id.
+        if len(rest) >= 2 and rest[1]:
+            return f"{rest[1]} ({transport_label})"
+        if len(rest) >= 1 and rest[0]:
+            return f"{transport_label.lower()} user {rest[0]}"
+        return transport_label
+    if transport == "cron":
+        if rest and rest[0]:
+            return f"{transport_label} '{rest[0]}'"
+        return transport_label
+    if transport == "a2a":
+        if rest and rest[0]:
+            return f"{transport_label} '{rest[0]}'"
+        return transport_label
+    if transport == "webhook":
+        if rest and rest[0]:
+            return f"{transport_label} ({rest[0]})"
+        return transport_label
+    return sender
+
+
 # #398 v4 emitter family — events-log subscriber dispatch table.
 #
 # Maps known emitter event types to (source, template) tuples used by
@@ -1112,6 +1180,12 @@ class ChatSession:
             from reyn.config import _default_agent_id
             agent_id = _default_agent_id()
         self._agent_id: str = agent_id
+        # FP-0041 (#489) PR-A: humanic dispatch attribution.
+        # Tracks the sender of the most-recently-dispatched inbox item
+        # so a sender transition (= different consumer addresses the
+        # agent now) can emit a state_change history entry. None until
+        # the first attributed turn is dispatched.
+        self._last_sender: str | None = None
         # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
         # EmbeddingProvider once per session when the operator has
         # configured ``action_retrieval.embedding_class``.  Both stay
@@ -1628,6 +1702,56 @@ class ChatSession:
         with self.history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
 
+    def _handle_sender_attribution(self, payload: object) -> None:
+        """Surface a sender transition to the LLM as a state_change entry
+        (= FP-0041 (#489) PR-A humanic dispatch attribution).
+
+        When the sender of an inbox item differs from the prior turn's
+        sender, emit a state_change history entry so the LLM reads
+        "[context shift] Now responding to <X> via <transport>.
+        Previous turn was from <Y>." before processing the new turn.
+        Without this, merged-inbox multi-consumer dispatch produces a
+        confused linear feed where the LLM can't tell who's talking.
+
+        ``sender`` convention (= envelope shape):
+          - ``user:tui`` / ``user:web`` / ``user:cli`` — local human user
+          - ``slack:<user_id>[:<display_name>]`` — Slack consumer
+          - ``line:<user_id>[:<display_name>]`` — LINE consumer
+          - ``cron:<job_name>`` — scheduled fire
+          - ``a2a:<peer_agent>`` — peer-agent message
+          - ``webhook:<source>`` — external event source (= Phase 2)
+
+        Payloads without a ``sender`` field are dispatched unchanged
+        (= backward compat for existing inbox producers that haven't
+        adopted the convention yet). No state_change is emitted in
+        that case; ``self._last_sender`` is unchanged.
+        """
+        if not isinstance(payload, dict):
+            return
+        new_sender = payload.get("sender")
+        if not new_sender or not isinstance(new_sender, str):
+            return
+        if new_sender == self._last_sender:
+            return
+        prev_label = _format_sender_label(self._last_sender)
+        new_label = _format_sender_label(new_sender)
+        if self._last_sender is None:
+            summary = (
+                f"[context shift] Now responding to {new_label}. "
+                f"This is the first attributed turn this session."
+            )
+        else:
+            summary = (
+                f"[context shift] Now responding to {new_label}. "
+                f"Previous turn was from {prev_label}."
+            )
+        try:
+            self.notify_state_change(summary, source="dispatch_attribution")
+        except Exception:
+            # Defensive: attribution emission must not crash dispatch.
+            pass
+        self._last_sender = new_sender
+
     def _on_chat_event_for_state_change(self, event) -> None:
         """Generic events-log subscriber that converts known emitter events
         to ``state_change`` history entries (= #398 v4 emitter family).
@@ -2023,6 +2147,17 @@ class ChatSession:
         kind, payload = await self._consume_inbox()
         if kind == "shutdown":
             return False
+        # FP-0041 (#489) PR-A: humanic dispatch attribution.
+        # If this inbox item carries a ``sender`` (= new envelope
+        # convention: who/what produced this message — e.g.
+        # ``user:tui`` / ``slack:U456:bob`` / ``cron:morning_news`` /
+        # ``a2a:peer_agent``) and it differs from the prior turn's
+        # sender, surface the transition to the LLM as a state_change
+        # history entry. Makes the multi-consumer (humanic) model
+        # explicit: the agent knows "I was just talking to Alice via
+        # cron, now Bob from Slack just said something" instead of
+        # seeing a confused linear feed.
+        self._handle_sender_attribution(payload)
         if kind == "user":
             await self._handle_user_message(
                 payload.get("text", ""),
