@@ -760,6 +760,17 @@ class MultimodalConfig:
             Project-relative directory for text-y tool result dumps
             (= #385 PoC foundation). PR-C lands the writer alongside
             ``media_dir``; PR-D wires the consumer + preview.
+        base_url:
+            Optional canonical URL prefix for cross-host path_ref
+            consumption (#385 β core impl sub-task 3b). When set
+            (= e.g. ``"https://reyn.example.com"`` from a deployed
+            ``reyn web`` instance), ``MediaStore.save_*`` augments the
+            path_ref with a ``url`` field pointing at
+            ``<base_url>/agents/<agent>/tool-results/<artifact>`` so
+            cross-host consumers (= A2A peers, MCP clients, browsers)
+            can fetch the body via the resources router. Unset → no
+            ``url`` field minted, same-host fast-path only (= backward
+            compat for legacy / CLI-only deployments).
 
     Issue #364 lands this config + the shared ``require_media_load`` gate;
     paths #365 (file__read binary) and #366 (user chat input image) reuse
@@ -769,6 +780,7 @@ class MultimodalConfig:
     on_oversize: Literal["ask", "allow", "deny"] = "ask"
     media_dir: str = ".reyn/media"
     tool_results_dir: str = ".reyn/tool-results"
+    base_url: str | None = None
 
 
 def _build_multimodal_config(raw: object) -> MultimodalConfig:
@@ -804,9 +816,16 @@ def _build_multimodal_config(raw: object) -> MultimodalConfig:
         if isinstance(tool_results_dir_raw, str) and tool_results_dir_raw
         else ".reyn/tool-results"
     )
+    base_url_raw = raw.get("base_url")
+    base_url: str | None = (
+        str(base_url_raw).rstrip("/")
+        if isinstance(base_url_raw, str) and base_url_raw
+        else None
+    )
     return MultimodalConfig(
         max_bytes=max_bytes, on_oversize=on_oversize,
         media_dir=media_dir, tool_results_dir=tool_results_dir,
+        base_url=base_url,
     )
 
 
