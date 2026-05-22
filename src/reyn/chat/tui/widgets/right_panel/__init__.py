@@ -529,7 +529,16 @@ class RightPanel(Widget):
             if scroll_helper is not None:
                 scroll_helper()
             if self._preview_visible:
-                self._update_preview()
+                # If the new tab has nothing previewable (= keys / cost,
+                # or an empty memory / events list), auto-close the
+                # preview so the user isn't left with a blank half-pane
+                # and a `_toggle_preview` guard that silently no-ops on
+                # the next Space press. Tabs that do have content keep
+                # the preview open and refresh it.
+                if not self._has_previewable_content():
+                    self._toggle_preview()
+                else:
+                    self._update_preview()
 
     @on(_PreviewPane.CloseRequested)
     def _on_preview_close_requested(self, event) -> None:
