@@ -39,6 +39,20 @@ from reyn.chat.tui._palette import _AMBER
 _RENDER_INTERVAL_MS = 16  # ~60 fps max
 _RENDER_INTERVAL_S = _RENDER_INTERVAL_MS / 1000
 
+# Body content rendered inside ConversationView lives at a 7-cell
+# hanging indent (= ``conversation._BODY_INDENT_COLS``) so wrap
+# continuations sit under the speaker name and the column-0 turn
+# header stays visually distinct. Streaming text mounted here is the
+# same kind of body content, so it must render at the same indent —
+# otherwise the body visibly shifts 7 cells to the right at seal()
+# time when ``end_stream`` commits the final markdown via
+# ``_write_agent_markdown_with_fold`` → ``_write_body`` (= the
+# Padding-wrapped ``_indent_body`` path). Kept as a local constant
+# rather than imported from conversation.py to avoid an import
+# cycle (conversation already imports this module); must stay in
+# sync with conversation._BODY_INDENT_COLS.
+_BODY_INDENT_COLS = 7
+
 
 class StreamingRow(Widget):
     """One in-progress agent message that accumulates token chunks.
@@ -56,17 +70,24 @@ class StreamingRow(Widget):
         row.seal()   # swaps raw text for Markdown widget
     """
 
+    # Wave-9 F-F1 + F-F6: Static (streaming) and Markdown (sealed swap)
+    # both get a 7-cell left padding so the body sits at the same
+    # hanging indent as ``_write_body`` / ``_indent_body``. Without
+    # this, the streaming text rendered at col 0 and visibly jumped 7
+    # cells to the right at seal time when ``end_stream`` committed
+    # the final markdown through ``_write_agent_markdown_with_fold``.
+    # The 4-value form is ``top right bottom left``.
     DEFAULT_CSS = """
     StreamingRow {
         padding: 0 0;
         height: auto;
     }
     StreamingRow Static {
-        padding: 0 0;
+        padding: 0 0 0 7;
         height: auto;
     }
     StreamingRow Markdown {
-        padding: 0 0;
+        padding: 0 0 0 7;
         height: auto;
         background: transparent;
     }
