@@ -141,6 +141,54 @@ async def test_unknown_op_id_terminals_are_no_op():
         assert len(list(conv.query(ToolCallRow))) == 0
 
 
+@pytest.mark.asyncio
+async def test_tool_call_with_parent_run_id_matching_skill_row_nests():
+    """Tier 2 F-F: tool_call whose run_id matches a mounted SkillActivityRow
+    renders with a ``└─`` prefix so the nesting is visible.
+    """
+    app = _ConvOnlyApp()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        # Mount a SkillActivityRow first (= "parent" of the eventual
+        # tool_call) so the run_id lookup hits.
+        conv.start_skill_row(run_id="parent-skill-run", skill_name="planner")
+        await pilot.pause()
+        row = conv.start_tool_call_row(
+            "op-nested",
+            "read_file",
+            args_repr="path=/x",
+            parent_run_id="parent-skill-run",
+        )
+        await pilot.pause()
+        assert row is not None
+        line1 = row._build_line1().plain
+        assert "└─" in line1, "nested tool_call carries └─ prefix"
+        assert "read_file" in line1
+
+
+@pytest.mark.asyncio
+async def test_tool_call_with_unmatched_parent_run_id_renders_root_level():
+    """Tier 2 F-F: tool_call whose run_id doesn't match any mounted skill
+    row falls back to root-level rendering (= no └─ prefix).
+    """
+    app = _ConvOnlyApp()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        # No skill rows mounted — parent_run_id has nothing to match.
+        row = conv.start_tool_call_row(
+            "op-root",
+            "read_file",
+            args_repr="path=/x",
+            parent_run_id="non-existent-run",
+        )
+        await pilot.pause()
+        assert row is not None
+        line1 = row._build_line1().plain
+        assert "└─" not in line1, "root-level tool_call has no prefix"
+
+
 # ── app_outbox formatter helper tests ─────────────────────────────────────────
 
 

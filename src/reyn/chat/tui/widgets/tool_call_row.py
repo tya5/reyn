@@ -89,12 +89,20 @@ class ToolCallRow(Widget):
         *,
         tool_name: str,
         args_repr: str = "",
+        label_prefix: str = "",
         id: str | None = None,
     ) -> None:
         super().__init__(id=id)
         self._tool_name = tool_name
         self._args_repr = args_repr
         self._result_snippet: str = ""
+        # F-F: when this tool_call originated from a sub-skill whose
+        # SkillActivityRow is currently mounted, the conv pane passes
+        # ``label_prefix="  └─ "`` so the inline rows visibly nest
+        # under the parent skill row — same idiom as SkillActivityRow's
+        # own ``label_prefix`` (issue #210 sub-skill nesting). Empty
+        # for root-level tool_calls.
+        self._label_prefix = label_prefix
 
         # Running state
         self._start = time.monotonic()
@@ -280,6 +288,8 @@ class ToolCallRow(Widget):
         )
         args_display = self._truncate_to_cells(self._args_repr, args_budget)
 
+        if self._label_prefix:
+            t.append(self._label_prefix, style="dim #666666")
         t.append(glyph_with_space, style=glyph_style)
         t.append(tool_open, style="bold" if not self._finished else "dim")
         t.append(args_display, style="dim")
