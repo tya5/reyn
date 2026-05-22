@@ -880,6 +880,7 @@ class ConversationView(Widget):
         tool_name: str,
         *,
         args_repr: str = "",
+        parent_run_id: str = "",
     ) -> ToolCallRow | None:
         """Mount a ToolCallRow for ``op_id`` if one isn't already present.
 
@@ -890,6 +891,13 @@ class ConversationView(Widget):
         None (= consumer with no correlation id falls back to silent
         suppression rather than mounting an unkeyed row that can never
         be finalised).
+
+        ``parent_run_id`` (F-F): when non-empty AND a SkillActivityRow
+        for that run_id is currently mounted, the new row renders with
+        a ``  └─ `` prefix so tool_calls visibly nest under their owning
+        skill — same idiom as ``start_skill_row``'s ``parent_run_id``
+        handling for sub-skill rows (issue #210). Root-level tool_calls
+        (= no matching parent skill row) render with empty prefix.
         """
         if not op_id:
             return None
@@ -897,9 +905,13 @@ class ConversationView(Widget):
         if existing is not None:
             return existing
         self._consume_empty_hint()
+        label_prefix = ""
+        if parent_run_id and parent_run_id in self._skill_rows:
+            label_prefix = "  └─ "
         row = ToolCallRow(
             tool_name=tool_name,
             args_repr=args_repr,
+            label_prefix=label_prefix,
             id=f"toolcall_{op_id[:8]}",
         )
         self._tool_call_rows[op_id] = row

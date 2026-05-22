@@ -792,9 +792,18 @@ class OutboxRouter:
         op_id = str(meta.get("op_id") or "")
         tool_name = str(meta.get("tool") or msg.text or "tool")
         args = meta.get("args") or {}
+        # F-F: pass through the source run_id so the conv pane can nest
+        # the tool_call row under its owning SkillActivityRow when one
+        # is currently mounted (= sub-skill spawned the call). The conv
+        # pane checks whether the run_id matches a mounted skill row;
+        # unmatched → root-level rendering (no prefix).
+        parent_run_id = str(meta.get("run_id") or "")
         try:
             conv.start_tool_call_row(
-                op_id, tool_name, args_repr=_format_tool_args(args),
+                op_id,
+                tool_name,
+                args_repr=_format_tool_args(args),
+                parent_run_id=parent_run_id,
             )
         except Exception:
             pass
