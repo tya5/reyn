@@ -209,8 +209,20 @@ class StreamingRow(Widget):
             if self._static is not None:
                 self._static.display = False
 
-            prefix_widget = Static(id="sealed_prefix")
-            md_widget = Markdown(full, id="sealed_markdown")
+            # Wave-9 F-F12: scope the sealed widget IDs by the row's
+            # own id so two StreamingRow instances sealed concurrently
+            # (e.g. ``/attach`` mid-stream, or remote ``--connect``
+            # delivering an out-of-order ``__stream_end__`` for an
+            # earlier turn) do not produce duplicate Textual widget
+            # IDs in the DOM. Pre-fix both rows mounted children with
+            # the hardcoded ``"sealed_prefix"`` / ``"sealed_markdown"``
+            # ids — Textual logs a warning about duplicates and
+            # ``query_one`` lookups become ambiguous. Fallback ``"anon"``
+            # is defensive; the production caller always supplies an
+            # id via ``begin_stream``.
+            row_id = self.id or "anon"
+            prefix_widget = Static(id=f"{row_id}_prefix")
+            md_widget = Markdown(full, id=f"{row_id}_markdown")
             self.mount(prefix_widget, md_widget)
             prefix_widget.update(Text(self._prefix, style="bold " + _AMBER))
         except Exception:
