@@ -1768,7 +1768,13 @@ class RightPanel(Widget):
 
     def _build_running_plan_bundle(self, item: dict) -> str:
         lines: list[str] = []
-        lines.append(f"# Reyn plan (running) · {item.get('plan_id', '?')}")
+        # Wave-10 follow-up H-F6: prefer ``plan_id_full`` (= the
+        # canonical UUID) when it's present so the copied payload
+        # matches the events log identifier exactly. Falls back to
+        # the 8-char display prefix if the flat_item lacks the full
+        # form — defensive against older callers.
+        plan_id = item.get("plan_id_full") or item.get("plan_id", "?")
+        lines.append(f"# Reyn plan (running) · {plan_id}")
         lines.append(f"# agent:    {item.get('agent', '?')}")
         lines.append(f"# status:   {item.get('status', '?')}")
         lines.append(

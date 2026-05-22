@@ -710,6 +710,18 @@ def render_agents(
                     "kind": "running_plan",
                     "agent": name,
                     "plan_id": p["plan_id"],
+                    # Wave-10 follow-up H-F6: carry the FULL plan_id so
+                    # ``_build_running_plan_bundle`` (= the ``c``
+                    # copy-bundle path) can hand the user the
+                    # canonical identifier instead of the 8-char
+                    # display prefix. Pre-fix the bundle contained
+                    # only ``plan_id`` (= prefix), causing the copied
+                    # payload to disagree with the full UUID in the
+                    # events log and breaking cross-reference. The
+                    # ``recent_plan`` flat_item already carried this
+                    # via ``**p`` splat; this aligns the
+                    # ``running_plan`` shape.
+                    "plan_id_full": p.get("plan_id_full", p["plan_id"]),
                     "goal": p["goal"],
                     "done": p["done"],
                     "total": p["total"],
