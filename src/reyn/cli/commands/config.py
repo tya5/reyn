@@ -26,6 +26,18 @@ def register(sub) -> None:
                    help="Config key (e.g. api_base, models.standard). Run 'reyn config fields' for the full list.")
     s.add_argument("value", metavar="VALUE", help="Value to set (YAML syntax accepted)")
 
+    m = csub.add_parser(
+        "migrate-mcp",
+        help=(
+            "Move legacy mcp.servers entries from reyn.yaml / reyn.local.yaml "
+            "to .reyn/mcp.yaml (issue #470 config separation)"
+        ),
+    )
+    m.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would move without writing any files.",
+    )
+
 
 def run(args: argparse.Namespace) -> None:
     sub = getattr(args, "config_cmd", None)
@@ -37,6 +49,8 @@ def run(args: argparse.Namespace) -> None:
         _get(args.key)
     elif sub == "set":
         _set(args.key, args.value)
+    elif sub == "migrate-mcp":
+        _migrate_mcp(dry_run=bool(getattr(args, "dry_run", False)))
     else:
         _show()
 
@@ -83,6 +97,154 @@ def _get(key: str) -> None:
         print(yaml.dump(value, allow_unicode=True, default_flow_style=False), end="")
     else:
         print(value)
+
+
+def _migrate_mcp(*, dry_run: bool = False) -> None:
+    """Move legacy ``mcp.servers`` entries from ``reyn.yaml`` /
+    ``reyn.local.yaml`` (and ``~/.reyn/config.yaml``) into the canonical
+    ``.reyn/mcp.yaml`` location (= issue #470 config separation).
+
+    Why: post-#470, the dynamic MCP server registry lives at
+    ``.reyn/mcp.yaml`` so ``reyn.yaml`` carries only static deployment
+    config. Existing projects continue to load legacy entries (=
+    backward compat), but operators who want the clean separation
+    today can run this command to migrate explicitly.
+
+    Behaviour:
+      - Reads ``mcp.servers`` from reyn.yaml + reyn.local.yaml +
+        ~/.reyn/config.yaml (= the legacy locations).
+      - Merges into ``.reyn/mcp.yaml`` (= entries already present
+        there win on conflict so a partial migration doesn't get
+        clobbered).
+      - Removes the ``mcp.servers`` section from each legacy file
+        (= leaves other config sections intact).
+      - On ``--dry-run``: prints the plan without writing.
+
+    Non-goals:
+      - Auto-migration on every load (= explicit by design; operator
+        decides when to clean up the diff).
+      - Removing the ``mcp:`` key entirely from legacy files (=
+        leaves ``mcp:`` with sibling keys like ``mcp_servers_extra``
+        intact if any exist; only the ``servers`` sub-key is moved).
+    """
+    import yaml
+
+    from reyn.config import _find_project_root
+
+    project_root = _find_project_root(Path.cwd())
+    if project_root is None:
+        print(
+            "Error: no Reyn project root found. Run from a directory with "
+            "reyn.yaml or .reyn/.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Legacy paths to scan: project + local + user-global.
+    legacy_paths = [
+        project_root / "reyn.yaml",
+        project_root / "reyn.local.yaml",
+        Path.home() / ".reyn" / "config.yaml",
+    ]
+    dynamic_path = project_root / ".reyn" / "mcp.yaml"
+
+    def _read(p: Path) -> dict:
+        if not p.exists():
+            return {}
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    # Collect legacy servers per file (for the move-out step).
+    legacy_by_file: dict[Path, dict] = {}
+    for p in legacy_paths:
+        cfg = _read(p)
+        servers = (
+            cfg.get("mcp", {}).get("servers", {})
+            if isinstance(cfg.get("mcp"), dict)
+            else {}
+        )
+        if isinstance(servers, dict) and servers:
+            legacy_by_file[p] = dict(servers)
+
+    if not legacy_by_file:
+        print("No legacy mcp.servers entries found — nothing to migrate.")
+        return
+
+    # Compose target: existing dynamic file's entries (= take precedence
+    # so a partial prior migration isn't clobbered) plus the legacy
+    # entries that aren't already there.
+    dynamic_cfg = _read(dynamic_path)
+    dynamic_servers = (
+        dynamic_cfg.get("mcp", {}).get("servers", {})
+        if isinstance(dynamic_cfg.get("mcp"), dict)
+        else {}
+    )
+    if not isinstance(dynamic_servers, dict):
+        dynamic_servers = {}
+
+    merged_dynamic = dict(dynamic_servers)
+    for _src, src_servers in legacy_by_file.items():
+        for name, entry in src_servers.items():
+            if name not in merged_dynamic:
+                merged_dynamic[name] = entry
+
+    # Print plan.
+    print(f"# Migration plan ({'DRY RUN' if dry_run else 'WRITING'})")
+    for src, src_servers in legacy_by_file.items():
+        try:
+            rel = src.relative_to(project_root)
+            src_label = str(rel)
+        except ValueError:
+            src_label = str(src)
+        moved = sorted(src_servers.keys())
+        print(f"  from {src_label}: {len(moved)} server(s) → {', '.join(moved)}")
+    print("  → into .reyn/mcp.yaml (existing entries preserved)")
+    print(
+        f"  total servers in .reyn/mcp.yaml after migration: "
+        f"{len(merged_dynamic)}"
+    )
+
+    if dry_run:
+        print("\nDry run only — no files written. Re-run without --dry-run to apply.")
+        return
+
+    # Write the merged dynamic file.
+    dynamic_path.parent.mkdir(parents=True, exist_ok=True)
+    new_dynamic = dict(dynamic_cfg)
+    new_dynamic_mcp = dict(new_dynamic.get("mcp", {})) if isinstance(new_dynamic.get("mcp"), dict) else {}
+    new_dynamic_mcp["servers"] = merged_dynamic
+    new_dynamic["mcp"] = new_dynamic_mcp
+    dynamic_path.write_text(
+        yaml.dump(new_dynamic, allow_unicode=True, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
+    print(f"\nWrote {dynamic_path}")
+
+    # Remove ``mcp.servers`` from each legacy file (= leave other keys intact).
+    for src in legacy_by_file:
+        cfg = _read(src)
+        mcp_section = cfg.get("mcp")
+        if isinstance(mcp_section, dict) and "servers" in mcp_section:
+            del mcp_section["servers"]
+            # If the mcp section is now empty, drop it entirely so the
+            # legacy file doesn't keep a dangling ``mcp: {}`` key.
+            if not mcp_section:
+                del cfg["mcp"]
+            else:
+                cfg["mcp"] = mcp_section
+        src.write_text(
+            yaml.dump(cfg, allow_unicode=True, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        try:
+            rel = src.relative_to(project_root)
+            src_label = str(rel)
+        except ValueError:
+            src_label = str(src)
+        print(f"Removed mcp.servers from {src_label}")
 
 
 def _set(key: str, value: str) -> None:
