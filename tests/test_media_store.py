@@ -408,3 +408,91 @@ def test_agent_name_property_returns_set_identity(tmp_path):
     )
     assert no_id.agent_name is None
     assert with_id.agent_name == "alpha"
+
+
+# ── Lifecycle Phase 1 = "(a) Persistent until user delete" (sub-task 5) ──
+#
+# These tests pin the contract that MediaStore DOES NOT auto-GC. Future
+# Phase 2 will add TTL / LRU / session-end policies as opt-in config; until
+# then the storage is intentionally unbounded so cross-turn / cross-session
+# re-access of a path-ref keeps working. Regressing this invariant would
+# silently break the Q1 (= durable agent identity) contract too — a
+# path-ref whose source_agent / agent_name is stable but whose file got
+# auto-deleted would surface as ``not_found`` to consumers that expect
+# Phase 1 semantics.
+
+
+def test_saved_tool_result_persists_across_independent_store_instances(tmp_path):
+    """Tier 2: Phase 1 invariant — a file written by one MediaStore
+    instance is still readable by a separately-constructed instance on
+    the same project root. No constructor-time / process-start cleanup.
+
+    Simulates the cross-session re-access scenario: producer agent's
+    session ends, file stays, a new session (or a different agent in
+    the same project) constructs a fresh MediaStore and re-reads.
+    """
+    producer = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="producer",
+    )
+    block = producer.save_tool_result("persisted body\n", mime_type="text/plain")
+
+    # Drop the producer reference; construct a fresh store on the same root.
+    del producer
+    consumer = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="consumer",
+    )
+    body, found = consumer.read_tool_result(block["path"])
+    assert found is True
+    assert body == "persisted body\n"
+
+
+def test_multiple_saved_tool_results_all_retained(tmp_path):
+    """Tier 2: Phase 1 invariant — MediaStore retains every file written,
+    no implicit eviction. Saving N entries leaves N files on disk and
+    each remains readable. Pins the "no LRU / max-N" Phase 1 commitment.
+
+    Phase 2 (= bounded LRU / TTL) would change this; the test will
+    need an explicit policy=Phase1 marker then. Today the unbounded
+    behaviour is the contract.
+    """
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+    )
+    blocks = [
+        store.save_tool_result(f"entry {i}\n", mime_type="text/plain", seq=i)
+        for i in range(1, 11)
+    ]
+    # Every file present on disk + readable.
+    for i, block in enumerate(blocks, start=1):
+        body, found = store.read_tool_result(block["path"])
+        assert found is True, f"entry {i} was evicted"
+        assert body == f"entry {i}\n"
+    # Directory listing has all 10 files (= no auto-cleanup).
+    files = list(store.tool_results_dir.iterdir())
+    assert len(files) == 10
+
+
+def test_saved_file_survives_when_no_one_reads_for_a_while(tmp_path):
+    """Tier 2: Phase 1 invariant — passive time does NOT cause eviction.
+
+    Synthesises an "old" file by backdating its mtime to a year ago,
+    then confirms the file is still found by read_tool_result. Pins
+    the "no TTL" Phase 1 commitment so any future change that adds a
+    time-based check (= Phase 2 trigger) is a deliberate contract
+    change, not an accidental regression.
+    """
+    import os
+    import time
+
+    store = MediaStore(
+        MediaStoreConfig(), project_root=tmp_path, agent_name="me",
+    )
+    block = store.save_tool_result("old body\n", mime_type="text/plain")
+    full_path = tmp_path / block["path"]
+    # Backdate mtime + atime to ~1 year ago.
+    one_year_ago = time.time() - (365 * 24 * 60 * 60)
+    os.utime(full_path, (one_year_ago, one_year_ago))
+
+    body, found = store.read_tool_result(block["path"])
+    assert found is True
+    assert body == "old body\n"
