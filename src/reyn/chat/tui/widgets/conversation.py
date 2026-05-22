@@ -1663,6 +1663,13 @@ class ConversationView(Widget):
         self._turn_anchors.clear()
         self._trim_warned = False
         self._last_long_reply = None
+        # Wave-10 G-F3: reset the recent-replies ring buffer. Pre-fix
+        # ``/copy`` after a Ctrl+L returned replies from the now-invisible
+        # prior session — confusing, and potentially surfaces content
+        # the user thought they had cleared. Same lifecycle as
+        # ``_last_long_reply`` directly above: both are agent-reply
+        # caches that should not survive a pane clear.
+        self._recent_replies.clear()
         # Re-arm auto-scroll: clear() puts the user back at a fresh blank
         # log, and any prior scroll-up state is meaningless once the
         # content it was reading is gone.
