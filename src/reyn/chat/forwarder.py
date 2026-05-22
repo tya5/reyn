@@ -247,107 +247,12 @@ class ChatEventForwarder:
             source_run_id=data.get("run_id"),
         )
 
-    # ── Tool-call lifecycle events (issue #427 L4 step 3) ─────────────────
-    # Forward the existing ``dispatch/dispatcher.py`` emissions to outbox
-    # messages so the conv pane can mount per-tool_call ToolCallRow widgets
-    # (= step 4 wires the consumer). These three handlers complement the
-    # phase / skill_run / workflow handlers above and intentionally share
-    # the same fire-and-forget + ``parent_run_id`` provenance discipline.
-
-    def on_tool_called(self, data: dict) -> None:
-        """Bridge ``dispatch_tool``'s pre-event into a ``tool_call_started``
-        outbox message.
-
-        Source schema (= ``dispatch/dispatcher.py:200``):
-            {caller_kind, caller_id, tool, chain_id, args, args_hash}
-
-        ``args_hash`` is the deterministic correlation id we hand to the
-        TUI widget so it can match the eventual ``tool_call_completed`` /
-        ``tool_call_failed`` to this mount call. Args themselves go in
-        meta so the renderer can build a short args_repr.
-        """
-        self._enqueue_tool_call(
-            kind="tool_call_started",
-            text=str(data.get("tool", "")),
-            data=data,
-            extra_meta={"args": data.get("args")},
-        )
-
-    def on_tool_returned(self, data: dict) -> None:
-        """Bridge ``dispatch_tool``'s post-event into a ``tool_call_completed``
-        outbox message.
-
-        Source schema (= ``dispatch/dispatcher.py:262``):
-            {caller_kind, caller_id, tool, chain_id, args_hash, result}
-
-        The full result dict is forwarded in meta so the renderer can
-        synthesise a short result preview (= the TUI's truncation logic
-        already handles cell-aware ellipsis).
-        """
-        self._enqueue_tool_call(
-            kind="tool_call_completed",
-            text=str(data.get("tool", "")),
-            data=data,
-            extra_meta={"result": data.get("result")},
-        )
-
-    def on_tool_failed(self, data: dict) -> None:
-        """Bridge ``dispatch_tool``'s failure event into a ``tool_call_failed``
-        outbox message.
-
-        Source schema (= ``dispatch/dispatcher.py:222``):
-            {caller_kind, caller_id, tool, chain_id, args_hash, error_kind, message}
-        """
-        self._enqueue_tool_call(
-            kind="tool_call_failed",
-            text=str(data.get("tool", "")),
-            data=data,
-            extra_meta={
-                "error_kind": data.get("error_kind"),
-                "error_message": data.get("message"),
-            },
-        )
-
-    def _enqueue_tool_call(
-        self,
-        *,
-        kind: str,
-        text: str,
-        data: dict,
-        extra_meta: dict,
-    ) -> None:
-        """Shared enqueue path for the three tool-call lifecycle outbox kinds.
-
-        Carries the same ``run_id`` / ``parent_run_id`` provenance the
-        ``_enqueue`` helper builds for trace messages so consumers can
-        attribute each tool-call row to its owning skill thread. Adds
-        ``tool`` + ``args_hash`` to every message — together they form
-        the (tool, op_id) correlation key the TUI widget keys off of.
-        """
-        source_run_id = data.get("run_id")
-        effective_run_id = source_run_id or self.run_id
-        meta: dict = {"skill_name": self.skill_name}
-        if effective_run_id:
-            meta["run_id"] = effective_run_id
-            meta["run_id_short"] = effective_run_id[-4:]
-        if (
-            source_run_id is not None
-            and self.run_id is not None
-            and source_run_id != self.run_id
-        ):
-            meta["parent_run_id"] = self.run_id
-        # Stable across the three lifecycle phases so the consumer can
-        # pair start/end/fail without ambiguity. Falls back to None when
-        # the source event didn't include a hash (= shouldn't happen but
-        # is non-fatal — consumer treats missing op_id as "no pairing").
-        meta["tool"] = data.get("tool")
-        meta["op_id"] = data.get("args_hash")
-        meta["chain_id"] = data.get("chain_id")
-        meta.update(extra_meta)
-        try:
-            self.outbox.put_nowait(OutboxMessage(kind=kind, text=text, meta=meta))
-        except asyncio.QueueFull:
-            pass
+    # NOTE: tool-call lifecycle handlers (on_tool_called / on_tool_returned /
+    # on_tool_failed) live on ``ChatLifecycleForwarder`` instead — those
+    # events fire from ``dispatch/dispatcher.py`` against the session-level
+    # event log, not the per-skill event log this forwarder subscribes to.
+    # See ``feedback_verify_existing_event_emission_before_adding`` for the
+    # subscriber-layer lesson (wave-#427 smoke finding 2026-05-22).
 
     def _enqueue(self, text: str, *, source_run_id: str | None = None) -> None:
         # Fire-and-forget: trace messages are advisory, never block the skill.
