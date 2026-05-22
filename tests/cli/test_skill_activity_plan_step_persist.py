@@ -6,14 +6,22 @@ The forwarder emits ``"plan N/M"`` exactly once per spawned sub-skill
 ``_plan_step_announced``). Without this contract, the SkillActivityRow
 would lose the plan attribution after the first in-phase signal
 (on_llm_called / on_act_executed → ``set_detail("llm: …")``) or after
-the next phase advance (``set_phase`` clears ``_detail``).
+the next phase advance (``set_phase`` clears the ephemeral detail).
 
-These tests pin that the persistent ``_plan_step_label`` slot survives:
+These tests pin that the persistent plan badge surfaces in the
+rendered ``_build_running`` output even after:
 
 1. A subsequent ``set_detail`` with a non-plan payload (= llm: / act:).
-2. A ``set_phase`` call that clears the ephemeral ``_detail`` slot.
-3. The badge appears in the rendered running line so the user can see
-   "this sub-skill is plan step 2/5" at any time during execution.
+2. A ``set_phase`` call that clears the ephemeral in-phase detail.
+3. Non-plan detail payloads do NOT leave a stray "plan" marker behind
+   in the render output.
+
+All assertions go through the public render surface
+(``row._build_running().plain``) per CLAUDE.md testing policy: "NEVER
+assert on private state. Use the public surface or a snapshot()-style
+read." The renderer is what the user actually sees; verifying through
+the render contract keeps the test robust against future field /
+naming refactors of the internal slot.
 """
 from __future__ import annotations
 
@@ -31,49 +39,64 @@ def _row():
     ``_refresh`` returns early when ``_static is None`` (= not composed),
     so methods that drive internal state can be exercised directly
     against the row's public API without requiring a Textual app
-    context. The rendering helpers (``_build_running``) are pure
-    over the internal fields and can be called the same way.
+    context. The renderer (``_build_running``) is pure over those
+    fields and can be called the same way to read the visible state.
     """
     from reyn.chat.tui.widgets.skill_activity import SkillActivityRow
     return SkillActivityRow(run_id="abc1efgh", skill_name="test_skill")
 
 
-def test_plan_step_label_persists_through_in_phase_set_detail() -> None:
-    """Tier 2: ``set_detail("plan N/M")`` populates the persistent slot,
-    and a follow-up ``set_detail("llm: …")`` does NOT clobber it.
+def test_plan_step_badge_persists_through_in_phase_detail() -> None:
+    """Tier 2: a follow-up ``set_detail("llm: …")`` does NOT erase the
+    plan badge from the rendered output.
+
+    Sequence: plan badge arrives first → row shows "plan 2/5". The
+    next in-phase signal arrives (llm: opus-4-7) → row STILL shows
+    "plan 2/5" alongside the new in-phase detail.
     """
     row = _row()
+    row.set_phase("resolve")
     row.set_detail("plan 2/5")
-    assert row._plan_step_label == "plan 2/5"
-    assert row._detail == ""
+    assert "plan 2/5" in row._build_running().plain
     row.set_detail("llm: opus-4-7")
-    # ephemeral detail updated …
-    assert row._detail == "llm: opus-4-7"
-    # … but the persistent plan badge stays put.
-    assert row._plan_step_label == "plan 2/5"
+    rendered = row._build_running().plain
+    assert "plan 2/5" in rendered, (
+        "plan badge must survive the next in-phase set_detail call"
+    )
+    assert "llm: opus-4-7" in rendered, (
+        "ephemeral detail still updates normally"
+    )
 
 
-def test_plan_step_label_survives_set_phase() -> None:
-    """Tier 2: ``set_phase`` clears ``_detail`` but leaves the plan badge."""
+def test_plan_step_badge_survives_set_phase() -> None:
+    """Tier 2: ``set_phase`` clears the ephemeral detail but leaves the
+    plan badge visible in the render.
+    """
     row = _row()
+    row.set_phase("resolve")
     row.set_detail("plan 3/7")
     row.set_detail("act: 2 ops")
-    assert row._detail == "act: 2 ops"
-    assert row._plan_step_label == "plan 3/7"
+    pre = row._build_running().plain
+    assert "plan 3/7" in pre
+    assert "act: 2 ops" in pre
     row.set_phase("execute", visit=1)
-    # phase advance clears in-phase detail …
-    assert row._detail == ""
-    # … but the plan attribution remains visible.
-    assert row._plan_step_label == "plan 3/7"
+    post = row._build_running().plain
+    assert "plan 3/7" in post, (
+        "plan badge must survive set_phase clearing the ephemeral detail"
+    )
+    assert "act: 2 ops" not in post, (
+        "ephemeral detail is cleared on phase advance, as before"
+    )
+    assert "execute" in post, "new phase name appears in render"
 
 
-def test_plan_step_label_renders_in_running_line() -> None:
-    """Tier 2: the persistent badge appears in the running render output.
+def test_plan_step_badge_appears_on_first_set_detail() -> None:
+    """Tier 2: the very first ``set_detail("plan N/M")`` call surfaces
+    the badge in the running render.
 
-    The exact wrapping (``[`` / ``]``) is not pinned — only that the
-    badge text surfaces somewhere in the running Text. Tolerates
-    future renderer adjustments (different separator, color, etc.)
-    so long as the badge is observable to the user.
+    Pins the entry path — without this we couldn't tell whether the
+    contract was broken at routing (set_detail not recognising the
+    payload) or at rendering (renderer ignoring the persistent slot).
     """
     row = _row()
     row.set_phase("resolve")
@@ -82,17 +105,24 @@ def test_plan_step_label_renders_in_running_line() -> None:
     assert "plan 4/9" in rendered
 
 
-def test_non_plan_detail_does_not_populate_plan_label() -> None:
-    """Tier 2: regular details (= llm: / act:) stay in the ephemeral slot.
+def test_non_plan_details_do_not_leak_plan_marker_into_render() -> None:
+    """Tier 2: regular details (= llm: / act:) routed through set_detail
+    do NOT cause a "plan" marker to appear in the rendered output.
 
-    Only payloads matching ``plan N/M`` shape land in the persistent
-    slot — everything else uses the existing ephemeral routing so
-    in-phase signals keep their normal "replaced each event" semantics.
+    Pins the routing predicate: only payloads matching the ``plan N/M``
+    shape land in the persistent slot. Other payloads stay in the
+    ephemeral detail and don't bleed into the persistent render
+    segment.
     """
     row = _row()
+    row.set_phase("resolve")
     row.set_detail("llm: opus")
-    assert row._plan_step_label == ""
-    assert row._detail == "llm: opus"
+    rendered = row._build_running().plain
+    assert "llm: opus" in rendered
+    # No plan-step badge appears because no "plan N/M" payload was
+    # routed in.
+    assert "plan " not in rendered
     row.set_detail("act: 3 ops")
-    assert row._plan_step_label == ""
-    assert row._detail == "act: 3 ops"
+    rendered = row._build_running().plain
+    assert "act: 3 ops" in rendered
+    assert "plan " not in rendered
