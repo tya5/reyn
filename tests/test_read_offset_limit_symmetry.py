@@ -185,23 +185,29 @@ def test_memory_slice_body_lines_past_eof_is_empty() -> None:
 # ── cross-surface symmetry (= the contract this PR enforces) ────────────────
 
 
-def test_all_three_read_schemas_share_offset_limit_shape() -> None:
-    """Tier 2: ``read_file``, ``reyn_src_read``, ``read_memory_body`` all
-    expose the same ``offset`` / ``limit`` line-slice arguments in their
-    LLM-visible parameter schemas, with identical types (integer) and
-    optional status (not in ``required``).
+def test_all_four_read_schemas_share_offset_limit_shape() -> None:
+    """Tier 2: all four "read one entry" LLM-callable surfaces —
+    ``read_file``, ``reyn_src_read``, ``read_memory_body``, and
+    ``read_tool_result`` — expose the same ``offset`` / ``limit``
+    line-slice arguments in their LLM-visible parameter schemas, with
+    identical types (integer) and optional status (not in ``required``).
 
     This is the symmetry contract — adding a slice arg to one surface and
-    not the others would silently regress to the pre-PR asymmetry.
+    not the others would silently regress to the pre-PR asymmetry. The
+    four surfaces were established by PR #409 (= read_file /
+    reyn_src_read / read_memory_body) and completed by #385 Q7
+    adoption (= read_tool_result).
     """
     from reyn.tools.file import _READ_FILE_PARAMETERS
     from reyn.tools.memory import _READ_MEMORY_BODY_PARAMETERS
+    from reyn.tools.read_tool_result import _READ_TOOL_RESULT_PARAMETERS
     from reyn.tools.reyn_src import _REYN_SRC_READ_PARAMETERS
 
     for label, schema in [
         ("read_file", _READ_FILE_PARAMETERS),
         ("reyn_src_read", _REYN_SRC_READ_PARAMETERS),
         ("read_memory_body", _READ_MEMORY_BODY_PARAMETERS),
+        ("read_tool_result", _READ_TOOL_RESULT_PARAMETERS),
     ]:
         props = schema["properties"]
         required = schema.get("required", [])

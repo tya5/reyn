@@ -14,13 +14,20 @@ Path validation lives in :meth:`MediaStore.read_tool_result` — the
 resolved path must be inside ``tool_results_dir`` (= workspace
 boundary), otherwise the call raises ``PermissionError``.
 
-Out of scope for PoC PR-D (= follow-up work):
+Slice arguments (= ``offset`` / ``limit``) follow PR #409's line-based
+contract shared with ``read_file`` / ``reyn_src_read`` / ``read_memory_body``
+so the four "read one entry" surfaces stay parameter-symmetric. ``offset``
+counts 0-indexed lines from the start of the body; ``limit`` caps the
+line count taken. Slice happens before ``max_bytes`` truncation so the
+byte cap applies to the resulting sliced content (= two orthogonal axes
+for partial-read shape control).
 
-  - offset / limit pagination (= file_read-style partial read for very
-    long results). Current implementation caps at ``max_bytes`` and
-    surfaces truncation.
+Out of scope (= follow-up work):
+
   - search-within-result (= ``grep_tool_result(path, pattern)``).
   - cleanup policy enforcement (= LLM cannot delete; user-managed).
+  - cross-host RPC routing via ``resource_uri`` (= #385 β core impl,
+    gated on Step 2 measurement success path confirmation).
 """
 from __future__ import annotations
 
@@ -33,13 +40,29 @@ _READ_TOOL_RESULT_DESCRIPTION = (
     "path-ref preview (= web_fetch and similar). path: project-relative "
     "path under .reyn/tool-results/. Returns the content body or an "
     "error if the path is invalid or the file no longer exists. "
-    "max_bytes caps the returned size (default 16384)."
+    "offset / limit slice by line (0-indexed) — the same shape as "
+    "read_file / reyn_src_read / read_memory_body. max_bytes caps the "
+    "returned size after slicing (default 16384)."
 )
 
 _READ_TOOL_RESULT_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "path": {"type": "string"},
+        "offset": {
+            "type": "integer",
+            "description": (
+                "Line number to start reading from (0-indexed). "
+                "Omit to start at the beginning of the body."
+            ),
+        },
+        "limit": {
+            "type": "integer",
+            "description": (
+                "Number of lines to read from `offset`. "
+                "Omit to read through end of body."
+            ),
+        },
         "max_bytes": {"type": "integer"},
     },
     "required": ["path"],
@@ -98,6 +121,23 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             "path": path,
             "error": "tool result file does not exist or was deleted",
         }
+
+    offset_raw = args.get("offset")
+    limit_raw = args.get("limit")
+    try:
+        offset = int(offset_raw) if offset_raw is not None else None
+    except (TypeError, ValueError):
+        offset = None
+    try:
+        limit = int(limit_raw) if limit_raw is not None else None
+    except (TypeError, ValueError):
+        limit = None
+
+    if offset is not None or limit is not None:
+        lines = content.splitlines(keepends=True)
+        start = max(0, offset or 0)
+        sliced = lines[start:start + limit] if limit is not None else lines[start:]
+        content = "".join(sliced)
 
     max_bytes_raw = args.get("max_bytes")
     try:
