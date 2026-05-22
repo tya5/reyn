@@ -1704,7 +1704,7 @@ class RightPanel(Widget):
                 return
             if not (0 <= self._pending_cursor < len(self._pending_item_ys)):
                 return
-            y = self._pending_item_ys[self._pending_cursor]
+            y = 1 + self._pending_item_ys[self._pending_cursor]
             if y < current:
                 vs.scroll_to(y=y, animate=False)
             elif y >= current + visible:
