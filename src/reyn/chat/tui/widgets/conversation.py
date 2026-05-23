@@ -301,7 +301,7 @@ class ConversationView(Widget):
         # Ctrl+L (clear()) and updated on every fail_tool_call_row() call.
         # The row may still be mounted (= live widget, F7 can toggle expand)
         # or already flushed into the RichLog (= widget removed; F7 surfaces
-        # a "Ctrl+B -> events" hint instead). A None value means no failure
+        # a "Ctrl+B → events" hint instead). A None value means no failure
         # has occurred yet in this session.
         self._last_failed_tool_row: ToolCallRow | None = None
         # Header-grouping state (B1)
@@ -1332,11 +1332,12 @@ class ConversationView(Widget):
         Returns the row object regardless of whether it is still mounted
         (= live widget, F7 can toggle expand) or already flushed into the
         RichLog (= widget removed via ``row.remove()``). The caller must
-        check ``row.is_mounted`` to distinguish the two cases:
+        check ``row.is_mounted`` or try ``row.toggle_expand()`` defensively
+        to distinguish the two cases:
 
-          - Mounted  (``is_mounted=True``)  -> ``toggle_expand()`` works.
-          - Flushed  (``is_mounted=False``) -> surface a hint directing the
-            user to Ctrl+B -> Events tab for the full trace.
+          - Mounted  (``is_mounted=True``)  → ``toggle_expand()`` works.
+          - Flushed  (``is_mounted=False``) → surface a hint directing the
+            user to Ctrl+B → Events tab for the full trace.
 
         Returns None when no failure has been recorded in this session
         (= all tool calls so far succeeded / aborted, or the view was
@@ -1656,6 +1657,34 @@ class ConversationView(Widget):
             self._maybe_show_error_count_status()
         else:
             self.hide_status()
+
+    def dismiss_all_errors(self) -> None:
+        """Remove ALL mounted ErrorBoxes in one keystroke + emit a summary breadcrumb.
+
+        Wave-13 B#1: when N ErrorBoxes are stacked, Esc required N
+        presses. Shift+Esc binds here to clear the whole stack at once.
+        A single summary breadcrumb "✗ N errors dismissed (see events)"
+        lands in the conv log so the audit trail is preserved without
+        flooding the log with N individual lines.
+        """
+        n = len(self._error_boxes)
+        if n == 0:
+            return
+        boxes = list(self._error_boxes)
+        self._error_boxes.clear()
+        for box in boxes:
+            try:
+                box.remove()
+            except Exception:
+                pass
+        from rich.text import Text as _RichText
+        noun = "error" if n == 1 else "errors"
+        self._write_log(_RichText(
+            f"  ✗ {n} {noun} dismissed (see events)",
+            style="dim #555555",
+        ))
+        # Sticky count is now stale — clear it.
+        self.hide_status()
 
     def _maybe_show_error_count_status(self) -> None:
         """Surface the live ErrorBox count via the sticky when ≥ 2 stacked.
@@ -2142,6 +2171,11 @@ class ConversationView(Widget):
 
     def clear(self) -> None:
         """Ctrl+L: clear the log + reset state. Does not affect engine state."""
+        # Wave-13 C#1: capture the live error count BEFORE clearing so we can
+        # emit an audit breadcrumb AFTER the log wipe. The breadcrumb lands in
+        # the freshly-blank log so it survives the clear and points the user at
+        # the events tab for full context.
+        _error_count_before_clear = len(self._error_boxes)
         self._log().clear()
         for row in self._stream_rows.values():
             row.seal()
@@ -2160,6 +2194,18 @@ class ConversationView(Widget):
             except Exception:
                 pass
         self._error_boxes.clear()
+        # Wave-13 C#1: post-clear audit breadcrumb. Written AFTER _log().clear()
+        # so it survives in the fresh log (writing before clear() would wipe it
+        # along with the rest of the history). The message is intentionally
+        # brief and dim — it's a pointer to the events tab, not a summary.
+        if _error_count_before_clear > 0:
+            from rich.text import Text as _RichText
+            _noun = "error" if _error_count_before_clear == 1 else "errors"
+            self._write_log(_RichText(
+                f"  ✗ {_error_count_before_clear} {_noun} cleared"
+                " (see events tab, filter=error)",
+                style="dim #555555",
+            ))
         # Wave-10 G-F1: sweep in-flight ToolCallRow widgets too. They
         # share the same "child of ConversationView, not a RichLog
         # line" mounting model as ErrorBox / StreamingRow / SkillActivityRow,
