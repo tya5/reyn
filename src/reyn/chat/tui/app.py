@@ -1527,6 +1527,18 @@ class ReynTUIApp(App):
         except Exception:
             pass
 
+    def _voice_set_header_state(self, state: str | None) -> None:
+        """Drive the header voice badge from app-side voice transitions.
+
+        Defensive on lookup failure (= header widget might not be
+        mounted in tests that bypass standard compose). State values
+        forwarded as-is — header itself validates the string.
+        """
+        try:
+            self.query_one("#header", ReynHeader).set_voice_state(state)
+        except Exception:
+            pass
+
     async def action_voice_toggle(self) -> None:
         """F2 — toggle dictation (start ↔ stop+transcribe→inject into InputBar).
 
@@ -1592,12 +1604,14 @@ class ReynTUIApp(App):
                 await self._voice_input.start_recording()
             except Exception as exc:
                 self._voice_status(f"✗ voice recording failed: {exc}", style="bold red")
+                self._voice_set_header_state(None)
                 return
             # Replace the "starting…" line with the live recording
             # message once the stream is actually open.
             self._voice_status(
                 "🔴 recording — Ctrl+R stop · Enter stop+send · Esc cancel"
             )
+            self._voice_set_header_state("recording")
             # Take the InputBox out of the focus rotation + key-input path
             # while the mic is live: prevents accidental letters typed
             # during dictation from landing in the input field, and Tab /
@@ -1612,6 +1626,7 @@ class ReynTUIApp(App):
             asyncio.create_task(self._voice_input.preload_model())
         else:
             self._voice_busy = True
+            self._voice_set_header_state("transcribing")
             # Choose a status message that sets honest expectations: if
             # the model isn't hot yet the wait will be long, so say so.
             if self._voice_input.model_loaded:
@@ -1628,9 +1643,11 @@ class ReynTUIApp(App):
                 self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
                 self._voice_busy = False
                 self._voice_set_input_locked(False)
+                self._voice_set_header_state(None)
                 return
             self._voice_busy = False
             self._voice_set_input_locked(False)
+            self._voice_set_header_state(None)
             if not text:
                 self._voice_show_empty_diagnostic(diag)
                 return
@@ -1662,6 +1679,7 @@ class ReynTUIApp(App):
             _voice_vlog("action_voice_stop_and_submit: already busy, bail")
             return
         self._voice_busy = True
+        self._voice_set_header_state("transcribing")
         if self._voice_input.model_loaded:
             self._voice_status("⏳ transcribing & sending…")
         else:
@@ -1678,6 +1696,7 @@ class ReynTUIApp(App):
             self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
             self._voice_busy = False
             self._voice_set_input_locked(False)
+            self._voice_set_header_state(None)
             return
         _voice_vlog(
             f"action_voice_stop_and_submit: stop_recording returned "
@@ -1685,6 +1704,7 @@ class ReynTUIApp(App):
         )
         self._voice_busy = False
         self._voice_set_input_locked(False)
+        self._voice_set_header_state(None)
         if not text:
             self._voice_show_empty_diagnostic(diag)
             return
@@ -1911,6 +1931,7 @@ class ReynTUIApp(App):
         if self._voice_input is not None and self._voice_input.is_recording:
             self._voice_input.cancel()
             self._voice_set_input_locked(False)
+            self._voice_set_header_state(None)
             self._voice_status("✗ recording cancelled", style="dim #555555")
             return
         try:
