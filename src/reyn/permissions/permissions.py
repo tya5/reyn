@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, ClassVar
 
 from reyn.intervention_choices import (
     ALWAYS,
@@ -54,6 +54,27 @@ if TYPE_CHECKING:
 
 _DEFAULT_WRITE_ZONES = (".reyn", "reyn")
 
+# #571 collapse arc Phase 2: canonical paths whose write is gated by a
+# specific op handler (= mcp_install / mcp_drop_server / cron_register /
+# index_drop) AND therefore must not be silently default-zone-allowed.
+# Skills that legitimately need to mutate these must declare them
+# explicitly via ``file.write: [{path: ...}]`` (or via the bool-axis
+# compat shim that auto-expands into the equivalent file.write entry —
+# see ``PermissionDecl._compat_expand_bool_axes``).
+#
+# Why exempt these specific paths only: they back capability that the
+# OS treats as a distinct event-emit + audit-trail surface (server
+# install / cron register / index drop). Letting any safe-mode python
+# step write them via the broad ``.reyn/`` default zone bypasses the
+# corresponding gate. The narrow exception preserves the broad
+# ``.reyn/`` write zone for everything else (= chunkers, cursors,
+# scratch state).
+_CANONICAL_PROTECTED_WRITE_PATHS = (
+    ".reyn/mcp.yaml",
+    ".reyn/cron.yaml",
+    ".reyn/index/sources.yaml",
+)
+
 
 def _normalize_paths(v: object) -> list[str]:
     if not v:
@@ -68,8 +89,28 @@ def _expand(path_str: str) -> Path:
     return Path(path_str).expanduser().resolve()
 
 
+def _is_canonical_protected_write(path_str: str) -> bool:
+    """Return True if ``path_str`` resolves to one of the #571 protected paths."""
+    base = Path.cwd()
+    p = Path(path_str).expanduser()
+    resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
+    for rel in _CANONICAL_PROTECTED_WRITE_PATHS:
+        if resolved == (base / rel).resolve():
+            return True
+    return False
+
+
 def _in_default_write_zone(path_str: str) -> bool:
-    """Return True if path falls within a default-granted write zone (.reyn/ or reyn/)."""
+    """Return True if path falls within a default-granted write zone (.reyn/ or reyn/).
+
+    Exception: canonical paths gated by specific op handlers (#571
+    collapse arc Phase 2 — ``.reyn/mcp.yaml`` / ``.reyn/cron.yaml`` /
+    ``.reyn/index/sources.yaml``) return False here so the corresponding
+    skill / op handler is forced to declare the explicit ``file.write``
+    entry (= or the bool-axis compat shim expands to it).
+    """
+    if _is_canonical_protected_write(path_str):
+        return False
     base = Path.cwd()
     p = Path(path_str).expanduser()
     resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
@@ -194,11 +235,24 @@ class PermissionDecl:
             ))
         return out
 
+    # #571 collapse arc Phase 2: each bool axis maps to the canonical
+    # protected file.write path(s) it gates. The loader compat shim
+    # below expands any bool axis set to ``True`` into the equivalent
+    # ``file_write`` entry, so existing skills written before the
+    # collapse keep working while the bool form is being phased out
+    # (Phase 5 removes the bool axes entirely).
+    _BOOL_AXIS_TO_FILE_WRITE: ClassVar[dict[str, tuple[str, ...]]] = {
+        "mcp_install":     (".reyn/mcp.yaml",),
+        "mcp_drop_server": (".reyn/mcp.yaml",),
+        "cron_register":   (".reyn/cron.yaml",),
+        "index_drop":      (".reyn/index/sources.yaml",),
+    }
+
     @classmethod
     def from_dict(cls, d: dict | None) -> "PermissionDecl":
         if not d:
             return cls()
-        return cls(
+        decl = cls(
             shell=bool(d.get("shell", False)),
             mcp=_normalize_paths(d.get("mcp")),
             tool=_normalize_paths(d.get("tool")),
@@ -210,6 +264,27 @@ class PermissionDecl:
             mcp_drop_server=bool(d.get("mcp_drop_server", False)),
             cron_register=bool(d.get("cron_register", False)),
         )
+        decl._compat_expand_bool_axes()
+        return decl
+
+    def _compat_expand_bool_axes(self) -> None:
+        """Expand each set bool axis into the equivalent ``file_write`` entry.
+
+        Idempotent and additive: paths already present in ``file_write``
+        are not duplicated; explicit entries with a different scope are
+        kept as-is. The expansion runs once at load time; bool axis
+        fields stay set so ``require_mcp_install`` / etc. continue to
+        gate the op route until they are removed in Phase 5.
+        """
+        existing = {entry.get("path") for entry in self.file_write if isinstance(entry, dict)}
+        for axis, paths in self._BOOL_AXIS_TO_FILE_WRITE.items():
+            if not getattr(self, axis, False):
+                continue
+            for p in paths:
+                if p in existing:
+                    continue
+                self.file_write.append({"path": p, "scope": "just_path"})
+                existing.add(p)
 
 
 class PermissionResolver:
@@ -553,10 +628,24 @@ class PermissionResolver:
         read_seen: set[tuple] = set()
 
         decl = skill.permissions  # aggregated upper bound across all phases
+        # #571 collapse arc Phase 2: file.write entries that the compat
+        # shim auto-expanded from a still-set bool axis (mcp_install /
+        # mcp_drop_server / cron_register / index_drop) are skipped from
+        # the startup_guard prompt — the bool axis's per-op prompt
+        # already covers operator consent at op-execution time, so
+        # prompting again at startup is redundant double-confirmation.
+        # Skills that declared the explicit ``file.write`` entry
+        # WITHOUT a corresponding bool axis still get the normal prompt.
+        canonical_skip: set[str] = set()
+        for axis, paths in PermissionDecl._BOOL_AXIS_TO_FILE_WRITE.items():
+            if getattr(decl, axis, False):
+                canonical_skip.update(paths)
         for entry in decl.file_write:
             path = entry.get("path", "")
             scope = entry.get("scope", "just_path")
             if not path:
+                continue
+            if path in canonical_skip:
                 continue
             if _in_default_write_zone(path):
                 continue

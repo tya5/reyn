@@ -70,6 +70,24 @@ _read_paths: tuple[str, ...] = ()
 _write_paths: tuple[str, ...] = ()
 _context_initialised: bool = False
 
+# #571 collapse arc Phase 2: canonical paths whose write must go through
+# a specific op handler (= mcp_install / mcp_drop_server / cron_register
+# / index_drop). Listing one of these in ``_write_paths`` via a parent
+# directory (e.g. ``.reyn/``) is no longer enough; the path must appear
+# in ``_write_paths`` *exactly* (= via an explicit ``file.write: [{path:
+# ...}]`` decl, or via the bool-axis compat shim that auto-expands to
+# the same entry).
+#
+# Mirrors ``reyn.permissions.permissions._CANONICAL_PROTECTED_WRITE_PATHS``
+# — keep the two lists in sync. They live in two modules because this
+# one runs in the python-harness subprocess where importing the parent's
+# permissions module is not always available.
+_CANONICAL_PROTECTED_WRITE_PATHS = (
+    ".reyn/mcp.yaml",
+    ".reyn/cron.yaml",
+    ".reyn/index/sources.yaml",
+)
+
 
 def _set_permission_context(
     *,
@@ -139,12 +157,58 @@ def _check_read(path: str) -> None:
         )
 
 
+def _is_canonical_protected_write(path: str) -> bool:
+    """Return True if ``path`` resolves to one of the #571 protected paths.
+
+    These paths are normally writable via the broad ``.reyn/`` default
+    zone, but the collapse-arc Phase 2 carve-out requires they be listed
+    explicitly in ``_write_paths`` (not via a parent-directory prefix).
+    """
+    abs_path = _os.path.abspath(path)
+    cwd = _os.getcwd()
+    for rel in _CANONICAL_PROTECTED_WRITE_PATHS:
+        if abs_path == _os.path.abspath(_os.path.join(cwd, rel)):
+            return True
+    return False
+
+
+def _is_explicitly_listed(path: str, allowed: tuple[str, ...]) -> bool:
+    """Return True iff ``path`` exactly matches one of ``allowed`` entries.
+
+    Stricter than :func:`_is_under` — does not accept parent-directory
+    prefix matches. Used to enforce the #571 protected-paths exception.
+    """
+    abs_path = _os.path.abspath(path)
+    for entry in allowed:
+        if entry and abs_path == _os.path.abspath(entry):
+            return True
+    return False
+
+
 def _check_write(path: str) -> None:
     if not _context_initialised:
         raise PermissionError(
             "reyn.safe.file: permission context not initialised "
             f"(write attempted: {path!r})."
         )
+    # #571 collapse arc Phase 2: canonical protected paths require an
+    # explicit listing (= not the broad ``.reyn/`` parent-dir match).
+    if _is_canonical_protected_write(path):
+        if not _is_explicitly_listed(path, _write_paths):
+            raise PermissionError(
+                f"reyn.safe.file: write to {path!r} requires an explicit "
+                f"declaration — this is a canonical protected path "
+                f"(#571) and is not covered by the broad ``.reyn/`` "
+                f"default write zone. Declare it directly:\n"
+                f"  permissions:\n"
+                f"    file.write:\n"
+                f"      - path: {path}\n"
+                f"        scope: just_path\n"
+                f"(or use the corresponding bool axis — `mcp_install` / "
+                f"`mcp_drop_server` / `cron_register` / `index_drop` — "
+                f"which auto-expands to the same explicit entry.)"
+            )
+        return
     if not _is_under(path, _write_paths):
         raise PermissionError(
             f"reyn.safe.file: write to {path!r} is not in the declared "
