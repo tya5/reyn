@@ -71,6 +71,19 @@ Authoritative names for reyn concepts. Use these terms verbatim in skill DSL fil
 | `safe` | Python preprocessor | AST-validated, sandboxed builtins, allowed-modules-only imports. No extra flag needed. |
 | `unsafe` | Python preprocessor | Free Python; requires `--allow-unsafe-python` at the CLI plus a `permissions.python` entry with `mode: unsafe` in `skill.md`. **Stdlib skills in `mode: unsafe` are auto-trusted** — the flag is still required but no approval prompt fires (the skill is vendored with reyn, not user-supplied). |
 
+## TUI vocabulary
+
+Terms you will encounter in the conv pane, events tab, agents tab, or memory tab of the reyn TUI. None of these appear in skill DSL files; they describe runtime UX surfaces.
+
+| English | 日本語 | Definition |
+|---------|--------|------------|
+| Attached agent / attach pointer | アタッチ済みエージェント | The agent your TUI session currently talks to — the one labelled "you" in `/tasks` and `/agents` output. Switch with `/attach <name>`. The attached agent receives your text submissions and dispatches them; non-attached agents continue running in the background. See `docs/concepts/multi-agent.md`. |
+| ARS (Action Retrieval Service) / Hot list | ARS / ホットリスト | The action-routing service that ranks skill and action candidates by recent use ("hot now"). The "HOT NOW" section of the Memory tab shows the current top of this list. See `docs/concepts/universal-catalog.md`. |
+| Checkpoint (snapshot + WAL) | チェックポイント | A durable point in skill execution where state is persisted (snapshot) and subsequent transitions append to a write-ahead log (WAL). `safety_limit_checkpoint` events fire when a checkpoint is taken. Enables crash recovery and `/plan resume`. See `docs/concepts/skill-resume.md` and `docs/concepts/async-skill-execution.md`. |
+| Compaction | コンパクション | Automatic summarisation of older conv-pane history when the context window approaches its limit. Surfaced in the TUI as a `── ↑ compaction summary saved ────` divider in the conv pane and an "earlier history trimmed (N lines)" sticky warning. See `docs/concepts/chat-compaction.md`. |
+| Intervention | インターベンション | A question or confirmation an agent asks back, surfaced in the TUI as an orange-bordered chip widget. Answered inline by submitting text (head intervention) or via `/answer <id-prefix> <text>` (non-head, from the queue). See `docs/concepts/multi-agent.md`. |
+| Plan-mode | プランモード | Multi-step plan execution scoped under a `plan_id`, where each step has a `step_id` and may be `memoized` (= reused from a prior identical run). `/plan list`, `/plan discard`, and `/plan resume` manage active plan runs. See `docs/concepts/plan-mode.md`. |
+
 ## DO NOT confuse
 
 - **`continue` (decision) vs "next phase = X" (transition)** — `continue` is OS-level; the actual phase name is in `next_phase`.
