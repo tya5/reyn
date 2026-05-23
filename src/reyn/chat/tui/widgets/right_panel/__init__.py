@@ -162,6 +162,13 @@ class RightPanel(Widget):
         # tail at tail=200 is unreadable; isolate makes one chain
         # legible at a time.
         self._events_chain_isolate: str | None = None
+        # Verbose mode — when False (default), ``render_events`` hides
+        # ``compaction_check`` events which fire on every chat turn but
+        # mostly carry "didn't compact" outcomes (too_few_turns /
+        # below_min_batch / below_threshold / already_running). The actual
+        # compaction lifecycle (compaction_started / completed / failed)
+        # is always shown. Toggled by ``v`` on the events tab.
+        self._events_verbose: bool = False
         # Memory tab state — flat cursor over all entries
         self._memory_cursor: int = 0
         self._memory_entries: list[Any] = []
@@ -652,6 +659,22 @@ class RightPanel(Widget):
             # a flash for the wrong-tab case.
             event.prevent_default()
             self._flash_status("'i' only active on the Events tab")
+        elif event.key == "v" and self._panel_type == "events":
+            # Events tab ``v`` = toggle verbose mode. When off (default),
+            # compaction_check events are hidden (= "didn't compact" noise).
+            # When on, the full unfiltered list is shown including
+            # compaction_check. Scoped to events tab only — other tabs
+            # don't consume ``v``.
+            event.prevent_default()
+            self._events_verbose = not self._events_verbose
+            self._invalidate()
+            state = "on" if self._events_verbose else "off"
+            self._flash_status(f"events: verbose={state}")
+        elif event.key == "v" and self._panel_type != "events":
+            # ``v`` is only meaningful on the Events tab. Surface a flash
+            # hint so a wrong-tab press isn't a silent no-op.
+            event.prevent_default()
+            self._flash_status("'v' only active on the Events tab")
         elif event.key == "a" and self._panel_type == "agents":
             # Wave-10 follow-up H-F11: Agents tab `a` = switch to the
             # cursor's agent. Mirrors the per-tab action idiom landed
@@ -2282,6 +2305,7 @@ class RightPanel(Widget):
                     cache=self._events_cache,
                     filelist_cache=self._events_filelist_cache,
                     chain_isolate=self._events_chain_isolate,
+                    verbose=self._events_verbose,
                 )
                 self._events_visible = windowed
                 self._events_event_ys = event_ys

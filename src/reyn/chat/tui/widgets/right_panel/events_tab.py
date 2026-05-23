@@ -534,6 +534,7 @@ def render_events(
     cache: dict | None = None,
     filelist_cache: list | None = None,
     chain_isolate: str | None = None,
+    verbose: bool = False,
 ) -> tuple[str, list[dict], list[int]]:
     """Render the recent-events list for the events tab.
 
@@ -549,6 +550,16 @@ def render_events(
     Consecutive events sharing a chain_id are visually grouped (a blank
     line separates chain switches). The row at index ``cursor`` is
     highlighted with a coral ▶ prefix.
+
+    When ``verbose=False`` (the default), events with
+    ``type == "compaction_check"`` are filtered out of the visible list
+    — these fire on every chat turn with outcomes like
+    ``too_few_turns`` / ``below_min_batch`` / ``below_threshold`` /
+    ``already_running`` (= "didn't compact, just checking") and clutter
+    the tab without conveying actionable information. The actual
+    compaction lifecycle (``compaction_started`` / ``compaction_completed``
+    / ``compaction_failed``) is always shown. Pass ``verbose=True`` to
+    restore the full unfiltered view.
     """
     if project_root is None:
         return "[#555555]  (no project root)[/]", [], []
@@ -579,6 +590,22 @@ def render_events(
             ev for ev in visible
             if ((ev.get("data") or {}).get("chain_id") or "") == chain_isolate
         ]
+
+    # Compaction-check noise suppression: when verbose=False (the
+    # default), hide compaction_check events from the visible list.
+    # They fire on every chat turn but the vast majority carry
+    # "not triggered" outcomes — the actual lifecycle is covered by
+    # compaction_started / compaction_completed / compaction_failed.
+    # Track the suppressed count so the footer can surface the toggle.
+    n_compaction_check_hidden = 0
+    if not verbose:
+        filtered_visible: list[dict] = []
+        for ev in visible:
+            if ev.get("type") == "compaction_check":
+                n_compaction_check_hidden += 1
+            else:
+                filtered_visible.append(ev)
+        visible = filtered_visible
 
     # File-path iteration order doesn't match wall-clock: the events root
     # holds agents/<id>/events/*.jsonl alongside direct/<id>/skill_runs/*
@@ -698,6 +725,13 @@ def render_events(
     # Dim footer hint — always appended after the event rows so the user
     # can discover the [d] docs shortcut from the events tab itself.
     lines.append("[#555555]  ? press [d] for events.md reference[/]")
+    # Compaction-check suppression footer: when at least 1 event was
+    # hidden, surface a dim hint so the user can discover the [v] toggle.
+    if n_compaction_check_hidden > 0:
+        lines.append(
+            f"[#444444]  ↩ {n_compaction_check_hidden} compaction_check hidden"
+            " ([v] to show)[/]"
+        )
     return "\n".join(lines), windowed, event_ys
 
 
