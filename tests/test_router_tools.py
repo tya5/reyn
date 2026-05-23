@@ -99,7 +99,7 @@ SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
 def test_build_tools_returns_19_tools_when_no_extras():
-    """No file / MCP extras: 11 baseline + web_search (E1, always on)
+    """Tier 2: No file / MCP extras: 11 baseline + web_search (E1, always on)
     + web_fetch (E2, FP-0022: always on, handler-level approval)
     + read_tool_result (E3, B49 Step 2 v6 fix: lazy-expand half of the
     preview-driven design, surfaced for router-side use)
@@ -109,10 +109,13 @@ def test_build_tools_returns_19_tools_when_no_extras():
     unconfigured baseline.
     """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    assert len(tools) == 19, f"Expected 19 tools, got {len(tools)}"
+    assert _tool_names(tools) == EXPECTED_TOOL_NAMES, (
+        f"Expected tools {EXPECTED_TOOL_NAMES}, got {_tool_names(tools)}"
+    )
 
 
 def test_tool_order_is_deterministic():
+    """Tier 2: build_tools() returns tools in a stable, deterministic order."""
     tools_a = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     tools_b = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     assert _tool_names(tools_a) == _tool_names(tools_b)
@@ -120,6 +123,7 @@ def test_tool_order_is_deterministic():
 
 
 def test_no_forbidden_schema_keywords():
+    """Tier 2: No tool schema contains Gemini-forbidden keywords."""
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     for tool in tools:
         fn = tool["function"]
@@ -130,7 +134,7 @@ def test_no_forbidden_schema_keywords():
 
 
 def test_nested_objects_max_depth_1():
-    """No object's properties may themselves contain nested objects.
+    """Tier 2: No object's properties may themselves contain nested objects.
 
     In the parameters dict:
       - depth-0 'properties' key is the top-level parameter list → OK
@@ -149,6 +153,7 @@ def test_nested_objects_max_depth_1():
 
 
 def test_required_fields_present_per_tool():
+    """Tier 1: Every tool has type, function.name, function.description, and function.parameters."""
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     for tool in tools:
         assert tool.get("type") == "function", (
@@ -161,7 +166,7 @@ def test_required_fields_present_per_tool():
 
 
 def test_remember_type_enum():
-    """remember_shared and remember_agent must both expose the canonical type enum."""
+    """Tier 1: remember_shared and remember_agent must both expose the canonical type enum."""
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     tool_map = {t["function"]["name"]: t for t in tools}
 
@@ -180,7 +185,7 @@ def test_remember_type_enum():
 
 
 def test_layer_enum():
-    """read_memory_body and forget_memory must both expose the canonical layer enum."""
+    """Tier 1: read_memory_body and forget_memory must both expose the canonical layer enum."""
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     tool_map = {t["function"]["name"]: t for t in tools}
 
@@ -202,7 +207,7 @@ def test_layer_enum():
 
 
 def test_file_tools_omitted_when_no_permissions():
-    """No file_permissions kwarg → all file-class tools absent.
+    """Tier 2: No file_permissions kwarg → all file-class tools absent.
 
     Per the design contract: file_* tools touch the user's project
     files, which sit behind the operator's permission boundary. The
@@ -225,7 +230,7 @@ def test_file_tools_omitted_when_no_permissions():
 
 
 def test_file_read_only_tools_present():
-    """read scope only → list_directory and read_file present; write tools absent."""
+    """Tier 2: read scope only → list_directory and read_file present; write tools absent."""
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,
@@ -239,7 +244,7 @@ def test_file_read_only_tools_present():
 
 
 def test_file_full_tools_present():
-    """Both read and write scope → all 4 file tools present."""
+    """Tier 2: Both read and write scope → all 4 file tools present."""
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,
@@ -254,7 +259,7 @@ def test_file_full_tools_present():
 
 
 def test_mcp_tools_omitted_when_no_servers():
-    """No mcp_servers kwarg → all MCP tools absent."""
+    """Tier 2: No mcp_servers kwarg → all MCP tools absent."""
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     names = set(_tool_names(tools))
     assert names.isdisjoint(MCP_TOOL_NAMES), (
@@ -263,7 +268,7 @@ def test_mcp_tools_omitted_when_no_servers():
 
 
 def test_mcp_tools_present_when_servers_configured():
-    """mcp_servers non-empty → all 3 MCP tools present."""
+    """Tier 2: mcp_servers non-empty → all 3 MCP tools present."""
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS, mcp_servers=SAMPLE_MCP_SERVERS)
     names = set(_tool_names(tools))
     missing = MCP_TOOL_NAMES - names
@@ -273,8 +278,15 @@ def test_mcp_tools_present_when_servers_configured():
 # ── Total count test ──────────────────────────────────────────────────────────
 
 
+EXPECTED_FULL_TOOL_NAMES = sorted(
+    EXPECTED_TOOL_NAMES + list(FILE_TOOL_NAMES) + list(MCP_TOOL_NAMES)
+)
+
+
 def test_total_tool_count_with_full_permissions():
-    """Full file + MCP permissions → 11 baseline + 4 file C1-C4
+    """Tier 2: Full file + MCP permissions → all baseline + file + MCP tools present.
+
+    Full file + MCP permissions → 11 baseline + 4 file C1-C4
     + 3 web E1+E2+E3 (web_search + web_fetch always on since FP-0022;
     read_tool_result added in B49 Step 2 v6 fix) + 4 MCP D1-D4
     + 2 reyn_src F1-F2 + 1 plan G1
@@ -289,14 +301,20 @@ def test_total_tool_count_with_full_permissions():
         mcp_servers=SAMPLE_MCP_SERVERS,
         web_fetch_allowed=True,
     )
-    assert len(tools) == 27, f"Expected 27 tools with full permissions, got {len(tools)}"
+    names = set(_tool_names(tools))
+    missing_file = FILE_TOOL_NAMES - names
+    missing_mcp = MCP_TOOL_NAMES - names
+    missing_baseline = set(EXPECTED_TOOL_NAMES) - names
+    assert not missing_file, f"Missing file tools: {missing_file}"
+    assert not missing_mcp, f"Missing MCP tools: {missing_mcp}"
+    assert not missing_baseline, f"Missing baseline tools: {missing_baseline}"
 
 
 # ── Gemini-safe schema checks apply to new tools too ──────────────────────────
 
 
 def test_no_forbidden_schema_keywords_full_permissions():
-    """new file+MCP tools must also pass Gemini-safe schema check."""
+    """Tier 2: new file+MCP tools must also pass Gemini-safe schema check."""
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,
@@ -312,7 +330,7 @@ def test_no_forbidden_schema_keywords_full_permissions():
 
 
 def test_nested_objects_max_depth_1_full_permissions():
-    """new file+MCP tools must also satisfy max depth-1 object nesting."""
+    """Tier 2: new file+MCP tools must also satisfy max depth-1 object nesting."""
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,
