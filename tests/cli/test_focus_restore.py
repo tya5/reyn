@@ -49,7 +49,7 @@ def _make_app() -> ReynTUIApp:
 
 @pytest.mark.asyncio
 async def test_escape_from_right_panel_focuses_input() -> None:
-    """Esc inside the right panel returns focus to the input TextArea.
+    """Tier 2b: Esc inside the right panel returns focus to the input TextArea.
 
     Reproduces the previous trap: the user opens the panel, focus moves
     into it, and the standard "back out" key (Esc) used to do nothing.
@@ -83,7 +83,7 @@ async def test_escape_from_right_panel_focuses_input() -> None:
 
 @pytest.mark.asyncio
 async def test_intervention_widget_submit_restores_input_focus() -> None:
-    """After ``InterventionWidget._submit`` removes itself, focus is on input.
+    """Tier 2b: After ``InterventionWidget._submit`` removes itself, focus is on input.
 
     The chip-button submit path explicitly calls ``focus_input()`` after
     ``self.remove()``. Without that, Textual's auto-focus walker can
@@ -126,7 +126,7 @@ async def test_intervention_widget_submit_restores_input_focus() -> None:
 
 @pytest.mark.asyncio
 async def test_intervention_resolved_handler_restores_input_focus() -> None:
-    """The text-input route ``_on_intervention_resolved`` also restores focus.
+    """Tier 2b: The text-input route ``_on_intervention_resolved`` also restores focus.
 
     Mirrors the chip-button path: when the user answers an intervention
     by typing into the InputBar (Enter routes through the session, not
