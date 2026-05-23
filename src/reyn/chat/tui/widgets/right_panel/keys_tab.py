@@ -179,6 +179,13 @@ def render_keys(
     # detail lookup. MOUSE rows use "" since they have no key semantics.
     group_keys: dict[str, list[str]] = {g: [] for g in _GROUP_ORDER}
     seen: set[str] = set()
+    # ``binding_seen`` tracks keys that were emitted from app.BINDINGS /
+    # InputBar.BINDINGS. Used by the _PANEL_EXPLICIT loop below to skip
+    # entries whose key was already surfaced from a real Binding — but
+    # distinct from ``seen`` so that multiple _PANEL_EXPLICIT entries for
+    # the same key (= same key, different tab contexts) are not dropped
+    # against each other.
+    binding_seen: set[str] = set()
     # App-level bindings first — they take precedence on same-key conflicts
     # (the InputBar's ctrl+c / ctrl+d / ctrl+l shadow app's, but app's
     # description is the load-bearing one users see in the footer hint).
@@ -191,6 +198,7 @@ def render_keys(
         if b.key in _INPUT_OWNED_KEYS:
             continue
         seen.add(b.key)
+        binding_seen.add(b.key)
         group = _key_group_for(b.key)
         if group not in groups:
             group = "OTHER"
@@ -205,6 +213,7 @@ def render_keys(
         if b.key in seen or not b.description:
             continue
         seen.add(b.key)
+        binding_seen.add(b.key)
         groups["INPUT"].append((_pretty_key(b.key), b.description))
         group_keys["INPUT"].append(b.key.lower())
 
@@ -222,9 +231,12 @@ def render_keys(
         ("space", "Toggle preview pane"),
         ("c", "Copy current view (pending tab: claim cursor)"),
         # A-F2 (wave-8): ``d`` is the primary pending-tab action (=
-        # discard the cursor's intervention). T2-5a (wave-12): also
-        # opens runtime/events.md in Docs tab when on events tab.
-        ("d", "Discard cursor (pending) / open events.md (events tab)"),
+        # discard the cursor's intervention).
+        ("d", "Discard cursor (pending tab)"),
+        # T2-5a (wave-12): ``d`` on the events tab opens runtime/events.md
+        # in the Docs tab. Listed as a second row because it's a different
+        # tab context — not a merge of the pending-tab meaning.
+        ("d", "Open events.md reference (events tab)"),
         # H-F11 (wave-10 follow-up): ``a`` on the Agents tab prefills
         # ``/attach <name>`` into the InputBar for the cursor's agent.
         # Same "per-tab action" idiom as the pending-tab ``d`` / ``c``
@@ -241,8 +253,16 @@ def render_keys(
     # de-dupe guard would silently swallow this entry. The memory
     # binding self-documents via ``_flash_status("memory filter: <X>")``
     # on every press.
+    #
+    # The guard here is ``binding_seen`` (not ``seen``) so that multiple
+    # _PANEL_EXPLICIT rows with the same key but different tab-context
+    # descriptions (e.g. two ``d`` rows — pending-tab discard and
+    # events-tab docs jump) are both emitted. ``binding_seen`` only tracks
+    # keys that were already surfaced from app/InputBar Binding objects;
+    # two explicit synthetic rows for the same key are intentional and must
+    # not de-dupe against each other.
     for key, desc in _PANEL_EXPLICIT:
-        if key not in seen:
+        if key not in binding_seen:
             groups["PANEL"].append((_pretty_key(key), desc))
             group_keys["PANEL"].append(key.lower())
             seen.add(key)
