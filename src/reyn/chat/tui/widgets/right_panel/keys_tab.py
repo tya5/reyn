@@ -138,6 +138,11 @@ _CONVERSATION_KEYS = {
     # inline expand on widgets that live in the conv pane (=
     # mouse-click + F3 are the two trigger paths to the same UX).
     "f3",
+    # F4 focuses the bottom AsyncStackPanel for keyboard nav.
+    # Panel renders ambient conv-pane work (= attached agent
+    # tasks), so CONVERSATION is the right home for discovery
+    # alongside Ctrl+P / Ctrl+N turn jump.
+    "f4",
     # W13 T2-1: ToolCallRow failure drill-down. Same rationale as F3 --
     # toggles inline expand on a widget that lives in the conv pane.
     "f7",
