@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.context_builder import ARTIFACT_REF_THRESHOLD
 from reyn.safe import file as sf
 from reyn.stdlib.skills.index_events.chunkers import (
     advance_cursor,
@@ -149,17 +150,16 @@ def test_collect_run_chunks_groups_by_run(tmp_path):
 
     chunks = collect_run_chunks(str(tmp_path), since=None)
 
-    assert len(chunks) == 3, f"Expected 3 chunks, got {len(chunks)}"
-
-    # Check statuses
-    statuses = {c["metadata"]["extra"]["skill"]: c["metadata"]["extra"]["status"] for c in chunks}
-    # skill_a runs should both be success, skill_b should be failed
+    # Check statuses: skill_a runs ×2 success, skill_b ×1 failed
+    skills_seen = sorted(c["metadata"]["extra"]["skill"] for c in chunks)
+    assert skills_seen == ["skill_a", "skill_a", "skill_b"], (
+        f"Expected skill_a×2, skill_b×1, got: {skills_seen}"
+    )
     skill_a_chunks = [c for c in chunks if c["metadata"]["extra"]["skill"] == "skill_a"]
     skill_b_chunks = [c for c in chunks if c["metadata"]["extra"]["skill"] == "skill_b"]
-    assert len(skill_a_chunks) == 2
-    assert len(skill_b_chunks) == 1
     assert all(c["metadata"]["extra"]["status"] == "success" for c in skill_a_chunks)
-    assert skill_b_chunks[0]["metadata"]["extra"]["status"] == "failed"
+    (only_b,) = skill_b_chunks
+    assert only_b["metadata"]["extra"]["status"] == "failed"
 
     # Check version_hash propagation
     hashes = {c["metadata"]["extra"]["skill_version_hash"] for c in chunks}
@@ -183,8 +183,8 @@ def test_collect_run_chunks_skips_inflight_runs(tmp_path):
 
     chunks = collect_run_chunks(str(tmp_path), since=None)
 
-    assert len(chunks) == 1, f"Expected 1 chunk (in-flight skipped), got {len(chunks)}"
-    assert chunks[0]["metadata"]["extra"].get("skill") == "my_skill"
+    (only,) = chunks  # in-flight run must be skipped; exactly 1 complete run remains
+    assert only["metadata"]["extra"].get("skill") == "my_skill"
 
 
 def test_collect_run_chunks_filters_by_since(tmp_path):
@@ -210,10 +210,12 @@ def test_collect_run_chunks_filters_by_since(tmp_path):
     chunks = collect_run_chunks(str(tmp_path), since="2026-05-15T11:01:00Z")
 
     # Runs with completed_at >= 11:01:00 → run_3 (11:01), run_4 (12:01), run_5 (13:01)
-    assert len(chunks) == 3, (
-        f"Expected 3 chunks (since filter), got {len(chunks)}; "
-        f"timestamps: {[c['metadata']['extra']['ended_at'] for c in chunks]}"
-    )
+    ended_ats = sorted(c["metadata"]["extra"]["ended_at"] for c in chunks)
+    assert ended_ats == [
+        "2026-05-15T11:01:00Z",
+        "2026-05-15T12:01:00Z",
+        "2026-05-15T13:01:00Z",
+    ], f"Expected 3 chunks (since filter), got timestamps: {ended_ats}"
 
 
 def test_collect_run_chunks_failure_includes_errors(tmp_path):
@@ -235,14 +237,14 @@ def test_collect_run_chunks_failure_includes_errors(tmp_path):
 
     chunks = collect_run_chunks(str(tmp_path), since=None)
 
-    assert len(chunks) == 1
-    chunk_errors = chunks[0]["metadata"]["extra"]["errors"]
-    assert len(chunk_errors) == 2, f"Expected 2 errors, got {chunk_errors}"
-    assert any("AssertionError" in e or "verify" in e.lower() for e in chunk_errors), (
-        f"First error message missing expected content: {chunk_errors}"
+    (only,) = chunks
+    chunk_errors = only["metadata"]["extra"]["errors"]
+    (err_a, err_b) = chunk_errors  # exactly 2 errors from the 2 error events
+    assert "AssertionError" in err_a or "verify" in err_a.lower(), (
+        f"First error message missing expected content: {err_a!r}"
     )
-    assert any("Timeout" in e or "timeout" in e.lower() for e in chunk_errors), (
-        f"Second error message missing expected content: {chunk_errors}"
+    assert "Timeout" in err_b or "timeout" in err_b.lower(), (
+        f"Second error message missing expected content: {err_b!r}"
     )
 
 
@@ -263,8 +265,8 @@ def test_collect_run_chunks_text_format_human_readable(tmp_path):
 
     chunks = collect_run_chunks(str(tmp_path), since=None)
 
-    assert len(chunks) == 1
-    text = chunks[0]["text"]
+    (only,) = chunks
+    text = only["text"]
 
     assert "skill:" in text, f"'skill:' label missing in text:\n{text}"
     assert "status:" in text, f"'status:' label missing in text:\n{text}"
@@ -301,8 +303,8 @@ def test_collect_run_chunks_unknown_version_hash_fallback(tmp_path):
 
     chunks = collect_run_chunks(str(tmp_path), since=None)
 
-    assert len(chunks) == 1
-    assert chunks[0]["metadata"]["extra"]["skill_version_hash"] == "unknown"
+    (only,) = chunks
+    assert only["metadata"]["extra"]["skill_version_hash"] == "unknown"
 
 
 # ── Tier 2: cursor helpers ────────────────────────────────────────────────────
@@ -380,7 +382,10 @@ def test_index_events_skill_has_postprocessor():
     skill = load_dsl_skill(skill_md, skill_root=skill_root)
     assert skill.postprocessor is not None
     assert isinstance(skill.postprocessor, Postprocessor)
-    assert len(skill.postprocessor.steps) == 4
+    step_types = [s.type for s in skill.postprocessor.steps]
+    assert step_types == ["python", "run_op", "run_op", "python"], (
+        f"Expected [python, run_op, run_op, python] steps, got: {step_types}"
+    )
 
 
 def test_index_events_skill_postprocessor_output():
@@ -441,8 +446,8 @@ def test_resolve_scan_context_output_size_under_threshold(tmp_path, monkeypatch)
         ck._CURSOR_FILE = original_cursor_file
 
     serialized = json.dumps(result, ensure_ascii=False)
-    assert len(serialized) < 8000, (
-        f"resolve_scan_context output exceeds ARTIFACT_REF_THRESHOLD (8000 bytes): "
+    assert len(serialized) < ARTIFACT_REF_THRESHOLD, (
+        f"resolve_scan_context output exceeds ARTIFACT_REF_THRESHOLD ({ARTIFACT_REF_THRESHOLD} bytes): "
         f"{len(serialized)} bytes. Output keys: {list(result.keys())}"
     )
 
