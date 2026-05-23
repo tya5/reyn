@@ -175,17 +175,28 @@ class RegistryClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _get_single(self, base_url: str, path: str, params: dict | None = None) -> dict:
-        """Issue a GET request against a specific base URL and return the parsed JSON body.
+    async def _get(
+        self,
+        path: str,
+        params: dict | None = None,
+        base_url: str | None = None,
+    ) -> dict:
+        """Issue a GET request and return the parsed JSON body.
 
-        Raises ``RegistryError`` on network errors, non-2xx status codes,
-        or JSON parse failures. Callers that want multi-registry
-        fallback iterate over :func:`_base_urls` and catch
-        ``RegistryError`` between attempts.
+        ``base_url`` (= optional, defaults to the first
+        :func:`_base_urls` entry) lets callers iterate registries
+        without bypassing this method — that keeps existing test
+        mocks (= patches of ``RegistryClient._get``) intercepting
+        every HTTP call regardless of whether single-URL or
+        multi-URL semantics are in play.
+
+        Raises ``RegistryError`` on network errors, non-2xx status
+        codes, or JSON parse failures.
         """
         import httpx
 
-        url = f"{base_url}{path}"
+        effective_base = base_url or _base_urls()[0]
+        url = f"{effective_base}{path}"
         if self._client is None:
             raise RegistryError(
                 "RegistryClient must be used as an async context manager."
@@ -206,16 +217,6 @@ class RegistryClient:
             return response.json()
         except Exception as exc:
             raise RegistryError(f"Registry response is not valid JSON: {exc}") from exc
-
-    async def _get(self, path: str, params: dict | None = None) -> dict:
-        """GET ``path`` from the first registry URL.
-
-        Preserved for backward compat: callers that previously used
-        ``_get(path)`` continue to hit the first resolved URL. New
-        callers should iterate ``_base_urls()`` directly when
-        multi-registry fallback semantics are required.
-        """
-        return await self._get_single(_base_urls()[0], path, params)
 
     # ------------------------------------------------------------------
     # Public API
@@ -250,10 +251,10 @@ class RegistryClient:
         last_error: RegistryError | None = None
         for base in _base_urls():
             try:
-                data = await self._get_single(
-                    base,
+                data = await self._get(
                     "/v0.1/servers",
                     params={"search": query, "limit": str(limit)},
+                    base_url=base,
                 )
             except RegistryError as exc:
                 last_error = exc
@@ -294,9 +295,9 @@ class RegistryClient:
         last_error: RegistryError | None = None
         for base in _base_urls():
             try:
-                data = await self._get_single(
-                    base,
+                data = await self._get(
                     f"/v0.1/servers/{server_name}/versions/latest",
+                    base_url=base,
                 )
             except RegistryError as exc:
                 # 404 → not found on this URL, fall through to the next.

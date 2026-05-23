@@ -599,6 +599,22 @@ class PermissionResolver:
             p = p.rstrip("/") + "/"
         self._session[f"{skill_name}/{kind}/{p}"] = True
 
+    def session_approve_host(
+        self, host: str, skill_name: str, kind: str = "http.get",
+    ) -> None:
+        """Mark ``host`` as approved for this session only (not persisted).
+
+        Sibling of :meth:`session_approve_path` for the ``http.get`` axis
+        (#571 Phase 7). Hosts are network identifiers, not paths, so they
+        do not go through ``_expand`` / filesystem resolution. Persistence
+        key matches what :meth:`_is_host_approved_for` reads, so tests
+        and operator-startup code can pre-seed approvals via this public
+        surface instead of mutating ``_session`` directly.
+        """
+        if not skill_name or not host:
+            return
+        self._session[f"{skill_name}/{kind}/{host}"] = True
+
     async def _prompt_file_access(
         self, path: str, scope: str, skill_name: str, kind: str, bus: RequestBus,
     ) -> bool:

@@ -178,9 +178,15 @@ def _make_op_ctx(
 
 
 def _patch_registry_get(server_response: dict, status: int = 200):
-    """Patch RegistryClient._get to return a fixed response."""
+    """Patch RegistryClient._get to return a fixed response.
 
-    async def _fake_get(self, path: str, params=None):
+    PR-10 added a ``base_url`` kwarg to ``_get`` for multi-registry
+    iteration. The mock accepts it (= silently ignored) so the test
+    behaves identically across single-URL and multi-URL resolution
+    paths.
+    """
+
+    async def _fake_get(self, path: str, params=None, base_url=None):
         if status >= 400:
             from reyn.registry.client import RegistryError
             raise RegistryError(f"HTTP {status}")
