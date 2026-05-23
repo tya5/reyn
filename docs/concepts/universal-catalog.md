@@ -90,6 +90,33 @@ Examples:
 | `rag.corpus__meetings` | (`rag.corpus`, `meetings`) |
 | `file__read` | (`file`, `read`) |
 
+### Provider portability — dots in qualified names
+
+OpenAI's native function-call API restricts tool names to
+`^[a-zA-Z0-9_-]{1,64}$` (= no `.`). Reyn's qualified names with
+dotted categories (`mcp.tool`, `agent.peer`, `reyn.source`, etc.)
+therefore **work via a LiteLLM proxy** but may be rejected by direct
+OpenAI native callers.
+
+Reyn's default setup routes all providers through LiteLLM
+(`reyn.yaml: models: standard: openai/...`), so the dotted form works
+end-to-end out of the box for the bundled scenarios. Gemini /
+Anthropic / OpenAI-compatible endpoints all tolerate the `.` when
+called via LiteLLM.
+
+If you wire up a direct-OpenAI-native caller (= no LiteLLM in the
+middle), you'll need either:
+
+  - keep using a LiteLLM proxy in front (= recommended; matches the
+    Reyn default), OR
+  - migrate qualified names to use `_` everywhere (= breaking change
+    across catalog enumerators / dispatch tables / hot-list / fixtures /
+    scenarios; tracked at FP-0034 §D18 / #54 should it become real).
+
+The migration is out of scope today because no direct-OpenAI-native
+path exists in the Reyn project and the LiteLLM proxy is the canonical
+ingress.
+
 ## The 3 wrappers
 
 ### `list_actions(category, filter, offset, limit) → {items, total}`

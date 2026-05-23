@@ -89,6 +89,29 @@ split rule は 「category 名直後の最初の `__`」 なので
 | `rag.corpus__meetings` | (`rag.corpus`, `meetings`) |
 | `file__read` | (`file`, `read`) |
 
+### Provider portability — qualified name 中の `.`
+
+OpenAI native function-call API は tool 名を `^[a-zA-Z0-9_-]{1,64}$` に
+制限している (= `.` は不可)。 Reyn の qualified name はカテゴリに `.` を
+含む形 (`mcp.tool`, `agent.peer`, `reyn.source` 等) があり、 **LiteLLM
+proxy 経由なら OK** だが OpenAI native を直接叩く場合 reject される
+可能性がある。
+
+Reyn の標準設定は全 provider を LiteLLM 経由でルーティングする
+(`reyn.yaml: models: standard: openai/...`) ため、 ドット入り名でも
+end-to-end で動作する。 Gemini / Anthropic / OpenAI-compat endpoint は
+すべて LiteLLM 経由なら `.` を許容する。
+
+OpenAI native (= LiteLLM を介さない) 経路を新規に追加する場合は:
+
+  - LiteLLM proxy を前に立てる (= 推奨、 Reyn の default に揃う)、 もしくは
+  - qualified name を全て `_` ベースに移行 (= catalog enumerator /
+    dispatch table / hot-list / fixture / scenario すべて同期 update が
+    必要な breaking change。 FP-0034 §D18 / #54 で tracking)。
+
+直接 OpenAI native callsite が現プロジェクトには存在しないため、
+移行は今は scope 外。 LiteLLM proxy が canonical ingress。
+
 ## 3 つの wrapper
 
 ### `list_actions(category, filter, offset, limit) → {items, total}`
