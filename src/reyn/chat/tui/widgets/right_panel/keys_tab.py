@@ -88,6 +88,13 @@ _KEY_DETAILS: dict[str, str] = {
         "Isolate the cursor's chain in the Events tab — hides events\n"
         "not in the same chain_id. Only active on the Events tab."
     ),
+    "v": (
+        "Toggle verbose mode on the Events tab. When off (default),\n"
+        "hides compaction_check events (= 'not compacted' noise — fires\n"
+        "on every chat turn with outcomes too_few_turns /\n"
+        "below_min_batch / below_threshold / already_running).\n"
+        "When on, shows everything. Only active on the Events tab."
+    ),
 }
 
 
@@ -151,7 +158,7 @@ _PANEL_KEYS = {
     "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4",
     "ctrl+5", "ctrl+6", "ctrl+7",
 }
-_EVENTS_KEYS = {"f", "t", "i"}
+_EVENTS_KEYS = {"f", "t", "i", "v"}
 # ``/`` stays DOCS-only — it opens the docs name filter, no other tab
 # consumes it.
 _DOCS_KEYS = {"/"}
@@ -295,6 +302,9 @@ def render_keys(
         # interleaving noise from other concurrent chains. T2-3: added
         # "(events tab)" suffix so the gating is visible without Space-expand.
         ("i", "Isolate cursor's chain (events tab only)"),
+        # Events tab ``v`` = toggle verbose mode. Default-off hides
+        # compaction_check noise; verbose-on shows everything.
+        ("v", "Toggle verbose (events tab)"),
     ]
     # Note: memory tab's ``t`` (= cycle_memory_type_filter, wave-11
     # A#1) is intentionally NOT in this list because ``t`` is already
