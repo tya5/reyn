@@ -23,6 +23,11 @@ permissions:
   file.write:
     - path: reyn/local
       scope: recursive
+  python:
+    - module: ./detect_reference_format.py
+      function: detect
+      mode: unsafe
+      timeout: 30
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 routing:
