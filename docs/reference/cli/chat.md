@@ -33,6 +33,7 @@ Chat-specific flags:
 | `--banner` | off | Show the ASCII-art startup banner (gradient REYN logo + agent / model info). |
 | `--eager-embedding-build` | off | Await action embedding index build synchronously on the first turn (pays ~2–5 s once so `search_actions` is immediately available). |
 | `--allow-unsafe-python` | off | Enable `mode: unsafe` Python preprocessor steps. `--allow-untrusted-python` is a legacy alias. |
+| `--connect <WS_URL>` | off | Connect to a remote `reyn web` server over WebSocket (e.g. `--connect ws://localhost:8080`). The positional `agent_name` selects which agent on the server. Requires `pip install reyn[web]`. Right panel features that need local file access render in "remote — limited" v1 mode. |
 
 ## Agent workspace
 
@@ -58,21 +59,38 @@ While a session is active, lines starting with `/` are intercepted and never rou
 
 | Command | Effect |
 |---------|--------|
-| `/list` | Show running skill spawns and pending interventions |
-| `/cancel <id>` | Cancel a skill spawn (full id or last 4 chars) |
-| `/answer <id> <text>` | Answer a pending `ask_user` / permission prompt |
+| `/agent new <name>` | Create new agent and attach to it |
 | `/agents` | List loaded agents and which one is currently attached |
+| `/answer <id-prefix> <text>` | Answer a pending `ask_user` / permission prompt (id-prefix: any unique prefix of the intervention id) |
 | `/attach <name>` | Switch the REPL pointer to another agent (the previous one keeps running in the background) |
-| `/skill list` | Show active skill runs (id, name, current phase + parent lineage) |
-| `/skill discard <run_id>` | Abort a specific skill run + cleanup |
+| `/budget [reset]` | Full budget breakdown; `/budget reset` clears per-process counters (see [config/budget](../config/budget.md)) |
+| `/cancel <id-prefix>` | Cancel a running skill (accepts any unique prefix of the run_id) |
+| `/copy [N\|list]` | Copy an agent reply to the clipboard (1 = newest, 2 = one turn back, …) |
+| `/cost` | Quick token + USD cost summary for this agent |
+| `/cost-inline` | Toggle per-turn cost suffix in conversation |
+| `/docs-filter [<substring>]` | Filter the docs tab by substring (empty = clear) |
+| `/exit` | Exit the chat (alias: `/quit`, Ctrl+D) |
+| `/expand` | Show full content of the last folded agent reply |
+| `/find <query>` | Search the conv pane for a substring |
+| `/help [<cmd>]` | Slash command help — list all, or focus on one |
+| `/image <path>` | Attach an image to the next user message (multimodal input) |
+| `/list` | List running skills and pending interventions |
+| `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/memory.md)) |
+| `/pending [list\|discard <id>\|claim <id>]` | List / discard / claim stalled cross-channel ops |
 | `/plan list` | Show active plan runs (combined view: in-flight tasks + pending-resume) |
 | `/plan discard <plan_id>` | Abort a specific plan run + cleanup; notifies waiting peer agents via R-D14 |
-| `/plan resume <plan_id> --from <step_id>` | Surgical operator escape hatch; clears step results from the target step onward and re-launches with a fresh resume_plan (ADR-0023 §3.7) |
+| `/plan resume <plan_id> --from <step_id>` | Surgical operator escape hatch; clears step results from the target step onward and re-launches with a fresh resume_plan (ADR-0023 §3.7); see [concepts/plan-mode](../../concepts/plan-mode.md) |
+| `/quit` | Exit the chat (alias: `/exit`, Ctrl+D) |
+| `/reset confirm` | Reset in-flight skill state (snapshots + WAL; audit logs preserved) |
+| `/save [path]` | Save the conv pane to a file (auto-names if path omitted) |
+| `/skill list` | Show active skill runs (id, name, current phase + parent lineage) |
+| `/skill discard <run_id>` | Abort a specific skill run + cleanup |
+| `/skills` | List available skills (stdlib, project, local) |
 | `/tasks` | Unified view spanning skill runs + plan tasks (FP-0012). Same as `/tasks list` |
 | `/tasks status <prefix>` | Show current phase + elapsed for a specific task (skill or plan) |
 | `/tasks kill <prefix>` | Cancel a specific task; prefix matches against both skill run_ids and plan_ids |
 
-`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` are the multi-agent workflow primitives. `/skill` and `/plan` are crash-recovery operator commands that surface the per-skill-run and per-plan-run lifecycle: inspect what is running, abort a stuck run, or surgically re-run a plan from a specific step. `/tasks` is the unified entry point that spans both — the LLM also points users at `/tasks` after a skill is spawned (FP-0012 chat-mode async dispatch).
+`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives. `/skill` and `/plan` are crash-recovery operator commands that surface the per-skill-run and per-plan-run lifecycle: inspect what is running, abort a stuck run, or surgically re-run a plan from a specific step. `/tasks` is the unified entry point that spans both — the LLM also points users at `/tasks` after a skill is spawned (FP-0012 chat-mode async dispatch). `/copy`, `/find`, `/save`, and `/expand` are conversation-pane utilities; `/image` enables multimodal input.
 
 ## Multi-agent behavior
 
