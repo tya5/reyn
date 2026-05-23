@@ -257,10 +257,10 @@ async def test_chitchat_no_tools():
     with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("hi", [])
 
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["kind"] == "agent"
-    assert host.outbox[0]["text"] == "hello"
-    assert len(host.skill_calls) == 0
+    (msg,) = host.outbox
+    assert msg["kind"] == "agent"
+    assert msg["text"] == "hello"
+    assert not host.skill_calls
     assert scripted.call_count == 1
 
 
@@ -282,12 +282,12 @@ async def test_single_skill_round():
     with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("run my skill", [])
 
-    assert len(host.skill_calls) == 1
-    assert host.skill_calls[0]["skill"] == "my_skill"
-    assert host.skill_calls[0]["chain_id"] == "chain-test"
+    (skill_call,) = host.skill_calls
+    assert skill_call["skill"] == "my_skill"
+    assert skill_call["chain_id"] == "chain-test"
 
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["text"] == "Done!"
+    (msg,) = host.outbox
+    assert msg["text"] == "Done!"
     assert scripted.call_count == 2
 
 
@@ -323,7 +323,7 @@ async def test_two_round_sequential():
     final_messages = messages_seen[2]
     roles = [m["role"] for m in final_messages]
     assert roles.count("tool") == 2, "Two tool result messages expected"
-    assert len(host.skill_calls) == 1
+    (only_skill_call,) = host.skill_calls
     assert host.outbox[0]["text"] == "All done."
 
 
@@ -352,7 +352,6 @@ async def test_parallel_tool_calls_executed():
     with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("run both", [])
 
-    assert len(host.skill_calls) == 2
     called_skills = {c["skill"] for c in host.skill_calls}
     assert called_skills == {"skill_a", "skill_b"}
     assert host.outbox[0]["text"] == "Both done."
@@ -372,10 +371,10 @@ async def test_max_iterations_exhausted():
         await loop.run("do stuff", [])
 
     assert scripted.call_count == 3
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["kind"] == "error"
-    assert "max iterations" in host.outbox[0]["text"]
-    assert "3" in host.outbox[0]["text"]
+    (msg,) = host.outbox
+    assert msg["kind"] == "error"
+    assert "max iterations" in msg["text"]
+    assert "3" in msg["text"]
 
 
 @pytest.mark.asyncio
@@ -401,8 +400,8 @@ async def test_unknown_tool_returns_error_in_result():
     # Find the tool result message from round 1
     round2_messages = messages_captured[1]
     tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
-    assert len(tool_msgs) == 1
-    result_data = json.loads(tool_msgs[0]["content"])
+    (tool_msg,) = tool_msgs
+    result_data = json.loads(tool_msg["content"])
     # PR36: unknown tools now return {status: "error", error: {kind: "unknown_tool", ...}}
     assert result_data.get("status") == "error"
     error = result_data.get("error", {})
@@ -446,8 +445,7 @@ async def test_remember_shared_writes_file_and_regenerates_index():
     assert "The user is a senior developer." in written_content
 
     # file_regenerate_index should have been called
-    assert len(host.index_regenerations) == 1
-    regen = host.index_regenerations[0]
+    (regen,) = host.index_regenerations
     assert regen["output_path"] == "/memory/shared/MEMORY.md"
 
     assert host.outbox[0]["text"] == "Saved."
@@ -484,7 +482,6 @@ async def test_list_skills_with_category_returns_items():
 
     result = loop._list_skills("write")
 
-    assert len(result) == 2
     names = {r["name"] for r in result}
     assert names == {"write_blog", "write_email"}
 
@@ -539,10 +536,10 @@ async def test_delegate_to_agent():
     with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("send to peer", [])
 
-    assert len(host.agent_sends) == 1
-    assert host.agent_sends[0]["to"] == "peer_agent"
-    assert host.agent_sends[0]["request"] == "please process the data"
-    assert host.agent_sends[0]["chain_id"] == "chain-test"
+    (agent_send,) = host.agent_sends
+    assert agent_send["to"] == "peer_agent"
+    assert agent_send["request"] == "please process the data"
+    assert agent_send["chain_id"] == "chain-test"
     # Only the first LLM call ran; the second round was never consumed.
     assert scripted.call_count == 1
     # Outbox shows the "awaiting peer reply" status, not a text reply.
@@ -575,7 +572,7 @@ async def test_delegate_does_not_re_delegate_in_same_turn():
         await loop.run("delegate", [])
 
     # Exactly one delegate dispatch; loop exited after the first iteration.
-    assert len(host.agent_sends) == 1
+    (only_send,) = host.agent_sends
     assert scripted.call_count == 1
 
 
@@ -607,19 +604,17 @@ async def test_dedupe_duplicate_async_tool_calls_in_same_round():
         await loop.run("send", [])
 
     # Only one send_to_agent — duplicate suppressed.
-    assert len(host.agent_sends) == 1
-    assert host.agent_sends[0]["to"] == "peer"
-    assert host.agent_sends[0]["request"] == "do work"
+    (agent_send,) = host.agent_sends
+    assert agent_send["to"] == "peer"
+    assert agent_send["request"] == "do work"
     # Audit event records the suppressed call.
     deduped_events = [
         e for e in host.events.emitted  # type: ignore[attr-defined]
         if e["type"] == "tool_call_deduped"
     ]
-    assert len(deduped_events) == 1, (
-        f"expected 1 tool_call_deduped event; got: {host.events.emitted}"
-    )
-    assert deduped_events[0]["name"] == "delegate_to_agent"
-    assert deduped_events[0]["reason"] == "duplicate_async_in_round"
+    (deduped_evt,) = deduped_events
+    assert deduped_evt["name"] == "delegate_to_agent"
+    assert deduped_evt["reason"] == "duplicate_async_in_round"
 
 
 @pytest.mark.asyncio
@@ -646,7 +641,6 @@ async def test_dedupe_does_not_collapse_distinct_async_args():
         await loop.run("send two tasks", [])
 
     # Both dispatch — different args.
-    assert len(host.agent_sends) == 2
     requests = sorted(s["request"] for s in host.agent_sends)
     assert requests == ["task A", "task B"]
     # No dedupe events.
@@ -654,7 +648,7 @@ async def test_dedupe_does_not_collapse_distinct_async_args():
         e for e in host.events.emitted  # type: ignore[attr-defined]
         if e["type"] == "tool_call_deduped"
     ]
-    assert len(deduped_events) == 0
+    assert not deduped_events
 
 
 @pytest.mark.asyncio
@@ -690,7 +684,7 @@ async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls():
         e for e in host.events.emitted  # type: ignore[attr-defined]
         if e["type"] == "tool_call_deduped"
     ]
-    assert len(deduped_events) == 0
+    assert not deduped_events
 
 
 # ---------------------------------------------------------------------------
@@ -728,16 +722,16 @@ async def test_dedupe_duplicate_invoke_skill_in_same_round():
         await loop.run("improve the skill", [])
 
     # Only one skill invocation — two duplicates suppressed.
-    assert len(host.skill_calls) == 1
-    assert host.skill_calls[0]["skill"] == "skill_improver"
+    (skill_call,) = host.skill_calls
+    assert skill_call["skill"] == "skill_improver"
 
     # Two audit events for the two suppressed calls.
     deduped_events = [
         e for e in host.events.emitted
         if e["type"] == "tool_call_deduped"
     ]
-    assert len(deduped_events) == 2
-    for evt in deduped_events:
+    evt_a, evt_b = deduped_events
+    for evt in (evt_a, evt_b):
         assert evt["name"] == "invoke_skill"
         assert evt["reason"] == "duplicate_invoke_skill_in_round"
 
@@ -769,7 +763,6 @@ async def test_dedupe_does_not_collapse_distinct_invoke_skill_args():
         await loop.run("run two skills", [])
 
     # Both skills executed — different args, no collapse.
-    assert len(host.skill_calls) == 2
     called = {c["skill"] for c in host.skill_calls}
     assert called == {"skill_a", "skill_b"}
 
@@ -778,7 +771,7 @@ async def test_dedupe_does_not_collapse_distinct_invoke_skill_args():
         e for e in host.events.emitted
         if e["type"] == "tool_call_deduped"
     ]
-    assert len(deduped_events) == 0
+    assert not deduped_events
 
 
 @pytest.mark.asyncio
@@ -807,8 +800,7 @@ async def test_tool_call_deduped_event_emitted_for_invoke_skill():
         e for e in host.events.emitted
         if e["type"] == "tool_call_deduped"
     ]
-    assert len(deduped_events) == 1
-    evt = deduped_events[0]
+    (evt,) = deduped_events
     assert evt["name"] == "invoke_skill"
     assert evt["reason"] == "duplicate_invoke_skill_in_round"
     assert evt["chain_id"] == "chain-test"
@@ -834,7 +826,7 @@ async def test_forget_memory_deletes_file_and_regenerates_index():
         await loop.run("forget my role", [])
 
     assert "/memory/shared/user_role.md" in host.file_deletes
-    assert len(host.index_regenerations) == 1
+    (only_regen,) = host.index_regenerations
     assert host.outbox[0]["text"] == "Forgotten."
 
 
@@ -898,13 +890,13 @@ async def test_unknown_tool_name_returns_error_not_dispatched():
         await loop.run("read README.md", [])
 
     # host.file_read must NOT have been called.
-    assert len(host.file_reads) == 0, "file_read must not be called for unknown tool"
+    assert not host.file_reads, "file_read must not be called for unknown tool"
 
     # The tool result fed back to the LLM should carry status=error, kind=unknown_tool
     round2_messages = messages_captured[1]
     tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
-    assert len(tool_msgs) == 1
-    result_data = json.loads(tool_msgs[0]["content"])
+    (tool_msg,) = tool_msgs
+    result_data = json.loads(tool_msg["content"])
     assert result_data.get("status") == "error"
     error = result_data.get("error", {})
     assert error.get("kind") == "unknown_tool"
@@ -1003,8 +995,8 @@ async def test_known_tool_still_dispatches():
     # The tool result should not be an error
     round2_messages = messages_captured[1]
     tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
-    assert len(tool_msgs) == 1
-    result_data = json.loads(tool_msgs[0]["content"])
+    (tool_msg,) = tool_msgs
+    result_data = json.loads(tool_msg["content"])
     # dispatch_tool wraps success as {"status": "ok", "data": <result>}
     assert result_data.get("status") == "ok"
     # list_skills returns a list (categories) inside "data"
@@ -1096,13 +1088,11 @@ async def test_invoke_skill_with_unknown_skill_name_rejected():
         await loop.run("run bogus skill", [])
 
     # No skill should have been spawned
-    assert len(host.skill_calls) == 0, "No skill must be spawned for unknown name"
+    assert not host.skill_calls, "No skill must be spawned for unknown name"
 
     # G10: router exits after the failed tool call — only 1 LLM call (no second round).
-    assert len(messages_captured) == 1, (
-        "G10 fix: LLM must NOT be called a second time after invoke_skill error; "
-        f"got {len(messages_captured)} call(s)"
-    )
+    # Unpacking asserts exactly one call (ValueError if more or fewer).
+    (only_captured,) = messages_captured
 
     # Outbox must contain a deterministic error message (not the LLM-generated fallback).
     assert host.outbox, "Expected at least one outbox message"
@@ -1132,8 +1122,8 @@ async def test_invoke_skill_with_known_name_dispatches():
     with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("run real skill", [])
 
-    assert len(host.skill_calls) == 1
-    assert host.skill_calls[0]["skill"] == "real_skill"
+    (skill_call,) = host.skill_calls
+    assert skill_call["skill"] == "real_skill"
     assert host.outbox[0]["text"] == "Skill ran."
 
 
@@ -1181,9 +1171,9 @@ async def test_list_skills_name_lookup_fallback():
 
     result = loop._list_skills("read_local_files")
 
-    assert len(result) == 1
-    assert result[0]["name"] == "read_local_files"
-    assert result[0]["description"] == "Read files from local FS"
+    (item,) = result
+    assert item["name"] == "read_local_files"
+    assert item["description"] == "Read files from local FS"
 
 
 @pytest.mark.asyncio
