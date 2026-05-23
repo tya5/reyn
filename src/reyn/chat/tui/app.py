@@ -1066,10 +1066,20 @@ class ReynTUIApp(App):
                 task.cancel()
                 cancelled_skills += 1
         cancelled_plans = 0
-        for task in list(getattr(session, "running_plans", {}).values()):
+        # Iterate ``.items()`` so we can drop the AsyncStackPanel row
+        # for each plan_id alongside the asyncio cancel. ``task.cancel()``
+        # doesn't trigger the ``source=plan_complete`` outbox path the
+        # natural lifecycle hits, so the bottom-strip row would
+        # otherwise persist after Ctrl+C.
+        for plan_id, task in list(getattr(session, "running_plans", {}).items()):
             if not task.done():
                 task.cancel()
                 cancelled_plans += 1
+                if conv is not None:
+                    try:
+                        conv.remove_async_task(str(plan_id))
+                    except Exception:
+                        pass
 
         # Stop any SkillActivityRow spinners + clear the right-panel agents
         # tab. ``task.cancel()`` only stops the asyncio producer; no
