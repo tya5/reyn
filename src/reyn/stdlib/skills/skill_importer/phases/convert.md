@@ -37,9 +37,29 @@ For each phase, decide:
 
 - `name` — short snake_case (e.g. `analyze`, `draft`, `review`)
 - `instructions` — the prose for that phase, lifted/condensed from the source
-- `input` — usually the previous phase's output artifact, or `user_message`
-  for the entry phase
+- `input` — name of an **artifact** (NOT a phase name). For the entry phase
+  this is normally `user_message` (stdlib). For every later phase this MUST
+  be a custom artifact name you define in Step 3 — typically named after
+  the previous phase's output, e.g. `<prev_phase>_result` or a domain noun
+  like `draft_text`. The lint will fail if `input` names a phase rather
+  than an artifact you've declared.
 - `can_finish` — true only on the last phase
+
+**CRITICAL — artifact coverage rule** (= same shape as ``skill_builder``):
+Every phase's ``input`` MUST be either ``user_message`` (stdlib) OR an
+artifact you write a YAML schema for in Step 4. If you split the source
+into N phases, you need at least N-1 inter-phase artifacts plus the
+final-output artifact. Counting check:
+
+  - 1-phase skill: 0 custom artifacts (the phase's ``input`` is
+    ``user_message``; ``final_output`` can be ``user_message`` too).
+  - 2-phase skill: 1 inter-phase artifact + 1 final-output artifact
+    (the final-output may reuse the inter-phase one if the second
+    phase produces the user-visible result directly).
+  - 3-phase skill: 2 inter-phase artifacts + 1 final-output (often
+    the last inter-phase IS the final output).
+
+Lint catches missing artifacts; write them all in Step 4.
 
 ### Optional: python preprocessor
 
@@ -127,7 +147,8 @@ If the URL contains a git commit SHA (e.g.
 ---
 type: phase
 name: <phase_name>
-input: <input_artifact_name>
+input: <input_artifact_name>     # MUST name an artifact (= user_message or a YAML
+                                 # file you write below). NEVER a phase name.
 role: <optional_role>
 can_finish: <true|false>
 allowed_ops: [<op_kinds>]
@@ -188,11 +209,73 @@ phase frontmatter and add a note in the `## Source` section that the
 user must `reyn run --allow-untrusted-python` for this skill to work.
 (Note: `unsafe` replaces the old `trusted` keyword as of FP-0014.)
 
-### `reyn/local/<slug>/artifacts/<art>.yaml` (only if needed)
+### `reyn/local/<slug>/artifacts/<art>.yaml` (one per non-stdlib artifact)
 
-If you defined a custom artifact in Step 3, write its YAML schema here.
-For passthrough skills using only `user_message`, no artifact files are
-needed (stdlib provides `user_message`).
+Write a YAML schema file for **every artifact** any phase declares as
+``input`` other than ``user_message``, **and** for the ``final_output``
+artifact if it isn't ``user_message``. Skipping this is the single
+biggest source of lint failures on import — the OS validates that
+every phase's input has a corresponding artifact definition.
+
+Per-file shape (= same format as ``skill_builder`` writes):
+
+```yaml
+name: <art>
+description: One sentence describing what this artifact contains.
+schema:
+  type: object
+  properties:
+    <field_name>:
+      type: <string|integer|number|boolean|array|object>
+      description: One sentence on what this field represents.
+    # ... more fields as needed ...
+  required: [<field_name>, ...]
+```
+
+Rules:
+
+- ``type: object`` at the top level — never a bare string / array.
+- Every property has a ``description``.
+- ``required`` lists the fields the consuming phase can rely on (= the
+  ones it dereferences in its instructions).
+- For an artifact that just carries text between phases, a single
+  ``text: { type: string }`` field is fine.
+- Match the field names the phase instructions actually reference
+  (``input_artifact.data.<field>``) — mismatched names cause the
+  consuming phase to see undefined fields at runtime.
+
+Examples for a 3-phase skill `pdf` (= our smoke-test case):
+
+```yaml
+# artifacts/extracted_pdf.yaml — what read_pdf produces
+name: extracted_pdf
+description: Raw text + page count extracted from a PDF source.
+schema:
+  type: object
+  properties:
+    text:        { type: string,  description: "Concatenated page text." }
+    page_count:  { type: integer, description: "Number of pages." }
+    source_path: { type: string,  description: "Original PDF path or URL." }
+  required: [text, page_count, source_path]
+```
+
+```yaml
+# artifacts/processed_pdf.yaml — what process_pdf produces
+name: processed_pdf
+description: Result of the requested PDF operation (text, file path, or both).
+schema:
+  type: object
+  properties:
+    operation: { type: string, description: "Which operation ran (merge/split/extract/etc.)." }
+    output_text: { type: string, description: "Text output if applicable (else empty)." }
+    output_path: { type: string, description: "File output path if applicable (else empty)." }
+  required: [operation]
+```
+
+For passthrough skills using only ``user_message`` end-to-end (= rare,
+truly single-phase imports), no artifact files are needed (stdlib
+provides ``user_message``). Anything with 2+ phases needs at least
+one custom artifact.
 
 ## Step 5 — Lint the result
 
