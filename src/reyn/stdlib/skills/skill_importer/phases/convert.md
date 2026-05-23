@@ -45,6 +45,42 @@ preprocessor:
           type: string
           description: "ok | http_<code> | error"
       required: [is_reference_format, signal, stage_marker_count, description, fetch_status]
+  - type: python
+    module: ./fetch_sibling_files.py
+    function: fetch
+    into: data._sibling_files
+    mode: unsafe
+    timeout: 60
+    output_schema:
+      type: object
+      properties:
+        siblings:
+          type: array
+          description: |
+            Sibling .md files from the source skill's directory, ready
+            for the LLM to copy into ``reyn/local/<slug>/references/``.
+            Empty for non-GitHub sources, skills with no .md siblings,
+            or on directory-listing failures.
+          items:
+            type: object
+            properties:
+              name:           {type: string}
+              content:        {type: string}
+              was_truncated:  {type: boolean}
+              raw_url:        {type: string}
+            required: [name, content, was_truncated, raw_url]
+        fetched_count:        {type: integer, minimum: 0}
+        parent_url:           {type: string}
+        parent_listing_status:
+          type: string
+          description: "ok | http_<code> | non_github_source | <error>"
+        error:                {type: string}
+      required:
+        - siblings
+        - fetched_count
+        - parent_url
+        - parent_listing_status
+        - error
 ---
 
 Fetch the chosen source markdown, decompose it into a multi-phase reyn
@@ -467,6 +503,62 @@ absolutely needs a 3rd-party library, declare `mode: unsafe` in the
 phase frontmatter and add a note in the `## Source` section that the
 user must `reyn run --allow-untrusted-python` for this skill to work.
 (Note: `unsafe` replaces the old `trusted` keyword as of FP-0014.)
+
+### `reyn/local/<slug>/references/<lowercase_name>` (one per sibling .md the preprocessor fetched)
+
+**CRITICAL — the content is already fetched.** ``data._sibling_files.siblings``
+was populated by a deterministic Python preprocessor that already
+called the GitHub Contents API and downloaded each .md sibling's body.
+You do **NOT** need to re-fetch anything. Do **NOT** emit ``web_fetch``
+ops for sibling URLs. Do **NOT** emit ``web_fetch`` to "verify" or
+"re-check" the source URL — the preprocessor already validated it
+and the LLM-level Step 1 already fetched it. Re-fetching wastes
+act-turn budget and exhausts it before the file writes happen.
+
+For each entry in ``data._sibling_files.siblings``, emit ONE ``file``
+op of ``op: write`` with:
+
+  - ``path``: ``reyn/local/<slug>/references/<lowercase(sibling.name)>``
+  - ``content``: ``sibling.content`` verbatim
+
+So a sibling named ``FORMS.md`` lands at ``reyn/local/<slug>/references/forms.md``,
+``REFERENCE.md`` at ``references/reference.md``, etc. The body is
+already capped by the preprocessor at 80,000 chars per file; if
+``was_truncated`` is true, you may add a "[truncated]" note at the
+bottom of the file but must still write the truncated body.
+
+Once the references are written, **augment the relevant phase
+instructions** to point at them. Example for the ``pdf`` skill where
+``forms.md`` was fetched:
+
+```yaml
+---
+type: phase
+name: pdf
+input: user_message
+...
+---
+
+# instructions body
+...
+
+If the user wants to fill out a PDF form, read references/forms.md
+first — it contains the detailed form-filling workflow that this
+phase delegates to.
+```
+
+Map sibling -> phase responsibility by reading the source SKILL.md
+body for phrases like "see REFERENCE.md" / "read FORMS.md for X" /
+"detailed in <FILE>" — those tell you which phase should cite which
+reference. When the source has no such explicit pointer, add a generic
+mention in the entry phase's instructions: "Reference material lives
+under references/; consult <name>.md when <when>."
+
+If ``data._sibling_files.siblings`` is empty (= ``fetched_count: 0``,
+either non-GitHub source / no .md siblings / listing failure), **skip
+this sub-step entirely** — don't create an empty references/ dir.
+``parent_listing_status`` will explain why if you want to mention it
+in the ``notes`` field of the final ``skill_import_result``.
 
 ### `reyn/local/<slug>/artifacts/<art>.yaml` (one per non-stdlib artifact)
 
