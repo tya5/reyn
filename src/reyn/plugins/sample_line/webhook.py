@@ -125,19 +125,24 @@ def mint_envelope_from_line_event(event: dict) -> dict | None:
     if not isinstance(source, dict):
         return None
     source_type = source.get("type")
+    from reyn.plugins.api import make_sender
     if source_type == "user":
-        user_id = source.get("userId", "")
-        sender = f"line:user:{user_id}" if user_id else "line:user:unknown"
+        user_id = source.get("userId") or "unknown"
+        sender = make_sender("line", user_id, source_scope="user")
         source_id = user_id
     elif source_type == "group":
-        group_id = source.get("groupId", "")
-        user_id = source.get("userId", "")
-        sender = f"line:group:{group_id}:{user_id}" if group_id else "line:group:unknown"
+        group_id = source.get("groupId") or "unknown"
+        user_id = source.get("userId") or ""
+        sender = make_sender(
+            "line", group_id, source_scope="group", display=user_id,
+        )
         source_id = group_id
     elif source_type == "room":
-        room_id = source.get("roomId", "")
-        user_id = source.get("userId", "")
-        sender = f"line:room:{room_id}:{user_id}" if room_id else "line:room:unknown"
+        room_id = source.get("roomId") or "unknown"
+        user_id = source.get("userId") or ""
+        sender = make_sender(
+            "line", room_id, source_scope="room", display=user_id,
+        )
         source_id = room_id
     else:
         return None

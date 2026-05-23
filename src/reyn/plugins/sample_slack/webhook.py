@@ -176,7 +176,8 @@ def mint_envelope_from_slack_event(event: dict) -> dict | None:
         return None
     ts = inner.get("ts")
     thread_ts = inner.get("thread_ts") or ts
-    sender = f"slack:{user_id}" if user_id else "slack:unknown"
+    from reyn.plugins.api import make_sender
+    sender = make_sender("slack", user_id or "unknown")
     reply_to = ExternalRef(
         transport="slack",
         destination={"channel": channel, "thread_ts": thread_ts},

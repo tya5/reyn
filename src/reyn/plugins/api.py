@@ -108,4 +108,106 @@ async def push_to_agent(
     await session._put_inbox(kind, envelope)
 
 
-__all__ = ["push_to_agent"]
+# ── agent discovery ────────────────────────────────────────────────────
+
+
+def list_agents(*, registry: Any | None = None) -> list[str]:
+    """Return all agent names known to the project (= file-system view).
+
+    Plugin authors use this at ``register_router`` time to validate the
+    ``target_agent`` in their config OR to discover available agents
+    dynamically. Returns a sorted list of agent names (= subdirs of
+    ``.reyn/agents/`` carrying a profile file).
+
+    Includes agents that are NOT currently running (= ``ensure_running``
+    will start them on first push). Lazy / on-disk view, not the live
+    set of router_loop tasks.
+
+    ``registry`` is optional for tests; production callers omit it and
+    the process-shared singleton from ``reyn.web.deps`` is used.
+    """
+    if registry is None:
+        from reyn.web.deps import _get_registry
+        registry = _get_registry()
+    return registry.list_names()
+
+
+def agent_exists(name: str, *, registry: Any | None = None) -> bool:
+    """True iff ``name`` is registered in the project's agents dir.
+
+    Useful for pre-flight validation in ``register_router`` so a
+    plugin can return ``None`` (= skip mount) when the configured
+    ``target_agent`` is mistyped, instead of failing on every webhook
+    POST with a 503.
+
+    Falls back to ``False`` on any registry error (= defensive: a
+    boot-time registry hiccup shouldn't crash plugin discovery).
+    """
+    try:
+        if registry is None:
+            from reyn.web.deps import _get_registry
+            registry = _get_registry()
+        return registry.exists(name)
+    except Exception:
+        return False
+
+
+# ── sender formatting ──────────────────────────────────────────────────
+
+
+def make_sender(
+    transport: str,
+    external_id: str,
+    *,
+    display: str | None = None,
+    source_scope: str | None = None,
+) -> str:
+    """Build a Reyn ``sender`` attribution string.
+
+    Reyn's dispatch attribution (= PR-A) emits a ``[context shift]``
+    state_change history entry when the sender changes between turns.
+    The format is ``<transport>[:<source_scope>]:<external_id>[:<display>]``
+    so ``_format_sender_label`` (= reyn.chat.session) renders a
+    readable label for the LLM.
+
+    Examples
+    --------
+    Slack 1:1 chat::
+
+        make_sender("slack", "U456")
+        # → "slack:U456"
+
+        make_sender("slack", "U456", display="bob")
+        # → "slack:U456:bob"
+
+    LINE 1:1 chat with explicit source scope::
+
+        make_sender("line", "U456", source_scope="user")
+        # → "line:user:U456"
+
+    LINE group chat (= external_id is the group, display is the
+    posting user)::
+
+        make_sender("line", "G999", source_scope="group", display="U456")
+        # → "line:group:G999:U456"
+
+    Plugin authors SHOULD prefer this helper over raw f-string
+    assembly so the dispatch attribution label rendering follows
+    the documented format; future scope changes propagate without
+    each plugin needing to update.
+    """
+    parts: list[str] = [transport]
+    if source_scope:
+        parts.append(source_scope)
+    parts.append(external_id)
+    if display:
+        parts.append(display)
+    return ":".join(parts)
+
+
+__all__ = [
+    "agent_exists",
+    "list_agents",
+    "make_sender",
+    "push_to_agent",
+]

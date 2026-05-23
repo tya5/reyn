@@ -118,6 +118,34 @@ plugin author defines this schema.
 Secrets (= API keys, signing secrets) belong in **environment
 variables**, never in webhooks.yaml.
 
+## Stable plugin API — ``reyn.plugins.api``
+
+The module exposes the **stable contract** plugin authors consume.
+Internal session methods (= ``_put_inbox`` etc.) may change between
+Reyn versions; this API stays stable.
+
+### Helpers
+
+  push_to_agent(*, target_agent, text, sender, reply_to=None,
+                kind="user", extra_meta=None, registry=None)
+    Deliver a message to a Reyn agent's inbox. Default for webhook
+    plugins.
+
+  list_agents(*, registry=None) -> list[str]
+    All agent names known to the project (= sorted disk view).
+    Use at register_router time to validate config or discover
+    targets dynamically.
+
+  agent_exists(name, *, registry=None) -> bool
+    Pre-flight check for a single agent name. Defensive: registry
+    error → False.
+
+  make_sender(transport, external_id, *, display=None,
+              source_scope=None) -> str
+    Assemble the documented sender attribution string. Prefer over
+    raw f-strings so dispatch attribution label rendering follows
+    the standard format. See examples in the docstring.
+
 ## Inbound envelope shape + stable plugin API
 
 When the plugin's route receives a webhook, push to the target
