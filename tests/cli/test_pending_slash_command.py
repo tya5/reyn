@@ -124,8 +124,9 @@ async def test_pending_list_empty_returns_friendly_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pending_discard_invokes_session_api() -> None:
-    """Tier 2: ``/pending discard <id>`` calls ``discard_pending_intervention``."""
+async def test_pending_discard_first_invocation_shows_warning() -> None:
+    """Tier 2: ``/pending discard <id>`` (no confirm) emits a warning and
+    does NOT call discard_pending_intervention (Wave-13 B#2 confirm parity)."""
     sess = _StubSession(pending_ops=[
         _PendingOpStub(
             id="iv-abcd1234", kind="intervention",
@@ -134,6 +135,26 @@ async def test_pending_discard_invokes_session_api() -> None:
     ])
     cmd = _get_pending_cmd()
     await cmd.handler(sess, "discard iv-abcd1234")
+    # Must NOT have called the API.
+    assert sess.discard_calls == []
+    # Must emit a warning with "confirm" hint.
+    reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
+    assert len(reply_msgs) == 1
+    assert "confirm" in reply_msgs[0].text
+
+
+@pytest.mark.asyncio
+async def test_pending_discard_invokes_session_api_with_confirm() -> None:
+    """Tier 2: ``/pending discard <id> confirm`` calls
+    ``discard_pending_intervention`` (2-step confirm suffix)."""
+    sess = _StubSession(pending_ops=[
+        _PendingOpStub(
+            id="iv-abcd1234", kind="intervention",
+            origin_channel_id="tui:x", summary="ok?",
+        ),
+    ])
+    cmd = _get_pending_cmd()
+    await cmd.handler(sess, "discard iv-abcd1234 confirm")
     assert sess.discard_calls == ["iv-abcd1234"]
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
     assert any("discarded" in m.text for m in reply_msgs)
@@ -141,10 +162,12 @@ async def test_pending_discard_invokes_session_api() -> None:
 
 @pytest.mark.asyncio
 async def test_pending_discard_resolves_short_prefix_id() -> None:
-    """Tier 2: ``discard`` accepts a short prefix that uniquely matches one iv.
+    """Tier 2: ``discard confirm`` accepts a short prefix that uniquely
+    matches one iv.
 
     Mirrors the Pending tab's UX (= ``id[:8]`` short form is what the
-    user sees in the list output).
+    user sees in the list output).  The confirm suffix must be stripped
+    before prefix resolution.
     """
     sess = _StubSession(pending_ops=[
         _PendingOpStub(
@@ -153,7 +176,7 @@ async def test_pending_discard_resolves_short_prefix_id() -> None:
         ),
     ])
     cmd = _get_pending_cmd()
-    await cmd.handler(sess, "discard iv-abcd1")
+    await cmd.handler(sess, "discard iv-abcd1 confirm")
     assert sess.discard_calls == ["iv-abcd1234"]
 
 

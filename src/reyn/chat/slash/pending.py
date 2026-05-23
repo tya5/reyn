@@ -134,14 +134,62 @@ async def _list(session: "ChatSession") -> None:
 
 
 async def _discard(session: "ChatSession", supplied_id: str) -> None:
+    """Two-step confirm: first invocation shows a warning; second executes.
+
+    Mirrors ``/reset``'s pattern (Wave-13 B#2).  The user must re-type
+    ``/pending discard <id> confirm`` to proceed.  The ``confirm`` suffix
+    is stripped before resolving the intervention id so the existing
+    prefix-resolution logic is unchanged.
+    """
     if not hasattr(session, "discard_pending_intervention"):
         await reply_error(session, _NO_SESSION)
         return
-    iv_id, err = _resolve_iv_id(session, supplied_id)
+
+    # Detect "confirm" suffix (case-insensitive, space-separated).
+    stripped = supplied_id.strip()
+    if stripped.lower().endswith(" confirm"):
+        id_part = stripped[: -len(" confirm")].strip()
+        _do_confirm = True
+    else:
+        id_part = stripped
+        _do_confirm = False
+
+    iv_id, err = _resolve_iv_id(session, id_part)
     if err is not None:
         await reply_error(session, err)
         return
     assert iv_id is not None  # mypy guard
+
+    if not _do_confirm:
+        # First invocation — show warning with iv context, require confirm.
+        # Retrieve iv details from the stalled list for the warning line.
+        kind_hint = ""
+        skill_hint = ""
+        try:
+            ops = session.list_stalled_interventions()
+            match = next(
+                (v for v in ops if str(getattr(v, "id", "")).startswith(id_part)),
+                None,
+            )
+            if match is not None:
+                kind_hint = getattr(match, "kind", "") or ""
+                skill_hint = getattr(match, "summary", "") or ""
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+        context = ""
+        if kind_hint:
+            context = f" ({kind_hint}"
+            if skill_hint:
+                context += f": {skill_hint[:40]}"
+            context += ")"
+        await reply(
+            session,
+            f"⚠ About to discard pending intervention: {iv_id[:8]}{context}\n"
+            f"Type `/pending discard {id_part} confirm` to proceed, "
+            "or anything else to leave it queued.",
+        )
+        return
+
     try:
         ok = await session.discard_pending_intervention(iv_id)
     except Exception as exc:
