@@ -74,6 +74,19 @@ def _find_history_snapshot() -> list[str]:
     return list(_find_history)
 
 
+def find_history_has_entries() -> bool:
+    """Return True when the find history deque is non-empty.
+
+    Public surface used by :func:`SlashPicker._repaint_hint` to gate
+    the Tab-recall footer row (= "↳ Tab inserts a recent query") on
+    whether there's actually anything to recall. Callers must NOT
+    reach into ``_find_history`` directly — that would bypass the
+    module-level encapsulation and couple widget rendering to a private
+    deque. This wrapper is the minimal clean public surface.
+    """
+    return bool(_find_history)
+
+
 def _find_completer(session: "object", arg_partial: str = "") -> list[str]:
     """Surface recent /find queries as picker hint completions.
 
