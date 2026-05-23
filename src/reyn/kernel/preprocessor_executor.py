@@ -471,16 +471,29 @@ class PreprocessorExecutor:
 
         # FP-0042: forward the skill's declared file-read / file-write
         # paths into the subprocess so ``reyn.safe.file.*`` calls inside
-        # the user step can gate against them. Paths are passed verbatim
-        # — the subprocess-side check is decl-membership, not the full
-        # 4-layer ask flow (= those layers already fired at startup_guard
-        # time before this step ran). Empty lists mean "no file access
-        # granted" and any reyn.safe.file.* call raises PermissionError.
-        file_read_paths = [
+        # the user step can gate against them. The subprocess-side check
+        # is decl-membership, not the full 4-layer ask flow (= those
+        # layers already fired at startup_guard time before this step
+        # ran).
+        #
+        # Mirror the parent-side ``_in_default_read_zone`` / ``_in_default_write_zone``
+        # behaviour by pre-pending the implicit default zones (CWD for
+        # read; ``.reyn/`` + ``reyn/`` under CWD for write). Without this,
+        # a safe-mode step that reads a workspace-local file would have
+        # to declare every path explicitly, even though the equivalent
+        # ``invoke_action(file__read)`` route would be granted by default.
+        # Keeping the contract symmetric with the existing permission
+        # model.
+        import os as _os
+        _cwd = _os.getcwd()
+        file_read_paths = [_cwd] + [
             entry["path"] for entry in self._skill.permissions.file_read
             if isinstance(entry, dict) and entry.get("path")
         ]
         file_write_paths = [
+            _os.path.join(_cwd, ".reyn"),
+            _os.path.join(_cwd, "reyn"),
+        ] + [
             entry["path"] for entry in self._skill.permissions.file_write
             if isinstance(entry, dict) and entry.get("path")
         ]

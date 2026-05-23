@@ -1,12 +1,12 @@
 """Safe-mode postprocessor step for index_docs (= the `extract_and_split`
 path enumeration phase).
 
-Split out from ``chunkers.py`` so that ``extract_and_split`` can actually run
-under ``mode: safe``. The companion ``chunkers.py`` module legitimately
-imports ``os`` / ``reyn.api.unsafe.file`` for its unsafe-mode steps
-(``gather_samples``, ``cost_preflight``, ``write_chunks_with_lock``), and the
-safe-mode AST validator walks all imports in the module via ``ast.walk(tree)``
-— so a single-file layout forces every safe-mode step to inherit those
+Split out from ``chunkers.py`` so that ``extract_and_split`` can actually
+run under ``mode: safe``. The companion ``chunkers.py`` module
+legitimately imports ``os`` / ``pathlib`` for its remaining unsafe-mode
+steps (``write_chunks_with_lock``, ``apply_strategy``), and the safe-mode
+AST validator walks all imports in the module via ``ast.walk(tree)`` — so
+a single-file layout forces every safe-mode step to inherit those
 unsafe imports. Following the audit's own Wave 2 pattern (= ``aggregate``
 → ``aggregate_pure``), this module hosts only the safe-mode step and the
 exact set of imports the safe-mode allowlist admits.
@@ -14,7 +14,9 @@ exact set of imports the safe-mode allowlist admits.
 R-PURE-MODE-REDEFINE audit (2026-05-15) signed off on ``glob.glob`` as a
 restricted ambient source for path-list-only enumeration. See
 ``docs/deep-dives/audits/2026-05-15-pure-mode-stdlib-audit.md`` and
-``_python_allowlist.py`` for the contract.
+``_python_allowlist.py`` for the contract. FP-0042 Phase 2.1 (2026-05-22)
+migrated the two preprocessor steps to their own
+``chunkers_preproc_safe.py`` for the same reason.
 """
 from __future__ import annotations
 

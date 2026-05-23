@@ -7,16 +7,23 @@ JSON-serializable value that is placed at ``into`` in the artifact.
 Override pattern (ADR-0033 §2.1): project-specific chunkers (Python AST,
 custom Markdown) replace this module via skill.md ``module:`` override.
 
-R-PURE-MODE-REDEFINE Class A split (postprocessor steps):
-  ``extract_and_split`` (mode: safe) — moved to companion module
-    ``chunkers_safe.py``; this module's ``import os`` / ``import
-    reyn.api.unsafe.file`` would otherwise be inherited by the safe-mode
-    AST validator (which walks all module imports), forcing it to fail.
-  ``write_chunks_with_lock`` (mode: unsafe, minimal) — irreducible minimum:
+Module split (= reduces unsafe surface in stdlib per FP-0042):
+  ``gather_samples`` / ``cost_preflight`` (mode: safe) — live in
+    ``chunkers_preproc_safe.py``; file I/O goes through
+    ``reyn.safe.file`` with permission-gated reads. Migrated 2026-05-22
+    from this module's prior mode: unsafe implementation.
+  ``extract_and_split`` (mode: safe) — lives in ``chunkers_safe.py``
+    (the original R-PURE-MODE-REDEFINE Class A split).
+  ``write_chunks_with_lock`` (mode: unsafe, minimal) — kept here:
     source file content read, advisory lock acquire/release, .jsonl write.
+    Migration to safe-mode is FP-0042 Phase 2.2 pending ``reyn.safe.file``
+    growing ``delete`` / ``mkdir`` and a lock primitive.
+  ``apply_strategy`` (mode: unsafe, deprecated) — kept for project
+    override compatibility.
 
-The two preprocessor helpers (``gather_samples``, ``cost_preflight``) remain
-mode: unsafe because they call ``reyn.api.unsafe.file``.
+This module's ``import os`` / ``from pathlib import Path`` would be
+inherited by the safe-mode AST walk if the safe-mode steps lived here,
+which is why they live in companion modules.
 """
 from __future__ import annotations
 
@@ -25,181 +32,14 @@ import hashlib
 import json
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Iterator
 
-import reyn.api.unsafe.file as _unsafe_file
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase 1 preprocessor steps
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def gather_samples(artifact: dict) -> dict:
-    """Phase 1 preprocessor: sample files matched by path glob.
-
-    Receives the full index_docs_input artifact. Returns sample excerpts
-    and a file summary for the LLM's strategy decision.
-
-    Returns:
-        {
-            "samples": [
-                {
-                    "path": str,
-                    "excerpt": str,         # first ~1500 chars
-                    "size_tokens": int,     # rough token estimate
-                    "structure_hint": str,  # e.g. "Markdown with headings"
-                }
-            ],
-            "summary": {
-                "file_count": int,
-                "ext_dist":   dict,  # e.g. {".md": 10, ".py": 5}
-                "total_bytes": int,
-                "mean_bytes":  int,
-            },
-            "file_count": int,  # top-level convenience copy
-        }
-    """
-    data = artifact.get("data") or {}
-    path = str(data.get("path") or "")
-    sample_size: int = int(data.get("sample_size") or 5)
-
-    files = _api_glob_files(path)
-    if not files:
-        return {
-            "samples": [],
-            "summary": {
-                "file_count": 0,
-                "ext_dist": {},
-                "total_bytes": 0,
-                "mean_bytes": 0,
-            },
-            "file_count": 0,
-        }
-
-    # ── Build extension index + total size ───────────────────────────────────
-    by_ext: dict[str, list[str]] = {}
-    total_bytes = 0
-    for f in files:
-        ext = Path(f).suffix
-        by_ext.setdefault(ext, []).append(f)
-        try:
-            total_bytes += _unsafe_file.stat(f)["size"]
-        except OSError:
-            pass
-
-    # ── Stratified sampling: 1–2 per extension, up to sample_size total ──────
-    picks: list[str] = []
-    for _ext, file_list in by_ext.items():
-        n = min(2, len(file_list))
-        picks.extend(file_list[:n])
-        if len(picks) >= sample_size:
-            picks = picks[:sample_size]
-            break
-    picks = picks[:sample_size]
-
-    samples = []
-    for f in picks:
-        try:
-            text = _unsafe_file.read(f)
-        except OSError:
-            continue
-        excerpt = text[:1500]
-        samples.append(
-            {
-                "path": f,
-                "excerpt": excerpt,
-                "size_tokens": _approx_tokens(text),
-                "structure_hint": _detect_structure(text, Path(f).suffix),
-            }
-        )
-
-    n = len(files)
-    return {
-        "samples": samples,
-        "summary": {
-            "file_count": n,
-            "ext_dist": {ext: len(fs) for ext, fs in by_ext.items()},
-            "total_bytes": total_bytes,
-            "mean_bytes": total_bytes // n if n else 0,
-        },
-        "file_count": n,
-    }
-
-
-def cost_preflight(artifact: dict) -> dict:
-    """Phase 1 preprocessor: estimate embedding cost (UX gap fix B).
-
-    Receives the artifact after ``gather_samples`` has injected its result
-    at ``data.samples_result``. Returns cost estimate fields so the LLM
-    can decide to abort if cost is too high.
-
-    Returns:
-        {
-            "chunk_count":        int,
-            "estimated_tokens":   int,
-            "estimated_cost_usd": float,
-            "model":              str,
-            "threshold_exceeded": bool,
-        }
-    """
-    from math import ceil
-
-    data = artifact.get("data") or {}
-    path = str(data.get("path") or "")
-    samples_result = data.get("samples_result") or {}
-    samples = samples_result.get("samples") or []
-    threshold = int(data.get("cost_warn_threshold") or 10_000)
-
-    if not samples:
-        return {
-            "chunk_count": 0,
-            "estimated_tokens": 0,
-            "estimated_cost_usd": 0.0,
-            "model": "standard",
-            "threshold_exceeded": False,
-        }
-
-    files = _api_glob_files(path)
-    n_files = len(files)
-
-    # Rough estimate: avg tokens per sample → chunks per file
-    avg_size = sum(s.get("size_tokens", 0) for s in samples) / len(samples)
-    # Assume each file produces ceil(size / 600) chunks (default max_chunk_size)
-    chunks_per_file = max(1, ceil(avg_size / 600))
-    estimated_chunks = max(1, n_files) * chunks_per_file
-
-    # Cost estimation: ~0.02 USD / 1M tokens for text-embedding-3-small
-    # Use sample token counts to extrapolate
-    sample_texts = [s.get("excerpt", "") for s in samples]
-    sample_tokens = sum(_approx_tokens(t) for t in sample_texts)
-    avg_tokens_per_sample = sample_tokens / len(samples) if samples else 0
-    total_tokens = int(avg_tokens_per_sample * estimated_chunks)
-
-    rate = 0.02  # USD / 1M tokens (text-embedding-3-small; phase 1 hardcoded)
-    cost = total_tokens / 1_000_000 * rate
-
-    return {
-        "chunk_count": estimated_chunks,
-        "estimated_tokens": total_tokens,
-        "estimated_cost_usd": round(cost, 4),
-        "model": "standard",
-        "threshold_exceeded": estimated_chunks > threshold,
-    }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Postprocessor python steps (R-PURE-MODE-REDEFINE Class A split)
+# Postprocessor python steps
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CHUNKS_JSONL_PATH = "artifacts/chunks.jsonl"
-
-
-# ``extract_and_split`` was moved to ``chunkers_safe.py`` so the safe-mode
-# AST validator, which walks all module-level imports via ``ast.walk(tree)``,
-# does not reject it because of this module's legitimate ``os`` /
-# ``reyn.api.unsafe.file`` imports used by the surrounding unsafe-mode steps.
 
 
 def write_chunks_with_lock(artifact: dict) -> dict:
@@ -526,7 +366,8 @@ def _split_sentence(
 def _glob_files(path: str) -> list[str]:
     """Expand a glob pattern; return sorted list of file paths.
 
-    Used by apply_strategy (= postprocessor, mode: unsafe, Class A deferred).
+    Used by ``apply_strategy`` (= deprecated monolithic postprocessor
+    step, mode: unsafe).
     """
     if not path:
         return []
@@ -534,38 +375,9 @@ def _glob_files(path: str) -> list[str]:
     return sorted(m for m in matches if os.path.isfile(m))
 
 
-def _api_glob_files(path: str) -> list[str]:
-    """Expand a glob pattern via reyn.api.unsafe.file; return sorted file paths.
-
-    Used by gather_samples and cost_preflight (= preprocessor steps, Class B
-    refactored). Delegates to reyn.api.unsafe.file.glob then filters to files.
-    """
-    if not path:
-        return []
-    matches = _unsafe_file.glob(path)
-    return [m for m in matches if os.path.isfile(m)]
-
-
 def _approx_tokens(text: str) -> int:
     """Rough token count: ~4 chars per token (GPT-style BPE approximation)."""
     return max(1, len(text) // 4)
-
-
-def _detect_structure(text: str, ext: str) -> str:
-    """Heuristic structure hint for LLM strategy context."""
-    if ext in {".md", ".markdown", ".mdx"}:
-        if re.search(r"^#+\s", text, re.MULTILINE):
-            return "Markdown with headings"
-        return "Markdown without headings"
-    if ext == ".py":
-        if re.search(r"^(class |def )", text, re.MULTILINE):
-            return "Python with class/function definitions"
-        return "Python script"
-    if ext in {".js", ".ts", ".tsx", ".jsx"}:
-        return "JavaScript/TypeScript"
-    if ext in {".json", ".yaml", ".yml", ".toml"}:
-        return "Structured data file"
-    return "Plain text"
 
 
 def _pid_alive(pid: int) -> bool:
