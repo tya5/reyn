@@ -101,7 +101,7 @@ The shortcuts you reach for daily:
 | `Ctrl+W` | Cycle to the next tab (Keys → Events → Agents → Memory → Cost → Docs → Pending) |
 | `h` / `l` | Widen / narrow the panel |
 | `j` / `k` | Scroll the current tab |
-| `space` | Toggle the preview pane for the cursor row (works on most tabs) |
+| `space` | Toggle the preview pane for the cursor row (events / agents / memory / docs / pending only) |
 | `c` | Copy the current view; on the Pending tab, claim the cursor's intervention |
 
 ### Quit

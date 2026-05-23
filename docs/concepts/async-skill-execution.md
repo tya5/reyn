@@ -32,20 +32,20 @@ Chat-mode `invoke_skill` is now non-blocking. Plan-mode keeps blocking
 semantics on purpose (= sequential step execution needs the nested
 skill's result inline to feed the next step's LLM).
 
-## How chat-mode invoke_skill works now
+## How chat-mode action dispatch works
 
-> **FP-0034 Phase 6 (2026-05-16) routing note**: since the
-> wrapper-only path is the default, the LLM addresses skills via
-> `invoke_action(action_name="skill__<name>", args={"input": ...})`
-> instead of the legacy `invoke_skill(name, input)` directly.
-> `universal_dispatch.py` routes the wrapper call to the same
-> `invoke_skill` handler shown below — the spawn-ack mechanism is
-> unchanged. The diagram below uses the legacy tool name for
-> readability; the production LLM-visible surface is `invoke_action`.
+Since FP-0034 Phase 6 (2026-05-16), the LLM-visible surface is
+`invoke_action(action_name="skill__<name>", args={"input": ...})`.
+`universal_dispatch.py` routes the wrapper call to the same internal
+`invoke_skill` handler — the spawn-ack mechanism is unchanged.
+The legacy `invoke_skill(name, input)` direct form is no longer
+the production surface (kept internally for plan-mode; see below).
 
 ```
 User: "skill_builder で string_length を作って"
-  └─ RouterLoop: invoke_skill(name="skill_builder", input={...})
+  └─ RouterLoop: invoke_action(action_name="skill__skill_builder",
+                               args={"input": {...}})
+       └─ universal_dispatch → invoke_skill handler
        └─ _handle: spawn_skill_fn → ChatSession._spawn_skill_for_router
             └─ asyncio.create_task(_run_one_skill(...))
             └─ returns IMMEDIATELY:
