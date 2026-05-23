@@ -36,7 +36,9 @@ async def reset_cmd(session: "object", args: str) -> None:
             session,
             "⚠ This will delete all in-flight skill state "
             "(snapshots + WAL). Audit logs are preserved.\n"
-            "Type `/reset confirm` to proceed, or anything else to abort.",
+            "Type `/reset confirm` to proceed, or anything else to abort.\n"
+            "See docs/guide/for-skill-authors/crash-recovery-and-resume.md "
+            "for what snapshots+WAL hold.",
         )
         return
 

@@ -11,8 +11,10 @@ Speech-to-text for the `reyn chat` TUI, powered by `faster-whisper`.
 ## What it does
 
 Press **Ctrl+R** to start recording; press **Ctrl+R** again to stop.
-The transcribed text is inserted into the input bar. The voice layer lives
-entirely in `chat/tui/` — the OS and skill layers have no awareness of it (P7).
+The transcribed text is inserted into the input bar. While recording,
+pressing **Enter** stops, transcribes, and submits in one keystroke
+(= dictate-and-send). The voice layer lives entirely in `chat/tui/` —
+the OS and skill layers have no awareness of it (P7).
 
 ## Backend
 
