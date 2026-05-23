@@ -170,18 +170,25 @@ Before any MCP server can be added to the configuration, the install op's writes
 - `http.get` on `registry.modelcontextprotocol.io` (= the registry fetch). Same prompt model.
 - `secret.write` on the env-var keys the registry declares as `isSecret` (= wildcard `"*"` because the key set is runtime-determined).
 
-Enterprise teams use the project-scope `reyn.yaml` to enforce policy:
+Enterprise teams point reyn at a private / corporate registry via the `REYN_MCP_REGISTRY_URL` environment variable (= operator-trusted single-URL override; both the async op-handler client and the safe-mode skill-internal lookup honour it):
+
+```bash
+# operator's shell rc / systemd unit / CI runner env
+export REYN_MCP_REGISTRY_URL="https://mcp-registry.internal.acme.com"
+```
+
+Combined with project-scope `reyn.yaml` policy:
 
 ```yaml
 # enterprise reyn.yaml — team-wide policy
-mcp:
-  registries:
-    - https://mcp-registry.internal.acme.com/    # private registry (approved servers only)
-    - https://registry.modelcontextprotocol.io/   # public fallback
 permissions:
-  web.fetch: allow      # team can fetch from any host in the registries; the registry ordering does the gating
+  web.fetch: allow      # blanket allow for registry fetches (= overrides per-host prompts)
   file.write: allow     # blanket approval for .reyn/mcp.yaml writes
 ```
+
+The result is "approved servers only" — only servers registered in the private registry are discoverable, and there's no skill-author lever to bypass the operator's URL choice.
+
+> **Multi-registry list config** (`mcp.registries: [private, public]` ordering) is referenced in older docs and ADRs but **is not yet wired** in this codebase. Only the single-URL env-var override is functional today. The list-form config is a future enhancement.
 
 See [Concepts: permission model](permission-model.md) → "Collapse arc" for the full migration story.
 

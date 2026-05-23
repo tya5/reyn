@@ -1,27 +1,35 @@
 """Safe-mode MCP server registry lookup (FP-0042 Phase 2.4).
 
 Exposes ``search(query, limit)`` and ``lookup(server_id)`` to safe-mode
-python steps. Internally batches HTTP GET against
-``registry.modelcontextprotocol.io``, caches responses on disk (~/.reyn/
-registry-cache/), parses + dedups the registry envelope, and returns
-plain JSON-serialisable dicts.
+python steps. Internally batches HTTP GET against the MCP server
+registry, caches responses on disk (``~/.reyn/registry-cache/``),
+parses + dedups the registry envelope, and returns plain
+JSON-serialisable dicts.
 
-Threat model + permission rationale
------------------------------------
+Registry URL resolution
+-----------------------
 
-The registry URL is **hardcoded** to the official MCP server registry.
-There is no env var override, no config-driven base_url, and no
-per-skill host allowlist. As a result, registry lookup is treated as an
-*ambient* operation in the same sense as ``time`` and ``random`` —
-operator-controlled state is not in the loop, so the operation has no
-permission gate.
+The base URL is resolved from the ``REYN_MCP_REGISTRY_URL`` environment
+variable, falling back to the official registry at
+``https://registry.modelcontextprotocol.io`` when the env var is unset.
+This mirrors the resolution chain used by
+:class:`reyn.registry.client.RegistryClient` (= the op-handler-side
+async client), so an operator who points reyn at a private / corporate
+registry sees both code paths use the same URL.
 
-If a future requirement needs operator-configurable registry URLs (=
-private mirror / corporate registry), the design question moves into
-Issue #571 ("Permission model: granularity decomposition vs abstraction
-granularity"); at that point the URL becomes config-controlled and the
-permission shape needs to be co-designed with the rest of the MCP
-permission family.
+Threat model
+------------
+
+Registry lookup remains an *ambient* operation from the skill author's
+perspective — there is no per-skill ``http.get`` declaration required
+for this module's surface. The URL is operator-trusted via the env
+var; the operator setting ``REYN_MCP_REGISTRY_URL`` is what carries the
+authorisation, not the skill code that calls in. This matches how
+``time`` / ``random`` / file-system locale are treated.
+
+Multi-registry support (= ``reyn.yaml mcp.registries: [...]`` list) is
+not yet wired through this module. Today only the single-URL env var
+override works; the list-form config is a future enhancement.
 
 Internal layering
 -----------------
@@ -50,6 +58,7 @@ boundaries without translation:
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -63,8 +72,18 @@ from reyn.registry import cache as _cache
 from reyn.registry.client import _dedup_by_latest
 from reyn.registry.models import server_info_from_raw
 
-# Hardcoded URL — see module docstring for the rationale.
-_BASE_URL = "https://registry.modelcontextprotocol.io"
+_DEFAULT_BASE_URL = "https://registry.modelcontextprotocol.io"
+
+
+def _base_url() -> str:
+    """Resolve the registry base URL.
+
+    Reads ``REYN_MCP_REGISTRY_URL`` from the environment (= operator-
+    trusted single-URL override, same chain as
+    :func:`reyn.registry.client._base_url`). Falls back to the official
+    public registry when the env var is unset.
+    """
+    return os.environ.get("REYN_MCP_REGISTRY_URL", _DEFAULT_BASE_URL).rstrip("/")
 
 # urlopen timeout in seconds. 10s covers the canonical registry's p99
 # without leaving steps hanging if the network is wedged.
@@ -150,7 +169,7 @@ def search(query: str, *, limit: int = 20) -> list[dict]:
         return _candidates_from_payload(cached)
 
     qs = urllib.parse.urlencode({"search": query, "limit": str(limit)})
-    url = f"{_BASE_URL}/v0.1/servers?{qs}"
+    url = f"{_base_url()}/v0.1/servers?{qs}"
     data = _http_get_json(url)
     _cache.set(cache_key, data)
     return _candidates_from_payload(data)
@@ -177,7 +196,7 @@ def lookup(server_id: str) -> dict | None:
     if cached is not None:
         return _info_to_dict(server_info_from_raw(cached))
 
-    url = f"{_BASE_URL}/v0.1/servers/{urllib.parse.quote(server_id, safe='')}/versions/latest"
+    url = f"{_base_url()}/v0.1/servers/{urllib.parse.quote(server_id, safe='')}/versions/latest"
     try:
         data = _http_get_json(url)
     except RegistryError as exc:

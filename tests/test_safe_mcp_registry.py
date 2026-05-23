@@ -5,8 +5,14 @@ import. The HTTP boundary (``_http_get_json``) is the only mocked seam;
 everything else (= cache, dedup, dict reshape, 404 → None handling) runs
 real against a per-test tmp cache dir.
 
-Threat-model rationale (= URL hardcoded, no permission gate, ambient
-treatment) is documented in the module docstring and Issue #571.
+URL resolution: PR-9 (post #571 collapse arc, 2026-05-24) made the
+base URL resolution honor ``REYN_MCP_REGISTRY_URL`` env var, mirroring
+the chain used by ``reyn.registry.client._base_url``. See the "URL
+resolution" section below for the tests pinning that behavior.
+
+Threat-model rationale (= ambient registry lookup, no per-skill
+``http.get`` declaration required; operator-trusted via the env var)
+is documented in the module docstring.
 """
 from __future__ import annotations
 
@@ -218,11 +224,60 @@ def test_lookup_caches_response(_isolated_cache):
     assert call_count == 1
 
 
-# ── URL hardcoding regression ─────────────────────────────────────────────
+# ── URL resolution ────────────────────────────────────────────────────────
 
 
-def test_base_url_is_hardcoded():
-    """Tier 2: regression guard — the registry URL must stay hardcoded to the
-    official MCP registry. If a future change adds env-var or config-driven
-    override, Issue #571 needs revisiting first (= permission shape decision)."""
-    assert sr._BASE_URL == "https://registry.modelcontextprotocol.io"
+def test_base_url_default_is_official_registry(monkeypatch):
+    """Tier 2: default base URL falls back to the official MCP registry."""
+    monkeypatch.delenv("REYN_MCP_REGISTRY_URL", raising=False)
+    assert sr._base_url() == "https://registry.modelcontextprotocol.io"
+
+
+def test_base_url_honors_env_var(monkeypatch):
+    """Tier 2: ``REYN_MCP_REGISTRY_URL`` overrides the default URL.
+
+    Mirrors the resolution chain in
+    ``reyn.registry.client._base_url`` so an operator-set private /
+    corporate registry applies uniformly to both the async op-handler
+    client and this safe-mode skill-internal lookup.
+    """
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://private.example.com/mcp")
+    assert sr._base_url() == "https://private.example.com/mcp"
+
+
+def test_base_url_strips_trailing_slash(monkeypatch):
+    """Tier 2: trailing slash on the env-var value is normalised away."""
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://private.example.com/mcp/")
+    assert sr._base_url() == "https://private.example.com/mcp"
+
+
+def test_search_uses_overridden_base_url(monkeypatch, _isolated_cache):
+    """Tier 2: search hits the overridden host when ``REYN_MCP_REGISTRY_URL`` is set."""
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://private.example.com/mcp")
+    captured_urls: list[str] = []
+
+    def _fake_get(url):
+        captured_urls.append(url)
+        return _SEARCH_RESPONSE
+
+    with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
+        sr.search("bar")
+
+    assert len(captured_urls) == 1
+    assert captured_urls[0].startswith("https://private.example.com/mcp/v0.1/servers?")
+
+
+def test_lookup_uses_overridden_base_url(monkeypatch, _isolated_cache):
+    """Tier 2: lookup hits the overridden host when ``REYN_MCP_REGISTRY_URL`` is set."""
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://private.example.com/mcp")
+    captured_urls: list[str] = []
+
+    def _fake_get(url):
+        captured_urls.append(url)
+        return _VERSIONS_LATEST_RESPONSE
+
+    with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
+        sr.lookup("io.github.modelcontextprotocol/server-filesystem")
+
+    assert len(captured_urls) == 1
+    assert captured_urls[0].startswith("https://private.example.com/mcp/v0.1/servers/")
