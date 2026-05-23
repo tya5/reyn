@@ -503,17 +503,21 @@ For finer control, the skill's `skill.md` declares the canonical paths and hosts
 | Allow installs without prompting | `file.write: allow` and `web.fetch: allow` at the project scope |
 | Allow only certain hosts | Skill declares `http.get: [{host: "..."}]` explicitly; wildcard `["*"]` defers to per-host prompts |
 
-Enterprise pattern — restrict installs to a private registry:
+Enterprise pattern — point reyn at a private registry via the `REYN_MCP_REGISTRY_URL` environment variable (= operator-trusted single-URL override; both the async op-handler client and the safe-mode skill-internal lookup honour it):
+
+```bash
+# operator's shell rc / systemd unit / CI runner env
+export REYN_MCP_REGISTRY_URL="https://mcp-registry.internal.acme.com"
+```
 
 ```yaml
 # reyn.yaml (project scope — committed to git)
-mcp:
-  registries:
-    - https://mcp-registry.internal.acme.com/    # private registry first
-    - https://registry.modelcontextprotocol.io/   # public fallback
 permissions:
-  web.fetch: allow      # team can fetch from any host in the registries; the registry ordering does the gating
+  web.fetch: allow      # blanket allow for registry fetches
+  file.write: allow     # blanket approval for .reyn/mcp.yaml writes
 ```
+
+> **Multi-registry list config** (`mcp.registries: [private, public]` ordering with public-fallback semantics) is referenced in older docs and ADRs but **is not yet wired** in this codebase. Only the single-URL env-var override is functional today. The list-form config is a future enhancement.
 
 See [Concepts: permission model](../../concepts/permission-model.md) → "Collapse arc" for the full migration story and the canonical decomposition table.
 

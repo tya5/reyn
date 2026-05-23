@@ -22,9 +22,12 @@ Resolution strategy:
 FP-0042 Phase 2.4 (2026-05-23): migrated from mode: unsafe to mode: safe.
 HTTP + cache + JSON parse + dedup are all hidden inside
 ``reyn.safe.mcp.registry``; this module only deals with the resolution
-strategy. The legacy ``REYN_MCP_REGISTRY_URL`` env var override is no
-longer honoured here (= safe.mcp.registry hardcodes the URL); see Issue
-#571 for the design discussion that decided this scope.
+strategy.
+
+Registry URL: ``REYN_MCP_REGISTRY_URL`` env var is honored by both the
+async op-handler client (``reyn.registry.client.RegistryClient``) AND
+this safe-mode path (``reyn.safe.mcp.registry``), so an operator-set
+private / corporate registry URL applies consistently to both surfaces.
 """
 from __future__ import annotations
 
