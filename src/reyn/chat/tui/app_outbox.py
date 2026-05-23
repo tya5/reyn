@@ -140,6 +140,26 @@ def _format_tool_result(result) -> str:
 # app_outbox.
 from ._clipboard import copy_to_clipboard as _copy_to_clipboard  # noqa: F401
 
+# Maximum visible width for the matched-line preview snippet shown
+# after the ``/find`` status. Above this we trim with "…". 40 cells
+# fits the rest of the status line ("match 3/5 for 'foo' · line 12:")
+# on an 80-cell terminal without wrapping.
+_FIND_PREVIEW_MAX_CHARS = 40
+
+
+def _find_preview_snippet(text: str) -> str:
+    """Trim a matched-line content to fit the status preview budget.
+
+    Collapses runs of whitespace to a single space so a line with
+    heavy indentation doesn't waste preview cells on padding. The
+    returned snippet is wrapped in ``""`` quotes by the caller, so
+    this helper just produces the inner content.
+    """
+    compact = " ".join((text or "").split())
+    if len(compact) <= _FIND_PREVIEW_MAX_CHARS:
+        return compact
+    return compact[: max(1, _FIND_PREVIEW_MAX_CHARS - 1)] + "…"
+
 
 class OutboxRouter:
     """Drain + dispatch loop for the registry's outbox queue."""
@@ -614,6 +634,18 @@ class OutboxRouter:
         )
         if len(matches) > 1:
             body += " · Ctrl+G next"
+        # Matched-line preview — surfaces the actual content the user
+        # just scrolled to. Without this, the user sees the viewport
+        # jump but can't tell which on-screen line is the match (=
+        # the original "/find scrolled but where IS the match?" gap
+        # deferred from #539). Find the cursor's matched-line text
+        # so the preview reflects the line the viewport landed on.
+        cursor_text = next(
+            (m[1] for m in matches if m[0] == target_idx), ""
+        )
+        snippet = _find_preview_snippet(cursor_text)
+        if snippet:
+            body += f' · "{snippet}"'
         self._show_transient_status(conv, body)
 
     def cycle_find(self, direction: int) -> None:
@@ -697,11 +729,18 @@ class OutboxRouter:
         except Exception:
             pass
         self._find_cursor_idx = target_idx
-        self._show_transient_status(
-            conv,
+        # Same matched-line preview idea as ``_on_find`` — surface
+        # WHAT the cursor landed on so the user doesn't have to
+        # eyeball the viewport to confirm. ``matches[new_pos][1]``
+        # is the line content stored at search time.
+        snippet = _find_preview_snippet(matches[new_pos][1])
+        body = (
             f"match {new_pos + 1}/{len(matches)} for '{query}' "
-            f"· line {target_idx + 1}",
+            f"· line {target_idx + 1}"
         )
+        if snippet:
+            body += f' · "{snippet}"'
+        self._show_transient_status(conv, body)
 
     def _on_save(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
