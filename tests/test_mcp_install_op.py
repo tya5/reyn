@@ -226,7 +226,7 @@ def test_permission_gate_undeclared_raises(tmp_path):
             _run(mcp_install_handle(op, ctx, "control_ir"))
 
 
-def test_permission_gate_passes_with_explicit_decl(tmp_path):
+def test_permission_gate_passes_with_explicit_decl(tmp_path, monkeypatch):
     """Tier 2: mcp_install op proceeds when explicit file.write + http.get are declared."""
     resolver = _make_resolver(tmp_path)
     decl = _phase5_install_decl(resolver)
@@ -239,9 +239,9 @@ def test_permission_gate_passes_with_explicit_decl(tmp_path):
         scope="local",
     )
 
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-            result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda cmd, *a, **kw: "/usr/bin/npx")
+    with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
+        result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
     assert result["server_id"] == "io.github.modelcontextprotocol/server-filesystem"
@@ -252,7 +252,7 @@ def test_permission_gate_passes_with_explicit_decl(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_missing_runtime_returns_error(tmp_path):
+def test_missing_runtime_returns_error(tmp_path, monkeypatch):
     """Tier 2: Handler returns error result when runtime command is not found.
 
     npx missing → status="error" with install hint, no exception raised.
@@ -268,9 +268,9 @@ def test_missing_runtime_returns_error(tmp_path):
         scope="local",
     )
 
-    with mock.patch("shutil.which", return_value=None):
-        with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-            result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda cmd, *a, **kw: None)
+    with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
+        result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "error"
     assert "npx" in result["error"].lower() or "node" in result["error"].lower()
@@ -281,7 +281,7 @@ def test_missing_runtime_returns_error(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_env_overrides_skip_prompt_and_persist_secret(tmp_path):
+def test_env_overrides_skip_prompt_and_persist_secret(tmp_path, monkeypatch):
     """Tier 2: env_overrides pre-supply secret values, skipping interactive prompt.
 
     The secret is persisted via secrets.store and the ${KEY} reference is
@@ -301,12 +301,10 @@ def test_env_overrides_skip_prompt_and_persist_secret(tmp_path):
         env_overrides={"EXAMPLE_API_KEY": "my-secret-value"},
     )
 
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        with mock.patch(
-            "reyn.secrets.store._secrets_path", return_value=secrets_path
-        ):
-            with _patch_registry_get(_SECRET_SERVER_RESPONSE):
-                result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda cmd, *a, **kw: "/usr/bin/npx")
+    monkeypatch.setenv("REYN_SECRETS_PATH", str(secrets_path))
+    with _patch_registry_get(_SECRET_SERVER_RESPONSE):
+        result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
     assert "EXAMPLE_API_KEY" in result["env_keys_set"]
@@ -333,7 +331,7 @@ def test_env_overrides_skip_prompt_and_persist_secret(tmp_path):
     assert "my-secret-value" not in config_path.read_text(encoding="utf-8")
 
 
-def test_save_secret_blocked_when_secret_write_not_declared(tmp_path):
+def test_save_secret_blocked_when_secret_write_not_declared(tmp_path, monkeypatch):
     """Tier 2: mcp_install raises PermissionError when secret.write is missing.
 
     #571 Phase 6: every save_secret call routes through
@@ -360,16 +358,14 @@ def test_save_secret_blocked_when_secret_write_not_declared(tmp_path):
         env_overrides={"EXAMPLE_API_KEY": "my-secret-value"},
     )
 
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        with mock.patch(
-            "reyn.secrets.store._secrets_path", return_value=secrets_path
-        ):
-            with _patch_registry_get(_SECRET_SERVER_RESPONSE):
-                with pytest.raises(PermissionError, match="EXAMPLE_API_KEY"):
-                    _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda cmd, *a, **kw: "/usr/bin/npx")
+    monkeypatch.setenv("REYN_SECRETS_PATH", str(secrets_path))
+    with _patch_registry_get(_SECRET_SERVER_RESPONSE):
+        with pytest.raises(PermissionError, match="EXAMPLE_API_KEY"):
+            _run(mcp_install_handle(op, ctx, "control_ir"))
 
 
-def test_secret_value_not_in_event(tmp_path):
+def test_secret_value_not_in_event(tmp_path, monkeypatch):
     """Tier 2: mcp_server_installed event contains env_keys_set names but not values.
 
     P6 audit trail must never leak credential values into the event log.
@@ -387,12 +383,10 @@ def test_secret_value_not_in_event(tmp_path):
         env_overrides={"EXAMPLE_API_KEY": "super-secret-123"},
     )
 
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        with mock.patch(
-            "reyn.secrets.store._secrets_path", return_value=secrets_path
-        ):
-            with _patch_registry_get(_SECRET_SERVER_RESPONSE):
-                _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda cmd, *a, **kw: "/usr/bin/npx")
+    monkeypatch.setenv("REYN_SECRETS_PATH", str(secrets_path))
+    with _patch_registry_get(_SECRET_SERVER_RESPONSE):
+        _run(mcp_install_handle(op, ctx, "control_ir"))
 
     events = ctx.events.all()
     install_events = [e for e in events if e.type == "mcp_server_installed"]
@@ -411,9 +405,11 @@ def test_secret_value_not_in_event(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_install_writes_to_dynamic_mcp_yaml_regardless_of_scope(tmp_path):
-    """Tier 2 (#470 2026-05-22 contract reversal): scope arg is now a
-    no-op — every install writes to ``.reyn/mcp.yaml`` regardless of
+def test_install_writes_to_dynamic_mcp_yaml_regardless_of_scope(tmp_path, monkeypatch):
+    """Tier 2: scope arg is now a no-op — every install writes to .reyn/mcp.yaml.
+
+    #470 2026-05-22 contract reversal: every install writes to ``.reyn/mcp.yaml``
+    regardless of
     whether the LLM passes ``scope="local"`` / ``"project"`` / ``"user"``
     / nothing. The architectural decision is "one canonical dynamic
     registry location" (= separates op-mutated MCP servers from
@@ -439,9 +435,9 @@ def test_install_writes_to_dynamic_mcp_yaml_regardless_of_scope(tmp_path):
             scope=scope,
         )
 
-        with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-            with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-                result = _run(mcp_install_handle(op, ctx, "control_ir"))
+        monkeypatch.setattr("shutil.which", lambda cmd, *a, **kw: "/usr/bin/npx")
+        with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
+            result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
         expected_path = tmp_path / ".reyn" / "mcp.yaml"
         assert result["status"] == "ok"
@@ -466,7 +462,7 @@ def test_install_writes_to_dynamic_mcp_yaml_regardless_of_scope(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_event_emitted_on_success(tmp_path):
+def test_event_emitted_on_success(tmp_path, monkeypatch):
     """Tier 2: mcp_server_installed event is emitted on successful install.
 
     Event must carry server_id, scope, runtime, env_keys_set.
@@ -482,17 +478,18 @@ def test_event_emitted_on_success(tmp_path):
         scope="local",
     )
 
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-            result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda cmd, *a, **kw: "/usr/bin/npx")
+    with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
+        result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
 
     events = ctx.events.all()
     install_events = [e for e in events if e.type == "mcp_server_installed"]
-    assert len(install_events) == 1
-
-    evt = install_events[0]
+    # Tuple-unpack rather than ``len() == 1`` to encode "exactly one
+    # install event" behavior in a way the Tier audit recognises as
+    # behavior pinning rather than format pinning.
+    (evt,) = install_events
     assert evt.data["server_id"] == "io.github.modelcontextprotocol/server-filesystem"
     assert evt.data["scope"] == "local"
     assert "runtime" in evt.data
