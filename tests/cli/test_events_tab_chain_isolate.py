@@ -208,5 +208,5 @@ async def test_keys_tab_render_includes_i_isolate_description() -> None:
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        markup = render_keys(app)
+        markup, _ = render_keys(app)
         assert "Isolate cursor's chain" in markup or "isolate" in markup.lower()

@@ -123,7 +123,7 @@ async def test_keys_tab_render_includes_find_cycle_descriptions() -> None:
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        markup = render_keys(app)
+        markup, _ = render_keys(app)
         assert "Find next match" in markup
         assert "Find prev match" in markup
         # Pretty-printed form of ctrl+g / ctrl+shift+g.

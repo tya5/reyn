@@ -193,6 +193,6 @@ def test_keys_tab_t_first_occurrence_is_events() -> None:
     from reyn.chat.tui.widgets.right_panel.keys_tab import render_keys
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
-    markup = render_keys(app)
+    markup, _ = render_keys(app)
     # ``t`` from app.BINDINGS (events tab) still renders.
     assert "Tail events" in markup
