@@ -13,6 +13,7 @@ High-level (drop-in replacement for ``reyn.api.unsafe.file``):
 
 - :func:`read(path, *, encoding="utf-8")` → str
 - :func:`write(path, content, *, encoding="utf-8")` → None
+- :func:`write_atomic(path, content, *, encoding="utf-8")` → None
 - :func:`glob(pattern)` → list[str]
 - :func:`exists(path)` → bool
 - :func:`stat(path)` → {size, mtime, mode}
@@ -56,6 +57,7 @@ from __future__ import annotations
 import builtins as _builtins
 import glob as _glob_mod
 import os as _os
+import tempfile as _tempfile
 from typing import IO, Any
 
 # ── Internal state ─────────────────────────────────────────────────────────
@@ -178,6 +180,33 @@ def write(path: str, content: str, *, encoding: str = "utf-8") -> None:
     _check_write(path)
     with _builtins.open(path, "w", encoding=encoding) as f:
         f.write(content)
+
+
+def write_atomic(path: str, content: str, *, encoding: str = "utf-8") -> None:
+    """Write ``content`` to ``path`` atomically via tempfile + ``os.replace``.
+
+    Permission-checked: ``path`` must resolve under one of the declared
+    ``write_paths``. The temporary file is created in the same directory
+    as ``path`` so the final ``os.replace`` is guaranteed atomic on
+    POSIX filesystems.
+
+    On any error during write, the temp file is unlinked and the
+    original ``path`` is left untouched. Use case: cursor files, lock
+    files, and other small-file writes where crash-safety matters.
+    """
+    _check_write(path)
+    dir_path = _os.path.dirname(_os.path.abspath(path)) or "."
+    fd, tmp = _tempfile.mkstemp(prefix=".reyn_safe_atomic_", dir=dir_path)
+    try:
+        with _os.fdopen(fd, "w", encoding=encoding) as f:
+            f.write(content)
+        _os.replace(tmp, path)
+    except Exception:
+        try:
+            _os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def glob(pattern: str) -> list[str]:

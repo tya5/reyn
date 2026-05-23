@@ -9,6 +9,12 @@ Covers:
   - text format contains required fields
   - skill.md compiles without errors
   - BUG-1 regression: resolve_scan_context output < ARTIFACT_REF_THRESHOLD
+
+FP-0042 Phase 2.3 (2026-05-23): chunkers.py migrated to mode: safe — file
+I/O goes through reyn.safe.file. The autouse ``_safe_file_context`` fixture
+below grants reads + writes under ``tmp_path`` so the safe-mode helpers
+can run inside the test process (= mirrors what the production
+preprocessor_executor wires for the safe-mode subprocess).
 """
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.safe import file as sf
 from reyn.stdlib.skills.index_events.chunkers import (
     advance_cursor,
     collect_run_chunks,
@@ -25,6 +32,28 @@ from reyn.stdlib.skills.index_events.chunkers import (
     resolve_scan_context,
     run_collect_chunks,
 )
+
+
+@pytest.fixture(autouse=True)
+def _safe_file_context(tmp_path: Path):
+    """Grant reyn.safe.file read+write over tmp_path for each test.
+
+    Mirrors the production wiring (= CWD as default read zone, .reyn/ +
+    reyn/ + explicit grants as write zones). Tests in this module
+    operate exclusively under tmp_path, so a wide grant there matches
+    the per-test sandbox model.
+    """
+    sf._read_paths = ()
+    sf._write_paths = ()
+    sf._context_initialised = False
+    sf._set_permission_context(
+        read_paths=[str(tmp_path)],
+        write_paths=[str(tmp_path)],
+    )
+    yield
+    sf._read_paths = ()
+    sf._write_paths = ()
+    sf._context_initialised = False
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
