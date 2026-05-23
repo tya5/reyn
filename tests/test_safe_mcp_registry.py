@@ -84,8 +84,7 @@ def test_search_returns_dict_list_with_expected_shape(_isolated_cache):
         result = sr.search("bar")
 
     assert isinstance(result, list)
-    assert len(result) == 1
-    entry = result[0]
+    (entry,) = result
     assert set(entry.keys()) == {"name", "description", "repo_url", "runtime_hint"}
     assert entry["name"] == "io.github.foo/bar-mcp"
     assert entry["repo_url"] == "https://github.com/foo/bar-mcp"
@@ -160,8 +159,8 @@ def test_search_dedups_multiple_versions(_isolated_cache):
     with _patch_http(payload):
         result = sr.search("dup")
 
-    assert len(result) == 1
-    assert result[0]["description"] == "v2"  # latest wins
+    (only,) = result
+    assert only["description"] == "v2"  # latest wins
 
 
 # ── lookup ─────────────────────────────────────────────────────────────────
@@ -263,8 +262,8 @@ def test_search_uses_overridden_base_url(monkeypatch, _isolated_cache):
     with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
         sr.search("bar")
 
-    assert len(captured_urls) == 1
-    assert captured_urls[0].startswith("https://private.example.com/mcp/v0.1/servers?")
+    (url,) = captured_urls
+    assert url.startswith("https://private.example.com/mcp/v0.1/servers?")
 
 
 def test_lookup_uses_overridden_base_url(monkeypatch, _isolated_cache):
@@ -279,8 +278,8 @@ def test_lookup_uses_overridden_base_url(monkeypatch, _isolated_cache):
     with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
         sr.lookup("io.github.modelcontextprotocol/server-filesystem")
 
-    assert len(captured_urls) == 1
-    assert captured_urls[0].startswith("https://private.example.com/mcp/v0.1/servers/")
+    (url,) = captured_urls
+    assert url.startswith("https://private.example.com/mcp/v0.1/servers/")
 
 
 # ── multi-registry list (PR-10) ──────────────────────────────────────────
@@ -331,9 +330,9 @@ def test_lookup_iterates_on_404_fallback(monkeypatch, _isolated_cache):
         result = sr.lookup("io.github.modelcontextprotocol/server-filesystem")
 
     # Both URLs tried; second returns the hit.
-    assert len(captured_urls) == 2
-    assert "private.example.com" in captured_urls[0]
-    assert "public.example.com" in captured_urls[1]
+    (first_url, second_url) = captured_urls
+    assert "private.example.com" in first_url
+    assert "public.example.com" in second_url
     assert result is not None
 
 
@@ -381,7 +380,9 @@ def test_search_iterates_on_empty_first_returns_second(monkeypatch, _isolated_ca
     with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
         result = sr.search("bar")
 
-    assert len(captured_urls) == 2
+    (first_url, second_url) = captured_urls
+    assert "private.example.com" in first_url
+    assert "public.example.com" in second_url
     assert result and result[0]["name"] == "io.github.foo/bar-mcp"
 
 
@@ -398,5 +399,5 @@ def test_search_first_hit_wins(monkeypatch, _isolated_cache):
         sr.search("bar")
 
     # Only private was hit (= "private first" semantics).
-    assert len(captured_urls) == 1
-    assert "private.example.com" in captured_urls[0]
+    (only_url,) = captured_urls
+    assert "private.example.com" in only_url
