@@ -85,40 +85,11 @@ def test_require_file_write_accepts_canonical_after_session_approval(tmp_path, m
     resolver.require_file_write(decl, ".reyn/mcp.yaml", "skill_x")
 
 
-# ── compat shim ────────────────────────────────────────────────────────────────
+# ── legacy bool-axis keys are removed (#571 Phase 5) ───────────────────────────
 
 
-@pytest.mark.parametrize(
-    "axis,expected_path",
-    [
-        ("mcp_install",     ".reyn/mcp.yaml"),
-        ("mcp_drop_server", ".reyn/mcp.yaml"),
-        ("cron_register",   ".reyn/cron.yaml"),
-        ("index_drop",      ".reyn/index/sources.yaml"),
-    ],
-)
-def test_bool_axis_compat_shim_expands_to_file_write(axis, expected_path):
-    """Tier 2: setting a bool axis via from_dict auto-adds the canonical file.write entry."""
-    decl = PermissionDecl.from_dict({axis: True})
-    assert getattr(decl, axis) is True, f"bool axis {axis} should remain set"
-    paths = {entry.get("path") for entry in decl.file_write if isinstance(entry, dict)}
-    assert expected_path in paths, (
-        f"compat shim should have added {expected_path!r} to file_write for {axis}"
-    )
-
-
-def test_compat_shim_does_not_duplicate_explicit_entry():
-    """Tier 2: explicit file.write of a canonical path is not duplicated by the shim."""
-    decl = PermissionDecl.from_dict({
-        "mcp_install": True,
-        "file.write": [{"path": ".reyn/mcp.yaml", "scope": "just_path"}],
-    })
-    matching = [e for e in decl.file_write if e.get("path") == ".reyn/mcp.yaml"]
-    assert len(matching) == 1, "explicit + implicit should de-duplicate to a single entry"
-
-
-def test_compat_shim_no_bool_axis_no_implicit_entries():
-    """Tier 2: when no bool axis is set, file_write only contains explicit entries."""
+def test_explicit_file_write_no_canonical_implicit():
+    """Tier 2: with the compat shim removed, file_write only contains explicit entries."""
     decl = PermissionDecl.from_dict({
         "file.write": [{"path": "/tmp/x", "scope": "just_path"}],
     })
@@ -128,69 +99,37 @@ def test_compat_shim_no_bool_axis_no_implicit_entries():
         assert canonical not in paths
 
 
-def test_startup_guard_skips_canonical_when_bool_axis_set(tmp_path, monkeypatch):
-    """Tier 2: startup_guard does not prompt for canonical paths when the bool axis is set.
+def test_legacy_bool_keys_emit_deprecation_warning():
+    """Tier 2: legacy bool-axis keys parse as no-ops but emit DeprecationWarning."""
+    for legacy_key in ("mcp_install", "mcp_drop_server", "cron_register", "index_drop"):
+        with pytest.warns(DeprecationWarning, match=legacy_key):
+            decl = PermissionDecl.from_dict({legacy_key: True})
+        # The legacy attribute is gone; the value contributed nothing to the decl.
+        assert not hasattr(decl, legacy_key)
 
-    Avoids double-prompting: operator already approves the operation via
-    the bool axis's per-op prompt at op-execution time, so prompting again
-    at startup for the equivalent ``file.write`` entry would be redundant.
+
+def test_canonical_path_via_explicit_file_write_requires_startup_approval(tmp_path, monkeypatch):
+    """Tier 2: canonical-path file.write declaration prompts at startup (= no shim skip).
+
+    Phase 5 removed the "skip canonical when bool axis set" carve-out
+    because the bool axes themselves are gone. Now every file.write
+    entry that's outside the default zone — including canonical paths
+    — flows through the standard startup_guard prompt.
     """
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
-    decl = PermissionDecl.from_dict({"mcp_install": True})
-
-    # The compat shim populated decl.file_write with the canonical path.
-    assert any(
-        e.get("path") == ".reyn/mcp.yaml" for e in decl.file_write
-    ), "compat shim should add the canonical file.write entry"
-
-    # Walk the startup_guard prompt-collection logic directly: build the
-    # set of paths that would be prompted, and verify the canonical
-    # entry is skipped.
-    from reyn.permissions.permissions import _in_default_write_zone
-    canonical_skip = set()
-    for axis, paths in PermissionDecl._BOOL_AXIS_TO_FILE_WRITE.items():
-        if getattr(decl, axis, False):
-            canonical_skip.update(paths)
-    prompt_paths = [
-        entry["path"]
-        for entry in decl.file_write
-        if entry.get("path")
-        and entry["path"] not in canonical_skip
-        and not _in_default_write_zone(entry["path"])
-        and not resolver._is_path_approved_for(entry["path"], "skill_x", "file.write")
-    ]
-    assert ".reyn/mcp.yaml" not in prompt_paths, (
-        "canonical-with-bool-axis path should be skipped from startup prompts"
-    )
-
-
-def test_startup_guard_still_prompts_canonical_without_bool_axis(tmp_path, monkeypatch):
-    """Tier 2: startup_guard DOES prompt for canonical paths declared explicitly without bool axis."""
-    monkeypatch.chdir(tmp_path)
-    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
-    # Explicit file.write without the bool axis.
     decl = PermissionDecl.from_dict({
         "file.write": [{"path": ".reyn/mcp.yaml", "scope": "just_path"}],
     })
-    assert decl.mcp_install is False
-
     from reyn.permissions.permissions import _in_default_write_zone
-    canonical_skip = set()
-    for axis, paths in PermissionDecl._BOOL_AXIS_TO_FILE_WRITE.items():
-        if getattr(decl, axis, False):
-            canonical_skip.update(paths)
     prompt_paths = [
         entry["path"]
         for entry in decl.file_write
         if entry.get("path")
-        and entry["path"] not in canonical_skip
         and not _in_default_write_zone(entry["path"])
         and not resolver._is_path_approved_for(entry["path"], "skill_x", "file.write")
     ]
-    assert ".reyn/mcp.yaml" in prompt_paths, (
-        "explicit-only declaration (no bool axis) should still prompt at startup"
-    )
+    assert ".reyn/mcp.yaml" in prompt_paths
 
 
 # ── reyn.safe.file enforcement ────────────────────────────────────────────────

@@ -3938,14 +3938,33 @@ class ChatSession:
         file_write = [{"path": p, "scope": "recursive"} for p in file_perms.get("write", [])]
         mcp_names = [s["name"] for s in mcp_servers]
 
+        # #571 collapse arc Phase 5: the legacy ``mcp_install`` /
+        # ``index_drop`` bool axes are replaced with the explicit list
+        # axes the corresponding op handlers now consume. The chat
+        # router declares the canonical mutation paths + the registry
+        # host so LLM-emitted mcp_install / index_drop / mcp_drop_server
+        # ops pass the OS's uniform permission gates without per-op
+        # prompts (= operator-level config / session approvals carry
+        # the authorisation).
+        file_write = list(file_write) + [
+            {"path": ".reyn/mcp.yaml", "scope": "just_path"},
+            {"path": ".reyn/cron.yaml", "scope": "just_path"},
+            {"path": ".reyn/index/sources.yaml", "scope": "just_path"},
+        ]
         decl = PermissionDecl(
             file_read=file_read,
             file_write=file_write,
             mcp=mcp_names,
             allowed_mcp=self._allowed_mcp,
-            mcp_install=True,   # ADR-0029: allow ask gate to fire for MCP install
-            index_drop=True,    # B17-S8-3: allow ask gate to fire for index drop
+            http_get=[{"host": "registry.modelcontextprotocol.io"}],
         )
+        # Session-approve the canonical OS mutation paths so the runtime
+        # require_file_write check passes silently for LLM-emitted ops
+        # in the chat router context. Skipped when no resolver is wired
+        # (= ad-hoc test contexts that pass permission_resolver=None).
+        if self._perm is not None:
+            for canonical in (".reyn/mcp.yaml", ".reyn/cron.yaml", ".reyn/index/sources.yaml"):
+                self._perm.session_approve_path(canonical, "chat_router", "file.write")
 
         workspace = Workspace(
             events=self._chat_events,

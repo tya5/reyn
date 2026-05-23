@@ -125,11 +125,25 @@ def test_mcp_install_skill_loads():
 
 
 def test_mcp_install_skill_permission_decl():
-    """Tier 2: mcp_install skill declares mcp_install permission (ADR-0029)."""
+    """Tier 2: mcp_install skill declares the canonical file.write + http.get axes.
+
+    #571 collapse arc Phase 5: the legacy ``mcp_install: true`` bool
+    axis was replaced with the explicit list axes the op handler
+    consumes — ``file.write`` on ``.reyn/mcp.yaml`` + ``http.get`` on
+    the registry host.
+    """
     skill = _load_mcp_install_skill()
 
-    assert skill.permissions.mcp_install is True, (
-        "mcp_install skill must declare permissions.mcp_install: true"
+    write_paths = {
+        entry.get("path") for entry in skill.permissions.file_write
+        if isinstance(entry, dict)
+    }
+    assert ".reyn/mcp.yaml" in write_paths, (
+        "mcp_install skill must declare file.write for the canonical config path"
+    )
+    hosts = {entry.get("host") for entry in skill.permissions.http_get if isinstance(entry, dict)}
+    assert "registry.modelcontextprotocol.io" in hosts, (
+        "mcp_install skill must declare http.get for the MCP registry host"
     )
 
 

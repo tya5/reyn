@@ -117,12 +117,22 @@ async def _handle_mcp_drop_server_op(
     ):
         legacy_ctx = ctx.router_state.op_context_factory()
     else:
+        # #571 collapse arc Phase 5: synthesize a PermissionDecl with
+        # the explicit file.write entry the op handler now requires.
+        canonical_config = ".reyn/mcp.yaml"
+        synth_decl = PermissionDecl(
+            file_write=[{"path": canonical_config, "scope": "just_path"}],
+        )
+        if ctx.permission_resolver is not None:
+            ctx.permission_resolver.session_approve_path(
+                canonical_config, "mcp_drop_server", "file.write",
+            )
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
-            permission_decl=PermissionDecl(mcp_drop_server=True),
+            permission_decl=synth_decl,
             permission_resolver=ctx.permission_resolver,
-            skill_name="",
+            skill_name="mcp_drop_server",
             intervention_bus=None,
             subscribers=getattr(ctx.events, "subscribers", []),
         )

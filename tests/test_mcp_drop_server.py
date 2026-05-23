@@ -78,93 +78,17 @@ class _CapturingEvents:
         self.events.append((name, kwargs))
 
 
-# ── 1. Permission gate — require_mcp_drop_server ─────────────────────────
-
-
-def test_require_mcp_drop_server_decl_guard(tmp_path: Path) -> None:
-    """Tier 2: decl.mcp_drop_server=False raises immediately.
-
-    Install intent alone (mcp_install=True) is NOT sufficient — drop
-    is a distinct gate per §D23.
-    """
-    resolver = _resolver(tmp_path)
-    decl = PermissionDecl(mcp_install=True, mcp_drop_server=False)
-    bus = _RecordingBus()
-
-    with pytest.raises(PermissionError, match="not declared"):
-        _run(resolver.require_mcp_drop_server(decl, "filesystem", bus))
-
-    # Prompt was NOT shown — decl guard fires before bus is consulted.
-    assert bus.requests == []
-
-
-def test_require_mcp_drop_server_config_deny(tmp_path: Path) -> None:
-    """Tier 2: permissions.mcp_drop_server: deny raises after decl guard."""
-    resolver = _resolver(tmp_path, config={"mcp_drop_server": "deny"})
-    decl = PermissionDecl(mcp_drop_server=True)
-    bus = _RecordingBus()
-
-    with pytest.raises(PermissionError, match="denied by config"):
-        _run(resolver.require_mcp_drop_server(decl, "filesystem", bus))
-
-    assert bus.requests == []
-
-
-def test_require_mcp_drop_server_config_allow(tmp_path: Path) -> None:
-    """Tier 2: permissions.mcp_drop_server: allow passes without prompting."""
-    resolver = _resolver(tmp_path, config={"mcp_drop_server": "allow"})
-    decl = PermissionDecl(mcp_drop_server=True)
-    bus = _RecordingBus()
-
-    _run(resolver.require_mcp_drop_server(decl, "filesystem", bus))
-
-    assert bus.requests == []
-
-
-def test_require_mcp_drop_server_interactive_approval(tmp_path: Path) -> None:
-    """Tier 2: ask default path triggers interactive prompt; 'yes' approves."""
-    resolver = _resolver(tmp_path, interactive=True)
-    decl = PermissionDecl(mcp_drop_server=True)
-    bus = _RecordingBus(answer_choice="yes")
-
-    _run(resolver.require_mcp_drop_server(decl, "filesystem", bus))
-
-    assert len(bus.requests) == 1
-
-
-def test_require_mcp_drop_server_interactive_denial(tmp_path: Path) -> None:
-    """Tier 2: ask default path raises when user denies."""
-    resolver = _resolver(tmp_path, interactive=True)
-    decl = PermissionDecl(mcp_drop_server=True)
-    bus = _RecordingBus(answer_choice="no")
-
-    with pytest.raises(PermissionError, match="denied by user"):
-        _run(resolver.require_mcp_drop_server(decl, "filesystem", bus))
-
-    assert len(bus.requests) == 1
-
-
-def test_require_mcp_drop_server_auto_approve_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2: REYN_MCP_DROP_SERVER_AUTO_APPROVE=1 skips the prompt."""
-    monkeypatch.setenv("REYN_MCP_DROP_SERVER_AUTO_APPROVE", "1")
-    resolver = _resolver(tmp_path)
-    decl = PermissionDecl(mcp_drop_server=True)
-    bus = _RecordingBus(answer_choice="no")  # would deny if reached
-
-    _run(resolver.require_mcp_drop_server(decl, "filesystem", bus))
-
-    assert bus.requests == []
-
-
-def test_permission_decl_from_dict_parses_mcp_drop_server() -> None:
-    """Tier 2: PermissionDecl.from_dict round-trips mcp_drop_server field."""
-    decl = PermissionDecl.from_dict({"mcp_drop_server": True})
-    assert decl.mcp_drop_server is True
-
-    decl2 = PermissionDecl.from_dict({})  # default
-    assert decl2.mcp_drop_server is False
+# ── 1. Permission gate — #571 collapse arc Phase 5 ────────────────────────
+#
+# The bool-axis ``require_mcp_drop_server`` resolver method was removed
+# in Phase 5. The op handler now gates via ``require_file_write`` on
+# the canonical ``.reyn/mcp.yaml`` path. The previous suite of
+# bool-axis-specific tests (decl guard / config deny / config allow /
+# interactive approval / interactive denial / auto-approve env /
+# from_dict round-trip) is deleted — they all exercised the removed
+# resolver method. See ``test_permission_collapse_phase2.py`` and
+# ``test_permission_collapse_phase3.py`` for the canonical-path
+# ``require_file_write`` invariants that replace them.
 
 
 # ── 2. op_runtime handler — yaml edit ─────────────────────────────────────
@@ -192,6 +116,17 @@ class _StubWorkspace:
         self.base_dir = base_dir
 
 
+def _phase5_drop_decl(resolver: PermissionResolver, tmp_path: Path) -> PermissionDecl:
+    """Phase 5 successor to ``PermissionDecl(mcp_drop_server=True)``.
+
+    Builds an explicit ``file.write`` decl for ``.reyn/mcp.yaml`` and
+    session-approves it so ``require_file_write`` passes.
+    """
+    canonical = str(tmp_path / ".reyn" / "mcp.yaml")
+    resolver.session_approve_path(canonical, "test_mcp_drop_server", "file.write")
+    return PermissionDecl(file_write=[{"path": canonical, "scope": "just_path"}])
+
+
 def _make_op_ctx(
     tmp_path: Path,
     *,
@@ -203,12 +138,19 @@ def _make_op_ctx(
     """Build a minimal OpContext for op_runtime handler tests."""
     from reyn.op_runtime.context import OpContext
 
+    effective_decl = permission_decl
+    if effective_decl is None:
+        if resolver is not None:
+            effective_decl = _phase5_drop_decl(resolver, tmp_path)
+        else:
+            effective_decl = PermissionDecl()
+
     return OpContext(
         workspace=_StubWorkspace(base_dir=tmp_path),
         events=events or _CapturingEvents(),
-        permission_decl=permission_decl or PermissionDecl(mcp_drop_server=True),
+        permission_decl=effective_decl,
         permission_resolver=resolver,
-        skill_name="",
+        skill_name="test_mcp_drop_server",
         intervention_bus=bus,
         subscribers=[],
     )

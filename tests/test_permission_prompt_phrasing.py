@@ -144,8 +144,14 @@ async def test_announce_meta_carries_natural_prompt() -> None:
     assert "https://example.com" in msg.text
 
 
-# ── 4. require_mcp + require_mcp_install + require_index_drop +
-#     require_mcp_drop_server + require_tool + require_python — natural ────
+# ── 4. require_mcp + require_tool + require_python — natural ────
+#
+# #571 collapse arc Phase 5: the per-op interactive prompts for
+# require_mcp_install / require_index_drop / require_mcp_drop_server /
+# require_cron_register were removed alongside the bool-axis resolver
+# methods themselves. Authorisation flows through ``require_file_write``
+# (no interactive prompt at runtime) — operator consent is collected
+# at startup_guard time for the canonical file.write paths.
 
 
 @pytest.mark.asyncio

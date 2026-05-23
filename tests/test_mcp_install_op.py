@@ -1,13 +1,18 @@
 """Tier 2: mcp_install IR op handler invariants.
 
 Tests the OS-level contract of the mcp_install op:
-  - permission gate path (decl.mcp_install=False → PermissionError)
+  - permission gate path (no file.write declaration → PermissionError)
   - runtime hint check (missing runtime → error result)
   - secrets persistence: save_secret called for isSecret env vars
   - reyn.yaml written with ${KEY} reference (not raw value)
   - scope tier: local → reyn.local.yaml, project → reyn.yaml, user → ~/.reyn/config.yaml
   - mcp_server_installed event emitted (server_id / scope / runtime / env_keys_set present;
     secret values NOT in the event)
+
+#571 collapse arc Phase 5: the bool-axis ``mcp_install`` was removed.
+Tests now use ``_phase5_install_decl(resolver)`` which builds the
+explicit ``file.write`` + ``http.get`` decl and session-approves the
+canonical path.
 
 No mocks of real collaborators. RegistryClient._get is patched at the HTTP layer
 (same pattern as test_mcp_search_registry.py) to avoid network calls.
@@ -134,6 +139,24 @@ def _make_resolver(tmp_path: Path, *, config: dict | None = None) -> PermissionR
     )
 
 
+def _phase5_install_decl(resolver: PermissionResolver) -> PermissionDecl:
+    """Phase 5 successor to ``PermissionDecl(mcp_install=True)``.
+
+    Builds the explicit list-axis decl the op handler now consumes:
+    ``file.write`` on the canonical config path + ``http.get`` for the
+    registry host. Session-approves the file path so the
+    ``require_file_write`` check passes without an interactive prompt.
+    The path is anchored against the resolver's project_root so the
+    session-key matches the op handler's resolved path at check time.
+    """
+    canonical_config = str(resolver._project_root / ".reyn" / "mcp.yaml")
+    resolver.session_approve_path(canonical_config, "mcp_install_test", "file.write")
+    return PermissionDecl(
+        file_write=[{"path": canonical_config, "scope": "just_path"}],
+        http_get=[{"host": "registry.modelcontextprotocol.io"}],
+    )
+
+
 def _make_op_ctx(
     tmp_path: Path,
     resolver: PermissionResolver,
@@ -175,45 +198,31 @@ def _run(coro):
 # ---------------------------------------------------------------------------
 
 
-def test_permission_gate_decl_false_raises(tmp_path, monkeypatch):
-    """Tier 2: mcp_install op raises PermissionError when decl.mcp_install=False.
+def test_permission_gate_undeclared_raises(tmp_path):
+    """Tier 2: mcp_install op raises PermissionError when file.write not declared.
 
-    Even with config allow, the decl guard blocks immediately.
+    #571 collapse arc Phase 5: the legacy ``mcp_install: true`` bool
+    axis was removed; the op handler now gates via
+    ``require_file_write`` on ``.reyn/mcp.yaml``. A skill that
+    declares neither the explicit file.write entry nor the (now
+    removed) bool axis fails the gate.
     """
-    monkeypatch.setenv("REYN_MCP_INSTALL_AUTO_APPROVE", "1")
-    resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=False)  # not declared
+    resolver = _make_resolver(tmp_path)
+    decl = PermissionDecl()  # nothing declared
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
     op = MCPInstallIROp(kind="mcp_install", server_id="io.github.example/server-x")
 
     with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-        with pytest.raises(PermissionError, match="mcp_install"):
+        with pytest.raises(PermissionError, match="not approved"):
             _run(mcp_install_handle(op, ctx, "control_ir"))
 
 
-def test_permission_gate_config_deny_raises(tmp_path):
-    """Tier 2: mcp_install op raises PermissionError when config denies mcp_install.
-
-    decl.mcp_install=True but config says deny → blocked.
-    """
-    resolver = _make_resolver(tmp_path, config={"mcp_install": "deny"})
-    decl = PermissionDecl(mcp_install=True)
-    bus = _AutoApproveInterventionBus()
-    ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
-
-    op = MCPInstallIROp(kind="mcp_install", server_id="io.github.example/server-x")
-
-    with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-        with pytest.raises(PermissionError, match="denied by config"):
-            _run(mcp_install_handle(op, ctx, "control_ir"))
-
-
-def test_permission_gate_config_allow_passes(tmp_path):
-    """Tier 2: mcp_install op proceeds when decl=True and config=allow."""
-    resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+def test_permission_gate_passes_with_explicit_decl(tmp_path):
+    """Tier 2: mcp_install op proceeds when explicit file.write + http.get are declared."""
+    resolver = _make_resolver(tmp_path)
+    decl = _phase5_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -242,7 +251,7 @@ def test_missing_runtime_returns_error(tmp_path):
     npx missing → status="error" with install hint, no exception raised.
     """
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -272,7 +281,7 @@ def test_env_overrides_skip_prompt_and_persist_secret(tmp_path):
     written to the config file — not the raw value.
     """
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -323,7 +332,7 @@ def test_secret_value_not_in_event(tmp_path):
     P6 audit trail must never leak credential values into the event log.
     """
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
     secrets_path = tmp_path / ".reyn" / "secrets.env"
@@ -377,7 +386,7 @@ def test_install_writes_to_dynamic_mcp_yaml_regardless_of_scope(tmp_path):
     """
     for scope in ("local", "project", "user"):
         resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-        decl = PermissionDecl(mcp_install=True)
+        decl = _phase5_install_decl(resolver)
         bus = _AutoApproveInterventionBus()
         ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -420,7 +429,7 @@ def test_event_emitted_on_success(tmp_path):
     Event must carry server_id, scope, runtime, env_keys_set.
     """
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -452,10 +461,11 @@ def test_no_event_on_permission_denied(tmp_path):
     """Tier 2: No mcp_server_installed event when permission gate rejects.
 
     The event is only emitted after a successful install (P6 — only emit on
-    actual state change).
+    actual state change). #571 Phase 5: the rejection now comes from
+    ``require_file_write`` when ``.reyn/mcp.yaml`` is not declared.
     """
-    resolver = _make_resolver(tmp_path, config={"mcp_install": "deny"})
-    decl = PermissionDecl(mcp_install=True)
+    resolver = _make_resolver(tmp_path)
+    decl = PermissionDecl()  # missing required file.write declaration
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -485,7 +495,7 @@ def test_registry_fetch_failure_returns_error(tmp_path):
     RegistryError), so the OS can surface it to the LLM as a control_ir_result.
     """
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 

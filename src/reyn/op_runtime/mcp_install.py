@@ -228,13 +228,32 @@ async def handle(
                 "error": f"必要なランタイムが見つかりません: '{cmd}'. {hint}",
             }
 
-    # ── 3. Permission gate (ADR-0029) ─────────────────────────────────────────
+    # ── 3. Permission gate (#571 collapse arc Phase 5) ────────────────────────
+    # The skill must declare ``file.write: [.reyn/mcp.yaml]`` (= the
+    # canonical mutation target) AND ``http.get: [{host:
+    # registry.modelcontextprotocol.io}]`` (= the registry the op
+    # fetches metadata from) in its frontmatter. Both checks routed
+    # through the OS's uniform permission resolver — the bool-axis
+    # ``require_mcp_install`` per-server prompt is removed; per-server
+    # granularity is enforced at call time via the existing
+    # ``permissions.mcp: [<server>]`` gate.
+    project_root = Path.cwd()
+    if hasattr(ctx.workspace, "root"):
+        project_root = Path(ctx.workspace.root)
+    config_path = _scope_to_path(op.scope, project_root)
     if ctx.permission_resolver is not None:
-        if ctx.intervention_bus is None:
-            raise RuntimeError("mcp_install op requires intervention_bus on OpContext")
-        await ctx.permission_resolver.require_mcp_install(
-            ctx.permission_decl, op.server_id, ctx.intervention_bus,
+        ctx.permission_resolver.require_file_write(
+            ctx.permission_decl, str(config_path), ctx.skill_name,
         )
+        # Registry fetch happened via RegistryClient above — gate the
+        # host symmetrically so the OS exercises its own permission
+        # primitive uniformly.
+        if not op.source:
+            ctx.permission_resolver.require_http_get(
+                ctx.permission_decl,
+                "registry.modelcontextprotocol.io",
+                ctx.skill_name,
+            )
 
     # ── 4. Credentials: prompt for isSecret env vars + persist ───────────────
     env_overrides = dict(op.env_overrides or {})
@@ -276,12 +295,7 @@ async def handle(
                     secret_keys_set.append(key)
 
     # ── 5. Write mcp.servers.<name> to scope config file ─────────────────────
-    # Determine project root from workspace (P5 exception: direct file write)
-    project_root = Path.cwd()
-    if hasattr(ctx.workspace, "root"):
-        project_root = Path(ctx.workspace.root)
-
-    config_path = _scope_to_path(op.scope, project_root)
+    # project_root + config_path already resolved at the permission gate above.
     existing = _read_yaml_config(config_path)
 
     # Server name: use resolved_server_name (idempotent on re-install)

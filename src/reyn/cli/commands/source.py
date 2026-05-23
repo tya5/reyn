@@ -213,7 +213,16 @@ async def _cmd_rm_async(args: argparse.Namespace) -> int:
         unsafe_python_allowed=False,
     )
 
-    decl = PermissionDecl(index_drop=True)
+    # #571 collapse arc Phase 5: explicit list axis replaces the
+    # former index_drop bool axis. CLI is the operator-trusted entry
+    # point; session-approve the canonical manifest path up-front.
+    canonical_manifest = ".reyn/index/sources.yaml"
+    perm_resolver.session_approve_path(
+        canonical_manifest, "reyn_source_rm", "file.write",
+    )
+    decl = PermissionDecl(
+        file_write=[{"path": canonical_manifest, "scope": "just_path"}],
+    )
     ctx = OpContext(
         workspace=workspace_obj,
         events=events,

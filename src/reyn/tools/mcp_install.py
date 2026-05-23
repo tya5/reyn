@@ -25,7 +25,8 @@ _MCP_INSTALL_DESCRIPTION = (
     "prompts for secrets, and writes the server entry to the "
     "appropriate scope config file (local / project / user). "
     "Tier 3 op (declared + approved): when adding 'mcp_install' to phase.allowed_ops, "
-    "skill.permissions.mcp_install must also be set to true "
+    "skill.permissions must declare `file.write: [{path: .reyn/mcp.yaml}]` "
+    "and `http.get: [{host: registry.modelcontextprotocol.io}]` "
     "(OS rejects at runtime with PermissionError if undeclared, "
     "even when phase allows)."
 )
@@ -99,12 +100,28 @@ async def _handle_mcp_install_op(
     if _op_ctx is not None and isinstance(_op_ctx, OpContext):
         legacy_ctx = _op_ctx
     else:
+        # #571 collapse arc Phase 5: synthesize a PermissionDecl that
+        # declares the explicit list axes the op handler now requires
+        # (= file.write on the canonical config path + http.get for
+        # the registry host). Pre-approves via session so the runtime
+        # require_file_write check passes silently — the tool itself
+        # was already authorised via the calling skill's permissions.tool.
+        canonical_config = ".reyn/mcp.yaml"
+        registry_host = "registry.modelcontextprotocol.io"
+        synth_decl = PermissionDecl(
+            file_write=[{"path": canonical_config, "scope": "just_path"}],
+            http_get=[{"host": registry_host}],
+        )
+        if ctx.permission_resolver is not None:
+            ctx.permission_resolver.session_approve_path(
+                canonical_config, "mcp_install", "file.write",
+            )
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
-            permission_decl=PermissionDecl(mcp_install=True),
+            permission_decl=synth_decl,
             permission_resolver=ctx.permission_resolver,
-            skill_name="",
+            skill_name="mcp_install",
         )
 
     return await mcp_install_handle(op=op, ctx=legacy_ctx, caller="control_ir")

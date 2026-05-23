@@ -996,14 +996,24 @@ class RouterHostAdapter:
         file_write = [{"path": p, "scope": "recursive"} for p in file_perms.get("write", [])]
         mcp_names = [s["name"] for s in mcp_servers]
 
+        # #571 collapse arc Phase 5: explicit list axes replace the
+        # former mcp_install / index_drop bool axes. See ChatSession's
+        # _make_router_op_context for the matching pattern.
+        file_write = list(file_write) + [
+            {"path": ".reyn/mcp.yaml", "scope": "just_path"},
+            {"path": ".reyn/cron.yaml", "scope": "just_path"},
+            {"path": ".reyn/index/sources.yaml", "scope": "just_path"},
+        ]
         decl = PermissionDecl(
             file_read=file_read,
             file_write=file_write,
             mcp=mcp_names,
             allowed_mcp=self._allowed_mcp,
-            mcp_install=True,   # ADR-0029: allow ask gate to fire for MCP install
-            index_drop=True,    # B17-S8-3: allow ask gate to fire for index drop
+            http_get=[{"host": "registry.modelcontextprotocol.io"}],
         )
+        if self._perm is not None:
+            for canonical in (".reyn/mcp.yaml", ".reyn/cron.yaml", ".reyn/index/sources.yaml"):
+                self._perm.session_approve_path(canonical, "chat_router", "file.write")
 
         workspace = Workspace(
             events=self._events,
