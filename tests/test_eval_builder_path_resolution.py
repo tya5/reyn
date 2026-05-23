@@ -2,20 +2,27 @@
 
 Guards the Wave 2 fix (eval_builder analyze_skill preprocessor) that prevents
 the LLM from constructing filesystem paths. The OS must resolve all paths via
-resolve_skill_path; the LLM emits only a short skill name.
+``resolve_skill_path``; the LLM emits only a short skill name.
+
+FP-0042 Phase 2.5 (2026-05-23): the legacy unsafe ``resolve_paths`` in
+``analyze_skill_resolver.py`` was deleted. The active preprocessor chain
+in ``phases/analyze_skill.md`` already uses the ``skill_resolve`` run_op
+(= OS-level fs walk) plus the safe-mode ``resolve_paths_from_op`` pure
+transform. The ``_compute_paths`` helper below now mirrors that chain
+exactly — it calls ``resolve_skill_path`` directly to synthesise the
+``skill_resolve`` op output dict, then feeds it through the same
+``resolve_paths_from_op`` the OS runs in production.
 
 Invariants tested:
-  - extract_skill_name + resolve_paths resolves stdlib skill names to the correct stdlib path
-  - extract_skill_name + resolve_paths resolves local skill names to the correct local path
-  - extract_skill_name accepts both eval_builder_request and user_message artifacts
-  - user_message regex extraction handles "skill named <name>" form
+  - The full chain (extract_skill_name → synth-op → resolve_paths_from_op)
+    resolves stdlib + local skills to the correct path
+  - extract_skill_name accepts both eval_builder_request and user_message
+    artifacts (top-level / wrapped / regex-fallback shapes)
   - user_message with unrecognisable text raises ValueError (hard reject)
   - eval_output_path redirects stdlib skills to reyn/local/<name>/eval.md
   - eval_output_path for reyn/local/ skills stays alongside skill.md
   - inject_resolved_paths mirrors _prep into _resolved for LLM use
-  - eval_builder skill.md declares resolve_paths as unsafe python step (R-PURE-MODE-REDEFINE Class B)
-  - eval_builder skill.md declares extract_skill_name as safe python step
-  - eval_builder permissions.python contains an unsafe entry for analyze_skill_resolver
+  - eval_builder skill.md declares all 3 python steps as mode=safe
 
 Testing policy (docs/deep-dives/contributing/testing.ja.md):
   - No mocks (real instances only)
@@ -29,28 +36,88 @@ from pathlib import Path
 import pytest
 
 from reyn.compiler.loader import load_dsl_skill
-from reyn.skill.skill_paths import resolve_skill_path
+from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 from reyn.stdlib.skills.eval_builder.analyze_skill import (
     extract_skill_name,
     inject_resolved_paths,
 )
-from reyn.stdlib.skills.eval_builder.analyze_skill_resolver import resolve_paths
+from reyn.stdlib.skills.eval_builder.analyze_skill_resolver_pure import (
+    resolve_paths_from_op,
+)
+
+
+def _categorize_source(skill_dir: Path) -> str | None:
+    """Mirror of ``op_runtime.skill_resolve._categorize_source``.
+
+    Replicated here so the test helper can build a synthetic op output
+    without standing up an OpContext. The categorisation logic itself is
+    covered separately by the op_runtime tests; this copy is purely to
+    keep the helper self-contained.
+    """
+    try:
+        skill_dir.resolve().relative_to(stdlib_root().resolve())
+        return "stdlib"
+    except ValueError:
+        pass
+    parts = skill_dir.parts
+    for i, part in enumerate(parts):
+        if part == "reyn" and i + 1 < len(parts):
+            nxt = parts[i + 1]
+            if nxt == "local":
+                return "local"
+            if nxt == "project":
+                return "project"
+    return None
+
+
+def _synth_skill_resolve_op(name: str) -> dict:
+    """Synthesise the ``skill_resolve`` run_op output for ``name``.
+
+    Matches the production op handler at ``src/reyn/op_runtime/skill_resolve.py``
+    so the downstream ``resolve_paths_from_op`` sees the same shape it would
+    in a live preprocessor.
+    """
+    try:
+        skill_dir, _ = resolve_skill_path(name)
+    except (SkillNotFoundError, FileNotFoundError):
+        return {
+            "name": name,
+            "resolved": False,
+            "skill_md_path": None,
+            "source": None,
+            "skill_dir": None,
+        }
+    source = _categorize_source(skill_dir)
+    return {
+        "name": name,
+        "resolved": True,
+        "skill_md_path": str(skill_dir / "skill.md"),
+        "source": source,
+        "skill_dir": str(skill_dir),
+    }
 
 
 def _compute_paths(artifact: dict) -> dict:
-    """Test helper: chain extract_skill_name → resolve_paths, mimicking the preprocessor.
+    """Test helper: chain extract_skill_name + synth skill_resolve + resolve_paths_from_op.
 
-    Simulates the two-step preprocessor chain introduced by R-PURE-MODE-REDEFINE
-    Class B. Tests that previously called compute_paths directly now call this
-    helper to exercise the same end-to-end path resolution behaviour.
+    Mirrors the active preprocessor in ``phases/analyze_skill.md``:
+
+      1. ``extract_skill_name`` (safe-mode python) — pure dict / regex
+      2. ``skill_resolve`` run_op (OS layer) — synthesised here via the
+         same logic the op handler uses
+      3. ``resolve_paths_from_op`` (safe-mode python) — pure dict transform
     """
     name_result = extract_skill_name(artifact)
-    # Build the enriched artifact as the preprocessor engine would after step 1.
+    target = name_result["target_skill"]
+
+    op_output = _synth_skill_resolve_op(target)
+
     enriched = dict(artifact)
-    enriched.setdefault("data", {})
-    enriched["data"] = dict(enriched["data"])
+    enriched["data"] = dict(enriched.get("data") or {})
     enriched["data"]["_name"] = name_result
-    return resolve_paths(enriched)
+    enriched["data"]["_skill_resolved_op"] = op_output
+
+    return resolve_paths_from_op(enriched)
 
 
 # Keep the old alias so the per-test call sites below stay unchanged.
@@ -430,27 +497,43 @@ def _load_eval_builder_skill() -> object:
     return load_dsl_skill(skill_md)
 
 
-def test_eval_builder_permissions_python_has_unsafe_resolve_paths():
-    """Tier 2: eval_builder skill.md declares resolve_paths as mode=unsafe.
+def test_eval_builder_permissions_python_all_steps_safe():
+    """Tier 2: eval_builder skill.md declares every python step as mode=safe.
 
-    resolve_paths is the only unsafe step — it calls resolve_skill_path
-    which performs Path.exists() filesystem checks. All dict/regex logic
-    was moved to the preceding safe extract_skill_name step as part of the
-    R-PURE-MODE-REDEFINE Class B refactor (formerly compute_paths).
-
-    Guards that the permissions.python block is present and correct.
+    Post-FP-0042 Phase 2.5 (= legacy unsafe ``analyze_skill_resolver.resolve_paths``
+    deleted), every python step in eval_builder runs safe-mode. Filesystem-
+    touching path resolution is delegated to the ``skill_resolve`` run_op in
+    the preprocessor chain (= R-PURE-MODE-REDEFINE Class D).
     """
     skill = _load_eval_builder_skill()
 
-    unsafe_entries = [
+    modes = {(p.module, p.function): p.mode for p in skill.permissions.python}
+    expected = {
+        ("./analyze_skill.py", "extract_skill_name"): "safe",
+        ("./analyze_skill_resolver_pure.py", "resolve_paths_from_op"): "safe",
+        ("./analyze_skill.py", "inject_resolved_paths"): "safe",
+    }
+    for key, expected_mode in expected.items():
+        assert modes.get(key) == expected_mode, (
+            f"{key[0]}:{key[1]} must be mode={expected_mode}, "
+            f"got {modes.get(key)!r}"
+        )
+
+
+def test_eval_builder_permissions_python_legacy_unsafe_resolver_removed():
+    """Tier 2: regression guard — the legacy
+    ``./analyze_skill_resolver.py:resolve_paths`` permission entry must
+    not reappear (FP-0042 Phase 2.5 deleted the module). Any future patch
+    that re-adds it should also restore the file + adjust the AST guard."""
+    skill = _load_eval_builder_skill()
+
+    legacy = [
         p for p in skill.permissions.python
         if p.module == "./analyze_skill_resolver.py"
-        and p.function == "resolve_paths"
-        and p.mode == "unsafe"
     ]
-    assert unsafe_entries, (
-        "eval_builder skill.md must declare "
-        "./analyze_skill_resolver.py:resolve_paths with mode=unsafe in permissions.python"
+    assert legacy == [], (
+        "Legacy unsafe resolver permission entry must stay removed. "
+        f"Found: {legacy}"
     )
 
 

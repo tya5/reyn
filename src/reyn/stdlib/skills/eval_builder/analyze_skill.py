@@ -1,11 +1,10 @@
 """Safe-mode helper functions for the analyze_skill preprocessor phase.
 
 All functions here run in the safe-mode AST sandbox (no I/O, no reyn imports
-at module level). File I/O and OS calls are delegated to unsafe-mode steps or
-run_op steps in the preprocessor chain.
-
-The unsafe-mode resolve_paths function (which calls resolve_skill_path) lives
-in analyze_skill_resolver.py to keep this file importable in safe mode.
+at module level). Filesystem-touching path resolution is delegated to the
+``skill_resolve`` run_op in the preprocessor chain (= R-PURE-MODE-REDEFINE
+Class D); the pure transform that converts the op output to the legacy
+``resolve_paths`` shape lives in ``analyze_skill_resolver_pure.py``.
 
 NOTE: Do NOT add 'from __future__ import annotations' and do NOT import any
 reyn modules at the top level — the safe-mode AST sandbox blocks both.
@@ -47,8 +46,8 @@ def extract_skill_name(artifact):
       3. ``data.text`` regex fallback (user_message free-form input)
 
     Returns a dict with a single key ``target_skill`` (string). The preprocessor
-    engine places this at ``data._name`` for the subsequent unsafe resolve_paths
-    step to read.
+    engine places this at ``data._name`` for the subsequent ``skill_resolve``
+    run_op step to bind via args_from.
 
     Raises ValueError if the skill name cannot be determined or is empty.
 
@@ -56,8 +55,8 @@ def extract_skill_name(artifact):
       G17 (B8-NEW-6) initial fix landed at d1f2d30 only checked form B,
       missing the actual OS runtime shape (form A). B9-NEW-2 retest (B9-S5b)
       revealed the wrong-layer trap. This function preserves all three priority
-      levels, moved from analyze_skill_resolver.py (formerly _extract_skill_name)
-      into safe mode as part of the R-PURE-MODE-REDEFINE Class B refactor.
+      levels — moved out of the legacy ``analyze_skill_resolver.py`` (= deleted
+      in FP-0042 Phase 2.5 once its unsafe ``resolve_paths`` had no callers).
     """
     # Priority 1: top-level target_skill — the OS runtime shape for
     # invoke_skill(input={"target_skill": "..."}). No data wrapper.
