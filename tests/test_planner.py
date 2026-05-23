@@ -983,3 +983,72 @@ def test_plan_step_host_make_router_op_context_none_when_parent_lacks_factory():
     )
     host = _PlanStepHost(plan=plan, step=plan.steps[0], prior_results={}, parent=parent)
     assert host.make_router_op_context() is None
+
+
+# ---------------------------------------------------------------------------
+# B51 NF-W6-3: plan_invalid retry directive builder
+# ---------------------------------------------------------------------------
+
+
+def test_plan_invalid_retry_directive_includes_error_message():
+    """Tier 2: directive renders the parser error message verbatim
+    (sanitised) so the LLM has the failure context for self-correction.
+    """
+    from reyn.chat.planner import _build_plan_invalid_retry_directive
+
+    out = _build_plan_invalid_retry_directive(
+        "Expecting ',' delimiter at char 445"
+    )
+    assert "Expecting ',' delimiter at char 445" in out
+    # Mentions the actionable cue (= escape inner quotes).
+    assert "escape" in out.lower() or "\\\"" in out
+    # Includes the meta-loop guard.
+    assert "Do not copy the original error text" in out
+
+
+def test_plan_invalid_retry_directive_strips_control_chars():
+    """Tier 2: control bytes in the parser error must not survive into the
+    LLM prompt — they would either break the wire encoding or hide a
+    smuggled directive. The builder strips ``\\x00-\\x1f\\x7f`` before
+    embedding.
+    """
+    from reyn.chat.planner import _build_plan_invalid_retry_directive
+
+    out = _build_plan_invalid_retry_directive("foo\x00bar\x01baz\x7fend")
+    assert "foobarbazend" in out
+    # No raw control char survived in the embedded error segment. The
+    # template's own ``\n`` line break is legitimate structure, so the
+    # assertion excludes 0x09/0x0a/0x0d (= TAB/LF/CR) which are the only
+    # whitespace control chars the template may legitimately contain.
+    import re as _re
+    assert not _re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", out)
+
+
+def test_plan_invalid_retry_directive_caps_length():
+    """Tier 2: error message segment is capped at 500 chars so a verbose
+    parser trace can't blow the LLM directive budget.
+    """
+    from reyn.chat.planner import _build_plan_invalid_retry_directive
+
+    long_err = "x" * 5000
+    out = _build_plan_invalid_retry_directive(long_err)
+    # The error segment must be truncated; the directive boilerplate
+    # adds its own text but the embedded payload is bounded.
+    # Count consecutive 'x' run — must not exceed 500.
+    longest_x_run = max(
+        (len(m) for m in __import__("re").findall(r"x+", out)),
+        default=0,
+    )
+    assert longest_x_run <= 500
+
+
+def test_plan_invalid_retry_directive_handles_empty_input():
+    """Tier 2: defensive — empty / None error message still renders a
+    well-formed directive, just with an empty error segment.
+    """
+    from reyn.chat.planner import _build_plan_invalid_retry_directive
+
+    out_empty = _build_plan_invalid_retry_directive("")
+    out_none = _build_plan_invalid_retry_directive(None)  # type: ignore[arg-type]
+    assert "failed validation:" in out_empty
+    assert "failed validation:" in out_none

@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -103,6 +104,43 @@ _PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE = (
     "paths, header names, function names, line numbers, exact values). "
     "Do not call another tool. Write the report text now."
 )
+
+
+# B51 NF-W6-3 fix: directive template for the plan_invalid self-correction
+# loop. The router LLM gets the parser error message back inside a
+# user-role directive and is asked to re-emit a corrected plan call.
+#
+# Observed failure: weak-tier LLM (= flash-lite) generates a plan tool
+# call whose ``steps_json`` includes the user's quoted phrase verbatim
+# inside a step description, forgetting that the JSON-encoded outer
+# string requires inner ``"`` to be backslash-escaped. The JSON parser
+# fails (e.g. "Expecting ',' delimiter at char 445") and the plan
+# never spawns.
+#
+# Mitigation: the router loop intercepts the plan_invalid tool result,
+# formats this directive with the (sanitised) parser error, appends it
+# as a user-role message, and re-enters the LLM loop bounded by
+# ``safety.loop.plan_invalid_retries`` (= dedicated counter). The
+# closing line guards against a meta-loop where the LLM copies the
+# error text into the new steps_json and re-fails.
+_PLAN_INVALID_RETRY_DIRECTIVE_TEMPLATE = (
+    "Your previous plan() call failed validation: {error_message}\n"
+    "Common cause: unescaped \" inside step description / id / tools "
+    "strings. Re-emit the plan with all inner \" escaped as \\\". "
+    "Do not copy the original error text into the new steps_json."
+)
+
+
+def _build_plan_invalid_retry_directive(error_message: str) -> str:
+    """Render the plan_invalid retry directive with a sanitised error message.
+
+    Strips control characters (= LLM-injection safety: an attacker
+    crafting a steps_json that triggers a parser error embedding control
+    bytes should not be able to smuggle them into the retry prompt) and
+    caps the length so the directive stays bounded.
+    """
+    safe = re.sub(r"[\x00-\x1f\x7f]", "", error_message or "")[:500]
+    return _PLAN_INVALID_RETRY_DIRECTIVE_TEMPLATE.format(error_message=safe)
 
 # Exception types that must NOT be retried and must be re-raised to their
 # own safety-layer ask/abort path. Retrying them would cause double-ask or

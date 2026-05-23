@@ -1209,6 +1209,7 @@ class RouterLoop:
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
         skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
+        plan_invalid_retries: int = 1,  # B51 NF-W6-3 — safety.loop.plan_invalid_retries
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
     ):
         self.host = host
@@ -1257,6 +1258,17 @@ class RouterLoop:
         # process — the directive plumbing lands in the codebase but no
         # default runtime behaviour change.
         self._empty_stop_retry_directive = empty_stop_retry_directive
+        # B51 NF-W6-3: plan_invalid self-correction retry cap. When the
+        # ``plan`` tool returns ``{status:error, error:{kind:
+        # plan_invalid}}`` (= the LLM's ``steps_json`` failed JSON
+        # validation, typically from unescaped ``"`` inside step
+        # description strings), the router loop appends a sanitised
+        # directive carrying the parser error and re-enters the LLM
+        # loop. This counter caps the per-turn directive injections so
+        # a persistently-failing LLM is bounded; the outer caps
+        # (``max_router_calls_per_turn`` + ``max_iterations``) still
+        # apply on top. ``0`` disables the retry (= pre-fix behaviour).
+        self._plan_invalid_max_retries = max(0, int(plan_invalid_retries))
         # Tier 2 test seam: when set, ``run()`` calls this callable instead of
         # the module-level ``call_llm_tools``. Allows real-fake injection
         # (= scripted async callable) without ``unittest.mock.patch`` — per
@@ -1587,6 +1599,12 @@ class RouterLoop:
         # prompt; the second empty stop falls through to the standard
         # "observe + surface" path).
         _empty_stop_retries: int = 0
+        # B51 NF-W6-3: plan_invalid retry counter. Incremented every time
+        # the plan tool returns ``{status:error, kind:plan_invalid}`` and
+        # the router injects a self-correction directive back into the
+        # message list. Bounded by ``self._plan_invalid_max_retries``
+        # (default 1 = one correction attempt per chat turn).
+        _plan_invalid_retries: int = 0
 
         for _iteration in range(self.max_iterations):
             resolved_model = host.resolve_model(self.router_model)
@@ -2108,6 +2126,46 @@ class RouterLoop:
                         )
                         if followup is not None:
                             messages.append(followup)
+
+                # B51 NF-W6-3: plan_invalid self-correction loop. When the
+                # plan tool returned ``{status:error, error:{kind:plan_invalid}}``
+                # the most common cause is the LLM forgetting to escape
+                # ``"`` inside step description strings (= weak-tier JSON
+                # generation failure mode, observed B50/B51 W6-S3 at ~60%
+                # rate on user queries containing quoted phrases). Append a
+                # sanitised directive carrying the parser error so the LLM
+                # gets one corrected attempt before falling through to the
+                # generic tool-error path. Bounded by
+                # ``self._plan_invalid_max_retries`` (= safety.loop config).
+                # Imported lazily so the existing top-level import surface
+                # of router_loop stays stable.
+                from reyn.chat.planner import _build_plan_invalid_retry_directive
+                plan_invalid_idx = next(
+                    (
+                        i
+                        for i, (tc, r) in enumerate(zip(tool_calls, tool_results))
+                        if tc["function"]["name"] == "plan"
+                        and isinstance(r, dict)
+                        and isinstance(r.get("error"), dict)
+                        and r["error"].get("kind") == "plan_invalid"
+                    ),
+                    None,
+                )
+                if (
+                    plan_invalid_idx is not None
+                    and _plan_invalid_retries < self._plan_invalid_max_retries
+                ):
+                    err_payload = tool_results[plan_invalid_idx]["error"]
+                    err_msg = str(err_payload.get("message") or "")
+                    directive = _build_plan_invalid_retry_directive(err_msg)
+                    messages.append({"role": "user", "content": directive})
+                    _plan_invalid_retries += 1
+                    self.host.events.emit(
+                        "router_plan_invalid_retry_injected",
+                        directive_length=len(directive),
+                        chain_id=self.chain_id,
+                        retry_count=_plan_invalid_retries,
+                    )
                 continue
 
             # Option F (ADR-0021): detect empty-stop before treating as text reply.
