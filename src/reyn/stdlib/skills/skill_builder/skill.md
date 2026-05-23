@@ -9,11 +9,14 @@ final_output_description: |
 finish_criteria:
   - All DSL files for the skill have been written to the workspace
   - The generated DSL has been linted with no errors
+  - When ``max_iterations`` > 0, the post-build improvement loop has completed and the result includes ``improvement_summary``
 graph:
   plan_skill: [design_artifacts]
   design_artifacts: [review_plan]
   review_plan: [build_skill]
   build_skill: [verify_skill]
+  verify_skill: [iterate_with_evals]
+  iterate_with_evals: []
 routing:
   intents: [task]
   when_to_use:

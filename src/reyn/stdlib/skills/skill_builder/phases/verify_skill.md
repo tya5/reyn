@@ -3,7 +3,7 @@ type: phase
 name: verify_skill
 input: build_result
 role: dsl_verifier
-can_finish: true
+can_finish: false
 max_act_turns: 1
 allowed_ops: [file, lint]
 ---
@@ -25,7 +25,7 @@ If lint returned errors (`passed: false`):
 - The OS re-runs build_skill with your feedback; build_skill has the skill_plan context to fix the files
 - You MUST NOT write or delete files — you lack the skill_plan context
 
-If lint passed (`passed: true`), finish with an `skill_builder_result` artifact:
+If lint passed (`passed: true`), transition to `iterate_with_evals` with a `skill_builder_result` artifact:
 - `skill_name`: from data.skill_name
 - `skill_path`: from data.skill_path
 - `files_written`: from data.files_written
@@ -33,7 +33,15 @@ If lint passed (`passed: true`), finish with an `skill_builder_result` artifact:
 - `lint_passed`: true
 - `lint_issues`: []
 - `summary`: one sentence describing what the skill does for its users
+- `max_iterations`: from data.max_iterations (= copy through; 0 if absent)
+- `score_threshold`: from data.score_threshold (= copy through; 0.85 if absent)
+- (do NOT populate `improvement_summary` — the next phase owns it)
 
 summary MUST describe what the skill does for its users — not what you (the builder) did.
 Good: "A skill that lets users submit documents for reviewer approval or rejection with reasons."
 Bad: "Generated DSL files for the review skill and saved them to the workspace."
+
+The terminal phase is now `iterate_with_evals`. When `max_iterations` is 0
+(= the default), that phase short-circuits and finishes with the artifact you
+produced here unchanged. When `max_iterations` is > 0, it chains into
+`skill_improver` for the eval-driven loop.

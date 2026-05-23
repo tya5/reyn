@@ -202,8 +202,10 @@ Checklist before finishing:
 - one python file per entry in data.python_modules (when non-empty)
 - every phase's `input:` field resolves to either a written artifact file, `user_message` (stdlib), or data.final_output.name — if any phase's input is missing, STOP and write the missing artifact file before proceeding
 
-Write all files using one op per file. Once all files are written, finish with a `build_result` artifact:
+Write all files using one op per file. Once all files are written, transition to `verify_skill` with a `build_result` artifact:
 - `skill_name`: the generated skill name
 - `skill_path`: workspace-relative path (e.g. "reyn/local/my_app")
 - `files_written`: list of all file paths written
 - `file_count`: total number of files
+- `max_iterations`: from `data.max_iterations` (= copy through; 0 if absent)
+- `score_threshold`: from `data.score_threshold` (= copy through; 0.85 if absent)

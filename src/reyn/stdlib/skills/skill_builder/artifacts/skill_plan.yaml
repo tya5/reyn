@@ -158,6 +158,23 @@ schema:
           type: object
           description: JSON Schema object for the final output's data fields.
       required: [name, description, schema]
+    max_iterations:
+      type: integer
+      description: |
+        Iteration cap copied through from the input skill_request (=
+        plumbed for the post-lint ``iterate_with_evals`` phase). 0 = no
+        iteration requested. Default 0 keeps the legacy
+        build → lint → finish behaviour.
+      default: 0
+      minimum: 0
+    score_threshold:
+      type: number
+      description: |
+        Score threshold copied through from input. Only meaningful when
+        ``max_iterations`` > 0.
+      default: 0.85
+      minimum: 0.0
+      maximum: 1.0
     routing:
       type: object
       description: |
