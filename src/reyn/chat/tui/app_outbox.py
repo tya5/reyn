@@ -168,6 +168,7 @@ class OutboxRouter:
             "__cost_inline_toggle__":   self._on_cost_inline_toggle,
             "__expand_last_reply__":    self._on_expand_last_reply,
             "__copy_last_reply__":      self._on_copy_last_reply,
+            "__find__":                 self._on_find,
             "__docs_filter__":          self._on_docs_filter,
             "__stream_start__":         self._on_stream_start,
             "__stream_chunk__":         self._on_stream_chunk,
@@ -519,6 +520,71 @@ class OutboxRouter:
                 "(install pbcopy / xclip / wl-copy / xsel)",
                 kind="error",
             )
+
+    def _on_find(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """`__find__` — /find slash; substring search across the RichLog buffer.
+
+        ``msg.text`` carries the raw query. Behaviour:
+          - empty query → status with usage hint
+          - 0 matches  → status ``"no matches for '<q>'"`` (= clear "I
+            searched but found nothing")
+          - ≥ 1 match  → scroll the log to the match nearest BELOW
+            the current scroll position (= "go down to where the
+            result is"; wraps to the first match when no downward
+            match exists) AND write a status line with the total
+            count + up to 5 line numbers
+
+        Search target: the live RichLog buffer (= what's currently
+        scrollable). History past the ``_RICHLOG_MAX_LINES`` trim is
+        outside scope — the right-panel Events tab + ``/list``
+        slash cover that. ``ConversationView.find_in_buffer``
+        encapsulates the substring scan + case-insensitive match.
+        """
+        query = (msg.text or "").strip()
+        if not query:
+            self._show_transient_status(
+                conv,
+                "usage: /find <query>",
+                kind="error",
+            )
+            return
+        matches = conv.find_in_buffer(query)
+        if not matches:
+            self._show_transient_status(
+                conv,
+                f"no matches for '{query}'",
+                kind="error",
+            )
+            return
+        # Pick the match nearest BELOW the current scroll position
+        # — feels like "scroll down to the result" rather than
+        # jumping anywhere arbitrarily. Wrap to the first match
+        # when nothing below.
+        target_idx = matches[0][0]
+        try:
+            log = conv._log()
+            current_y = int(getattr(log, "scroll_y", 0))
+            below = [m for m in matches if m[0] >= current_y]
+            target_idx = (below[0][0] if below else matches[0][0])
+            log.scroll_to(y=target_idx, animate=False)
+            # Suppress auto-scroll so the next outbox tick doesn't
+            # immediately yank the view back to the tail.
+            conv._user_scrolled = True
+        except Exception:
+            pass
+        # Compose the status line. Showing the first 5 line numbers
+        # gives the user a sense of distribution without overwhelming
+        # the 1-line sticky budget.
+        line_nums = [str(m[0] + 1) for m in matches[:5]]
+        if len(matches) > 5:
+            line_nums.append(f"+{len(matches) - 5} more")
+        self._show_transient_status(
+            conv,
+            f"{len(matches)} match{'es' if len(matches) != 1 else ''} for "
+            f"'{query}' · lines {', '.join(line_nums)}",
+        )
 
     def _on_docs_filter(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
