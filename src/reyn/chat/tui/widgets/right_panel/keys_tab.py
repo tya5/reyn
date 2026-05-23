@@ -26,7 +26,15 @@ _KEY_PRETTY: dict[str, str] = {
     "enter": "Enter", "tab": "Tab", "escape": "Esc", "space": "Space",
     "up": "↑", "down": "↓", "left": "←", "right": "→",
 }
-_CONVERSATION_KEYS = {"ctrl+p", "ctrl+n", "ctrl+shift+n", "ctrl+shift+p"}
+_CONVERSATION_KEYS = {
+    "ctrl+p", "ctrl+n", "ctrl+shift+n", "ctrl+shift+p",
+    # ``/find`` cycle navigation — semantically conv-pane scoped
+    # (= step through matches in the conv log), so they belong with
+    # the other conv-navigation keys (turn jump). Without this they
+    # would land in the generic GLOBAL group and be harder to
+    # discover next to their conceptual peers.
+    "ctrl+g", "ctrl+shift+g",
+}
 # ``j`` / ``k`` / ``space`` / ``c`` are routed via ``RightPanel.on_key``
 # (not ``app.BINDINGS``) and dispatch per-tab inside the panel handler,
 # so they are panel-universal — not docs-only. Wave-2 K1: previously
