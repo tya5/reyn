@@ -1133,15 +1133,20 @@ class OutboxRouter:
     ) -> None:
         """`system` — bridge plan lifecycle to AsyncStackPanel + default render.
 
-        ``plan_runner`` emits two ``kind="system"`` messages with a
-        ``source`` discriminator in meta:
+        ``plan_runner`` / ``/plan discard`` emit ``kind="system"`` messages
+        with a ``source`` discriminator in meta:
 
           - ``source="plan_summary"`` (= ``[task_spawned] kind=plan``
             equivalent for the TUI) — fires when a plan starts. Carries
             ``plan_id`` so the AsyncStackPanel can mount a row keyed
             on the plan identity.
           - ``source="plan_complete"`` (= ``[task_completed] kind=plan``
-            equivalent) — fires when the plan finishes. We drop the row.
+            equivalent) — fires when the plan finishes cleanly. Row
+            unmounts immediately (= ``terminal="ok"``).
+          - ``source="plan_aborted"`` (= ``/plan discard`` or other abort
+            path) — fires when the plan is discarded. Wave-13 T2-2:
+            row briefly flashes red before unmounting
+            (= ``terminal="aborted"``).
 
         Other ``kind="system"`` messages (lifecycle markers, slash-command
         output, attach/detach notices) flow through the default
@@ -1164,6 +1169,14 @@ class OutboxRouter:
             elif source == "plan_complete":
                 try:
                     conv.remove_async_task(str(plan_id))
+                except Exception:
+                    pass
+            elif source == "plan_aborted":
+                # Wave-13 T2-2: /plan discard → flash red before unmount
+                # so the user sees the row terminated abnormally rather
+                # than silently disappearing (= audit finding A#6).
+                try:
+                    conv.remove_async_task(str(plan_id), terminal="aborted")
                 except Exception:
                     pass
         # Default render path — preserves the dim marker line / slash
