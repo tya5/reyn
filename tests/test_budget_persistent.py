@@ -76,7 +76,7 @@ def _ts_from_localtime(lt) -> str:
 
 
 def test_ledger_append_and_hydrate():
-    """Tier 1 (Contract): ledger JSONL round-trip — append then hydrate restores counters."""
+    """Tier 1: ledger JSONL round-trip — append then hydrate restores counters."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / ".reyn" / "state" / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100_000, monthly_tokens=1_000_000)
@@ -98,7 +98,7 @@ def test_ledger_append_and_hydrate():
 
 
 def test_hydrate_noop_if_no_ledger():
-    """Tier 1 (Contract): hydrate() is a no-op when the ledger file does not exist."""
+    """Tier 1: hydrate() is a no-op when the ledger file does not exist."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "nonexistent" / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100_000)
@@ -114,7 +114,7 @@ def test_hydrate_noop_if_no_ledger():
 
 
 def test_period_boundary_yesterday_excluded():
-    """Tier 2 (P5/P6): records from yesterday are not counted in today's daily counter."""
+    """Tier 2: records from yesterday are not counted in today's daily counter."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
 
@@ -145,7 +145,7 @@ def test_period_boundary_yesterday_excluded():
 
 
 def test_period_boundary_month():
-    """Tier 2 (P5/P6): records from last month are excluded from this month's counter."""
+    """Tier 2: records from last month are excluded from this month's counter."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         now = time.time()
@@ -174,7 +174,7 @@ def test_period_boundary_month():
 
 
 def test_daily_token_hard_limit_refuses():
-    """Tier 1 (Contract): exceeding daily_tokens hard limit causes check_pre_llm to refuse."""
+    """Tier 1: exceeding daily_tokens hard limit causes check_pre_llm to refuse."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100)  # very low
@@ -196,7 +196,7 @@ def test_daily_token_hard_limit_refuses():
 
 
 def test_daily_cost_hard_limit_refuses():
-    """Tier 1 (Contract): exceeding daily_cost_usd hard limit causes refusal."""
+    """Tier 1: exceeding daily_cost_usd hard limit causes refusal."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
 
@@ -223,7 +223,7 @@ def test_daily_cost_hard_limit_refuses():
 
 
 def test_monthly_refusal_with_context():
-    """Tier 1 (Contract): monthly_tokens hard limit refuses; message mentions monthly."""
+    """Tier 1: monthly_tokens hard limit refuses; message mentions monthly."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = _make_cfg(monthly_tokens=50, daily_tokens=10_000)
@@ -241,7 +241,7 @@ def test_monthly_refusal_with_context():
 
 
 def test_daily_warn_threshold():
-    """Tier 1 (Contract): crossing daily warn threshold emits a warn dimension in record_llm result."""
+    """Tier 1: crossing daily warn threshold emits a warn dimension in record_llm result."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = CostConfig(
@@ -265,7 +265,7 @@ def test_daily_warn_threshold():
 
 
 def test_check_pre_llm_rolls_period_across_midnight():
-    """Tier 2 (P5/P6 OS invariant): stale period counters from yesterday must not
+    """Tier 2: stale period counters from yesterday must not
     cause a wrongful refusal when check_pre_llm is called after the local-time
     period boundary.
 
@@ -302,7 +302,7 @@ def test_check_pre_llm_rolls_period_across_midnight():
 
 
 def test_monthly_warn_threshold():
-    """Tier 1 (Contract): monthly warn threshold emits the correct warn dimension."""
+    """Tier 1: monthly warn threshold emits the correct warn dimension."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = CostConfig(
@@ -319,7 +319,7 @@ def test_monthly_warn_threshold():
 
 
 def test_broken_ledger_lines_skipped():
-    """Tier 1 (Contract): corrupt / partial lines in the ledger are skipped without error."""
+    """Tier 1: corrupt / partial lines in the ledger are skipped without error."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
 
@@ -345,7 +345,7 @@ def test_broken_ledger_lines_skipped():
 
 
 def test_snapshot_includes_period_fields():
-    """Tier 1 (Contract): snapshot() exposes daily_tokens, monthly_tokens, day_key, month_key."""
+    """Tier 1: snapshot() exposes daily_tokens, monthly_tokens, day_key, month_key."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100_000, monthly_tokens=1_000_000)
@@ -366,7 +366,7 @@ def test_snapshot_includes_period_fields():
 
 
 def test_reset_all_preserves_daily_monthly():
-    """Tier 1 (Contract): reset_all() clears per-agent counters but leaves daily/monthly unchanged."""
+    """Tier 1: reset_all() clears per-agent counters but leaves daily/monthly unchanged."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100_000)
@@ -388,7 +388,7 @@ def test_reset_all_preserves_daily_monthly():
 
 
 def test_ledger_created_on_first_append():
-    """Tier 1 (Contract): the ledger file and parent dirs are created automatically."""
+    """Tier 1: the ledger file and parent dirs are created automatically."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "deep" / "nested" / "budget_ledger.jsonl"
         assert not ledger_path.exists()
@@ -401,8 +401,8 @@ def test_ledger_created_on_first_append():
         assert ledger_path.exists()
         content = ledger_path.read_text(encoding="utf-8")
         records = [json.loads(l) for l in content.splitlines() if l.strip()]
-        assert len(records) == 1
-        assert records[0]["tokens"] == 10
+        (only,) = records
+        assert only["tokens"] == 10
 
 
 if __name__ == "__main__":
