@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
-"""TDD iteration scenario driver — FizzBuzz with edge-case tests.
+"""Iteration-loop dogfood driver — TDD / bug-planted / similar.
 
-Sets up an isolated workspace from ``dogfood/fixtures/fizzbuzz_tdd/``,
-pipes ``task.md`` into ``reyn chat --cui`` as a single user turn, and
-afterwards runs ``pytest -q`` in the workspace to verify the agent's
-implementation.
+Sets up an isolated workspace from ``dogfood/fixtures/<scenario>/``,
+pipes a directive prompt into ``reyn chat --cui`` as a single user turn,
+and afterwards runs ``pytest -q`` in the workspace to verify the agent's
+work.
 
-Per-run observations (printed as RESULT:<json>):
+Each scenario folder must contain:
 
-  - ``iterations``: number of pytest invocations the agent did (= proxy
-    for fix loop depth). Counted by scanning the LLM trace for tool
-    calls that look like ``pytest``.
-  - ``write_calls``: number of write-to-fizzbuzz.py tool calls.
-  - ``pytest_verdict``: PASS / FAIL based on the final ``pytest -q`` run
-    by the driver (not the agent). Source of truth.
-  - ``failed_tests``: list of failing test ids on the driver's final run.
+  - ``task.md``      — natural-language instructions for the agent
+  - ``test_*.py``    — pytest tests (one file expected)
+  - ``<impl>.py``    — implementation file the agent must edit
+  - ``reyn.yaml``    — model alias + sandbox + permissions for the workspace
 
-Aggregates across N runs:
+Built-in scenarios:
 
-  - Pass rate (= verified / N)
-  - Mean iterations
-  - Mean write_calls
-  - Fix-type distribution (= attractor classification possible if N>=5)
+  - ``fizzbuzz_tdd``         — failing tests + empty stub (often 1-shot)
+  - ``fizzbuzz_bug_planted`` — working-looking impl with 3 subtle bugs
+    (forces iteration: agent must run pytest, locate root cause, fix)
+
+Per-run observations:
+
+  - ``iterations``  — pytest invocations the agent issued
+  - ``write_calls`` — edits to the implementation file
+  - ``pytest_verdict`` — driver's authoritative pytest pass/fail
+  - ``failed_tests`` — failing test ids on the driver's final run
+
+Aggregates: pass_rate, mean_iterations, mean_writes, mean_requests.
 
 Usage:
-    python dogfood/scripts/run_fizzbuzz_tdd.py [--n 3] [--timeout 240]
+    python dogfood/scripts/run_dogfood_iterate.py \\
+        --scenario fizzbuzz_bug_planted [--n 5] [--timeout 300]
 """
 from __future__ import annotations
 
@@ -39,37 +45,43 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_DIR = REPO_ROOT / "dogfood" / "fixtures" / "fizzbuzz_tdd"
+FIXTURES_ROOT = REPO_ROOT / "dogfood" / "fixtures"
 
 
-def setup_workspace(target: Path) -> str:
-    """Copy fixture files into ``target`` and return a single-line task prompt.
+def setup_workspace(scenario: str, target: Path) -> str:
+    """Copy the scenario's fixture files into ``target`` and return the
+    scenario-specific directive prompt.
 
-    The prompt MUST be single-line because ``reyn chat --cui`` reads stdin
-    line-by-line and would otherwise treat each newline as a separate user
-    turn. So we hand the agent a pointer to ``task.md`` and let it read.
+    The fixture must contain a ``prompt.txt`` whose **first line** is the
+    single-line directive sent to the agent.  ``reyn chat --cui`` reads
+    stdin line-by-line and would otherwise split a multiline prompt into
+    many turns.
 
     Also copies the project's ``reyn.local.yaml`` if present so the LiteLLM
     ``api_base`` (= proxy URL the model alias depends on) is available in
     the workspace.
     """
-    for name in ("fizzbuzz.py", "test_fizzbuzz.py", "task.md", "reyn.yaml"):
-        shutil.copy2(FIXTURE_DIR / name, target / name)
+    fixture_dir = FIXTURES_ROOT / scenario
+    if not fixture_dir.is_dir():
+        raise FileNotFoundError(
+            f"scenario {scenario!r} not found under {FIXTURES_ROOT}",
+        )
+    prompt_path = fixture_dir / "prompt.txt"
+    if not prompt_path.exists():
+        raise FileNotFoundError(
+            f"scenario {scenario!r} missing prompt.txt",
+        )
+    for entry in fixture_dir.iterdir():
+        if entry.is_file():
+            shutil.copy2(entry, target / entry.name)
     project_local = REPO_ROOT / "reyn.local.yaml"
     if project_local.exists():
         shutil.copy2(project_local, target / "reyn.local.yaml")
-    return (
-        "The current directory contains task.md, test_fizzbuzz.py, and fizzbuzz.py. "
-        "Step 1: file__read path='task.md'. "
-        "Step 2: file__read path='test_fizzbuzz.py'. "
-        "Step 3: file__write path='fizzbuzz.py' with your implementation. "
-        "Step 4: invoke_action 'exec__sandboxed_exec' with args "
-        "{\"command\": [\"python\", \"-m\", \"pytest\", \"test_fizzbuzz.py\", \"-q\"]} "
-        "to verify your implementation. "
-        "Step 5: If any test fails, read the failure message and go back to step 3 (file__write a fix). "
-        "Step 6: When all tests pass, reply 'all tests pass' and stop. "
-        "Do not ask the user clarifying questions; act on the instructions directly."
-    )
+    # First non-empty line is the directive (= single-line invariant).
+    for line in prompt_path.read_text().splitlines():
+        if line.strip():
+            return line.strip()
+    raise ValueError(f"{prompt_path} is empty")
 
 
 def run_chat(prompt: str, cwd: Path, trace_file: Path, timeout: int) -> dict:
@@ -93,8 +105,8 @@ def run_chat(prompt: str, cwd: Path, trace_file: Path, timeout: int) -> dict:
     }
 
 
-def parse_trace(trace_file: Path) -> dict:
-    """Count pytest invocations + fizzbuzz.py writes in the trace."""
+def parse_trace(trace_file: Path, impl_filename: str) -> dict:
+    """Count pytest invocations + ``impl_filename`` writes in the trace."""
     if not trace_file.exists():
         return {"requests": 0, "iterations": 0, "write_calls": 0,
                 "tool_calls": 0, "trace_missing": True}
@@ -102,6 +114,7 @@ def parse_trace(trace_file: Path) -> dict:
     tool_calls = 0
     iterations = 0
     write_calls = 0
+    impl_l = impl_filename.lower()
     for raw in trace_file.read_text().splitlines():
         if not raw.strip():
             continue
@@ -125,11 +138,11 @@ def parse_trace(trace_file: Path) -> dict:
                     or ""
                 )
                 args_blob = str(args_blob)
+                blob_l = args_blob.lower()
                 # iteration = each shell-class invocation that ran pytest.
                 # Tool surface: invoke_action(action_name="exec__sandboxed_exec",
                 # args={"argv": [..., "pytest", ...]}). Catch both the direct
                 # name and the embedded action_name in args.
-                blob_l = args_blob.lower()
                 if "pytest" in blob_l and (
                     "sandboxed_exec" in blob_l
                     or "sandboxed_exec" in name
@@ -138,8 +151,15 @@ def parse_trace(trace_file: Path) -> dict:
                     iterations += 1
                 elif "pytest" in name:
                     iterations += 1
-                if "fizzbuzz.py" in args_blob and (
-                    "write" in name or "edit" in name or "str_replace" in name
+                # write = file write to the scenario's implementation file.
+                # Match both direct (file__write) and wrapped
+                # (invoke_action(action_name="file__write", ...)) surfaces.
+                if impl_l in blob_l and (
+                    "file__write" in blob_l
+                    or "file__write" in name
+                    or "write" in name
+                    or "edit" in name
+                    or "str_replace" in name
                 ):
                     write_calls += 1
     return {
@@ -150,10 +170,10 @@ def parse_trace(trace_file: Path) -> dict:
     }
 
 
-def run_pytest_verdict(cwd: Path) -> dict:
+def run_pytest_verdict(cwd: Path, test_file: str) -> dict:
     """Driver's authoritative pytest verdict — runs after the agent stops."""
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "test_fizzbuzz.py", "-q",
+        [sys.executable, "-m", "pytest", test_file, "-q",
          "--tb=line", "--no-header"],
         capture_output=True,
         text=True,
@@ -173,18 +193,41 @@ def run_pytest_verdict(cwd: Path) -> dict:
     }
 
 
-def run_one(idx: int, timeout: int, keep_workspace: bool) -> dict:
+def _scenario_files(scenario: str) -> tuple[str, str]:
+    """Return ``(test_filename, impl_filename)`` for ``scenario``."""
+    fixture_dir = FIXTURES_ROOT / scenario
+    test_files = sorted(fixture_dir.glob("test_*.py"))
+    if not test_files:
+        raise FileNotFoundError(f"no test_*.py in {fixture_dir}")
+    test_file = test_files[0].name
+    # impl = first non-test, non-config .py
+    impl_files = [
+        p.name for p in fixture_dir.glob("*.py")
+        if not p.name.startswith("test_")
+    ]
+    if not impl_files:
+        raise FileNotFoundError(f"no impl .py in {fixture_dir}")
+    return test_file, impl_files[0]
+
+
+def run_one(
+    scenario: str, idx: int, timeout: int, keep_workspace: bool,
+) -> dict:
     """One full trial: workspace setup → chat → pytest verdict."""
-    workspace = Path(tempfile.mkdtemp(prefix=f"fizzbuzz_tdd_r{idx}_"))
+    test_file, impl_file = _scenario_files(scenario)
+    workspace = Path(
+        tempfile.mkdtemp(prefix=f"{scenario}_r{idx}_"),
+    )
     try:
-        prompt = setup_workspace(workspace)
+        prompt = setup_workspace(scenario, workspace)
         trace_file = workspace / "llm_trace.jsonl"
         chat = run_chat(prompt, workspace, trace_file, timeout)
-        trace = parse_trace(trace_file)
-        verdict = run_pytest_verdict(workspace)
-        final_impl = (workspace / "fizzbuzz.py").read_text()
+        trace = parse_trace(trace_file, impl_file)
+        verdict = run_pytest_verdict(workspace, test_file)
+        final_impl = (workspace / impl_file).read_text()
         return {
             "run": idx,
+            "scenario": scenario,
             "workspace": str(workspace),
             "chat": chat,
             "trace": trace,
@@ -198,16 +241,19 @@ def run_one(idx: int, timeout: int, keep_workspace: bool) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--scenario", default="fizzbuzz_tdd",
+                    help="fixture folder under dogfood/fixtures/")
     ap.add_argument("--n", type=int, default=3, help="number of runs")
     ap.add_argument("--timeout", type=int, default=240, help="per-run timeout (s)")
     ap.add_argument("--keep-workspace", action="store_true",
                     help="don't delete tmp workspaces (debug)")
     args = ap.parse_args()
 
+    print(f"[scenario] {args.scenario}", flush=True)
     results = []
     for i in range(1, args.n + 1):
         print(f"[run {i}/{args.n}] starting ...", flush=True)
-        r = run_one(i, args.timeout, args.keep_workspace)
+        r = run_one(args.scenario, i, args.timeout, args.keep_workspace)
         results.append(r)
         print(
             f"[run {i}/{args.n}] verdict={r['verdict']} "
@@ -225,6 +271,7 @@ def main() -> None:
     mean_requests = sum(r["trace"]["requests"] for r in results) / max(n, 1)
 
     summary = {
+        "scenario": args.scenario,
         "n": n,
         "pass_rate": round(n_pass / max(n, 1), 2),
         "n_pass": n_pass,

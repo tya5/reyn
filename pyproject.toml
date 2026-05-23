@@ -132,6 +132,11 @@ sample_line = "reyn.plugins.sample_line:register_router"
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
 pythonpath = ["src"]
+# dogfood/fixtures/ ships failing-test workspaces consumed by
+# dogfood/scripts/ runners on isolated tmp copies. They MUST NOT
+# be collected by the project's main pytest suite — the placeholder
+# stubs (= NotImplementedError) would fail CI at collection time.
+norecursedirs = ["dogfood/fixtures", ".reyn", "reyn-worktrees"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
