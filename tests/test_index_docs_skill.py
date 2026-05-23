@@ -172,8 +172,8 @@ def test_index_docs_postprocessor_output_name():
 def test_index_docs_postprocessor_four_steps():
     """Tier 2: postprocessor has exactly 4 steps: python → python → run_op → run_op.
 
-    R-PURE-MODE-REDEFINE Class A split: apply_strategy was split into
-    extract_and_split (safe, step 0) + write_chunks_with_lock (unsafe, step 1).
+    Post-FP-0042 Phase 2.2: both python steps now run mode: safe via
+    chunkers_safe.py (= extract_and_split + write_chunks_with_lock).
     Steps 2 and 3 are the existing embed and index_write run_ops.
     """
     skill = _load()
@@ -195,7 +195,7 @@ def test_index_docs_postprocessor_step0_is_extract_and_split():
 
 
 def test_index_docs_postprocessor_step1_is_write_chunks_with_lock():
-    """Tier 2: postprocessor step[1] calls write_chunks_with_lock (unsafe, minimal I/O)."""
+    """Tier 2: postprocessor step[1] calls write_chunks_with_lock (safe, reyn.safe.file + reyn.safe.process)."""
     skill = _load()
     step = skill.postprocessor.steps[1]
     assert isinstance(step, PythonStep)
@@ -241,11 +241,9 @@ def test_index_docs_postprocessor_step3_args_from():
 def test_index_docs_permissions_python_modes_declared():
     """Tier 2: skill declares the expected mode per chunker function.
 
-    Post-FP-0042 Phase 2.1:
+    Post-FP-0042 Phase 2.2:
       - gather_samples / cost_preflight: safe (chunkers_preproc_safe.py)
-      - extract_and_split: safe (chunkers_safe.py)
-      - write_chunks_with_lock: unsafe minimal — lock + content read +
-        jsonl write (will migrate in Phase 2.2)
+      - extract_and_split / write_chunks_with_lock: safe (chunkers_safe.py)
       - apply_strategy: unsafe deprecated, kept for override compat
     """
     skill = _load()
@@ -256,7 +254,7 @@ def test_index_docs_permissions_python_modes_declared():
     assert fn_modes.get("gather_samples") == "safe"
     assert fn_modes.get("cost_preflight") == "safe"
     assert fn_modes.get("extract_and_split") == "safe"
-    assert fn_modes.get("write_chunks_with_lock") == "unsafe"
+    assert fn_modes.get("write_chunks_with_lock") == "safe"
     assert fn_modes.get("apply_strategy") == "unsafe"
 
 

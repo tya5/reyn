@@ -16,6 +16,8 @@ High-level (drop-in replacement for ``reyn.api.unsafe.file``):
 - :func:`glob(pattern)` → list[str]
 - :func:`exists(path)` → bool
 - :func:`stat(path)` → {size, mtime, mode}
+- :func:`mkdir(path, *, parents=False, exist_ok=False)` → None
+- :func:`delete(path, *, missing_ok=False)` → None
 
 Low-level (Python-IO-compatible):
 
@@ -210,6 +212,53 @@ def stat(path: str) -> dict[str, Any]:
     _check_read(path)
     st = _os.stat(path)
     return {"size": st.st_size, "mtime": st.st_mtime, "mode": st.st_mode}
+
+
+def mkdir(
+    path: str,
+    *,
+    parents: bool = False,
+    exist_ok: bool = False,
+) -> None:
+    """Create directory ``path``.
+
+    Permission-checked as a write — ``path`` must resolve under one of
+    the declared ``write_paths``. Mirrors :meth:`pathlib.Path.mkdir`:
+
+    - ``parents=True`` creates missing intermediate directories;
+    - ``exist_ok=True`` does not raise when the directory already exists.
+
+    Raises :class:`PermissionError` when ``path`` is outside the declared
+    write zone, :class:`FileExistsError` when the directory exists and
+    ``exist_ok=False``, and :class:`FileNotFoundError` when a parent
+    directory is missing and ``parents=False``.
+    """
+    _check_write(path)
+    if parents:
+        _os.makedirs(path, exist_ok=exist_ok)
+        return
+    try:
+        _os.mkdir(path)
+    except FileExistsError:
+        if not exist_ok:
+            raise
+
+
+def delete(path: str, *, missing_ok: bool = False) -> None:
+    """Remove file ``path``.
+
+    Permission-checked as a write — the path must resolve under one of
+    the declared ``write_paths``. Mirrors :meth:`pathlib.Path.unlink`:
+    ``missing_ok=True`` swallows :class:`FileNotFoundError`. Directory
+    removal isn't part of the safe surface — explicit unsafe-mode is the
+    right gate when needed.
+    """
+    _check_write(path)
+    try:
+        _os.unlink(path)
+    except FileNotFoundError:
+        if not missing_ok:
+            raise
 
 
 # ── Low-level API (Python-IO-compatible) ────────────────────────────────────

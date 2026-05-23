@@ -33,7 +33,7 @@ permissions:
   python:
     # FP-0042 Phase 2.1 (2026-05-22): preprocessor steps migrated from
     # chunkers.py (mode: unsafe) → chunkers_preproc_safe.py (mode: safe).
-    # File reads / stat calls now go through reyn.safe.file, which gates
+    # File reads / stat calls go through reyn.safe.file, which gates
     # against the workspace default-read-zone (CWD) and any explicit
     # file.read entries below.
     - module: ./chunkers_preproc_safe.py
@@ -48,16 +48,28 @@ permissions:
       function: extract_and_split
       mode: safe
       timeout: 30
-    - module: ./chunkers.py
+    # FP-0042 Phase 2.2 (2026-05-23): write_chunks_with_lock migrated to
+    # chunkers_safe.py (mode: safe). Source file reads + lock + jsonl
+    # write all go through reyn.safe.file; PID identity + liveness go
+    # through reyn.safe.process. The artifacts/ write zone below grants
+    # the chunks.jsonl output (= outside the default .reyn/ zone).
+    - module: ./chunkers_safe.py
       function: write_chunks_with_lock
-      mode: unsafe
-      unsafe_reason: "minimal filesystem I/O + advisory lock for concurrent indexing (FP-0042 Phase 2.2 will migrate this once reyn.safe.file grows delete/mkdir + lock support)"
+      mode: safe
       timeout: 300
     - module: ./chunkers.py
       function: apply_strategy
       mode: unsafe
       unsafe_reason: "deprecated monolithic step kept for project override compatibility"
       timeout: 300
+  # FP-0042 Phase 2.2: write_chunks_with_lock writes the chunked JSONL
+  # output to ``<cwd>/artifacts/chunks.jsonl`` — outside the default
+  # ``.reyn/`` write zone, so it needs an explicit grant. The lock file
+  # at ``.reyn/index/<source>/.lock`` does not need a declaration (=
+  # default-zone write).
+  file.write:
+    - path: artifacts
+      scope: recursive
 postprocessor:
   output_schema: index_summary
   steps:

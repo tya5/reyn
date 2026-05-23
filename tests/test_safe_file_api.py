@@ -290,3 +290,106 @@ def test_context_can_be_reinitialised(sandbox: Path) -> None:
     sf._set_permission_context(read_paths=[])
     with pytest.raises(PermissionError):
         sf.read(str(sandbox / "docs" / "a.md"))
+
+
+# ---------------------------------------------------------------------------
+# mkdir — FP-0042 Phase 2.2
+# ---------------------------------------------------------------------------
+
+
+def test_mkdir_within_write_path_creates_directory(sandbox: Path) -> None:
+    """Tier 2: mkdir in declared write zone creates the directory."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "out" / "new"
+    sf.mkdir(str(target))
+    assert target.is_dir()
+
+
+def test_mkdir_outside_write_path_raises(sandbox: Path) -> None:
+    """Tier 2: mkdir outside the declared write zone raises PermissionError."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    with pytest.raises(PermissionError):
+        sf.mkdir(str(sandbox / "docs" / "should_not_exist"))
+
+
+def test_mkdir_without_context_raises() -> None:
+    """Tier 2: mkdir without permission context raises clearly."""
+    with pytest.raises(PermissionError):
+        sf.mkdir("/tmp/no-context-mkdir")
+
+
+def test_mkdir_existing_dir_default_raises(sandbox: Path) -> None:
+    """Tier 2: mkdir raises FileExistsError on existing dir by default."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "out" / "already"
+    target.mkdir()
+    with pytest.raises(FileExistsError):
+        sf.mkdir(str(target))
+
+
+def test_mkdir_exist_ok_true_swallows_existing(sandbox: Path) -> None:
+    """Tier 2: mkdir(exist_ok=True) is a no-op on existing dir."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "out" / "already"
+    target.mkdir()
+    sf.mkdir(str(target), exist_ok=True)
+    assert target.is_dir()
+
+
+def test_mkdir_parents_true_creates_intermediates(sandbox: Path) -> None:
+    """Tier 2: mkdir(parents=True) creates intermediate directories."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "out" / "a" / "b" / "c"
+    sf.mkdir(str(target), parents=True)
+    assert target.is_dir()
+
+
+def test_mkdir_parents_false_missing_intermediate_raises(sandbox: Path) -> None:
+    """Tier 2: mkdir without parents=True fails when intermediates missing."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "out" / "missing" / "leaf"
+    with pytest.raises(FileNotFoundError):
+        sf.mkdir(str(target))
+
+
+# ---------------------------------------------------------------------------
+# delete — FP-0042 Phase 2.2
+# ---------------------------------------------------------------------------
+
+
+def test_delete_within_write_path_removes_file(sandbox: Path) -> None:
+    """Tier 2: delete in declared write zone removes the file."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "out" / "trash.txt"
+    target.write_text("bye\n", encoding="utf-8")
+    sf.delete(str(target))
+    assert not target.exists()
+
+
+def test_delete_outside_write_path_raises(sandbox: Path) -> None:
+    """Tier 2: delete outside the declared write zone raises PermissionError;
+    the file stays put."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "docs" / "a.md"
+    with pytest.raises(PermissionError):
+        sf.delete(str(target))
+    assert target.exists()
+
+
+def test_delete_missing_default_raises(sandbox: Path) -> None:
+    """Tier 2: delete of a missing file raises FileNotFoundError by default."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    with pytest.raises(FileNotFoundError):
+        sf.delete(str(sandbox / "out" / "ghost.txt"))
+
+
+def test_delete_missing_ok_true_swallows(sandbox: Path) -> None:
+    """Tier 2: delete(missing_ok=True) is a no-op when the file doesn't exist."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    sf.delete(str(sandbox / "out" / "ghost.txt"), missing_ok=True)
+
+
+def test_delete_without_context_raises() -> None:
+    """Tier 2: delete without permission context raises clearly."""
+    with pytest.raises(PermissionError):
+        sf.delete("/tmp/no-context-delete")
