@@ -6,6 +6,45 @@ role: skill_converter
 can_finish: true
 max_act_turns: 6
 allowed_ops: [file, lint, web_fetch]
+preprocessor:
+  - type: python
+    module: ./detect_reference_format.py
+    function: detect
+    into: data._reference_format_check
+    mode: unsafe
+    timeout: 30
+    output_schema:
+      type: object
+      properties:
+        is_reference_format:
+          type: boolean
+          description: |
+            True when the source's frontmatter description matches an
+            enumeration-trigger pattern AND the body lacks explicit
+            "## Step N" / "## Stage N" stage markers. When true, the
+            decompose step MUST emit a single-phase graph.
+        signal:
+          type: string
+          description: |
+            Name of the trigger anchor that matched (includes_phrase,
+            means_phrase, triggers_include, trigger_when, trigger_list,
+            also_use_when, use_whenever, mention_clause) or "none".
+        stage_marker_count:
+          type: integer
+          description: |
+            Number of "## Step N" / "## Stage N" / "## Phase N"
+            headings in the source body. 2+ triggers the workflow
+            classification even with a positive trigger anchor.
+        description:
+          type: string
+          description: |
+            Parsed source description field (= cap 600 chars).
+            Convert step copies this into the imported skill.md's
+            description: block-scalar field.
+        fetch_status:
+          type: string
+          description: "ok | http_<code> | error"
+      required: [is_reference_format, signal, stage_marker_count, description, fetch_status]
 ---
 
 Fetch the chosen source markdown, decompose it into a multi-phase reyn
@@ -20,6 +59,56 @@ also have YAML frontmatter (`---` block at the top) with `name`,
 `description`, etc. — extract those if present.
 
 ## Step 2 — Decompose
+
+### Pre-check — honor the deterministic flag FIRST
+
+Before any LLM judgment, check ``data._reference_format_check``. This
+field is populated by a deterministic Python preprocessor that:
+
+  - Fetched the source SKILL.md.
+  - Pattern-matched the description for enumeration-trigger anchors
+    ("This includes ...", "Triggers include ...", "TRIGGER when ...",
+    "This means ...", "Also use when ...", etc.).
+  - Counted explicit ``## Step N`` / ``## Stage N`` / ``## Phase N``
+    stage markers in the body.
+  - Returned ``is_reference_format: true`` iff the trigger pattern
+    matched AND the body has fewer than 2 stage markers.
+
+If ``data._reference_format_check.is_reference_format`` is ``true``:
+**you MUST emit a single-phase graph**.
+
+```yaml
+graph:
+  <only_phase>: []
+```
+
+The phase's ``input`` is ``user_message``; ``can_finish: true``; the
+phase's instructions are the source body itself (lifted / lightly
+condensed, recipes preserved verbatim). The skill has 0 or 1 custom
+artifacts total. **Do not override this flag** — it is deterministic
+machine signal, not LLM judgment. The N=5 dogfood baseline at PR #585
+established that LLM-judgment-only honored the single-phase
+discipline 20% of the time; this preprocessor lifts that to 100%
+when the source matches the marker.
+
+Also: use ``data._reference_format_check.description`` (= already
+parsed) for the imported skill.md ``description:`` field instead of
+re-parsing the YAML frontmatter yourself.
+
+If ``is_reference_format`` is ``false`` (= no trigger pattern matched
+OR body has ≥ 2 stage markers OR fetch failed), fall through to the
+LLM-judgment branches below.
+
+**IMPORTANT — the pre-check only decides the phase count.** You still
+MUST complete Steps 3, 4, 5, 6 (= decide identity, write files, lint,
+return result). The deterministic flag is a *decomposition* signal,
+not an authorization to skip work. Whether you ended up with one
+phase or many, you still need to emit ``file write`` ops for skill.md
++ phase files + artifact YAML files + (optionally) preprocessing.py
+in Step 4, then ``lint`` in Step 5, then ``skill_import_result`` in
+Step 6.
+
+### LLM judgment — for non-trigger-marked sources
 
 Read the source carefully. Anthropic-style skills come in two flavours,
 and the right decomposition depends on which one you're looking at:
