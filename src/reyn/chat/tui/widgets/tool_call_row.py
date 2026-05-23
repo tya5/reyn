@@ -30,11 +30,14 @@ import time
 
 from rich.cells import cell_len
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
 from reyn.chat.tui._palette import _CORAL
+
+from ._renderable_cache import RenderableCacheMixin
 
 _TICK_INTERVAL_S = 0.5  # elapsed-time refresh rate
 
@@ -93,7 +96,7 @@ def _maybe_middle_elide(name: str, max_cells: int) -> str:
     return name
 
 
-class ToolCallRow(Widget):
+class ToolCallRow(RenderableCacheMixin, Widget):
     """One inline tool-call row that updates in-place until terminal state.
 
     State machine:
@@ -145,6 +148,16 @@ class ToolCallRow(Widget):
         self._reason: str = ""
         self._frozen_elapsed: float | None = None
 
+        # Expand state — when True, line 1 + line 2 render the full
+        # args / result content without cell-budget truncation.
+        # Long args / result get word-wrapped across multiple visual
+        # lines by Static (= ``height: auto`` lets the row grow).
+        # Toggled by mouse click on the row (see ``on_click``) or
+        # the public ``toggle_expand`` method. Preserves across the
+        # running → finished transition so the user can still drill
+        # into a completed call's full args / result.
+        self._expanded: bool = False
+
         # DOM refs — populated in compose()
         self._line1: Static | None = None
         self._line2: Static | None = None
@@ -175,6 +188,34 @@ class ToolCallRow(Widget):
         return max(0.0, time.monotonic() - self._mount_time)
 
     # ── Public API ─────────────────────────────────────────────────────────────
+
+    def toggle_expand(self) -> None:
+        """Flip the collapsed / expanded render shape.
+
+        Expanded form drops cell-budget truncation on both lines so
+        long args / result wrap to multiple visual lines (Static
+        handles wrap; ``height: auto`` lets the row grow). Useful
+        for tool calls whose args / result got snipped to ``…`` in
+        the default 80-cell view.
+        """
+        self._expanded = not self._expanded
+        self._refresh()
+
+    @property
+    def is_expanded(self) -> bool:
+        """True when the row is currently rendering the drill-down view."""
+        return self._expanded
+
+    def on_click(self, event: events.Click) -> None:
+        """Mouse-click anywhere on the row toggles the drill-down view.
+
+        ``event.stop()`` so the click doesn't bubble up to conv-pane
+        scroll handling. Mirrors the SkillActivityRow click contract
+        from PR #546 — same trigger UX for two adjacent inline
+        widgets that the user reads together.
+        """
+        event.stop()
+        self.toggle_expand()
 
     def set_result(self, snippet: str) -> None:
         """Update the result snippet shown on line 2.
@@ -343,6 +384,16 @@ class ToolCallRow(Widget):
         )
         args_display = self._truncate_to_cells(self._args_repr, args_budget)
 
+        # Expand mode: drop the cell-budget cap on args so the full
+        # repr surfaces. Static wraps the line to fit; ``height: auto``
+        # grows the row. Tool name stays un-elided too — when
+        # drilling in, the user wants the qualified name in full.
+        if self._expanded:
+            tool_display = self._tool_name
+            tool_open = f"{tool_display}("
+            tool_close = ")"
+            args_display = self._args_repr
+
         if self._label_prefix:
             t.append(self._label_prefix, style="dim #666666")
         t.append(glyph_with_space, style=glyph_style)
@@ -383,7 +434,11 @@ class ToolCallRow(Widget):
         body_budget = max(
             8, total_width - cell_len(_RESULT_INDENT) - _RIGHT_MARGIN_CELLS,
         )
-        snippet = self._truncate_to_cells(body, body_budget)
+        # Expand mode: surface the full body without cell-budget
+        # truncation. Static wraps; row grows via height: auto.
+        snippet = body if self._expanded else self._truncate_to_cells(
+            body, body_budget,
+        )
         t = Text()
         t.append(_RESULT_INDENT, style="dim #666666")
         t.append(snippet, style=body_style)
@@ -406,10 +461,22 @@ class ToolCallRow(Widget):
         return "", "dim"
 
     def _refresh(self) -> None:
+        l1 = self._build_line1()
+        l2 = self._build_line2()
         if self._line1 is not None:
-            self._line1.update(self._build_line1())
+            self._line1.update(l1)
         if self._line2 is not None:
-            self._line2.update(self._build_line2())
+            self._line2.update(l2)
+        # Concatenate for the renderable-cache mixin — tests read
+        # both lines via ``rendered_text()`` as a single string. Line
+        # 2 is often empty (= running with no result yet); join with
+        # a newline only when both have content.
+        combined = Text()
+        combined.append_text(l1)
+        if l2.plain:
+            combined.append("\n")
+            combined.append_text(l2)
+        self._set_rendered_cache(combined)
 
 
 __all__ = ["ToolCallRow"]
