@@ -589,6 +589,10 @@ class OutboxRouter:
             # ghost from a previous one.
             self._find_query = None
             self._find_cursor_idx = None
+            try:
+                header.set_find_state(None)
+            except Exception:
+                pass
             self._show_transient_status(
                 conv,
                 f"no matches for '{query}'",
@@ -614,6 +618,17 @@ class OutboxRouter:
         # Seed cycle state so Ctrl+G picks up from here.
         self._find_query = query
         self._find_cursor_idx = target_idx
+        # Set the header find-state badge so the user has a persistent
+        # cue that /find mode is active. Position = 1-based index of
+        # the cursor's match in the sorted match list.
+        position = next(
+            (i + 1 for i, m in enumerate(matches) if m[0] == target_idx),
+            1,
+        )
+        try:
+            header.set_find_state(query, position, len(matches))
+        except Exception:
+            pass
         # Compose the status line. Showing the first 5 line numbers
         # gives the user a sense of distribution without overwhelming
         # the 1-line sticky budget. Same format the initial ``/find``
@@ -695,6 +710,10 @@ class OutboxRouter:
         if not matches:
             self._find_query = None
             self._find_cursor_idx = None
+            try:
+                self._app.query_one("#header", ReynHeader).set_find_state(None)
+            except Exception:
+                pass
             self._show_transient_status(
                 conv,
                 f"no matches for '{query}'",
@@ -729,10 +748,21 @@ class OutboxRouter:
         except Exception:
             pass
         self._find_cursor_idx = target_idx
-        # Same matched-line preview idea as ``_on_find`` — surface
-        # WHAT the cursor landed on so the user doesn't have to
-        # eyeball the viewport to confirm. ``matches[new_pos][1]``
-        # is the line content stored at search time.
+        # Refresh header badge with the new position so the user sees
+        # ``[find: 'q' 2/3]`` advance as they cycle. Total stays
+        # constant for the same buffer, but a buffer mutation between
+        # presses could shift it — recomputed every step.
+        try:
+            self._app.query_one("#header", ReynHeader).set_find_state(
+                query, new_pos + 1, len(matches),
+            )
+        except Exception:
+            pass
+        # Matched-line preview (= #563) — surface WHAT the cursor
+        # landed on so the user doesn't have to eyeball the viewport.
+        # ``matches[new_pos][1]`` is the line content stored at search
+        # time. Gated on non-empty snippet so whitespace-only lines
+        # don't dangle ``""`` quotes.
         snippet = _find_preview_snippet(matches[new_pos][1])
         body = (
             f"match {new_pos + 1}/{len(matches)} for '{query}' "
