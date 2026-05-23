@@ -116,13 +116,14 @@ def test_require_http_get_passes_for_declared_host(tmp_path):
     """Tier 2: require_http_get passes silently for a persisted approval.
 
     #571 Phase 7: specific declarations expect to be approved at
-    startup_guard time. This test simulates that — session-approve
-    the host as the resolver would after startup_guard's prompt,
-    then verify runtime require_http_get passes silently.
+    startup_guard time. This test simulates that via the public
+    session_approve_path() API (= same persistence write that
+    startup_guard's prompt would do), then verifies runtime
+    require_http_get passes silently.
     """
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl(http_get=[{"host": "api.github.com"}])
-    resolver._session["test_skill/http.get/api.github.com"] = True
+    resolver.session_approve_host("api.github.com", "test_skill")
     asyncio.run(resolver.require_http_get(decl, "api.github.com", skill_name="test_skill"))
 
 
@@ -132,7 +133,7 @@ def test_require_http_get_passes_via_explicit_decl(tmp_path):
     decl = PermissionDecl.from_dict({
         "http.get": [{"host": "registry.modelcontextprotocol.io"}],
     })
-    resolver._session["mcp_install/http.get/registry.modelcontextprotocol.io"] = True
+    resolver.session_approve_host("registry.modelcontextprotocol.io", "mcp_install")
     asyncio.run(resolver.require_http_get(
         decl, "registry.modelcontextprotocol.io", skill_name="mcp_install",
     ))

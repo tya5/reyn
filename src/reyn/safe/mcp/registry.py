@@ -9,27 +9,43 @@ JSON-serialisable dicts.
 Registry URL resolution
 -----------------------
 
-The base URL is resolved from the ``REYN_MCP_REGISTRY_URL`` environment
-variable, falling back to the official registry at
-``https://registry.modelcontextprotocol.io`` when the env var is unset.
+The base URL list is resolved in priority order:
+
+1. ``REYN_MCP_REGISTRY_URLS`` (plural) — comma-separated list, used
+   for multi-registry fallback (e.g. ``private,public``).
+2. ``REYN_MCP_REGISTRY_URL`` (singular) — single URL, legacy alias
+   treated as a one-item list.
+3. Default ``https://registry.modelcontextprotocol.io``.
+
+When set in ``reyn.yaml`` under ``mcp.registries: [...]``, the
+config-loader exports the list into ``REYN_MCP_REGISTRY_URLS`` (only
+if neither env var is already set, so explicit operator overrides
+win). The subprocess running safe-mode python steps inherits the env
+var from the parent process automatically.
+
 This mirrors the resolution chain used by
-:class:`reyn.registry.client.RegistryClient` (= the op-handler-side
-async client), so an operator who points reyn at a private / corporate
-registry sees both code paths use the same URL.
+:class:`reyn.registry.client.RegistryClient`, so both surfaces — the
+async op-handler client and this safe-mode skill-internal lookup —
+agree on which registries to try and in what order.
+
+Multi-registry semantics
+------------------------
+
+``lookup(server_id)`` tries each URL in order, returning the first
+non-404 hit. A 404 from one registry falls through to the next.
+``search(query)`` queries each URL in order and returns the first
+non-empty result list (= "private first, public fallback" semantics).
+A ``RegistryError`` from one URL falls through to the next; if every
+URL fails the final error is re-raised.
 
 Threat model
 ------------
 
 Registry lookup remains an *ambient* operation from the skill author's
 perspective — there is no per-skill ``http.get`` declaration required
-for this module's surface. The URL is operator-trusted via the env
-var; the operator setting ``REYN_MCP_REGISTRY_URL`` is what carries the
-authorisation, not the skill code that calls in. This matches how
-``time`` / ``random`` / file-system locale are treated.
-
-Multi-registry support (= ``reyn.yaml mcp.registries: [...]`` list) is
-not yet wired through this module. Today only the single-URL env var
-override works; the list-form config is a future enhancement.
+for this module's surface. The URLs are operator-trusted via the env
+var / config; the operator setting them is what carries the
+authorisation, not the skill code that calls in.
 
 Internal layering
 -----------------
@@ -75,15 +91,37 @@ from reyn.registry.models import server_info_from_raw
 _DEFAULT_BASE_URL = "https://registry.modelcontextprotocol.io"
 
 
-def _base_url() -> str:
-    """Resolve the registry base URL.
+def _registry_urls() -> list[str]:
+    """Resolve the ordered list of registry URLs to try.
 
-    Reads ``REYN_MCP_REGISTRY_URL`` from the environment (= operator-
-    trusted single-URL override, same chain as
-    :func:`reyn.registry.client._base_url`). Falls back to the official
-    public registry when the env var is unset.
+    Resolution priority (= same chain as
+    :func:`reyn.registry.client._base_urls`):
+
+    1. ``REYN_MCP_REGISTRY_URLS`` (plural) — comma-separated list.
+    2. ``REYN_MCP_REGISTRY_URL`` (singular, legacy) — single-item list.
+    3. Default single-item list with the public registry.
+
+    Each URL is trimmed and trailing-slash-normalised. Empty entries
+    are dropped. When both env vars are set, the plural form wins.
     """
-    return os.environ.get("REYN_MCP_REGISTRY_URL", _DEFAULT_BASE_URL).rstrip("/")
+    plural = os.environ.get("REYN_MCP_REGISTRY_URLS")
+    if plural:
+        urls = [u.strip().rstrip("/") for u in plural.split(",")]
+        return [u for u in urls if u]
+    singular = os.environ.get("REYN_MCP_REGISTRY_URL")
+    if singular:
+        return [singular.strip().rstrip("/")]
+    return [_DEFAULT_BASE_URL]
+
+
+def _base_url() -> str:
+    """Return the first registry URL (= preserved for backward compat).
+
+    Callers that only need a single URL (= legacy paths, tests) can
+    keep using this; the multi-URL iteration happens inside ``search``
+    and ``lookup`` via :func:`_registry_urls`.
+    """
+    return _registry_urls()[0]
 
 # urlopen timeout in seconds. 10s covers the canonical registry's p99
 # without leaving steps hanging if the network is wedged.
@@ -150,13 +188,13 @@ def _candidates_from_payload(payload: dict) -> list[dict]:
 def search(query: str, *, limit: int = 20) -> list[dict]:
     """Search the MCP registry for servers matching ``query``.
 
-    Returns a list of result dicts (= newest version per server name,
-    other dups removed). Empty list when the query yields no results.
-    Raises :class:`RegistryError` on registry / network failure with a
-    descriptive message; callers that want fail-soft behaviour should
-    catch it and degrade to stale cache / empty result on their side.
+    Iterates the resolved registry URL list (= ``_registry_urls()``)
+    and returns the first non-empty result list — "private first,
+    public fallback" semantics. A :class:`RegistryError` from one URL
+    falls through to the next; if every URL fails the final error is
+    re-raised.
 
-    Caching: search results are cached on disk for 24 hours under
+    Caching: results are cached on disk for 24 hours under
     ``~/.reyn/registry-cache/``. Subsequent identical queries within
     the TTL return the cached payload without hitting the network.
     """
@@ -169,22 +207,31 @@ def search(query: str, *, limit: int = 20) -> list[dict]:
         return _candidates_from_payload(cached)
 
     qs = urllib.parse.urlencode({"search": query, "limit": str(limit)})
-    url = f"{_base_url()}/v0.1/servers?{qs}"
-    data = _http_get_json(url)
-    _cache.set(cache_key, data)
-    return _candidates_from_payload(data)
+    last_error: RegistryError | None = None
+    for base in _registry_urls():
+        try:
+            data = _http_get_json(f"{base}/v0.1/servers?{qs}")
+        except RegistryError as exc:
+            last_error = exc
+            continue
+        candidates = _candidates_from_payload(data)
+        if candidates:
+            _cache.set(cache_key, data)
+            return candidates
+        # Empty result at this registry — fall through to next URL.
+    if last_error is not None:
+        raise last_error
+    return []
 
 
 def lookup(server_id: str) -> dict | None:
     """Return the registry entry for the exact ``server_id``, or None.
 
-    ``server_id`` is the registry-canonical name (= ``namespace/server-name``,
-    e.g. ``io.github.modelcontextprotocol/server-filesystem``).
-
-    The lookup hits ``/v0.1/servers/{id}/versions/latest`` and reshapes
-    the response into the same dict shape as :func:`search`. Returns
-    None when the registry replies 404. Raises :class:`RegistryError`
-    on other failures (= transport error, parse error, 5xx).
+    Iterates the resolved registry URL list (= ``_registry_urls()``):
+    a 404 from one URL falls through to the next; a non-404 hit
+    returns immediately. Returns None when every URL replies 404.
+    Raises :class:`RegistryError` if the final URL fails with a
+    non-404 error after all others were 404.
 
     Caching: 24-hour disk cache keyed by ``server_id``.
     """
@@ -196,14 +243,25 @@ def lookup(server_id: str) -> dict | None:
     if cached is not None:
         return _info_to_dict(server_info_from_raw(cached))
 
-    url = f"{_base_url()}/v0.1/servers/{urllib.parse.quote(server_id, safe='')}/versions/latest"
-    try:
-        data = _http_get_json(url)
-    except RegistryError as exc:
-        # 404 = not found → return None instead of raising.
-        if "HTTP 404" in str(exc):
-            return None
-        raise
+    encoded_id = urllib.parse.quote(server_id, safe="")
+    last_error: RegistryError | None = None
+    for base in _registry_urls():
+        try:
+            data = _http_get_json(
+                f"{base}/v0.1/servers/{encoded_id}/versions/latest"
+            )
+        except RegistryError as exc:
+            # 404 → not found on this URL, try the next one. Other
+            # errors (= transport, parse, 5xx) are remembered as
+            # last_error in case all URLs fail.
+            if "HTTP 404" in str(exc):
+                continue
+            last_error = exc
+            continue
+        _cache.set(cache_key, data)
+        return _info_to_dict(server_info_from_raw(data))
 
-    _cache.set(cache_key, data)
-    return _info_to_dict(server_info_from_raw(data))
+    # Every URL returned an error (404 or otherwise).
+    if last_error is not None:
+        raise last_error
+    return None

@@ -451,7 +451,7 @@ def test_registry_path_unaffected_by_source_field_being_none(tmp_path):
         "remotes": [],
     }
 
-    async def _fake_get(self, path: str, params=None):
+    async def _fake_get(self, path: str, params=None, base_url=None):
         return {"server": _FILESYSTEM_RESPONSE}
 
     with mock.patch("reyn.registry.client.RegistryClient._get", _fake_get):

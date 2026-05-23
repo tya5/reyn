@@ -91,11 +91,37 @@ def _dedup_by_latest(raw_entries: list[dict]) -> list[dict]:
     return [item[0] for item in best.values()]
 
 
+_DEFAULT_BASE_URL = "https://registry.modelcontextprotocol.io"
+
+
+def _base_urls() -> list[str]:
+    """Resolve the ordered list of registry URLs to try.
+
+    Mirrors :func:`reyn.safe.mcp.registry._registry_urls` so both
+    surfaces — the async op-handler client (this module) and the
+    safe-mode skill-internal lookup — agree on which registries to
+    try and in what order.
+
+    Priority:
+    1. ``REYN_MCP_REGISTRY_URLS`` (plural) — comma-separated list,
+       populated by the config loader from ``mcp.registries: [...]``
+       when the env var isn't already explicitly set.
+    2. ``REYN_MCP_REGISTRY_URL`` (singular, legacy) — single-item list.
+    3. Default single-item list with the public registry.
+    """
+    plural = os.environ.get("REYN_MCP_REGISTRY_URLS")
+    if plural:
+        urls = [u.strip().rstrip("/") for u in plural.split(",")]
+        return [u for u in urls if u]
+    singular = os.environ.get("REYN_MCP_REGISTRY_URL")
+    if singular:
+        return [singular.strip().rstrip("/")]
+    return [_DEFAULT_BASE_URL]
+
+
 def _base_url() -> str:
-    return os.environ.get(
-        "REYN_MCP_REGISTRY_URL",
-        "https://registry.modelcontextprotocol.io",
-    ).rstrip("/")
+    """Return the first registry URL (= preserved for backward compat)."""
+    return _base_urls()[0]
 
 
 class RegistryClient:
@@ -149,15 +175,28 @@ class RegistryClient:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _get(self, path: str, params: dict | None = None) -> dict:
+    async def _get(
+        self,
+        path: str,
+        params: dict | None = None,
+        base_url: str | None = None,
+    ) -> dict:
         """Issue a GET request and return the parsed JSON body.
 
-        Raises ``RegistryError`` on network errors, non-2xx status codes,
-        or JSON parse failures.
+        ``base_url`` (= optional, defaults to the first
+        :func:`_base_urls` entry) lets callers iterate registries
+        without bypassing this method — that keeps existing test
+        mocks (= patches of ``RegistryClient._get``) intercepting
+        every HTTP call regardless of whether single-URL or
+        multi-URL semantics are in play.
+
+        Raises ``RegistryError`` on network errors, non-2xx status
+        codes, or JSON parse failures.
         """
         import httpx
 
-        url = f"{_base_url()}{path}"
+        effective_base = base_url or _base_urls()[0]
+        url = f"{effective_base}{path}"
         if self._client is None:
             raise RegistryError(
                 "RegistryClient must be used as an async context manager."
@@ -186,14 +225,19 @@ class RegistryClient:
     async def search(self, query: str, limit: int = 20) -> list:
         """Search for MCP servers matching *query*.
 
+        Iterates the resolved registry URL list (:func:`_base_urls`)
+        and returns the first non-empty result list — "private first,
+        public fallback" semantics. A :class:`RegistryError` from one
+        URL falls through to the next; if every URL fails the final
+        error is re-raised.
+
         Returns a deduplicated list of ``ServerInfo`` dataclasses (from
-        ``reyn.registry.models``).  When the registry returns multiple version
-        entries for the same server name, only the latest version is kept:
-        first by ``_meta.isLatest == true``, then by highest semver.
+        ``reyn.registry.models``).  When the registry returns multiple
+        version entries for the same server name, only the latest
+        version is kept: first by ``_meta.isLatest == true``, then by
+        highest semver.
 
         Results are cached for 24 h.
-
-        Raises ``RegistryError`` on network / HTTP failure.
         """
         from reyn.registry import cache
         from reyn.registry.models import server_info_from_raw
@@ -204,23 +248,40 @@ class RegistryClient:
             raw_entries = cached.get("servers", [])
             return [server_info_from_raw(e) for e in _dedup_by_latest(raw_entries)]
 
-        data = await self._get(
-            "/v0.1/servers",
-            params={"search": query, "limit": str(limit)},
-        )
-        cache.set(cache_key, data)
-        raw_entries = data.get("servers", [])
-        return [server_info_from_raw(e) for e in _dedup_by_latest(raw_entries)]
+        last_error: RegistryError | None = None
+        for base in _base_urls():
+            try:
+                data = await self._get(
+                    "/v0.1/servers",
+                    params={"search": query, "limit": str(limit)},
+                    base_url=base,
+                )
+            except RegistryError as exc:
+                last_error = exc
+                continue
+            raw_entries = data.get("servers", [])
+            results = [server_info_from_raw(e) for e in _dedup_by_latest(raw_entries)]
+            if results:
+                cache.set(cache_key, data)
+                return results
+            # Empty result at this registry — fall through to next URL.
+        if last_error is not None:
+            raise last_error
+        return []
 
     async def get_server(self, server_name: str) -> object:
         """Fetch the latest version of a specific server by registry name.
+
+        Iterates the resolved registry URL list (:func:`_base_urls`).
+        A 404 from one URL falls through to the next; the first
+        non-404 hit returns. If every URL replies 404 or errors, the
+        final error is re-raised (= preserves the pre-existing
+        ``RegistryError`` contract for "server not found anywhere").
 
         *server_name* is the registry identifier (e.g.
         ``"io.github.foo/bar-mcp"``).
 
         Returns a ``ServerJson`` dataclass.  Result is cached for 24 h.
-
-        Raises ``RegistryError`` on network / HTTP failure.
         """
         from reyn.registry import cache
         from reyn.registry.models import server_json_from_raw
@@ -231,9 +292,26 @@ class RegistryClient:
             srv = cached.get("server", cached)
             return server_json_from_raw(srv)
 
-        data = await self._get(
-            f"/v0.1/servers/{server_name}/versions/latest",
-        )
-        cache.set(cache_key, data)
-        srv = data.get("server", data)
-        return server_json_from_raw(srv)
+        last_error: RegistryError | None = None
+        for base in _base_urls():
+            try:
+                data = await self._get(
+                    f"/v0.1/servers/{server_name}/versions/latest",
+                    base_url=base,
+                )
+            except RegistryError as exc:
+                # 404 → not found on this URL, fall through to the next.
+                # Other errors → remember as last_error in case every
+                # URL fails.
+                if "HTTP 404" not in str(exc):
+                    last_error = exc
+                else:
+                    last_error = exc  # last 404 also surfaced if all fail
+                continue
+            cache.set(cache_key, data)
+            srv = data.get("server", data)
+            return server_json_from_raw(srv)
+
+        # Every URL errored.
+        assert last_error is not None
+        raise last_error
