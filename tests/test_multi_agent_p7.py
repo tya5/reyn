@@ -220,6 +220,7 @@ _KNOWN_SKILL_NAMES: frozenset[str] = frozenset({
     "eval_builder",
     "judge_phase",
     "mcp_search",
+    "skill_search",
     "read_local_files",
     "recall_docs",
     "direct_llm",
