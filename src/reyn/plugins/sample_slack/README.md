@@ -23,23 +23,27 @@ outbox interceptor, MCP dispatcher) live in ``src/reyn/chat/`` and
 
 ## Operator setup
 
-1. Create a Slack App at https://api.slack.com/apps
-2. Enable **Event Subscriptions** and set Request URL to
+1. Install Reyn with the ``sample_slack`` extra:
+   ```bash
+   pip install 'reyn[sample_slack]'   # = reyn + slack-bolt
+   ```
+2. Create a Slack App at https://api.slack.com/apps
+3. Enable **Event Subscriptions** and set Request URL to
    ``https://<your-reyn-host>/webhook/slack``
-3. Subscribe to bot events: ``app_mention`` and ``message.im``
-4. Install the App in your workspace
-5. Note the **Signing Secret** from the App credentials
-6. Activate the plugin in ``webhooks.yaml`` (= next to reyn.yaml):
+4. Subscribe to bot events: ``app_mention`` and ``message.im``
+5. Install the App in your workspace
+6. Note the **Signing Secret** from the App credentials
+7. Activate the plugin in ``webhooks.yaml`` (= next to reyn.yaml):
    ```yaml
    sample_slack:
      target_agent: news_agent     # agent that receives Slack messages
    ```
-7. Set env vars on Reyn:
+8. Set env vars on Reyn:
    ```bash
    export SLACK_SIGNING_SECRET=<signing-secret>
    export SLACK_BOT_TOKEN=xoxb-...    # for outbound replies via Slack MCP
    ```
-8. At-mention the bot in any channel where it's invited; messages
+9. At-mention the bot in any channel where it's invited; messages
    reach the target agent's inbox.
 
 ## Configuration (= webhooks.yaml)
