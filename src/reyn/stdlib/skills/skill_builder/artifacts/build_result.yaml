@@ -17,4 +17,20 @@ schema:
     file_count:
       type: integer
       description: Total number of files written.
+    max_iterations:
+      type: integer
+      description: |
+        Iteration cap copied through from the input skill_request (=
+        plumbed for the post-lint ``iterate_with_evals`` phase). 0 = no
+        iteration requested.
+      default: 0
+      minimum: 0
+    score_threshold:
+      type: number
+      description: |
+        Score threshold copied through from input. Only used when
+        ``max_iterations`` > 0.
+      default: 0.85
+      minimum: 0.0
+      maximum: 1.0
   required: [skill_name, skill_path, files_written, file_count]

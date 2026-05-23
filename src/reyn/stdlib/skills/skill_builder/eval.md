@@ -51,8 +51,14 @@ quality:
 quality:
 - The lint op is executed with the correct `skill_path`.
 - If lint fails, `control.type='rollback'` is emitted with lint issues included in the reason.
-- If lint passes, the phase finishes with a correctly structured `skill_builder_result` artifact.
+- If lint passes, the phase **transitions to `iterate_with_evals`** (= not `finish`) with a correctly structured `skill_builder_result` artifact carrying `max_iterations` + `score_threshold` copied through from `build_result`.
 - The `summary` field in `skill_builder_result` describes what the generated skill does for its users, not the build process itself.
+
+### phase: iterate_with_evals
+quality:
+- When `data.max_iterations == 0`: the phase emits a `finish` decide turn with zero ops and the input artifact passed through verbatim (= legacy fast path).
+- When `data.max_iterations > 0`: the phase emits exactly one `run_skill` op invoking `skill_improver` with `target_skill_path`, `max_iterations`, and `score_threshold` taken from input. After the op returns, the phase finishes with a `skill_builder_result` that adds `improvement_summary` (= `iterations_run`, `initial_score`, `final_score`, `termination_reason`, `files_modified`) and a brief tail appended to `summary`.
+- If `run_skill` returns `status: error`, the phase still finishes successfully (= build itself was OK) with `improvement_summary.termination_reason = "error"` and a diagnostic note. The workflow is NOT aborted.
 
 ## case: complex_review_and_revision_app
 input: "Create a skill that generates a legal disclaimer and allows a reviewer to approve or reject it with specific feedback, looping back for revisions."
@@ -101,5 +107,11 @@ quality:
 quality:
 - The lint op is executed with the correct `skill_path`.
 - If lint fails, `control.type='rollback'` is emitted with lint issues included in the reason.
-- If lint passes, the phase finishes with a correctly structured `skill_builder_result` artifact.
+- If lint passes, the phase **transitions to `iterate_with_evals`** (= not `finish`) with a correctly structured `skill_builder_result` artifact carrying `max_iterations` + `score_threshold` copied through from `build_result`.
 - The `summary` field in `skill_builder_result` describes what the generated skill does for its users, not the build process itself.
+
+### phase: iterate_with_evals
+quality:
+- When `data.max_iterations == 0`: the phase emits a `finish` decide turn with zero ops and the input artifact passed through verbatim (= legacy fast path).
+- When `data.max_iterations > 0`: the phase emits exactly one `run_skill` op invoking `skill_improver` with `target_skill_path`, `max_iterations`, and `score_threshold` taken from input. After the op returns, the phase finishes with a `skill_builder_result` that adds `improvement_summary` (= `iterations_run`, `initial_score`, `final_score`, `termination_reason`, `files_modified`) and a brief tail appended to `summary`.
+- If `run_skill` returns `status: error`, the phase still finishes successfully (= build itself was OK) with `improvement_summary.termination_reason = "error"` and a diagnostic note. The workflow is NOT aborted.

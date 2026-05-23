@@ -29,4 +29,56 @@ schema:
     summary:
       type: string
       description: One sentence describing what the generated skill does for its users.
+    max_iterations:
+      type: integer
+      description: |
+        Iteration cap copied through from the input skill_request (= 0
+        when iteration was not requested). When > 0, the
+        ``iterate_with_evals`` phase chained into ``skill_improver``;
+        when 0, the phase short-circuited and this artifact is the
+        build+lint result unchanged.
+      default: 0
+      minimum: 0
+    score_threshold:
+      type: number
+      description: |
+        Score threshold copied through from input (or default 0.85).
+        Only meaningful when ``max_iterations`` > 0.
+      default: 0.85
+      minimum: 0.0
+      maximum: 1.0
+    improvement_summary:
+      type: object
+      description: |
+        Optional — populated by ``iterate_with_evals`` when iteration
+        actually ran (= ``max_iterations`` > 0 AND ``skill_improver``
+        completed). Captures the score progression + termination
+        reason so the caller knows what changed.
+      properties:
+        iterations_run:
+          type: integer
+          description: Actual number of skill_improver iterations performed.
+          minimum: 0
+        initial_score:
+          type: number
+          description: Eval score from the first run_and_eval pass.
+          minimum: 0.0
+          maximum: 1.0
+        final_score:
+          type: number
+          description: Eval score from the last run_and_eval pass.
+          minimum: 0.0
+          maximum: 1.0
+        termination_reason:
+          type: string
+          description: |
+            Why the loop stopped. One of: score_threshold_met,
+            max_iterations_reached, regression_detected,
+            stagnation_detected, no_more_changes_planned, error.
+        files_modified:
+          type: array
+          items:
+            type: string
+          description: Union of files modified across all improver iterations.
+      required: [iterations_run, termination_reason]
   required: [skill_name, skill_path, files_written, file_count, lint_passed, lint_issues, summary]

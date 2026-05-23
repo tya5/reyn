@@ -13,4 +13,26 @@ schema:
     goal:
       type: string
       description: Detailed description of the skill's purpose, input, and expected output quality.
+    max_iterations:
+      type: integer
+      description: |
+        Optional — when set to N ≥ 1, after the build + lint completes,
+        ``skill_builder`` chains into ``skill_improver`` via the
+        ``iterate_with_evals`` phase. ``skill_improver`` will
+        auto-generate an ``eval.md`` (via ``eval_builder``) if absent,
+        then loop up to N iterations or until ``score_threshold`` is met.
+        Default 0 = no iteration (= build → lint → finish, the legacy
+        behaviour). Typical opt-in values: 1 (= one improvement pass) or
+        2-3 (= meaningful iteration). Higher values mostly waste tokens.
+      default: 0
+      minimum: 0
+    score_threshold:
+      type: number
+      description: |
+        Optional — paired with ``max_iterations``. When iteration runs,
+        ``skill_improver`` stops early if eval score reaches this value.
+        Ignored when ``max_iterations`` is 0. Default 0.85.
+      default: 0.85
+      minimum: 0.0
+      maximum: 1.0
   required: [skill_name, description, goal]

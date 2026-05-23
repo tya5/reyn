@@ -167,6 +167,25 @@ final_output:
   - name: snake_case name for the final output artifact
   - description: one sentence describing it
 
+max_iterations:
+  Integer ≥ 0 (default 0). Plumbed through to the post-build
+  ``iterate_with_evals`` phase that optionally chains into
+  ``skill_improver``. Sources:
+  - Structured input (= ``skill_request`` artifact): use
+    ``input_artifact.data.max_iterations`` verbatim if present.
+  - Free-text input (= ``user_message`` artifact): scan for explicit
+    phrasing like "iterate 2 times", "max_iterations=3", "improve and
+    iterate up to N times". Otherwise default to 0 (= no iteration,
+    legacy fast path).
+  Do NOT inflate this — over-iterating wastes tokens. Typical values:
+  0 (default), 1 (one improvement pass), 2-3 (meaningful loop).
+
+score_threshold:
+  Float in [0, 1], default 0.85. Same plumbing. Only used when
+  ``max_iterations`` > 0. Sources:
+  - Structured input: ``input_artifact.data.score_threshold`` verbatim.
+  - Free-text: scan for "threshold 0.9" / "until score 0.95"; else 0.85.
+
 routing:
   Structured routing hints. The chat router uses these **alongside the
   bare `description`** to decide WHEN to dispatch this skill. Every stdlib
