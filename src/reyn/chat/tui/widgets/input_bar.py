@@ -24,6 +24,8 @@ Keybindings (handled here):
 """
 from __future__ import annotations
 
+from collections import deque
+
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -34,6 +36,28 @@ from textual.widgets import Label, TextArea
 from reyn.chat.slash import SlashCommand
 
 from .slash_picker import SlashPicker
+
+# Wave-11 C#1 — bounded + persisted input history.
+#
+# Two caps with distinct purposes:
+#   _HISTORY_MAX                  — in-memory deque cap. The current
+#                                    session can recall this many recent
+#                                    entries via Up/Down. Picked at 200
+#                                    so heavy users have a deep recall
+#                                    surface without unbounded growth.
+#   _HISTORY_PERSIST_MAX          — how many entries cross the session
+#                                    boundary via prefs.json. Smaller
+#                                    so the JSON file stays compact
+#                                    and the first boot read is fast.
+#   _HISTORY_ENTRY_PERSIST_MAX_BYTES — per-entry size gate for
+#                                       persistence only. Pasted blobs
+#                                       past this size stay in-memory
+#                                       (= current session can recall)
+#                                       but don't pollute the
+#                                       persisted slice.
+_HISTORY_MAX = 200
+_HISTORY_PERSIST_MAX = 50
+_HISTORY_ENTRY_PERSIST_MAX_BYTES = 4096
 
 
 class InputBar(Widget):
@@ -108,7 +132,17 @@ class InputBar(Widget):
     ) -> None:
         super().__init__(id=id)
         self._slash_commands: list[SlashCommand] = list(slash_commands or [])
-        self._history: list[str] = []
+        # Wave-11 C#1: bounded history + cross-session persistence.
+        # The deque cap prevents long sessions from bloating memory
+        # (a single 4 MB pasted prompt previously stayed pinned for
+        # the whole session). on_mount restores the last
+        # ``_HISTORY_PERSIST_MAX`` entries from
+        # ``.reyn/tui_prefs.json``; ``_submit`` writes back after
+        # each append, with oversized entries
+        # (> ``_HISTORY_ENTRY_PERSIST_MAX_BYTES``) excluded from the
+        # persisted slice but kept in-memory so the current
+        # session can still recall them.
+        self._history: deque[str] = deque(maxlen=_HISTORY_MAX)
         self._history_idx: int = -1
         # Wave-4 ML4: track whether the current TextArea contents came
         # from a history restore + haven't been edited yet. When True,
@@ -140,6 +174,72 @@ class InputBar(Widget):
         try:
             ta = self.query_one("#input", TextArea)
             ta.show_line_numbers = False
+        except Exception:
+            pass
+        # Wave-11 C#1: hydrate history from prefs.
+        self._load_persisted_history()
+
+    def _load_persisted_history(self) -> None:
+        """Restore the persisted history slice into the in-memory deque.
+
+        Best-effort: a missing / malformed prefs file degrades to an
+        empty history (= startup unaffected). Entries are appended in
+        their stored order; oldest first so subsequent appends + Up
+        navigation behave the same as a session that never restarted.
+        """
+        try:
+            from reyn.chat.tui.prefs import load_tui_prefs
+            root = self.app._project_root_path()  # type: ignore[attr-defined]
+        except Exception:
+            return
+        try:
+            prefs = load_tui_prefs(root)
+        except Exception:
+            return
+        raw = prefs.get("input_history") if isinstance(prefs, dict) else None
+        if not isinstance(raw, list):
+            return
+        for item in raw:
+            if isinstance(item, str) and item:
+                self._history.append(item)
+
+    def _save_persisted_history(self) -> None:
+        """Write the last ``_HISTORY_PERSIST_MAX`` entries to prefs.
+
+        Filters out oversized entries (>
+        ``_HISTORY_ENTRY_PERSIST_MAX_BYTES``) so a one-off 4 MB paste
+        doesn't dominate the persisted slice. The in-memory deque
+        still holds the oversized entry — only the persisted view
+        excludes it. Best-effort: a write failure (= read-only FS)
+        leaves the in-memory state intact.
+        """
+        try:
+            from reyn.chat.tui.prefs import load_tui_prefs, save_tui_prefs
+            root = self.app._project_root_path()  # type: ignore[attr-defined]
+        except Exception:
+            return
+        if root is None:
+            return
+        # Build the persisted slice — last N entries that pass the
+        # size gate. Walking from the right (newest) keeps recency
+        # bias if the size gate drops mid-history entries.
+        persisted: list[str] = []
+        for item in reversed(self._history):
+            if not isinstance(item, str):
+                continue
+            if len(item.encode("utf-8", errors="ignore")) > _HISTORY_ENTRY_PERSIST_MAX_BYTES:
+                continue
+            persisted.append(item)
+            if len(persisted) >= _HISTORY_PERSIST_MAX:
+                break
+        persisted.reverse()  # restore chronological order (oldest first)
+        try:
+            prefs = load_tui_prefs(root) or {}
+        except Exception:
+            prefs = {}
+        prefs["input_history"] = persisted
+        try:
+            save_tui_prefs(root, prefs)
         except Exception:
             pass
 
@@ -587,6 +687,11 @@ class InputBar(Widget):
             return
         if not self._history or self._history[-1] != text:
             self._history.append(text)
+            # Wave-11 C#1: persist after a fresh entry lands (= LRU
+            # update would also benefit, but the simple "append-only"
+            # contract is the common case; dedup of last-entry is
+            # already handled above). Best-effort; failures are silent.
+            self._save_persisted_history()
         self._history_idx = -1
         ta.clear()
         # Hide picker on submit (in case it was somehow visible)
