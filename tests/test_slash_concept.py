@@ -154,7 +154,7 @@ async def _run_concept(args: str, *, glossary_path: Path | None = None) -> list[
 
 def _run(coro):  # type: ignore[no-untyped-def]
     import asyncio
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _write_fixture_glossary(tmp_path: Path) -> Path:
