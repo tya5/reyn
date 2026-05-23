@@ -139,10 +139,9 @@ class TestStopWithMustRule:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=[mod.HEURISTIC_STOP_MUST], filter_caller=None)
 
-        assert len(detections) == 1
-        d = detections[0]
-        assert d["heuristic"] == mod.HEURISTIC_STOP_MUST
-        ev = d["evidence"]
+        (only,) = detections
+        assert only["heuristic"] == mod.HEURISTIC_STOP_MUST
+        ev = only["evidence"]
         assert ev["finish_reason"] == "stop"
         assert ev["completion_tokens"] == 0
         assert len(ev["must_rule_excerpts"]) >= 1
@@ -162,8 +161,8 @@ class TestStopWithMustRule:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=[mod.HEURISTIC_STOP_MUST], filter_caller=None)
 
-        assert len(detections) == 1
-        assert detections[0]["heuristic"] == mod.HEURISTIC_STOP_MUST
+        (only,) = detections
+        assert only["heuristic"] == mod.HEURISTIC_STOP_MUST
 
 
 # ---------------------------------------------------------------------------
@@ -189,10 +188,9 @@ class TestEnumViolation:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=[mod.HEURISTIC_ENUM], filter_caller=None)
 
-        assert len(detections) == 1
-        d = detections[0]
-        assert d["heuristic"] == mod.HEURISTIC_ENUM
-        ev = d["evidence"]
+        (only,) = detections
+        assert only["heuristic"] == mod.HEURISTIC_ENUM
+        ev = only["evidence"]
         assert ev["actual_value"] == "skill_c"
         assert "skill_a" in ev["expected_enum"]
         assert "skill_b" in ev["expected_enum"]
@@ -212,7 +210,7 @@ class TestEnumViolation:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=[mod.HEURISTIC_ENUM], filter_caller=None)
 
-        assert len(detections) == 0
+        assert not detections
 
 
 # ---------------------------------------------------------------------------
@@ -238,10 +236,9 @@ class TestToolNameHallucinate:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=[mod.HEURISTIC_TOOL_NAME], filter_caller=None)
 
-        assert len(detections) == 1
-        d = detections[0]
-        assert d["heuristic"] == mod.HEURISTIC_TOOL_NAME
-        ev = d["evidence"]
+        (only,) = detections
+        assert only["heuristic"] == mod.HEURISTIC_TOOL_NAME
+        ev = only["evidence"]
         assert ev["hallucinated_name"] == "skill_improver.direct_llm"
         assert "invoke_skill" in ev["available_names"]
         assert "list_skills" in ev["available_names"]
@@ -261,7 +258,7 @@ class TestToolNameHallucinate:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=[mod.HEURISTIC_TOOL_NAME], filter_caller=None)
 
-        assert len(detections) == 0
+        assert not detections
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +284,7 @@ class TestCleanTrace:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=mod.ALL_HEURISTICS, filter_caller=None)
 
-        assert len(detections) == 0
+        assert not detections
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +312,7 @@ class TestHeuristicsFilter:
         # Only run stop_must — the enum_violation must be ignored
         detections = mod.detect(pairs, heuristics=[mod.HEURISTIC_STOP_MUST], filter_caller=None)
 
-        assert len(detections) == 0, (
+        assert not detections, (
             "stop_must heuristic should not fire; enum_violation should be skipped"
         )
 
@@ -336,8 +333,8 @@ class TestHeuristicsFilter:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=[mod.HEURISTIC_ENUM], filter_caller=None)
 
-        assert len(detections) == 1
-        assert detections[0]["heuristic"] == mod.HEURISTIC_ENUM
+        (only,) = detections
+        assert only["heuristic"] == mod.HEURISTIC_ENUM
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +359,7 @@ class TestFilterCaller:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=mod.ALL_HEURISTICS, filter_caller="router")
 
-        assert len(detections) == 0, "phase:copy record must be skipped when filter is 'router'"
+        assert not detections, "phase:copy record must be skipped when filter is 'router'"
 
     def test_matching_caller_included(self, tmp_path: Path) -> None:
         """Tier 2: a must-rule attractor from caller 'router' is detected when filtering on 'router'."""
@@ -378,8 +375,8 @@ class TestFilterCaller:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=mod.ALL_HEURISTICS, filter_caller="router")
 
-        assert len(detections) == 1
-        assert detections[0]["heuristic"] == mod.HEURISTIC_STOP_MUST
+        (only,) = detections
+        assert only["heuristic"] == mod.HEURISTIC_STOP_MUST
 
 
 # ---------------------------------------------------------------------------
@@ -461,8 +458,7 @@ class TestJsonOutput:
         assert "summary" in data
         assert "detections" in data
         assert isinstance(data["detections"], list)
-        assert len(data["detections"]) == 1
-        det = data["detections"][0]
+        (det,) = data["detections"]
         assert det["heuristic"] == mod.HEURISTIC_ENUM
         assert "evidence" in det
 
@@ -532,6 +528,6 @@ class TestNoMustRuleNotFlagged:
         pairs = mod._pair_records(records)
         detections = mod.detect(pairs, heuristics=[mod.HEURISTIC_STOP_MUST], filter_caller=None)
 
-        assert len(detections) == 0, (
+        assert not detections, (
             "stop_with_must_rule must NOT fire when system prompt has no MUST-rule keyword"
         )
