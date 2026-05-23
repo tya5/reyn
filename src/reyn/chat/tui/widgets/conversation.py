@@ -871,6 +871,36 @@ class ConversationView(Widget):
         """Number of agent replies currently held in the /copy ring buffer."""
         return len(self._recent_replies)
 
+    def find_in_buffer(self, query: str) -> list[tuple[int, str]]:
+        """Return ``(line_idx, line_text)`` for every RichLog line matching ``query``.
+
+        Case-insensitive substring search across the live RichLog
+        buffer (= what's currently scrollable). Lines past the
+        ``_RICHLOG_MAX_LINES`` ring-buffer trim are NOT searched —
+        for older history the user has the right-panel Events tab +
+        the agent-side ``.reyn/events/agents/<name>/`` skill-run
+        directories. Returning the line index lets the caller scroll
+        the log to the match with ``log.scroll_to(y=...)``.
+
+        Empty ``query`` returns an empty list (= the caller treats
+        this as "nothing to search for", typically with a usage hint).
+
+        Each tuple's ``line_text`` carries the line's rendered plain
+        text (= via the Strip's ``.text`` property) so the caller can
+        surface a short preview alongside the line number without
+        re-walking the buffer.
+        """
+        q = (query or "").strip().lower()
+        if not q:
+            return []
+        out: list[tuple[int, str]] = []
+        log = self._log()
+        for idx, strip in enumerate(getattr(log, "lines", []) or []):
+            text = getattr(strip, "text", "") or ""
+            if q in text.lower():
+                out.append((idx, text))
+        return out
+
     def _write_log(self, text: Text) -> None:
         log = self._log()
         log.write(text)
