@@ -289,6 +289,35 @@ class OutboxRouter:
                 if msg.kind == "agent":
                     app._maybe_refresh_status(header)
                     app._maybe_render_cost_suffix(conv)
+                    # ROOT-CAUSE FIX: release the in-flight lock for inline
+                    # LLM reply turns.
+                    #
+                    # router_loop.py:2242 is the SOLE emitter of
+                    # ``kind="agent"`` outbox and fires exactly once at the
+                    # terminal of an inline reply turn (= text-only response,
+                    # no skill dispatch).  The three existing unlock paths
+                    # all miss this case:
+                    #   • ``_on_stream_end`` (line 935) — engine emits 0
+                    #     ``__stream_*__`` outbox messages for inline turns
+                    #     (grep returns 0 emitters); this path is dead for
+                    #     inline replies.
+                    #   • ``_handle_trace_for_skill_row`` "skill done"
+                    #     (app.py:738) — requires a workflow_finished event;
+                    #     chat-level inline turns have no workflow.
+                    #   • slash finally (app.py:865) — text submits don't
+                    #     go through the slash handler.
+                    # Result without this fix: InputBar._in_flight stays True
+                    # forever, swallowing all subsequent Enter keypresses
+                    # silently until Ctrl+C (= action_cancel_inflight).
+                    #
+                    # Idempotent with the existing unlock paths per the same
+                    # contract documented at app_outbox.py:931 and app.py:734:
+                    # set_in_flight(False) is a no-op when already False.
+                    try:
+                        from .widgets import InputBar  # local import — avoid cycle
+                        app.query_one("#inputbar", InputBar).set_in_flight(False)
+                    except Exception:
+                        pass
             except Exception as exc:
                 # A handler crash used to silently break the outbox loop —
                 # the TUI froze on its last frame with no events flowing
