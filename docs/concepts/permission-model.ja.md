@@ -73,6 +73,8 @@ permissions:
 
 ## `mcp_install` パーミッション {#mcp_install-パーミッション}
 
+> [Collapse arc](#collapse-arc571) 中の compat shim 形式。 canonical な decomposition は `file.write: [.reyn/mcp.yaml]` + `http.get: [{host: registry.modelcontextprotocol.io}]` + `secret.write: [<env_key>]`、 下の bool 形式は Phase 4 まで維持される。
+
 `mcp_install` は **設定への新しい MCP サーバーの追加** をゲートします。これはランタイムのツール呼び出しをゲートする `permissions.mcp` とは別物です。
 
 ```yaml
@@ -207,66 +209,60 @@ web:
 - **自己署名証明書の開発環境**: `verify_ssl: false` を設定
 - **env var に関係なく SSL 検証を強制**: `verify_ssl: true` を設定
 
-## 宣言軸の taxonomy（= bool flag と resource list の使い分け）
+## Permission は OS の I/O primitive
 
-`skill.md` frontmatter の `permissions:` ブロックは **3 種類の軸 shape** を混在させている。 本セクションは各軸を明示的に列挙し、 新軸追加時の shape 選定 criterion を確立する。
+permission system は OS runtime の一部であり、 OS の上に乗る別レイヤーではない。 reyn が行う全 side-effect — skill code 由来も、 op handler 由来も、 その他 OS 内部経路由来も — すべて同じ permission resolver を、 呼び出し起点 skill の `PermissionDecl` に対して通る。 inside / outside の区別はない: OS は permission system を、 全 I/O に対する自身の core abstraction として用いる。
 
-### 現状の軸
+具体例: `op_runtime/mcp_install.py` が `.reyn/mcp.yaml` を write するとき、 これは `reyn.safe.file.write` を経由する — skill-level の safe-mode python step が使うのと同じ gate。 スコープ上の PermissionDecl は呼び出し起点 skill のもの、 OS は呼び出し元に関係なく一様に honor する。 旧来の 「OS は caller を gate するが自分自身は gate しない」 framing は、 この単一機構で解消される — 循環の懸念もない。
+
+## 宣言軸の taxonomy
+
+各 side-effect 種別ごとに対応する宣言軸がある。 軸語彙は小さく保たれ、 **bool 軸は真に capability-shaped な操作 — 単一の file / network / secret I/O scope に reducible でないもの — に予約**されている。
+
+### 軸
 
 | 軸 | 型 | 粒度 | gate site | 補足 |
 |---|---|---|---|---|
-| `file.read` | `list[{path, scope}]` | resource（per-path）| `require_file_read()` | scope ∈ {`just_path`, `recursive`} |
-| `file.write` | `list[{path, scope}]` | resource（per-path）| `require_file_write()` | write / edit / delete を包含 |
-| `python` | `list[{module, function, mode, timeout}]` | resource（per-step）| `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
-| `mcp` | `list[str]` | resource（per-server）| MCP 呼び出し時 implicit | サーバー名の allowlist |
-| `tool` | `list[str]` | resource（per-tool）| `require_tool()` | 名前指定 tool allowlist |
+| `file.read` | `list[{path, scope}]` | per-path | `require_file_read()` | scope ∈ {`just_path`, `recursive`} |
+| `file.write` | `list[{path, scope}]` | per-path | `require_file_write()` | write / edit / delete を包含 |
+| `http.get` | `list[{host}]` | per-host | 未実装（Phase 3）| `reyn.safe.http.*` 用 |
+| `secret.write` | `list[<key>]` | per-key | 未実装（Phase 3）| `~/.reyn/secrets.env` write 用 |
+| `mcp` | `list[str]` | per-server | MCP 呼び出し時 implicit | サーバー名の allowlist |
+| `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
+| `tool` | `list[str]` | per-tool | `require_tool()` | 名前指定 tool allowlist |
 | `shell` | `bool` | abstract | `require_shell()` | binary（= shell 全般へのアクセス）|
-| `mcp_install` | `bool`（宣言）+ per-server approval key | hybrid | `require_mcp_install()` | 宣言は bool / approval は `<server_id>` キーで永続 |
-| `mcp_drop_server` | `bool`（同 shape）| hybrid | `require_mcp_drop_server()` | `mcp_install` の counter-op |
-| `index_drop` | `bool`（同 shape）| hybrid | `require_index_drop()` | RAG corpus / source の drop |
-| `cron_register` | `bool`（同 shape、 per-job approval）| hybrid | `require_cron_register()` | register / unregister / enable / disable をまとめて |
-| `allowed_mcp` | `list[str]` または `None` | ACL filter | MCP 呼び出し時 implicit | per-agent restriction、 `mcp` 軸とは cross-cut |
+| `allowed_mcp` | `list[str] \| None` | ACL filter | MCP 呼び出し時 implicit | per-agent restriction、 `mcp` 軸と cross-cut |
 
-### Criterion — `bool` 軸 vs `list` 軸
+### `shell` だけが bool である理由
 
-ある capability が **bool 軸** に属するのは、 **以下を全て満たす** とき:
+`shell` は任意 command の process exec。 side-effect 集合が unbounded（= shell command は任意 file の read / 任意 file の write / 任意 host への network ができる）で、 作者は具体的な invocation がどの side-effect を引き起こすかを enumeration できない。 単一 I/O scope に reduce する余地がない — process exec **そのものが** irreducible primitive。
 
-1. その capability が起こす **side-effect 集合** が単一 resource scope で表現できない（= config write + chain notify + state_change emit のような複合効果、 `mcp_install` triad が典型）。
-2. Skill 作者が write-time に対象 instance を列挙できない（= 「どの server を install するか」 は runtime に user / LLM が決める、 skill 作者には不可知）。
-3. user が runtime に **per-instance** 承認面を見たい — 宣言は intent shape（= bool）でも、 approval は resource-keyed という hybrid shape。
+他の旧 bool 軸（`mcp_install` / `mcp_drop_server` / `cron_register` / `index_drop`）はいずれも、 実際には小さな file / network / secret 操作の集合に reducible であることが判明したため、 1 つ以上の list 軸へと表現し直された:
 
-ある capability が **list 軸** に属するのは、 **以下を全て満たす** とき:
+| 旧 bool 軸 | 等価な list 軸 decomposition |
+|---|---|
+| `mcp_install: true` | `file.write: [.reyn/mcp.yaml]` + `http.get: [{host: registry.modelcontextprotocol.io}]` + `secret.write: [<env_key>]` |
+| `mcp_drop_server: true` | `file.write: [.reyn/mcp.yaml]` |
+| `cron_register: true` | `file.write: [.reyn/cron.yaml]` |
+| `index_drop: true` | `file.write: [.reyn/index/sources.yaml]` + `.reyn/index/<source>/index.db` の delete |
 
-1. 単一の I/O scope に reducible（= 1 path / 1 host / 1 server）。
-2. Skill 作者が write-time に inventory を知っている（= 「これらの path を読む」）。
-3. runtime per-instance prompt は不要（= list 自体が scope、 config tier が ask しない限り追加 prompt なし）。
+criterion: **capability が有限の I/O scope（file path / host / secret key）に reducible なら list 軸、 そうでなければ bool**。 現状、 唯一の irreducible primitive は shell のみ。
 
-**`allowed_mcp` ACL 軸** は 3 つめの shape — capability を grant せず、 既に grant 済の resource list の **subset を agent ごとに restrict** する。 ACL filter は bool / list 両軸を cross-cut する別系統。
+### collapse で失ったもの・失わなかったもの
 
-例示:
+bool 軸は per-instance approval surface を持っていた（= `mcp_install:<server_id>` のように server ごとに key 化）。 collapse 後:
 
-| Capability | shape | 理由 |
-|---|---|---|
-| `file.write` | list（resource）| 単一 I/O scope（= 1 path）、 作者が inventory を知る、 chain effect なし |
-| `mcp_install` | bool（hybrid）| side-effect 集合（= config write + emit + notify）、 server name は runtime 決定、 user が per-server prompt 希望 |
-| `shell` | bool | side-effect 集合 unbounded（= 任意プロセス実行）、 作者は 「これらの command」 と列挙不可 |
-| `cron_register` | bool（hybrid）| side-effect 集合（= cron.yaml write + emit）、 job name は runtime 決定、 per-job approval key |
+- **MCP の per-server 粒度は保持される**: call 時点で既存 `permissions.mcp: [<server>]` 軸が依然として per-server gate を効かせる。 server install（= `.reyn/mcp.yaml` への write）は 1 段階の grant になるが、 specific server を使う段階で再度 per-server check が走るため、 server package の download + execute は call-time gate の範疇に収まる。
+- **cron の per-job 粒度は減る**: 「`.reyn/cron.yaml` に書ける」 の 1 段階に集約される。 ただし cron 発火で起動される skill は実行時に自身の permission gate を再度通るため、 下流の保護は bypass されない。
+- **index の per-source 粒度は減る**: post-write gate に相当するものはない。 drop は destructive op であり、 per-source 区別は security ではなく operator UX の話だったので、 粒度減は accept する。
 
-### 隠れた軸 — 「intent ↔ raw I/O」 correlation
+### `allowed_mcp` は ACL filter であって capability ではない
 
-bool 軸は **intent** を宣言するが、 実際の side-effect（= file write / HTTP / process spawn）は **underlying primitive** を通る。 同じ raw I/O が直接到達可能（= `file.write` の default-zone path 経由）な場合、 bool 軸の intent は **bypass 可能**。
+`allowed_mcp` は capability を grant しない — すでに grant 済の `mcp` server list の **subset を agent ごとに restrict** する。 ACL filter は capability 軸と cross-cut する別系統。
 
-具体例: `mcp_install: true` は 「この skill は MCP server を install する」 と宣言するが、 副作用（= `.reyn/mcp.yaml` への write）は `reyn.safe.file.write(".reyn/mcp.yaml", ...)` でも到達可能 — `.reyn/` が default-zone write path に含まれるため。 2 経路の reconcile が無い — 後述 [Known gaps](#known-gaps-2026-05-23-監査-追跡は個別-pr) 参照。
+## Trust boundary レイヤー
 
-提案する canonical correlation rule（= 未実装）:
-
-> bool 軸 B が記述する side-effect 集合に raw I/O R が含まれる場合、 R をどの経路（宣言済 list / default zone / OS 内部 code 経由）で実行しても B の gate を通過する必要がある。
-
-現実装は 4 つの bool 軸（`mcp_install` / `mcp_drop_server` / `index_drop` / `cron_register`）いずれもこの rule を強制していない。
-
-## Trust boundary レイヤー（= 強制が実際どこで掛かるか）
-
-side-effect を実行する 4 つの surface を強制力の強い順に:
+side-effect を実行する surface を強制力の強い順に:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐  ← 最強
@@ -283,79 +279,46 @@ side-effect を実行する 4 つの surface を強制力の強い順に:
 │    `--allow-unsafe-python` opt-in 後は gate なし              │
 │    宣言による trust（= 作者が step の安全性を保証）            │
 ├──────────────────────────────────────────────────────────────┤
-│  reyn パッケージ内部（OS handler / registry client）          │  ← 最弱
-│    permission_resolver は call path に居ない                  │
-│    Trust boundary: このコードは OS 自身、 caller を gate するが │
-│    自分自身は gate されない                                   │
+│  reyn パッケージ内部（op handler / registry client）          │
+│    skill code と同じ `reyn.safe.*` primitive を、 呼び出し     │
+│    起点 skill の PermissionDecl に対して使用                  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-最上層・最下層は意図的な非対称、 中 2 層は現状制限:
-
 - **最上層 (sandboxed_exec)** は OS-kernel 強制を持つ唯一のレイヤー。 argv / network / fs scope を per-call で declarative 宣言、 platform sandbox が強制。
-- **最下層 (reyn パッケージ内部)** は構造的に trust 内側 — OS が caller を gate、 自分自身は gate しない。 ここに gate を足すには (a) OS 内部の permission model 別建て（= 循環）、 もしくは (b) I/O を `op_runtime` 層に移す（= 既に gate がある層）必要があり、 どちらも architectural commitment が大きい。
-- **safe-mode python** は honor system: AST validation が `import os` を弾き、 `reyn.safe.file` が宣言済 path を check。 motivated な user が `mode: unsafe` で bypass 可、 通常の `mode: safe` author が accidentally bypass はしにくい。
-- **unsafe-mode python** は宣言 trust: operator が runtime に `--allow-unsafe-python` を承認、 step が host へのフルアクセスを持つことを accept。
+- **内部 OS code** は skill code と同じ `reyn.safe.*` primitive を、 呼び出し起点 skill の PermissionDecl に対して使う。 inside / outside の区別はない — OS は自身の permission 機構を一様に使う。
+- **safe-mode python** は honor system: AST validation が `import os` を弾き、 `reyn.safe.*` が宣言済 path / host / key を check する。 motivated な user が `mode: unsafe` で bypass する余地はあるが、 通常の `mode: safe` author が accidentally bypass することはない。
+- **unsafe-mode python** は宣言 trust: operator が runtime に `--allow-unsafe-python` を承認、 step が host へのフルアクセスを持つことを accept する。
 
-## 業界比較（= 設計選択の参照）
+## 業界比較
 
 | Platform | 宣言 shape | runtime ask | 粒度 | 強制レイヤー |
 |---|---|---|---|---|
 | iOS (TCC + Entitlements) | `Info.plist` capability + purpose string | First-use prompt | Capability axis | OS kernel + signed entitlements |
 | Android (≥ M) | `AndroidManifest.xml` `uses-permission` | dangerous tier に first-use prompt | Permission class + scoped storage | OS kernel + per-app UID |
-| Web Permissions API | feature ごとに query | per-permission prompt | **Origin-scoped**（= per-domain capability）| Browser sandbox |
+| Web Permissions API | feature ごとに query | per-permission prompt | Origin-scoped（= per-domain capability）| Browser sandbox |
 | Anthropic Claude Code | Tool list（Bash / Edit / Read / Write）| デフォルトでは無、 sandbox-mode で opt-in | Tool 名（path scope なし）| Seatbelt（sandbox-mode）または trust |
 | MCP servers | server side で tool list 公開 | server がオーナーシップ | per-tool、 server 定義 | プロセス境界 |
-| **Reyn** | `permissions:` ブロック（本 doc）| startup_guard + first-use interactive | **Hybrid**（= per-path list + abstract bool）| safe-mode は AST + honor system / `sandboxed_exec` のみ kernel |
+| **Reyn** | `permissions:` ブロック（list 軸主体、 bool は `shell` のみ）| startup_guard + first-use interactive | per-path / per-host / per-server（resource scope）| safe-mode は AST + `reyn.safe.*` honor system / `sandboxed_exec` のみ kernel |
 
-業界の主流は **abstract capability 宣言 + runtime per-instance prompt + OS-kernel 強制**。 Reyn は 2 軸で乖離:
+Reyn は iOS / Android の 「capability + first-use prompt」 主流から 2 軸で乖離する:
 
-1. **粒度は業界標準より細かい** — path-list `file.read` / `file.write` は iOS / Android の capability axis より Web の origin-scope に近い。 正当化: Reyn skill は workflow code（= 作者が file inventory を知る）、 iOS / Android app は general-purpose（= 作者が write-time に列挙不可）。
-2. **safe-mode python の強制は honor system** — iOS / Android は kernel boundary、 Reyn は AST + path-list check。 Trade-off: 実装簡素（= per-step seatbelt セットアップ不要） vs 強制の弱さ。
+1. **粒度は業界標準より細かい** — list 軸の path / host / server scope は iOS / Android の capability axis より Web の origin-scope に近い。 正当化: Reyn skill は workflow code（= 作者が inventory を知る）、 iOS / Android app は general-purpose。
+2. **safe-mode python の強制は honor system** — iOS / Android は kernel boundary、 Reyn は AST validation + path / host / key の check を `reyn.safe.*` primitive 経由で行う。 Trade-off: 実装簡素（= per-step seatbelt セットアップ不要） vs 強制の弱さ。
 
-これらの乖離は明示的な design choice だが、 safe-mode-python honor-system contract に制約を課す: `reyn.safe.*` を bypass する経路（= AST hole / 直接 I/O path で AST が捕捉しないもの）は宣言 path check を silently escape する。 上の criterion section で挙げた bool 軸 cross-cutting correlation rule は、 この honor-system 破綻が最も visible に現れる surface である。
+## Collapse arc（#571）
 
-## Known gaps (2026-05-23 監査、 追跡は個別 PR)
+上の軸 taxonomy は target state。 2026-05-23 監査（#571）で、 旧設計が `mcp_install` / `mcp_drop_server` / `cron_register` / `index_drop` の 4 つの bool 軸を持っており、 これらが `file.write` 軸と重複していることが識別された — side-effect はいずれも canonical な `.reyn/*.yaml` への write に reducible で、 そして `reyn.safe.file.write` 経由で到達可能であったため、 bool 軸は新たな capability を gate するのではなく既存 capability を二重 gate していた。 Collapse arc はこれを段階的に除去する:
 
-2026-05-23 軸 taxonomy 監査で identify した 3 つの architectural inconsistency。 個別 PR で remediation する前提で、 gap を明示する目的でここに記録。
+| Phase | scope | 状態 |
+|---|---|---|
+| 1 | 本 doc — 「permission is an OS I/O primitive」 と collapse map を articulate | 本 PR |
+| 2 | `op_runtime` handler（= `mcp_install` / `mcp_drop_server` / `cron_register` / `index_drop`）を `reyn.safe.file.write` 経由化、 loader compat shim で bool 形式と list 形式を両方受け付け | 後続 PR |
+| 3 | `http.get: [{host}]` 軸（= `reyn.safe.http.*` を per-host gate）と `secret.write: [<key>]` 軸（= `~/.reyn/secrets.env` write を per-key gate）を新設 | 後続 |
+| 4 | stdlib skill 全体を明示 list 形式に移行 | 後続 |
+| 5 | bool 軸（`mcp_install` 等）と `require_mcp_install` / `require_cron_register` / `require_index_drop` / `require_mcp_drop_server` を OS surface から撤去 | 後続 |
 
-### Gap A — bool intent vs raw I/O default-zone bypass
-
-4 つの bool 軸（`mcp_install` / `mcp_drop_server` / `index_drop` / `cron_register`）は **intent** を宣言するが、 その side-effect 集合（= `.reyn/` 配下への config write）は `reyn.safe.file.write()` 経由でも到達可能 — `.reyn/` が default-zone write path のため（= `src/reyn/kernel/preprocessor_executor.py:493-499`）。
-
-具体的 bypass: safe-mode python step は `.reyn/mcp.yaml` を直接 write して MCP server registry を変更できる、 `mcp_install: true` 宣言なし + `require_mcp_install()` 承認 prompt なしで。
-
-Remediation 候補（= 後続 PR）:
-
-- Cross-axis correlation gate: `_check_write(path)` で 「raw I/O → bool 軸」 registry（= `.reyn/mcp.yaml` → `mcp_install` / `.reyn/cron.yaml` → `cron_register` 等）を consult、 path match 時に bool 軸も追加強制。
-- もしくは canonical な MCP registry mutation を `safe.file` 経由から外す（= `op_runtime/mcp_install.py` 内のみに keep、 safe.file 層で直接 write を refuse）。
-
-cross-cutting rule は上の [宣言軸の taxonomy](#宣言軸の-taxonomy-bool-flag-と-resource-list-の使い分け) section に articulate 済、 現実装はこれを強制していない。
-
-### Gap B — reyn パッケージ内部コードが permission resolver を経由しない
-
-OS 内部 code（= `src/reyn/registry/client.py` の MCP registry HTTP、 `src/reyn/op_runtime/mcp_install.py` の config write）は `PermissionResolver` を consult せず I/O を実行する。 これは意図的な trust boundary（= OS が caller を gate、 自分自身は gate しない）だが、 境界が undocumented。
-
-この gap は **必ずしも bug ではない**: OS 内部 code への厳密な gate は (a) OS 内部の permission model 別建て（= 循環）か (b) I/O を `op_runtime` 層に押し出す（= 既に gate がある）かのいずれかが必要で、 どちらも architectural commitment が大きい。
-
-Disposition: known trust-boundary choice として記録。 具体的な OS 内部 I/O path が user-visible になり operator が gate を要求する場合（= 例: MCP registry call の `web.fetch` event ログ化）に re-open。
-
-### Gap C — `safe.http` は存在するが gate されていない
-
-`src/reyn/safe/http.py`（= FP-0042 Phase 3 drift-fix で landed）は `get` / `post` / `put` / `delete` を ship — urllib-backed、 AST allowlist 経由で safe-mode step から呼び出し可。 しかし **per-call permission gate を持たない**: module の docstring 自体が 「ここでの "safe" は namespace 役割（= AST-allowlisted）であって、 `reyn.safe.file` が enforce する per-call permission-resolver pattern ではない」 と明示し、 設計解決先として本 issue を参照している。
-
-現状の stdlib 使用:
-
-- `mcp_search` / `mcp_install` は domain-specific `reyn.safe.mcp.registry`（= hardcoded registry URL、 host は skill から見えない）を使用。
-- `skill_search` / `skill_importer` は bare `reyn.safe.http.get`（= 任意 URL、 host check なし）を使用。
-
-宣言 shape の design question（= gate を追加するときの形）は依然として:
-
-- **per-host allowlist**（= `http.get: [{host: "registry.modelcontextprotocol.io"}]`）— resource-list criterion 合致（= 単一 I/O scope、 作者が inventory を知る）。
-- **bool flag**（= `http: true`）— bool criterion 合致は HTTP が fetch 自体を超える side-effect を持つ場合のみ（= 定義上 HTTP GET は read-only でそれを持たない）。
-- **method + origin-scope**（= Web Permissions API style）— 業界 pattern に最も近く、 Reyn の workflow-code use case に granular 十分。
-
-上の criterion section の規則によれば: HTTP read は単一 I/O scope、 作者が host を write-time に知る、 fetch 以外の side-effect なし → **resource list、 bool ではない**。 現在の un-gated state が gap、 `safe.http` に per-host allowlist を追加するのが整合した remediation。
+Phase 1–4 の間、 bool 形式（= `mcp_install: true`）は compat shim として受け付けられ、 暗黙的に等価な list 軸 decomposition に展開される。 Phase 5 で bool 形式は撤去される。
 
 ## `python` パーミッションと `mode: safe` allowlist
 
