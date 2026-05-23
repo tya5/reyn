@@ -130,6 +130,14 @@ class ReynTUIApp(App):
         Binding("alt+up", "conv_scroll_line_up", "Scroll up 1 line", priority=True, show=False),
         Binding("alt+down", "conv_scroll_line_down", "Scroll down 1 line", priority=True, show=False),
         Binding("alt+end", "conv_scroll_end", "Scroll to bottom", priority=True, show=False),
+        # ``/find`` cycle navigation. After ``/find <query>`` lands the
+        # first match, Ctrl+G cycles forward and Ctrl+Shift+G cycles
+        # backward through the remaining matches (with wrap). When no
+        # prior ``/find`` query is set, the action surfaces a usage hint
+        # rather than silently no-op'ing. ``priority=True`` so the keys
+        # win against any widget-level binding.
+        Binding("ctrl+g", "find_next", "Find next match", priority=True, show=False),
+        Binding("ctrl+shift+g", "find_prev", "Find prev match", priority=True, show=False),
     ]
 
     _REYN_THEME = Theme(
@@ -163,6 +171,10 @@ class ReynTUIApp(App):
         self._banner = banner
         self._no_restore = no_restore
         self._outbox_task: asyncio.Task | None = None
+        # OutboxRouter instance, kept on the app so actions outside the
+        # outbox loop (= Ctrl+G / Ctrl+Shift+G ``/find`` cycle navigation)
+        # can reach the find-cycle state living on the router.
+        self._outbox_router = None  # type: ignore[assignment]
         self._panel_visible = False
         self._cancel_event: asyncio.Event = asyncio.Event()
         # Most-recent "nothing-in-flight cancel" timestamp, used to
@@ -321,7 +333,11 @@ class ReynTUIApp(App):
         if self._agent_registry is None:
             return
         from .app_outbox import OutboxRouter
-        await OutboxRouter(self).run()
+        self._outbox_router = OutboxRouter(self)
+        try:
+            await self._outbox_router.run()
+        finally:
+            self._outbox_router = None
 
     def _mount_intervention(
         self,
@@ -1299,6 +1315,20 @@ class ReynTUIApp(App):
             conv.scroll_to_bottom()
         except Exception:
             pass
+
+    def action_find_next(self) -> None:
+        """Ctrl+G — cycle to the next ``/find`` match (wraps to first)."""
+        router = self._outbox_router
+        if router is None:
+            return
+        router.cycle_find(+1)
+
+    def action_find_prev(self) -> None:
+        """Ctrl+Shift+G — cycle to the previous ``/find`` match (wraps to last)."""
+        router = self._outbox_router
+        if router is None:
+            return
+        router.cycle_find(-1)
 
     def action_next_turn(self) -> None:
         """ctrl+n — scroll the conversation log to the next agent turn."""

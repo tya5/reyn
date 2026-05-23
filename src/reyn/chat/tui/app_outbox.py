@@ -157,6 +157,15 @@ class OutboxRouter:
         # timer before installing a new one, and cancel it outright when a
         # live thinking-status arrives so it can't kill the agent's spinner.
         self._transient_status_timer = None  # type: ignore[assignment]
+        # ``/find`` cycle navigation state. Set by ``_on_find`` when a
+        # query produces ≥ 1 match; consumed by ``cycle_find`` driven
+        # from the Ctrl+G / Ctrl+Shift+G app actions. Re-searches the
+        # live RichLog buffer on every cycle so buffer mutations (= new
+        # lines streamed in mid-cycle) don't leave stale indices. None
+        # query ⇒ no prior /find ran this session ⇒ Ctrl+G surfaces a
+        # usage hint rather than silently no-op'ing.
+        self._find_query: str | None = None
+        self._find_cursor_idx: int | None = None
         # Dispatch table — each entry maps a `msg.kind` to its handler.
         # Methods on `self` are bound, so we can reference them directly.
         self.HANDLERS: dict[str, Callable[..., str | None]] = {
@@ -534,7 +543,9 @@ class OutboxRouter:
             the current scroll position (= "go down to where the
             result is"; wraps to the first match when no downward
             match exists) AND write a status line with the total
-            count + up to 5 line numbers
+            count + up to 5 line numbers, AND seed the cycle state
+            so Ctrl+G / Ctrl+Shift+G can step forward/backward
+            through the remaining matches.
 
         Search target: the live RichLog buffer (= what's currently
         scrollable). History past the ``_RICHLOG_MAX_LINES`` trim is
@@ -552,6 +563,11 @@ class OutboxRouter:
             return
         matches = conv.find_in_buffer(query)
         if not matches:
+            # Forget any stale cycle state so a follow-up Ctrl+G
+            # reports the no-match condition for THIS query, not a
+            # ghost from a previous one.
+            self._find_query = None
+            self._find_cursor_idx = None
             self._show_transient_status(
                 conv,
                 f"no matches for '{query}'",
@@ -574,9 +590,15 @@ class OutboxRouter:
             conv._user_scrolled = True
         except Exception:
             pass
+        # Seed cycle state so Ctrl+G picks up from here.
+        self._find_query = query
+        self._find_cursor_idx = target_idx
         # Compose the status line. Showing the first 5 line numbers
         # gives the user a sense of distribution without overwhelming
-        # the 1-line sticky budget.
+        # the 1-line sticky budget. Same format the initial ``/find``
+        # PR introduced — match cycle (Ctrl+G) uses a shorter
+        # ``"match N/M · line K"`` shape so the overview stays here
+        # and the cycle just reports position.
         line_nums = [str(m[0] + 1) for m in matches[:5]]
         if len(matches) > 5:
             line_nums.append(f"+{len(matches) - 5} more")
@@ -584,6 +606,93 @@ class OutboxRouter:
             conv,
             f"{len(matches)} match{'es' if len(matches) != 1 else ''} for "
             f"'{query}' · lines {', '.join(line_nums)}",
+        )
+
+    def cycle_find(self, direction: int) -> None:
+        """Step to the next/previous ``/find`` match (Ctrl+G / Ctrl+Shift+G).
+
+        ``direction``: ``+1`` for forward (next), ``-1`` for backward (prev).
+
+        Behaviour:
+          - No prior ``/find`` query in this session → surface a usage
+            hint (= "no active /find query — try /find <text>"). Silent
+            no-op would leave the user thinking the keybinding is broken.
+          - Prior query had matches BUT the buffer has since mutated so
+            none survive → status ``"no matches for '<q>'"`` AND clear
+            the cycle state so a subsequent Ctrl+G after a new /find
+            starts fresh.
+          - Otherwise: re-run ``find_in_buffer`` (= cheap; bounded by
+            the RichLog ring buffer), locate the current cursor in the
+            sorted match list, advance by ``direction`` with wrap, scroll
+            the log to the new target, write status ``"match N/M for
+            '<q>' · line <ln>"`` and update the cursor.
+
+        Re-searching on every cycle keeps indices honest under streaming
+        — between two Ctrl+G presses the agent might have appended new
+        text that shifts line numbers; a cached match list would
+        scroll-to a stale offset and feel "drifty". The cost is one
+        substring scan per keypress (= O(N) over the bounded buffer).
+        """
+        if direction not in (-1, +1):
+            return
+        query = self._find_query
+        if not query:
+            try:
+                conv = self._app.query_one("#conversation", ConversationView)
+            except Exception:
+                return
+            self._show_transient_status(
+                conv,
+                "no active /find query — try /find <text>",
+                kind="error",
+            )
+            return
+        try:
+            conv = self._app.query_one("#conversation", ConversationView)
+        except Exception:
+            return
+        matches = conv.find_in_buffer(query)
+        if not matches:
+            self._find_query = None
+            self._find_cursor_idx = None
+            self._show_transient_status(
+                conv,
+                f"no matches for '{query}'",
+                kind="error",
+            )
+            return
+        # Locate the current cursor in the sorted match list. If the
+        # cursor's exact idx isn't in the list (= the line drifted out
+        # of the buffer, or the cursor was never set), fall back to
+        # "nearest by line index" so wrap-around still behaves
+        # predictably.
+        idxs = [idx for idx, _ in matches]
+        cursor = self._find_cursor_idx
+        if cursor is None or cursor not in idxs:
+            # Pick the closest position by line index so the next step
+            # feels continuous with the user's last viewport.
+            if cursor is None:
+                pos = 0
+            else:
+                pos = min(
+                    range(len(idxs)),
+                    key=lambda i: abs(idxs[i] - cursor),  # type: ignore[arg-type]
+                )
+        else:
+            pos = idxs.index(cursor)
+        new_pos = (pos + direction) % len(matches)
+        target_idx = matches[new_pos][0]
+        try:
+            log = conv._log()
+            log.scroll_to(y=target_idx, animate=False)
+            conv._user_scrolled = True
+        except Exception:
+            pass
+        self._find_cursor_idx = target_idx
+        self._show_transient_status(
+            conv,
+            f"match {new_pos + 1}/{len(matches)} for '{query}' "
+            f"· line {target_idx + 1}",
         )
 
     def _on_docs_filter(
