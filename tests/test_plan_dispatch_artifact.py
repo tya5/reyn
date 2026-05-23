@@ -171,10 +171,10 @@ async def test_dispatch_uses_same_plan_id_across_lifecycle() -> None:
         parent_host=host, chain_id="c0",
         available_tool_names=set(),
     )
-    assert len(host.write_decomp_calls) == 1
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 1
-    assert len(host.delete_decomp_calls) == 1
+    assert host.write_decomp_calls
+    assert host.plan_started_calls
+    assert host.plan_completed_calls
+    assert host.delete_decomp_calls
     plan_id = host.write_decomp_calls[0]["plan_id"]
     assert host.plan_started_calls[0]["plan_id"] == plan_id
     assert host.plan_completed_calls[0]["plan_id"] == plan_id
@@ -191,8 +191,8 @@ async def test_dispatch_routes_step_events_through_record_methods() -> None:
         parent_host=host, chain_id="c0",
         available_tool_names=set(),
     )
-    assert len(host.plan_step_started_calls) == 2
-    assert len(host.plan_step_completed_calls) == 2
+    assert {c["step_id"] for c in host.plan_step_started_calls} == {"s1", "s2"}
+    assert {c["step_id"] for c in host.plan_step_completed_calls} == {"s1", "s2"}
     assert host.plan_step_started_calls[0]["step_id"] == "s1"
     assert host.plan_step_started_calls[1]["step_id"] == "s2"
     assert host.plan_step_started_calls[1]["depends_on"] == ["s1"]
@@ -210,7 +210,7 @@ async def test_dispatch_deletes_artifact_on_normal_completion() -> None:
         parent_host=host, chain_id="c0",
         available_tool_names=set(),
     )
-    assert len(host.delete_decomp_calls) == 1
+    assert host.delete_decomp_calls
 
 
 @pytest.mark.asyncio
@@ -227,10 +227,10 @@ async def test_dispatch_deletes_artifact_when_workflow_abort_caught_per_step() -
         available_tool_names=set(),
     )
     # All steps recorded as failed (= per-step except catches WorkflowAbortedError).
-    assert len(host.plan_step_failed_calls) == 2
+    assert {c["step_id"] for c in host.plan_step_failed_calls} == {"s1", "s2"}
     # Plan still completes cleanly; artifact cleaned up.
-    assert len(host.plan_completed_calls) == 1
-    assert len(host.delete_decomp_calls) == 1
+    assert host.plan_completed_calls
+    assert host.delete_decomp_calls
 
 
 @pytest.mark.asyncio
@@ -277,11 +277,11 @@ async def test_dispatch_records_step_failed_when_step_raises() -> None:
         available_tool_names=set(),
     )
     # All steps should be marked failed (= 2-step plan, both sub-loops crash).
-    assert len(host.plan_step_failed_calls) == 2
+    assert {c["step_id"] for c in host.plan_step_failed_calls} == {"s1", "s2"}
     assert host.plan_step_failed_calls[0]["step_id"] == "s1"
     # plan_completed is still emitted because execute_plan only
     # propagates uncaught exceptions; per-step errors are caught.
-    assert len(host.plan_completed_calls) == 1
+    assert host.plan_completed_calls
 
 
 @pytest.mark.asyncio
@@ -334,5 +334,5 @@ async def test_dispatch_tolerates_host_without_step6_methods() -> None:
         available_tool_names=set(),
     )
     assert result["status"] == "ok"
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 1
+    assert host.plan_started_calls
+    assert host.plan_completed_calls

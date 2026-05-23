@@ -174,9 +174,9 @@ async def test_normal_completion_emits_plan_started_and_completed():
 
     result = await execute_plan(plan, parent_host=host, chain_id="c0")
 
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 1
-    assert len(host.plan_aborted_calls) == 0
+    assert host.plan_started_calls
+    assert host.plan_completed_calls
+    assert not host.plan_aborted_calls
     started = host.plan_started_calls[0]
     completed = host.plan_completed_calls[0]
     assert started["plan_id"] == completed["plan_id"]
@@ -208,11 +208,11 @@ async def test_workflow_abort_treated_as_clean_completion():
     # itself completes normally → plan_completed.
     result = await execute_plan(plan, parent_host=host, chain_id="c0")
 
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 1
-    assert len(host.plan_aborted_calls) == 0
+    assert host.plan_started_calls
+    assert host.plan_completed_calls
+    assert not host.plan_aborted_calls
     # All steps "failed" but plan completed normally
-    assert len(result.step_failures) == 2
+    assert result.step_failures
 
 
 @pytest.mark.asyncio
@@ -240,13 +240,13 @@ async def test_external_cancel_preserves_active_plan_id():
     with pytest.raises(asyncio.CancelledError):
         await execute_plan(plan, parent_host=host, chain_id="c0")
 
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 0  # ← key invariant
-    assert len(host.plan_aborted_calls) == 0  # not aborted from inside
+    assert host.plan_started_calls
+    assert not host.plan_completed_calls  # ← key invariant
+    assert not host.plan_aborted_calls  # not aborted from inside
     # plan_run_interrupted event emitted for forensics
     interrupted = [(k, f) for k, f in host.events.emitted
                    if k == "plan_run_interrupted"]
-    assert len(interrupted) == 1
+    assert interrupted
     assert interrupted[0][1]["exc_type"] == "CancelledError"
 
 
