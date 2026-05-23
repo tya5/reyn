@@ -162,11 +162,15 @@ API keys and tokens belong in `~/.reyn/secrets.env` (managed via `reyn secret se
 
 MCP operations are gated at two points:
 
-### Install-time gate: `permissions.mcp_install`
+### Install-time gate: `file.write` + `http.get`
 
-Before any MCP server can be added to the configuration, the `mcp_install` permission gate fires. This applies to `reyn mcp install` and to any `mcp_install` Control IR op emitted by a skill. The default is `ask` — an interactive prompt on first install.
+Before any MCP server can be added to the configuration, the install op's writes go through the OS's standard list-axis gates. The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed in the #571 collapse arc (Phase 5, 2026-05-23) — install gating now flows through:
 
-Enterprise teams can set `permissions.mcp_install: deny` in a project-scoped `reyn.yaml` to prevent all server additions, or combine `mcp_install: allow` with a private registry to enforce "approved servers only" policy:
+- `file.write` on `.reyn/mcp.yaml` (= the canonical mutation target). `startup_guard` prompts the operator once per skill+path; runtime is silent after approval.
+- `http.get` on `registry.modelcontextprotocol.io` (= the registry fetch). Same prompt model.
+- `secret.write` on the env-var keys the registry declares as `isSecret` (= wildcard `"*"` because the key set is runtime-determined).
+
+Enterprise teams use the project-scope `reyn.yaml` to enforce policy:
 
 ```yaml
 # enterprise reyn.yaml — team-wide policy
@@ -175,10 +179,13 @@ mcp:
     - https://mcp-registry.internal.acme.com/    # private registry (approved servers only)
     - https://registry.modelcontextprotocol.io/   # public fallback
 permissions:
-  mcp_install: allow    # team can install, but only from the private registry
+  web.fetch: allow      # team can fetch from any host in the registries; the registry ordering does the gating
+  file.write: allow     # blanket approval for .reyn/mcp.yaml writes
 ```
 
-See [Concepts: permission model — `mcp_install`](permission-model.md#mcp_install-permission) for the full scope-tier interaction and enterprise use cases.
+See [Concepts: permission model](permission-model.md) → "Collapse arc" for the full migration story.
+
+> Legacy `permissions.mcp_install: ...` keys in older `reyn.yaml` files are accepted with a `DeprecationWarning` and translate to the equivalent gates during the migration window.
 
 ### Runtime gate: `permissions.mcp`
 
@@ -252,5 +259,5 @@ If you find yourself wishing MCP could do one of these, you're at the wrong laye
 - [Reference: `reyn secret`](../reference/cli/secret.md) — universal secret management
 - [Concepts: secret handling](secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
 - [Reference: `reyn.yaml`](../reference/config/reyn-yaml.md#mcp-servers) — full `mcp.servers:` schema
-- [Concepts: permission model](permission-model.md) — `mcp_install` and `permissions.mcp`
+- [Concepts: permission model](permission-model.md) — `file.write` / `http.get` / `permissions.mcp` and the collapse arc
 - [modelcontextprotocol.io](https://modelcontextprotocol.io) — the spec, server registry, official SDKs

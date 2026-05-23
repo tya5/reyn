@@ -154,7 +154,7 @@ permissions:
 
 **`MCP config references undefined environment variable: ${TOKEN}`.** A `${VAR}` reference in the config didn't resolve. Run `reyn secret set TOKEN` to store the value, or export the variable in your shell. Missing vars expand to empty string and warn rather than fail.
 
-**`mcp_install` permission prompt on first install.** This is expected — reyn gates server additions by default (`mcp_install: ask`). Select `j` to persist the approval for this server. For non-interactive CI runs, pass `--non-interactive` and set `mcp_install: allow` in your config beforehand.
+**Permission prompts on first install.** This is expected — reyn gates server additions through the standard list axes (`file.write` on `.reyn/mcp.yaml`, `http.get` on the registry host). Select `j` (just this path) or `r` (recursive) to persist. For non-interactive CI runs, pass `--non-interactive` and set `permissions.file.write: allow` + `permissions.web.fetch: allow` in your config beforehand. The legacy `mcp_install: ask | allow | deny` key still works during the migration window (= emits a `DeprecationWarning`).
 
 **`reyn events tail` shows no `mcp_called`.** The skill never reached the `mcp` op — check its phase log to see whether the LLM emitted it. A common cause is the LLM picking `file.read` (default capability, project-scoped) instead of `mcp` because the path was inside the project; that's correct behaviour, not an error.
 

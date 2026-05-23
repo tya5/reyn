@@ -1,7 +1,9 @@
 # ADR-0029: `mcp_install` permission — install-time gating として permission system に追加
 
-**Status**: Proposed (2026-05-09)
-**Track**: Architecture — permission system の install-time gating layer
+**Status**: Superseded by [#571 collapse arc Phase 5 (PR #631)](https://github.com/tya5/reyn/pull/631) (2026-05-23). The bool axis `mcp_install` was removed; install gating now flows through `file.write` (= `.reyn/mcp.yaml`) + `http.get` (= registry host) + `secret.write` (= per-env-key) via the standard list-axis resolvers. See `docs/concepts/permission-model.md` → "Collapse arc" for the canonical decomposition.
+**Track**: Architecture — permission system の install-time gating layer (= 旧 design、 historical record)
+
+> Historical context preserved below. The bool-axis shape this ADR proposed is no longer the active mechanism.
 
 ---
 

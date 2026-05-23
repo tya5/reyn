@@ -39,6 +39,12 @@ permissions:
     write:
       - path: /tmp/output
         scope: just_path
+  http.get:
+    - host: api.github.com           # specific host: startup_guard prompts once, runtime silent
+    - host: "*"                      # wildcard: runtime per-host 4-layer prompt for any URL
+  secret.write:
+    - GITHUB_TOKEN                   # specific key, or
+    - "*"                            # wildcard for runtime-determined keys (= user-prompt is the gate)
   python:
     - module: stats
       function: compute
@@ -74,17 +80,34 @@ Per-(module, function) declarations for `python` preprocessor steps. See [`refer
 - `mode` — `safe` (sandboxed) or `unsafe` (no AST sandbox; needs `--allow-unsafe-python` at runtime).
 - `timeout` — wall-clock seconds before the parent SIGKILLs the child. Default `30`.
 
-## Web ops (Tier 1 — default allow)
+### `http.get` (#571 Phase 7)
 
-`web_search` and `web_fetch` are **Tier 1**: they pass through by default without any declaration. No `permissions:` entry is needed to use them (FP-0022).
+Per-host HTTP allowlist for `reyn.safe.http.*` (skill-internal) AND for `web_fetch` (LLM-driven) — both surfaces share one axis.
 
-They can be restricted project-wide in `reyn.yaml`:
+- **Specific host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts once per `<skill, host>`; runtime is silent after approval. Same model as `file.write` outside the default zone.
+- **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime); the 4-layer prompt fires inside `require_http_get` at the actual host gate; ALWAYS / NEVER persists per host.
+- **No declaration** — legacy `web.fetch` compat fallback with `DeprecationWarning` until the migration window closes.
+
+`reyn.safe.http` (subprocess path) accepts only specific hosts; wildcard requires the async `web_fetch` op route.
+
+### `secret.write` (#571 Phase 6)
+
+Per-key allowlist for `~/.reyn/secrets.env` writes (= called by the `mcp_install` op handler when persisting `isSecret` env vars).
+
+- **Specific key** (`secret.write: ["GITHUB_TOKEN"]`) — authorises that exact env-var name.
+- **Wildcard** (`secret.write: ["*"]`) — runtime-determined key set (= mcp_install reads `isSecret` env vars from the registry response). The operator's per-value prompt at op-execution time is the actual security gate.
+
+## Web ops
+
+`web_search` is **Tier 1**: passes through by default without any declaration. Restrict project-wide via `permissions.web.search: deny`.
+
+`web_fetch` is unified under the `http.get` axis post-#571 Phase 7 (= same per-host gate as `safe.http`). The chat router injects `http.get: [{host: "*"}]` so LLM-driven fetches keep working with per-host prompts replacing the old per-URL prompts. Legacy `permissions.web.fetch: allow / deny` config keys remain honored as backward-compat aliases during the migration window.
 
 ```yaml
 permissions:
   web.search: deny   # block all web_search ops
-  web.fetch: deny    # block all web_fetch ops
-  web.fetch: allow   # explicit pre-approval (skips per-run prompt entirely)
+  web.fetch: deny    # legacy alias — overrides http.get wildcard, raises immediately
+  web.fetch: allow   # legacy alias — pre-approves any host (= equivalent to ALWAYS for all hosts)
 ```
 
 This differs from Tier 2-3 ops (`shell`, `mcp`) which require an explicit declaration in `skill.md` before the op is even attempted.

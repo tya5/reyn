@@ -162,11 +162,15 @@ API キーとトークンは `~/.reyn/secrets.env`（`reyn secret set` で管理
 
 MCP の操作は 2 つのポイントでゲートされます：
 
-### インストール時ゲート: `permissions.mcp_install`
+### インストール時ゲート: `file.write` + `http.get`
 
-MCP サーバーを設定に追加する前に、`mcp_install` パーミッションゲートが実行されます。これは `reyn mcp install` と、skill が発行する `mcp_install` Control IR op の両方に適用されます。デフォルトは `ask` — 初回インストール時にインタラクティブプロンプトが表示されます。
+MCP サーバーを設定に追加する際、install op の書き込みは OS の標準 list-axis gate を通ります。 旧 `permissions.mcp_install: ask | allow | deny` bool 軸は #571 collapse arc (Phase 5、 2026-05-23) で撤去され、 install 制御は以下の経路に統一されました:
 
-エンタープライズチームは、プロジェクトスコープの `reyn.yaml` で `permissions.mcp_install: deny` を設定してすべてのサーバー追加を防ぐか、`mcp_install: allow` とプライベートレジストリを組み合わせて「承認済みサーバーのみ」ポリシーを強制できます：
+- `.reyn/mcp.yaml` への `file.write` (= canonical mutation target)。 `startup_guard` が skill+path ごとに 1 回 operator に prompt、 承認後の runtime は silent。
+- `registry.modelcontextprotocol.io` への `http.get` (= registry fetch)。 同じ prompt model。
+- registry が `isSecret` 指定する env-var key への `secret.write` (= key set が runtime 決定なので wildcard `"*"`)。
+
+エンタープライズチームは project-scope `reyn.yaml` でポリシーを強制:
 
 ```yaml
 # enterprise reyn.yaml — チーム全体のポリシー
@@ -175,10 +179,13 @@ mcp:
     - https://mcp-registry.internal.acme.com/    # プライベートレジストリ（承認済みサーバーのみ）
     - https://registry.modelcontextprotocol.io/   # パブリックフォールバック
 permissions:
-  mcp_install: allow    # チームはインストール可能だが、プライベートレジストリのサーバーのみ事実上限定
+  web.fetch: allow      # registries 内の任意 host を fetch 可、 registry ordering で gating
+  file.write: allow     # .reyn/mcp.yaml 書き込みの blanket 承認
 ```
 
-詳細は [コンセプト: パーミッションモデル — `mcp_install`](permission-model.md#mcp_install-パーミッション) を参照してください。
+詳細は [コンセプト: パーミッションモデル](permission-model.md) → 「Collapse arc」 を参照してください。
+
+> 旧 `permissions.mcp_install: ...` キーは `reyn.yaml` で `DeprecationWarning` 付きで受理され、 migration window 期間中は等価な gate に translate されます。
 
 ### ランタイムゲート: `permissions.mcp`
 
@@ -252,5 +259,5 @@ MCP は *外部ケイパビリティへのアクセス* に適したツールで
 - [Reference: `reyn secret`](../reference/cli/secret.md) — ユニバーサルシークレット管理
 - [コンセプト: シークレット管理](secret-handling.md) — `~/.reyn/secrets.env` と `${VAR}` interpolation
 - [リファレンス: `reyn.yaml`](../reference/config/reyn-yaml.md#mcp-servers) — `mcp.servers:` の完全なスキーマ
-- [コンセプト: パーミッションモデル](permission-model.md) — `mcp_install` と `permissions.mcp`
+- [コンセプト: パーミッションモデル](permission-model.md) — `file.write` / `http.get` / `permissions.mcp` と collapse arc
 - [modelcontextprotocol.io](https://modelcontextprotocol.io) — 仕様、サーバーレジストリ、公式 SDK
