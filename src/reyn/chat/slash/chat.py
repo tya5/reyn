@@ -52,7 +52,11 @@ async def list_cmd(session: "ChatSession", args: str) -> None:
     await reply(session, "\n".join(lines))
 
 
-@slash("cancel", summary="Cancel a running skill: /cancel <id-prefix>")
+@slash(
+    "cancel",
+    summary="Cancel a running skill",
+    usage="/cancel <id-prefix>",
+)
 async def cancel_cmd(session: "ChatSession", args: str) -> None:
     """``/cancel <id-prefix>`` — cancel a running skill task."""
     prefix = args.strip()
@@ -86,7 +90,8 @@ async def cancel_cmd(session: "ChatSession", args: str) -> None:
 
 @slash(
     "answer",
-    summary="Answer a pending intervention: /answer <id-prefix> <text>",
+    summary="Answer a pending intervention",
+    usage="/answer <id-prefix> <text>",
 )
 async def answer_cmd(session: "ChatSession", args: str) -> None:
     """``/answer <id-prefix> <text>`` — deliver answer to a non-head

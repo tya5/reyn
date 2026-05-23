@@ -50,7 +50,8 @@ def _memory_completer(
 
 @slash(
     "memory",
-    summary="Inspect project memory entries (list / view <name>)",
+    summary="Inspect project memory entries",
+    usage="/memory [list|view <name>]",
     completer=_memory_completer,
 )
 async def memory_cmd(session: "ChatSession", args: str) -> None:

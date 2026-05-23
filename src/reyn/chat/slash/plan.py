@@ -89,7 +89,8 @@ def _step_ids_for_plan(
 
 @slash(
     "plan",
-    summary="Manage active plan-mode runs (list / discard / resume)",
+    summary="Manage active plan-mode runs",
+    usage="/plan [list|discard <id>|resume <id>]",
     completer=_plan_completer,
 )
 async def plan_cmd(session: "ChatSession", args: str) -> None:

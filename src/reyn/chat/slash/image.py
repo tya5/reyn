@@ -51,6 +51,7 @@ def _file_size_human(n: int) -> str:
 @slash(
     "image",
     summary="Attach an image to the next user message (multimodal input).",
+    usage="/image <path>",
     aliases=("img",),
 )
 async def image_cmd(session: object, args: str) -> None:

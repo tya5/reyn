@@ -25,8 +25,10 @@ async def test_memory_slash_is_registered():
     """Tier 2: ``/memory`` is in the slash registry, summary matches contract."""
     cmd = REGISTRY.get("memory")
     assert cmd is not None
-    assert "list" in cmd.summary.lower()
-    assert "view" in cmd.summary.lower()
+    # Subcommand names landed in ``cmd.usage`` after PR #552 +
+    # follow-on usage extension; summary is prose only now.
+    assert "list" in cmd.usage.lower()
+    assert "view" in cmd.usage.lower()
     assert cmd.completer is not None
 
 

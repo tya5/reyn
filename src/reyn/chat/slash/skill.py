@@ -33,7 +33,11 @@ _USAGE = (
 )
 
 
-@slash("skill", summary="Manage active skill runs (list / discard)")
+@slash(
+    "skill",
+    summary="Manage active skill runs",
+    usage="/skill [list|discard <id>]",
+)
 async def skill_cmd(session: "ChatSession", args: str) -> None:
     """Dispatch to sub-command based on the first argument."""
     parts = args.strip().split(maxsplit=1)
