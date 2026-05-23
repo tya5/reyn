@@ -38,7 +38,12 @@ def test_lint_router_render_matches_shape():
     assert params["type"] == "object"
     assert params["required"] == ["skill_path"]
     assert "skill_path" in params["properties"]
-    assert params["properties"]["skill_path"] == {"type": "string"}
+    skill_path_schema = params["properties"]["skill_path"]
+    assert skill_path_schema["type"] == "string"
+    # Description added per F3 decision-time fix so the ARG SCHEMAS
+    # block in invoke_action surfaces a format hint at decision time.
+    assert "description" in skill_path_schema
+    assert "skill__" in skill_path_schema["description"]
 
 
 def test_lint_router_render_exact_description():

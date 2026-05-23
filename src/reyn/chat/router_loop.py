@@ -1134,7 +1134,23 @@ def _enrich_invoke_action_description(
     if not ars_entries:
         return tools
 
-    # Build compact schema lines: "  <action_name>: {key1, key2, ...}"
+    # Build compact schema lines: "  <action_name>: {key1, key2, ...}".
+    # Sparse description enrichment (= F3 decision-time fix): when a key's
+    # JSON Schema dict carries a ``description`` field, inline it as
+    # ``key=<description>`` so the LLM sees the format hint at decision
+    # time (= before emitting invoke_action). Keys without a description
+    # render bare (= ``key``), preserving the existing compact shape.
+    #
+    # F3 / B53 W3-S6 evidence: weak-tier LLM with bare key names
+    # (e.g. ``validation__lint: {skill_path}``) guesses path format and
+    # hits 80% wrong-arg rate. Inline format-hint patch via
+    # llm_replay --patch drove the rate to 0% (N=10). Pre-call schema
+    # signal is the only working layer per F3 deep-dive — 7 reaction-time
+    # hint variants topped at 1/10 retry rate. Sparse-not-blanket: only
+    # keys with non-obvious format (= description supplied in the
+    # ToolDefinition) get enriched; keys like ``path`` / ``text`` whose
+    # name is self-explanatory stay bare so the block doesn't bloat.
+    #
     # Empty-props entries (= B40 cognitive-bias fix Source 2b: empty-schema
     # skills) render as "  <action_name>: {}" so they're visible to wrapper
     # routing without a false schema signal.
@@ -1143,8 +1159,20 @@ def _enrich_invoke_action_description(
         if not name:
             continue
         if props:
-            keys = ", ".join(sorted(props.keys()))
-            schema_lines.append(f"  {name}: {{{keys}}}")
+            parts: list[str] = []
+            for k in sorted(props.keys()):
+                desc = None
+                v = props[k]
+                if isinstance(v, dict):
+                    raw_desc = v.get("description")
+                    if isinstance(raw_desc, str) and raw_desc.strip():
+                        # Single-line for the compact block; collapse any
+                        # newlines / runs of whitespace defensively so a
+                        # multi-line description from a ToolDefinition
+                        # doesn't break the schema-line layout.
+                        desc = " ".join(raw_desc.split())
+                parts.append(f"{k}={desc}" if desc else k)
+            schema_lines.append(f"  {name}: {{{', '.join(parts)}}}")
         else:
             schema_lines.append(f"  {name}: {{}}")
 
