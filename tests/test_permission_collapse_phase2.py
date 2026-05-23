@@ -24,13 +24,12 @@ from pathlib import Path
 import pytest
 
 from reyn.permissions.permissions import (
+    _CANONICAL_PROTECTED_WRITE_PATHS,
     PermissionDecl,
     PermissionResolver,
-    _CANONICAL_PROTECTED_WRITE_PATHS,
     _in_default_write_zone,
     _is_canonical_protected_write,
 )
-
 
 # ── default-zone exception ─────────────────────────────────────────────────────
 
