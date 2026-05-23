@@ -73,40 +73,21 @@ def test_secret_write_drops_non_string_entries():
 # ── compat shim ────────────────────────────────────────────────────────────────
 
 
-def test_mcp_install_compat_shim_expands_http_get():
-    """Tier 2: mcp_install: true adds the registry host to http_get."""
-    decl = PermissionDecl.from_dict({"mcp_install": True})
-    hosts = [e["host"] for e in decl.http_get]
-    assert "registry.modelcontextprotocol.io" in hosts
+def test_legacy_bool_keys_do_not_expand_to_http_get_or_secret_write():
+    """Tier 2: post-Phase-5, legacy bool keys parse as no-ops.
 
-
-def test_mcp_install_compat_shim_idempotent_with_explicit_http_get():
-    """Tier 2: explicit + implicit http_get entries deduplicate."""
-    decl = PermissionDecl.from_dict({
-        "mcp_install": True,
-        "http.get": [{"host": "registry.modelcontextprotocol.io"}],
-    })
-    matching = [e for e in decl.http_get if e["host"] == "registry.modelcontextprotocol.io"]
-    assert len(matching) == 1
-
-
-def test_non_mcp_install_bool_axes_do_not_expand_http_get():
-    """Tier 2: only mcp_install carries an HTTP expansion today."""
-    for axis in ("mcp_drop_server", "cron_register", "index_drop"):
-        decl = PermissionDecl.from_dict({axis: True})
-        assert decl.http_get == [], f"{axis} should not expand to http_get"
-
-
-def test_compat_shim_does_not_expand_secret_write():
-    """Tier 2: no bool axis auto-expands to secret_write entries.
-
-    Rationale: the env-var keys mcp_install will save are determined at
-    runtime from the registry response, not statically by the skill
-    author, so there is no useful compat-shim mapping. Skills declare
-    secret.write explicitly (or it stays empty).
+    Phase 3 introduced a compat-shim expansion (`mcp_install: true` →
+    http.get [registry host]) so existing skills kept working. Phase 5
+    removed both the bool axis AND the shim. Legacy keys parse with a
+    DeprecationWarning but contribute nothing to the decl.
     """
-    decl = PermissionDecl.from_dict({"mcp_install": True})
-    assert decl.secret_write == []
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        for axis in ("mcp_install", "mcp_drop_server", "cron_register", "index_drop"):
+            decl = PermissionDecl.from_dict({axis: True})
+            assert decl.http_get == [], f"{axis} must not expand to http_get post-Phase-5"
+            assert decl.secret_write == [], f"{axis} must not expand to secret_write"
 
 
 # ── PermissionResolver gates ──────────────────────────────────────────────────
@@ -127,10 +108,16 @@ def test_require_http_get_passes_for_declared_host(tmp_path):
     resolver.require_http_get(decl, "api.github.com")
 
 
-def test_require_http_get_passes_via_compat_shim(tmp_path):
-    """Tier 2: end-to-end — mcp_install bool decl passes the registry host check."""
+def test_require_http_get_passes_via_explicit_decl(tmp_path):
+    """Tier 2: explicit http.get declaration authorises the host check.
+
+    Phase 5 removed the bool-axis → http.get compat shim, so the
+    explicit form is the only path.
+    """
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
-    decl = PermissionDecl.from_dict({"mcp_install": True})
+    decl = PermissionDecl.from_dict({
+        "http.get": [{"host": "registry.modelcontextprotocol.io"}],
+    })
     resolver.require_http_get(decl, "registry.modelcontextprotocol.io")
 
 

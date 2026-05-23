@@ -202,27 +202,36 @@ def _set_jobs_list(data: dict, jobs: list) -> dict:
 
 
 async def _gate(ctx: ToolContext, job_name: str) -> None:
-    """Run the ``require_cron_register`` gate.
+    """Permission gate for cron mutation tools (#571 collapse arc Phase 5).
 
-    Synthesises a PermissionDecl with ``cron_register=True`` so the
-    LLM-callable wrapper can satisfy the decl guard (= the wrapper IS
-    the declaration site; tools don't ship with their own skill.md
-    frontmatter). The interactive prompt + approvals.yaml flow runs
-    unchanged.
+    The bool-axis ``require_cron_register`` per-job approval prompt was
+    removed in Phase 5. Authorisation is now layered:
+
+    - The calling skill must list this tool in ``permissions.tool`` so
+      the LLM is permitted to invoke it (= operator authorisation
+      happens at skill-startup time via ``require_tool``).
+    - The runtime gate here is the standard ``require_file_write``
+      against the canonical ``.reyn/cron.yaml`` path. Since the tool
+      is OS-internal (= no per-tool skill frontmatter), we synthesise
+      a minimal PermissionDecl listing the canonical path explicitly
+      and route it through ``session_approve_path`` once per resolver
+      instance so subsequent calls pass silently.
+
+    No-op in unit-test contexts (= ``ctx.permission_resolver`` is None).
     """
     from reyn.permissions.permissions import PermissionDecl
     if ctx.permission_resolver is None:
-        # No resolver = unit test context. Skip gate, document in the
-        # ToolResult that auth was bypassed.
         return
-    bus = getattr(ctx, "intervention_bus", None)
-    if bus is None:
-        # Without a bus, ``_approve`` would raise; treat as
-        # operator-not-present and short-circuit. Production callers
-        # always provide a bus.
-        return
-    decl = PermissionDecl(cron_register=True)
-    await ctx.permission_resolver.require_cron_register(decl, job_name, bus)
+    cron_yaml_path = str(_dynamic_cron_yaml_path(ctx))
+    decl = PermissionDecl(file_write=[{"path": cron_yaml_path, "scope": "just_path"}])
+    # OS-internal tool: session-approve the canonical path so the
+    # require_file_write check passes without an interactive prompt.
+    # The TOOL-level authorisation already happened at skill-startup
+    # time (= require_tool against the calling skill's permissions.tool).
+    ctx.permission_resolver.session_approve_path(
+        cron_yaml_path, "cron", "file.write",
+    )
+    ctx.permission_resolver.require_file_write(decl, cron_yaml_path, "cron")
 
 
 # ── Handlers ─────────────────────────────────────────────────────────

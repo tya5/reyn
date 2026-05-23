@@ -713,8 +713,17 @@ def _run_install_from_source(
     workspace = type("Workspace", (), {"root": str(project_root or Path.cwd())})()
     bus = StdinInterventionBus()
 
-    # Source installs use mcp_install permission declaration (same gate as registry).
-    decl = PermissionDecl(mcp_install=True)
+    # #571 collapse arc Phase 5: explicit list axes replace the
+    # former mcp_install bool axis. CLI is the operator-trusted entry
+    # point, so we session-approve the canonical config path up-front.
+    canonical_config = ".reyn/mcp.yaml"
+    perm_resolver.session_approve_path(
+        canonical_config, "mcp_install_source", "file.write",
+    )
+    decl = PermissionDecl(
+        file_write=[{"path": canonical_config, "scope": "just_path"}],
+        http_get=[{"host": "registry.modelcontextprotocol.io"}],
+    )
 
     ctx = OpContext(
         workspace=workspace,

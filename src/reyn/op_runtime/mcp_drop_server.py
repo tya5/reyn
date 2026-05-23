@@ -211,11 +211,14 @@ async def handle(
 
     config_path = _scope_to_path(scope, project_root)
 
-    # ── 2. Permission gate ─────────────────────────────────────────────
-    bus = getattr(ctx, "intervention_bus", None)
-    if ctx.permission_resolver is not None and bus is not None:
-        await ctx.permission_resolver.require_mcp_drop_server(
-            ctx.permission_decl, server, bus,
+    # ── 2. Permission gate (#571 collapse arc Phase 5) ─────────────────
+    # The skill must declare ``file.write: [.reyn/mcp.yaml]``. The
+    # bool-axis ``require_mcp_drop_server`` per-server prompt is
+    # removed — per-server granularity in mutations is operator-
+    # config-level concern, not per-op runtime concern.
+    if ctx.permission_resolver is not None:
+        ctx.permission_resolver.require_file_write(
+            ctx.permission_decl, str(config_path), ctx.skill_name,
         )
 
     # ── 3. Capture env keys before mutation ────────────────────────────

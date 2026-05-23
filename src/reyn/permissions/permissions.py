@@ -176,22 +176,6 @@ class PermissionDecl:
     # AND the server must pass project-wide checks. "all" sentinel is
     # normalized to None by the loader before constructing PermissionDecl.
     allowed_mcp: list[str] | None = None
-    # ADR-0029: install-time gating. False = skill/agent did not declare install
-    # intent; require_mcp_install() will reject immediately without prompting.
-    mcp_install: bool = False
-    # ADR-0033: index_drop gating. False = skill/agent did not declare drop
-    # intent; require_index_drop() will reject immediately without prompting.
-    index_drop: bool = False
-    # FP-0034 §D23: drop-time gating for MCP servers. Counter-op to
-    # mcp_install; declared separately so install-only skills cannot
-    # tear down user-configured servers. False = skill/agent did not
-    # declare drop intent; require_mcp_drop_server() rejects immediately.
-    mcp_drop_server: bool = False
-    # FP-0041 #489 PR-B2: cron-register gating. False = skill/agent did
-    # not declare cron registration intent; require_cron_register()
-    # rejects immediately. Covers register / unregister / enable /
-    # disable on the LLM-callable ``cron`` action category.
-    cron_register: bool = False
     # #571 collapse arc Phase 3: per-host HTTP allowlist for
     # ``reyn.safe.http.*`` calls from safe-mode python steps. Each
     # entry: {"host": str}. Empty list = no HTTP allowed via safe.http
@@ -200,12 +184,19 @@ class PermissionDecl:
     http_get: list[dict] = field(default_factory=list)
     # #571 collapse arc Phase 3: per-key secret-store write allowlist
     # for ``~/.reyn/secrets.env`` writes. Each entry is a key name
-    # (env var name). Declared here so the axis exists in the schema
-    # and the compat shim can wire mcp_install secret prompts to it;
-    # actual enforcement at the ``reyn.secrets.store.save_secret``
-    # boundary is a Phase 5 task (= op handlers route through
-    # ``require_secret_write`` when bool axes are removed).
+    # (env var name).
     secret_write: list[str] = field(default_factory=list)
+    # #571 collapse arc Phase 5 NOTE: the four former bool axes —
+    # ``mcp_install`` / ``mcp_drop_server`` / ``cron_register`` /
+    # ``index_drop`` — have been removed. Each was redundant with the
+    # corresponding ``file.write`` (+ ``http.get`` for the registry
+    # fetch in ``mcp_install``) declaration. Skills that previously
+    # declared the bool axis migrate to the explicit list axes; see
+    # the ``mcp_install`` stdlib skill for the canonical example. The
+    # legacy ``PermissionDecl.from_dict`` keys (``mcp_install`` /
+    # ``mcp_drop_server`` / ``cron_register`` / ``index_drop``) emit
+    # ``DeprecationWarning`` when encountered so user-side skills can
+    # be migrated; they no longer establish any runtime authority.
 
     @staticmethod
     def _parse_path_list(raw: object) -> list[dict]:
@@ -284,95 +275,50 @@ class PermissionDecl:
             ))
         return out
 
-    # #571 collapse arc Phase 2: each bool axis maps to the canonical
-    # protected file.write path(s) it gates. The loader compat shim
-    # below expands any bool axis set to ``True`` into the equivalent
-    # ``file_write`` entry, so existing skills written before the
-    # collapse keep working while the bool form is being phased out
-    # (Phase 5 removes the bool axes entirely).
-    _BOOL_AXIS_TO_FILE_WRITE: ClassVar[dict[str, tuple[str, ...]]] = {
-        "mcp_install":     (".reyn/mcp.yaml",),
-        "mcp_drop_server": (".reyn/mcp.yaml",),
-        "cron_register":   (".reyn/cron.yaml",),
-        "index_drop":      (".reyn/index/sources.yaml",),
-    }
-
-    # #571 collapse arc Phase 3: each bool axis also gates a set of
-    # HTTP hosts (= the registry the bool-axis op talks to). The compat
-    # shim expands these into the equivalent ``http_get`` entries so
-    # bool-axis decls continue to authorise the op handler's HTTP
-    # traffic without needing an explicit ``http.get`` declaration. The
-    # actual ``reyn.safe.http`` gate is wired against ``http_get``.
-    _BOOL_AXIS_TO_HTTP_GET: ClassVar[dict[str, tuple[str, ...]]] = {
-        "mcp_install": ("registry.modelcontextprotocol.io",),
-    }
+    # #571 collapse arc Phase 5: legacy bool-axis keys carried for
+    # deprecation-warning purposes only. The compat shim that previously
+    # expanded these into ``file_write`` / ``http_get`` entries was
+    # removed because the corresponding ``require_*`` methods no longer
+    # exist — declaring a legacy bool axis no longer establishes any
+    # runtime authority. Skills must migrate to the explicit list axes.
+    _LEGACY_BOOL_AXIS_KEYS: ClassVar[tuple[str, ...]] = (
+        "mcp_install",
+        "mcp_drop_server",
+        "cron_register",
+        "index_drop",
+    )
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "PermissionDecl":
         if not d:
             return cls()
-        decl = cls(
+        # #571 collapse arc Phase 5: warn on legacy bool-axis keys so
+        # user-side skills get a visible migration prompt. The values
+        # themselves are no longer consulted — skills must declare the
+        # equivalent file.write / http.get / secret.write entries
+        # explicitly. See the ``mcp_install`` stdlib skill for the
+        # canonical migration pattern.
+        for legacy_key in cls._LEGACY_BOOL_AXIS_KEYS:
+            if d.get(legacy_key):
+                import warnings
+                warnings.warn(
+                    f"permissions.{legacy_key}: <bool> is removed in the "
+                    f"#571 collapse arc (Phase 5). Replace it with the "
+                    f"explicit list axes: file.write / http.get / secret.write. "
+                    f"See docs/concepts/permission-model.md → Collapse arc.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
+        return cls(
             shell=bool(d.get("shell", False)),
             mcp=_normalize_paths(d.get("mcp")),
             tool=_normalize_paths(d.get("tool")),
             file_read=cls._parse_path_list(d.get("file.read")),
             file_write=cls._parse_path_list(d.get("file.write")),
             python=cls._parse_python_list(d.get("python")),
-            mcp_install=bool(d.get("mcp_install", False)),
-            index_drop=bool(d.get("index_drop", False)),
-            mcp_drop_server=bool(d.get("mcp_drop_server", False)),
-            cron_register=bool(d.get("cron_register", False)),
             http_get=cls._parse_host_list(d.get("http.get")),
             secret_write=cls._parse_secret_key_list(d.get("secret.write")),
         )
-        decl._compat_expand_bool_axes()
-        return decl
-
-    def _compat_expand_bool_axes(self) -> None:
-        """Expand each set bool axis into the equivalent list-axis entries.
-
-        Idempotent and additive: entries already present are not
-        duplicated; explicit entries with different metadata are kept
-        as-is. The expansion runs once at load time; bool axis fields
-        stay set so ``require_mcp_install`` / etc. continue to gate the
-        op route until they are removed in Phase 5.
-
-        Two cross-cutting expansions:
-          - ``_BOOL_AXIS_TO_FILE_WRITE``: bool → ``file_write`` entries
-            (Phase 2, canonical ``.reyn/*.yaml`` config writes).
-          - ``_BOOL_AXIS_TO_HTTP_GET``: bool → ``http_get`` entries
-            (Phase 3, the registry host the op talks to).
-
-        ``secret_write`` is NOT auto-expanded — the env-var keys the op
-        will save are determined at runtime from the registry response,
-        not statically by the skill author, so there is no useful
-        compat-shim mapping. Skills that need explicit secret-write
-        authorisation declare it manually.
-        """
-        # file.write expansion (Phase 2).
-        existing_writes = {
-            entry.get("path") for entry in self.file_write if isinstance(entry, dict)
-        }
-        for axis, paths in self._BOOL_AXIS_TO_FILE_WRITE.items():
-            if not getattr(self, axis, False):
-                continue
-            for p in paths:
-                if p in existing_writes:
-                    continue
-                self.file_write.append({"path": p, "scope": "just_path"})
-                existing_writes.add(p)
-        # http.get expansion (Phase 3).
-        existing_hosts = {
-            entry.get("host") for entry in self.http_get if isinstance(entry, dict)
-        }
-        for axis, hosts in self._BOOL_AXIS_TO_HTTP_GET.items():
-            if not getattr(self, axis, False):
-                continue
-            for h in hosts:
-                if h in existing_hosts:
-                    continue
-                self.http_get.append({"host": h})
-                existing_hosts.add(h)
 
 
 class PermissionResolver:
@@ -716,24 +662,10 @@ class PermissionResolver:
         read_seen: set[tuple] = set()
 
         decl = skill.permissions  # aggregated upper bound across all phases
-        # #571 collapse arc Phase 2: file.write entries that the compat
-        # shim auto-expanded from a still-set bool axis (mcp_install /
-        # mcp_drop_server / cron_register / index_drop) are skipped from
-        # the startup_guard prompt — the bool axis's per-op prompt
-        # already covers operator consent at op-execution time, so
-        # prompting again at startup is redundant double-confirmation.
-        # Skills that declared the explicit ``file.write`` entry
-        # WITHOUT a corresponding bool axis still get the normal prompt.
-        canonical_skip: set[str] = set()
-        for axis, paths in PermissionDecl._BOOL_AXIS_TO_FILE_WRITE.items():
-            if getattr(decl, axis, False):
-                canonical_skip.update(paths)
         for entry in decl.file_write:
             path = entry.get("path", "")
             scope = entry.get("scope", "just_path")
             if not path:
-                continue
-            if path in canonical_skip:
                 continue
             if _in_default_write_zone(path):
                 continue
@@ -792,19 +724,6 @@ class PermissionResolver:
                     f"--allow-unsafe-python was not provided. Re-run with the flag "
                     f"to enable unsafe-mode Python preprocessor steps."
                 )
-
-        # ADR-0029: warn when skill declares mcp_install but config denies it.
-        # This is a pre-flight warning, not a hard-fail — the actual gate runs
-        # at require_mcp_install() call time. Emit a visible warning so the
-        # operator learns about the conflict before execution reaches install ops.
-        if decl.mcp_install and self._is_config_denied("mcp_install"):
-            import warnings
-            warnings.warn(
-                f"Skill '{skill_name}' declares mcp_install permission but "
-                f"config has permissions.mcp_install: deny. "
-                f"Any mcp_install operation will be rejected at runtime.",
-                stacklevel=2,
-            )
 
         if not (write_requests or read_requests or python_requests):
             return
@@ -1045,202 +964,6 @@ class PermissionResolver:
             user_prompt=f"Allow access to MCP server {server!r}?",
         ):
             raise PermissionError(f"MCP server {server!r} access denied")
-
-    async def require_mcp_install(
-        self, decl: PermissionDecl, server_id: str, bus: RequestBus,
-    ) -> None:
-        """Gate MCP server installation (ADR-0029).
-
-        Three-step resolution:
-        1. Skill/agent must declare `mcp_install: true` in its permissions block.
-           If not declared, raise immediately — the skill has no install intent.
-        2. Config (any scope tier) may hard-allow or hard-deny. `deny` → raise.
-           `allow` → pass through. Otherwise fall through to interactive prompt.
-        3. Interactive prompt (or auto-approve via REYN_MCP_INSTALL_AUTO_APPROVE).
-           Approval key `mcp_install:<server_id>` is persisted to approvals.yaml.
-        """
-        import os
-
-        # Step 1 — decl guard
-        if not decl.mcp_install:
-            raise PermissionError(
-                f"MCP server install of {server_id!r} not declared in skill permissions. "
-                f"Add `permissions:\\n  mcp_install: true` to the skill.md frontmatter."
-            )
-
-        # Step 2 — config deny/allow
-        if self._is_config_denied("mcp_install"):
-            raise PermissionError(
-                f"MCP server install of {server_id!r} denied by config "
-                f"(permissions.mcp_install: deny)."
-            )
-        if self._is_config_approved("mcp_install"):
-            return
-
-        # Step 3 — CI escape hatch or interactive prompt
-        approval_key = f"mcp_install:{server_id}"
-
-        if os.environ.get("REYN_MCP_INSTALL_AUTO_APPROVE") == "1":
-            self._persist(approval_key, True)
-            return
-
-        if not await self._approve(
-            approval_key,
-            f"install MCP server: {server_id!r}",
-            bus,
-            user_prompt=f"Install MCP server {server_id!r}?",
-        ):
-            raise PermissionError(
-                f"MCP server install of {server_id!r} denied by user."
-            )
-
-    async def require_cron_register(
-        self, decl: PermissionDecl, job_name: str, bus: RequestBus,
-    ) -> None:
-        """Gate cron-register-family ops (FP-0041 #489 PR-B2).
-
-        Covers all 4 mutating LLM-callable cron tools (``cron__register
-        / unregister / enable / disable``). The ``job_name`` arg is
-        included in the approval key so "yes always" remembers per
-        job — operator can selectively allow certain jobs without
-        granting blanket cron-edit authority.
-
-        Mirrors ``require_mcp_install`` shape:
-        1. Skill/agent must declare ``cron_register: true`` in its
-           permissions block. Not declared → raise immediately.
-        2. Config (any scope tier) may hard-allow or hard-deny.
-        3. Interactive prompt (or auto-approve via
-           ``REYN_CRON_REGISTER_AUTO_APPROVE``). Approval key
-           ``cron_register:<job_name>`` persisted to approvals.yaml.
-        """
-        import os
-
-        if not decl.cron_register:
-            raise PermissionError(
-                f"Cron register of {job_name!r} not declared in skill permissions. "
-                f"Add `permissions:\\n  cron_register: true` to the skill.md frontmatter."
-            )
-
-        if self._is_config_denied("cron_register"):
-            raise PermissionError(
-                f"Cron register of {job_name!r} denied by config "
-                f"(permissions.cron_register: deny)."
-            )
-        if self._is_config_approved("cron_register"):
-            return
-
-        approval_key = f"cron_register:{job_name}"
-
-        if os.environ.get("REYN_CRON_REGISTER_AUTO_APPROVE") == "1":
-            self._persist(approval_key, True)
-            return
-
-        if not await self._approve(
-            approval_key,
-            f"register cron job: {job_name!r}",
-            bus,
-            user_prompt=f"Allow cron register/edit for job {job_name!r}?",
-        ):
-            raise PermissionError(
-                f"Cron register of {job_name!r} denied by user."
-            )
-
-    async def require_index_drop(
-        self, decl: PermissionDecl, source: str, bus: RequestBus,
-    ) -> None:
-        """Gate index source drop (ADR-0033, mirrors require_mcp_install).
-
-        Three-step resolution:
-        1. Skill/agent must declare `index_drop: true` in its permissions block.
-           If not declared, raise immediately — the skill has no drop intent.
-        2. Config (any scope tier) may hard-allow or hard-deny.
-        3. Interactive prompt (or auto-approve via REYN_INDEX_DROP_AUTO_APPROVE).
-           Approval key `index_drop:<source>` is persisted to approvals.yaml.
-        """
-        import os
-
-        # Step 1 — decl guard
-        if not decl.index_drop:
-            raise PermissionError(
-                f"Index drop of '{source}' not declared in skill permissions. "
-                f"Add `permissions:\\n  index_drop: true` to the skill.md frontmatter."
-            )
-
-        # Step 2 — config deny/allow
-        if self._is_config_denied("index_drop"):
-            raise PermissionError(
-                f"Index drop of '{source}' denied by config "
-                f"(permissions.index_drop: deny)."
-            )
-        if self._is_config_approved("index_drop"):
-            return
-
-        # Step 3 — CI escape hatch or interactive prompt
-        approval_key = f"index_drop:{source}"
-
-        if os.environ.get("REYN_INDEX_DROP_AUTO_APPROVE") == "1":
-            self._persist(approval_key, True)
-            return
-
-        if not await self._approve(
-            approval_key,
-            f"drop index source: {source!r}",
-            bus,
-            user_prompt=f"Drop indexed source {source!r}?",
-        ):
-            raise PermissionError(
-                f"Index drop of '{source}' denied by user."
-            )
-
-    async def require_mcp_drop_server(
-        self, decl: PermissionDecl, server: str, bus: RequestBus,
-    ) -> None:
-        """Gate MCP server drop (FP-0034 §D23, mirrors require_mcp_install).
-
-        Three-step resolution:
-        1. Skill/agent must declare `mcp_drop_server: true` in its
-           permissions block. If not declared, raise immediately —
-           install intent (`mcp_install`) is NOT enough by design.
-        2. Config (any scope tier) may hard-allow or hard-deny.
-        3. Interactive prompt (or auto-approve via
-           REYN_MCP_DROP_SERVER_AUTO_APPROVE). Approval key
-           `mcp_drop_server:<server>` is persisted to approvals.yaml.
-        """
-        import os
-
-        # Step 1 — decl guard
-        if not decl.mcp_drop_server:
-            raise PermissionError(
-                f"MCP server drop of {server!r} not declared in skill "
-                f"permissions. Add `permissions:\\n  mcp_drop_server: true` "
-                f"to the skill.md frontmatter."
-            )
-
-        # Step 2 — config deny/allow
-        if self._is_config_denied("mcp_drop_server"):
-            raise PermissionError(
-                f"MCP server drop of {server!r} denied by config "
-                f"(permissions.mcp_drop_server: deny)."
-            )
-        if self._is_config_approved("mcp_drop_server"):
-            return
-
-        # Step 3 — CI escape hatch or interactive prompt
-        approval_key = f"mcp_drop_server:{server}"
-
-        if os.environ.get("REYN_MCP_DROP_SERVER_AUTO_APPROVE") == "1":
-            self._persist(approval_key, True)
-            return
-
-        if not await self._approve(
-            approval_key,
-            f"remove MCP server: {server!r}",
-            bus,
-            user_prompt=f"Remove MCP server {server!r}?",
-        ):
-            raise PermissionError(
-                f"MCP server drop of {server!r} denied by user."
-            )
 
     async def require_python(
         self, decl: PermissionDecl, module: str, function: str,

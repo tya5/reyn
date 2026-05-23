@@ -55,12 +55,20 @@ _TIER23_GATES: dict[str, dict] = {
         ),
     },
     "mcp_install": {
-        "label": "permissions.mcp_install",
-        "fix": "Add `permissions:\\n  mcp_install: true` to the skill.md frontmatter.",
+        "label": "permissions.file.write[.reyn/mcp.yaml]",
+        "fix": (
+            "Add `permissions:\\n  file.write:\\n    - path: .reyn/mcp.yaml\\n"
+            "      scope: just_path\\n  http.get:\\n    - host: "
+            "registry.modelcontextprotocol.io` to the skill.md frontmatter."
+        ),
     },
     "index_drop": {
-        "label": "permissions.index_drop",
-        "fix": "Add `permissions:\\n  index_drop: true` to the skill.md frontmatter.",
+        "label": "permissions.file.write[.reyn/index/sources.yaml]",
+        "fix": (
+            "Add `permissions:\\n  file.write:\\n    - path: "
+            ".reyn/index/sources.yaml\\n      scope: just_path` to the "
+            "skill.md frontmatter."
+        ),
     },
 }
 
@@ -110,16 +118,31 @@ class ValidationResult:
 # ---------------------------------------------------------------------------
 
 
+def _has_file_write(decl, canonical_path: str) -> bool:
+    """Return True if *decl* declares ``file.write`` for *canonical_path*."""
+    for entry in decl.file_write:
+        if isinstance(entry, dict) and entry.get("path") == canonical_path:
+            return True
+    return False
+
+
 def _permission_has(decl, op_kind: str) -> bool:
-    """Return True if *decl* has an effective declaration for *op_kind*."""
+    """Return True if *decl* has an effective declaration for *op_kind*.
+
+    #571 collapse arc Phase 5: ``mcp_install`` / ``index_drop`` no
+    longer have dedicated bool axes — their declarations route through
+    ``file.write`` for the canonical mutation path (mcp_install also
+    needs ``http.get`` for the registry, but the validator stays at
+    the file-write granularity for the cross-layer consistency check).
+    """
     if op_kind == "shell":
         return bool(decl.shell)
     if op_kind == "mcp":
         return bool(decl.mcp)
     if op_kind == "mcp_install":
-        return bool(decl.mcp_install)
+        return _has_file_write(decl, ".reyn/mcp.yaml")
     if op_kind == "index_drop":
-        return bool(decl.index_drop)
+        return _has_file_write(decl, ".reyn/index/sources.yaml")
     return False  # non-Tier-2/3 op → no declaration needed
 
 

@@ -25,6 +25,17 @@ from reyn.workspace.workspace import Workspace
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _phase5_index_drop_decl(resolver: PermissionResolver, tmp_path: Path) -> PermissionDecl:
+    """Phase 5 successor to ``PermissionDecl(index_drop=True)``.
+
+    Builds the explicit ``file.write`` decl for the canonical manifest
+    path and session-approves it so ``require_file_write`` passes.
+    """
+    canonical = str(tmp_path / ".reyn" / "index" / "sources.yaml")
+    resolver.session_approve_path(canonical, "test_op_index_drop", "file.write")
+    return PermissionDecl(file_write=[{"path": canonical, "scope": "just_path"}])
+
+
 def _make_ctx(
     tmp_path: Path,
     *,
@@ -38,6 +49,7 @@ def _make_ctx(
         events=events,
         permission_decl=permission_decl or PermissionDecl(),
         permission_resolver=permission_resolver,
+        skill_name="test_op_index_drop",
     )
 
 
@@ -105,7 +117,7 @@ async def test_drop_removes_backend_and_manifest(tmp_path: Path, monkeypatch: py
         ctx = _make_ctx(
             tmp_path,
             permission_resolver=resolver,
-            permission_decl=PermissionDecl(index_drop=True),
+            permission_decl=_phase5_index_drop_decl(resolver, tmp_path),
         )
 
         op = IndexDropIROp(kind="index_drop", source="my_source")
@@ -138,8 +150,9 @@ async def test_drop_emits_p6_event(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         ctx = OpContext(
             workspace=ws,
             events=events,
-            permission_decl=PermissionDecl(index_drop=True),
+            permission_decl=_phase5_index_drop_decl(resolver, tmp_path),
             permission_resolver=resolver,
+            skill_name="test_op_index_drop",
         )
 
         op = IndexDropIROp(kind="index_drop", source="audit_src")
@@ -164,7 +177,7 @@ async def test_drop_nonexistent_source_returns_not_removed(tmp_path: Path, monke
         ctx = _make_ctx(
             tmp_path,
             permission_resolver=resolver,
-            permission_decl=PermissionDecl(index_drop=True),
+            permission_decl=_phase5_index_drop_decl(resolver, tmp_path),
         )
 
         op = IndexDropIROp(kind="index_drop", source="nonexistent")
@@ -179,42 +192,26 @@ async def test_drop_nonexistent_source_returns_not_removed(tmp_path: Path, monke
 
 @pytest.mark.asyncio
 async def test_drop_denied_when_permission_not_declared(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tier 2: index_drop is denied when index_drop is not declared in PermissionDecl."""
+    """Tier 2: index_drop is denied when file.write for sources.yaml is not declared.
+
+    #571 collapse arc Phase 5: the bool-axis ``index_drop`` is gone;
+    authorisation flows through ``require_file_write`` on
+    ``.reyn/index/sources.yaml``. An empty PermissionDecl fails the gate.
+    """
     import os
     monkeypatch.chdir(tmp_path)
 
     await _seed(tmp_path, "guarded_src")
 
     resolver = _resolver(tmp_path)
-    # PermissionDecl without index_drop=True
+    # PermissionDecl without the canonical sources.yaml file.write entry.
     ctx = _make_ctx(
         tmp_path,
         permission_resolver=resolver,
-        permission_decl=PermissionDecl(index_drop=False),
+        permission_decl=PermissionDecl(),
     )
 
     op = IndexDropIROp(kind="index_drop", source="guarded_src")
-    result = await execute_op(op, ctx, caller="control_ir")
-
-    assert result["status"] == "denied"
-
-
-@pytest.mark.asyncio
-async def test_drop_denied_when_config_deny(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tier 2: index_drop is denied when config sets permissions.index_drop: deny."""
-    import os
-    monkeypatch.chdir(tmp_path)
-
-    await _seed(tmp_path, "deny_src")
-
-    resolver = _resolver(tmp_path, config={"index_drop": "deny"})
-    ctx = _make_ctx(
-        tmp_path,
-        permission_resolver=resolver,
-        permission_decl=PermissionDecl(index_drop=True),
-    )
-
-    op = IndexDropIROp(kind="index_drop", source="deny_src")
     result = await execute_op(op, ctx, caller="control_ir")
 
     assert result["status"] == "denied"

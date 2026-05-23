@@ -1387,28 +1387,33 @@ async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_router_op_context_declares_index_drop(tmp_path, monkeypatch):
-    """Tier 2: router op context declares index_drop=True so ask gate can fire.
+def test_router_op_context_declares_canonical_file_write_paths(tmp_path, monkeypatch):
+    """Tier 2: router op context declares file.write for the canonical OS paths.
 
-    B17-S8-3 invariant: _make_router_op_context() must set index_drop=True on
-    the PermissionDecl it constructs. Without it, require_index_drop() raises at
-    the decl guard (step 1) before the interactive ask UI can fire — making
-    drop_source via chat permanently unreachable regardless of config.
-
-    Pattern mirrors ADR-0029 mcp_install: declared True enables the ask gate;
-    runtime gating (allow/ask/deny) is controlled by permissions.index_drop
-    in reyn.yaml, which is a separate concern.
+    #571 collapse arc Phase 5: the bool-axis ``index_drop`` /
+    ``mcp_install`` declarations on the router context are replaced
+    with the equivalent ``file.write`` entries for the canonical
+    mutation paths. The op handlers (= index_drop / mcp_install /
+    mcp_drop_server / cron_register) now gate via
+    ``require_file_write`` against these paths.
 
     Observation: the test calls _make_router_op_context() and reads
-    ctx.permission_decl.index_drop — public attribute on a public dataclass
-    (PermissionDecl). No private internal state is asserted.
+    the public ``file_write`` list on the PermissionDecl. No private
+    internal state is asserted.
     """
     monkeypatch.chdir(tmp_path)
 
     session = _make_session(tmp_path)
     ctx = session._make_router_op_context()
 
-    assert ctx.permission_decl.index_drop is True, (
-        "B17-S8-3: router op context must declare index_drop=True so the "
-        "ask gate can fire; got False (= decl guard blocks before prompt)"
-    )
+    declared_paths = {
+        entry["path"]
+        for entry in ctx.permission_decl.file_write
+        if isinstance(entry, dict) and entry.get("path")
+    }
+    for canonical in (".reyn/mcp.yaml", ".reyn/cron.yaml", ".reyn/index/sources.yaml"):
+        assert canonical in declared_paths, (
+            f"#571 Phase 5: router op context must declare file.write for "
+            f"{canonical!r} so the corresponding op handler's "
+            f"require_file_write gate can pass; declared={sorted(declared_paths)}"
+        )

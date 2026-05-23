@@ -211,6 +211,21 @@ def _make_resolver(tmp_path: Path, *, config: dict | None = None) -> PermissionR
     )
 
 
+def _phase5_source_install_decl(resolver: PermissionResolver) -> PermissionDecl:
+    """Phase 5 successor to ``PermissionDecl(mcp_install=True)`` for source installs.
+
+    Source installs skip the registry fetch but still write to
+    ``.reyn/mcp.yaml`` — declare only the file.write entry (no
+    http.get is needed since no registry HTTP is issued on the
+    source-resolver path).
+    """
+    canonical_config = str(resolver._project_root / ".reyn" / "mcp.yaml")
+    resolver.session_approve_path(canonical_config, "mcp_install_source_test", "file.write")
+    return PermissionDecl(
+        file_write=[{"path": canonical_config, "scope": "just_path"}],
+    )
+
+
 def _make_op_ctx(
     tmp_path: Path,
     resolver: PermissionResolver,
@@ -236,7 +251,7 @@ def _run(coro):
 def test_source_npm_skips_registry_and_installs(tmp_path):
     """Tier 2: --source npm: skips registry fetch and writes config via npx."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_source_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -274,7 +289,7 @@ def test_source_npm_skips_registry_and_installs(tmp_path):
 def test_source_pypi_skips_registry_and_installs(tmp_path):
     """Tier 2: --source pypi: skips registry fetch and writes config via uvx."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_source_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -302,7 +317,7 @@ def test_source_pypi_skips_registry_and_installs(tmp_path):
 def test_source_invalid_specifier_returns_error(tmp_path):
     """Tier 2: unresolvable --source returns error result without raising."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_source_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -325,7 +340,7 @@ def test_source_invalid_specifier_returns_error(tmp_path):
 def test_source_event_includes_source_field(tmp_path):
     """Tier 2: mcp_server_installed event carries source field when source install used (P6)."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_source_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -351,7 +366,7 @@ def test_source_event_includes_source_field(tmp_path):
 def test_source_github_known_installs_npm(tmp_path):
     """Tier 2: GitHub URL for known modelcontextprotocol repo resolves to npm and installs."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_source_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -380,7 +395,7 @@ def test_source_github_known_installs_npm(tmp_path):
 def test_source_missing_runtime_returns_error(tmp_path):
     """Tier 2: source install returns error when runtime binary is absent."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    decl = _phase5_source_install_decl(resolver)
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 
@@ -399,9 +414,14 @@ def test_source_missing_runtime_returns_error(tmp_path):
 
 
 def test_registry_path_unaffected_by_source_field_being_none(tmp_path):
-    """Tier 2: registry path still works when source=None (regression guard)."""
-    resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
-    decl = PermissionDecl(mcp_install=True)
+    """Tier 2: registry path still works when source=None (regression guard).
+
+    The source=None path hits the registry fetch, so the decl must
+    include the http.get host as well as the file.write entry.
+    """
+    resolver = _make_resolver(tmp_path)
+    decl = _phase5_source_install_decl(resolver)
+    decl.http_get = [{"host": "registry.modelcontextprotocol.io"}]
     bus = _AutoApproveInterventionBus()
     ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
 

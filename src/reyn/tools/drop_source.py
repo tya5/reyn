@@ -78,17 +78,24 @@ async def _handle_drop_source(
     ):
         legacy_ctx = ctx.router_state.op_context_factory()
     else:
-        # Minimal context: index_drop is destructive — permission resolver
-        # and intervention_bus must be present for the gate to fire.
-        # Callers (RouterLoop) must supply op_context_factory; this fallback
-        # builds a context that will trigger the resolver's non-interactive
-        # denial if no bus is supplied.
+        # #571 collapse arc Phase 5: explicit file.write axis replaces
+        # the former index_drop bool axis. Tool wrapper synthesises the
+        # decl + session-approves so the op handler's require_file_write
+        # passes silently (= tool-level authorisation already happened
+        # at the calling skill's permissions.tool gate).
+        canonical_manifest = ".reyn/index/sources.yaml"
+        if ctx.permission_resolver is not None:
+            ctx.permission_resolver.session_approve_path(
+                canonical_manifest, "drop_source", "file.write",
+            )
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
-            permission_decl=PermissionDecl(index_drop=True),
+            permission_decl=PermissionDecl(
+                file_write=[{"path": canonical_manifest, "scope": "just_path"}],
+            ),
             permission_resolver=ctx.permission_resolver,
-            skill_name="",
+            skill_name="drop_source",
             intervention_bus=None,
             subscribers=getattr(ctx.events, "subscribers", []),
         )

@@ -44,11 +44,16 @@ async def handle(
 
     workspace_root = ctx.workspace.base_dir
 
-    # Permission gate (ADR-0029 mirror — ask default)
+    # Permission gate (#571 collapse arc Phase 5): the skill must
+    # declare ``file.write: [.reyn/index/sources.yaml]``. The
+    # bool-axis ``require_index_drop`` per-source prompt is removed;
+    # per-source granularity is not preserved (= drop is destructive
+    # and the per-source distinction was operator-UX rather than
+    # security).
     if ctx.permission_resolver is not None:
-        bus = ctx.intervention_bus if ctx.intervention_bus is not None else _DenyBus()
-        await ctx.permission_resolver.require_index_drop(
-            ctx.permission_decl, op.source, bus,  # type: ignore[arg-type]
+        sources_yaml = workspace_root / ".reyn" / "index" / "sources.yaml"
+        ctx.permission_resolver.require_file_write(
+            ctx.permission_decl, str(sources_yaml), ctx.skill_name,
         )
 
     backend = SqliteIndexBackend(workspace_root=workspace_root)
