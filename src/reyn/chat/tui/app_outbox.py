@@ -161,6 +161,44 @@ def _find_preview_snippet(text: str) -> str:
     return compact[: max(1, _FIND_PREVIEW_MAX_CHARS - 1)] + "…"
 
 
+def _parse_find_flags(raw: str) -> tuple[bool, bool, str]:
+    """Split ``/find`` arg into ``(regex, case_sensitive, query)``.
+
+    Accepts a single leading short-flag token of the shape ``-X``
+    where X is any combination of ``r`` (regex) and ``c`` (case-
+    sensitive). Order within the token doesn't matter (``-rc`` =
+    ``-cr``). Anything that doesn't look like a flag token is
+    treated as the start of the query (= ``/find -foo`` searches
+    for ``"-foo"`` literally, because ``-foo`` isn't a known flag
+    combo). The query keeps its full text including spaces; the
+    flag token is only consumed when it sits at the head.
+
+    Examples::
+
+        _parse_find_flags("foo")          → (False, False, "foo")
+        _parse_find_flags("-c Foo")       → (False, True,  "Foo")
+        _parse_find_flags("-r f.*o")      → (True,  False, "f.*o")
+        _parse_find_flags("-rc Foo.*")    → (True,  True,  "Foo.*")
+        _parse_find_flags("-cr Foo.*")    → (True,  True,  "Foo.*")
+        _parse_find_flags("-foo bar")     → (False, False, "-foo bar")
+        _parse_find_flags("")             → (False, False, "")
+    """
+    s = (raw or "").strip()
+    if not s.startswith("-"):
+        return False, False, s
+    # Peel the leading flag token off the front. ``split(maxsplit=1)``
+    # gives [flag_token, rest_of_query] or just [flag_token] if no
+    # trailing query.
+    head, _, tail = s.partition(" ")
+    body = head[1:]  # strip the leading "-"
+    if not body or any(c not in ("r", "c") for c in body):
+        # Not a recognised flag combo — treat the whole thing as
+        # the query (= the user is searching for a hyphen-prefixed
+        # term like ``-h`` or ``-flag``).
+        return False, False, s
+    return ("r" in body), ("c" in body), tail.strip()
+
+
 class OutboxRouter:
     """Drain + dispatch loop for the registry's outbox queue."""
 
@@ -186,6 +224,14 @@ class OutboxRouter:
         # usage hint rather than silently no-op'ing.
         self._find_query: str | None = None
         self._find_cursor_idx: int | None = None
+        # Search flags applied to the active cycle (set in ``_on_find``,
+        # read in ``cycle_find``). Default both False = case-insensitive
+        # substring (= the original /find behaviour, unchanged for plain
+        # ``/find <text>`` invocations). The flags survive Ctrl+G /
+        # Ctrl+Shift+G so the same search mode is re-applied as the
+        # buffer mutates between presses.
+        self._find_regex: bool = False
+        self._find_case_sensitive: bool = False
         # Dispatch table — each entry maps a `msg.kind` to its handler.
         # Methods on `self` are bound, so we can reference them directly.
         self.HANDLERS: dict[str, Callable[..., str | None]] = {
@@ -589,35 +635,55 @@ class OutboxRouter:
     def _on_find(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__find__` — /find slash; substring search across the RichLog buffer.
+        """`__find__` — /find slash; substring / regex search of the conv buffer.
 
-        ``msg.text`` carries the raw query. Behaviour:
-          - empty query → status with usage hint
-          - 0 matches  → status ``"no matches for '<q>'"`` (= clear "I
-            searched but found nothing")
-          - ≥ 1 match  → scroll the log to the match nearest BELOW
-            the current scroll position (= "go down to where the
-            result is"; wraps to the first match when no downward
-            match exists) AND write a status line with the total
-            count + up to 5 line numbers, AND seed the cycle state
-            so Ctrl+G / Ctrl+Shift+G can step forward/backward
-            through the remaining matches.
+        ``msg.text`` carries the raw arg string. Leading short flags
+        are parsed off the front (= ``-r``, ``-c``, or combined
+        ``-rc``); everything after is the query.
 
-        Search target: the live RichLog buffer (= what's currently
-        scrollable). History past the ``_RICHLOG_MAX_LINES`` trim is
-        outside scope — the right-panel Events tab + ``/list``
-        slash cover that. ``ConversationView.find_in_buffer``
-        encapsulates the substring scan + case-insensitive match.
+          /find foo            → case-insensitive substring (default)
+          /find -c Foo         → case-sensitive substring
+          /find -r f.*o        → case-insensitive regex
+          /find -rc Foo.*      → case-sensitive regex (combined flag)
+
+        Behaviour:
+          - empty query → usage hint
+          - invalid regex → error status with the ``re.error`` message
+          - 0 matches  → ``"no matches for '<q>'"``
+          - ≥ 1 match  → scroll to nearest below-cursor + seed cycle
+            state with the same flags so Ctrl+G / Ctrl+Shift+G keep
+            applying them as the buffer mutates between presses.
+
+        Search target: the live RichLog buffer. History past the
+        ``_RICHLOG_MAX_LINES`` trim is outside scope — the right-
+        panel Events tab + ``/list`` slash cover that.
         """
-        query = (msg.text or "").strip()
+        regex, case_sensitive, query = _parse_find_flags(msg.text or "")
         if not query:
             self._show_transient_status(
                 conv,
-                "usage: /find <query>",
+                "usage: /find [-r|-c|-rc] <query>",
                 kind="error",
             )
             return
-        matches = conv.find_in_buffer(query)
+        try:
+            matches = conv.find_in_buffer(
+                query, regex=regex, case_sensitive=case_sensitive,
+            )
+        except Exception as exc:
+            # Invalid regex (= ``re.error``) lands here. Catching all
+            # Exceptions defensively so a future syntax issue in
+            # find_in_buffer can't crash the outbox loop; the message
+            # naming preserves the underlying ``re.error`` text for
+            # actionability.
+            self._find_query = None
+            self._find_cursor_idx = None
+            self._show_transient_status(
+                conv,
+                f"/find: invalid pattern: {exc}",
+                kind="error",
+            )
+            return
         if not matches:
             # Forget any stale cycle state so a follow-up Ctrl+G
             # reports the no-match condition for THIS query, not a
@@ -653,6 +719,8 @@ class OutboxRouter:
         # Seed cycle state so Ctrl+G picks up from here.
         self._find_query = query
         self._find_cursor_idx = target_idx
+        self._find_regex = regex
+        self._find_case_sensitive = case_sensitive
         # Set the header find-state badge so the user has a persistent
         # cue that /find mode is active. Position = 1-based index of
         # the cursor's match in the sorted match list.
@@ -741,7 +809,26 @@ class OutboxRouter:
             conv = self._app.query_one("#conversation", ConversationView)
         except Exception:
             return
-        matches = conv.find_in_buffer(query)
+        try:
+            matches = conv.find_in_buffer(
+                query,
+                regex=self._find_regex,
+                case_sensitive=self._find_case_sensitive,
+            )
+        except Exception as exc:
+            # Defensive: re-search shouldn't normally fail mid-cycle
+            # since the same pattern compiled at /find time, but a
+            # buffer mutation could theoretically expose a corner
+            # case. Surface + clear state so the user can recover
+            # with a fresh /find.
+            self._find_query = None
+            self._find_cursor_idx = None
+            self._show_transient_status(
+                conv,
+                f"/find: pattern failed: {exc}",
+                kind="error",
+            )
+            return
         if not matches:
             self._find_query = None
             self._find_cursor_idx = None

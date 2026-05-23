@@ -1,20 +1,20 @@
-"""/find — search the conv pane buffer for a substring, with history recall.
+"""/find — search the conv pane buffer for a substring or regex, with history recall.
 
 Categorical UX gap fill (= "I said something about X earlier, where
-is it?"). Searches the current RichLog buffer for case-insensitive
-substring matches and jumps to the first one near the current
-scroll position. The "search what's visible in scrollback" scope
-is the natural TUI-internal boundary — agent-reply history past
-the ring-buffer trim lives in ``.reyn/events/agents/<name>/`` and
-is reachable via the right-panel Events tab + ``/list`` slash;
-this command surfaces just the in-pane content.
+is it?"). Searches the current RichLog buffer and jumps to the
+first match near the current scroll position. Default is
+case-insensitive substring; flags opt into regex / case-sensitive
+modes. The "search what's visible in scrollback" scope is the
+natural TUI-internal boundary — agent-reply history past the
+ring-buffer trim lives in ``.reyn/events/agents/<name>/`` and is
+reachable via the right-panel Events tab + ``/list`` slash; this
+command surfaces just the in-pane content.
 
 Pattern: same shape as ``/copy`` — the slash command emits a
-sentinel ``__find__`` OutboxMessage with the raw query in
-``text``; the TUI app intercepts via ``_on_find`` in app_outbox,
-runs ``ConversationView.find_in_buffer`` against the live
-RichLog, scrolls to the nearest match, and writes a status line
-with the match count.
+sentinel ``__find__`` OutboxMessage with the raw arg in ``text``;
+the TUI app intercepts via ``_on_find`` in app_outbox, parses
+leading flags off the front, runs ``find_in_buffer`` with the
+chosen mode, scrolls to the nearest match, and writes a status.
 
 History recall: every non-empty ``/find <q>`` invocation appends
 ``q`` to a module-level LRU deque (capped at
@@ -27,10 +27,16 @@ naturally gone on session restart.
 
 Usage::
 
-    /find tokens     # find lines containing "tokens" (case-insensitive)
-    /find foo bar    # multi-word query (literal substring, not regex)
-    /find <space>    # picker shows last 5 queries to recall via Tab
-    /find            # empty query → status reports usage
+    /find tokens         # case-insensitive substring (default)
+    /find -c Foo         # case-sensitive substring
+    /find -r f.*o        # case-insensitive regex
+    /find -rc Foo.*      # case-sensitive regex (combined flag)
+    /find -cr Foo.*      # same as -rc (flag order doesn't matter)
+    /find -hyphen-term   # leading hyphen + unrecognised letters →
+                          treated as the literal query (= the user
+                          is searching for ``-hyphen-term``)
+    /find <space>        # picker shows last 5 queries to recall via Tab
+    /find                # empty query → usage hint
 """
 from __future__ import annotations
 
@@ -105,8 +111,8 @@ def _find_completer(session: "object", arg_partial: str = "") -> list[str]:
 
 @slash(
     "find",
-    summary="Search the conv pane for a substring",
-    usage="/find <query>",
+    summary="Search the conv pane (substring or regex)",
+    usage="/find [-r|-c|-rc] <query>",
     completer=_find_completer,
 )
 async def find_cmd(session: "object", args: str) -> None:

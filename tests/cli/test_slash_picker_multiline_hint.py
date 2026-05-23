@@ -174,12 +174,18 @@ async def test_usage_and_completions_render_together() -> None:
 
 
 def test_find_command_has_usage() -> None:
-    """Tier 2: /find opts into the structured usage line."""
+    """Tier 2: /find opts into the structured usage line.
+
+    Usage syntax expanded in the regex/case opt-in PR
+    (``[-r|-c|-rc]`` flag block). The substring ``<query>`` stays
+    so the contract "usage names the query placeholder" survives.
+    """
     from reyn.chat.slash import REGISTRY
 
     cmd = REGISTRY.get("find")
     assert cmd is not None
-    assert cmd.usage == "/find <query>"
+    assert "<query>" in cmd.usage
+    assert "/find" in cmd.usage
 
 
 def test_save_command_has_usage() -> None:
@@ -212,14 +218,17 @@ def test_attach_command_has_usage() -> None:
 def test_find_summary_no_longer_carries_redundant_paren_usage() -> None:
     """Tier 2: /find summary stripped of the embedded ``(/find <query>)``.
 
-    After moving usage to its own field, the summary should be
-    the prose description only — no embedded usage paren. Pin
-    this so a future revert can't accidentally re-introduce the
-    redundancy.
+    After moving usage to its own field, the summary no longer
+    embeds the ``/find`` usage syntax in parens. The regex/case
+    opt-in PR added ``(substring or regex)`` to the summary
+    which is mode disambiguation, NOT a usage hint, so it stays.
+    Pin only that the embedded ``(/find ...)`` form doesn't return.
     """
     from reyn.chat.slash import REGISTRY
 
     cmd = REGISTRY.get("find")
     assert cmd is not None
+    # Embedded ``(/find ...)`` paren-form usage must not return.
     assert "(/find" not in cmd.summary
-    assert cmd.summary == "Search the conv pane for a substring"
+    # Summary still describes the conv pane scope.
+    assert "conv pane" in cmd.summary.lower()

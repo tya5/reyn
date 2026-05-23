@@ -960,33 +960,65 @@ class ConversationView(Widget):
         """Number of agent replies currently held in the /copy ring buffer."""
         return len(self._recent_replies)
 
-    def find_in_buffer(self, query: str) -> list[tuple[int, str]]:
+    def find_in_buffer(
+        self,
+        query: str,
+        *,
+        regex: bool = False,
+        case_sensitive: bool = False,
+    ) -> list[tuple[int, str]]:
         """Return ``(line_idx, line_text)`` for every RichLog line matching ``query``.
 
-        Case-insensitive substring search across the live RichLog
-        buffer (= what's currently scrollable). Lines past the
-        ``_RICHLOG_MAX_LINES`` ring-buffer trim are NOT searched —
-        for older history the user has the right-panel Events tab +
-        the agent-side ``.reyn/events/agents/<name>/`` skill-run
-        directories. Returning the line index lets the caller scroll
-        the log to the match with ``log.scroll_to(y=...)``.
+        Search modes (off → on, two independent flags):
+          - ``regex=False`` (default): substring match — fast, no
+            metacharacters interpreted
+          - ``regex=True``: compiled regex search via ``re.search``;
+            invalid patterns raise ``re.error`` so the caller can
+            surface a clear error status
+          - ``case_sensitive=False`` (default): match across cases
+            (= ``"Foo"`` query matches ``"foo bar"``)
+          - ``case_sensitive=True``: exact-case match
 
-        Empty ``query`` returns an empty list (= the caller treats
-        this as "nothing to search for", typically with a usage hint).
+        Scope: the live RichLog buffer (= what's currently
+        scrollable). Lines past the ``_RICHLOG_MAX_LINES`` ring-
+        buffer trim are NOT searched — for older history the user
+        has the right-panel Events tab + the agent-side
+        ``.reyn/events/agents/<name>/`` skill-run directories.
 
-        Each tuple's ``line_text`` carries the line's rendered plain
-        text (= via the Strip's ``.text`` property) so the caller can
-        surface a short preview alongside the line number without
-        re-walking the buffer.
+        Empty ``query`` returns an empty list (= caller treats this
+        as "nothing to search for", usually with a usage hint).
+
+        Each tuple's ``line_text`` carries the line's rendered
+        plain text (via the Strip's ``.text`` property) so callers
+        can surface a short preview alongside the line number.
         """
-        q = (query or "").strip().lower()
+        q = (query or "").strip()
         if not q:
             return []
-        out: list[tuple[int, str]] = []
         log = self._log()
+        out: list[tuple[int, str]] = []
+
+        if regex:
+            import re
+            # ``re.error`` (invalid pattern) bubbles up — callers
+            # catch it and surface a status; silent suppression
+            # would leave the user wondering why ``/find -r foo(``
+            # silently matched nothing.
+            flags = 0 if case_sensitive else re.IGNORECASE
+            pattern = re.compile(q, flags)
+            for idx, strip in enumerate(getattr(log, "lines", []) or []):
+                text = getattr(strip, "text", "") or ""
+                if pattern.search(text):
+                    out.append((idx, text))
+            return out
+
+        # Substring path — same lookup whether case-sensitive or
+        # not; only the comparison case differs.
+        needle = q if case_sensitive else q.lower()
         for idx, strip in enumerate(getattr(log, "lines", []) or []):
             text = getattr(strip, "text", "") or ""
-            if q in text.lower():
+            haystack = text if case_sensitive else text.lower()
+            if needle in haystack:
                 out.append((idx, text))
         return out
 
