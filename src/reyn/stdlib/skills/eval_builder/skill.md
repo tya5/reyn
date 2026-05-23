@@ -52,20 +52,20 @@ permissions:
     - path: reyn/project
       scope: recursive
   python:
+    # FP-0042 Phase 2.5 (2026-05-23): the legacy unsafe-mode
+    # ``analyze_skill_resolver.resolve_paths`` was deleted — it had no
+    # active callers (= the active preprocessor chain in
+    # ``phases/analyze_skill.md`` uses the ``skill_resolve`` run_op
+    # plus the safe-mode ``resolve_paths_from_op`` instead, per the
+    # R-PURE-MODE-REDEFINE Class D refactor). All python steps are now
+    # mode: safe.
     - module: ./analyze_skill.py
       function: extract_skill_name
       mode: safe
       timeout: 5
-    # NEW: pure resolver consuming skill_resolve op output (R-PURE-MODE Class D).
-    # Replaces the unsafe resolve_paths step in the preprocessor chain.
     - module: ./analyze_skill_resolver_pure.py
       function: resolve_paths_from_op
       mode: safe
-      timeout: 5
-    # KEEP: legacy unsafe resolver for back-compat with any direct callers.
-    - module: ./analyze_skill_resolver.py
-      function: resolve_paths
-      mode: unsafe
       timeout: 5
     - module: ./analyze_skill.py
       function: inject_resolved_paths
