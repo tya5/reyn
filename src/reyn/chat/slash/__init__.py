@@ -51,6 +51,13 @@ class SlashCommand:
     # ``[arg]`` for optional, matching the slash tradition (e.g.
     # ``/find <query>``, ``/copy [N|list]``).
     usage: str = ""
+    # Optional docs paths for ``/help <cmd>`` focus mode. When non-empty,
+    # the focus panel appends a ``  see also: <path1>, <path2>`` footer
+    # so the user can navigate from the picker-hint summary to the
+    # canonical concept doc. Paths are repo-relative (e.g.
+    # ``"docs/concepts/plan-mode.md"``). Defaults to empty tuple so all
+    # existing commands without explicit see_also are unaffected.
+    see_also: tuple[str, ...] = ()
 
 
 class SlashRegistry:
@@ -125,6 +132,7 @@ def slash(
     completer: CompleterFn | None = None,
     hidden: bool = False,
     usage: str = "",
+    see_also: tuple[str, ...] = (),
 ) -> Callable[[HandlerFn], HandlerFn]:
     """Decorator that registers `fn` as a slash command on import.
 
@@ -133,6 +141,10 @@ def slash(
 
     ``usage`` is the optional structured usage line surfaced as the
     second row of the SlashPicker hint mode (see ``SlashCommand.usage``).
+
+    ``see_also`` is an optional tuple of repo-relative doc paths surfaced
+    in ``/help <cmd>`` focus mode as a footer link (see
+    ``SlashCommand.see_also``).
     """
 
     def _decorator(fn: HandlerFn) -> HandlerFn:
@@ -144,6 +156,7 @@ def slash(
             completer=completer,
             hidden=hidden,
             usage=usage,
+            see_also=see_also,
         ))
         return fn
 

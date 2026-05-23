@@ -33,6 +33,7 @@ async def cost_cmd(session: "ChatSession", args: str) -> None:
     "budget",
     summary="Full budget breakdown",
     usage="/budget [reset]",
+    see_also=("docs/reference/config/budget.md",),
 )
 async def budget_cmd(session: "ChatSession", args: str) -> None:
     """``/budget`` (full breakdown) or ``/budget reset`` (clear counters).
