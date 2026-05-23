@@ -27,7 +27,15 @@ _LINT_DESCRIPTION = (
 _LINT_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "skill_path": {"type": "string"},
+        "skill_path": {
+            "type": "string",
+            "description": (
+                'qualified action name like "skill__<name>" '
+                "(returned by list_actions), the bare skill name, "
+                "or a workspace-relative directory path. NOT a "
+                "slash-style path under \"skill/\""
+            ),
+        },
     },
     "required": ["skill_path"],
 }
