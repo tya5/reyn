@@ -393,3 +393,51 @@ def test_delete_without_context_raises() -> None:
     """Tier 2: delete without permission context raises clearly."""
     with pytest.raises(PermissionError):
         sf.delete("/tmp/no-context-delete")
+
+
+# ---------------------------------------------------------------------------
+# write_atomic — FP-0042 Phase 2.3
+# ---------------------------------------------------------------------------
+
+
+def test_write_atomic_within_write_path_writes_content(sandbox: Path) -> None:
+    """Tier 2: write_atomic in declared write zone lands the content."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "out" / "atomic.txt"
+    sf.write_atomic(str(target), "atomic payload\n")
+    assert target.read_text() == "atomic payload\n"
+
+
+def test_write_atomic_outside_write_path_raises(sandbox: Path) -> None:
+    """Tier 2: write_atomic outside the write zone raises; nothing changes."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "docs" / "a.md"
+    with pytest.raises(PermissionError):
+        sf.write_atomic(str(target), "should not land")
+    assert target.read_text() == "hello A\n"
+
+
+def test_write_atomic_replaces_existing(sandbox: Path) -> None:
+    """Tier 2: write_atomic overwrites an existing file in-place atomically."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "out" / "data.txt"
+    target.write_text("original\n", encoding="utf-8")
+    sf.write_atomic(str(target), "replacement\n")
+    assert target.read_text() == "replacement\n"
+
+
+def test_write_atomic_without_context_raises() -> None:
+    """Tier 2: write_atomic without permission context raises clearly."""
+    with pytest.raises(PermissionError):
+        sf.write_atomic("/tmp/no-context-atomic", "x")
+
+
+def test_write_atomic_leaves_no_temp_residue(sandbox: Path) -> None:
+    """Tier 2: a successful write_atomic leaves no .reyn_safe_atomic_* temp
+    file behind in the destination directory."""
+    sf._set_permission_context(write_paths=[str(sandbox / "out")])
+    target = sandbox / "out" / "clean.txt"
+    sf.write_atomic(str(target), "payload\n")
+    # No temp file with our prefix should remain.
+    siblings = list((sandbox / "out").glob(".reyn_safe_atomic_*"))
+    assert siblings == [], f"temp residue: {siblings}"

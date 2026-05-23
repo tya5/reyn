@@ -1,4 +1,4 @@
-"""chunkers.py — pure-function API for index_events stdlib skill (FP-0009 A).
+"""chunkers.py — safe-mode python steps for the index_events stdlib skill (FP-0009 A).
 
 Public pure functions (Tier 2 testable — no artifact dict, no global state):
   collect_run_chunks  — walk events_root, group by run boundary, return chunks
@@ -12,21 +12,33 @@ Postprocessor entry points (called by the skill harness with artifact dict):
   run_collect_chunks  — artifact wrapper around collect_run_chunks
   run_advance_cursor  — artifact wrapper around advance_cursor
 
+FP-0042 Phase 2.3 (2026-05-23): migrated from mode: unsafe to mode: safe.
+File reads / writes / stat / glob go through ``reyn.safe.file``; the atomic
+cursor update uses the new ``reyn.safe.file.write_atomic`` primitive. The
+event-files glob covers ``.reyn/events/`` (= default-zone read), the chunks
+JSONL output goes to ``artifacts/event_chunks.jsonl`` (= granted via
+``permissions.file.write: artifacts`` in skill.md), and the cursor file at
+``.reyn/index/events_cursor`` is in the default write zone.
+
+Path manipulation uses plain string operations because ``pathlib`` is not
+on the safe-mode import allowlist. The single-character path separator
+``/`` is used throughout — adequate on macOS / Linux, the only supported
+platforms for stdlib skills.
+
 P7 note: this module is skill-local and may freely reference event-domain
-concepts (run boundaries, skill names, tool_executed, etc.). OS code does NOT
-import from here.
+concepts (run boundaries, skill names, tool_executed, etc.). OS code does
+NOT import from here.
 """
 from __future__ import annotations
 
 import glob as _glob_mod
 import hashlib
 import json
-import os
-import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Iterator
+
+from reyn.safe import file as _safe_file
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -35,8 +47,13 @@ _ERROR_EXCERPT_MAX = 200
 _EPOCH_ISO = "1970-01-01T00:00:00Z"
 
 # Preprocessor constants (used by resolve_scan_context; patchable in tests)
-_CURSOR_FILE = Path(".reyn") / "index" / "events_cursor"
-_EVENTS_DIR = Path(".reyn") / "events"
+_CURSOR_FILE = ".reyn/index/events_cursor"
+_EVENTS_DIR = ".reyn/events"
+
+# POSIX stat-mode constants (= stat.S_IFMT / S_IFREG). Hard-coded because
+# the ``stat`` module is not on the safe-mode import allowlist.
+_S_IFMT = 0o170000
+_S_IFREG = 0o100000
 
 
 # ── Preprocessor entry point ──────────────────────────────────────────────────
@@ -74,7 +91,7 @@ def resolve_scan_context(artifact: dict) -> dict:
     skill_filter_raw = data.get("skills") or data.get("skill_filter")
     skill_filter: list[str] | None = list(skill_filter_raw) if skill_filter_raw else None
 
-    cursor_exists = _CURSOR_FILE.exists()
+    cursor_exists = _path_exists_safe(_CURSOR_FILE)
     cursor_value: str | None = None
 
     if mode == "replace":
@@ -84,14 +101,14 @@ def resolve_scan_context(artifact: dict) -> dict:
         since = since_input
     elif cursor_exists:
         try:
-            cursor_value = _CURSOR_FILE.read_text(encoding="utf-8").strip()
+            cursor_value = _safe_file.read(_CURSOR_FILE).strip()
             since = cursor_value if cursor_value else _EPOCH_ISO
-        except OSError:
+        except (OSError, PermissionError):
             since = _EPOCH_ISO
     else:
         since = _EPOCH_ISO
 
-    event_files = _discover_event_files(str(_EVENTS_DIR))
+    event_files = _discover_event_files(_EVENTS_DIR)
     event_files_count = len(event_files)
 
     # Compute oldest/newest via file mtime (cheap — avoids reading JSONL content)
@@ -101,8 +118,8 @@ def resolve_scan_context(artifact: dict) -> dict:
         mtimes = []
         for fp in event_files:
             try:
-                mtimes.append(os.path.getmtime(fp))
-            except OSError:
+                mtimes.append(float(_safe_file.stat(fp).get("mtime", 0)))
+            except (OSError, PermissionError):
                 pass
         if mtimes:
             def _mtime_to_iso(mts: float) -> str:
@@ -190,33 +207,24 @@ def collect_run_chunks(events_root: str, since: str | None) -> list[dict]:
 def advance_cursor(cursor_path: str, new_ts: str) -> None:
     """Atomic write of new max ts to cursor file.
 
-    Creates parent directories as needed. Uses tempfile + os.rename for
-    atomic update (crash-safe). Raises OSError on persistent write failure.
+    Creates parent directories as needed. Uses ``reyn.safe.file.write_atomic``
+    (= tempfile + os.replace internally) for crash-safe update. Raises
+    OSError / PermissionError on write failure.
     """
-    path = Path(cursor_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), prefix=".events_cursor_tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(new_ts)
-        os.rename(tmp_path, str(path))
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    parent = _dirname(cursor_path)
+    if parent:
+        _safe_file.mkdir(parent, parents=True, exist_ok=True)
+    _safe_file.write_atomic(cursor_path, new_ts)
 
 
 def read_cursor(cursor_path: str) -> str | None:
     """Read cursor file; return None if missing or empty."""
-    path = Path(cursor_path)
-    if not path.exists():
+    if not _path_exists_safe(cursor_path):
         return None
     try:
-        value = path.read_text(encoding="utf-8").strip()
+        value = _safe_file.read(cursor_path).strip()
         return value if value else None
-    except OSError:
+    except (OSError, PermissionError):
         return None
 
 
@@ -257,34 +265,35 @@ def run_collect_chunks(artifact: dict) -> dict:
 
     # Re-glob event files deterministically — do NOT use data.event_files from
     # the LLM artifact (it is no longer provided; BUG-1 fix).
-    events_root = str(Path(".reyn") / "events")
+    events_root = ".reyn/events"
     file_paths = _discover_event_files(events_root)
 
-    output_path = Path(_CHUNKS_JSONL_PATH)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _safe_file.mkdir(_dirname(_CHUNKS_JSONL_PATH), parents=True, exist_ok=True)
 
     chunk_count = 0
     skipped_runs = 0
     filtered_runs = 0
     chunk_index = 0
+    records: list[str] = []
 
-    with open(output_path, "w", encoding="utf-8") as out_f:
-        for run_id, events, source_file in _stream_runs(file_paths):
-            result = _build_chunk(run_id, events, source_file, since_dt, skill_filter)
-            if result is None:
-                skipped_runs += 1
-                continue
-            if result.get("_filtered"):
-                filtered_runs += 1
-                continue
-            result["metadata"]["chunk_index"] = chunk_index
-            record = {
-                "text": result["text"],
-                "metadata": result["metadata"],
-            }
-            out_f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            chunk_count += 1
-            chunk_index += 1
+    for run_id, events, source_file in _stream_runs(file_paths):
+        result = _build_chunk(run_id, events, source_file, since_dt, skill_filter)
+        if result is None:
+            skipped_runs += 1
+            continue
+        if result.get("_filtered"):
+            filtered_runs += 1
+            continue
+        result["metadata"]["chunk_index"] = chunk_index
+        record = {
+            "text": result["text"],
+            "metadata": result["metadata"],
+        }
+        records.append(json.dumps(record, ensure_ascii=False))
+        chunk_count += 1
+        chunk_index += 1
+
+    _safe_file.write(_CHUNKS_JSONL_PATH, "\n".join(records) + ("\n" if records else ""))
 
     return {
         "chunk_count": chunk_count,
@@ -315,7 +324,7 @@ def run_advance_cursor(artifact: dict) -> dict:
     skipped_runs = int(chunk_stats.get("skipped_runs") or 0)
     filtered_runs = int(chunk_stats.get("filtered_runs") or 0)
 
-    cursor_path = str(Path(".reyn") / "index" / "events_cursor")
+    cursor_path = ".reyn/index/events_cursor"
     new_cursor = _find_max_cursor_from_chunks()
     if not new_cursor:
         existing = read_cursor(cursor_path)
@@ -336,7 +345,7 @@ def run_advance_cursor(artifact: dict) -> dict:
 
 
 def _stream_runs(
-    event_files: list[Path],
+    event_files: list[str],
 ) -> Iterator[tuple[str, list[dict], str]]:
     """Yield (run_id, events, source_file) tuples, grouping events by run_id.
 
@@ -348,24 +357,24 @@ def _stream_runs(
     run_files: dict[str, str] = {}
 
     for file_path in event_files:
-        if not file_path.exists():
+        if not _path_exists_safe(file_path):
             continue
         try:
-            with open(file_path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    run_id = _extract_run_id(event)
-                    runs[run_id].append(event)
-                    if run_id not in run_files:
-                        run_files[run_id] = str(file_path)
-        except OSError:
+            content = _safe_file.read(file_path)
+        except (OSError, PermissionError):
             continue
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            run_id = _extract_run_id(event)
+            runs[run_id].append(event)
+            if run_id not in run_files:
+                run_files[run_id] = file_path
 
     for run_id, events in runs.items():
         yield run_id, events, run_files.get(run_id, "")
@@ -647,43 +656,41 @@ def _extract_caller(run_id: str, started_event: dict | None) -> str:
     return "direct"
 
 
-def _discover_event_files(events_root: str) -> list[Path]:
+def _discover_event_files(events_root: str) -> list[str]:
     """Discover all .jsonl files under events_root/**/ ."""
-    root = Path(events_root)
-    if not root.exists():
+    if not _path_exists_safe(events_root):
         return []
-    pattern = str(root / "**" / "*.jsonl")
+    pattern = f"{events_root}/**/*.jsonl"
     matches = _glob_mod.glob(pattern, recursive=True)
-    return [Path(m) for m in sorted(matches) if os.path.isfile(m)]
+    return sorted(m for m in matches if _is_regular_file(m))
 
 
 def _find_max_cursor_from_chunks() -> str | None:
     """Read the just-written event_chunks.jsonl and find the max completed_at."""
-    chunks_path = Path(_CHUNKS_JSONL_PATH)
-    if not chunks_path.exists():
+    if not _path_exists_safe(_CHUNKS_JSONL_PATH):
+        return None
+    try:
+        content = _safe_file.read(_CHUNKS_JSONL_PATH)
+    except (OSError, PermissionError):
         return None
     max_ts: str | None = None
     max_dt: datetime | None = None
-    try:
-        with open(chunks_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                    meta = record.get("metadata") or {}
-                    extra = meta.get("extra") or {}
-                    completed_at = str(extra.get("ended_at") or extra.get("completed_at") or "")
-                    if completed_at:
-                        dt = _parse_iso_safe(completed_at)
-                        if dt and (max_dt is None or dt > max_dt):
-                            max_dt = dt
-                            max_ts = completed_at
-                except Exception:
-                    continue
-    except OSError:
-        return None
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+            meta = record.get("metadata") or {}
+            extra = meta.get("extra") or {}
+            completed_at = str(extra.get("ended_at") or extra.get("completed_at") or "")
+            if completed_at:
+                dt = _parse_iso_safe(completed_at)
+                if dt and (max_dt is None or dt > max_dt):
+                    max_dt = dt
+                    max_ts = completed_at
+        except Exception:
+            continue
     return max_ts
 
 
@@ -718,3 +725,48 @@ def _parse_iso_safe(ts: str) -> datetime | None:
 def _approx_tokens(text: str) -> int:
     """Rough token count: ~4 chars per token (GPT-style BPE approximation)."""
     return max(1, len(text) // 4)
+
+
+# ── Path helpers (pathlib-free for safe-mode allowlist) ────────────────────
+
+
+def _dirname(path: str) -> str:
+    """Return the parent directory of a POSIX-style path.
+
+    Replacement for ``Path(p).parent`` / ``os.path.dirname`` (= os not in
+    the safe-mode allowlist). Returns ``""`` when the path has no parent.
+    """
+    idx = path.rfind("/")
+    if idx <= 0:
+        return ""
+    return path[:idx]
+
+
+def _path_exists_safe(path: str) -> bool:
+    """Permission-aware existence check that does not raise.
+
+    ``reyn.safe.file.exists`` raises ``PermissionError`` when the path
+    falls outside the declared read zone; for the read-cursor / glob
+    paths here, we want a permission denial to count as "not present"
+    so the step degrades gracefully (= no cursor → reindex from epoch,
+    no events dir → empty chunk list).
+    """
+    try:
+        return _safe_file.exists(path)
+    except (OSError, PermissionError):
+        return False
+
+
+def _is_regular_file(path: str) -> bool:
+    """Return True iff ``path`` exists and is a regular file.
+
+    Replacement for ``os.path.isfile``. Uses ``reyn.safe.file.stat`` and
+    checks the POSIX mode bits. Any error (missing, permission denied,
+    broken symlink) returns False — matches ``os.path.isfile``'s
+    suppress-all-errors behaviour.
+    """
+    try:
+        info = _safe_file.stat(path)
+    except (OSError, PermissionError):
+        return False
+    return (int(info.get("mode", 0)) & _S_IFMT) == _S_IFREG

@@ -30,27 +30,39 @@ graph:
   scan: []
 permissions:
   python:
+    # FP-0042 Phase 2.3 (2026-05-23): migrated from mode: unsafe to mode: safe.
+    # File reads / writes / stat / glob go through reyn.safe.file; the
+    # atomic cursor update uses reyn.safe.file.write_atomic. Event-file
+    # reads under .reyn/events/ + cursor reads/writes under
+    # .reyn/index/events_cursor are inside the default zones; the chunks
+    # JSONL output below requires the explicit artifacts/ grant.
     - module: ./chunkers.py
       function: resolve_scan_context
-      mode: unsafe
+      mode: safe
       timeout: 30
     - module: ./chunkers.py
       function: run_collect_chunks
-      mode: unsafe
+      mode: safe
       timeout: 300
     - module: ./chunkers.py
       function: run_advance_cursor
-      mode: unsafe
+      mode: safe
       timeout: 10
+  # FP-0042 Phase 2.3: run_collect_chunks writes the chunked JSONL output
+  # to ``<cwd>/artifacts/event_chunks.jsonl`` — outside the default
+  # ``.reyn/`` write zone, so it needs an explicit grant.
+  file.write:
+    - path: artifacts
+      scope: recursive
 postprocessor:
   output_schema: index_events_summary
   steps:
-    # Step 1: unsafe — walk events_root, group by run, produce chunks.jsonl
+    # Step 1: safe — walk events_root, group by run, produce chunks.jsonl
     - type: python
       module: ./chunkers.py
       function: run_collect_chunks
       into: data.chunk_stats
-      mode: unsafe
+      mode: safe
       output_schema:
         type: object
         required: [chunk_count, skipped_runs, filtered_runs]
@@ -81,7 +93,7 @@ postprocessor:
       module: ./chunkers.py
       function: run_advance_cursor
       into: data.cursor_result
-      mode: unsafe
+      mode: safe
       output_schema:
         type: object
         required: [indexed_runs, new_cursor, sources_updated]
