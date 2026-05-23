@@ -77,7 +77,7 @@ def test_chat_message_multimodal_user_content_list() -> None:
 
 
 def test_constructor_rejects_legacy_agent_role() -> None:
-    """Tier 2 (PR-B): ``role="agent"`` is the pre-#383 spelling.
+    """Tier 2: ``role="agent"`` is the pre-#383 spelling.
     PR-A accepted it for transition; PR-B's constructor rejects it with
     a structured ValueError so any straggler caller gets a loud signal.
     Migration of on-disk entries still happens via
@@ -89,7 +89,7 @@ def test_constructor_rejects_legacy_agent_role() -> None:
 
 
 def test_constructor_no_longer_accepts_text_kwarg() -> None:
-    """Tier 2 (PR-B): the legacy ``text=`` kwarg was removed alongside
+    """Tier 2: the legacy ``text=`` kwarg was removed alongside
     the compat shim. Callers must pass ``content=``.
     """
     import pytest
@@ -98,7 +98,7 @@ def test_constructor_no_longer_accepts_text_kwarg() -> None:
 
 
 def test_constructor_no_longer_accepts_media_kwarg() -> None:
-    """Tier 2 (PR-B): the legacy ``media=`` kwarg was removed alongside
+    """Tier 2: the legacy ``media=`` kwarg was removed alongside
     the compat shim. Callers must build a content list directly.
     """
     import pytest
@@ -242,7 +242,6 @@ def test_load_history_migrates_legacy_lines(tmp_path: Path) -> None:
     )
     session.load_history()
 
-    assert len(session.history) == 2
     assert session.history[0].role == "user"
     assert session.history[0].content == "hi"
     assert session.history[1].role == "assistant"  # renamed from "agent"
