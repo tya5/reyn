@@ -66,16 +66,11 @@ permissions:
     # R-PURE-MODE Class D: pure resolver consuming skill_resolve op output (mode: safe).
     # Receives data._resolved (set by the skill_resolve run_op preprocessor step) and
     # produces the same path dict as the legacy resolve_paths, without any fs I/O.
+    # FP-0042 Phase 2.7 (2026-05-23): the legacy unsafe copy_to_work_resolver.py
+    # was deleted — its only direct caller was the test suite.
     - module: ./copy_to_work_resolver_pure.py
       function: resolve_paths_from_op
       mode: safe
-      timeout: 5
-
-    # KEPT for back-compat: legacy unsafe resolver for direct callers (tests).
-    # No longer used by the copy_to_work.md preprocessor as of R-PURE-MODE Class D.
-    - module: ./copy_to_work_resolver.py
-      function: resolve_paths
-      mode: unsafe
       timeout: 5
     - module: ./copy_to_work.py
       function: build_copy_plan
@@ -93,48 +88,34 @@ permissions:
       function: inject_resolved_paths
       mode: safe
       timeout: 5
-    # R-PURE-MODE wave 4: dispatch_traces is pure — aggregates recall chunks
-    # inline via aggregate_from_recall_chunks_for_traces. No glob/os/pathlib imports.
-    # Declared mode: safe; 99% hot path (recall hit) runs here.
+    # FP-0042 Phase 2.7 (2026-05-23): all skill_improver python steps now
+    # run mode: safe. File I/O goes through reyn.safe.file; the
+    # .reyn/events/ + .reyn/skill-versions/ writes stay in the default
+    # write zone so no explicit file.write declaration is needed.
     - module: ./trace_collector_pure.py
       function: dispatch_traces
       mode: safe
       timeout: 10
-
-    # R-PURE-MODE wave 4: collect_traces_fallback is honestly mode: unsafe
-    # (globs .reyn/events/**/*.jsonl). Runs unconditionally but no-ops if upstream
-    # dispatch_traces already produced recall stats (_path=recall).
     - module: ./trace_collector.py
       function: collect_traces_fallback
-      mode: unsafe
+      mode: safe
       timeout: 30
-
-    # FP-0006 C: collect_traces back-compat wrapper. Kept for existing tests and
-    # direct callers; delegates to dispatch_traces + collect_traces_fallback.
-    - module: ./trace_collector.py
-      function: collect_traces
-      mode: unsafe
-      timeout: 30
-    # FP-0006 B: version snapshot (finalize preprocessor).
-    # Unsafe mode: reads original skill.md from disk, writes .reyn/skill-versions/,
-    # manages the `current` pointer file.
+    # FP-0006 B: version snapshot (finalize preprocessor). Reads original
+    # skill.md, writes .reyn/skill-versions/<name>/v<N>.md, manages the
+    # `current` pointer file — all via reyn.safe.file as of FP-0042
+    # Phase 2.7. max_versions is read from data._on_propose_config which
+    # the file_read + parse_on_propose_config_minimal chain populates.
     - module: ./version_snapshot.py
       function: save_snapshot
-      mode: unsafe
+      mode: safe
       timeout: 10
-    # R-PURE-MODE Wave 3b (Component D replacement): pure regex parser for
-    # self_improvement subset of reyn.yaml. The file_read step (D-1) passes
-    # raw YAML text via data._reyn_yaml_text; this step extracts the two
-    # fields (on_propose, max_versions) without any fs I/O.
+    # R-PURE-MODE Wave 3b: pure regex parser for self_improvement subset
+    # of reyn.yaml. The file_read step (D-1) passes raw YAML text via
+    # data._reyn_yaml_text; this step extracts the two fields
+    # (on_propose, max_versions) without any fs I/O.
     - module: ./version_snapshot_pure.py
       function: parse_on_propose_config_minimal
       mode: safe
-      timeout: 5
-    # KEPT for backward-compat (tests that call read_on_propose_config directly).
-    # No longer used by finalize.md preprocessor as of Wave 3b.
-    - module: ./version_snapshot.py
-      function: read_on_propose_config
-      mode: unsafe
       timeout: 5
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []

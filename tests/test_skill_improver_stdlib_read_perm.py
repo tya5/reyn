@@ -195,27 +195,22 @@ def _load_skill_improver_skill() -> object:
     return load_dsl_skill(skill_md)
 
 
-def test_skill_improver_permissions_python_has_unsafe_resolve_paths():
-    """Tier 2: skill_improver skill.md declares resolve_paths as mode=unsafe.
-
-    resolve_paths is the only unsafe step in copy_to_work_resolver.py — it calls
-    resolve_skill_path which performs Path.exists() filesystem checks.
-    All dict/regex logic was moved to the preceding safe extract_skill_name step
-    as part of the R-PURE-MODE-REDEFINE Class B refactor (formerly compute_paths).
-
-    Guards that the permissions.python block is present and correct.
+def test_skill_improver_permissions_python_legacy_unsafe_resolver_removed():
+    """Tier 2: regression guard — the legacy
+    ``./copy_to_work_resolver.py:resolve_paths`` permission entry must
+    stay removed (FP-0042 Phase 2.7 deleted the module). Any future
+    patch that re-adds it should also restore the file + adjust the AST
+    guard.
     """
     skill = _load_skill_improver_skill()
 
-    unsafe_entries = [
+    legacy = [
         p for p in skill.permissions.python
         if p.module == "./copy_to_work_resolver.py"
-        and p.function == "resolve_paths"
-        and p.mode == "unsafe"
     ]
-    assert unsafe_entries, (
-        "skill_improver skill.md must declare "
-        "./copy_to_work_resolver.py:resolve_paths with mode=unsafe in permissions.python"
+    assert legacy == [], (
+        "Legacy unsafe resolver permission entry must stay removed. "
+        f"Found: {legacy}"
     )
 
 

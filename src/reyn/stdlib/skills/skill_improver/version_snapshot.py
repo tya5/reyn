@@ -1,25 +1,46 @@
 """FP-0006 Component B — version snapshot helper for skill_improver finalize phase.
 
-Runs in UNSAFE mode from the finalize preprocessor because it:
-  - reads the current skill.md from the original skill directory (Path.read_text)
-  - writes snapshot files to .reyn/skill-versions/<name>/v<N>.md
-  - manages the `current` pointer file in that directory
+Public functions:
+  save_snapshot(artifact)         → dict   (snapshot pre-apply skill.md)
+  update_current_pointer(artifact) → dict  (advance `current` after copy-back)
+  decide_on_propose_action(...)   → str    (pure config-to-action mapping)
 
-Called as a python preprocessor step in finalize.md:
-  - Input:  the improvement_result artifact (after apply_improvements hands off)
-  - Output: {"saved_version": N, "snapshot_path": str, "next_version": N+1}
+FP-0042 Phase 2.7 (2026-05-23): migrated from mode: unsafe to mode: safe.
+File reads / writes / mkdir / delete go through ``reyn.safe.file``;
+``glob.glob`` covers directory enumeration for the max-versions cap.
 
-The snapshot is taken of the PRE-APPLY skill.md (= the version about to be
-replaced). The caller (finalize.md) performs the actual copy-back; this step
-only captures the before-state so rollback is always possible.
+The legacy ``read_on_propose_config`` (which called
+``reyn.config.load_config()`` — a ``reyn.*`` import the safe-mode AST
+validator rejects) was removed. Its only consumer was the test suite;
+the test helper now lives in
+``tests/test_skill_improver_version_snapshot.py``. Production code uses
+the file_read run_op + ``parse_on_propose_config_minimal`` chain in
+``version_snapshot_pure.py`` (= Wave 3b).
 
-NOTE: Do NOT add 'from __future__ import annotations' and do NOT import reyn
-modules at the top level — keep module-level imports minimal so the function is
-importable without the full reyn install if needed.
+Snapshot semantics (unchanged):
+  - reads the current skill.md from the original skill directory
+  - writes a snapshot file to ``.reyn/skill-versions/<name>/v<N>.md``
+  - manages the ``current`` pointer file in that directory
+
+Called as a python preprocessor step in ``phases/finalize.md``. The
+snapshot is taken of the PRE-APPLY skill.md (= the version about to be
+replaced). The caller (finalize.md) performs the actual copy-back; this
+step only captures the before-state so rollback is always possible.
+
+Path manipulation uses plain string operations because ``pathlib`` is
+not on the safe-mode import allowlist.
 """
+from __future__ import annotations
 
-import os
-from pathlib import Path
+import glob as _glob_mod
+
+from reyn.safe import file as _safe_file
+
+# POSIX stat-mode constants (= stat.S_IFMT / S_IFREG). Hard-coded because
+# the ``stat`` module is not on the safe-mode import allowlist.
+_S_IFMT = 0o170000
+_S_IFREG = 0o100000
+
 
 # ── public entry point ─────────────────────────────────────────────────────────
 
@@ -77,14 +98,14 @@ def save_snapshot(artifact: dict) -> dict:
         }
 
     skill_name = _skill_name_from_root(original_skill_root)
-    versions_dir = Path(".reyn") / "skill-versions" / skill_name
-    versions_dir.mkdir(parents=True, exist_ok=True)
+    versions_dir = f".reyn/skill-versions/{skill_name}"
+    _safe_file.mkdir(versions_dir, parents=True, exist_ok=True)
 
     # --- determine version number ---
-    current_file = versions_dir / "current"
-    if current_file.exists():
+    current_file = f"{versions_dir}/current"
+    if _safe_file.exists(current_file):
         try:
-            current_n = int(current_file.read_text(encoding="utf-8").strip())
+            current_n = int(_safe_file.read(current_file).strip())
         except (ValueError, OSError):
             current_n = 0
         save_n = current_n + 1  # the snapshot we write is the pre-apply state
@@ -93,34 +114,38 @@ def save_snapshot(artifact: dict) -> dict:
         save_n = 1
 
     # --- read the pre-apply skill.md ---
-    original_skill_md = Path(original_skill_root) / "skill.md"
+    original_skill_md = f"{original_skill_root}/skill.md"
     try:
-        skill_md_content = original_skill_md.read_text(encoding="utf-8")
+        skill_md_content = _safe_file.read(original_skill_md)
     except OSError as exc:
         raise OSError(
             f"version_snapshot.save_snapshot: cannot read {original_skill_md}: {exc}"
         ) from exc
 
     # --- write the snapshot ---
-    snapshot_path = versions_dir / f"v{save_n}.md"
-    snapshot_path.write_text(skill_md_content, encoding="utf-8")
+    snapshot_path = f"{versions_dir}/v{save_n}.md"
+    _safe_file.write(snapshot_path, skill_md_content)
 
     # --- apply the `current` pointer (points to the snapshot just written) ---
     # For the first save, `current` → "1" (pre-apply original).
     # After the actual apply-back, `update_current_pointer` is called to bump
     # it to save_n+1 so the CLI sees "the applied version is live now".
-    current_file.write_text(str(save_n), encoding="utf-8")
+    _safe_file.write_atomic(current_file, str(save_n))
 
     next_version = save_n + 1
 
     # --- enforce max_versions cap ---
-    _apply_max_versions_cap(versions_dir, current_n=save_n, max_versions=_get_max_versions())
+    # ``data._on_propose_config.max_versions`` is set by the Wave 3b
+    # ``parse_on_propose_config_minimal`` preprocessor step that reads
+    # reyn.yaml via the file_read run_op. Default 10 if absent.
+    max_versions = _get_max_versions_from_artifact(data)
+    _apply_max_versions_cap(versions_dir, current_n=save_n, max_versions=max_versions)
 
     return {
         "saved_version": save_n,
-        "snapshot_path": str(snapshot_path),
+        "snapshot_path": snapshot_path,
         "next_version": next_version,
-        "versions_dir": str(versions_dir),
+        "versions_dir": versions_dir,
         "original_skill_root": original_skill_root,
     }
 
@@ -149,28 +174,6 @@ def decide_on_propose_action(on_propose: str, score: float, threshold: float) ->
     return "ask"
 
 
-def read_on_propose_config(artifact: dict) -> dict:
-    """FP-0006 Component D — read self_improvement config from reyn.yaml.
-
-    Runs in unsafe mode: calls load_config() which reads reyn.yaml from disk.
-    Returns the on_propose + max_versions values so the LLM can apply the gate
-    without needing to know how the config is loaded.
-
-    Returns:
-        {"on_propose": str, "max_versions": int}
-
-    Falls back to safe defaults (ask_user, 10) on any config-load error so
-    that a broken reyn.yaml does not abort the finalize phase.
-    """
-    try:
-        from reyn.config import load_config
-        cfg = load_config()
-        si = cfg.self_improvement
-        return {"on_propose": si.on_propose, "max_versions": si.max_versions}
-    except Exception:
-        return {"on_propose": "ask_user", "max_versions": 10}
-
-
 def update_current_pointer(artifact: dict) -> dict:
     """Update the `current` pointer AFTER the improved files have been copied back.
 
@@ -183,19 +186,15 @@ def update_current_pointer(artifact: dict) -> dict:
     """
     data = artifact.get("data", {}) if isinstance(artifact, dict) else {}
 
-    # Read what save_snapshot stored
     snapshot_info = data.get("_snapshot", {}) if isinstance(data, dict) else {}
     next_version = snapshot_info.get("next_version")
     versions_dir_str = snapshot_info.get("versions_dir", "")
 
     if not versions_dir_str or next_version is None:
-        # Snapshot step was skipped (no-copy path) — nothing to update.
         return {"current_version": None, "versions_dir": versions_dir_str}
 
-    versions_dir = Path(versions_dir_str)
-    current_file = versions_dir / "current"
-    if versions_dir.exists():
-        current_file.write_text(str(next_version), encoding="utf-8")
+    if _safe_file.exists(versions_dir_str):
+        _safe_file.write_atomic(f"{versions_dir_str}/current", str(next_version))
 
     return {"current_version": next_version, "versions_dir": versions_dir_str}
 
@@ -230,26 +229,48 @@ def _skill_name_from_root(original_skill_root: str) -> str:
       "reyn/local/my_skill"              → "my_skill"
       ".reyn/skill_improver_work/my_skill" → "my_skill"
       "src/reyn/stdlib/skills/eval"      → "eval"
+
+    Replacement for ``pathlib.Path(...).name`` (= pathlib is not on the
+    safe-mode allowlist).
     """
-    return Path(original_skill_root).name or original_skill_root
+    if not original_skill_root:
+        return original_skill_root
+    last = original_skill_root.rstrip("/").rsplit("/", 1)[-1]
+    return last or original_skill_root
 
 
-def _get_max_versions() -> int:
-    """Read self_improvement.max_versions from config, default 10.
+def _get_max_versions_from_artifact(data: dict) -> int:
+    """Read ``self_improvement.max_versions`` from the artifact preprocessor chain.
 
-    Avoids a hard import dependency on reyn.config so this module stays
-    importable in testing and non-Reyn contexts. Falls back to 10 on
-    any error.
+    The Wave 3b file_read + ``parse_on_propose_config_minimal`` chain leaves
+    the parsed values at ``data._on_propose_config``. Default 10 on absence
+    (= matches SelfImprovementConfig).
+    """
+    if not isinstance(data, dict):
+        return 10
+    cfg = data.get("_on_propose_config") or {}
+    if isinstance(cfg, dict):
+        try:
+            return int(cfg.get("max_versions") or 10)
+        except (TypeError, ValueError):
+            return 10
+    return 10
+
+
+def _is_regular_file(path: str) -> bool:
+    """Return True iff ``path`` exists and is a regular file.
+
+    Replacement for ``os.path.isfile`` (= ``os`` is not on the safe-mode
+    allowlist).
     """
     try:
-        from reyn.config import load_config
-        cfg = load_config()
-        return cfg.self_improvement.max_versions
-    except Exception:
-        return 10
+        info = _safe_file.stat(path)
+    except (OSError, PermissionError):
+        return False
+    return (int(info.get("mode", 0)) & _S_IFMT) == _S_IFREG
 
 
-def _apply_max_versions_cap(versions_dir: Path, current_n: int, max_versions: int) -> None:
+def _apply_max_versions_cap(versions_dir: str, current_n: int, max_versions: int) -> None:
     """Delete the OLDEST versioned files if total count exceeds max_versions.
 
     Rules:
@@ -257,19 +278,30 @@ def _apply_max_versions_cap(versions_dir: Path, current_n: int, max_versions: in
       - If count > max_versions: delete the OLDEST (smallest N).
       - NEVER delete the file pointed to by `current_n`.
       - Repeats until count <= max_versions or no deletable files remain.
+
+    FP-0042 Phase 2.7: replaces ``Path.iterdir`` + ``os.remove`` with
+    ``glob.glob`` + ``reyn.safe.file.delete``. Directory enumeration via
+    glob covers what iterdir did; the regular-file filter is implicit
+    because the pattern only matches ``v*.md``.
     """
     if max_versions <= 0:
         return
 
-    # Collect all vN.md files and their version numbers
-    version_files: list[tuple[int, Path]] = []
-    for entry in versions_dir.iterdir():
-        if entry.name.startswith("v") and entry.name.endswith(".md"):
-            try:
-                n = int(entry.name[1:-3])
-                version_files.append((n, entry))
-            except ValueError:
-                pass
+    pattern = f"{versions_dir}/v*.md"
+    matches = _glob_mod.glob(pattern)
+
+    version_files: list[tuple[int, str]] = []
+    for entry in matches:
+        if not _is_regular_file(entry):
+            continue
+        name = entry.rsplit("/", 1)[-1]  # "v<N>.md"
+        if not (name.startswith("v") and name.endswith(".md")):
+            continue
+        try:
+            n = int(name[1:-3])
+            version_files.append((n, entry))
+        except ValueError:
+            continue
 
     version_files.sort(key=lambda t: t[0])  # oldest first
 
@@ -279,8 +311,8 @@ def _apply_max_versions_cap(versions_dir: Path, current_n: int, max_versions: in
         for i, (n, path) in enumerate(version_files):
             if n != current_n:
                 try:
-                    os.remove(path)
-                except OSError:
+                    _safe_file.delete(path)
+                except (OSError, PermissionError):
                     pass
                 version_files.pop(i)
                 deleted = True

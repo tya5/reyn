@@ -41,15 +41,6 @@ GRANDFATHERED_UNSAFE: set[tuple[str, str]] = {
     # is the deprecated monolithic path kept for project override
     # back-compat. See docs/concepts/python-safe-mode.md.
     ("index_docs", "apply_strategy"),
-
-    # skill_improver — outside FP-0042 Phase 2 listed scope. The fallback,
-    # back-compat, and snapshot steps perform glob + skill.md read + write
-    # to .reyn/skill-versions. Future "Phase 2.7" candidate.
-    ("skill_improver", "resolve_paths"),
-    ("skill_improver", "collect_traces_fallback"),
-    ("skill_improver", "collect_traces"),
-    ("skill_improver", "save_snapshot"),
-    ("skill_improver", "read_on_propose_config"),
 }
 
 
