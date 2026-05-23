@@ -73,7 +73,7 @@ def _run(coro):
 # ---------------------------------------------------------------------------
 
 def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
-    """Tier 1 framework boundary: ChatSession→RouterLoop integration — user message produces kind=agent outbox entry. AsyncMock isolates from network for e2e path verification.
+    """Tier 1: ChatSession→RouterLoop integration — user message produces kind=agent outbox entry. AsyncMock isolates from network for e2e path verification.
 
     Minimal session: mock call_llm_tools to return text 'hi'.
     User message → router → assert outbox has kind='agent', text='hi'.
@@ -91,12 +91,12 @@ def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
 
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
-    assert len(agent_msgs) == 1, f"Expected 1 agent outbox msg; got {[m.kind for m in msgs]}"
-    assert agent_msgs[0].text == "hi"
+    (only,) = agent_msgs
+    assert only.text == "hi"
 
 
 def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
-    """Tier 1 framework boundary: agent reply from RouterLoop is appended to session history with role=agent. AsyncMock isolates from network for e2e path verification."""
+    """Tier 1: agent reply from RouterLoop is appended to session history with role=agent. AsyncMock isolates from network for e2e path verification."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
@@ -110,8 +110,8 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 
     # Issue #383: role rename "agent" → "assistant" at construction time.
     agent_turns = [m for m in session.history if m.role == "assistant"]
-    assert len(agent_turns) == 1
-    assert agent_turns[0].text == "hello back"
+    (only,) = agent_turns
+    assert only.text == "hello back"
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
-    """Tier 1 framework boundary: ChatSession→RouterLoop invoke_skill — round 1 spawns skill (FP-0012 non-blocking) and the router exits on spawn-ack. AsyncMock required for the e2e path.
+    """Tier 1: ChatSession→RouterLoop invoke_skill — round 1 spawns skill (FP-0012 non-blocking) and the router exits on spawn-ack. AsyncMock required for the e2e path.
 
     Post-H3-ablation contract (= dogfood B32 §4.2 + H3 ablation diagnosis):
     invoke_skill / invoke_action returning the spawn-ack
@@ -198,11 +198,7 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
     # message is just the user-visible "your request started" signal.
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
-    assert len(agent_msgs) == 1, (
-        f"Post-N3 contract: spawn-ack turn must emit exactly one "
-        f"OS-composed agent message. Got: {[m.text[:80] for m in agent_msgs]}"
-    )
-    ack = agent_msgs[0]
+    (ack,) = agent_msgs
     assert "/tasks" in ack.text, (
         f"Spawn-ack message must mention /tasks (the user's only "
         f"in-flight tracking surface). Got: {ack.text!r}"
@@ -217,10 +213,7 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
         e for e in session._chat_events.all()
         if e.type == "invoke_skill_spawn_ack_exit"
     ]
-    assert len(emitted) == 1, (
-        f"Expected exactly one invoke_skill_spawn_ack_exit event; "
-        f"got {len(emitted)}: {emitted!r}"
-    )
+    (only_event,) = emitted
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +314,7 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
-    """Tier 1 framework boundary: RouterHostAdapter.resolve_model delegates to ModelResolver; named models resolve to configured values and unknown names pass through unchanged."""
+    """Tier 1: RouterHostAdapter.resolve_model delegates to ModelResolver; named models resolve to configured values and unknown names pass through unchanged."""
     monkeypatch.chdir(tmp_path)
     from reyn.llm.model_resolver import ModelResolver
     resolver = ModelResolver({"router": "openai/gpt-4o-mini"})
@@ -354,7 +347,7 @@ def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_build_history_for_router_shape(tmp_path, monkeypatch):
-    """Tier 1 framework boundary: _build_history_for_router returns OpenAI-style dicts with correct role mapping and ordering from session history."""
+    """Tier 1: _build_history_for_router returns OpenAI-style dicts with correct role mapping and ordering from session history."""
     monkeypatch.chdir(tmp_path)
     from reyn.chat.session import ChatMessage
     session = _make_session(tmp_path)
