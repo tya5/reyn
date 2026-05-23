@@ -180,8 +180,7 @@ class TestBasicReplay:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1, "Expected exactly one litellm call"
-        call = stub.calls[0]
+        (call,) = stub.calls
         # model must be the one from the trace (proxy-stripped if needed)
         assert "gemini-2.5-flash-lite" in call["model"]
         assert call["messages"] == [{"role": "user", "content": "hello"}]
@@ -208,8 +207,7 @@ class TestBasicReplay:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        call = stub.calls[0]
+        (call,) = stub.calls
         assert "tools" in call, "tools must be forwarded when present in trace"
         assert call["tools"][0]["function"]["name"] == "invoke_skill"
         assert call.get("tool_choice") == "auto"
@@ -240,8 +238,7 @@ class TestModelOverride:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        call = stub.calls[0]
+        (call,) = stub.calls
         # Override model must be used, not the original
         assert call["model"] == "claude-sonnet", (
             f"Expected override model 'claude-sonnet', got '{call['model']}'"
@@ -299,9 +296,9 @@ class TestNShot:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 3, f"Expected 3 calls, got {len(stub.calls)}"
+        (call0, call1, call2) = stub.calls
         # All calls must use the same messages
-        for call in stub.calls:
+        for call in (call0, call1, call2):
             assert call["messages"] == [{"role": "user", "content": "hello"}]
 
     def test_nshot_summary_in_output(self, tmp_path: Path, capsys) -> None:
@@ -360,7 +357,7 @@ class TestMissingRequestId:
             ))
 
         # The stub must NOT have been called since lookup failed first
-        assert len(stub.calls) == 0
+        assert not stub.calls
 
 
 class TestSamplingOverrides:
@@ -388,8 +385,8 @@ class TestSamplingOverrides:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        assert stub.calls[0].get("temperature") == pytest.approx(0.7)
+        (call,) = stub.calls
+        assert call.get("temperature") == pytest.approx(0.7)
 
     def test_max_tokens_override_forwarded(self, tmp_path: Path) -> None:
         """Tier 2: max_tokens_override is included in litellm call kwargs."""
@@ -413,8 +410,8 @@ class TestSamplingOverrides:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        assert stub.calls[0].get("max_tokens") == 512
+        (call,) = stub.calls
+        assert call.get("max_tokens") == 512
 
 
 class TestNShotTableFormat:
