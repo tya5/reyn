@@ -129,6 +129,11 @@ class PreprocessorExecutor:
         # (= preserves backward compat for callers that don't supply a store).
         self._secret_store = secret_store
 
+    @property
+    def secret_store(self):
+        """Read-only accessor for the injected ScopedSecretStore (or None)."""
+        return self._secret_store
+
     def _build_op_ctx(self, phase: "Phase", step_index: int):
         """Construct an OpContext for an op_runtime call from this preprocessor."""
         from reyn.op_runtime.context import OpContext
