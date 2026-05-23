@@ -900,3 +900,86 @@ async def test_plan_step_retry_limit_exhaustion_asks_user_via_limit_handler():
         f"Expected s1 to succeed after user-approved extension; "
         f"step_failures={result2.step_failures}"
     )
+
+
+# ---------------------------------------------------------------------------
+# B50 NF-W6-2 fix: _PlanStepHost workspace + make_router_op_context passthrough
+# ---------------------------------------------------------------------------
+
+
+def test_plan_step_host_propagates_workspace_from_parent():
+    """Tier 2: _PlanStepHost.workspace forwards to the parent host.
+
+    Without this propagation, RouterLoop inside a plan step builds the
+    ToolContext with ``workspace=None``; the recall handler then falls
+    into its minimal-context fallback that also propagates None, and
+    ``index_query`` raises ``op_runtime context has no workspace``.
+    Observed B50 W6-S3 plan step s4 (3x ``control_ir_failed
+    kind=index_query``).
+    """
+    parent = _FakeParentHost()
+    # Inject a fake workspace + permission_resolver onto parent.
+    parent.workspace = object()  # sentinel — any non-None object is fine
+    parent.permission_resolver = object()
+    plan = Plan(
+        goal="g",
+        steps=(PlanStep(id="s1", description="d", tools=()),),
+    )
+    host = _PlanStepHost(plan=plan, step=plan.steps[0], prior_results={}, parent=parent)
+    assert host.workspace is parent.workspace
+    assert host.permission_resolver is parent.permission_resolver
+
+
+def test_plan_step_host_workspace_none_when_parent_has_none():
+    """Tier 2: when parent has no workspace attribute, the property
+    returns None rather than raising. This keeps test stubs working.
+    """
+    parent = _FakeParentHost()
+    # No workspace attribute on the bare fake host.
+    assert not hasattr(parent, "workspace")
+    plan = Plan(
+        goal="g",
+        steps=(PlanStep(id="s1", description="d", tools=()),),
+    )
+    host = _PlanStepHost(plan=plan, step=plan.steps[0], prior_results={}, parent=parent)
+    assert host.workspace is None
+
+
+def test_plan_step_host_make_router_op_context_delegates_to_parent():
+    """Tier 2: _PlanStepHost.make_router_op_context delegates to the
+    parent's factory.
+
+    The recall handler's OpContext resolution preferentially uses
+    ``ctx.router_state.op_context_factory()`` (which is bound to
+    ``self.host.make_router_op_context`` at router init). Plan-step
+    hosts previously didn't define this method, so the factory bound
+    to ``None`` and recall fell into its workspace-less fallback.
+    """
+    parent = _FakeParentHost()
+    sentinel = object()
+
+    def _make() -> object:
+        return sentinel
+
+    parent.make_router_op_context = _make
+    plan = Plan(
+        goal="g",
+        steps=(PlanStep(id="s1", description="d", tools=()),),
+    )
+    host = _PlanStepHost(plan=plan, step=plan.steps[0], prior_results={}, parent=parent)
+    assert host.make_router_op_context() is sentinel
+
+
+def test_plan_step_host_make_router_op_context_none_when_parent_lacks_factory():
+    """Tier 2: if the parent doesn't define make_router_op_context,
+    the plan-step facade returns None rather than raising — test
+    stubs / older hosts continue to work.
+    """
+    parent = _FakeParentHost()
+    assert not hasattr(parent, "make_router_op_context")
+    plan = Plan(
+        goal="g",
+        steps=(PlanStep(id="s1", description="d", tools=()),),
+    )
+    host = _PlanStepHost(plan=plan, step=plan.steps[0], prior_results={}, parent=parent)
+    assert host.make_router_op_context() is None
