@@ -149,6 +149,16 @@ class ReynHeader(RenderableCacheMixin, Widget):
         # ~2.5 s, so without the header badge the user couldn't tell
         # at a glance whether Ctrl+G is currently armed.
         self._find_state: dict | None = None
+        # Voice mode badge state. One of:
+        #   - None          — not in voice mode (= no badge)
+        #   - "recording"   — mic is live; user is dictating
+        #   - "transcribing"— mic stopped, whisper processing audio
+        # Surfaced as ``🔴 voice`` / ``⏳ voice`` adjacent to the find
+        # badge so the user has a persistent "voice mode active"
+        # indicator that survives the conv-pane status-line scroll.
+        # Without this, after switching focus away + back the user
+        # couldn't tell at a glance whether they were still recording.
+        self._voice_state: str | None = None
         # ``RenderableCacheMixin`` provides the cache slot +
         # ``rendered_text`` accessor. Every ``Label.update`` is paired
         # with ``self._set_rendered_cache(text)`` via the
@@ -349,6 +359,16 @@ class ReynHeader(RenderableCacheMixin, Widget):
                 f"{fs.get('position', 0)}/{fs.get('total', 0)}]"
             )
             parts.append((badge, "#88aacc"))
+        # Voice mode badge — mirrors the find-badge contract but uses
+        # the recording / transcribing dichotomy. Red while the mic is
+        # live (= user attention), amber while whisper processes the
+        # audio (= "waiting on me, not on you"). Placed adjacent to the
+        # find badge as a sibling "active state" cue; clock stays
+        # rightmost.
+        if self._voice_state == "recording":
+            parts.append(("🔴 voice", "bold #ff6644"))
+        elif self._voice_state == "transcribing":
+            parts.append(("⏳ voice", "bold #ffaa44"))
         # Clock always present, last — the canary for "is the UI frozen?"
         parts.append((self._now_text(), None))
 
@@ -416,6 +436,25 @@ class ReynHeader(RenderableCacheMixin, Widget):
         if new_state == self._find_state:
             return
         self._find_state = new_state
+        self._repaint_status()
+
+    def set_voice_state(self, state: str | None) -> None:
+        """Update or clear the voice mode badge.
+
+        Accepted states:
+          - ``None``           → no badge (= voice mode inactive)
+          - ``"recording"``    → 🔴 voice (red, mic is live)
+          - ``"transcribing"`` → ⏳ voice (amber, whisper running)
+
+        Anything else (= unknown string) clears the badge — defensive
+        against caller typos. Equality-gated repaint so redundant
+        calls don't churn the Static.
+        """
+        if state not in (None, "recording", "transcribing"):
+            state = None
+        if state == self._voice_state:
+            return
+        self._voice_state = state
         self._repaint_status()
 
     def on_reyn_header_status_update(self, msg: StatusUpdate) -> None:
