@@ -3957,6 +3957,11 @@ class ChatSession:
             mcp=mcp_names,
             allowed_mcp=self._allowed_mcp,
             http_get=[{"host": "registry.modelcontextprotocol.io"}],
+            # #571 Phase 6: wildcard secret.write authorises LLM-emitted
+            # mcp_install ops to save runtime-determined ``isSecret`` env
+            # vars from the registry — the actual security gate is the
+            # operator's per-value prompt at op-execution time.
+            secret_write=["*"],
         )
         # Session-approve the canonical OS mutation paths so the runtime
         # require_file_write check passes silently for LLM-emitted ops

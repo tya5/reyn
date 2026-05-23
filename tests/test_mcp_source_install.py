@@ -212,17 +212,18 @@ def _make_resolver(tmp_path: Path, *, config: dict | None = None) -> PermissionR
 
 
 def _phase5_source_install_decl(resolver: PermissionResolver) -> PermissionDecl:
-    """Phase 5 successor to ``PermissionDecl(mcp_install=True)`` for source installs.
+    """Phase 5 + Phase 6 successor to ``PermissionDecl(mcp_install=True)``.
 
     Source installs skip the registry fetch but still write to
-    ``.reyn/mcp.yaml`` — declare only the file.write entry (no
-    http.get is needed since no registry HTTP is issued on the
-    source-resolver path).
+    ``.reyn/mcp.yaml`` — declare the file.write entry. Wildcard
+    secret.write (= #571 Phase 6) covers any isSecret env vars the
+    source resolver surfaces.
     """
     canonical_config = str(resolver._project_root / ".reyn" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_source_test", "file.write")
     return PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],
+        secret_write=["*"],
     )
 
 

@@ -140,20 +140,21 @@ def _make_resolver(tmp_path: Path, *, config: dict | None = None) -> PermissionR
 
 
 def _phase5_install_decl(resolver: PermissionResolver) -> PermissionDecl:
-    """Phase 5 successor to ``PermissionDecl(mcp_install=True)``.
+    """Phase 5 + Phase 6 successor to ``PermissionDecl(mcp_install=True)``.
 
     Builds the explicit list-axis decl the op handler now consumes:
     ``file.write`` on the canonical config path + ``http.get`` for the
-    registry host. Session-approves the file path so the
+    registry host + wildcard ``secret.write`` (= #571 Phase 6,
+    authorises save_secret for runtime-determined env-var keys from
+    the registry response). Session-approves the file path so the
     ``require_file_write`` check passes without an interactive prompt.
-    The path is anchored against the resolver's project_root so the
-    session-key matches the op handler's resolved path at check time.
     """
     canonical_config = str(resolver._project_root / ".reyn" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_test", "file.write")
     return PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],
         http_get=[{"host": "registry.modelcontextprotocol.io"}],
+        secret_write=["*"],
     )
 
 
@@ -324,6 +325,42 @@ def test_env_overrides_skip_prompt_and_persist_secret(tmp_path):
     assert env_section.get("EXAMPLE_API_KEY") == "${EXAMPLE_API_KEY}"
     # Raw value must not appear in config
     assert "my-secret-value" not in config_path.read_text(encoding="utf-8")
+
+
+def test_save_secret_blocked_when_secret_write_not_declared(tmp_path):
+    """Tier 2: mcp_install raises PermissionError when secret.write is missing.
+
+    #571 Phase 6: every save_secret call routes through
+    require_secret_write. A skill that declares file.write + http.get
+    but forgets secret.write fails the gate when the registry server
+    has ``isSecret`` env vars.
+    """
+    resolver = _make_resolver(tmp_path)
+    canonical_config = str(resolver._project_root / ".reyn" / "mcp.yaml")
+    resolver.session_approve_path(canonical_config, "mcp_install_test", "file.write")
+    decl = PermissionDecl(
+        file_write=[{"path": canonical_config, "scope": "just_path"}],
+        http_get=[{"host": "registry.modelcontextprotocol.io"}],
+        # secret_write omitted — gate fires when first secret save is attempted
+    )
+    bus = _AutoApproveInterventionBus()
+    ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
+    secrets_path = tmp_path / ".reyn" / "secrets.env"
+
+    op = MCPInstallIROp(
+        kind="mcp_install",
+        server_id="io.github.example/secret-server",
+        scope="local",
+        env_overrides={"EXAMPLE_API_KEY": "my-secret-value"},
+    )
+
+    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
+        with mock.patch(
+            "reyn.secrets.store._secrets_path", return_value=secrets_path
+        ):
+            with _patch_registry_get(_SECRET_SERVER_RESPONSE):
+                with pytest.raises(PermissionError, match="EXAMPLE_API_KEY"):
+                    _run(mcp_install_handle(op, ctx, "control_ir"))
 
 
 def test_secret_value_not_in_event(tmp_path):

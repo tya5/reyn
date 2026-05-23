@@ -723,6 +723,9 @@ def _run_install_from_source(
     decl = PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],
         http_get=[{"host": "registry.modelcontextprotocol.io"}],
+        # #571 Phase 6: wildcard authorises save_secret for the
+        # registry's ``isSecret`` env vars (= determined at runtime).
+        secret_write=["*"],
     )
 
     ctx = OpContext(

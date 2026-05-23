@@ -111,6 +111,10 @@ async def _handle_mcp_install_op(
         synth_decl = PermissionDecl(
             file_write=[{"path": canonical_config, "scope": "just_path"}],
             http_get=[{"host": registry_host}],
+            # #571 Phase 6: wildcard authorises the op handler to save
+            # the user-prompted secret values for whichever env vars
+            # the registry declares as ``isSecret`` at runtime.
+            secret_write=["*"],
         )
         if ctx.permission_resolver is not None:
             ctx.permission_resolver.session_approve_path(
