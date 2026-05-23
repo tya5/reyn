@@ -1141,6 +1141,18 @@ class ConversationView(Widget):
         label_prefix = ""
         if parent_run_id and parent_run_id in self._skill_rows:
             label_prefix = "  └─ "
+            # Record the tool call on the owning SkillActivityRow so
+            # its drill-down expand view can surface the call list
+            # (= 2-level drill: phases × tools). Belt-and-braces over
+            # ``ToolCallRow``'s own rendering — the row gets unmounted
+            # on finalise, but the skill's drill-down should remember
+            # what tools ran beneath it for the rest of the session.
+            try:
+                self._skill_rows[parent_run_id].record_tool_call(
+                    tool_name, args_repr,
+                )
+            except Exception:
+                pass
         row = ToolCallRow(
             tool_name=tool_name,
             args_repr=args_repr,

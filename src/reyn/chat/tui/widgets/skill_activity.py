@@ -38,6 +38,12 @@ from reyn.chat.tui._palette import _CORAL
 
 _TICK_INTERVAL_S = 0.5  # elapsed-time refresh rate
 
+# Max tool calls rendered inline in the drill-down expand view.
+# Beyond this we collapse to ``+N more``. Skills with > ~8 tool
+# calls would otherwise push the expanded row across many screen
+# lines, defeating the "compact drill-down" idiom.
+_TOOL_DRILL_MAX_RENDER = 6
+
 # Braille-dot spinner frames. Cycles once every (len(_SPINNER_FRAMES) *
 # _TICK_INTERVAL_S) = 5 s, which is slow enough to be calming and fast
 # enough to make "still alive" obvious at a glance.
@@ -105,6 +111,17 @@ class SkillActivityRow(Widget):
         # research three times". Bound is the natural skill phase count —
         # typical Reyn skills have < 10 transitions; no explicit cap.
         self._phase_history: list[tuple[str, int, float]] = []
+        # Tool-call history — each entry is ``(tool_name, args_snippet)``
+        # recorded when a tool_call_started event fires under this
+        # skill's run_id (= parent-aware routing from
+        # ConversationView.start_tool_call_row). Powers the 2nd level
+        # of the drill-down expand view — phases × tools — so a user
+        # exploring a finished skill can see both "which phases ran"
+        # and "what did each phase actually call". Bounded only by
+        # the natural per-skill tool-call count; we cap the rendered
+        # list at _TOOL_DRILL_MAX_RENDER to keep the expand row from
+        # exploding for tool-heavy skills.
+        self._tool_calls: list[tuple[str, str]] = []
         # Optional in-phase detail (= what's happening WITHIN the phase right
         # now — "calling llm", "running act op", etc.). Without this the row
         # showed only the phase name during a 10–30 s LLM call inside that
@@ -212,6 +229,25 @@ class SkillActivityRow(Widget):
             return
         self._detail = detail
         self._refresh()
+
+    def record_tool_call(self, tool_name: str, args_repr: str = "") -> None:
+        """Append a tool call to the drill-down history.
+
+        Called by ``ConversationView.start_tool_call_row`` when a
+        ``tool_call_started`` event arrives with a ``parent_run_id``
+        matching this row's run_id. The pair (tool name + args
+        snippet) is stored verbatim; rendering trims at expand time
+        so the recorded data stays full-fidelity for future replay /
+        export uses. Re-runs of the same tool with different args
+        record as separate entries — re-invocation IS meaningful
+        execution detail.
+        """
+        self._tool_calls.append((tool_name, args_repr))
+        # Refresh only when expanded — collapsed view doesn't show
+        # tool calls, so the rebuild would be wasted paint cycles
+        # during a tool-call-heavy phase.
+        if self._expanded:
+            self._refresh()
 
     def toggle_expand(self) -> None:
         """Flip the collapsed / expanded render shape.
@@ -416,6 +452,41 @@ class SkillActivityRow(Widget):
                 t.append(f"({entered_at:.1f}s)", style="dim")
         return t
 
+    def _build_tools_line(self) -> Text:
+        """Render the tool-call drill-down line shown when expanded.
+
+        Format:
+          ``  ↳ tools (3): file:read, file:grep("foo"), bash:run("npm…")``
+
+        Only rendered when ``_tool_calls`` is non-empty so skills
+        that didn't call any tools don't get a dangling "tools: ()"
+        line. The list is truncated at ``_TOOL_DRILL_MAX_RENDER``
+        with a ``+N more`` suffix beyond that; the full tool list
+        is still in ``_tool_calls`` for inspection / future export.
+        """
+        t = Text()
+        if self._label_prefix:
+            # Indent under the same prefix as the head/history lines
+            # so a sub-skill's tool list nests visually with its parent.
+            t.append(" " * len(self._label_prefix), style="dim #666666")
+        t.append(f"  ↳ tools ({len(self._tool_calls)}): ", style="dim")
+        for i, (tool_name, args) in enumerate(
+            self._tool_calls[:_TOOL_DRILL_MAX_RENDER]
+        ):
+            if i > 0:
+                t.append(", ", style="dim")
+            t.append(tool_name, style="dim #aaaaaa")
+            if args:
+                # Compress args to a short hint so the tools-line
+                # stays readable. Full args live on the
+                # ToolCallRow (= ``_tool_call_rows[op_id]``).
+                snippet = args if len(args) <= 14 else args[:13] + "…"
+                t.append(f"({snippet})", style="dim #888888")
+        hidden = len(self._tool_calls) - _TOOL_DRILL_MAX_RENDER
+        if hidden > 0:
+            t.append(f", +{hidden} more", style="dim #666666")
+        return t
+
     def rendered_text(self) -> str:
         """Plain-text rendering of the last frame sent to ``Static.update``.
 
@@ -443,5 +514,11 @@ class SkillActivityRow(Widget):
         body.append_text(head)
         body.append("\n")
         body.append_text(self._build_history_line())
+        # Tool-call drill-down (= 2nd level): only when at least one
+        # tool ran under this skill. Without the gate, skills with
+        # no tool calls would get a misleading empty "tools (0):" row.
+        if self._tool_calls:
+            body.append("\n")
+            body.append_text(self._build_tools_line())
         self._static.update(body)
         self._rendered_cache = body
