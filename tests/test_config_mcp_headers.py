@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest import mock
 
 import yaml
 
@@ -115,7 +114,7 @@ def test_mcp_headers_optional_back_compat(tmp_path, monkeypatch):
 
 
 def test_mcp_headers_reach_http_transport(monkeypatch):
-    """Tier 2 framework boundary: a config with resolved headers reaches the
+    """Tier 2: a config with resolved headers reaches the
     ``streamablehttp_client`` call with the exact post-expansion header dict.
 
     This pins the contract: whatever the caller puts in ``cfg['headers']``,
@@ -143,6 +142,11 @@ def test_mcp_headers_reach_http_transport(monkeypatch):
         async def initialize(self):
             return None
 
+    import mcp.client.streamable_http as _sh_mod
+    import mcp as _mcp_mod
+    monkeypatch.setattr(_sh_mod, "streamablehttp_client", _fake_http_client)
+    monkeypatch.setattr(_mcp_mod, "ClientSession", _FakeSession)
+
     from reyn.mcp_client import MCPClient
 
     cfg = {
@@ -156,12 +160,9 @@ def test_mcp_headers_reach_http_transport(monkeypatch):
     }
 
     async def _run_it():
-        with mock.patch(
-            "mcp.client.streamable_http.streamablehttp_client", _fake_http_client
-        ), mock.patch("mcp.ClientSession", _FakeSession):
-            client = MCPClient(cfg)
-            await client.initialize()
-            await client.close()
+        client = MCPClient(cfg)
+        await client.initialize()
+        await client.close()
 
     asyncio.run(_run_it())
 
@@ -174,7 +175,7 @@ def test_mcp_headers_reach_http_transport(monkeypatch):
 
 
 def test_mcp_headers_default_empty_when_omitted(monkeypatch):
-    """Tier 2 framework boundary: an http MCP config without ``headers`` yields
+    """Tier 2: an http MCP config without ``headers`` yields
     an empty header dict at the transport (no spurious headers injected)."""
     captured: dict = {}
 
@@ -196,17 +197,19 @@ def test_mcp_headers_default_empty_when_omitted(monkeypatch):
         async def initialize(self):
             return None
 
+    import mcp.client.streamable_http as _sh_mod
+    import mcp as _mcp_mod
+    monkeypatch.setattr(_sh_mod, "streamablehttp_client", _fake_http_client)
+    monkeypatch.setattr(_mcp_mod, "ClientSession", _FakeSession)
+
     from reyn.mcp_client import MCPClient
 
     cfg = {"type": "http", "url": "http://x/mcp"}
 
     async def _run_it():
-        with mock.patch(
-            "mcp.client.streamable_http.streamablehttp_client", _fake_http_client
-        ), mock.patch("mcp.ClientSession", _FakeSession):
-            client = MCPClient(cfg)
-            await client.initialize()
-            await client.close()
+        client = MCPClient(cfg)
+        await client.initialize()
+        await client.close()
 
     asyncio.run(_run_it())
     assert captured["headers"] == {}
