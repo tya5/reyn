@@ -199,9 +199,7 @@ class TestFromAttractorAll:
         ))
 
         # 2 attractors × n=1 → 2 calls
-        assert len(stub.calls) == 2, (
-            f"Expected 2 LLM calls (one per attractor), got {len(stub.calls)}"
-        )
+        (call_0, call_1) = stub.calls
 
     def test_all_attractors_n3(self, tmp_path: Path) -> None:
         """Tier 2: with 2 attractors and n=3, the LLM stub receives 6 calls total."""
@@ -233,9 +231,7 @@ class TestFromAttractorAll:
         ))
 
         # 2 attractors × n=3 → 6 calls
-        assert len(stub.calls) == 6, (
-            f"Expected 6 LLM calls (2 attractors × 3 runs), got {len(stub.calls)}"
-        )
+        (c0, c1, c2, c3, c4, c5) = stub.calls
 
 
 # ---------------------------------------------------------------------------
@@ -317,9 +313,7 @@ class TestAttractorHeuristicsFilter:
         ))
 
         # Only the stop_must attractor should be replayed (1 call)
-        assert len(stub.calls) == 1, (
-            f"Expected 1 call (only stop_with_must_rule replayed), got {len(stub.calls)}"
-        )
+        (only_call,) = stub.calls
 
 
 # ---------------------------------------------------------------------------
@@ -360,9 +354,7 @@ class TestAttractorFirst:
         ))
 
         # Only 1 attractor replayed despite 3 being present
-        assert len(stub.calls) == 1, (
-            f"Expected 1 LLM call (first=1), got {len(stub.calls)}"
-        )
+        (only_call,) = stub.calls
 
     def test_first_2_of_3(self, tmp_path: Path) -> None:
         """Tier 2: with 3 attractors and first=2, exactly 2 are replayed."""
@@ -393,9 +385,7 @@ class TestAttractorFirst:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 2, (
-            f"Expected 2 LLM calls (first=2), got {len(stub.calls)}"
-        )
+        (call_0, call_1) = stub.calls
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +423,7 @@ class TestZeroAttractors:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 0, "No LLM calls expected when no attractors found"
+        assert not stub.calls, "No LLM calls expected when no attractors found"
         out = capsys.readouterr().out
         # Informational message must appear
         assert "No attractors" in out or "nothing" in out.lower()
@@ -544,6 +534,4 @@ class TestBackwardCompat:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 2, (
-            f"Expected 2 calls for direct request_id replay, got {len(stub.calls)}"
-        )
+        (call_0, call_1) = stub.calls
