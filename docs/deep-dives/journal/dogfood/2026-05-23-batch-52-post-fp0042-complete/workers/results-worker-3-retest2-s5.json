@@ -1,0 +1,17 @@
+{
+  "batch": "B52",
+  "retest_for": "W3-S5 (round 2)",
+  "worker": 3,
+  "head": "8e9be379+deps.py-sandbox-fix",
+  "date": "2026-05-23",
+  "fix": "sandbox_config propagation added to web/deps.py ChatSession factory",
+  "scenario": {
+    "id": "sandboxed_exec_simple",
+    "verdict": "V",
+    "reply_excerpt": "The output of the command `python -c 'print(2 + 2)'` is:\n4",
+    "events_pass": true,
+    "sandboxed_exec_backend_observed": "noop",
+    "notes": "sandboxed_exec_started.backend == 'noop' confirmed in events.jsonl (= proof reyn.local.yaml sandbox.backend: noop propagated through web/deps.py ChatSession factory). sandboxed_exec_completed returncode=0, stdout_len=2 (= '4\\n'). Reply correctly reports '4'. Rubric met + events_pass + backend=noop ⇒ V. Prior R→I (retest 1) now I→V."
+  },
+  "prior_verdicts": {"original_b52_w3_s5": "R", "retest_1": "I"}
+}

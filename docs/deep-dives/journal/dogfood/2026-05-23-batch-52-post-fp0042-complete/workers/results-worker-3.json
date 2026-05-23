@@ -1,0 +1,105 @@
+{
+  "batch": "B52",
+  "worker": 3,
+  "head": "8e9be379",
+  "date": "2026-05-23",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {"REYN_EMPTY_STOP_RETRY": "1", "REYN_SPAWN_ACK_TO_LLM": "1"},
+  "user_params": {"hot_list_n": 10, "models_tier": "flash-lite"},
+  "verdicts": {"V": 4, "I": 0, "R": 5, "B": 0},
+  "vs_past": {
+    "B51": {"V": 6, "I": 1, "R": 2, "B": 0},
+    "B52_W3": {"V": 4, "I": 0, "R": 5, "B": 0},
+    "delta_V": -2,
+    "note": "V dropped 6 -> 4 vs B51; regressions concentrated in S4 (web_fetch permission), S5 (sandboxed_exec sandbox restriction), S6 (lint_completed event missing), S7 (recall missing-arg path), S9 (skill_builder never spawned)."
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "verdict": "V",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-3-s1/chat/2026-05/2026-05-23T201540.jsonl",
+      "events_pass": true,
+      "rubric_pass": true,
+      "notes": "Reply summarised principles.md content and explicitly enumerated P1-P8 with descriptions. routing_decided + tool_executed emitted; no permission_denied."
+    },
+    {
+      "id": "file_glob_grep",
+      "verdict": "V",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-3-s2/chat/2026-05/2026-05-23T201601.jsonl",
+      "events_pass": true,
+      "rubric_pass": true,
+      "notes": "LLM used file__grep (glob src/**/*.md, pattern 'preprocessor'); 50 matches returned. Reply listed multiple skill.md paths and mentioned preprocessor. routing_decided + tool_executed emitted; no permission_denied."
+    },
+    {
+      "id": "web_search_query",
+      "verdict": "V",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-3-s3/chat/2026-05/2026-05-23T201600.jsonl",
+      "events_pass": true,
+      "rubric_pass": true,
+      "notes": "web_search_started + web_search_completed emitted; no web_search_failed; no permission_denied. Reply reported search outcome and referenced OpenAI Python SDK / GitHub repository."
+    },
+    {
+      "id": "web_fetch_url",
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-3-s4/chat/2026-05/2026-05-23T201559.jsonl",
+      "events_pass": false,
+      "rubric_pass": false,
+      "notes": "web__fetch tool_failed; must_emit web_fetch_started NOT present. Reply: 'unable to fetch the URL because I do not have the necessary permissions'. Rubric item (Python 3.12 features) not met."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-3-s5/chat/2026-05/2026-05-23T201600.jsonl",
+      "events_pass": true,
+      "rubric_pass": false,
+      "notes": "sandboxed_exec_started + sandboxed_exec_completed emitted (events pass), but invoke_action returned status=error: 'Python interpreter could not be found due to file system sandbox restrictions'. Reply reports failure, not output 4 -> rubric fails."
+    },
+    {
+      "id": "lint_a_skill",
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-3-s6/chat/2026-05/2026-05-23T201601.jsonl",
+      "events_pass": false,
+      "rubric_pass": false,
+      "notes": "must_emit lint_completed NOT present. invoke_action returned status=error. Reply confused skill.md path (expected 'skill/index_events.py' which is wrong path), reported lint failure but no error/warning count."
+    },
+    {
+      "id": "recall_indexed_source",
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-3-s7/chat/2026-05/2026-05-23T201600.jsonl",
+      "events_pass": true,
+      "rubric_pass": false,
+      "notes": "routing_decided emitted (events pass). recall tool returned 'missing_required_arg' for 'sources'. Reply reports tool needs sources arg, does NOT clearly report 'no indexed sources were found' (rubric item 1 alternative). Did not fabricate (item 2 OK), but item 1 fails."
+    },
+    {
+      "id": "judge_output_direct",
+      "verdict": "V",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-3-s8/chat/2026-05/2026-05-23T201600.jsonl",
+      "events_pass": true,
+      "rubric_pass": true,
+      "notes": "skill_run_spawned + tool_executed + routing_decided emitted; no permission_denied / validation_error. Reply: 'passed all criteria. The skill has a non-empty description and declares at least one phase. The score is 1.0.' All 3 rubric items met."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-3-s9/chat/2026-05/2026-05-23T201648.jsonl",
+      "events_pass": false,
+      "rubric_pass": true,
+      "notes": "Turn 2 reply references 'my_demo_skill' (rubric item 1 met). BUT must_emit routing_decided / skill_run_spawned / user_intervention_requested / user_intervention_received are all MISSING. LLM only called describe_action and inline-replied; never invoked skill_builder. events_pass=false drives verdict R."
+    }
+  ],
+  "new_findings": [
+    "S4 web_fetch_started event NOT emitted on tool_failed path (only tool_failed). Suggests web__fetch failure path skips the *_started P6 event emission. Affects event-based verdicts.",
+    "S6 lint_completed event NOT emitted even though LLM attempted invoke_action for lint. invoke_action returned status=error before lint phase completed; need to confirm whether lint_completed should still fire on lint-input error vs only on successful lint completion.",
+    "S9 chat router never spawned skill_builder despite explicit prompt 'Run the skill_builder skill'. LLM called describe_action(skill__skill_builder) then inline-replied asking user for description. The expected control flow (skill_run_spawned -> user_intervention_requested) never started. Possibly the LLM treated the prompt as an info-gathering loop rather than an invoke loop.",
+    "S5 sandboxed_exec sandbox could not locate Python interpreter ('unable to load the necessary Python library'). Env-level issue affecting any python -c style sandbox tests; not a new behavior but persistent infra constraint."
+  ]
+}

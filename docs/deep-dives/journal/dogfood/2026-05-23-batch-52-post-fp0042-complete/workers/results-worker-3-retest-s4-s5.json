@@ -1,0 +1,32 @@
+{
+  "batch": "B52",
+  "retest_for": "W3-S4+S5",
+  "worker": 3,
+  "head": "8e9be379",
+  "date": "2026-05-23",
+  "fix": "permissions.web.fetch: allow + sandbox.backend: noop in worker reyn.local.yaml",
+  "scenarios": [
+    {
+      "id": "web_fetch_url",
+      "verdict": "V",
+      "reply_excerpt": "Python 3.12 introduces several key new features, including: PEP 695: Type Parameter Syntax... PEP 701: Syntactic formalization of f-strings...",
+      "events_pass": true,
+      "notes": "web__fetch invoked successfully (status 200, content_length 50000, total_length 103774). No permission_denied event. Reply names PEP 695 + PEP 701 + acknowledges other improvements. permissions.web.fetch: allow injection effective."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "verdict": "I",
+      "reply_excerpt": "The command failed because the Python interpreter could not be found due to a file system sandbox restriction.",
+      "events_pass": false,
+      "notes": "exec__sandboxed_exec invoked with backend=seatbelt (NOT noop as configured). sandboxed_exec_completed returncode=-6, stderr shows 'file system sandbox blocked open()' for /Users/yasudatetsuya/.pyenv/versions/3.12.7/lib/libpython3.12.dylib. Direct config load via load_config() returns backend='noop' correctly, but runtime path emitted backend='seatbelt' event — fix did NOT propagate to the running RouterCallerState/sandbox handler chain. Same OS env bug class as original B52; fix incomplete."
+    }
+  ],
+  "original_b52_verdicts": {
+    "web_fetch_url": "R",
+    "sandboxed_exec_simple": "R"
+  },
+  "delta": {
+    "web_fetch_url": "R→V",
+    "sandboxed_exec_simple": "R→I"
+  }
+}
