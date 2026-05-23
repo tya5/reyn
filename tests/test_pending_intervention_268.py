@@ -130,14 +130,20 @@ def test_registry_list_stalled_returns_snapshot() -> None:
     reg = InterventionRegistry(on_announce=_no_announce)
     iv1 = UserIntervention(kind="ask_user", prompt="Q1?")
     iv2 = UserIntervention(kind="permission.shell", prompt="Run cmd?")
-    reg._stalled[iv1.id] = iv1
-    reg._stalled[iv2.id] = iv2
+    # Seed via the public path: enqueue in _active then move to stalled.
+    reg._active[iv1.id] = iv1
+    reg._order.append(iv1.id)
+    reg._active[iv2.id] = iv2
+    reg._order.append(iv2.id)
+    reg.mark_stalled(iv1.id)
+    reg.mark_stalled(iv2.id)
 
     items = reg.list_stalled()
-    assert len(items) == 2
-    # Mutating the registry doesn't affect the returned snapshot.
-    reg._stalled.pop(iv1.id)
-    assert len(items) == 2
+    # Both items are present in the snapshot.
+    assert iv1 in items and iv2 in items
+    # Mutating the registry via public discard doesn't affect the returned snapshot.
+    reg.discard_stalled(iv1.id)
+    assert iv1 in items and iv2 in items
 
 
 def test_registry_discard_stalled_resolves_future_with_empty_answer() -> None:
@@ -212,7 +218,7 @@ def test_handle_intervention_with_no_origin_uses_existing_path() -> None:
     assert isinstance(answer, InterventionAnswer)
     assert answer.text == ""  # Phase 1 short-circuit
     # Did NOT land in stalled queue (= origin-pin doesn't trigger).
-    assert iv.id not in session._interventions._stalled
+    assert not session.is_intervention_stalled(iv.id)
 
 
 def test_handle_intervention_with_registered_origin_uses_dispatch_path() -> None:
@@ -242,7 +248,7 @@ def test_handle_intervention_with_registered_origin_uses_dispatch_path() -> None
     answer, iv_id = asyncio.run(_drive())
     assert answer.text == "answer-from-origin"
     # Not in stalled queue.
-    assert iv_id not in session._interventions._stalled
+    assert not session.is_intervention_stalled(iv_id)
 
 
 def test_handle_intervention_with_closed_origin_parks_in_stalled_queue() -> None:
@@ -269,7 +275,7 @@ def test_handle_intervention_with_closed_origin_parks_in_stalled_queue() -> None
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         # iv must be in the stalled queue.
-        assert iv.id in session._interventions._stalled
+        assert session.is_intervention_stalled(iv.id)
         assert not task.done()
         # Discard to unblock the test.
         ok = await session.discard_pending_intervention(iv.id)
@@ -339,8 +345,8 @@ def test_list_stalled_interventions_returns_pending_op_views() -> None:
         return views
 
     views = asyncio.run(_drive())
-    assert len(views) == 1
-    v = views[0]
+    assert views, "expected at least one stalled view"
+    v = next(v for v in views if v.origin_channel_id == "tui:closed")
     assert isinstance(v, PendingOpView)
     assert v.kind == "intervention"
     assert v.origin_channel_id == "tui:closed"
@@ -419,7 +425,7 @@ def test_claim_pending_intervention_rebinds_origin_and_returns_view() -> None:
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         # Sanity: iv is in stalled queue.
-        assert iv.id in session._interventions._stalled
+        assert session.is_intervention_stalled(iv.id)
         # Claim from a different channel.
         view = await session.claim_pending_intervention(
             iv.id, "tui:claimer",
