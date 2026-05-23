@@ -429,17 +429,33 @@ class ConversationView(Widget):
             return
         panel.add(task_id, summary)
 
-    def remove_async_task(self, task_id: str) -> None:
+    def remove_async_task(
+        self,
+        task_id: str,
+        *,
+        terminal: str = "ok",
+    ) -> None:
         """Drop ``task_id``'s entry from the bottom stack panel.
 
         Called on ``"skill done:"`` from the trace flow + the
         corresponding plan-completion path. Idempotent (= silent
         no-op if the panel isn't mounted or the task is unknown).
+
+        Wave-13 T2-2: ``terminal`` is threaded through to
+        ``AsyncStackPanel.remove`` so aborted / interrupted lifecycle
+        events can trigger the red flash-before-unmount behaviour.
+        Valid values: ``"ok"`` (default, immediate unmount),
+        ``"aborted"``, ``"interrupted"``.
         """
         panel = self._async_stack()
         if panel is None or not task_id:
             return
-        panel.remove(task_id)
+        # Coerce to the Literal values AsyncStackPanel.remove accepts.
+        # Anything unrecognised falls back to "ok" (= existing safe default).
+        if terminal in ("aborted", "interrupted"):
+            panel.remove(task_id, terminal=terminal)  # type: ignore[arg-type]
+        else:
+            panel.remove(task_id)
 
     def clear_async_tasks(self) -> None:
         """Reset the bottom stack panel to empty.

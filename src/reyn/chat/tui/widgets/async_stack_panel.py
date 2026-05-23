@@ -1,5 +1,22 @@
 """AsyncStackPanel — sticky list of the attached agent's running tasks.
 
+Wave-13 T2-2: ``remove(plan_id, terminal=...)`` flash extension.
+
+When ``terminal`` is ``"aborted"`` or ``"interrupted"``, the row briefly
+transitions to a red ``"✗ async: <id> (interrupted)"`` state for ~1.5 s
+before unmounting, so the user can distinguish abnormal terminations from
+clean completions. The same ``terminal="ok"`` default preserves the
+existing immediate-unmount behaviour.
+
+Flash lifecycle per entry:
+  add(summary)                     → running (⟳)
+  set_pending(count)               → pending (⚑)
+  set_running(summary)             → back to running (⟳)
+  remove(ok)                       → immediate unmount
+  remove(aborted|interrupted)      → transition to _FLASH state → 1.5s timer
+                                     → unmount (earlier remove cancels timer)
+
+
 Scope (= user direction 2026-05-23): only the **attached** agent's
 tasks are surfaced. A "task" is the SP-level abstraction covering
 both **skill spawns** and **plan spawns** — the same lifecycle the
@@ -53,7 +70,8 @@ plan spawns). The widget treats it as an opaque key.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Literal
 
 from rich.cells import cell_len
 from rich.text import Text
@@ -75,6 +93,11 @@ _TICK_INTERVAL_S = 1.0
 
 _GLYPH_RUNNING = "⟳"
 _GLYPH_PENDING = "⚑"
+_GLYPH_INTERRUPTED = "✗"
+
+# How long (in seconds) an interrupted/aborted row stays visible before
+# unmounting. Long enough to be noticed; short enough to clear itself.
+_FLASH_DURATION_S = 1.5
 
 _RIGHT_MARGIN_CELLS = 4
 
@@ -117,6 +140,11 @@ class _Entry:
     summary: str
     started_at: float
     pending_count: int = 0  # 0 = running, >0 = intervention pending
+    # Wave-13 T2-2: flash state for terminal non-ok removal.
+    # ``True`` while the 1.5 s interrupted-flash window is active;
+    # the render path reads this to show the red ✗ shape instead of
+    # the normal ⟳ / ⚑ row.
+    flashing: bool = False
 
 
 def _fmt_elapsed(seconds: float) -> str:
@@ -166,6 +194,14 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         # bucket" intent + makes test ordering deterministic).
         self._entries: dict[str, _Entry] = {}
         self._static: Static | None = None
+        # Wave-13 T2-2: per-entry deferred-unmount timer handles.
+        # Keyed by agent_id; value is a Textual timer object (or any
+        # object with a ``stop()`` method — tests may inject a stub).
+        # When ``remove(terminal!="ok")`` fires, a timer is placed here.
+        # If ``remove()`` is called again for the same id before the
+        # timer fires, the pending timer is cancelled and the entry is
+        # unmounted immediately.
+        self._flash_timers: dict[str, object] = {}
 
     # ── Textual lifecycle ────────────────────────────────────────────────────
 
@@ -222,14 +258,86 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
             entry.summary = summary
         self._refresh()
 
-    def remove(self, agent_id: str) -> None:
-        """Remove ``agent_id``'s entry (= complete / fail / disappear)."""
+    def remove(
+        self,
+        agent_id: str,
+        *,
+        terminal: Literal["ok", "aborted", "interrupted"] = "ok",
+    ) -> None:
+        """Remove ``agent_id``'s entry (= complete / fail / disappear).
+
+        ``terminal="ok"`` (default): immediate unmount — same as the
+        historical signature, fully backwards-compatible.
+
+        ``terminal="aborted"`` / ``"interrupted"``: the row briefly
+        transitions to a red ``✗ async: <id> (interrupted)`` state for
+        ~1.5 s before unmounting. If ``remove()`` is called again for
+        the same ``agent_id`` during the flash window (e.g. a forced
+        cancel-all sweep), any pending timer is cancelled and the entry
+        is unmounted immediately instead.
+
+        Any pending flash timer for ``agent_id`` is always cancelled
+        on entry, regardless of ``terminal``, so double-remove calls
+        never leak orphan timers.
+        """
+        # Cancel any pending flash timer before doing anything else.
+        self._cancel_flash_timer(agent_id)
+
+        if agent_id not in self._entries:
+            return
+
+        if terminal == "ok":
+            del self._entries[agent_id]
+            self._refresh()
+            return
+
+        # Non-ok terminal: transition to flash state and schedule unmount.
+        entry = self._entries[agent_id]
+        entry.flashing = True
+        self._refresh()
+        try:
+            timer = self.app.set_timer(
+                _FLASH_DURATION_S,
+                lambda: self._flush_now(agent_id),
+            )
+            self._flash_timers[agent_id] = timer
+        except Exception:
+            # If timer scheduling fails (widget torn down, no app),
+            # fall through to immediate unmount so we don't leak the row.
+            self._flush_now(agent_id)
+
+    def _cancel_flash_timer(self, agent_id: str) -> None:
+        """Cancel any pending flash-timer for ``agent_id`` (no-op if none)."""
+        timer = self._flash_timers.pop(agent_id, None)
+        if timer is None:
+            return
+        try:
+            timer.stop()
+        except Exception:
+            pass
+
+    def _flush_now(self, agent_id: str) -> None:
+        """Immediately unmount ``agent_id``'s entry.
+
+        Called by the deferred flash timer and directly by tests via
+        the public surface. Cancels any pending timer first so this
+        is idempotent (double-flush is a safe no-op).
+        """
+        self._cancel_flash_timer(agent_id)
         if agent_id in self._entries:
             del self._entries[agent_id]
             self._refresh()
 
     def clear(self) -> None:
-        """Reset to empty (= no entries)."""
+        """Reset to empty (= no entries).
+
+        Cancels any pending flash timers so deferred unmounts from a
+        prior interrupted state don't fire after the panel is cleared
+        (e.g. Ctrl+L conversation clear).
+        """
+        # Cancel all pending flash timers first.
+        for aid in list(self._flash_timers.keys()):
+            self._cancel_flash_timer(aid)
         if self._entries:
             self._entries.clear()
             self._refresh()
@@ -239,9 +347,12 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
 
         Returns the visible (= sorted, capped, overflow-substituted) view
         as a list of ``{"agent_id", "glyph", "summary", "pending_count",
-        "elapsed_s", "is_overflow"}`` dicts. Lets callers verify ordering
-        + overflow without reaching into private state (= per testing
-        policy public-surface convention).
+        "elapsed_s", "is_overflow", "flashing"}`` dicts. Lets callers
+        verify ordering + overflow + flash state without reaching into
+        private state (= per testing policy public-surface convention).
+
+        Wave-13 T2-2: ``flashing`` is ``True`` while a non-ok terminal
+        flash window is active (= row is red, pending unmount).
         """
         out: list[dict] = []
         for agent_id, entry, glyph in self._sorted_visible():
@@ -252,6 +363,7 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
                 "pending_count": entry.pending_count,
                 "elapsed_s": time.monotonic() - entry.started_at,
                 "is_overflow": False,
+                "flashing": entry.flashing,
             })
         overflow = len(self._entries) - len(out)
         if overflow > 0:
@@ -262,6 +374,7 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
                 "pending_count": 0,
                 "elapsed_s": 0.0,
                 "is_overflow": True,
+                "flashing": False,
             })
         return out
 
@@ -275,18 +388,26 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         """Return up to ``_CAP`` (agent_id, entry, glyph) tuples in display order.
 
         Sort: pending entries (= ⚑) first, then running entries (= ⟳)
-        ordered by elapsed shortest-first. Within each bucket, ties
-        broken by insertion order (= dict iteration stability).
+        ordered by elapsed shortest-first, then flashing entries (= ✗)
+        last. Flashing rows are transitioning out; pushing them to the
+        tail keeps the most actionable rows (pending / running) at the
+        top of the narrow strip where the user's eye lands first.
+
+        Within each bucket, ties broken by insertion order (= dict
+        iteration stability).
         """
         pending: list[tuple[str, _Entry, str]] = []
         running: list[tuple[str, _Entry, str]] = []
+        flashing: list[tuple[str, _Entry, str]] = []
         for agent_id, entry in self._entries.items():
-            if entry.pending_count > 0:
+            if entry.flashing:
+                flashing.append((agent_id, entry, _GLYPH_INTERRUPTED))
+            elif entry.pending_count > 0:
                 pending.append((agent_id, entry, _GLYPH_PENDING))
             else:
                 running.append((agent_id, entry, _GLYPH_RUNNING))
         running.sort(key=lambda triple: time.monotonic() - triple[1].started_at)
-        ordered = pending + running
+        ordered = pending + running + flashing
         return ordered[:_CAP]
 
     def _build_lines(self) -> Text:
@@ -325,7 +446,20 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
 
         Truncation order on overflow: shrink ``summary`` first (= most
         disposable), keep agent_id + glyph + elapsed always visible.
+
+        Wave-13 T2-2: when ``entry.flashing`` is True, bypasses normal
+        rendering and emits a fixed red ``✗ async: <id_short> (interrupted)``
+        row so the user can see the termination reason before unmount.
         """
+        # Flash mode: render a fixed red "interrupted" line and return.
+        # The agent_id is middle-elided to a short form (first 8 chars)
+        # so the row fits comfortably even on narrow terminals.
+        if entry.flashing:
+            id_short = _middle_elide_id(agent_id, min(16, body_budget - 24))
+            flash_text = f"✗ async: {id_short} (interrupted)"
+            t.append(self._truncate_to_cells(flash_text, body_budget), style="bold #ff6644")
+            return
+
         elapsed_str = _fmt_elapsed(time.monotonic() - entry.started_at)
         if entry.pending_count > 0:
             elapsed_segment = f"  ({entry.pending_count} pending)"

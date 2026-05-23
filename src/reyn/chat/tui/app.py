@@ -719,7 +719,11 @@ class ReynTUIApp(App):
             # for the attached agent's task — drop the row from the
             # bottom-docked overview. Mirrors the ``add_async_task``
             # call in ``_update_skill_exec``'s first-trace branch.
-            conv.remove_async_task(run_id)
+            # Wave-13 T2-2: pass terminal="aborted" when the skill did
+            # not finish cleanly so the bottom strip briefly flashes
+            # the red ✗ shape before unmounting (= audit finding A#6).
+            _async_terminal = "ok" if status == "finished" else "aborted"
+            conv.remove_async_task(run_id, terminal=_async_terminal)
             # Wave-9 D-F11: release the input-bar lock when the last
             # tracked skill finishes. Sub-skills popping during a
             # nested run keep the lock held — only the empty state
@@ -1082,8 +1086,10 @@ class ReynTUIApp(App):
                     # entry needs explicit removal here (= same
                     # rationale as the ``_skill_exec.pop`` directly
                     # below).
+                    # Wave-13 T2-2: terminal="aborted" so the strip
+                    # briefly flashes red before unmounting.
                     try:
-                        conv.remove_async_task(run_id)
+                        conv.remove_async_task(run_id, terminal="aborted")
                     except Exception:
                         pass
                     self._skill_exec.pop(run_id, None)
@@ -1113,7 +1119,10 @@ class ReynTUIApp(App):
                 cancelled_plans += 1
                 if conv is not None:
                     try:
-                        conv.remove_async_task(str(plan_id))
+                        # Wave-13 T2-2: terminal="interrupted" so the
+                        # strip briefly flashes red before unmounting,
+                        # distinguishing plan cancel from clean completion.
+                        conv.remove_async_task(str(plan_id), terminal="interrupted")
                     except Exception:
                         pass
 
@@ -1142,8 +1151,10 @@ class ReynTUIApp(App):
                 # path; needs explicit handling here because
                 # ``task.cancel()`` doesn't produce a
                 # workflow_aborted trace.
+                # Wave-13 T2-2: terminal="aborted" → red flash before
+                # unmount so user can tell user-cancelled from clean done.
                 try:
-                    conv.remove_async_task(run_id)
+                    conv.remove_async_task(run_id, terminal="aborted")
                 except Exception:
                     pass
                 self._skill_exec.pop(run_id, None)
