@@ -178,6 +178,7 @@ class OutboxRouter:
             "__expand_last_reply__":    self._on_expand_last_reply,
             "__copy_last_reply__":      self._on_copy_last_reply,
             "__find__":                 self._on_find,
+            "__save__":                 self._on_save,
             "__docs_filter__":          self._on_docs_filter,
             "__stream_start__":         self._on_stream_start,
             "__stream_chunk__":         self._on_stream_chunk,
@@ -700,6 +701,87 @@ class OutboxRouter:
             conv,
             f"match {new_pos + 1}/{len(matches)} for '{query}' "
             f"· line {target_idx + 1}",
+        )
+
+    def _on_save(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """`__save__` — /save slash; write the conv pane buffer to a file.
+
+        ``msg.text`` carries the raw path argument (may be empty,
+        relative, absolute, or ``~``-prefixed). Behaviour:
+          - empty arg → auto-generate ``./reyn-conv-YYYYMMDD-HHMMSS.txt``
+            in the current working directory
+          - relative path → resolved relative to cwd
+          - ``~/foo.txt`` → expanded against the user's home
+          - existing file → overwritten silently (slash UX has no
+            confirmation channel; the user typed the path)
+
+        On success: status ``"saved N lines to <path>"``. On failure
+        (parent dir missing, permission denied, …): error-kind status
+        with the exception class + message. The file write is
+        synchronous because the buffer is bounded (≤ a few thousand
+        lines), so blocking the outbox loop for ≤ a few ms is fine —
+        no need for the ``/copy`` subprocess-offload pattern.
+        """
+        from datetime import datetime
+        from pathlib import Path
+
+        arg = (msg.text or "").strip()
+        if arg:
+            try:
+                target = Path(arg).expanduser()
+            except Exception as exc:
+                self._show_transient_status(
+                    conv, f"/save: bad path: {exc}", kind="error",
+                )
+                return
+        else:
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            target = Path.cwd() / f"reyn-conv-{stamp}.txt"
+
+        # Resolve to absolute for the status line so the user always
+        # sees where the file landed (= ``./notes.txt`` is ambiguous
+        # depending on cwd; the absolute form is unambiguous).
+        try:
+            abs_target = target.resolve() if target.is_absolute() else (
+                Path.cwd() / target
+            ).resolve()
+        except Exception:
+            abs_target = target
+
+        lines = conv.dump_buffer_text()
+        body = "\n".join(lines)
+        # Trailing newline so POSIX tools (``cat`` / ``less`` / ``wc -l``)
+        # report a sane line count and the final line isn't headless.
+        if body and not body.endswith("\n"):
+            body += "\n"
+
+        try:
+            target.write_text(body, encoding="utf-8")
+        except FileNotFoundError as exc:
+            self._show_transient_status(
+                conv,
+                f"/save: parent dir missing: {exc.filename or target.parent}",
+                kind="error",
+            )
+            return
+        except PermissionError:
+            self._show_transient_status(
+                conv, f"/save: permission denied: {abs_target}", kind="error",
+            )
+            return
+        except OSError as exc:
+            self._show_transient_status(
+                conv, f"/save: {type(exc).__name__}: {exc}", kind="error",
+            )
+            return
+
+        self._show_transient_status(
+            conv,
+            f"saved {len(lines)} line{'s' if len(lines) != 1 else ''} "
+            f"to {abs_target}",
+            duration=3.0,
         )
 
     def _on_docs_filter(

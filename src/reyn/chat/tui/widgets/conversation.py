@@ -901,6 +901,23 @@ class ConversationView(Widget):
                 out.append((idx, text))
         return out
 
+    def dump_buffer_text(self) -> list[str]:
+        """Return the plain-text rendering of every line in the RichLog buffer.
+
+        Sibling to :meth:`find_in_buffer` — same buffer scope (= the
+        live, scrollable RichLog content; not historical events past
+        ``_RICHLOG_MAX_LINES``), but returns the full ordered list
+        without filtering. Used by ``/save`` to materialise the conv
+        pane to a text file. Each entry is a single line (= no
+        embedded newlines), already stripped of ANSI / Rich markup
+        by Strip's ``.text`` property.
+        """
+        log = self._log()
+        return [
+            getattr(strip, "text", "") or ""
+            for strip in (getattr(log, "lines", []) or [])
+        ]
+
     def _write_log(self, text: Text) -> None:
         log = self._log()
         log.write(text)
