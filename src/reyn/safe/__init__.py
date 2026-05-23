@@ -16,6 +16,8 @@ Available modules:
 
 - :mod:`reyn.safe.hash` — `sha256` / `sha256_hex`.
 - :mod:`reyn.safe.json` — strict / canonical JSON helpers.
+- :mod:`reyn.safe.mcp` — MCP helpers (`mcp.registry.search` / `lookup`).
+  New in FP-0042 Phase 2.4 — ambient (URL hardcoded, no permission gate).
 - :mod:`reyn.safe.process` — process identity (`getpid`, `pid_alive`).
   Ambient (no permission gate). New in FP-0042 Phase 2.2.
 - :mod:`reyn.safe.random` — explicit-seeded RNG.
@@ -28,6 +30,8 @@ to work via shim re-exports from this package. New code should import from
 ``reyn.safe.*``; existing code may migrate at its own pace.
 """
 
-from . import file, hash, json, process, random, schema, text, time
+from . import file, hash, json, mcp, process, random, schema, text, time
 
-__all__ = ["file", "hash", "json", "process", "random", "schema", "text", "time"]
+__all__ = [
+    "file", "hash", "json", "mcp", "process", "random", "schema", "text", "time",
+]

@@ -61,42 +61,36 @@ _EMPTY_SEARCH_RESPONSE = {
 
 
 def _patch_registry_get_versions(server_response: dict, status: int = 200):
-    """Patch ``http_get`` in mcp_install.registry_fetch for versions/latest endpoint."""
-    import json as _json
+    """Patch the safe-mode registry HTTP helper for the versions/latest endpoint.
 
-    def _fake_get(url, *, headers=None, timeout=30):
+    FP-0042 Phase 2.4: ``mcp_install.registry_fetch`` no longer imports
+    ``http_get``; HTTP is encapsulated in ``reyn.safe.mcp.registry``. We
+    patch the internal ``_http_get_json`` there — it's the lowest stable
+    seam and matches the existing test pattern (= patch HTTP boundary, run
+    the real cache + dedup + dict-shape code path).
+    """
+    import reyn.safe.mcp.registry as _safe_registry
+
+    def _fake(url: str) -> dict:
         if status >= 400:
-            return {"status": status, "body": f"HTTP {status}", "headers": {}}
+            raise _safe_registry.RegistryError(f"HTTP {status} for {url}")
         if "/versions/latest" in url:
-            return {
-                "status": 200,
-                "body": _json.dumps({"server": server_response}),
-                "headers": {},
-            }
-        # search endpoint
-        return {
-            "status": 200,
-            "body": _json.dumps(_FILESYSTEM_SEARCH_RESPONSE),
-            "headers": {},
-        }
+            return {"server": server_response}
+        return _FILESYSTEM_SEARCH_RESPONSE
 
-    return mock.patch(
-        "reyn.stdlib.skills.mcp_install.registry_fetch.http_get", _fake_get
-    )
+    return mock.patch.object(_safe_registry, "_http_get_json", _fake)
 
 
 def _patch_registry_search(response_data: dict, status: int = 200):
-    """Patch ``http_get`` in mcp_install.registry_fetch for search endpoint."""
-    import json as _json
+    """Patch the safe-mode registry HTTP helper for the search endpoint."""
+    import reyn.safe.mcp.registry as _safe_registry
 
-    def _fake_get(url, *, headers=None, timeout=30):
+    def _fake(url: str) -> dict:
         if status >= 400:
-            return {"status": status, "body": f"HTTP {status}", "headers": {}}
-        return {"status": 200, "body": _json.dumps(response_data), "headers": {}}
+            raise _safe_registry.RegistryError(f"HTTP {status} for {url}")
+        return response_data
 
-    return mock.patch(
-        "reyn.stdlib.skills.mcp_install.registry_fetch.http_get", _fake_get
-    )
+    return mock.patch.object(_safe_registry, "_http_get_json", _fake)
 
 
 def _run(coro):
@@ -273,20 +267,19 @@ def test_fetch_server_registry_error_source_error(tmp_path):
 
 def test_fetch_server_empty_text_source_error():
     """Tier 2: Empty input text → source='error', no HTTP call made."""
+    import reyn.safe.mcp.registry as _safe_registry
     from reyn.stdlib.skills.mcp_install.registry_fetch import fetch_server_for_install
 
     call_count = 0
 
-    def _fake_get(url, *, headers=None, timeout=30):
+    def _spy(url: str) -> dict:
         nonlocal call_count
         call_count += 1
-        return {"status": 200, "body": "{}", "headers": {}}
+        return {}
 
     artifact = {"data": {"text": ""}}
 
-    with mock.patch(
-        "reyn.stdlib.skills.mcp_install.registry_fetch.http_get", _fake_get
-    ):
+    with mock.patch.object(_safe_registry, "_http_get_json", _spy):
         result = fetch_server_for_install(artifact)
 
     assert result["source"] == "error"

@@ -17,9 +17,13 @@ graph:
 permissions:
   mcp_install: true
   python:
+    # FP-0042 Phase 2.4 (2026-05-23): migrated from mode: unsafe to mode: safe.
+    # Registry HTTP + cache + JSON parse + dedup all hidden inside
+    # reyn.safe.mcp.registry (= URL hardcoded, no permission gate per the
+    # ambient-read treatment captured in Issue #571).
     - module: ./registry_fetch.py
       function: fetch_server_for_install
-      mode: unsafe
+      mode: safe
       timeout: 20
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
