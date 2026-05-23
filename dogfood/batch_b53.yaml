@@ -1,0 +1,138 @@
+batch:
+  name: B53
+  date: "2026-05-23"
+  head: 5f46af7b
+  env_vars:
+    REYN_EMPTY_STOP_RETRY: "1"      # held on (apples-to-apples vs B49-B52)
+    REYN_SPAWN_ACK_TO_LLM: "1"      # held on
+  user_params:
+    hot_list_n: 10                  # held constant vs B43-B52
+    models_tier: flash-lite         # weak only per dogfood policy
+  hard_caps:
+    tool_uses: 50
+    wall_clock_min: 15
+
+# B53 = post-B52 carry-over re-measurement + sandbox_config-fix effect verification.
+#
+# Landed since B52 (= HEAD 8e9be379 → 5f46af7b):
+#
+#   sandbox_2 axis (= dogfood-coder):
+#   - PR #615 fix(web/a2a + mcp): propagate sandbox_config to ChatSession factory.
+#     A2A + MCP-serve session factories now pass sandbox_config=config.sandbox so
+#     reyn.yaml sandbox.backend declarations reach the sandboxed_exec handler via
+#     the chat-router path. Cron-side was already correct. Also adds AST-uniformity
+#     test pinning the kwarg on every ChatSession() call site. Discovered by
+#     B52 W3-S5 retest where backend=seatbelt was observed despite sandbox.backend:
+#     noop in reyn.local.yaml.
+#   - PR #617 (= B52 journal docs-only commit).
+#
+#   Cross-author landings since B52:
+#   - PR #616 (= e2e-coder collapse arc Phase 2 ruff fix landed post-CI).
+#   - PR #618 (= e2e-coder collapse arc Phase 3 http.get axis + safe.http per-host
+#     gate). These are permission-model work that may interact with web_fetch /
+#     safe.http surfaces in scenarios; no specific dogfood-scenario impact expected
+#     but watch W3-S4 (web_fetch) and W5 (MCP catalog-overlap) for any indirect effect.
+#
+# Expected ΔV vs B52 post-retest (= 28/48 = 58.3%):
+#   - sandbox_config-fix effect: W3-S5 stays V (= already verified via retest).
+#     Confirming this in a full batch run is the primary B53 axis.
+#   - W3-S4 env-grant via injected reyn.local.yaml: stays V (= dispatch script
+#     now auto-injects permissions.web.fetch: allow on --setup-worktrees).
+#   - B52-W6-2 plan_aggregated reply truncation: 1-obs in B52, re-measure.
+#     Classification axis: noise (= disappears) or structural (= recurs).
+#   - LLM noise band ±2-3 V at this rate level.
+#   - Median expected: V ≈ 28-30/48 (= flat-to-+2 vs B52 retest baseline).
+#   - Conservative: V ≈ 26/48 (= -2 LLM noise).
+#   - Optimistic: V ≈ 31/48 (= +3, all noise + B52-W6-2 dissipates).
+#
+# Carry-over re-measurement (per feedback_pre_conclusion_observation_checklist):
+#
+#   1. B52 W3-S4 web_fetch_url + W3-S5 sandboxed_exec_simple
+#      - Both V on B52 retest after PR #615 landed.
+#      - B53 = first full-batch verification with the fix on main.
+#      - Expected V; flap to R = regression worth investigating.
+#
+#   2. B52-W6-2 plan_aggregated reply truncation
+#      - Scenario: W6 s3 plan_summary_across_n_files.
+#      - B52: events all met, but HTTP reply truncated to spawn_ack envelope
+#        (partial:true), aggregated result never reached the caller.
+#      - 1-obs; B53 confirms noise vs structural.
+#      - If recurs: file as structural finding for follow-up scoping.
+#      - If absent: classify as noise + dismiss.
+#
+#   3. W6 plan-mode weak-tier ceiling (W6-S2 / W6-S3 family from B51-B52)
+#      - Known-future-challenge zone, no expected change.
+#      - Surface fluctuation tolerated.
+#
+#   4. W5 catalog-overlap weak-tier ceiling
+#      - Same. Future-challenge zone.
+#
+# Measurement-process notes:
+#   - V trajectory vs B52-post-retest (= 28/48) is the headline metric.
+#   - PR #618 (e2e-coder safe.http per-host gate) is a new permission-model axis;
+#     watch for any unexpected interaction with scenarios calling reyn.safe.http
+#     (= post-FP-0042 Phase 2.4 / drift-fix paths). No specific scenario covers
+#     this directly; document any surprises in B53 findings.
+
+workers:
+  - name: W1
+    scenario_set: chat_router_smoke.yaml
+    scenario_set_path: dogfood/scenarios/chat_router_smoke.yaml
+    port: 8281
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b53-1
+    agent_prefix: dogfood-b53-1-s
+
+  - name: W2
+    scenario_set: stdlib_skills_core.yaml
+    scenario_set_path: dogfood/scenarios/stdlib_skills_core.yaml
+    port: 8282
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b53-2
+    agent_prefix: dogfood-b53-2-s
+
+  - name: W3
+    scenario_set: control_ir_ops.yaml
+    scenario_set_path: dogfood/scenarios/control_ir_ops.yaml
+    port: 8283
+    n_scenarios: 9
+    worktree: /tmp/reyn-worktrees/b53-3
+    agent_prefix: dogfood-b53-3-s
+
+  - name: W4
+    scenario_set: permissions_and_safety.yaml
+    scenario_set_path: dogfood/scenarios/permissions_and_safety.yaml
+    port: 8284
+    n_scenarios: 8
+    worktree: /tmp/reyn-worktrees/b53-4
+    agent_prefix: dogfood-b53-4-s
+
+  - name: W5
+    scenario_set: multi_agent_and_mcp.yaml
+    scenario_set_path: dogfood/scenarios/multi_agent_and_mcp.yaml
+    port: 8285
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b53-5
+    agent_prefix: dogfood-b53-5-s
+
+  - name: W6
+    scenario_set: plan_mode_fp_0011_mixed
+    scenario_set_path: dogfood/scenarios/plan_mode.yaml
+    port: 8286
+    n_scenarios: 3
+    worktree: /tmp/reyn-worktrees/b53-6
+    agent_prefix: dogfood-b53-6-s
+
+  - name: W7
+    scenario_set: long_session_v1.yaml
+    scenario_set_path: dogfood/scenarios/long_session_v1.yaml
+    port: 8287
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b53-7
+    agent_prefix: dogfood-b53-7-s
+
+past_batches:
+  - name: B52
+    aggregate_path: docs/deep-dives/journal/dogfood/2026-05-23-batch-52-post-fp0042-complete/aggregate.json
+
+journal_dir: docs/deep-dives/journal/dogfood/2026-05-23-batch-53-post-sandbox-config-fix

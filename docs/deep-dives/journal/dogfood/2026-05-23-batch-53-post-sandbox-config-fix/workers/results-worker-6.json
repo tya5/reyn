@@ -1,0 +1,112 @@
+{
+  "batch": "B53",
+  "worker": 6,
+  "head": "5f46af7b",
+  "date": "2026-05-23",
+  "scenario_set": "plan_mode_fp_0011_mixed",
+  "env_vars": {"REYN_EMPTY_STOP_RETRY": "1", "REYN_SPAWN_ACK_TO_LLM": "1"},
+  "user_params": {"hot_list_n": 10, "models_tier": "flash-lite"},
+  "verdicts": {"V": 1, "I": 0, "R": 2, "B": 0},
+  "vs_past": {
+    "B52": {"V": 1, "I": 1, "R": 1, "B": 0},
+    "B53": {"V": 1, "I": 0, "R": 2, "B": 0},
+    "delta": "V flat (1→1); I→R drift (one inconclusive collapsed to refuted; s3 plan tool now emits plan_invalid error pre-emission instead of partial spawn_ack-only behaviour)"
+  },
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "verdict": "V",
+      "http_status": 200,
+      "events_file": "/tmp/reyn-worktrees/b53-6/.reyn/events/agents/dogfood-b53-6-s1/chat/2026-05/2026-05-23T221658.jsonl",
+      "events_counts": {
+        "plan_emitted": 1,
+        "plan_step_started": 3,
+        "plan_step_completed": 3,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0,
+        "router_empty_response_detected": 2,
+        "router_empty_response_retry_injected": 2
+      },
+      "events_pass": true,
+      "rubric_eval": {
+        "refs_both_docs": true,
+        "at_least_3_points": true,
+        "cites_evidence": true,
+        "no_fabrication": true
+      },
+      "reply_truncation": "ok — reply contains [task_spawned] envelope followed by full aggregated synthesis (3 numbered points with header references to workspace.md and permission-model.md)",
+      "notes": "Clean run. 2 empty-response retries injected but recovered. Plan with 3 steps (read_permission_model, read_workspace, compare_docs) completed and aggregated."
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "verdict": "R",
+      "http_status": 200,
+      "events_file": "/tmp/reyn-worktrees/b53-6/.reyn/events/agents/dogfood-b53-6-s2/chat/2026-05/2026-05-23T221806.jsonl",
+      "events_counts": {
+        "plan_emitted": 0,
+        "plan_step_started": 0,
+        "plan_step_completed": 0,
+        "tool_called": 4,
+        "tool_failed": 1
+      },
+      "events_pass": false,
+      "events_pass_reason": "must_emit plan_emitted >=1 / plan_step_started >=2 / plan_step_completed >=2 all failed (0 occurrences). Router never invoked plan tool.",
+      "rubric_eval": {
+        "refs_plan_and_planner": false,
+        "names_specific_function": false,
+        "explains_both_when_and_how": false,
+        "no_fabrication": true
+      },
+      "reply_truncation": "no truncation — reply is the router error string 'Router loop exceeded max iterations (5).' preceded by echoed tool names (list_actions, describe_action, source__read). No spawn_ack, no aggregated result.",
+      "notes": "Router exhausted iteration cap cycling list_actions/describe_action without ever calling plan. source__read tool_failed once. Classic non-plan-engagement attractor."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "verdict": "R",
+      "http_status": 200,
+      "events_file": "/tmp/reyn-worktrees/b53-6/.reyn/events/agents/dogfood-b53-6-s3/chat/2026-05/2026-05-23T221825.jsonl",
+      "events_counts": {
+        "plan_emitted": 0,
+        "plan_step_started": 0,
+        "plan_step_completed": 0,
+        "plan_aggregated": 0,
+        "tool_called": 1,
+        "tool_returned": 1
+      },
+      "events_pass": false,
+      "events_pass_reason": "must_emit plan_emitted >=1 / plan_step_started >=3 / plan_step_completed >=2 / plan_aggregated >=1 all failed (0 occurrences). plan tool invoked once but returned status=error kind=plan_invalid (steps_json malformed JSON: 'Expecting , delimiter: line 1 column 387').",
+      "rubric_eval": {
+        "refs_all_three_files": false,
+        "at_least_4_pillars": false,
+        "cites_source_per_pillar": false,
+        "no_fabrication": true
+      },
+      "reply_truncation": "TRUNCATED — HTTP A2A reply body is only 179 bytes containing the literal string 'plan\\n\\nplan' (two echoed tool-call names). Neither (a) spawn_ack envelope (no [task_spawned] header), NOR (b) aggregated result is present. Per B52-W6-2 finding re-measurement: plan_aggregated event absent in events.jsonl AND reply contains neither spawn_ack envelope nor aggregated synthesis. Root cause: plan_invalid JSON error fired before plan_emitted, so the lifecycle never started; the router fell through to returning raw tool-name echoes.",
+      "notes": "B52-W6-2 axis: this is a regression direction relative to B52 where s3 reportedly produced spawn_ack-only (no aggregated). B53 produces NEITHER spawn_ack NOR aggregated — reply degenerates to bare tool-name echoes. Underlying LLM JSON serialisation of plan.steps_json appears unreliable for the 3-file synthesis prompt."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B53-W6-1",
+      "scenario": "plan_summary_across_n_files",
+      "kind": "plan_tool_json_validation_failure",
+      "summary": "plan tool rejects LLM-emitted steps_json with 'Expecting , delimiter: line 1 column 387' for s3. plan_emitted never fires; HTTP reply degenerates to literal 'plan\\n\\nplan' (= echoed tool-call names), no spawn_ack envelope, no aggregated content.",
+      "primary_evidence": [
+        "events.jsonl tool_returned.result = {status: error, error: {kind: plan_invalid, message: 'plan.steps_json is not valid JSON: Expecting , delimiter: line 1 column 387 (char 386)'}}",
+        "HTTP A2A reply body (179 bytes) = '{\"jsonrpc\":\"2.0\",\"id\":\"s3\",\"result\":{\"kind\":\"message\",\"role\":\"agent\",\"parts\":[{\"kind\":\"text\",\"text\":\"plan\\n\\nplan\"}]...}'",
+        "Zero plan_* events in s3 events.jsonl"
+      ]
+    },
+    {
+      "id": "B53-W6-2",
+      "scenario": "plan_explain_with_code_references",
+      "kind": "router_no_plan_engagement",
+      "summary": "Router cycles list_actions/describe_action 4x without invoking plan tool, then hits source__read error and exits via 'Router loop exceeded max iterations (5).' No plan lifecycle events. Suggests planner-trigger heuristic does not match this prompt phrasing.",
+      "primary_evidence": [
+        "events: 4× tool_called (list_actions/describe_action), 0× plan tool invocation, 1× tool_failed source__read",
+        "Reply text: 'Router loop exceeded max iterations (5).'"
+      ]
+    }
+  ]
+}

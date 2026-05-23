@@ -1,0 +1,154 @@
+{
+  "batch": "B53",
+  "worker": 3,
+  "head": "5f46af7b",
+  "date": "2026-05-23",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {"REYN_EMPTY_STOP_RETRY": "1", "REYN_SPAWN_ACK_TO_LLM": "1"},
+  "user_params": {"hot_list_n": 10, "models_tier": "flash-lite"},
+  "verdicts": {"V": 6, "I": 0, "R": 3, "B": 0},
+  "vs_past": {
+    "B52": {"V": 4, "I": 0, "R": 5, "B": 0},
+    "B53": {"V": 6, "I": 0, "R": 3, "B": 0},
+    "delta_V": "+2",
+    "note": "W3-S4 web_fetch_url and W3-S5 sandboxed_exec_simple both V post-PR-#615 (permissions.web.fetch=allow + sandbox.backend=noop injected by dispatch); B52 had these as R."
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "agent": "dogfood-b53-3-s1",
+      "http_status": [200],
+      "verdict": "V",
+      "reasoning": "Reply summarises principles doc and mentions principles P1-P8 ('eight design principles', 'stateless phases', 'workspace as the single source of truth', 'events as the audit trail'); events_pass=true (routing_decided>=1, tool_executed>=1, no permission_denied).",
+      "rubric_check": {
+        "quotes_or_summarises_principles": true,
+        "mentions_P1_through_P8": true
+      },
+      "events_pass": true,
+      "events_observed": {"routing_decided": 1, "tool_executed": 1, "permission_denied": 0}
+    },
+    {
+      "id": "file_glob_grep",
+      "agent": "dogfood-b53-3-s2",
+      "http_status": [200],
+      "verdict": "V",
+      "reasoning": "Reply lists 14 skill.md paths and mentions 'preprocessor' in relation to those files (30 instances found); events_pass=true (routing_decided=2, tool_executed=2, no permission_denied).",
+      "rubric_check": {
+        "lists_skill_md_paths": true,
+        "mentions_preprocessor": true
+      },
+      "events_pass": true,
+      "events_observed": {"routing_decided": 2, "tool_executed": 2, "permission_denied": 0}
+    },
+    {
+      "id": "web_search_query",
+      "agent": "dogfood-b53-3-s3",
+      "http_status": [200],
+      "verdict": "V",
+      "reasoning": "Reply references OpenAI Python SDK changelog with multiple sources (GitHub openai-python CHANGELOG.md, change8.dev, releases.sh); events_pass=true (routing_decided=1, web_search_started=1, web_search_completed=1, no permission_denied, no web_search_failed).",
+      "rubric_check": {
+        "reports_search_results": true,
+        "references_openai_or_python_sdk": true
+      },
+      "events_pass": true,
+      "events_observed": {"routing_decided": 1, "web_search_started": 1, "web_search_completed": 1, "permission_denied": 0, "web_search_failed": 0}
+    },
+    {
+      "id": "web_fetch_url",
+      "agent": "dogfood-b53-3-s4",
+      "http_status": [200],
+      "verdict": "V",
+      "reasoning": "Reply summarises Python 3.12 features explicitly (PEP 695 type parameter syntax, PEP 701 f-string improvements, PEP 709 comprehension inlining, per-interpreter GIL, sys.monitoring) — not a raw HTML dump; events_pass=true (routing_decided=1, web_fetch_started=1, no permission_denied). PR-#615 verified: permissions.web.fetch=allow grant worked end-to-end.",
+      "rubric_check": {
+        "mentions_python_312_feature": true,
+        "is_summary_not_raw_html": true
+      },
+      "events_pass": true,
+      "events_observed": {"routing_decided": 1, "web_fetch_started": 1, "web_fetch_completed": 1, "permission_denied": 0}
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "agent": "dogfood-b53-3-s5",
+      "http_status": [200],
+      "verdict": "V",
+      "reasoning": "Reply 'The output of the command is: 4' — matches rubric (reports 4, no error). Events: sandboxed_exec_started=1, sandboxed_exec_completed=1, routing_decided=1, no permission_denied. PR-#615 verified: sandbox.backend=noop allowed op-routing surface to fire end-to-end.",
+      "rubric_check": {
+        "reports_output_4": true,
+        "no_error_or_denial": true
+      },
+      "events_pass": true,
+      "events_observed": {"routing_decided": 1, "sandboxed_exec_started": 1, "sandboxed_exec_completed": 1, "permission_denied": 0}
+    },
+    {
+      "id": "lint_a_skill",
+      "agent": "dogfood-b53-3-s6",
+      "http_status": [200],
+      "verdict": "R",
+      "reasoning": "Reply reports error but events.must_emit requires lint_completed which was NOT emitted (event_type_counts contains no lint_completed). tool_called=1 / tool_returned=1 but lint_completed=0. LLM passed wrong path 'skill/index_events' and the tool returned an error rather than completing a lint. events_pass=false.",
+      "rubric_check": {
+        "reports_pass_or_fail": true,
+        "mentions_error_or_warning_count": true
+      },
+      "events_pass": false,
+      "events_observed": {"routing_decided": 1, "lint_completed": 0, "permission_denied": 0},
+      "failure_reason": "must_emit lint_completed missing — LLM passed invalid path 'skill/index_events', lint op short-circuited before emitting lint_completed."
+    },
+    {
+      "id": "recall_indexed_source",
+      "agent": "dogfood-b53-3-s7",
+      "http_status": [200],
+      "verdict": "V",
+      "reasoning": "Reply clearly reports no indexed sources were found and does not fabricate ('If no sources are listed, it means none have been indexed yet for this agent'). Rubric explicitly allows 'OR clearly reports that no indexed sources were found'. Events: routing_decided=1, no permission_denied.",
+      "rubric_check": {
+        "returns_chunks_or_reports_no_sources": true,
+        "does_not_fabricate": true
+      },
+      "events_pass": true,
+      "events_observed": {"routing_decided": 1, "permission_denied": 0}
+    },
+    {
+      "id": "judge_output_direct",
+      "agent": "dogfood-b53-3-s8",
+      "http_status": [200],
+      "verdict": "V",
+      "reasoning": "Reply mentions 'Passed' verdict, numeric score '1.0', and references both criteria ('skill has a non-empty description field' / 'skill declares at least one phase'). Events: routing_decided=1, skill_run_spawned=1, tool_executed=1, no permission_denied, no validation_error.",
+      "rubric_check": {
+        "mentions_passed_or_failed": true,
+        "reports_numeric_score": true,
+        "references_at_least_one_criterion": true
+      },
+      "events_pass": true,
+      "events_observed": {"routing_decided": 1, "skill_run_spawned": 1, "tool_executed": 1, "permission_denied": 0, "validation_error": 0}
+    },
+    {
+      "id": "ask_user_round_trip",
+      "agent": "dogfood-b53-3-s9",
+      "http_status": [200, 200],
+      "verdict": "R",
+      "reasoning": "Reply rubric met (turn2 reply 'I've started scaffolding your new skill, my_demo_skill'). BUT events.must_emit requires user_intervention_requested and user_intervention_received — NEITHER emitted (event_type_counts has 0 of each). The router responded to turn 1 inline ('What would you like to name the new skill?') rather than dispatching skill_builder ask_user op; skill_builder later spawned on turn 2 but ultimately ran workflow_aborted (phase_no_progress). events_pass=false.",
+      "rubric_check": {
+        "references_skill_name_or_scaffolding_started": true
+      },
+      "events_pass": false,
+      "events_observed": {"routing_decided": 1, "skill_run_spawned": 1, "user_intervention_requested": 0, "user_intervention_received": 0, "permission_denied": 0, "workflow_aborted": 1},
+      "failure_reason": "must_emit user_intervention_requested + user_intervention_received both missing — turn1 was handled inline by router instead of going through ask_user op; skill_builder workflow on turn2 also aborted with phase_no_progress."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B53-W3-1",
+      "summary": "PR-#615 dispatch-script injections (permissions.web.fetch=allow + sandbox.backend=noop) confirmed effective: W3-S4 web_fetch_url and W3-S5 sandboxed_exec_simple both V (vs B52 R/R).",
+      "evidence": "S4 events web_fetch_started=1 / web_fetch_completed=1 no permission_denied; S5 events sandboxed_exec_started=1 / sandboxed_exec_completed=1 no permission_denied + reply '4'."
+    },
+    {
+      "id": "B53-W3-2",
+      "summary": "ask_user_round_trip still R — turn1 router replies inline instead of dispatching ask_user op; skill_builder workflow on turn2 aborts via phase_no_progress.",
+      "evidence": "s9 events: 0 user_intervention_requested / 0 user_intervention_received; workflow_aborted=1; skill_run_failed=1. Reply text matches rubric, but events.must_emit fails."
+    },
+    {
+      "id": "B53-W3-3",
+      "summary": "lint_a_skill: LLM passes invalid skill path 'skill/index_events' to lint tool, which short-circuits before emitting lint_completed.",
+      "evidence": "s6 events: tool_called=1 / tool_returned=1 but lint_completed=0. Reply text mentions 'skill.md was not found at the specified path skill/index_events'."
+    }
+  ]
+}
