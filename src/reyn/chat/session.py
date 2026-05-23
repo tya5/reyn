@@ -2859,6 +2859,18 @@ class ChatSession:
             for iv in self._interventions.list_stalled()
         ]
 
+    def is_intervention_stalled(self, iv_id: str) -> bool:
+        """Return True iff ``iv_id`` is in the stalled queue.
+
+        issue #268 Phase 1: point-in-time membership test for the
+        stalled queue. Callers (TUI, tests, CLI) can use this instead
+        of reading ``_interventions._stalled`` directly. The stalled
+        queue is immutable from the caller's perspective — only
+        ``_dispatch_intervention``, ``discard_pending_intervention``,
+        and ``claim_stalled_intervention`` change membership.
+        """
+        return self._interventions.get_stalled(iv_id) is not None
+
     async def discard_pending_intervention(
         self, iv_id: str, *, reason: str = "user_discarded",
     ) -> bool:
