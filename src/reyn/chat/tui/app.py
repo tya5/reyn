@@ -910,7 +910,7 @@ class ReynTUIApp(App):
                 # confirmation the new turn is starting). When the
                 # natural ``thinking…`` message arrives, it overwrites
                 # with identical text — no flicker.
-                conv.show_status("thinking…", kind="thinking")
+                conv.start_thinking()
                 await session.submit_user_text(text)
             else:
                 from rich.text import Text as RichText
@@ -987,11 +987,12 @@ class ReynTUIApp(App):
     def action_cancel_inflight(self) -> None:
         """Cancel the in-flight skill/plan/model call on the attached session.
 
-        Visibility: clears the sticky ``⟳ thinking…`` indicator AND writes
-        a one-line summary to the conv pane reporting how many skills /
-        plans were actually cancelled. Without this summary the user
-        couldn't tell whether Ctrl+C did anything (= "did it really
-        cancel, or was nothing in flight?").
+        Visibility: unmounts the inline thinking spinner AND clears the
+        sticky ``⟳ thinking…`` indicator. Also writes a one-line summary
+        to the conv pane reporting how many skills / plans were actually
+        cancelled. Without this summary the user couldn't tell whether
+        Ctrl+C did anything (= "did it really cancel, or was nothing in
+        flight?").
 
         Ctrl+C is hierarchical: if the slash picker is open, dismiss it
         first (matches Esc, satisfies the "abort the visible thing"
@@ -1010,6 +1011,7 @@ class ReynTUIApp(App):
         except Exception:
             conv = None
         if conv is not None:
+            conv.stop_thinking()
             conv.hide_status()
         # Wave-9 D-F11: Ctrl+C unconditionally releases the in-flight
         # lock so the user can immediately submit a new prompt. Even if

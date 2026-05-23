@@ -1,21 +1,12 @@
-"""Tier 2: elapsed suffix shows only for kind="thinking" (I-F2).
+"""Tier 2: elapsed suffix is never shown in sticky (kind="thinking" removed).
 
-Wave-10 follow-up Topic I finding F2 (P2): ``_repaint`` rendered
-``· N.Ns`` regardless of kind, so a transient ``general`` flash
-like ``↑ turn 3 / 8`` displayed as ``↑ turn 3 / 8  · 1.4s`` —
-the elapsed counter is meaningful only when the user is asking
-"how long has the agent been working?", which is the ``thinking``
-semantics. For navigation breadcrumbs and one-shot error notices,
-the appended elapsed read as noise the user neither needed nor
-expected.
-
-After the fix the elapsed suffix is emitted only when
-``self._kind == "thinking"``. ``_start`` is still refreshed on
-each ``show()`` so the value is meaningful for any future kind
-that opts in.
+Wave-10 follow-up Topic I finding F2 originally tested that the elapsed
+suffix was only shown for ``kind="thinking"``. The ``"thinking"`` kind has
+since been removed from StickyStatus — the inline Braille spinner
+(``InlineThinkingRow``) replaced it. This file now guards that neither
+``general`` nor ``error`` render an elapsed suffix.
 
 Public surfaces tested:
-  - thinking → render contains ``· N.Ns`` (regression guard)
   - general → render does NOT contain elapsed suffix
   - error → render does NOT contain elapsed suffix
 """
@@ -37,21 +28,11 @@ _ELAPSED_RE = re.compile(r"·\s+\d+\.\d+s")
 
 
 async def _render_plain(pilot, kind: str, body: str) -> str:
-    """Drive a real mounted StickyStatus + read the rendered plain text.
-
-    Backs the kind/body into the sticky via ``show``, lets the
-    coalesced ``_repaint`` run, then reads the widget's internal
-    state through the snapshot path + reconstructs the rendered
-    text by calling ``_repaint`` and capturing the ``update`` arg.
-    """
+    """Drive a real mounted StickyStatus + read the rendered plain text."""
     from reyn.chat.tui.widgets import ConversationView
     conv = pilot.app.query_one("#conversation", ConversationView)
     sticky = conv._sticky()
     sticky.show(body, kind=kind)
-    # Back-date _start so a meaningful elapsed value appears for
-    # the thinking case. 2.5s is enough to verify the float pattern.
-    import time
-    sticky._start = time.monotonic() - 2.5
     captured: dict = {}
     original_update = sticky.update
     def _spy(t):  # type: ignore[no-untyped-def]
@@ -61,21 +42,6 @@ async def _render_plain(pilot, kind: str, body: str) -> str:
     sticky._repaint()
     await pilot.pause()
     return captured["text"].plain
-
-
-@pytest.mark.asyncio
-async def test_thinking_kind_renders_elapsed_suffix() -> None:
-    """Tier 2 (regression): thinking still shows ``· N.Ns``."""
-    from reyn.chat.tui.app import ReynTUIApp
-
-    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
-    async with app.run_test(headless=True) as pilot:
-        await pilot.pause()
-        plain = await _render_plain(pilot, "thinking", "thinking…")
-        assert "thinking…" in plain
-        assert _ELAPSED_RE.search(plain), (
-            f"thinking should render elapsed suffix, got: {plain!r}"
-        )
 
 
 @pytest.mark.asyncio

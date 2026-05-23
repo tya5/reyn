@@ -12,17 +12,22 @@ load-bearing live indicators).
     overwrote the warning before the user could read it.
 
 Fix:
-  - ``StickyStatus.show()`` now respects a ``_KIND_PRIORITY`` map.
-    ``thinking`` (priority 100) cannot be displaced by ``general``
+  - ``StickyStatus.show()`` respects a ``_KIND_PRIORITY`` map.
+    ``error`` (priority 80) cannot be displaced by ``general``
     (priority 50); same-or-higher priority overwrites freely.
   - ``_maybe_warn_about_trimmed_history`` additionally writes a
     permanent dim log line so the warning survives subsequent
     sticky overwrites — the user can find it in scrollback.
 
+Note: the original tests checked ``kind="thinking"`` (priority 100).
+The ``"thinking"`` kind was removed when the inline Braille spinner
+(``InlineThinkingRow``) replaced the sticky thinking indicator. The
+priority hierarchy now has ``error`` (80) as the highest kind.
+
 Public surfaces tested:
-  - thinking-active + general show → suppressed (I-F8)
-  - thinking → thinking overwrite → succeeds (regression guard)
-  - general-active + thinking show → succeeds (priority elevation)
+  - error-active + general show → suppressed (priority guard)
+  - error → error overwrite → succeeds (regression guard)
+  - general-active + error show → succeeds (priority elevation)
   - general → general overwrite → succeeds (same priority)
   - trim warning emits both a sticky AND a permanent log line (G-F8)
 """
@@ -46,35 +51,34 @@ async def _sticky(pilot):
 
 
 @pytest.mark.asyncio
-async def test_general_show_suppressed_when_thinking_active() -> None:
-    """Tier 2 (I-F8): a general flash cannot overwrite an active thinking."""
+async def test_general_show_suppressed_when_error_active() -> None:
+    """Tier 2 (I-F8): a general flash cannot overwrite an active error."""
     from reyn.chat.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         s = await _sticky(pilot)
-        s.show("thinking…", kind="thinking")
-        assert s.snapshot()["kind"] == "thinking"
-        assert s.snapshot()["body"] == "thinking…"
+        s.show("copy failed", kind="error")
+        assert s.snapshot()["kind"] == "error"
+        assert s.snapshot()["body"] == "copy failed"
 
-        # Lower-priority "general" must NOT displace thinking.
+        # Lower-priority "general" must NOT displace error.
         s.show("↑ turn 3 / 8", kind="general")
         snap = s.snapshot()
-        assert snap["kind"] == "thinking", (
-            f"thinking should still be active, got kind={snap['kind']!r}"
+        assert snap["kind"] == "error", (
+            f"error should still be active, got kind={snap['kind']!r}"
         )
-        assert snap["body"] == "thinking…", (
-            f"thinking body should be preserved, got body={snap['body']!r}"
+        assert snap["body"] == "copy failed", (
+            f"error body should be preserved, got body={snap['body']!r}"
         )
 
 
 @pytest.mark.asyncio
-async def test_thinking_overwrites_thinking_body() -> None:
+async def test_error_overwrites_error_body() -> None:
     """Tier 2: same-priority overwrite still works (regression guard).
 
-    The natural thinking-body update (e.g. "thinking…" → "calling
-    llm…") must not be suppressed.
+    The natural error-body update must not be suppressed.
     """
     from reyn.chat.tui.app import ReynTUIApp
 
@@ -82,15 +86,15 @@ async def test_thinking_overwrites_thinking_body() -> None:
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         s = await _sticky(pilot)
-        s.show("thinking…", kind="thinking")
-        s.show("calling llm…", kind="thinking")
+        s.show("first error", kind="error")
+        s.show("second error", kind="error")
         snap = s.snapshot()
-        assert snap["kind"] == "thinking"
-        assert snap["body"] == "calling llm…"
+        assert snap["kind"] == "error"
+        assert snap["body"] == "second error"
 
 
 @pytest.mark.asyncio
-async def test_thinking_overwrites_general_when_general_active() -> None:
+async def test_error_overwrites_general_when_general_active() -> None:
     """Tier 2: higher-priority show DISPLACES lower-priority active."""
     from reyn.chat.tui.app import ReynTUIApp
 
@@ -100,10 +104,10 @@ async def test_thinking_overwrites_general_when_general_active() -> None:
         s = await _sticky(pilot)
         s.show("↑ turn 2 / 5", kind="general")
         assert s.snapshot()["kind"] == "general"
-        s.show("thinking…", kind="thinking")
+        s.show("copy failed", kind="error")
         snap = s.snapshot()
-        assert snap["kind"] == "thinking"
-        assert snap["body"] == "thinking…"
+        assert snap["kind"] == "error"
+        assert snap["body"] == "copy failed"
 
 
 @pytest.mark.asyncio
