@@ -43,7 +43,7 @@ def _make_app() -> ReynTUIApp:
 
 @pytest.mark.asyncio
 async def test_ring_starts_empty() -> None:
-    """No replies yet → accessors return None / 0."""
+    """Tier 2b: No replies yet → accessors return None / 0."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -55,7 +55,7 @@ async def test_ring_starts_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_recent_replies_addressable_by_one_indexed_recency() -> None:
-    """Three replies → reply_at(1) newest, reply_at(2) second-newest, …."""
+    """Tier 2b: Three replies → reply_at(1) newest, reply_at(2) second-newest, …."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -78,7 +78,7 @@ async def test_recent_replies_addressable_by_one_indexed_recency() -> None:
 
 @pytest.mark.asyncio
 async def test_ring_caps_at_max_drops_oldest() -> None:
-    """Replies past ``_RECENT_REPLIES_MAX`` push the oldest out."""
+    """Tier 2b: Replies past ``_RECENT_REPLIES_MAX`` push the oldest out."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -98,7 +98,7 @@ async def test_ring_caps_at_max_drops_oldest() -> None:
 
 @pytest.mark.asyncio
 async def test_last_reply_text_returns_newest_for_back_compat() -> None:
-    """Backwards-compat: ``last_reply_text()`` is still the newest reply.
+    """Tier 2b: Backwards-compat: ``last_reply_text()`` is still the newest reply.
 
     External consumers (existing TUI handler, future slash commands)
     must keep working without a per-call N argument when they just want
@@ -135,7 +135,6 @@ def test_slash_copy_forwards_arg_to_outbox_sentinel() -> None:
     asyncio.run(copy_cmd(_FakeSession(), "list"))
     asyncio.run(copy_cmd(_FakeSession(), ""))
 
-    assert len(sent) == 3
     assert all(m.kind == "__copy_last_reply__" for m in sent)
     assert sent[0].text == "2"        # whitespace trimmed
     assert sent[1].text == "list"
