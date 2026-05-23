@@ -238,20 +238,23 @@ def test_index_docs_postprocessor_step3_args_from():
 # ---------------------------------------------------------------------------
 
 
-def test_index_docs_permissions_python_unsafe_declared():
-    """Tier 2: skill declares python permissions for all chunker functions.
+def test_index_docs_permissions_python_modes_declared():
+    """Tier 2: skill declares the expected mode per chunker function.
 
-    R-PURE-MODE-REDEFINE Class A: extract_and_split is safe (glob enum only),
-    write_chunks_with_lock is unsafe (lock + content read + jsonl write).
-    apply_strategy remains unsafe (deprecated monolithic step, compat kept).
+    Post-FP-0042 Phase 2.1:
+      - gather_samples / cost_preflight: safe (chunkers_preproc_safe.py)
+      - extract_and_split: safe (chunkers_safe.py)
+      - write_chunks_with_lock: unsafe minimal — lock + content read +
+        jsonl write (will migrate in Phase 2.2)
+      - apply_strategy: unsafe deprecated, kept for override compat
     """
     skill = _load()
     python_perms = skill.permissions.python
     assert len(python_perms) >= 5, f"Expected at least 5 python perms, got {len(python_perms)}"
 
     fn_modes = {p.function: p.mode for p in python_perms}
-    assert fn_modes.get("gather_samples") == "unsafe"
-    assert fn_modes.get("cost_preflight") == "unsafe"
+    assert fn_modes.get("gather_samples") == "safe"
+    assert fn_modes.get("cost_preflight") == "safe"
     assert fn_modes.get("extract_and_split") == "safe"
     assert fn_modes.get("write_chunks_with_lock") == "unsafe"
     assert fn_modes.get("apply_strategy") == "unsafe"

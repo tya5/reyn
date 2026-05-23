@@ -31,13 +31,18 @@ graph:
   strategy: []
 permissions:
   python:
-    - module: ./chunkers.py
+    # FP-0042 Phase 2.1 (2026-05-22): preprocessor steps migrated from
+    # chunkers.py (mode: unsafe) → chunkers_preproc_safe.py (mode: safe).
+    # File reads / stat calls now go through reyn.safe.file, which gates
+    # against the workspace default-read-zone (CWD) and any explicit
+    # file.read entries below.
+    - module: ./chunkers_preproc_safe.py
       function: gather_samples
-      mode: unsafe
+      mode: safe
       timeout: 30
-    - module: ./chunkers.py
+    - module: ./chunkers_preproc_safe.py
       function: cost_preflight
-      mode: unsafe
+      mode: safe
       timeout: 10
     - module: ./chunkers_safe.py
       function: extract_and_split
@@ -46,7 +51,7 @@ permissions:
     - module: ./chunkers.py
       function: write_chunks_with_lock
       mode: unsafe
-      unsafe_reason: "minimal filesystem I/O + advisory lock for concurrent indexing"
+      unsafe_reason: "minimal filesystem I/O + advisory lock for concurrent indexing (FP-0042 Phase 2.2 will migrate this once reyn.safe.file grows delete/mkdir + lock support)"
       timeout: 300
     - module: ./chunkers.py
       function: apply_strategy

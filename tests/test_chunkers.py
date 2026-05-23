@@ -1,11 +1,16 @@
 """Tier 2: OS invariant tests for index_docs stdlib skill chunkers.
 
-Tests the deterministic chunking logic (gather_samples, cost_preflight,
-apply_strategy, _split_*) used by the index_docs skill (ADR-0033 §2.1).
+Tests the deterministic chunking logic (apply_strategy, _split_*,
+write_chunks_with_lock helpers) used by the index_docs skill
+(ADR-0033 §2.1).
+
+Coverage for the safe-mode preprocessor steps (``gather_samples`` /
+``cost_preflight``) lives in ``test_chunkers_preproc_safe.py`` — they
+moved out of this module to ``chunkers_preproc_safe.py`` as part of
+FP-0042 Phase 2.1.
 
 No mocks; uses real filesystem operations via tmp_path.
-Tests cover UX gap fix B (cost_preflight threshold) and UX gap fix D
-(concurrent lock detection in apply_strategy).
+Tests cover UX gap fix D (concurrent lock detection in apply_strategy).
 """
 from __future__ import annotations
 
@@ -46,177 +51,9 @@ _C = _load_chunkers()
 # ---------------------------------------------------------------------------
 
 
-def _make_artifact(data: dict) -> dict:
-    """Wrap data in the standard artifact envelope."""
-    return {"type": "index_docs_input", "data": data}
-
-
 def _make_chunk_strategy_artifact(data: dict) -> dict:
     """Wrap data in chunk_strategy artifact envelope."""
     return {"type": "chunk_strategy", "data": data}
-
-
-# ---------------------------------------------------------------------------
-# gather_samples
-# ---------------------------------------------------------------------------
-
-
-def test_gather_samples_empty_path_returns_empty():
-    """Tier 2: gather_samples on empty / non-existent path returns empty samples."""
-    artifact = _make_artifact({"path": "/nonexistent/path/**/*.md", "source": "x"})
-    result = _C.gather_samples(artifact)
-
-    assert result["samples"] == []
-    assert result["file_count"] == 0
-    assert result["summary"]["file_count"] == 0
-    assert result["summary"]["total_bytes"] == 0
-
-
-def test_gather_samples_stratified_by_extension(tmp_path):
-    """Tier 2: gather_samples picks samples per extension (stratified)."""
-    # Create 3 .md and 2 .py files
-    for i in range(3):
-        (tmp_path / f"doc{i}.md").write_text(f"# Heading {i}\nContent {i}", encoding="utf-8")
-    for i in range(2):
-        (tmp_path / f"script{i}.py").write_text(f"def fn{i}():\n    pass", encoding="utf-8")
-
-    artifact = _make_artifact({"path": str(tmp_path / "**" / "*"), "source": "x"})
-    result = _C.gather_samples(artifact)
-
-    samples = result["samples"]
-    exts = {Path(s["path"]).suffix for s in samples}
-    # Should have samples from both .md and .py
-    assert ".md" in exts
-    assert ".py" in exts
-    assert result["file_count"] == 5
-    assert result["summary"]["file_count"] == 5
-
-
-def test_gather_samples_respects_sample_size_cap(tmp_path):
-    """Tier 2: gather_samples respects sample_size cap (default 5)."""
-    for i in range(10):
-        (tmp_path / f"doc{i}.md").write_text(f"# Doc {i}\nSome content.", encoding="utf-8")
-
-    artifact = _make_artifact({"path": str(tmp_path / "*.md"), "source": "x"})
-    result = _C.gather_samples(artifact)
-
-    assert len(result["samples"]) <= 5
-    assert result["file_count"] == 10
-
-
-def test_gather_samples_structure_hint_for_markdown(tmp_path):
-    """Tier 2: gather_samples returns 'Markdown with headings' for .md with # headings."""
-    (tmp_path / "readme.md").write_text(
-        "# Title\n\n## Section\n\nBody text.", encoding="utf-8"
-    )
-    artifact = _make_artifact({"path": str(tmp_path / "*.md"), "source": "x"})
-    result = _C.gather_samples(artifact)
-
-    assert len(result["samples"]) == 1
-    assert result["samples"][0]["structure_hint"] == "Markdown with headings"
-
-
-def test_gather_samples_structure_hint_for_python(tmp_path):
-    """Tier 2: gather_samples returns Python hint for .py files with class/def."""
-    (tmp_path / "module.py").write_text(
-        "class MyClass:\n    def method(self):\n        pass", encoding="utf-8"
-    )
-    artifact = _make_artifact({"path": str(tmp_path / "*.py"), "source": "x"})
-    result = _C.gather_samples(artifact)
-
-    assert len(result["samples"]) == 1
-    assert "Python" in result["samples"][0]["structure_hint"]
-
-
-def test_gather_samples_summary_ext_dist(tmp_path):
-    """Tier 2: gather_samples populates ext_dist correctly."""
-    (tmp_path / "a.md").write_text("hello", encoding="utf-8")
-    (tmp_path / "b.md").write_text("world", encoding="utf-8")
-    (tmp_path / "c.py").write_text("x = 1", encoding="utf-8")
-
-    artifact = _make_artifact({"path": str(tmp_path / "*"), "source": "x"})
-    result = _C.gather_samples(artifact)
-
-    ext_dist = result["summary"]["ext_dist"]
-    assert ext_dist.get(".md") == 2
-    assert ext_dist.get(".py") == 1
-
-
-# ---------------------------------------------------------------------------
-# cost_preflight
-# ---------------------------------------------------------------------------
-
-
-def test_cost_preflight_empty_samples_returns_zero():
-    """Tier 2: cost_preflight with empty samples returns zero cost."""
-    artifact = _make_artifact(
-        {
-            "path": "/nonexistent/**",
-            "source": "x",
-            "samples_result": {"samples": [], "summary": {}, "file_count": 0},
-        }
-    )
-    result = _C.cost_preflight(artifact)
-
-    assert result["chunk_count"] == 0
-    assert result["estimated_tokens"] == 0
-    assert result["estimated_cost_usd"] == 0.0
-    assert result["threshold_exceeded"] is False
-
-
-def test_cost_preflight_threshold_exceeded_flag(tmp_path):
-    """Tier 2: cost_preflight sets threshold_exceeded when estimated chunks exceed threshold."""
-    # Create 1000 tiny files so estimated_chunks > threshold=100
-    for i in range(100):
-        (tmp_path / f"doc{i}.md").write_text("x" * 4000, encoding="utf-8")
-
-    samples = [
-        {
-            "path": str(tmp_path / "doc0.md"),
-            "excerpt": "x" * 1000,
-            "size_tokens": 1000,
-            "structure_hint": "Markdown without headings",
-        }
-    ]
-
-    artifact = _make_artifact(
-        {
-            "path": str(tmp_path / "*.md"),
-            "source": "x",
-            "cost_warn_threshold": 10,  # very low threshold
-            "samples_result": {"samples": samples, "file_count": 100},
-        }
-    )
-    result = _C.cost_preflight(artifact)
-
-    assert result["threshold_exceeded"] is True
-
-
-def test_cost_preflight_not_exceeded_for_few_files(tmp_path):
-    """Tier 2: cost_preflight threshold_exceeded=False for small input sets."""
-    (tmp_path / "doc.md").write_text("Short file.", encoding="utf-8")
-
-    samples = [
-        {
-            "path": str(tmp_path / "doc.md"),
-            "excerpt": "Short file.",
-            "size_tokens": 3,
-            "structure_hint": "Markdown without headings",
-        }
-    ]
-
-    artifact = _make_artifact(
-        {
-            "path": str(tmp_path / "*.md"),
-            "source": "x",
-            "cost_warn_threshold": 10_000,
-            "samples_result": {"samples": samples, "file_count": 1},
-        }
-    )
-    result = _C.cost_preflight(artifact)
-
-    assert result["threshold_exceeded"] is False
-    assert result["estimated_cost_usd"] >= 0.0
 
 
 # ---------------------------------------------------------------------------
