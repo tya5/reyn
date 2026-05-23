@@ -1620,6 +1620,12 @@ class ChatSession:
         # default ChatInterventionBus continues to serve chat-mode interactions.
         self._intervention_overrides: dict[str, "RequestBus"] = {}
 
+        # Wave-13 T2-5: TUI-side error box count surfaced to slash commands
+        # (/pending list needs-attention, /reset confirm preview).  Starts at
+        # 0.  The TUI app's outbox handler increments this on mount_error and
+        # decrements on dismiss; slash commands read it via current_state_summary().
+        self._error_box_count: int = 0
+
         self._a2a_handler = A2AHandler(
             event_log=self._chat_events,
             chain_manager=self._chains,
@@ -1682,6 +1688,78 @@ class ChatSession:
         PlanRunner.
         """
         return self._plan_runner.running_plans
+
+    def current_state_summary(self) -> dict:
+        """Return a lightweight snapshot for slash-command display.
+
+        Used by ``/pending list`` (needs-attention section) and
+        ``/reset`` (confirm preview line).  Keys:
+
+        - ``running_skills``: count of currently running skill runs.
+        - ``running_plans``: count of currently running plan tasks.
+        - ``error_box_count``: count of undismissed TUI error boxes
+          (maintained by the TUI outbox handler; 0 in non-TUI mode).
+        - ``interrupted_plans``: list of ``{plan_id, goal, exc_type}``
+          dicts for recently-interrupted plans (event-store scan; empty
+          when project_root is unavailable).
+        - ``stuck_skills``: list of ``{skill_name, run_id, stuck_at}``
+          dicts for skill runs that ended on a non-terminal event.
+
+        All sources are defensive: missing attributes / I/O errors
+        return zero / empty rather than raising.
+        """
+        n_skills = len(self.running_skills) if hasattr(self, "_skill_runner") else 0
+        n_plans = len(self.running_plans) if hasattr(self, "_plan_runner") else 0
+        error_count = getattr(self, "_error_box_count", 0)
+
+        # Interrupted plans + stuck skills require the event-store scan
+        # implemented in the agents-tab helper functions.  We import lazily
+        # (avoids pulling TUI widgets at session-bootstrap time).
+        interrupted_plans: list[dict] = []
+        stuck_skills: list[dict] = []
+        try:
+            project_root: "Path | None" = None
+            registry = getattr(self, "_registry", None)
+            if registry is not None:
+                project_root = getattr(registry, "_project_root", None)
+
+            if project_root is not None:
+                from reyn.chat.tui.widgets.right_panel.agents_tab import (
+                    _recent_plans_for_agent,
+                    _recent_skill_runs_for_agent,
+                )
+                running_plan_ids = set(self.running_plans.keys())
+                running_run_ids = set(self.running_skills.keys())
+                plans = _recent_plans_for_agent(
+                    project_root, self.agent_name, running_plan_ids,
+                )
+                for p in plans:
+                    if p.get("status") == "interrupted":
+                        interrupted_plans.append({
+                            "plan_id": p.get("plan_id", "?"),
+                            "goal": p.get("goal", ""),
+                            "exc_type": p.get("exc_type", ""),
+                        })
+                skills = _recent_skill_runs_for_agent(
+                    project_root, self.agent_name, running_run_ids,
+                )
+                for s in skills:
+                    if s.get("status") == "stuck":
+                        stuck_skills.append({
+                            "skill_name": s.get("skill_name", "?"),
+                            "run_id": s.get("run_id", "?"),
+                            "stuck_at": s.get("stuck_at", "?"),
+                        })
+        except Exception:  # noqa: BLE001 — best-effort; display must not crash
+            pass
+
+        return {
+            "running_skills": n_skills,
+            "running_plans": n_plans,
+            "error_box_count": error_count,
+            "interrupted_plans": interrupted_plans,
+            "stuck_skills": stuck_skills,
+        }
 
     def _build_agent_for_skill_runner(
         self,
@@ -3704,7 +3782,28 @@ class ChatSession:
                 text=f"unknown command /{cmd}; try: {known}",
             ))
             return True
+        # Wave-13 T2-3: recall hint — detect if the handler emitted an error
+        # and surface a one-shot "↑ to recall" sticky so the user can
+        # re-edit instead of retyping from scratch.  We snapshot the queue
+        # size before the call and inspect only the new items afterwards via
+        # ``outbox._queue[pre_size:]`` (= asyncio.Queue internal deque slice;
+        # read-only, best-effort — the try/except ensures a CPython internals
+        # change never breaks slash dispatch).
+        pre_size = self.outbox.qsize()
         await slash_cmd.handler(self, args)
+        try:
+            new_items = list(self.outbox._queue)[pre_size:]  # type: ignore[attr-defined]
+            had_error = any(
+                getattr(item, "kind", None) == "error" for item in new_items
+            )
+        except Exception:
+            had_error = False
+        if had_error:
+            await self._put_outbox(OutboxMessage(
+                kind="status",
+                text=f"↑ to recall `/{cmd}`",
+                meta={"source": "slash_recall_hint"},
+            ))
         return True
 
     # NOTE: the 7 ``_slash_*`` handlers (list / cancel / answer / agents /

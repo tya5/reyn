@@ -121,6 +121,37 @@ async def pending_cmd(session: "ChatSession", args: str) -> None:
         await reply_error(session, _USAGE)
 
 
+def _render_needs_attention(summary: dict) -> str:
+    """Render the "needs attention" tail section from a state summary dict.
+
+    Returns an empty string when there is nothing to report so the caller
+    can skip appending entirely (= no blank "needs attention:" header).
+    """
+    lines: list[str] = []
+    error_count = summary.get("error_box_count", 0)
+    if error_count:
+        lines.append(f"  ✗ {error_count} error{'s' if error_count != 1 else ''} on screen")
+    for p in summary.get("interrupted_plans", []):
+        pid = p.get("plan_id", "?")
+        goal = p.get("goal", "")
+        label = f"plan {pid}"
+        if goal:
+            label += f" ({goal[:32]})"
+        exc = p.get("exc_type", "")
+        n_completed = p.get("n_completed", "?")
+        n_total = p.get("n_total", "?")
+        detail = f"interrupted ({n_completed}/{n_total})" if exc else "interrupted"
+        lines.append(f"  ⊘ {label} {detail}")
+    for s in summary.get("stuck_skills", []):
+        skill = s.get("skill_name", "?")
+        rid = s.get("run_id", "?")
+        stuck_at = s.get("stuck_at", "?")
+        lines.append(f"  ⊘ skill {skill} stuck @ {stuck_at} (run {rid})")
+    if not lines:
+        return ""
+    return "needs attention:\n" + "\n".join(lines)
+
+
 async def _list(session: "ChatSession") -> None:
     if not hasattr(session, "list_stalled_interventions"):
         await reply_error(session, _NO_SESSION)
@@ -130,7 +161,21 @@ async def _list(session: "ChatSession") -> None:
     except Exception as exc:
         await reply_error(session, f"/pending list failed: {exc}")
         return
-    await reply(session, _render_list(ops))
+    iv_text = _render_list(ops)
+    # Append needs-attention tail if available.
+    needs_attention = ""
+    try:
+        summary_fn = getattr(session, "current_state_summary", None)
+        if callable(summary_fn):
+            summary = summary_fn()
+            needs_attention = _render_needs_attention(summary)
+    except Exception:  # noqa: BLE001 — display must not crash
+        pass
+    if needs_attention:
+        output = iv_text + "\n\n" + needs_attention
+    else:
+        output = iv_text
+    await reply(session, output)
 
 
 async def _discard(session: "ChatSession", supplied_id: str) -> None:
