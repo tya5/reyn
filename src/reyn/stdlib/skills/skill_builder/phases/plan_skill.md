@@ -167,6 +167,59 @@ final_output:
   - name: snake_case name for the final output artifact
   - description: one sentence describing it
 
+routing:
+  Structured routing hints. The chat router uses these **alongside the
+  bare `description`** to decide WHEN to dispatch this skill. Every stdlib
+  skill has one; populating it puts new user-built skills on the same
+  triggering footing.
+
+  All four sub-fields are REQUIRED — even empty lists are valid for
+  fields that don't apply (rare). Missing the whole block leaves the
+  router with only `description` to match against, which is the
+  under-trigger trap.
+
+  Sub-fields:
+
+  - intents: almost always [task]. Use [stable_knowledge] only for
+    Q&A skills that answer factual questions about a fixed domain
+    (rare for user-built skills).
+  - when_to_use: 2-5 third-person scenario phrases describing when
+    the router should pick this skill. Example: "User wants to
+    build a dashboard / data visualization / chart panel."
+  - when_not_to_use: 1-3 anti-trigger scenarios that cross-reference
+    sibling skills. Example: "User wants to invoke the dashboard
+    (= use the built skill directly)". Helps the router NOT
+    over-trigger.
+  - examples: { positive: [...], negative: [...] }
+    - positive: 2-3 verbatim user phrasings (ja/en mixed OK) that
+      SHOULD trigger. Quote-shaped strings, not paraphrases.
+    - negative: 1-2 verbatim phrasings that look similar but belong
+      to a sibling skill, with `(= use <skill_name>)` annotation.
+
+  Style: keep the lists tight. Long routing blocks crowd out other
+  skills in the router's context budget. The bullets are SIGNAL, not
+  documentation — every line should help the router make a clearer
+  decision.
+
+  Example for a hypothetical `dashboard_builder`:
+
+  ```yaml
+  routing:
+    intents: [task]
+    when_to_use:
+      - User wants to build / generate / scaffold a dashboard
+      - User mentions data visualization, charts, panels, metrics views
+    when_not_to_use:
+      - User wants to edit an existing dashboard's data (= use the built skill directly)
+      - User asks "what's a dashboard?" (= stable_knowledge / direct_llm)
+    examples:
+      positive:
+        - "ダッシュボード作って"
+        - "Build me a dashboard for our internal metrics"
+      negative:
+        - "dashboard って何？"   # this is direct_llm, not dashboard_builder
+  ```
+
 ---
 
 ## Design principles
