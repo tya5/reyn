@@ -92,6 +92,7 @@ def _step_ids_for_plan(
     summary="Manage active plan-mode runs",
     usage="/plan [list|discard <id>|resume <id>]",
     completer=_plan_completer,
+    see_also=("docs/concepts/plan-mode.md",),
 )
 async def plan_cmd(session: "ChatSession", args: str) -> None:
     """Dispatch to sub-command based on the first argument."""

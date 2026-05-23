@@ -58,6 +58,8 @@ def _render_command_focus(name: str) -> str:
     # list (matrix / donut / zen). Surface this once per focus view.
     if cmd.hidden:
         lines.append("  (hidden — not listed in /help)")
+    if cmd.see_also:
+        lines.append(f"  see also: {', '.join(cmd.see_also)}")
     return "\n".join(lines)
 
 
