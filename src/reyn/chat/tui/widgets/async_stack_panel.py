@@ -1,15 +1,27 @@
-"""AsyncStackPanel — sticky list of non-attach agents currently running.
+"""AsyncStackPanel — sticky list of the attached agent's running tasks.
 
-PoC stage for issue #427 L4 step 5: widget shape + entry state mgmt +
-ordering + cap behaviour. Production wiring (= subscribe to agent
-registry / non-attach agent lifecycle events, drive entries on the
-real signal) is deferred to a follow-up PR.
+Scope (= user direction 2026-05-23): only the **attached** agent's
+tasks are surfaced. A "task" is the SP-level abstraction covering
+both **skill spawns** and **plan spawns** — the same lifecycle the
+LLM observes via ``[task_spawned]`` / ``[task_completed]``
+notifications. Non-attached agent activity flows through its own
+event log and is not the TUI's concern.
 
-Spec (= issue #427 L2):
+The original PoC framing (= "non-attach agents currently running",
+issue #427 L4 step 5) was narrowed to attached-only because:
+  - the attached agent's tasks are already tracked by the trace
+    lifecycle the App drives (``_handle_trace_for_skill_row``), so
+    the event source needs no new plumbing
+  - non-attached agents have their own ``.reyn/events/agents/<name>/``
+    surface (= visible via the right-panel Agents tab) that suits
+    a "what other agents are doing" overview better than a sticky
+    1-line strip
 
-  ⟳ async: code_review · 12.3s      ← running entry
+Spec (= issue #427 L2 visual contract, retained):
+
+  ⟳ async: code_review · 12.3s      ← running task
   ⟳ async: monitor_loop · 5m21s      ← running, longer-running
-  ⚑ async: alice (1 pending)         ← intervention-pending entry
+  ⚑ async: alice (1 pending)         ← intervention-pending task
   … +N more (panel for all)          ← overflow indicator when > _CAP
 
 - 1-5 entries dynamic, ``_CAP`` cap with overflow indicator
@@ -26,11 +38,17 @@ widget never emits to history; consumers route history-side events
 (= start / complete inline markers) through a separate path.
 
 Public API:
-    panel.add(agent_id, summary)       # mount / update a running entry
-    panel.set_pending(agent_id, count) # switch entry to ⚑ + pending count
+
+    panel.add(agent_id, summary)         # mount / update a running entry
+    panel.set_pending(agent_id, count)   # switch entry to ⚑ + pending count
     panel.set_running(agent_id, summary) # switch back to ⟳ (intervention resolved)
-    panel.remove(agent_id)             # entry disappeared (complete / fail)
-    panel.clear()                      # reset all entries
+    panel.remove(agent_id)               # entry disappeared (complete / fail)
+    panel.clear()                        # reset all entries
+
+The ``agent_id`` parameter is a legacy name from the PoC era — in
+the attached-agent-only production wiring, this string is the
+**task identity** (= ``run_id`` for skill spawns, ``plan_id`` for
+plan spawns). The widget treats it as an opaque key.
 """
 from __future__ import annotations
 

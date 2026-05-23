@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.tui._palette import _AMBER, _CORAL
 
+from .async_stack_panel import AsyncStackPanel
 from .error_box import ErrorBox
 from .intervention import InterventionWidget
 from .skill_activity import SkillActivityRow
@@ -372,8 +373,21 @@ class ConversationView(Widget):
             id="empty-hint",
             markup=True,
         )
-        # A3: sticky status pinned to bottom of conv pane
+        # A3: sticky status pinned to bottom of conv pane (= 1-line
+        # ``⟳ thinking…`` / ``⚑ awaiting answer`` live indicator).
+        # AsyncStackPanel docks ABOVE the sticky (= the 0-5-line
+        # "currently running tasks" overview). Per Textual's
+        # ``dock: bottom`` stacking rule (= multiple bottom-docked
+        # siblings stack in declaration order, with each new sibling
+        # placed further FROM the bottom edge), yielding StickyStatus
+        # first pins it to the very bottom; the subsequent
+        # AsyncStackPanel sits above it. Result from bottom-up:
+        # ``input bar → sticky → async stack → conv log``.
+        # AsyncStackPanel collapses to zero height when no tasks are
+        # active so the input bar layout is unchanged in the
+        # cold-default case.
         yield StickyStatus(id="sticky-status")
+        yield AsyncStackPanel(id="async-stack")
 
     def _log(self) -> RichLog:
         return self.query_one("#log", RichLog)
@@ -383,6 +397,62 @@ class ConversationView(Widget):
             return self.query_one("#sticky-status", StickyStatus)
         except Exception:
             return None
+
+    def _async_stack(self) -> AsyncStackPanel | None:
+        """Return the bottom-docked AsyncStackPanel, if mounted.
+
+        Mirrors ``_sticky()`` — the panel may not exist during
+        composition in test harnesses that mount ConversationView
+        manually without going through the full compose path.
+        """
+        try:
+            return self.query_one("#async-stack", AsyncStackPanel)
+        except Exception:
+            return None
+
+    def add_async_task(self, task_id: str, summary: str) -> None:
+        """Add or update an attached-agent task in the bottom stack panel.
+
+        Wiring helper for the production hook (= app.py's
+        ``_handle_trace_for_skill_row`` calls this on the
+        ``"phase started:"`` first-trace branch and on plan
+        spawn events). ``task_id`` is the canonical task identity
+        — ``run_id`` for skill spawns or ``plan_id`` for plan
+        spawns; both flow through this single entry point.
+
+        Silent no-op when the panel isn't mounted (= test
+        harness path), matching the ``show_status`` / ``hide_status``
+        defensive style.
+        """
+        panel = self._async_stack()
+        if panel is None or not task_id:
+            return
+        panel.add(task_id, summary)
+
+    def remove_async_task(self, task_id: str) -> None:
+        """Drop ``task_id``'s entry from the bottom stack panel.
+
+        Called on ``"skill done:"`` from the trace flow + the
+        corresponding plan-completion path. Idempotent (= silent
+        no-op if the panel isn't mounted or the task is unknown).
+        """
+        panel = self._async_stack()
+        if panel is None or not task_id:
+            return
+        panel.remove(task_id)
+
+    def clear_async_tasks(self) -> None:
+        """Reset the bottom stack panel to empty.
+
+        Called from ``clear()`` so a Ctrl+L wipes the running-task
+        overview alongside the conv log. The visible stack would
+        otherwise survive the clear and look like "ghost rows"
+        attached to a fresh-looking pane.
+        """
+        panel = self._async_stack()
+        if panel is None:
+            return
+        panel.clear()
 
     def on_mount(self) -> None:
         """Wire a scroll watcher so user scroll-up suppresses auto-scroll.
@@ -1866,6 +1936,13 @@ class ConversationView(Widget):
             except Exception:
                 pass
         self._tool_call_rows.clear()
+        # AsyncStackPanel wiring: drop all bottom-stack entries so a
+        # Ctrl+L leaves the panel empty alongside the conv log.
+        # Without this the running-task overview would survive the
+        # clear and look like ghost rows attached to an otherwise-
+        # fresh pane. Same pattern as the ErrorBox / ToolCallRow
+        # sweeps directly above.
+        self.clear_async_tasks()
         # Wave-10 G-F2: sweep any pending InterventionWidget children too.
         # ``mount_intervention`` adds the widget via ``self.mount(widget)``
         # with no tracking list, so the only way to find them at clear()
