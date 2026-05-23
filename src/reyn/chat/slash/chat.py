@@ -76,12 +76,27 @@ def _running_run_id_completer(
 @slash(
     "cancel",
     summary="Cancel a running skill",
-    usage="/cancel <id-prefix>",
+    usage="/cancel <id-prefix> [confirm]",
     completer=_running_run_id_completer,
 )
 async def cancel_cmd(session: "ChatSession", args: str) -> None:
-    """``/cancel <id-prefix>`` — cancel a running skill task."""
-    prefix = args.strip()
+    """``/cancel <id-prefix>`` — cancel a running skill task (2-step confirm).
+
+    First invocation prints a warning and asks the user to re-type with
+    ``confirm`` appended.  Second invocation (``/cancel <id-prefix> confirm``)
+    executes the cancellation.  Mirrors ``/reset``'s 2-step pattern so a
+    Tab-completed prefix can't accidentally abort the wrong skill on first
+    press (Wave-13 B#2).
+    """
+    stripped = args.strip()
+    # Detect "confirm" suffix (case-insensitive, space-separated).
+    if stripped.lower().endswith(" confirm"):
+        prefix = stripped[: -len(" confirm")].strip()
+        _do_confirm = True
+    else:
+        prefix = stripped
+        _do_confirm = False
+
     if not prefix:
         await reply_error(session, "usage: /cancel <id-prefix>")
         return
@@ -100,6 +115,21 @@ async def cancel_cmd(session: "ChatSession", args: str) -> None:
     if task is None or task.done():
         await reply(session, f"skill {_run_short(rid)} already finished")
         return
+
+    if not _do_confirm:
+        # First invocation — show warning, require explicit confirm.
+        short = _run_short(rid)
+        # Recover skill_name from run_id for the warning context line.
+        trimmed = rid[: -len(short) - 1] if short else rid
+        _, _, skill_part = trimmed.partition("_")
+        await reply(
+            session,
+            f"⚠ About to cancel: {skill_part} #{short}\n"
+            f"Type `/cancel {prefix} confirm` to abort the skill, "
+            "or anything else to leave it running.",
+        )
+        return
+
     task.cancel()
     # Preserve the per-run meta on the cancel-requested system message so
     # the TUI's skill-activity row can match against it.

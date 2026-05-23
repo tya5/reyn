@@ -116,8 +116,8 @@ async def test_plan_discard_unknown_id_reports_error(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_plan_discard_records_plan_aborted(tmp_path, monkeypatch):
-    """Tier 2: /plan discard emits plan_aborted to WAL + clears
-    active_plan_ids."""
+    """Tier 2: /plan discard confirm emits plan_aborted to WAL + clears
+    active_plan_ids.  Uses the 2-step confirm suffix (Wave-13 B#2)."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
@@ -127,7 +127,9 @@ async def test_plan_discard_records_plan_aborted(tmp_path, monkeypatch):
     )
     assert "p_to_discard" in session._journal.snapshot.active_plan_ids
 
-    consumed = await session._maybe_handle_slash("/plan discard p_to_discard")
+    consumed = await session._maybe_handle_slash(
+        "/plan discard p_to_discard confirm",
+    )
     assert consumed is True
 
     # active_plan_ids cleared via plan_aborted apply.
@@ -165,7 +167,9 @@ async def test_plan_discard_cancels_running_task(tmp_path, monkeypatch):
         plan_id="p_running", goal="g", n_steps=1,
     )
 
-    consumed = await session._maybe_handle_slash("/plan discard p_running")
+    consumed = await session._maybe_handle_slash(
+        "/plan discard p_running confirm",
+    )
     assert consumed is True
     assert task.cancelled() or cancelled.is_set()
     assert "p_running" not in session.running_plans
@@ -200,7 +204,7 @@ async def test_plan_discard_deletes_decomposition_artifact(tmp_path, monkeypatch
         plan_id="p_artifact", goal="g", n_steps=2,
     )
 
-    await session._maybe_handle_slash("/plan discard p_artifact")
+    await session._maybe_handle_slash("/plan discard p_artifact confirm")
     assert not artifact.exists()
 
 
@@ -219,7 +223,7 @@ async def test_plan_discard_emits_plan_aborted_outbox(tmp_path, monkeypatch):
     )
 
     consumed = await session._maybe_handle_slash(
-        "/plan discard p_aborted_emit",
+        "/plan discard p_aborted_emit confirm",
     )
     assert consumed is True
 

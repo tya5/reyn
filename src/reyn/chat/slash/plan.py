@@ -151,6 +151,10 @@ async def _list_plan_runs(session: "ChatSession") -> None:
 async def _discard_plan_run(session: "ChatSession", args: str) -> None:
     """Abort a plan: cancel task, surface outbox notice, clean up state.
 
+    Two-step confirm pattern (mirrors ``/reset``): first invocation prints
+    a warning showing the plan summary and asks for ``/plan discard <id>
+    confirm``; second invocation (args ending with " confirm") proceeds.
+
     Steps (mirror /skill discard):
       1. Cancel asyncio.Task (= triggers PlanRuntime's finally clause →
          no plan_completed → active_plan_ids preserved for cleanup).
@@ -161,7 +165,15 @@ async def _discard_plan_run(session: "ChatSession", args: str) -> None:
          per-plan chain_id (= f"plan_{plan_id}") gets resolved
          immediately rather than waiting for chain_timeout.
     """
-    plan_id = args.strip()
+    stripped = args.strip()
+    # Detect "confirm" suffix (case-insensitive, space-separated).
+    if stripped.lower().endswith(" confirm"):
+        plan_id = stripped[: -len(" confirm")].strip()
+        _do_confirm = True
+    else:
+        plan_id = stripped
+        _do_confirm = False
+
     if not plan_id:
         await reply_error(session, "Usage: /plan discard <plan_id>")
         return
@@ -172,6 +184,31 @@ async def _discard_plan_run(session: "ChatSession", args: str) -> None:
     is_active = plan_id in snap.active_plan_ids
     if not is_running and not is_active:
         await reply_error(session, f"unknown plan run: {plan_id}")
+        return
+
+    if not _do_confirm:
+        # First invocation — show warning with plan context, require confirm.
+        status = "running" if is_running else "active (no task)"
+        # Try to surface step count from the decomposition artifact.
+        step_hint = ""
+        try:
+            from pathlib import Path
+
+            from reyn.plan import read_decomposition
+            agent_state_dir = (
+                Path(".reyn") / "agents" / session.agent_name / "state"
+            )
+            decomp = read_decomposition(agent_state_dir, plan_id)
+            n = len(decomp.steps)
+            step_hint = f", {n} step{'s' if n != 1 else ''}"
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+        await reply(
+            session,
+            f"⚠ About to discard plan: {plan_id} ({status}{step_hint})\n"
+            f"Type `/plan discard {plan_id} confirm` to proceed, "
+            "or anything else to leave it running.",
+        )
         return
 
     # 1. Cancel the asyncio.Task if mid-flight.

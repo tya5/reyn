@@ -36,7 +36,7 @@ if str(_SRC) not in sys.path:
 
 # Commands that should have ``usage`` set after this PR.
 _EXPECTED_USAGE: dict[str, str] = {
-    "cancel":      "/cancel <id-prefix>",
+    "cancel":      "/cancel <id-prefix> [confirm]",
     "answer":      "/answer <id-prefix> <text>",
     "plan":        "/plan [list|discard <id>|resume <id>]",
     "memory":      "/memory [list|view <name>]",
