@@ -111,6 +111,47 @@ Empty `[]` for pure decision phases. The runtime default `[file, ask_user]`
 is permissive — meta-skills should explicitly tighten it when the eval
 shows drift.
 
+### Step 4c — Consider rewriting `description` for trigger accuracy
+
+The `description` field in the target skill's `skill.md` is the **primary
+triggering signal** the chat router compares the user's turn against.
+A "too narrow" description causes **under-triggering**: the router
+hand-waves the request instead of dispatching the right skill when the
+user's phrasing doesn't literally include the skill's name.
+
+This pattern is invisible to `eval.md`-driven scoring (= eval measures
+correctness when the skill IS invoked, not whether the router picks it).
+Two signals to watch for:
+
+  1. **User's `improvement_focus` mentions** "trigger", "description",
+     "routing", "under-trigger", "doesn't fire", "doesn't get picked", or
+     similar — the user has noticed the under-trigger problem directly.
+  2. **Eval evidence is thin** but the user reports the skill "isn't being
+     used" — the eval criteria pass when invoked, so the gap is at the
+     router-decision layer, not the phase-execution layer.
+
+When either signal is present, propose an `update` to the target skill's
+`skill.md` rewriting the `description` field using the pushy pattern
+established in `skill_builder/phases/plan_skill.md`:
+
+  - Cover BOTH what the skill does AND when it should fire.
+  - List the synonym set / trigger contexts the user is likely to use.
+  - Keep ≤ 2 sentences, ≤ ~250 chars (300 soft cap).
+  - No marketing fluff — every word is either capability or trigger.
+
+Example shape:
+
+```
+description: <one-sentence what>. Use whenever the user asks to <action1>,
+  <action2>, or <related-phrasing> — even if they don't explicitly say
+  "<skill_name>".
+```
+
+Treat this as one candidate `update` change in your plan. If the skill
+already has a pushy + trigger-aware description (= explicit "Use whenever
+…" or equivalent), and the user's reported problem is something else,
+do NOT touch the description.
+
 ## Output
 
 Emit `improvement_plan` with:
