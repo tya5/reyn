@@ -21,17 +21,150 @@ also have YAML frontmatter (`---` block at the top) with `name`,
 
 ## Step 2 — Decompose
 
-Read the source carefully. Most Anthropic-style skills are written as a
-single block of instructions; your job is to split that into reasonable
-**phases**. Look for natural boundaries:
+Read the source carefully. Anthropic-style skills come in two flavours,
+and the right decomposition depends on which one you're looking at:
 
-- Setup / preparation steps
-- Main work / generation
-- Review / validation / refinement
-- Final formatting / output
+### Reference-format skills → **single phase by default**
 
-Aim for **2–4 phases**. A single-phase skill is fine if the source is
-genuinely simple. Don't manufacture phases that aren't in the source.
+Skills like ``pdf`` / ``docx`` / ``xlsx`` / ``claude-api`` are written as
+**reference manuals**: a list of operations (read / write / merge /
+split / OCR / fill form / ...) the LLM selects from based on the user's
+intent. The user dispatches to ONE operation per invocation; the
+"operations" do not form a sequential workflow that produces intermediate
+artifacts for the next step.
+
+For these, **keep the import as a single phase**. The user's request
+("summarize this PDF" vs "merge these PDFs" vs "OCR this scan") routes
+to the right code path inside that one phase. Splitting into
+``read → process → output`` is mechanical decomposition that **does not
+match the source** — it manufactures phase boundaries the original
+author never intended and turns inter-operation switching (= a natural
+single-phase concern) into broken inter-phase artifact passing.
+
+Tell-tale signs the source is reference-format:
+
+- The body is dominated by code-block "how to do X" recipes, often with
+  multiple unrelated recipes (merge / split / OCR / encrypt / ...).
+- The recipes are independent; no recipe consumes another recipe's
+  output as a prerequisite.
+- A table of contents lists "operations" rather than "stages".
+- The frontmatter ``description`` enumerates triggers
+  ("This includes reading, merging, splitting, ...") — that's the
+  router-facing dispatch surface, not a phase sequence.
+
+### Workflow-format skills → **2-4 phases, only when the source explicitly stages**
+
+Skills like ``doc-coauthoring`` / ``brand-guidelines`` (= where the
+source describes "first interview the user, then draft, then review")
+are workflow-format. Their decomposition IS a sequential phase graph
+producing intermediate artifacts.
+
+For these, split into **2-4 phases** at the stages the source explicitly
+names. Tell-tale signs:
+
+- The source uses imperative stage markers: "Step 1 — Interview", "Step
+  2 — Draft", "Step 3 — Review".
+- Each stage's output is described as feeding the next ("the draft is
+  then handed to the reviewer").
+- The body shows pipeline-style information flow, not a recipe menu.
+
+### Decision rule (= deterministic signals first)
+
+Before counting phases, check these **hard signals** on the source's
+frontmatter and body:
+
+1. **Trigger-enumerating description** — does the frontmatter
+   ``description`` field contain a phrase like "This includes <list of
+   operations>" or "When the user wants to <op1>, <op2>, <op3>, ..."?
+   That pattern is Anthropic's canonical reference-format marker. The
+   description is enumerating operations the user dispatches between,
+   not stages of a pipeline. **→ Single phase.**
+
+2. **No explicit "Step 1 / Step 2 / Step 3" stage markers in the body**
+   — workflow-format skills have section headings like ``## Step 1 —
+   Interview`` or ``## Stage 1 — Plan``. Reference-format skills have
+   section headings like ``## Python Libraries`` or ``## Quick Start``
+   or ``## Merging PDFs``. Topical / category headings are NOT stage
+   markers. **→ Single phase unless explicit stage markers exist.**
+
+3. **Recipe independence** — open the source body. Does recipe N+1's
+   code consume recipe N's output as a prerequisite (= workflow), or
+   is each recipe self-contained for a different user intent (=
+   reference)? **→ Single phase if recipes are independent.**
+
+If **any one** of signals 1, 2, 3 points at reference-format, the answer
+is **single phase**. No quorum, no override. "But it has a lot of
+content" / "but I can split it for clarity" / "but recipes can be
+grouped by stage" are NOT valid reasons to split — they all manufacture
+structure the source doesn't have.
+
+**Imperative**: when you detect signal 1 (= trigger-enumerating
+description), you MUST emit ``graph: { <single_phase>: [] }``. Do
+NOT use topical body headings (= ``## Python Libraries``,
+``## Command-Line Tools``, ``## Common Tasks``) to justify a split —
+those are categories of recipes, not pipeline stages. If you find
+yourself reasoning "the description suggests reference-format BUT the
+body structure suggests phases", you are about to make the wrong
+decision. The description wins. Single phase.
+
+### Canonical examples
+
+The Anthropic skills published as of 2026-05 fall into these buckets:
+
+  Reference-format (= single phase):
+    pdf, docx, xlsx, pptx, claude-api, brand-guidelines,
+    canvas-design, frontend-design, algorithmic-art
+
+  Workflow-format (= 2-4 phases when source explicitly stages):
+    doc-coauthoring, skill-creator
+
+When in doubt about a NEW skill not on this list, apply the 3 hard
+signals above. Default to single phase if any one of them points that
+way.
+
+### Why this matters
+
+Mechanical ``read → process → output`` splits:
+
+  - Manufacture phase boundaries the source never had.
+  - Force you to invent inter-phase artifacts the source doesn't
+    describe (= prone to wrong field names / shapes / runtime
+    KeyError-shaped failures).
+  - Spread the source's recipes across phases in ways that hide the
+    per-operation recipes from the LLM at dispatch time — each phase
+    has its own ~500-token budget, so a per-recipe instruction list
+    won't fit if it's chopped across multiple phases.
+  - The single-phase form preserves the full recipe library in one
+    place where the LLM can scan all options and pick the right one
+    based on the user's actual request.
+
+### What "single phase" looks like
+
+```yaml
+graph:
+  <only_phase>: []
+```
+
+The phase's ``input`` is ``user_message``; ``can_finish: true``; the
+phase's instructions are the source body itself (lifted / lightly
+condensed, recipes preserved verbatim so the LLM can apply them). The
+``final_output`` reuses ``user_message`` or a single result artifact.
+The skill has 0 or 1 custom artifacts total. Lint passes trivially
+because there are no inter-phase artifacts to wire.
+
+### What workflow-style decomposition looks like (= when justified)
+
+```yaml
+graph:
+  interview: [draft]
+  draft: [review]
+  review: []
+```
+
+With 2 inter-phase artifacts (= the answers from interview, the draft
+from draft phase) + 1 final-output artifact. Each phase's input is the
+previous phase's output, **declared as a real artifact YAML** per the
+coverage rule below.
 
 For each phase, decide:
 
