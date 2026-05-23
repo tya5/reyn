@@ -16,7 +16,7 @@ from reyn.chat.slash import slash
 
 @slash(
     "docs-filter",
-    summary="Filter the docs tab by substring (empty = clear)",
+    summary="Filter the right-panel Docs tab (Ctrl+B → Docs) by substring (empty = clear)",
     usage="/docs-filter [<substring>]",
 )
 async def docs_filter_cmd(session: "object", args: str) -> None:

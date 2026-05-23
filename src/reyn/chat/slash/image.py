@@ -50,7 +50,7 @@ def _file_size_human(n: int) -> str:
 
 @slash(
     "image",
-    summary="Attach an image to the next user message (multimodal input).",
+    summary="Send an image (png/jpg/gif/webp/svg/jpeg)",
     usage="/image <path>",
     aliases=("img",),
 )

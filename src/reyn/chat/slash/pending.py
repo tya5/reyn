@@ -103,6 +103,7 @@ def _resolve_iv_id(
         "List / discard / claim stalled cross-channel ops "
         "(subcommands: list | discard <id> | claim <id>)"
     ),
+    usage="/pending [list|discard <id>|claim <id>]",
 )
 async def pending_cmd(session: "ChatSession", args: str) -> None:
     """Dispatch ``/pending [list|discard|claim]`` subcommands."""
