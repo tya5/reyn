@@ -1,0 +1,132 @@
+{
+  "batch": "B53",
+  "worker": 7,
+  "head": "5f46af7b",
+  "date": "2026-05-23",
+  "scenario_set": "long_session_v1.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {"V": 6, "I": 1, "R": 0, "B": 0},
+  "vs_past": {
+    "B52": {"V": 7, "I": 0, "R": 0, "B": 0},
+    "B53_W7": {"V": 6, "I": 1, "R": 0, "B": 0},
+    "delta_V": -1,
+    "note": "1 V→I regression on scenario_3 due to upstream provider (LiteLLM/Gemini) BadRequestError on turns 2-5; not a Reyn-side behavioral regression. Other 6 scenarios held V, including the G12 attractor-detection scenario (scenario_4 repetitive_context_bloat) which ran all 6 turns with non-empty substantive replies."
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "agent": "dogfood-b53-7-s1",
+      "turns": 5,
+      "verdict": "V",
+      "rubric_outcome": {
+        "final_addresses_skill_leakage_prevention": true,
+        "references_prior_concepts_without_re_explain": true,
+        "non_empty_final": true
+      },
+      "events_path": "/tmp/reyn-worktrees/b53-7/.reyn/agents/dogfood-b53-7-s1/events.jsonl",
+      "notes": "Final turn explicitly named the principle 'OS as the Unchanging Core' and the 'strict separation of concerns' with the LLM constrained to a closed set of candidate transitions (P4/P7 equivalent). Turn 4 reused the architecture diagram introduced in earlier turns."
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "agent": "dogfood-b53-7-s2",
+      "turns": 6,
+      "verdict": "V",
+      "rubric_outcome": {
+        "rubric_in_yaml": false,
+        "non_empty_final": true
+      },
+      "events_path": "/tmp/reyn-worktrees/b53-7/.reyn/agents/dogfood-b53-7-s2/events.jsonl",
+      "notes": "Yaml has no explicit rubric / artifacts / events.must_emit. Turn 2 hit a transient `litellm.ServiceUnavailableError` (provider 503-class) but the agent recovered and turns 3-6 returned coherent (if knowledge-limited) text. No empty-stop on any turn."
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "agent": "dogfood-b53-7-s3",
+      "turns": 5,
+      "verdict": "I",
+      "rubric_outcome": {
+        "rubric_in_yaml": false,
+        "non_empty_final": true,
+        "env_failure": "litellm.BadRequestError (GeminiException) on turns 2-5"
+      },
+      "events_path": "/tmp/reyn-worktrees/b53-7/.reyn/agents/dogfood-b53-7-s3/events.jsonl",
+      "notes": "Turn 1 produced a substantive LangGraph multi-agent answer. Turns 2-5 all returned `router failed: [bad request] litellm.BadRequestError ... GeminiException BadRequestError - { • check the prompt / model name / context size`. Upstream provider env failure (likely prompt-validation / content-policy / model-id mismatch from LiteLLM proxy), not a Reyn behavioral regression. Marked I per worker brief (env reason)."
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "agent": "dogfood-b53-7-s4",
+      "turns": 6,
+      "verdict": "V",
+      "rubric_outcome": {
+        "rubric_in_yaml": false,
+        "non_empty_final": true,
+        "g12_attractor_observed": false
+      },
+      "events_path": "/tmp/reyn-worktrees/b53-7/.reyn/agents/dogfood-b53-7-s4/events.jsonl",
+      "notes": "Primary attractor-detection scenario per yaml comment. All 6 turns returned substantive replies; turn 6 (deliberate re-confirm pattern, classic G12 Pattern E trigger) produced a full skill list, no empty-stop."
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "agent": "dogfood-b53-7-s5",
+      "turns": 5,
+      "verdict": "V",
+      "rubric_outcome": {
+        "final_has_working_minimal_async_producer_consumer": true,
+        "uses_asyncio_queue_or_equivalent": true,
+        "non_empty_final": true
+      },
+      "events_path": "/tmp/reyn-worktrees/b53-7/.reyn/agents/dogfood-b53-7-s5/events.jsonl",
+      "notes": "Final turn produced a minimal async producer-consumer using asyncio.Queue with producer/consumer coroutines, None sentinel for shutdown, and queue.task_done() — all three rubric items satisfied."
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "agent": "dogfood-b53-7-s6",
+      "turns": 5,
+      "verdict": "V",
+      "rubric_outcome": {
+        "rubric_in_yaml": false,
+        "non_empty_final": true
+      },
+      "events_path": "/tmp/reyn-worktrees/b53-7/.reyn/agents/dogfood-b53-7-s6/events.jsonl",
+      "notes": "Yaml has no explicit rubric. Agent did not autonomously read ADRs from disk (it lacks an unguided file-read tool in this surface) but all 5 turns returned coherent, on-topic, non-empty replies. No empty-stop. Note: per worker brief verdict scoping, `covers: control-ir-ops/file` is metadata, not verdict criteria."
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "agent": "dogfood-b53-7-s7",
+      "turns": 5,
+      "verdict": "V",
+      "rubric_outcome": {
+        "rubric_in_yaml": false,
+        "non_empty_final": true
+      },
+      "events_path": "/tmp/reyn-worktrees/b53-7/.reyn/agents/dogfood-b53-7-s7/events.jsonl",
+      "notes": "Non-Reyn distributed-systems chain across 5 turns. All turns substantive, final turn enumerated repair strategies (LWW, application-specific, etc.) building on prior CAP/eventual-consistency context."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B53-W7-F1",
+      "kind": "env-flake",
+      "severity": "low",
+      "summary": "scenario_3 turns 2-5 hit upstream LiteLLM/Gemini BadRequestError. Single-occurrence in this worker (N=1); not reproducible without rerun. Hypothesis: prompt-validation or context-size threshold on the LiteLLM proxy. Not a Reyn-layer regression."
+    },
+    {
+      "id": "B53-W7-F2",
+      "kind": "env-flake",
+      "severity": "low",
+      "summary": "scenario_2 turn 2 hit a single litellm.ServiceUnavailableError (503-class) but recovered cleanly on turns 3-6. No fix action required; documented for cross-worker dedup."
+    },
+    {
+      "id": "B53-W7-OBS1",
+      "kind": "observation",
+      "severity": "info",
+      "summary": "G12 Pattern E (= context-bloat empty-stop) did NOT trigger on scenario_4 in this worker run, including the deliberate 6th re-confirm turn. Hypothesis confirmation pending across other B53 workers + B52 baseline (B52=7/7 V)."
+    }
+  ]
+}

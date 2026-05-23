@@ -1,0 +1,192 @@
+{
+  "batch": "B53",
+  "worker": 2,
+  "head": "5f46af7b",
+  "date": "2026-05-23",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 2,
+    "I": 2,
+    "R": 3,
+    "B": 0
+  },
+  "vs_past": {
+    "B52": {"V": 2, "I": 3, "R": 2, "B": 0},
+    "B53": {"V": 2, "I": 2, "R": 3, "B": 0},
+    "delta_V": 0,
+    "note": "V unchanged at 2/7; one prior I shifted to R (eval/index_docs preprocessor permission failures continue to drive R)."
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b53-2-s1/chat/2026-05/2026-05-23T221736.jsonl",
+      "skill_events_path": ".reyn/events/agents/dogfood-b53-2-s1/skill_runs/2026-05/2026-05-23T221742_index_docs.jsonl",
+      "rubric_eval": {
+        "indexing_started_or_completed": false,
+        "mentions_source_or_chunk_count": false,
+        "no_error_claim": false
+      },
+      "events_check": {
+        "routing_decided": ">=1 OK",
+        "skill_run_spawned": ">=1 OK",
+        "skill_run_completed_status_success": "FAIL (skill_run_failed instead)",
+        "phase_started": ">=1 OK (in skill_runs)",
+        "phase_completed": "absent FAIL",
+        "permission_denied": "absent OK"
+      },
+      "artifacts_check": {
+        "index_docs_present": "spawn happened but preprocessor_step_failed"
+      },
+      "reply_excerpt": "インデックス作成中にエラーが発生しました。 ... python step ./chunkers.py:gather_samples is not declared in skill permissions ..."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "verdict": "I",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b53-2-s2/chat/2026-05/2026-05-23T221738.jsonl",
+      "rubric_eval": {
+        "skill_generated_or_lint_passed_in_reply": false,
+        "mentions_skill_name": true,
+        "no_total_failure_claim": true
+      },
+      "events_check": {
+        "routing_decided": ">=1 OK",
+        "skill_run_spawned": ">=1 OK",
+        "skill_run_completed": ">=1 OK",
+        "phase_started": ">=1 OK (in skill_runs)",
+        "permission_denied": "absent OK"
+      },
+      "artifacts_check": {
+        "skill_builder_present": true
+      },
+      "reply_excerpt": "ウェブ記事の URL を受け取り、内容を 3 文で要約する skill 'web_article_summariser' の作成を開始しました。完了までしばらくお待ちください。",
+      "notes": "Events fully met (workflow_finished + lint_completed in skill_runs). Reply only says 'started' rather than 'generated/lint passed' — rubric partial → I."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "verdict": "V",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b53-2-s3/chat/2026-05/2026-05-23T221738.jsonl",
+      "rubric_eval": {
+        "computed_statistic_present": true,
+        "references_text": true,
+        "consistent_with_input": true
+      },
+      "events_check": {
+        "routing_decided": ">=1 OK",
+        "skill_run_spawned": ">=1 OK",
+        "skill_run_completed_status_success": "OK (status=finished)",
+        "phase_started": ">=1 OK (in skill_runs)",
+        "llm_called": ">=1 OK (in skill_runs)",
+        "permission_denied": "absent OK"
+      },
+      "artifacts_check": {
+        "word_stats_demo_present": true
+      },
+      "reply_excerpt": "このテキストには44文字が含まれています。"
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "verdict": "V",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b53-2-s4/chat/2026-05/2026-05-23T221740.jsonl",
+      "rubric_eval": {
+        "word_or_char_count_for_multiline": true,
+        "references_precomputed_stats": true
+      },
+      "events_check": {
+        "routing_decided": ">=1 OK",
+        "skill_run_spawned": ">=1 OK",
+        "skill_run_completed_status_success": "OK (status=finished)",
+        "permission_denied": "absent OK"
+      },
+      "artifacts_check": {
+        "word_stats_demo_present": true
+      },
+      "reply_excerpt": "'word_stats_demo' スキルが完了しました。 結果: Reyn は 4 行、128 文字のテキストで構成されており、最も長い行は 40 文字です。これは約 32 トークンと推定されます。"
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b53-2-s5/chat/2026-05/2026-05-23T221741.jsonl",
+      "rubric_eval": {
+        "eval_result_pass_fail_or_score": false,
+        "references_criterion": false,
+        "no_fabricated_score": "n/a — no eval invocation at all"
+      },
+      "events_check": {
+        "routing_decided": "absent FAIL",
+        "skill_run_spawned": "absent FAIL",
+        "skill_run_completed": "absent FAIL",
+        "phase_started": "absent FAIL",
+        "permission_denied": "absent OK"
+      },
+      "artifacts_check": {
+        "eval_present": false
+      },
+      "reply_excerpt": "The `skill__eval` tool can be used to evaluate a skill against a test case. It takes the following arguments: case_name, case_input, spec_path, target_skill_path, phase_criteria ... For your request, you would use target_skill_path='direct_llm'",
+      "notes": "Router explained the tool schema instead of invoking it — no skill_run_spawned for eval."
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "verdict": "I",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b53-2-s6/chat/2026-05/2026-05-23T221743.jsonl",
+      "rubric_eval": {
+        "final_reply_coherent_routing_answer": true,
+        "mentions_skill_routing_or_chat_router": true,
+        "no_bare_error": true
+      },
+      "events_check": {
+        "skill_run_spawned": "absent — compaction threshold not reached",
+        "llm_called": "absent in chat events (skill_runs/ dir empty for this agent)",
+        "permission_denied": "absent OK"
+      },
+      "artifacts_check": {
+        "direct_llm_present": false
+      },
+      "reply_excerpt": "Reyn の `reyn chat` におけるルーティングの仕組み ... universal action catalog と skill routing ... routing_decided イベント ...",
+      "notes": "Rubric fully met but compaction did not trigger (token threshold not reached). Scenario yaml comment explicitly anticipates this env condition → I."
+    },
+    {
+      "id": "chained_find_then_index",
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b53-2-s7/chat/2026-05/2026-05-23T221744.jsonl",
+      "skill_events_path": ".reyn/events/agents/dogfood-b53-2-s7/skill_runs/2026-05/ (2 runs, both preprocessor_step_failed)",
+      "rubric_eval": {
+        "indexing_requested_or_completed": false,
+        "references_arch_events_index_source_name": false,
+        "no_generic_error": false
+      },
+      "events_check": {
+        "routing_decided": ">=1 OK (count=3)",
+        "skill_run_spawned": ">=1 OK (count=2)",
+        "skill_run_completed": "absent FAIL (only skill_run_failed x2)",
+        "phase_started": ">=1 OK (in skill_runs)",
+        "permission_denied": "absent OK"
+      },
+      "artifacts_check": {
+        "index_docs_present": "spawned but failed in preprocessor (chunkers.py permission)"
+      },
+      "reply_excerpt": "events.md のインデックス作成中にエラーが発生 ... architecture.md と events.md の両方で、`skill.md` の frontmatter に `chunkers.py` モジュールと `gather_samples` 関数の実行権限を追加する必要があります。",
+      "notes": "Same index_docs preprocessor permission failure as s1; reply does not use 'arch_events_index' source name."
+    }
+  ],
+  "new_findings": [
+    "index_docs preprocessor chunkers.py:gather_samples permission missing — affects s1 and s7 (2/7 scenarios). Reply correctly surfaces the permission-declaration error verbatim, suggesting OS error reporting is healthy but the bundled skill.md frontmatter lacks the python permission entry.",
+    "eval scenario (s5): router explained the skill__eval tool's argument schema instead of invoking it — no skill_run_spawned at all. Possible attractor: router treats high-complexity tool args as 'document the API' rather than 'invoke'.",
+    "skill_builder reply pattern (s2): LLM consistently reports 'started' rather than 'generated' even though workflow_finished + lint_completed fired in skill_runs. Rubric phrasing ('generated or lint passed') exceeds what the inline reply normally surfaces — potential rubric tuning candidate."
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "batch": "B53",
+  "worker": 5,
+  "head": "5f46af7b",
+  "date": "2026-05-23",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "env_vars": {"REYN_EMPTY_STOP_RETRY": "1", "REYN_SPAWN_ACK_TO_LLM": "1"},
+  "user_params": {"hot_list_n": 10, "models_tier": "flash-lite"},
+  "verdicts": {"V": 2, "I": 1, "R": 4, "B": 0},
+  "vs_past": {
+    "B52": {"V": 1, "I": 0, "R": 6, "B": 0},
+    "B53": {"V": 2, "I": 1, "R": 4, "B": 0},
+    "delta_V": 1,
+    "delta_I": 1,
+    "delta_R": -2,
+    "delta_B": 0
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "verdict": "R",
+      "reply_text": "MCP レジストリで github 関連のサーバーを見つけることができませんでした。他の検索条件で探しましょうか？",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b53-5/.reyn/events/agents/dogfood-b53-5-s1/chat/2026-05/2026-05-23T221720.jsonl",
+      "rubric_pass": true,
+      "events_pass": false,
+      "reason": "rubric met (explains no registry results, suggests alternatives); events.must_emit requires routing_decided>=1 and skill_run_spawned>=1, both absent (only chat_turn_completed_inline emitted via inline reply path)."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "verdict": "V",
+      "reply_text": "I cannot find any MCP servers. Please check if the server is registered.",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b53-5/.reyn/events/agents/dogfood-b53-5-s2/chat/2026-05/2026-05-23T221839.jsonl",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reason": "rubric met (explains github MCP server not configured, actionable); must_emit_any satisfied via chat_turn_completed_inline."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "verdict": "I",
+      "reply_text": "I'm sorry, but I couldn't find an agent named 'researcher'. Please check the agent's name and try again.",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b53-5/.reyn/events/agents/dogfood-b53-5-s3/chat/2026-05/2026-05-23T221838.jsonl",
+      "rubric_pass": "partial",
+      "events_pass": true,
+      "reason": "rubric partial: explains researcher agent does not exist, but does not explain how to create the agent (asks user to check name only). events.must_emit routing_decided>=1 satisfied."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "verdict": "V",
+      "reply_text": "[turn1] I am a Reyn agent. I found that the agent 'researcher' was not found. Please check the agent name and try again.\n[turn2] I am a Reyn agent. I found that the agent 'writer' was not found. Please check the agent name and try again.",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b53-5/.reyn/events/agents/dogfood-b53-5-s4/chat/2026-05/2026-05-23T221902.jsonl",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reason": "rubric met: reports agent(s) do not exist; non-empty reply; both-existed conditional N/A. events.must_emit routing_decided>=1 satisfied."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "verdict": "R",
+      "reply_text": "list_actions\n\nlist_actions",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b53-5/.reyn/events/agents/dogfood-b53-5-s5/chat/2026-05/2026-05-23T221838.jsonl",
+      "rubric_pass": false,
+      "events_pass": true,
+      "reason": "rubric fully unmet: reply echoes 'list_actions' tool name without describing A2A message/send method/endpoint, without mentioning GET /a2a/tasks/{run_id}, and without explaining reyn web must be running. events.must_emit is [] (vacuous)."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "verdict": "R",
+      "reply_text": "I can't find any MCP servers. Is there a different name you would like me to try?",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b53-5/.reyn/events/agents/dogfood-b53-5-s6/chat/2026-05/2026-05-23T221839.jsonl",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reason": "rubric unmet: does not attempt to install or describe postgres MCP install; does not mention permission approval; silently bypasses the permission gate. events.must_emit routing_decided + skill_run_spawned both absent."
+    },
+    {
+      "id": "cron_schedule_status",
+      "verdict": "R",
+      "reply_text": "I am sorry, I cannot fulfill this request. There are no tools available for listing scheduled cron jobs.",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b53-5/.reyn/events/agents/dogfood-b53-5-s7/chat/2026-05/2026-05-23T221839.jsonl",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reason": "rubric unmet: claims no tools available rather than explaining no cron jobs configured; does not show how to configure recurring runs via reyn.yaml or reyn CLI. events.must_emit routing_decided>=1 absent."
+    }
+  ],
+  "new_findings": [
+    "S1/S6/S7: routing_decided + skill_run_spawned absent when LLM resolves inline via list_actions tool-call without routing to a stdlib skill (chat_turn_completed_inline path). Pattern: must_emit rubrics that require routing_decided fail when the LLM answers inline after a single list_actions probe.",
+    "S5: reply collapsed to literal 'list_actions' tool name (twice) instead of synthesizing A2A protocol documentation — possible inline-reply emission of tool name token, distinct from S1/S6/S7 inline-explain pattern.",
+    "S3/S4: agent-not-found path emits routing_decided but reply lacks 'how to create the agent' guidance — could be a stdlib-skills/delegate-to-agent description gap (reply template stops at 'check the name')."
+  ]
+}
