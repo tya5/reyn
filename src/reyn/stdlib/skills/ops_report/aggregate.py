@@ -1,26 +1,33 @@
-"""aggregate.py — I/O-using aggregations for ops_report (FP-0009 Component D).
+"""aggregate.py — safe-mode aggregations for ops_report (FP-0009 Component D).
 
 Public functions:
-  collect_aggregate(artifact)                              → dict   (back-compat wrapper; prefer dispatch_aggregate + collect_aggregate_fallback)
-  collect_aggregate_fallback(artifact)                     → dict   (mode: unsafe fallback; no-ops if upstream recalled)
+  collect_aggregate_fallback(artifact)                     → dict   (raw-events fallback)
   aggregate_from_raw_events(events_root, period_days, skills) → dict
 
-These functions use filesystem I/O (glob, os, pathlib) and must be declared
-``mode: unsafe`` in skill.md.
+The legacy ``collect_aggregate`` (= a thin back-compat wrapper that
+composed ``dispatch_aggregate`` + ``collect_aggregate_fallback``) was
+removed in FP-0042 Phase 2.6 — the active preprocessor chain in
+``phases/collect.md`` calls the two steps directly via skill.md
+``preprocessor`` entries, and the only remaining caller was the test
+suite. The composition lives there now (= ``_collect_aggregate`` helper
+in ``tests/test_ops_report_skill.py``).
 
-``aggregate_from_recall_chunks`` has been extracted to the sibling module
-``aggregate_pure.py`` (no unsafe imports) so it can be declared ``mode: safe``.
+FP-0042 Phase 2.6 (2026-05-23): migrated from mode: unsafe to mode: safe.
+File reads go through ``reyn.safe.file``; the event-file glob covers
+``.reyn/events/`` (= default-zone read), no skill.md ``file.read``
+declaration needed. Path manipulation uses plain string operations
+because ``pathlib`` is not on the safe-mode import allowlist.
 
-R-PURE-MODE-REDEFINE wave 3a: the preprocessor chain is now 3 steps:
-  1. recall run_op (unchanged)
-  2. ``dispatch_aggregate`` in ``aggregate_pure.py`` (mode: safe) — aggregates
-     recall chunks inline; returns ``{..., "_path": "recall"}`` or
-     ``{"_path": "needs_fallback", ...}`` sentinel.
-  3. ``collect_aggregate_fallback`` (this module, mode: unsafe) — no-ops when
-     upstream already recalled; otherwise walks ``.reyn/events/*.jsonl``.
+``aggregate_from_recall_chunks`` and ``dispatch_aggregate`` live in
+``aggregate_pure.py``; the two-file split is retained to keep that
+module's import graph minimal (= no ``glob`` import), but both modules
+are now ``mode: safe``.
 
-``collect_aggregate`` is kept as a back-compat wrapper (called by existing tests
-and any code that imports it directly); it dispatches to the new two-step path.
+R-PURE-MODE-REDEFINE wave 3a preprocessor chain (unchanged):
+  1. recall run_op
+  2. ``dispatch_aggregate`` in ``aggregate_pure.py`` (mode: safe)
+  3. ``collect_aggregate_fallback`` (this module, mode: safe) — walks
+     ``.reyn/events/*.jsonl`` only when upstream did not recall.
 
 All functions return the same aggregate-stats output shape. No LLM calls,
 no side effects beyond filesystem reads, fully testable at Tier 2.
@@ -33,17 +40,22 @@ from __future__ import annotations
 
 import glob as _glob_mod
 import json
-import os
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
+
+from reyn.safe import file as _safe_file
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _EPOCH_ISO = "1970-01-01T00:00:00Z"
 _ERROR_SAMPLE_MAX = 5
 _ERROR_EXCERPT_MAX = 200
+
+# POSIX stat-mode constants (= stat.S_IFMT / S_IFREG). Hard-coded because
+# the ``stat`` module is not on the safe-mode import allowlist.
+_S_IFMT = 0o170000
+_S_IFREG = 0o100000
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -53,7 +65,10 @@ def collect_aggregate_fallback(artifact: dict) -> dict:
     """Fallback raw-events aggregator. Runs unconditionally; no-ops if upstream
     dispatcher already produced stats.
 
-    Mode: unsafe — imports glob/os/pathlib for .reyn/events/*.jsonl walk.
+    FP-0042 Phase 2.6: mode: safe. Uses ``reyn.safe.file`` for event-file
+    reads + stat checks; ``glob.glob`` covers path enumeration (= safe-mode
+    allowlisted as a restricted ambient source per the 2026-05-15
+    R-PURE-MODE stdlib audit).
 
     If ``data.aggregate._path == "recall"``, the upstream ``dispatch_aggregate``
     step already computed real stats. Strip the sentinel and return them.
@@ -83,35 +98,8 @@ def collect_aggregate_fallback(artifact: dict) -> dict:
         period_days=period_days,
         skills=skills,
     )
-    result["_path"] = "raw_events"  # for debuggability; stripped below
     result.pop("_path", None)
     return result
-
-
-def collect_aggregate(artifact: dict) -> dict:
-    """Back-compat wrapper: dispatches to dispatch_aggregate then collect_aggregate_fallback.
-
-    Kept so that existing tests and any direct callers continue to work.
-    New preprocessor chains should use the 3-step split in collect.md instead.
-
-    Decision logic:
-      - if recall produced ≥1 chunk → pure inline aggregation (mode: safe path)
-      - else → ``aggregate_from_raw_events`` (= fallback: walk
-        ``.reyn/events/*.jsonl`` directly; index not built or empty)
-    """
-    from reyn.stdlib.skills.ops_report.aggregate_pure import dispatch_aggregate
-
-    # Step 1: pure dispatch — produces either recall stats or needs_fallback sentinel.
-    dispatched = dispatch_aggregate(artifact)
-
-    # Inject dispatched result as data.aggregate so collect_aggregate_fallback can read it.
-    import copy
-    patched = copy.deepcopy(artifact)
-    data = patched.setdefault("data", {})
-    data["aggregate"] = dispatched
-
-    # Step 2: fallback step (no-ops if dispatched._path == "recall").
-    return collect_aggregate_fallback(patched)
 
 
 def aggregate_from_raw_events(
@@ -121,9 +109,9 @@ def aggregate_from_raw_events(
 ) -> dict:
     """Walk events under events_root, group by run, return aggregated stats.
 
-    Scans all .jsonl files under *events_root* (non-recursively checks
-    events_root itself and one level of sub-dirs, as the P6 layout is
-    typically flat or date-partitioned).
+    Scans all ``.jsonl`` files under ``events_root`` recursively. FP-0042
+    Phase 2.6: file content + stat go through ``reyn.safe.file``; missing
+    directory or permission denial returns an empty aggregate.
 
     Args:
         events_root: Path to the events directory (e.g. ".reyn/events").
@@ -144,12 +132,11 @@ def aggregate_from_raw_events(
             "errors_sample":       list[str],  # last 5 error strings
         }
     """
-    root = Path(events_root)
-    if not root.exists() or not root.is_dir():
+    if not _path_exists_safe(events_root):
         return _empty_aggregate(period_days)
 
     cutoff = _utc_now() - timedelta(days=period_days)
-    event_files = _discover_event_files(root)
+    event_files = _discover_event_files(events_root)
 
     runs = _group_events_by_run(event_files)
     return _aggregate_runs(runs, cutoff=cutoff, skills=skills, period_days=period_days)
@@ -175,32 +162,73 @@ def _utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def _discover_event_files(root: Path) -> list[Path]:
-    """Discover all .jsonl files under root recursively."""
-    pattern = str(root / "**" / "*.jsonl")
+def _path_exists_safe(path: str) -> bool:
+    """Permission-aware existence check that does not raise.
+
+    ``reyn.safe.file.exists`` raises ``PermissionError`` when the path
+    falls outside the declared read zone. For the events-root probe, we
+    want a permission denial to count as "not present" so the step
+    degrades to an empty aggregate.
+    """
+    try:
+        return _safe_file.exists(path)
+    except (OSError, PermissionError):
+        return False
+
+
+def _is_regular_file(path: str) -> bool:
+    """Return True iff ``path`` exists and is a regular file.
+
+    Replacement for ``os.path.isfile`` (= ``os`` is not on the safe-mode
+    allowlist). Uses ``reyn.safe.file.stat`` and checks the POSIX mode
+    bits. Any error (missing, permission denied, broken symlink)
+    returns False — matches ``os.path.isfile``'s suppress-all-errors
+    behaviour.
+    """
+    try:
+        info = _safe_file.stat(path)
+    except (OSError, PermissionError):
+        return False
+    return (int(info.get("mode", 0)) & _S_IFMT) == _S_IFREG
+
+
+def _discover_event_files(events_root: str) -> list[str]:
+    """Discover all .jsonl files under events_root recursively.
+
+    Returns a list of path strings (= no pathlib, which is not on the
+    safe-mode allowlist). Filters to regular files via
+    :func:`_is_regular_file` to preserve the legacy ``os.path.isfile``
+    behaviour (= directory matches from broad globs are dropped).
+    """
+    pattern = f"{events_root}/**/*.jsonl"
     matches = _glob_mod.glob(pattern, recursive=True)
-    return [Path(m) for m in sorted(matches) if os.path.isfile(m)]
+    return sorted(m for m in matches if _is_regular_file(m))
 
 
-def _group_events_by_run(event_files: list[Path]) -> dict[str, list[dict]]:
-    """Group raw events by run_id."""
+def _group_events_by_run(event_files: list[str]) -> dict[str, list[dict]]:
+    """Group raw events by run_id.
+
+    Reads each event file via :mod:`reyn.safe.file` (= permission-gated).
+    Files outside the declared read zone, or that fail to parse, are
+    silently skipped — matches the legacy OSError-swallowing read loop.
+    """
     runs: dict[str, list[dict]] = defaultdict(list)
 
     for file_path in event_files:
         try:
-            with open(file_path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    run_id = _extract_run_id(event)
-                    runs[run_id].append(event)
-        except OSError:
+            content = _safe_file.read(file_path)
+        except (OSError, PermissionError):
             continue
+        for line in content.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            run_id = _extract_run_id(event)
+            runs[run_id].append(event)
 
     return runs
 

@@ -1,11 +1,18 @@
 """Tier 2: ops_report stdlib skill (FP-0009 Component D).
 
-Tests for aggregate.py pure functions:
+Tests for aggregate.py + aggregate_pure.py functions:
   aggregate_from_raw_events — walk .jsonl files and compute stats
   aggregate_from_recall_chunks — aggregate pre-fetched recall chunks
 
 All tests use real filesystem I/O (tmp_path) and real Python functions.
 No mocks, no AsyncMock, no patch decorators — per CLAUDE.md testing policy.
+
+FP-0042 Phase 2.6 (2026-05-23): ``aggregate.py`` migrated from mode:
+unsafe to mode: safe; file I/O now goes through ``reyn.safe.file``.
+The autouse ``_safe_file_context`` fixture below grants reads under
+``tmp_path`` so the safe-mode helpers can run inside the test process
+(= mirrors how the production preprocessor_executor wires the
+safe-mode subprocess).
 """
 from __future__ import annotations
 
@@ -15,16 +22,57 @@ from pathlib import Path
 
 import pytest
 
+from reyn.safe import file as sf
+
 # Module under test
 from reyn.stdlib.skills.ops_report.aggregate import (
     aggregate_from_raw_events,
-    collect_aggregate,
     collect_aggregate_fallback,
 )
 from reyn.stdlib.skills.ops_report.aggregate_pure import (
     aggregate_from_recall_chunks,
     dispatch_aggregate,
 )
+
+
+def collect_aggregate(artifact: dict) -> dict:
+    """Test helper: dispatches to dispatch_aggregate then collect_aggregate_fallback.
+
+    Was the back-compat wrapper in ``aggregate.py`` before FP-0042 Phase 2.6;
+    moved here because the active preprocessor chain calls the two steps
+    directly via skill.md, and the only consumer was this test module.
+
+    Hosting the composition in the test module also avoids the cross-module
+    ``reyn.stdlib.*`` import the safe-mode AST validator rejects.
+    """
+    import copy
+
+    dispatched = dispatch_aggregate(artifact)
+    patched = copy.deepcopy(artifact)
+    data = patched.setdefault("data", {})
+    data["aggregate"] = dispatched
+    return collect_aggregate_fallback(patched)
+
+
+@pytest.fixture(autouse=True)
+def _safe_file_context(tmp_path: Path):
+    """Grant reyn.safe.file read access over tmp_path for each test.
+
+    Mirrors the production wiring (= CWD as default read zone). Tests
+    in this module operate exclusively under tmp_path, so a wide grant
+    there matches the per-test sandbox model.
+    """
+    sf._read_paths = ()
+    sf._write_paths = ()
+    sf._context_initialised = False
+    sf._set_permission_context(
+        read_paths=[str(tmp_path)],
+        write_paths=[str(tmp_path)],
+    )
+    yield
+    sf._read_paths = ()
+    sf._write_paths = ()
+    sf._context_initialised = False
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 
