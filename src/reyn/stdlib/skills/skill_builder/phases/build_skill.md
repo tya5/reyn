@@ -47,6 +47,19 @@ finish_criteria:
 graph:
   {phase_a}: [{phase_b}]
   {phase_b}: [{phase_c}, {phase_d}]
+routing:
+  intents: {routing.intents}
+  when_to_use:
+    - {when_to_use_1}
+    - {when_to_use_2}
+  when_not_to_use:
+    - {when_not_to_use_1}
+  examples:
+    positive:
+      - "{positive_example_1}"
+      - "{positive_example_2}"
+    negative:
+      - "{negative_example_1}"
 ---
 
 ## 概要
@@ -55,6 +68,11 @@ graph:
 ## 入力
 {入力に期待する内容と例}
 ```
+
+The `routing:` block is **required** in the generated skill.md — copy each
+sub-field verbatim from `data.routing`. Do NOT omit it even if some lists
+are short. Missing routing leaves the chat router with only `description`
+to match against, which causes under-triggering (see PR #564 / #567).
 
 If `data.mcp_servers` is non-empty, append a `## MCP` section after `## 入力`:
 ```

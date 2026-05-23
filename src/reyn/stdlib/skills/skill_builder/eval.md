@@ -19,6 +19,7 @@ quality:
 - Transitions correctly define the graph flow, with `to` values being only phase names.
 - Artifacts list includes all artifacts used as input by phases, with clear descriptions.
 - Final output artifact is well-defined with a name and description.
+- The `routing` block is populated with intents (= [task] for action skills, [stable_knowledge] for Q&A), 2-5 when_to_use scenario phrases, 1-3 when_not_to_use anti-trigger phrases (cross-referencing sibling skills), and examples.positive (2-3 verbatim phrasings) + examples.negative (1-2 quoting sibling-skill confusion). A missing or empty routing block is a fail — it leaves the chat router with only `description` to match against (= under-triggers in practice, same defect class as a bare description).
 
 ### phase: design_artifacts
 quality:
@@ -37,7 +38,8 @@ quality:
 
 ### phase: build_skill
 quality:
-- skill.md is correctly generated with all required fields (name, description, entry, final_output, finish_criteria).
+- skill.md is correctly generated with all required fields (name, description, entry, final_output, finish_criteria, routing).
+- The `routing:` block in skill.md is present and copied verbatim from `data.routing` (= intents / when_to_use / when_not_to_use / examples sub-fields all written, even when some lists are short). A skill.md without a routing block is a fail.
 - The graph in skill.md correctly reflects the transitions defined in the plan.
 - Phase files correctly include `type: phase`, `name`, `input`, `role`, `model_class` (if applicable), and `can_finish` (if applicable).
 - Phase instructions are copied verbatim from the plan.
@@ -67,6 +69,7 @@ quality:
 - Transitions correctly define the graph flow, with `to` values being only phase names.
 - Artifacts list includes all artifacts used as input by phases, with clear descriptions.
 - Final output artifact is well-defined with a name and description.
+- The `routing` block is populated with intents (= [task] for action skills, [stable_knowledge] for Q&A), 2-5 when_to_use scenario phrases, 1-3 when_not_to_use anti-trigger phrases (cross-referencing sibling skills), and examples.positive (2-3 verbatim phrasings) + examples.negative (1-2 quoting sibling-skill confusion). A missing or empty routing block is a fail — it leaves the chat router with only `description` to match against (= under-triggers in practice, same defect class as a bare description).
 
 ### phase: design_artifacts
 quality:
@@ -85,7 +88,8 @@ quality:
 
 ### phase: build_skill
 quality:
-- skill.md is correctly generated with all required fields (name, description, entry, final_output, finish_criteria).
+- skill.md is correctly generated with all required fields (name, description, entry, final_output, finish_criteria, routing).
+- The `routing:` block in skill.md is present and copied verbatim from `data.routing` (= intents / when_to_use / when_not_to_use / examples sub-fields all written, even when some lists are short). A skill.md without a routing block is a fail.
 - The graph in skill.md correctly reflects the transitions defined in the plan.
 - Phase files correctly include `type: phase`, `name`, `input`, `role`, `model_class` (if applicable), and `can_finish` (if applicable).
 - Phase instructions are copied verbatim from the plan.
