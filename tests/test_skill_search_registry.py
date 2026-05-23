@@ -154,10 +154,19 @@ def test_raw_base_derived_from_github_contents_url():
     )
 
 
-def test_raw_base_honors_explicit_override(monkeypatch):
-    """Tier 2: REYN_SKILL_REGISTRY_RAW_BASE overrides the derivation."""
+def test_raw_base_env_override_dropped_post_fp0042_phase3(monkeypatch):
+    """Tier 2: regression guard — FP-0042 Phase 3 drift-fix dropped the
+    ``REYN_SKILL_REGISTRY_RAW_BASE`` env-var override because ``os``
+    is not on the safe-mode allowlist. Setting the env var must NOT
+    change ``_raw_base()`` — the URL is hardcoded post-migration.
+
+    Issue #571 covers the future config-driven URL design; once that
+    lands this test should be revisited.
+    """
     monkeypatch.setenv("REYN_SKILL_REGISTRY_RAW_BASE", "https://example.com/raw")
-    assert _raw_base() == "https://example.com/raw"
+    assert _raw_base() == (
+        "https://raw.githubusercontent.com/anthropics/skills/main/skills"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -286,9 +295,13 @@ def test_fetch_stale_cache_after_explicit_eviction(
     assert r["candidates"]
 
 
-def test_fetch_skill_registry_url_override(monkeypatch, isolated_cache):
-    """Tier 2: REYN_SKILL_REGISTRY_URL routes the fetch to a different
-    endpoint.
+def test_fetch_uses_hardcoded_registry_url_post_fp0042_phase3(
+    monkeypatch, isolated_cache
+):
+    """Tier 2: regression guard — FP-0042 Phase 3 drift-fix dropped the
+    ``REYN_SKILL_REGISTRY_URL`` env var override. Even when the env var
+    is set, the fetch hits the canonical anthropics/skills endpoint
+    (= same treatment as ``reyn.safe.mcp.registry`` per Issue #571).
     """
     monkeypatch.setenv(
         "REYN_SKILL_REGISTRY_URL",
@@ -306,6 +319,7 @@ def test_fetch_skill_registry_url_override(monkeypatch, isolated_cache):
     monkeypatch.setattr(registry_fetch, "http_get", _spy_get)
 
     fetch_registry_results({"data": {"text": "pdf"}})
-    # The first call should be to the overridden host.
     assert calls
-    assert "myorg/myskills" in calls[0]
+    # The env var override is ignored — the call goes to the hardcoded URL.
+    assert "myorg/myskills" not in calls[0]
+    assert "anthropics/skills" in calls[0]
