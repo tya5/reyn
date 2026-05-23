@@ -484,6 +484,19 @@ class PreprocessorExecutor:
         # ``invoke_action(file__read)`` route would be granted by default.
         # Keeping the contract symmetric with the existing permission
         # model.
+        #
+        # #571 collapse arc Phase 2: ``reyn.safe.file._check_write``
+        # additionally enforces a canonical-protected-paths denylist
+        # (= ``.reyn/mcp.yaml`` / ``.reyn/cron.yaml`` /
+        # ``.reyn/index/sources.yaml``). Those paths are allowed through
+        # the broad ``.reyn/`` default zone here, but rejected by the
+        # safe.file gate unless the skill ALSO listed the path
+        # explicitly in ``permissions.file_write`` (which the bool-axis
+        # compat shim does automatically when ``mcp_install`` /
+        # ``cron_register`` / ``index_drop`` / ``mcp_drop_server`` is
+        # set). The narrow exception preserves the broad ``.reyn/``
+        # default for chunkers, cursors, and other workspace scratch
+        # state.
         import os as _os
         _cwd = _os.getcwd()
         file_read_paths = [_cwd] + [
