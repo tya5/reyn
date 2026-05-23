@@ -84,6 +84,8 @@ class PythonRunner:
         artifact: dict,
         timeout: int,
         allowed_modules: list[str] | None = None,
+        file_read_paths: list[str] | None = None,
+        file_write_paths: list[str] | None = None,
     ) -> Any:
         """Execute `function` in `module` against `artifact`.
 
@@ -91,6 +93,12 @@ class PythonRunner:
         PythonStepError if anything goes wrong: module-not-found, sandbox
         violation, the function raising, JSON serialization failure,
         timeout, or child crash.
+
+        FP-0042: ``file_read_paths`` / ``file_write_paths`` forward the
+        skill-declared file permission paths into the subprocess so
+        ``reyn.safe.file.*`` calls inside the step can gate against
+        them. Both default to empty (= no file access granted) — pass
+        the absolute paths the parent has approved for this step.
         """
         module_abs = _resolve_module_path(skill_dir, module)
 
@@ -100,6 +108,9 @@ class PythonRunner:
             "mode": mode,
             "artifact": artifact,
             "allowed_modules": list(allowed_modules or []),
+            # FP-0042: file-permission paths for reyn.safe.file gating.
+            "file_read_paths": list(file_read_paths or []),
+            "file_write_paths": list(file_write_paths or []),
         }
 
         try:

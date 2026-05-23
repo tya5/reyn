@@ -1,16 +1,7 @@
-"""Time helpers (ambient sources — outputs are non-deterministic)."""
+"""Shim re-export — canonical module is :mod:`reyn.safe.time`.
 
-from __future__ import annotations
-
-import time as _time
-
-
-def monotonic_seq() -> float:
-    """Return a monotonic clock value in seconds.
-
-    Non-deterministic: two calls within the same process produce
-    different values. Wraps ``time.monotonic``. Use only when the
-    step's contract permits ambient clock reads (= replay records
-    the value).
-    """
-    return _time.monotonic()
+FP-0042 backward-compat: import from reyn.api.safe.time is
+forwarded to the canonical reyn.safe.time. Scheduled for removal
+in the next release — please migrate to from reyn.safe import time.
+"""
+from reyn.safe.time import *  # noqa: F401,F403 — re-export

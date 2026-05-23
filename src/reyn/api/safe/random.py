@@ -1,15 +1,7 @@
-"""Random helpers — explicit seeding only (no ambient global RNG)."""
+"""Shim re-export — canonical module is :mod:`reyn.safe.random`.
 
-from __future__ import annotations
-
-import random as _random
-
-
-def seeded(seed: int) -> _random.Random:
-    """Return a fresh ``random.Random`` seeded with ``seed``.
-
-    The returned RNG is independent of the global ``random`` module
-    state; reusing the same seed across calls reproduces the same
-    sequence (= deterministic under replay).
-    """
-    return _random.Random(seed)
+FP-0042 backward-compat: import from reyn.api.safe.random is
+forwarded to the canonical reyn.safe.random. Scheduled for removal
+in the next release — please migrate to from reyn.safe import random.
+"""
+from reyn.safe.random import *  # noqa: F401,F403 — re-export
