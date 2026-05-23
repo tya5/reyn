@@ -27,7 +27,11 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.chat.slash import slash
 
 
-@slash("copy", summary="Copy an agent reply to the clipboard (/copy [N] or /copy list)")
+@slash(
+    "copy",
+    summary="Copy an agent reply to the clipboard",
+    usage="/copy [N|list]",
+)
 async def copy_cmd(session: "object", args: str) -> None:
     # Forward the raw arg; the TUI handler validates and surfaces errors so
     # we don't duplicate the parsing logic across the slash + outbox layers.

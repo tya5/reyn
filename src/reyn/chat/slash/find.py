@@ -30,7 +30,8 @@ from reyn.chat.slash import slash
 
 @slash(
     "find",
-    summary="Search the conv pane for a substring (/find <query>)",
+    summary="Search the conv pane for a substring",
+    usage="/find <query>",
 )
 async def find_cmd(session: "object", args: str) -> None:
     # Forward the raw arg; the TUI handler validates and surfaces

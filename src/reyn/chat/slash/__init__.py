@@ -42,6 +42,15 @@ class SlashCommand:
     completer: CompleterFn | None = None  # optional: (session, arg_partial="") -> list[str]
     hidden: bool = False    # if True, omit from /help and the Tab palette
                             # (still dispatchable when typed by name)
+    # Optional structured usage line — when set, the SlashPicker hint
+    # mode (= what shows once the user types ``/<cmd> ``) renders a
+    # second line ``  ↳ usage: <usage>`` below the summary. Commands
+    # that don't set this fall back to single-line hint (= current
+    # behavior, backward-compatible for all existing commands).
+    # Convention: ``/<name> <args>`` with ``<arg>`` for required and
+    # ``[arg]`` for optional, matching the slash tradition (e.g.
+    # ``/find <query>``, ``/copy [N|list]``).
+    usage: str = ""
 
 
 class SlashRegistry:
@@ -115,11 +124,15 @@ def slash(
     aliases: Iterable[str] = (),
     completer: CompleterFn | None = None,
     hidden: bool = False,
+    usage: str = "",
 ) -> Callable[[HandlerFn], HandlerFn]:
     """Decorator that registers `fn` as a slash command on import.
 
     Arguments mirror :class:`SlashCommand`. The decorated function must be
     `async def fn(session, args: str) -> None`.
+
+    ``usage`` is the optional structured usage line surfaced as the
+    second row of the SlashPicker hint mode (see ``SlashCommand.usage``).
     """
 
     def _decorator(fn: HandlerFn) -> HandlerFn:
@@ -130,6 +143,7 @@ def slash(
             aliases=tuple(aliases),
             completer=completer,
             hidden=hidden,
+            usage=usage,
         ))
         return fn
 
