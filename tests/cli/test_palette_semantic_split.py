@@ -103,30 +103,32 @@ async def test_agent_header_label_renders_with_amber() -> None:
         conv = app.query_one("#conversation", ConversationView)
         log = conv.query_one(RichLog)
 
-        # Render an agent message so the "reyn" label appears in a header
+        # Render an agent message so the agent symbol appears in a header.
+        # Post-refactor: headers are symbol-only (``⏺``); no label text or dash rule.
+        from reyn.chat.tui.widgets.conversation import _GLYPH_AGENT
         conv.render_message(OutboxMessage(kind="agent", text="hi"))
         await pilot.pause()
 
-        # Find the strip containing "reyn" (the speaker label)
+        # Find the strip containing the agent symbol (= the header line).
         strip = None
         for s in log.lines:
             text = "".join(seg.text for seg in s)
-            if "reyn" in text and "─" in text:
+            if _GLYPH_AGENT in text:
                 strip = s
                 break
         assert strip is not None, "agent header strip not found"
 
-        # The segment containing 'reyn' must carry the amber colour
+        # The segment containing the agent symbol must carry the amber colour.
         amber_lower = _AMBER.lower()
         found = False
         for seg in strip:
-            if "reyn" in seg.text and seg.style is not None:
+            if _GLYPH_AGENT in seg.text and seg.style is not None:
                 style_str = str(seg.style).lower()
                 if amber_lower in style_str:
                     found = True
                     break
         assert found, (
-            f"agent label 'reyn' must use _AMBER ({_AMBER}); "
+            f"agent symbol {_GLYPH_AGENT!r} must use _AMBER ({_AMBER}); "
             f"got segments={[(s.text, str(s.style)) for s in strip]}"
         )
 

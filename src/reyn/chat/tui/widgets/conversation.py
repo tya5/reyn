@@ -67,16 +67,24 @@ from .tool_call_row import ToolCallRow
 
 _DASH_TOTAL = 38  # matches the banner separator width
 _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
-# Speaker-identity glyphs prepended to header labels — non-color cue so
-# turn boundaries stay legible in greyscale / for color-blind users.
-# The header name color (cyan / amber / grey) is still the primary
-# signal; the glyph is a redundant shape signal so neither channel
-# alone is load-bearing.
-_GLYPH_USER = "▶"
-_GLYPH_AGENT = "◆"
+# Speaker-identity symbols — 1-char shape cues for turn boundaries.
+# These replace the old "▶ you" / "◆ reyn" labels; the symbol alone
+# differentiates speaker without the redundant label text.
+_GLYPH_USER = ">"
+_GLYPH_AGENT = "⏺"
 _GLYPH_SYSTEM = "·"
 _FOLD_THRESHOLD_LINES = 30  # B3: rendered-screen-line estimate above this folds inline
-_FOLD_WIDTH_FALLBACK = 73   # estimated body width when size.width is 0 (= 80 - _BODY_INDENT_COLS)
+# Hanging indent constants — two modes gated by ``_show_timestamps``.
+# ON  (ts shown):  ``HH:MM <sym>`` = 5 (ts) + 1 (space) + 1 (sym) + 1 (space)
+#                  → body starts col 8.
+# OFF (ts hidden): ``<sym>`` = 1 (sym) + 1 (space) → body starts col 2.
+_BODY_INDENT_WITH_TS = 8
+_BODY_INDENT_NO_TS = 2
+# Legacy alias kept so external code that imports _BODY_INDENT_COLS
+# directly (e.g. streaming_row.py, foldable_markdown.py, tests) still
+# compiles. Points at the ts-on value (= the default).
+_BODY_INDENT_COLS = _BODY_INDENT_WITH_TS
+_FOLD_WIDTH_FALLBACK = 73   # estimated body width when size.width is 0 (= 80 - _BODY_INDENT_WITH_TS)
 # /copy ring-buffer depth. Far enough back that the user can grab "the
 # reply two turns ago" — the typical "wait, that one was useful" recovery
 # pattern — without growing memory unboundedly across long sessions.
@@ -98,15 +106,6 @@ _TOOL_CALL_MIN_DISPLAY_S = 0.3
 # Esc-dismissed breadcrumb) so the footer area can't pile up under a
 # burst of failures (e.g. proxy down + multiple retries).
 _MAX_VISIBLE_ERROR_BOXES = 3
-_NAME_COL_COLS = 4  # display-cell width reserved for the speaker label column
-# Hanging indent for message bodies (= the lines under each header). The
-# header is ``HH:MM  reyn ───`` — 5 (timestamp) + 2 (gap) = 7 cells before
-# the name column starts. Indenting the body to column 7 visually nests
-# replies under their author's name and, crucially, makes wrap continuations
-# of a long body line visually distinct from the start of a new turn
-# (which begins at column 0). Without this, a wrapped URL or code-line
-# looks identical to a new ``HH:MM …`` header on a quick scan.
-_BODY_INDENT_COLS = 7
 
 
 def _pad_to_cells(s: str, target_cells: int) -> str:
@@ -128,32 +127,40 @@ def _pad_to_cells(s: str, target_cells: int) -> str:
     return s + " " * (target_cells - width)
 
 
-def _indent_body(renderable: RenderableType) -> RenderableType:
+def _indent_body(renderable: RenderableType, indent: int = _BODY_INDENT_WITH_TS) -> RenderableType:
     """Wrap ``renderable`` in a left-only Padding for the body indent column.
 
     Used at every body write site (agent markdown, user text, system text,
     fallback formatted lines). Header writes intentionally bypass this
-    helper so the timestamp / name / dash rule stay anchored at column 0.
+    helper so the timestamp / symbol stay anchored at column 0.
+
+    ``indent`` defaults to the ts-on value (= 8). Callers that track
+    ``_show_timestamps`` pass the dynamic value via
+    ``ConversationView._current_body_indent()``.
     """
-    return Padding(renderable, (0, 0, 0, _BODY_INDENT_COLS))
+    return Padding(renderable, (0, 0, 0, indent))
 
 
-def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
-    """Timestamp + label + dash rule for a new message turn.
+def _msg_header(symbol: str, name_style: str, show_ts: bool = True) -> Text:
+    """Symbol-only header for a new message turn.
 
-    Column layout: ``HH:MM`` (5) + 2 spaces + label (>=4 cells) + 1 space +
-    dashes. The dash count flexes with the actual cell width of ``label``
-    so wide-character agent names don't push the line past _DASH_TOTAL.
+    Layout when ``show_ts=True``:
+        ``HH:MM <symbol>``  (5 ts + 1 space + 1 symbol)
+        body starts at col 8 (= _BODY_INDENT_WITH_TS)
+
+    Layout when ``show_ts=False``:
+        ``<symbol>``
+        body starts at col 2 (= _BODY_INDENT_NO_TS)
+
+    The dash rule and label text (``▶ you`` / ``◆ reyn``) are intentionally
+    dropped — the 1-char symbol already differentiates speaker, and blank
+    lines between turns provide turn separation without horizontal noise.
     """
     t = Text()
-    t.append(time.strftime("%H:%M"), style="dim #666666")
-    t.append("  ")
-    padded = _pad_to_cells(label, _NAME_COL_COLS)
-    name_cells = cell_len(padded)
-    t.append(padded, style=name_style)
-    t.append(" ")
-    dashes = max(1, _DASH_TOTAL - 5 - 2 - name_cells - 1)
-    t.append("─" * dashes, style=dash_style)
+    if show_ts:
+        t.append(time.strftime("%H:%M"), style="dim #666666")
+        t.append(" ")
+    t.append(symbol, style=name_style)
     return t
 
 
@@ -355,6 +362,12 @@ class ConversationView(Widget):
         self._user_scrolled = False
         # Issue 5 — track mounted ErrorBoxes for Escape-to-dismiss
         self._error_boxes: list[ErrorBox] = []
+        # F9 timestamp toggle — default on. Loaded from tui_prefs.json in
+        # on_mount; callers use toggle_timestamps() / show_timestamps property.
+        # New messages rendered after a toggle use the new indent; past
+        # messages stay at whatever indent they had when rendered (= no
+        # full re-render of scroll history).
+        self._show_timestamps: bool = True
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -490,6 +503,44 @@ class ConversationView(Widget):
             return
         panel.clear()
 
+    # ── timestamp toggle (F9) ─────────────────────────────────────────────────
+
+    @property
+    def show_timestamps(self) -> bool:
+        """True when the ``HH:MM`` prefix is prepended to speaker headers."""
+        return self._show_timestamps
+
+    def _current_body_indent(self) -> int:
+        """Return the dynamic body-indent column based on ``_show_timestamps``.
+
+        ON  → ``_BODY_INDENT_WITH_TS`` (8) — body under the symbol when ts shown.
+        OFF → ``_BODY_INDENT_NO_TS``  (2) — symbol at col 0, body at col 2.
+        """
+        return _BODY_INDENT_WITH_TS if self._show_timestamps else _BODY_INDENT_NO_TS
+
+    def toggle_timestamps(self) -> bool:
+        """Flip the timestamp-visibility state and persist to ``tui_prefs.json``.
+
+        Returns the NEW state (True = ts now visible, False = now hidden).
+        The toggle applies to NEW messages only (= no re-render of past
+        history). Past messages stay at whatever indent they were rendered
+        with — a full re-render would be expensive and confusing mid-session.
+        """
+        self._show_timestamps = not self._show_timestamps
+        try:
+            from reyn.chat.tui.prefs import load_tui_prefs, save_tui_prefs
+            root = None
+            try:
+                root = self.app._project_root_path()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            prefs = load_tui_prefs(root)
+            prefs["show_timestamps"] = self._show_timestamps
+            save_tui_prefs(root, prefs)
+        except Exception:
+            pass
+        return self._show_timestamps
+
     def on_mount(self) -> None:
         """Wire a scroll watcher so user scroll-up suppresses auto-scroll.
 
@@ -502,6 +553,9 @@ class ConversationView(Widget):
         only flips ``auto_scroll`` on the boundary crossing, so writes
         during user-read keep their place and writes after user-return
         immediately auto-scroll again.
+
+        Also loads ``show_timestamps`` from ``tui_prefs.json`` so the
+        F9 toggle state survives a restart.
         """
         log = self._log()
         try:
@@ -509,6 +563,20 @@ class ConversationView(Widget):
         except Exception:
             # If Textual's cross-widget watch API changes, fail open
             # (= keep historic auto-scroll behaviour) rather than crash mount.
+            pass
+        # Load persisted timestamp-toggle state. The app instance holds
+        # the project root; ConversationView reaches it defensively via
+        # app.app (= the Textual ``app`` property on every widget).
+        try:
+            from reyn.chat.tui.prefs import load_tui_prefs
+            root = None
+            try:
+                root = self.app._project_root_path()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            prefs = load_tui_prefs(root)
+            self._show_timestamps = bool(prefs.get("show_timestamps", True))
+        except Exception:
             pass
 
     def _snap_to_bottom(self) -> None:
@@ -568,10 +636,13 @@ class ConversationView(Widget):
 
     # ── header grouping (B1) ──────────────────────────────────────────────────
 
-    def _maybe_write_header(self, speaker: str, label_text: str,
-                             name_style: str, dash_style: str) -> None:
-        """Write a header line only when the speaker changes or the gap is
-        larger than _GROUP_WINDOW_S. Stores the new state.
+    def _maybe_write_header(self, speaker: str, symbol: str,
+                             name_style: str) -> None:
+        """Write a symbol-only header when the speaker changes or the gap exceeds _GROUP_WINDOW_S.
+
+        The header is ``HH:MM <symbol>`` (ts on) or ``<symbol>`` (ts off).
+        A blank line separates turns; the dash rule from the old layout is
+        intentionally absent.
 
         Wave-10 follow-up G-F7: ``time.time()`` (wall clock) rather
         than ``time.monotonic()``. The header's visible HH:MM
@@ -617,7 +688,7 @@ class ConversationView(Widget):
             # The raw list cost is ~8 bytes per turn — a 24h session
             # generating one turn per second is ~700 KB, negligible
             # next to the RichLog itself.
-            log.write(_msg_header(label_text, name_style, dash_style))
+            log.write(_msg_header(symbol, name_style, show_ts=self._show_timestamps))
         self._last_speaker = speaker
         self._last_speaker_at = now
 
@@ -703,9 +774,7 @@ class ConversationView(Widget):
         """
         self._snap_to_bottom()
         self._consume_empty_hint()
-        self._maybe_write_header(
-            "you", f"{_GLYPH_USER} you", "bold #4abbb5", "#666666",
-        )
+        self._maybe_write_header("you", _GLYPH_USER, "bold #4abbb5")
         self._write_body(Text(text))
         self._write_log(Text(""))
 
@@ -730,9 +799,7 @@ class ConversationView(Widget):
         if _is_lifecycle_marker(text):
             self._write_log(_render_lifecycle_marker(text))
             return
-        self._maybe_write_header(
-            "system", f"{_GLYPH_SYSTEM} system", "bold #888888", "#666666",
-        )
+        self._maybe_write_header("system", _GLYPH_SYSTEM, "bold #888888")
         for line in text.splitlines() or [""]:
             self._write_body(Text(line))
         self._write_log(Text(""))
@@ -749,13 +816,14 @@ class ConversationView(Widget):
         self.stop_thinking()  # turn finished — unmount inline spinner
         self.hide_status()    # also clear any sticky status
         meta_pfx = _meta_prefix(msg.meta)
-        label = f"reyn  {meta_pfx}".rstrip() if meta_pfx else "reyn"
-        # _AMBER for agent identity (header label) — distinct from _CORAL
-        # which is reserved for interactive affordances (/expand, picker
-        # selection caret, panel cursor ▶) and "you are here" indicators.
-        self._maybe_write_header(
-            "reyn", f"{_GLYPH_AGENT} {label}", "bold " + _AMBER, "#666666",
-        )
+        # _AMBER for agent identity — distinct from _CORAL (interactive
+        # affordances). The meta prefix (= [skill#abcd]) is emitted on its
+        # own line after the header so the symbol-only header stays minimal.
+        self._maybe_write_header("reyn", _GLYPH_AGENT, "bold " + _AMBER)
+        if meta_pfx:
+            # Emit the meta prefix as a dim sub-line so skill identity is still
+            # discoverable without cluttering the symbol header.
+            self._write_body(Text(meta_pfx.strip(), style="dim #888888"))
         if msg.text:
             self._write_agent_markdown_with_fold(msg.text)
         self._write_log(Text(""))
@@ -779,7 +847,7 @@ class ConversationView(Widget):
         reply through).
         """
         try:
-            width = max(20, self.size.width - _BODY_INDENT_COLS - 2)
+            width = max(20, self.size.width - self._current_body_indent() - 2)
         except Exception:
             width = _FOLD_WIDTH_FALLBACK
         if width <= 0:
@@ -953,25 +1021,23 @@ class ConversationView(Widget):
             self._maybe_warn_about_trimmed_history(log)
 
     def _write_body(self, renderable: RenderableType) -> None:
-        """Append a body renderable at the hanging-indent column.
+        """Append a body renderable at the dynamic hanging-indent column.
 
         Wraps ``renderable`` in left-only ``Padding`` so wrap continuations
-        line up under the speaker name and stay visually distinct from the
-        column-0 turn header. Used for agent markdown, user / system text,
-        and any other content that belongs "under" the most recent header.
+        line up under the speaker symbol and stay visually distinct from the
+        column-0 turn header. The indent is 8 when timestamps are shown
+        (= col 0-4 ts + col 5 space + col 6 symbol + col 7 space + col 8+
+        body) and 2 when hidden (= col 0 symbol + col 1 space + col 2+ body).
         """
-        self._log().write(_indent_body(renderable))
+        self._log().write(_indent_body(renderable, self._current_body_indent()))
 
     # ── streaming support ─────────────────────────────────────────────────────
 
     def begin_stream(self, msg_id: str, agent_name: str = "") -> StreamingRow:
         """Start a streaming agent message row. Returns the row widget."""
         self._consume_empty_hint()
-        label = agent_name if agent_name else "reyn"
         # Same agent-identity styling as _render_agent_markdown (_AMBER).
-        self._maybe_write_header(
-            "reyn", f"{_GLYPH_AGENT} {label}", "bold " + _AMBER, "#666666",
-        )
+        self._maybe_write_header("reyn", _GLYPH_AGENT, "bold " + _AMBER)
         row = StreamingRow(prefix="", id=f"stream_{msg_id[:8]}")
         self._stream_rows[msg_id] = row
         self.mount(row)

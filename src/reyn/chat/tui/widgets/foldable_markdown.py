@@ -17,7 +17,7 @@ from textual.widgets import Label, Static
 
 from reyn.chat.tui._palette import _CORAL
 
-_BODY_INDENT_COLS = 7  # must match conversation.py _BODY_INDENT_COLS
+_BODY_INDENT_COLS = 8  # must match conversation.py _BODY_INDENT_WITH_TS (ts-on value)
 
 
 class FoldableMarkdown(Widget):

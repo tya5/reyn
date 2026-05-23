@@ -81,7 +81,7 @@ async def test_anchor_survives_partial_trim_and_projects_correctly() -> None:
         await pilot.pause()
 
         # Now record a header anchor.
-        conv._maybe_write_header("user", "you ", "bold", "dim")
+        conv._maybe_write_header("user", ">", "bold")
         await pilot.pause()
         assert conv._turn_anchors  # at least one anchor recorded
         anchor_abs = conv._turn_anchors[0]
@@ -110,7 +110,7 @@ async def test_anchor_dropped_when_target_trimmed() -> None:
         log = conv.query_one(RichLog)
 
         # Write a header at absolute position N.
-        conv._maybe_write_header("user", "you ", "bold", "dim")
+        conv._maybe_write_header("user", ">", "bold")
         await pilot.pause()
         anchor = conv._turn_anchors[0]
 
@@ -132,8 +132,8 @@ async def test_jump_no_crash_when_all_anchors_trimmed() -> None:
         conv = app.query_one("#conversation", ConversationView)
         log = conv.query_one(RichLog)
 
-        conv._maybe_write_header("user", "you ", "bold", "dim")
-        conv._maybe_write_header("reyn", "reyn", "bold", "dim")
+        conv._maybe_write_header("user", ">", "bold")
+        conv._maybe_write_header("reyn", "⏺", "bold")
         await pilot.pause()
         # Force trim to push every anchor out of range
         log._start_line = 999_999
@@ -154,7 +154,7 @@ async def test_clear_resets_trim_warn_latch() -> None:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         log = conv.query_one(RichLog)
-        conv._maybe_write_header("user", "you ", "bold", "dim")
+        conv._maybe_write_header("user", ">", "bold")
         await pilot.pause()
         log._start_line = 999_999
         conv.jump_prev_turn()
