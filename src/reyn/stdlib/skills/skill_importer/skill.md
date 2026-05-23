@@ -25,11 +25,11 @@ permissions:
       scope: recursive
   python:
     # FP-0042 Phase 3 drift-fix (2026-05-23): migrated from mode: unsafe
-    # to mode: safe via reyn.safe.http (= urllib-backed; no per-call
-    # permission gate, see Issue #571 for the deferred gate-design
-    # discussion). The GitHub raw + Contents API fetches stay
-    # structurally identical, only the import path moved into the
-    # safe-mode-callable namespace.
+    # to mode: safe via reyn.safe.http (= urllib-backed). #571 collapse
+    # arc Phase 3 (2026-05-23) added per-host gating on reyn.safe.http;
+    # this skill explicitly declares the two GitHub hosts it fetches
+    # from (raw.githubusercontent.com for skill source, api.github.com
+    # for the Contents API sibling listing).
     - module: ./detect_reference_format.py
       function: detect
       mode: safe
@@ -38,6 +38,9 @@ permissions:
       function: fetch
       mode: safe
       timeout: 60
+  http.get:
+    - host: api.github.com
+    - host: raw.githubusercontent.com
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 routing:

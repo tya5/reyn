@@ -86,6 +86,7 @@ class PythonRunner:
         allowed_modules: list[str] | None = None,
         file_read_paths: list[str] | None = None,
         file_write_paths: list[str] | None = None,
+        http_hosts: list[str] | None = None,
     ) -> Any:
         """Execute `function` in `module` against `artifact`.
 
@@ -99,6 +100,10 @@ class PythonRunner:
         ``reyn.safe.file.*`` calls inside the step can gate against
         them. Both default to empty (= no file access granted) — pass
         the absolute paths the parent has approved for this step.
+
+        #571 collapse arc Phase 3: ``http_hosts`` mirrors the same wiring
+        for ``reyn.safe.http.*`` per-host gating. Empty = no HTTP via
+        safe.http.
         """
         module_abs = _resolve_module_path(skill_dir, module)
 
@@ -111,6 +116,8 @@ class PythonRunner:
             # FP-0042: file-permission paths for reyn.safe.file gating.
             "file_read_paths": list(file_read_paths or []),
             "file_write_paths": list(file_write_paths or []),
+            # #571 Phase 3: host allowlist for reyn.safe.http gating.
+            "http_hosts": list(http_hosts or []),
         }
 
         try:

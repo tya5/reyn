@@ -510,6 +510,14 @@ class PreprocessorExecutor:
             entry["path"] for entry in self._skill.permissions.file_write
             if isinstance(entry, dict) and entry.get("path")
         ]
+        # #571 collapse arc Phase 3: forward the skill's declared http.get
+        # host allowlist into the subprocess so ``reyn.safe.http.*`` calls
+        # gate against it. Empty list = no HTTP allowed via safe.http
+        # (web_fetch's Tier-1 path is unaffected — separate surface).
+        http_hosts = [
+            entry["host"] for entry in self._skill.permissions.http_get
+            if isinstance(entry, dict) and entry.get("host")
+        ]
 
         try:
             result = await asyncio.to_thread(
@@ -523,6 +531,7 @@ class PreprocessorExecutor:
                 allowed_modules=self._python_allowed_modules,
                 file_read_paths=file_read_paths,
                 file_write_paths=file_write_paths,
+                http_hosts=http_hosts,
             )
         except PythonStepError as exc:
             self._events.emit(
