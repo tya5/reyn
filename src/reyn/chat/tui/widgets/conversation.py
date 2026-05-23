@@ -1401,6 +1401,11 @@ class ConversationView(Widget):
         )
         self.mount(box)
         self._error_boxes.append(box)
+        # Wave-11 B#6 — renumber the stack so every mounted box shows
+        # ``[N/M]`` for its current position. Cheap (≤ ``_MAX_VISIBLE
+        # _ERROR_BOXES`` rows = small loop), idempotent via
+        # ``set_index_total``'s equality gate.
+        self._renumber_error_boxes()
         # C-F4 (wave-8): once ≥ 2 error boxes are stacked, surface the
         # count via the sticky so the user can see at a glance that
         # one Esc per box is the dismiss path. Single-error case keeps
@@ -1418,6 +1423,24 @@ class ConversationView(Widget):
             except Exception:
                 pass
         return box
+
+    def _renumber_error_boxes(self) -> None:
+        """Push current ``[i, total]`` to every mounted ErrorBox.
+
+        Wave-11 B#6 — called after every mutation to ``_error_boxes``
+        (= new mount, dismiss, auto-eviction) so the per-box
+        ``[N/M]`` header badge stays accurate. ``ErrorBox.set_index_total``
+        is equality-gated (no DOM round-trip when values are
+        unchanged), so re-numbering an unchanged stack is cheap.
+        Index is 1-based for human readability.
+        """
+        total = len(self._error_boxes)
+        for i, box in enumerate(self._error_boxes):
+            try:
+                box.set_index_total(i + 1, total)
+            except Exception:
+                # Box mid-teardown / DOM teardown — best-effort.
+                pass
 
     def has_error_boxes(self) -> bool:
         """Return True if any undismissed ErrorBox remains."""
@@ -1477,6 +1500,10 @@ class ConversationView(Widget):
             # breadcrumb is in the log; that's the user-visible
             # contract.
             pass
+        # Wave-11 B#6 — renumber surviving boxes so the badge stays
+        # accurate after a dismiss. ``[2/3]`` after removing the
+        # newest becomes ``[2/2]`` for the remaining tail entry.
+        self._renumber_error_boxes()
         # C-F4 (wave-8): after dismiss the live count drops by 1.
         # If still ≥ 2, refresh the count sticky to the new value;
         # otherwise the count form is stale and we clear the

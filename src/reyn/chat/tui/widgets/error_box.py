@@ -109,6 +109,8 @@ class ErrorBox(Widget):
         run_id_short: str = "",
         skill_name: str = "",
         id: str | None = None,
+        index: int = 0,
+        total: int = 0,
     ) -> None:
         super().__init__(id=id)
         self._message = message
@@ -116,6 +118,17 @@ class ErrorBox(Widget):
         self._run_id_short = run_id_short
         self._skill_name = skill_name
         self._expanded = False
+        # Wave-11 B#6 — per-box index badge for stacked errors. When
+        # ``total > 1`` the header renders ``✗ [2/3] [skill#abcd]: …``
+        # so a user landing on a focused box (= via F5/F6 jump) sees
+        # which one of the stack they're reading. ``mount_error`` /
+        # ``dismiss_last_error`` keep these values fresh via
+        # ``set_index_total`` after every stack mutation. Defaults
+        # (= 0/0) omit the badge so single-error rendering is
+        # unchanged (cold-default + backward compat for any caller
+        # that doesn't pass the new kwargs).
+        self._index: int = index
+        self._total: int = total
         # Extract trailing ``• <hint>`` from the first line so the header
         # can truncate the detail portion without silently dropping the
         # recovery hint — ``classify_router_error`` formats messages as
@@ -189,9 +202,44 @@ class ErrorBox(Widget):
         else:
             msg = first_line
         msg = _markup_escape(msg)
+        # Wave-11 B#6 — render a ``[N/M]`` index badge between ✗ and
+        # the prefix when this row is part of a stack (total > 1).
+        # Single-error renders omit the badge entirely so the
+        # cold-default layout is unchanged. Badge sits BEFORE the
+        # skill prefix so the eye reads "this is error 2 of 3 in
+        # the [code_review#abc1] skill". Defensive ``getattr`` keeps
+        # the ``__new__``-bypass-init test path working without
+        # forcing every test to seed the fields.
+        idx = getattr(self, "_index", 0)
+        tot = getattr(self, "_total", 0)
+        index_badge = (
+            f"[{idx}/{tot}] "
+            if tot > 1 and idx > 0
+            else ""
+        )
         if prefix:
-            return f"✗ {prefix}: {msg}  {arrow}"
-        return f"✗ {msg}  {arrow}"
+            return f"✗ {index_badge}{prefix}: {msg}  {arrow}"
+        return f"✗ {index_badge}{msg}  {arrow}"
+
+    def set_index_total(self, index: int, total: int) -> None:
+        """Update the stack-position badge and re-render the header.
+
+        Called by ``ConversationView`` after every mutation to the
+        ``_error_boxes`` list (= new mount, dismiss, auto-eviction)
+        so the badge stays accurate. Single-error states (= total
+        ≤ 1) hide the badge automatically.
+
+        Idempotent — repeated calls with the same values skip the
+        DOM round-trip so churn on a per-render tick stays cheap.
+        """
+        if self._index == index and self._total == total:
+            return
+        self._index = index
+        self._total = total
+        try:
+            self.query_one(".eb-header", Label).update(self._header_text())
+        except Exception:
+            pass
 
     # ── compose ───────────────────────────────────────────────────────────────
 
