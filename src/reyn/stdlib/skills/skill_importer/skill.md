@@ -58,7 +58,13 @@ want, e.g. "PDF を読んで要約する", "translate documents", "code review".
 
 The user may also include the registry URL in the same message
 ("...from https://example.com/skills.md"). If no URL is present, the
-search phase asks the user via `ask_user`.
+search phase defaults to the canonical Anthropic skills registry at
+``https://api.github.com/repos/anthropics/skills/contents/skills``
+(overridable via the ``REYN_SKILL_REGISTRY_URL`` env var). For
+richer discovery against the same registry — keyword scoring,
+description-based filtering, 24h cache, deterministic preprocessor —
+prefer the ``skill_search`` skill first, then hand the chosen
+``source_url`` to ``skill_importer``.
 
 ## Output
 
