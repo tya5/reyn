@@ -598,15 +598,22 @@ class OutboxRouter:
         # the 1-line sticky budget. Same format the initial ``/find``
         # PR introduced — match cycle (Ctrl+G) uses a shorter
         # ``"match N/M · line K"`` shape so the overview stays here
-        # and the cycle just reports position.
+        # and the cycle just reports position. The trailing
+        # ``"· Ctrl+G next"`` hint surfaces the keybinding ONCE per
+        # /find so users discover cycle navigation without having to
+        # find it in the Keys tab; the hint is only useful when
+        # there's more than one match to step through, so it's
+        # gated on ``len(matches) > 1``.
         line_nums = [str(m[0] + 1) for m in matches[:5]]
         if len(matches) > 5:
             line_nums.append(f"+{len(matches) - 5} more")
-        self._show_transient_status(
-            conv,
+        body = (
             f"{len(matches)} match{'es' if len(matches) != 1 else ''} for "
-            f"'{query}' · lines {', '.join(line_nums)}",
+            f"'{query}' · lines {', '.join(line_nums)}"
         )
+        if len(matches) > 1:
+            body += " · Ctrl+G next"
+        self._show_transient_status(conv, body)
 
     def cycle_find(self, direction: int) -> None:
         """Step to the next/previous ``/find`` match (Ctrl+G / Ctrl+Shift+G).
