@@ -7,7 +7,7 @@ can_finish: true
 allowed_ops: []
 preprocessor:
   - type: python
-    module: ./chunkers.py
+    module: ./chunkers_preproc_safe.py
     function: gather_samples
     into: data.samples_result
     output_schema:
@@ -38,7 +38,7 @@ preprocessor:
           minimum: 0
           description: Total number of files matched by the path glob.
   - type: python
-    module: ./chunkers.py
+    module: ./chunkers_preproc_safe.py
     function: cost_preflight
     into: data.cost
     output_schema:
