@@ -222,11 +222,9 @@ def render_keys(
         ("space", "Toggle preview pane"),
         ("c", "Copy current view (pending tab: claim cursor)"),
         # A-F2 (wave-8): ``d`` is the primary pending-tab action (=
-        # discard the cursor's intervention) but was missing from
-        # _PANEL_EXPLICIT entirely, so a user on the pending tab had
-        # no way to discover it from the Keys tab. Surface it here
-        # alongside ``c=claim`` for symmetry.
-        ("d", "Discard cursor (pending tab)"),
+        # discard the cursor's intervention). T2-5a (wave-12): also
+        # opens runtime/events.md in Docs tab when on events tab.
+        ("d", "Discard cursor (pending) / open events.md (events tab)"),
         # H-F11 (wave-10 follow-up): ``a`` on the Agents tab prefills
         # ``/attach <name>`` into the InputBar for the cursor's agent.
         # Same "per-tab action" idiom as the pending-tab ``d`` / ``c``

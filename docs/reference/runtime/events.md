@@ -40,6 +40,27 @@ See [Concepts: multi-agent](../../concepts/multi-agent.md) — "Agent ID propaga
 | `loop_limit_exceeded` | A phase exceeded `limits.phase.max_visits` | `phase`, `visit_count`, `max` |
 | `phase_budget_exceeded` | A phase exceeded its wall-clock budget (`limits.phase.max_wall_seconds`) | `phase`, `elapsed`, `budget` |
 
+## Plan lifecycle
+
+Plan-mode events cover the full lifetime of a parallel plan — from decomposition through step execution to aggregation or interruption. See [Concepts: plan-mode](../../concepts/plan-mode.md) for the architectural context.
+
+`plan_started` and `plan_completed` / `plan_aborted` are written to the agent WAL (`state_log.jsonl`), not the forensic event log — they appear in state recovery but not in the Events tab stream. The remaining events below are emitted to the regular events log and surface in the TUI Events tab under the `plan` filter.
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `plan_started` | Plan execution begins (WAL only — not in events log) | `plan_id`, `goal`, `n_steps`, `target` (agent name) |
+| `plan_step_started` | A step's sub-loop begins | `plan_id`, `step_id`, `depends_on` (list), `n_tools`, `chain_id` |
+| `plan_step_completed` | A step's sub-loop finished successfully | `plan_id`, `step_id`, `content_len` (bytes of result text), `chain_id` |
+| `plan_step_failed` | A step's sub-loop exhausted retries without success | `plan_id`, `step_id`, `error` (repr), `chain_id` |
+| `plan_completed` | All steps finished; plan aggregation done (WAL only — not in events log) | `plan_id`, `target` |
+| `plan_run_interrupted` | Plan loop exited via crash / cancel / unexpected exception (NOT `WorkflowAbortedError`) | `plan_id`, `exc_type` (exception class name), `chain_id` |
+| `plan_aborted` | Plan was explicitly discarded via `/plan discard` or AgentRegistry cleanup after crash recovery (WAL only — not in events log) | `plan_id`, `reason`, `target` |
+
+**Notes:**
+- WAL-only events (`plan_started`, `plan_completed`, `plan_aborted`) appear in `state_log.jsonl` alongside the agent snapshot. They are not in `.reyn/events/*.jsonl` and do not show in the TUI Events tab.
+- `plan_run_interrupted` is the crash/cancel signal; `plan_aborted` is the post-recovery cleanup signal. A crash followed by `reyn` restart will produce `plan_run_interrupted` (from the crashed session) then `plan_aborted` (from `AgentRegistry.restore_all`).
+- `plan_step_started` is also written to WAL (via `record_plan_step_started`) in addition to the events log, to enable resume-time step pairing.
+
 ## LLM and context
 
 | Kind | Key payload |
