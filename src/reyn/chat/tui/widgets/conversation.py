@@ -619,11 +619,36 @@ class ConversationView(Widget):
             return
 
         if msg.kind == "error":
+            # W13 A#2: derive short keys from full meta when missing.
+            # forwarder.py populates meta["skill_name"] + meta["run_id_short"]
+            # for skill-context errors; direct router emissions (classify path,
+            # chain_timeout, chain_peer_discarded) only set meta["skill"]
+            # (full name) and meta["run_id"] (full id). Deriving here at the
+            # TUI seam restores the [skill#abcd] prefix + re-enables the
+            # Ctrl+B trace hint footer for all router-emitted errors.
+            skill_name = str(
+                msg.meta.get("skill_name") or msg.meta.get("skill", "")
+            )
+            run_id_raw = str(msg.meta.get("run_id", ""))
+            run_id_short = str(
+                msg.meta.get("run_id_short") or (run_id_raw[-4:] if run_id_raw else "")
+            )
+            details = str(msg.meta.get("details", ""))
+            # W13 A#1: when details is empty, build context lines from
+            # well-known meta keys so the expand region surfaces structured
+            # provenance rather than just repeating the header message.
+            context_lines: list[str] = []
+            if not details:
+                for key in ("chain_id", "skill", "run_id", "dimension"):
+                    val = msg.meta.get(key)
+                    if val:
+                        context_lines.append(f"{key}={val}")
             self.mount_error(
                 message=msg.text,
-                details=str(msg.meta.get("details", "")),
-                run_id_short=str(msg.meta.get("run_id_short", "")),
-                skill_name=str(msg.meta.get("skill_name", "")),
+                details=details,
+                run_id_short=run_id_short,
+                skill_name=skill_name,
+                context_lines=context_lines,
             )
             return
 
@@ -1348,6 +1373,7 @@ class ConversationView(Widget):
         details: str = "",
         run_id_short: str = "",
         skill_name: str = "",
+        context_lines: list[str] | None = None,
     ) -> ErrorBox:
         self._consume_empty_hint()
         # F5: cap the live stack. When more than _MAX_VISIBLE_ERROR_BOXES
@@ -1398,6 +1424,7 @@ class ConversationView(Widget):
             details=details,
             run_id_short=run_id_short,
             skill_name=skill_name,
+            context_lines=context_lines,
         )
         self.mount(box)
         self._error_boxes.append(box)

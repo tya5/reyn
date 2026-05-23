@@ -108,6 +108,7 @@ class ErrorBox(Widget):
         details: str = "",
         run_id_short: str = "",
         skill_name: str = "",
+        context_lines: list[str] | None = None,
         id: str | None = None,
         index: int = 0,
         total: int = 0,
@@ -117,6 +118,11 @@ class ErrorBox(Widget):
         self._details = details
         self._run_id_short = run_id_short
         self._skill_name = skill_name
+        # W13 A#1: optional context lines shown in expand region when details
+        # is empty. Callers pass meta-derived lines (chain_id=… / skill=… /
+        # run_id=… / dimension=…) so expand reveals structured provenance
+        # instead of just the header message repeated verbatim.
+        self._context_lines: list[str] = list(context_lines) if context_lines else []
         self._expanded = False
         # Wave-11 B#6 — per-box index badge for stacked errors. When
         # ``total > 1`` the header renders ``✗ [2/3] [skill#abcd]: …``
@@ -277,9 +283,20 @@ class ErrorBox(Widget):
                 yield Label(
                     "Ctrl+B → events for full trace", classes="eb-hint",
                 )
+        elif self._context_lines:
+            # W13 A#1: details empty but meta-derived context lines present.
+            # Render them as a structured context block so expand reveals
+            # useful provenance (chain_id / skill / run_id / dimension)
+            # rather than just the header message repeated verbatim.
+            context_text = "\n".join(self._context_lines)
+            yield Static(_markup_escape(context_text), classes="eb-details")
+            if has_trace:
+                yield Label(
+                    "Ctrl+B → events for full trace", classes="eb-hint",
+                )
         else:
-            # No details supplied — fall back to the full (untruncated) message
-            # so long errors are still readable when the box is expanded.
+            # No details or context lines — fall back to the full (untruncated)
+            # message so long errors are still readable when expanded.
             yield Static(_markup_escape(self._message), classes="eb-details")
             if has_trace:
                 yield Label(
