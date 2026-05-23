@@ -150,8 +150,8 @@ class TestBasicPatch:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        assert stub.calls[0].get("temperature") == pytest.approx(0.9)
+        (only,) = stub.calls
+        assert only.get("temperature") == pytest.approx(0.9)
 
 
 # ---------------------------------------------------------------------------
@@ -181,8 +181,8 @@ class TestListIndexPatch:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        assert stub.calls[0]["messages"][0]["content"] == "patched content"
+        (only,) = stub.calls
+        assert only["messages"][0]["content"] == "patched content"
 
 
 # ---------------------------------------------------------------------------
@@ -214,8 +214,8 @@ class TestListNestedPatch:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        tools = stub.calls[0]["tools"]
+        (only,) = stub.calls
+        tools = only["tools"]
         enum_val = (
             tools[0]["function"]["parameters"]["properties"]["name"]["enum"]
         )
@@ -249,8 +249,8 @@ class TestStringAppendPatch:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        content = stub.calls[0]["messages"][0]["content"]
+        (only,) = stub.calls
+        content = only["messages"][0]["content"]
         assert content.startswith("hello")
         assert "MUST output flat names" in content
 
@@ -282,8 +282,8 @@ class TestOptionalSetPatch:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        assert stub.calls[0].get("temperature") == pytest.approx(0.5)
+        (only,) = stub.calls
+        assert only.get("temperature") == pytest.approx(0.5)
 
     def test_optional_set_existing_key_unchanged(self, tmp_path: Path) -> None:
         """Tier 2: ?= leaves an existing field unchanged."""
@@ -318,9 +318,9 @@ class TestOptionalSetPatch:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
+        (only,) = stub.calls
         # existing value 0.8 must be preserved, not replaced with 0.0
-        assert stub.calls[0].get("temperature") == pytest.approx(0.8)
+        assert only.get("temperature") == pytest.approx(0.8)
 
 
 # ---------------------------------------------------------------------------
@@ -362,9 +362,9 @@ class TestDeletePatch:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
+        (only,) = stub.calls
         # max_tokens must not be present in the litellm call
-        assert "max_tokens" not in stub.calls[0]
+        assert "max_tokens" not in only
 
     def test_delete_list_element(self, tmp_path: Path) -> None:
         """Tier 2: -- removes a list element by index."""
@@ -403,10 +403,9 @@ class TestDeletePatch:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        msgs = stub.calls[0]["messages"]
-        assert len(msgs) == 1
-        assert msgs[0]["role"] == "user"
+        (only,) = stub.calls
+        (only_msg,) = only["messages"]
+        assert only_msg["role"] == "user"
 
 
 # ---------------------------------------------------------------------------
@@ -440,8 +439,8 @@ class TestMultiplePatchOrder:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        assert stub.calls[0]["messages"][0]["content"] == "third"
+        (only,) = stub.calls
+        assert only["messages"][0]["content"] == "third"
 
     def test_independent_patches_both_applied(self, tmp_path: Path) -> None:
         """Tier 2: two independent patches each take effect."""
@@ -479,9 +478,9 @@ class TestMultiplePatchOrder:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        assert stub.calls[0].get("temperature") == pytest.approx(0.7)
-        assert stub.calls[0].get("max_tokens") == 200
+        (only,) = stub.calls
+        assert only.get("temperature") == pytest.approx(0.7)
+        assert only.get("max_tokens") == 200
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +512,7 @@ class TestInvalidPath:
             ))
 
         # LLM must NOT have been called
-        assert len(stub.calls) == 0
+        assert not stub.calls
 
     def test_malformed_expression_raises(self, tmp_path: Path) -> None:
         """Tier 2: a syntactically unparseable patch expression raises SystemExit."""
@@ -537,7 +536,7 @@ class TestInvalidPath:
                 acompletion_fn=stub,
             ))
 
-        assert len(stub.calls) == 0
+        assert not stub.calls
 
 
 # ---------------------------------------------------------------------------
@@ -581,7 +580,7 @@ class TestAppendNonString:
                 acompletion_fn=stub,
             ))
 
-        assert len(stub.calls) == 0
+        assert not stub.calls
 
 
 # ---------------------------------------------------------------------------
@@ -657,8 +656,8 @@ class TestValueParsing:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        enum_val = stub.calls[0]["tools"][0]["function"]["parameters"]["properties"]["name"]["enum"]
+        (only,) = stub.calls
+        enum_val = only["tools"][0]["function"]["parameters"]["properties"]["name"]["enum"]
         assert isinstance(enum_val, list)
         assert enum_val == ["x", "y"]
 
@@ -683,8 +682,8 @@ class TestValueParsing:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        assert stub.calls[0]["messages"][0]["content"] == "bare_word"
+        (only,) = stub.calls
+        assert only["messages"][0]["content"] == "bare_word"
 
 
 # ---------------------------------------------------------------------------
@@ -704,10 +703,8 @@ class TestPatchIntegration:
             'messages[0].content="patched"',
             "sampling_params.temperature=0.7",
         ])
-        assert len(applied) == 2
-        paths = [p for p, _ in applied]
-        assert "messages[0].content" in paths
-        assert "sampling_params.temperature" in paths
+        paths = {p for p, _ in applied}
+        assert paths == {"messages[0].content", "sampling_params.temperature"}
 
     def test_payload_mutated_in_place(self) -> None:
         """Tier 2: _apply_patches mutates the payload dict in place."""
@@ -743,8 +740,7 @@ class TestPatchIntegration:
             acompletion_fn=stub,
         ))
 
-        assert len(stub.calls) == 1
-        call = stub.calls[0]
+        (call,) = stub.calls
 
         # Enum must be patched
         enum_val = call["tools"][0]["function"]["parameters"]["properties"]["name"]["enum"]
