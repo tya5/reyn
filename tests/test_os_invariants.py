@@ -46,7 +46,7 @@ def _control(type: str, decision: str, next_phase: str | None, confidence: float
 
 
 def test_p4_transition_requires_next_phase():
-    """Tier 2 (P4): control.type='transition' requires non-null next_phase.
+    """Tier 2: P4 — control.type='transition' requires non-null next_phase.
 
     Protects: the LLM output contract documented in CLAUDE.md. A transition
     without a target makes the OS phase-graph state ambiguous.
@@ -57,7 +57,7 @@ def test_p4_transition_requires_next_phase():
 
 
 def test_p4_finish_forbids_next_phase():
-    """Tier 2 (P4): control.type='finish' requires next_phase=null.
+    """Tier 2: P4 — control.type='finish' requires next_phase=null.
 
     Protects: an LLM that emits both 'finish' and a target next_phase is
     self-contradictory; the OS must reject it rather than pick one
@@ -69,7 +69,7 @@ def test_p4_finish_forbids_next_phase():
 
 
 def test_p4_finish_requires_finish_decision():
-    """Tier 2 (P4): control.type='finish' requires control.decision='finish'.
+    """Tier 2: P4 — control.type='finish' requires control.decision='finish'.
 
     Protects: the OS-level decision vocabulary (continue|finish|abort) must
     be consistent with the control type. 'revise' / other skill-specific
@@ -84,7 +84,7 @@ def test_p4_finish_requires_finish_decision():
 
 
 def test_p5_workspace_round_trip(tmp_path, monkeypatch):
-    """Tier 2 (P5): data round-trips through Workspace API; no other channel.
+    """Tier 2: P5 — data round-trips through Workspace API; no other channel.
 
     Protects: the principle that Workspace is the only sink/source for
     inter-phase data. A read after a write must return exactly what was
@@ -101,7 +101,7 @@ def test_p5_workspace_round_trip(tmp_path, monkeypatch):
 
 
 def test_p5_workspace_rejects_writes_outside_project(tmp_path, monkeypatch):
-    """Tier 2 (P5): Workspace refuses absolute paths outside project root
+    """Tier 2: P5 — Workspace refuses absolute paths outside project root
     when no PermissionResolver has approved them.
 
     Protects: workspace boundary. Phases / preprocessors cannot exfiltrate
@@ -120,7 +120,7 @@ def test_p5_workspace_rejects_writes_outside_project(tmp_path, monkeypatch):
 
 
 def test_p6_workspace_write_emits_event(tmp_path, monkeypatch):
-    """Tier 2 (P6): every workspace mutation produces an event.
+    """Tier 2: P6 — every workspace mutation produces an event.
 
     Protects: the audit-truth principle. If a state-mutating operation
     can occur without a corresponding event, the events log is no longer
@@ -140,7 +140,7 @@ def test_p6_workspace_write_emits_event(tmp_path, monkeypatch):
 
 
 def test_p6_workspace_delete_emits_event(tmp_path, monkeypatch):
-    """Tier 2 (P6): workspace deletion is audited.
+    """Tier 2: P6 — workspace deletion is audited.
 
     Protects: deletion is a state mutation. Even if the file disappears,
     the events log retains a record. Without this, a phase that deletes
@@ -184,7 +184,7 @@ def _make_simple_skill() -> Skill:
 
 
 def test_build_candidates_includes_abort():
-    """Tier 2 (P4/B17-S9-1): _build_candidates always emits an abort candidate.
+    """Tier 2: P4/B17-S9-1 — _build_candidates always emits an abort candidate.
 
     Per P4 the LLM can only pick from OS-provided candidates. Without an
     abort candidate the LLM has no structural path to emit decision=abort,
@@ -208,7 +208,7 @@ def test_build_candidates_includes_abort():
 
 
 def test_llm_output_with_decision_abort_validates():
-    """Tier 2 (P4/B17-S9-1): LLM output with decision=abort passes normalize().
+    """Tier 2: P4/B17-S9-1 — LLM output with decision=abort passes normalize().
 
     Confirms the OS accepts the abort control triple (type=abort,
     decision=abort, next_phase=null) per the LLM Output Contract in CLAUDE.md.
