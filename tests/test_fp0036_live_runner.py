@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import shutil
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -144,8 +143,8 @@ async def test_single_turn_scenario_returns_reply(tmp_path, monkeypatch):
     runner_fn = _make_live_runner_fn(tmp_path, agent_name="default")
     assert runner_fn is not None, "_build_live_runner must return a callable"
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=fake_llm):
-        result = await runner_fn(scenario)
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    result = await runner_fn(scenario)
 
     assert result.scenario_id == "s1"
     assert result.reply_text, "reply_text must be non-empty for a successful turn"
@@ -179,8 +178,8 @@ async def test_multi_turn_scenario_concatenates_replies(tmp_path, monkeypatch):
     runner_fn = _make_live_runner_fn(tmp_path, agent_name="default")
     assert runner_fn is not None
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=fake_llm):
-        result = await runner_fn(scenario)
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    result = await runner_fn(scenario)
 
     assert result.scenario_id == "s2"
     # Both replies must be present in the output.
@@ -227,15 +226,14 @@ async def test_event_isolation_between_scenarios(tmp_path, monkeypatch):
     scenario_a = _make_scenario("iso-a", input_text="Turn A")
     scenario_b = _make_scenario("iso-b", input_text="Turn B")
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=fake_llm):
-        result_a = await runner_fn(scenario_a)
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    result_a = await runner_fn(scenario_a)
 
     # The chat events dir should exist after scenario A.
     events_chat_dir = tmp_path / ".reyn" / "events" / "agents" / "default" / "chat"
 
     # After scenario B is run, the runner wipes the event dir first.
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=fake_llm):
-        result_b = await runner_fn(scenario_b)
+    result_b = await runner_fn(scenario_b)
 
     # Scenario B's events list must NOT contain events from scenario A.
     # Since the wipe removes all prior files, events in result_b are only
@@ -361,8 +359,8 @@ async def test_history_jsonl_wiped_before_scenario(tmp_path, monkeypatch):
 
     scenario = _make_scenario("hist-s1", input_text="What is fresh?")
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=capturing_llm):
-        result = await runner_fn(scenario)
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", capturing_llm)
+    result = await runner_fn(scenario)
 
     # The LLM must NOT have seen any of the stale entries in any call.
     # (Cannot assert history_path absence after the run because the session
