@@ -325,7 +325,35 @@ class AsyncStackPanel(Widget):
         return "".join(out) + ellipsis
 
     def _refresh(self) -> None:
+        """Re-render the rows after a state change.
+
+        Wave-10 follow-up I-F11: ``self._static`` is assigned inside
+        ``compose()`` BEFORE the ``yield``. Textual considers the
+        widget mounted only after ``yield`` returns + the DOM append
+        completes on the next event-loop tick. An external caller
+        invoking ``add()`` / ``set_pending()`` / ``remove()`` before
+        the widget is attached (= pre-mount race in test harness, or
+        future wiring that hooks into a pre-mount registry event)
+        passes the bare ``self._static is None`` guard because the
+        attribute IS set — but ``self._static.update(...)`` lands on
+        a Static that has no parent in the DOM. The update is silently
+        dropped by Textual and the visible state diverges from the
+        widget's internal model.
+
+        Adding ``is_mounted`` (= Textual's public "widget is in the
+        DOM" check) makes the pre-mount path a no-op. Mounted-but-
+        pending updates still flush correctly because on_mount()
+        calls ``_refresh`` directly after marking the widget
+        attached.
+        """
         if self._static is None:
+            return
+        # ``is_mounted`` is the public Textual attribute for "widget
+        # has reached the post-on_mount DOM-attached state". Falls
+        # back to True when missing (= ancient Textual versions) so
+        # the new gate doesn't break existing pre-mount behaviour on
+        # incompatible runtimes.
+        if not getattr(self, "is_mounted", True):
             return
         self._static.update(self._build_lines())
 
