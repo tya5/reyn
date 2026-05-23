@@ -22,6 +22,11 @@ _KEY_DETAILS: dict[str, str] = {
         "If the row was already flushed to scroll history, surfaces a\n"
         "Ctrl+B -> Events hint. No-op hint when no failure exists yet."
     ),
+    "f8": (
+        "Toggle the latest long agent reply (expand/collapse). Same as\n"
+        "/expand or clicking the foldable's hint footer. Collapsed shows\n"
+        "preview + ▶ hint; expanded shows full text + ▼ hint."
+    ),
     "f3": (
         "Drill-down expands the cursor's skill row to show phase history,\n"
         "tool calls, and per-phase events. Mouse-click on the row does\n"
@@ -101,7 +106,7 @@ _KEY_PRETTY: dict[str, str] = {
     "ctrl+shift+g": "⌃⇧G",
     "enter": "Enter", "tab": "Tab", "escape": "Esc", "space": "Space",
     "up": "↑", "down": "↓", "left": "←", "right": "→",
-    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f7": "F7",
+    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f7": "F7", "f8": "F8",
     # Quick-jump number keys for the right-panel tabs (Ctrl+1 .. Ctrl+7).
     "ctrl+1": "⌃1", "ctrl+2": "⌃2", "ctrl+3": "⌃3", "ctrl+4": "⌃4",
     "ctrl+5": "⌃5", "ctrl+6": "⌃6", "ctrl+7": "⌃7", "ctrl+8": "⌃8",
@@ -124,6 +129,9 @@ _CONVERSATION_KEYS = {
     # W13 T2-1: ToolCallRow failure drill-down. Same rationale as F3 --
     # toggles inline expand on a widget that lives in the conv pane.
     "f7",
+    # F8: FoldableMarkdown toggle. Same rationale as F3/F7 — toggles
+    # expand state of a widget mounted in the conv pane.
+    "f8",
 }
 # ``j`` / ``k`` / ``space`` / ``c`` are routed via ``RightPanel.on_key``
 # (not ``app.BINDINGS``) and dispatch per-tab inside the panel handler,
@@ -157,6 +165,7 @@ _GROUP_ORDER = [
 _MOUSE_EXPLICIT: list[tuple[str, str]] = [
     ("click skill row", "Drill-down (= F3 mouse equivalent)"),
     ("click failed tool row", "Expand failure detail (= F7 mouse equivalent)"),
+    ("click foldable reply", "Toggle long reply expand/collapse (= F8 / /expand)"),
     ("click header [N pending]", "Jump to Pending tab"),
     ("click header [find: ...]", "Clear find filter"),
 ]

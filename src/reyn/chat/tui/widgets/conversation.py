@@ -57,6 +57,7 @@ from reyn.chat.tui._palette import _AMBER, _CORAL
 
 from .async_stack_panel import AsyncStackPanel
 from .error_box import ErrorBox
+from .foldable_markdown import FoldableMarkdown
 from .intervention import InterventionWidget
 from .skill_activity import SkillActivityRow
 from .sticky_status import StickyStatus
@@ -331,7 +332,16 @@ class ConversationView(Widget):
         self._start_line_warned = False
         # B3 — full text of the last truncated agent reply (or None when the
         # most recent reply fit within _FOLD_THRESHOLD_LINES).
+        # DEPRECATED: retained for has_pending_expand property only.
+        # Long replies are now mounted as FoldableMarkdown widgets tracked
+        # in ``_foldables`` below. ``expand_last_reply`` is kept for
+        # backwards-compat but delegates to toggle_last_foldable().
         self._last_long_reply: str | None = None
+        # B3 (toggle): ordered list of mounted FoldableMarkdown widgets,
+        # newest last. toggle_last_foldable() operates on the tail element.
+        # Cleared on clear(). Does NOT grow unboundedly — FoldableMarkdown
+        # widgets are height:auto children; the list is a reference list only.
+        self._foldables: list[FoldableMarkdown] = []
         # Recent agent replies (newest last), capped at ``_RECENT_REPLIES_MAX``.
         # Consumed by the /copy slash command — users can grab the latest reply
         # (``/copy``) or any of the last N (``/copy 2``, ``/copy 3``, …) without
@@ -781,12 +791,15 @@ class ConversationView(Widget):
         return total
 
     def _write_agent_markdown_with_fold(self, text: str) -> None:
-        """Write `text` as Markdown into the log; truncate when it's too long.
+        """Write `text` as Markdown; mount FoldableMarkdown when too long.
 
-        Long replies (> _FOLD_THRESHOLD_LINES) are truncated and a dim hint is
-        appended pointing the user at /expand. The full text is stashed in
-        self._last_long_reply so expand_last_reply() can flush the rest.
-        Replies that fit are rendered as-is and clear any pending fold.
+        Short replies (≤ _FOLD_THRESHOLD_LINES estimated rendered lines):
+        rendered via _write_body directly into the RichLog.
+
+        Long replies: a FoldableMarkdown widget is mounted as a child of
+        ConversationView, AFTER the most-recent RichLog content. Collapsed
+        by default (shows preview + ▶ hint). toggle_last_foldable() and
+        on_click toggle state.
 
         Side effect: appends ``text`` to ``self._recent_replies`` (capped
         at ``_RECENT_REPLIES_MAX``) so the /copy slash command can hand
@@ -796,106 +809,61 @@ class ConversationView(Widget):
         self._recent_replies.append(text)
         if len(self._recent_replies) > _RECENT_REPLIES_MAX:
             self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
-        log = self._log()
-        # Detect that a prior fold is about to be invalidated. The single-slot
-        # ``_last_long_reply`` is replaced (or cleared) by every new agent
-        # reply, so any old fold hint up-screen still reads "type /expand to
-        # show" while /expand itself silently no-ops. Flag it inline so the
-        # user can tell the previous fold is no longer reachable.
-        had_prev_fold = self._last_long_reply is not None
         # Wave-10 follow-up G-F11: ``splitlines()`` instead of
         # ``split("\n")`` so CRLF / CR endings normalise correctly.
-        # ``split("\n")`` leaves a trailing ``\r`` on each CRLF line,
-        # which can confuse Rich's markup parser at preview-slice
-        # boundaries and produces stray carriage-return characters
-        # in the fold-hint count's source. ``_render_system_message``
-        # already uses ``splitlines()``; this aligns the two paths.
         lines = text.splitlines()
         # Wave-7 B-F2: fold decision uses an estimated rendered-screen-line
-        # count rather than raw source newlines. A reply with 29 newlines
-        # whose paragraphs wrap to 4 screen lines each would have rendered
-        # ~116 lines without folding under the old ``len(lines)`` check;
-        # conversely 31 single-word lines used to fold needlessly. The
-        # estimate is degrade-safe: when ``self.size.width`` is 0
-        # (= pre-mount), falls back to a typical 73-col body width.
+        # count rather than raw source newlines.
         if self._estimate_rendered_lines(lines) <= _FOLD_THRESHOLD_LINES:
             self._write_body(RichMarkdown(text))
-            if had_prev_fold:
-                self._write_fold_expired_marker()
             self._last_long_reply = None
             return
         preview = "\n".join(lines[:_FOLD_THRESHOLD_LINES])
         # Wave-10 follow-up G-F6: report the rendered-screen-line count
-        # of the suppressed tail, not the raw source-line count. The
-        # fold decision (= ``_estimate_rendered_lines(lines) >
-        # _FOLD_THRESHOLD_LINES``) was already in rendered-line space,
-        # but the hint message used ``len(lines) -
-        # _FOLD_THRESHOLD_LINES`` which is raw source-line count. Net
-        # effect: a reply with paragraphs that wrap to 4 screen lines
-        # each would report ``"12 more lines"`` when the actual hidden
-        # body is ~48 screen lines (= user expected a short tail,
-        # ``/expand`` reveals a screenful). Conversely, 60 single-word
-        # source lines past position 30 reported ``"60 more lines"``
-        # but rendered as just ~60 screen lines (= the report happens
-        # to be accurate when wrap doesn't fire, which is the minority
-        # case). Routing the count through ``_estimate_rendered_lines``
-        # uses the same metric for both the gate and the user-facing
-        # count → no surprise on ``/expand``.
+        # of the suppressed tail, not the raw source-line count.
         tail_lines = lines[_FOLD_THRESHOLD_LINES:]
         remaining = self._estimate_rendered_lines(tail_lines)
-        self._write_body(RichMarkdown(preview))
-        hint = Text()
-        hint.append(
-            f"  [ … {remaining} more lines · type ",
-            style=f"dim {_CORAL}",
+        # Mount a FoldableMarkdown widget for the long reply.
+        # The widget renders preview by default and supports
+        # click / F8 / /expand to toggle to full content.
+        foldable = FoldableMarkdown(
+            full_text=text,
+            preview_text=preview,
+            remaining_lines=remaining,
         )
-        hint.append("/expand", style=f"bold {_CORAL}")
-        hint.append(" to show ]", style=f"dim {_CORAL}")
-        log.write(hint)
-        if had_prev_fold:
-            self._write_fold_expired_marker()
-        # Wave-4 AR1: store only the TAIL (= the part not yet rendered)
-        # in the stash, not the full text. Previously
-        # ``_last_long_reply = text`` re-rendered lines 1-30 on /expand
-        # → user saw the preview AND the full reply with overlap
-        # (= lines 1-30 appeared twice in the log). Storing the tail
-        # makes expand_last_reply render exactly the missing lines,
-        # matching the docstring intent ("flush the rest").
-        # ``_recent_replies`` above still has the full text for /copy.
-        self._last_long_reply = "\n".join(lines[_FOLD_THRESHOLD_LINES:])
+        self._foldables.append(foldable)
+        self._last_long_reply = "\n".join(tail_lines)  # kept for has_pending_expand
+        self.mount(foldable)
 
-    def _write_fold_expired_marker(self) -> None:
-        """Emit a dim marker noting that an earlier fold's /expand is gone.
+    def toggle_last_foldable(self) -> bool:
+        """Toggle the latest FoldableMarkdown widget (expand ↔ collapse).
 
-        The fold stash is a single slot — every new agent reply either
-        clears it (short reply) or replaces it (next long reply). Either
-        way the earlier fold's /expand becomes unreachable; this marker
-        makes that visible chronologically so users don't keep typing
-        /expand into a no-op.
+        Returns True when a widget was toggled, False when no foldable
+        exists yet in this session (= "nothing to expand" path for /expand).
         """
-        marker = Text()
-        marker.append("  [ ↑ earlier fold cleared ]", style=f"dim {_CORAL}")
-        self._log().write(marker)
+        if not self._foldables:
+            return False
+        self._foldables[-1].toggle()
+        return True
 
     def expand_last_reply(self) -> bool:
-        """Append the full text of the most recently truncated reply.
+        """Toggle the latest foldable (= bidirectional; kept for back-compat).
 
-        Returns True when a reply was expanded; False when nothing pending.
-        After expanding, the stash is cleared (only one expand per fold).
+        The old one-way append is superseded by FoldableMarkdown. This method
+        now delegates to toggle_last_foldable() so callers wired to the old
+        path continue to work (= /expand handler in app_outbox.py).
         """
-        if not self._last_long_reply:
-            return False
-        log = self._log()
-        marker = Text()
-        marker.append("  ↓ expanded", style=f"dim {_CORAL}")
-        log.write(marker)
-        self._write_body(RichMarkdown(self._last_long_reply))
-        log.write(Text(""))
-        self._last_long_reply = None
-        return True
+        return self.toggle_last_foldable()
 
     @property
     def has_pending_expand(self) -> bool:
+        """True when the latest reply produced a foldable (= long enough to fold).
+
+        Mirrors the old single-slot semantics: a subsequent short reply
+        clears ``_last_long_reply`` to None, so this returns False even
+        though older foldable widgets from previous turns are still mounted.
+        Used by tests that check whether the most-recent reply was long.
+        """
         return self._last_long_reply is not None
 
     def last_reply_text(self) -> str | None:
@@ -2165,6 +2133,13 @@ class ConversationView(Widget):
         self._turn_anchors.clear()
         self._trim_warned = False
         self._last_long_reply = None
+        # B3 toggle: remove any mounted FoldableMarkdown widgets + clear list.
+        for widget in list(self.query(FoldableMarkdown)):
+            try:
+                widget.remove()
+            except Exception:
+                pass
+        self._foldables.clear()
         # Wave-10 G-F3: reset the recent-replies ring buffer. Pre-fix
         # ``/copy`` after a Ctrl+L returned replies from the now-invisible
         # prior session — confusing, and potentially surfaces content

@@ -1,16 +1,19 @@
-"""Tier 2: fold-stash invalidation is surfaced inline, not silent.
+"""Tier 2: FoldableMarkdown replaces single-slot fold stash (B3 toggle refactor).
 
-The B3 fold mechanism stashes the full text of a long agent reply in
-``_last_long_reply`` and offers `/expand` to flush the rest. The stash is
-a single slot — any subsequent agent reply (short or long) overwrites
-it. Before this fix the user kept seeing the old fold hint up-screen
-while `/expand` silently no-ops; nothing in the log indicated that the
-fold had been invalidated.
+The old B3 fold mechanism used a single ``_last_long_reply`` slot: each
+new reply (short or long) either cleared or replaced it, and a dim
+"[ ↑ earlier fold cleared ]" marker was emitted to signal invalidation.
 
-These tests pin the contract that when an earlier fold's stash is
-cleared or replaced, a dim "[ ↑ earlier fold cleared ]" marker lands in
-the RichLog so the user can tell `/expand` no longer points at the old
-reply.
+The new design mounts a ``FoldableMarkdown`` widget per long reply.
+Each widget is independently toggleable, so there is no longer a
+"stash invalidated" concept. The "expired marker" contract is gone.
+
+These tests pin the new B3 toggle contract:
+  - ``has_pending_expand`` reflects whether the LATEST reply was long.
+  - A short follow-up clears ``has_pending_expand`` (= latest is short).
+  - A second long reply adds a NEW foldable; both widgets remain mounted.
+  - Short replies write nothing to the "earlier fold" path.
+  - ``_last_long_reply`` transitions are still testable via public surface.
 """
 from __future__ import annotations
 
@@ -48,46 +51,51 @@ def _long_reply(line_count: int = 60) -> str:
 
 
 @pytest.mark.asyncio
-async def test_short_reply_after_fold_writes_expired_marker():
-    """Short reply following a folded long reply emits the expired marker.
+async def test_short_reply_after_fold_clears_has_pending_expand():
+    """Tier 2: short reply after a long one clears has_pending_expand.
 
-    The single-slot stash is cleared by the short reply; up-screen the
-    old fold hint still reads "type /expand to show", so the marker is
-    the only on-screen cue that /expand no longer works.
+    FoldableMarkdown design: the new widget remains mounted for the older
+    long reply; ``has_pending_expand`` tracks whether the LATEST reply
+    was long (= mirrors the old slot semantics on the public API).
     """
+    from reyn.chat.tui.widgets.foldable_markdown import FoldableMarkdown
+
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        log = conv.query_one(RichLog)
 
-        # Turn 1: long reply → stash populated, fold hint emitted
+        # Turn 1: long reply → foldable mounted, has_pending_expand True
         conv._write_agent_markdown_with_fold(_long_reply(60))
         await pilot.pause()
-        assert conv.has_pending_expand
+        assert conv.has_pending_expand, "long reply should set has_pending_expand"
+        assert len(list(conv.query(FoldableMarkdown))) == 1
 
-        # Turn 2: short reply → stash cleared, marker should appear
+        # Turn 2: short reply → has_pending_expand False; foldable still mounted
         conv._write_agent_markdown_with_fold("short ack")
         await pilot.pause()
-        assert not conv.has_pending_expand
-        rendered = _log_text(log)
-        assert "earlier fold cleared" in rendered, (
-            f"expected expired marker after short reply, got:\n{rendered}"
+        assert not conv.has_pending_expand, (
+            "short reply clears has_pending_expand (latest reply is short)"
+        )
+        # The older foldable widget is STILL mounted (not removed by short reply)
+        assert len(list(conv.query(FoldableMarkdown))) == 1, (
+            "older FoldableMarkdown stays mounted after a short follow-up"
         )
 
 
 @pytest.mark.asyncio
-async def test_long_reply_after_fold_writes_expired_marker():
-    """Second long reply replaces the stash and still flags the user.
+async def test_long_reply_after_fold_adds_second_foldable():
+    """Tier 2: second long reply mounts a second FoldableMarkdown.
 
-    /expand now targets the NEW reply; the marker prevents the user
-    from assuming /expand still points at the older content.
+    Both widgets remain independently toggleable. ``has_pending_expand``
+    reflects the latest (second) reply's tail.
     """
+    from reyn.chat.tui.widgets.foldable_markdown import FoldableMarkdown
+
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        log = conv.query_one(RichLog)
 
         conv._write_agent_markdown_with_fold(_long_reply(60))
         await pilot.pause()
@@ -95,18 +103,25 @@ async def test_long_reply_after_fold_writes_expired_marker():
 
         conv._write_agent_markdown_with_fold(_long_reply(80))
         await pilot.pause()
-        # Stash was replaced (new content), not None
+        # has_pending_expand still True (latest reply is also long)
+        assert conv.has_pending_expand
+        # _last_long_reply replaced with second reply's tail
         assert conv._last_long_reply is not None
         assert conv._last_long_reply != first_stash
-        rendered = _log_text(log)
-        assert "earlier fold cleared" in rendered, (
-            f"expected expired marker after replacing fold, got:\n{rendered}"
+        # Two FoldableMarkdown widgets mounted
+        foldables = list(conv.query(FoldableMarkdown))
+        assert len(foldables) == 2, (
+            f"expected 2 foldable widgets, got {len(foldables)}"
         )
 
 
 @pytest.mark.asyncio
-async def test_first_reply_does_not_emit_expired_marker():
-    """No prior fold → no marker (the marker is only relevant on invalidation)."""
+async def test_first_reply_does_not_write_expired_marker():
+    """Tier 2: no expired-marker text appears for the first reply.
+
+    The expired-marker concept is gone with FoldableMarkdown; this test
+    guards against any accidental regression that re-introduces the marker.
+    """
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -118,16 +133,16 @@ async def test_first_reply_does_not_emit_expired_marker():
 
         rendered = _log_text(log)
         assert "earlier fold cleared" not in rendered, (
-            f"marker leaked on first reply:\n{rendered}"
+            f"expired marker leaked on first reply:\n{rendered}"
         )
 
 
 @pytest.mark.asyncio
-async def test_short_then_short_no_marker():
-    """Two short replies in a row → no fold ever existed, no marker.
+async def test_short_then_short_no_expired_marker():
+    """Tier 2: two short replies in a row → no expired-marker text.
 
     Defends against accidentally emitting the marker whenever the stash
-    transitions None → None.
+    transitions None → None (regression from old code path).
     """
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:

@@ -171,48 +171,50 @@ async def test_streaming_cursor_uses_amber() -> None:
 
 @pytest.mark.asyncio
 async def test_fold_hint_uses_coral_action_colour() -> None:
-    """The ``/expand`` fold hint stays on _CORAL — it's an action affordance.
+    """The fold hint is a FoldableMarkdown widget, not an amber agent element.
 
-    Defence against an over-eager refactor that swept every coral to
-    amber: the action / cursor channel must keep its distinct hue, or
-    the semantic split collapses back to a single accent.
+    FoldableMarkdown design: the hint Label uses a dim coral palette (#886633),
+    NOT _AMBER (agent identity). We verify:
+      1. A FoldableMarkdown widget is mounted for a long reply.
+      2. The FoldableMarkdown DEFAULT_CSS does NOT reference _AMBER so the
+         semantic split is intact.
+      3. The hint Label has the fm-hint CSS class (= correct widget structure).
+
+    The old test searched for a RichLog strip containing "/expand"; with
+    FoldableMarkdown the hint lives in a Label widget child.
     """
-    from textual.widgets import RichLog
+    from textual.widgets import Label
+
+    from reyn.chat.tui.widgets.foldable_markdown import FoldableMarkdown
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        log = conv.query_one(RichLog)
 
         # Trigger fold with a long reply (> _FOLD_THRESHOLD_LINES)
         long_text = "\n".join(f"line {i}" for i in range(60))
         conv._write_agent_markdown_with_fold(long_text)
         await pilot.pause()
 
-        # Find the fold hint strip
-        hint_strip = None
-        for s in log.lines:
-            text = "".join(seg.text for seg in s)
-            if "/expand" in text or "more lines" in text:
-                hint_strip = s
-                break
-        assert hint_strip is not None, "fold hint strip not found"
+        foldables = list(conv.query(FoldableMarkdown))
+        assert foldables, "FoldableMarkdown should be mounted for a long reply"
+        latest = foldables[-1]
+        hint_label = latest.query_one(".fm-hint", Label)
+        assert hint_label is not None, "fm-hint Label should exist in FoldableMarkdown"
 
-        coral_lower = _CORAL.lower()
+        # Structural check: DEFAULT_CSS must not reference _AMBER (amber = agent identity).
         amber_lower = _AMBER.lower()
-        any_coral = any(
-            coral_lower in (str(seg.style).lower() if seg.style else "")
-            for seg in hint_strip
+        css = FoldableMarkdown.DEFAULT_CSS.lower()
+        assert amber_lower not in css, (
+            f"FoldableMarkdown.DEFAULT_CSS must NOT use _AMBER ({_AMBER}); "
+            f"found it in CSS"
         )
-        any_amber = any(
-            amber_lower in (str(seg.style).lower() if seg.style else "")
-            for seg in hint_strip
+
+        # Hint text check (internal attribute): contains the ▶ glyph and "more lines".
+        hint_text = latest._collapsed_hint()
+        assert "more lines" in hint_text, (
+            f"collapsed hint should contain 'more lines', got: {hint_text!r}"
         )
-        assert any_coral, (
-            f"fold hint must use _CORAL ({_CORAL}); "
-            f"got segs={[(s.text, str(s.style)) for s in hint_strip]}"
-        )
-        assert not any_amber, (
-            f"fold hint must NOT use _AMBER (= agent identity); "
-            f"got segs={[(s.text, str(s.style)) for s in hint_strip]}"
+        assert "▶" in hint_text, (
+            f"collapsed hint should contain '▶', got: {hint_text!r}"
         )

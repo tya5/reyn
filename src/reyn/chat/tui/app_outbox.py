@@ -476,8 +476,12 @@ class OutboxRouter:
     def _on_expand_last_reply(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__expand_last_reply__` — /expand slash; flush truncated reply."""
-        if not conv.expand_last_reply():
+        """`__expand_last_reply__` — /expand slash; toggle latest foldable.
+
+        Semantics change: was one-way "reveal tail"; now toggles the latest
+        FoldableMarkdown widget (expand ↔ collapse). Repeated /expand cycles.
+        """
+        if not conv.toggle_last_foldable():
             self._show_transient_status(conv, "nothing to expand", duration=2.0)
 
     def _on_copy_last_reply(
