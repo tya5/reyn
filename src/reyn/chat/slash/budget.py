@@ -29,7 +29,11 @@ async def cost_cmd(session: "ChatSession", args: str) -> None:
     await reply(session, line)
 
 
-@slash("budget", summary="Full budget breakdown; /budget reset to clear counters")
+@slash(
+    "budget",
+    summary="Full budget breakdown",
+    usage="/budget [reset]",
+)
 async def budget_cmd(session: "ChatSession", args: str) -> None:
     """``/budget`` (full breakdown) or ``/budget reset`` (clear counters).
 

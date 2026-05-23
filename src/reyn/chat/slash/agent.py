@@ -29,7 +29,11 @@ _NO_REGISTRY = (
 )
 
 
-@slash("agent", summary="Create new agent (subcommands: new <name>)")
+@slash(
+    "agent",
+    summary="Create new agent",
+    usage="/agent new <name>",
+)
 async def agent_cmd(session: "ChatSession", args: str) -> None:
     """Dispatch ``/agent <sub>`` subcommands."""
     parts = args.strip().split(maxsplit=1)

@@ -26,6 +26,7 @@ from reyn.chat.slash import reply, reply_error, slash
 @slash(
     "reset",
     summary="Reset in-flight skill state (snapshots + WAL; audit logs preserved)",
+    usage="/reset confirm",
 )
 async def reset_cmd(session: "object", args: str) -> None:
     token = args.strip().lower()

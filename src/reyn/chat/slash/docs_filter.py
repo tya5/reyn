@@ -14,7 +14,11 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.chat.slash import slash
 
 
-@slash("docs-filter", summary="Filter the docs tab by substring (empty = clear)")
+@slash(
+    "docs-filter",
+    summary="Filter the docs tab by substring (empty = clear)",
+    usage="/docs-filter [<substring>]",
+)
 async def docs_filter_cmd(session: "object", args: str) -> None:
     await session._put_outbox(OutboxMessage(
         kind="__docs_filter__",
