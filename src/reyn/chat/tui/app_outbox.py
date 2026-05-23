@@ -175,6 +175,7 @@ class OutboxRouter:
             "intervention":             self._on_intervention,
             "intervention_resolved":    self._on_intervention_resolved,
             "status":                   self._on_status,
+            "system":                   self._on_system,
             "trace":                    self._on_trace,
             # NOTE: "skill_done" outbox kind was removed in FP-0011.
             # Skill completion is now signalled via "skill done: <status>"
@@ -793,6 +794,49 @@ class OutboxRouter:
                 if _is_plan_sourced_body(current_body):
                     return  # don't overwrite the higher-priority plan status
         conv.show_status(msg.text, kind="thinking")
+
+    def _on_system(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """`system` — bridge plan lifecycle to AsyncStackPanel + default render.
+
+        ``plan_runner`` emits two ``kind="system"`` messages with a
+        ``source`` discriminator in meta:
+
+          - ``source="plan_summary"`` (= ``[task_spawned] kind=plan``
+            equivalent for the TUI) — fires when a plan starts. Carries
+            ``plan_id`` so the AsyncStackPanel can mount a row keyed
+            on the plan identity.
+          - ``source="plan_complete"`` (= ``[task_completed] kind=plan``
+            equivalent) — fires when the plan finishes. We drop the row.
+
+        Other ``kind="system"`` messages (lifecycle markers, slash-command
+        output, attach/detach notices) flow through the default
+        ``conv.render_message`` path unchanged. The plan side-effect is
+        ADDITIVE — we always also render the message so the conv pane's
+        existing system-message UX (= dim marker line) stays intact.
+        """
+        source = (msg.meta or {}).get("source", "")
+        plan_id = (msg.meta or {}).get("plan_id", "")
+        if plan_id:
+            if source == "plan_summary":
+                # Compact summary for the bottom strip — the full
+                # multi-line ``Executing plan: …`` text already lands
+                # in the conv pane via the default render below.
+                summary = f"plan #{str(plan_id)[:8]}"
+                try:
+                    conv.add_async_task(str(plan_id), summary)
+                except Exception:
+                    pass
+            elif source == "plan_complete":
+                try:
+                    conv.remove_async_task(str(plan_id))
+                except Exception:
+                    pass
+        # Default render path — preserves the dim marker line / slash
+        # output / attach notice display the conv pane already gives
+        # to system messages.
+        conv.render_message(msg)
 
     def _on_trace(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
