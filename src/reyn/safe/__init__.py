@@ -14,7 +14,13 @@ Available modules:
   ``permissions.file.write_paths``; reads outside the declared set raise
   :class:`PermissionError`.
 
+- :mod:`reyn.safe.cache` — 24h-TTL file cache (`get` / `set`). New in
+  FP-0042 Phase 3 drift-fix; thin re-export of `reyn.registry.cache`
+  so safe-mode skills can use the existing shared cache store.
 - :mod:`reyn.safe.hash` — `sha256` / `sha256_hex`.
+- :mod:`reyn.safe.http` — urllib-backed HTTP (`get` / `post` / `put` /
+  `delete`). New in FP-0042 Phase 3 drift-fix; no per-call permission
+  gate (Issue #571 covers the future gate design).
 - :mod:`reyn.safe.json` — strict / canonical JSON helpers.
 - :mod:`reyn.safe.mcp` — MCP helpers (`mcp.registry.search` / `lookup`).
   New in FP-0042 Phase 2.4 — ambient (URL hardcoded, no permission gate).
@@ -30,8 +36,9 @@ to work via shim re-exports from this package. New code should import from
 ``reyn.safe.*``; existing code may migrate at its own pace.
 """
 
-from . import file, hash, json, mcp, process, random, schema, text, time
+from . import cache, file, hash, http, json, mcp, process, random, schema, text, time
 
 __all__ = [
-    "file", "hash", "json", "mcp", "process", "random", "schema", "text", "time",
+    "cache", "file", "hash", "http", "json", "mcp", "process", "random",
+    "schema", "text", "time",
 ]

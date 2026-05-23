@@ -28,11 +28,10 @@ Registry unreachable:
 """
 from __future__ import annotations
 
-import os
 import re
 
-from reyn.api.safe.json import loads_strict
-from reyn.api.unsafe.http import get as http_get
+from reyn.safe.http import get as http_get
+from reyn.safe.json import loads_strict
 
 _USER_AGENT = "reyn/1.0"
 _DEFAULT_LIST_URL = (
@@ -46,22 +45,24 @@ _DEFAULT_RAW_BASE = (
 def _list_url() -> str:
     """GitHub Contents API URL for the skill directory listing.
 
-    Override via ``REYN_SKILL_REGISTRY_URL`` (must be a GitHub Contents
-    API endpoint that returns an array of directory entries each having
-    a ``name`` and a ``html_url`` field).
+    FP-0042 Phase 3 drift-fix (2026-05-23): the ``REYN_SKILL_REGISTRY_URL``
+    env var override was dropped because ``os`` is not on the safe-mode
+    import allowlist and reading env vars under safe-mode is part of
+    the Issue #571 deferred design discussion (= config-controlled URL
+    needs a permission gate). Skills using a non-default registry can
+    declare mode: unsafe explicitly, or wait for the Issue #571
+    resolution.
     """
-    return os.environ.get("REYN_SKILL_REGISTRY_URL", _DEFAULT_LIST_URL).rstrip("/")
+    return _DEFAULT_LIST_URL.rstrip("/")
 
 
 def _raw_base() -> str:
     """Raw-URL prefix for fetching ``<name>/SKILL.md``.
 
-    Derived from the listing URL by default; overridable via
-    ``REYN_SKILL_REGISTRY_RAW_BASE`` for non-GitHub registries.
+    Derived from the listing URL. FP-0042 Phase 3 drift-fix dropped
+    the ``REYN_SKILL_REGISTRY_RAW_BASE`` override (= same reason as
+    ``_list_url``).
     """
-    explicit = os.environ.get("REYN_SKILL_REGISTRY_RAW_BASE")
-    if explicit:
-        return explicit.rstrip("/")
     # Default GitHub mapping: api.github.com/.../contents/<path>
     # → raw.githubusercontent.com/<owner>/<repo>/main/<path>
     list_url = _list_url()
@@ -166,7 +167,7 @@ def _build_candidate(name: str) -> dict:
     description fetch happens at most once per 24h per skill — successive
     queries against the same registry reuse the result.
     """
-    import reyn.registry.cache as cache
+    import reyn.safe.cache as cache
 
     cache_key = f"skill_search:desc:{_raw_base()}:{name}"
     cached = cache.get(cache_key)
@@ -190,7 +191,7 @@ def fetch_registry_results(artifact: dict) -> dict:
     Receives the phase input artifact dict. Returns a dict placed at
     ``data.registry`` in the enriched artifact.
     """
-    import reyn.registry.cache as cache
+    import reyn.safe.cache as cache
 
     text: str = (artifact.get("data") or {}).get("text") or ""
     query = _extract_keyword(text) if text.strip() else ""

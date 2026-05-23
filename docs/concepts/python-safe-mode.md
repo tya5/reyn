@@ -205,6 +205,62 @@ Instead, use `type: run_op` in the preprocessor / postprocessor chain.
 In short: **`safe` python is for deterministic-ish computation over inputs +
 ambient sources. Everything else is a `run_op`.**
 
+## Stdlib safe-only doctrine (FP-0042)
+
+**Stdlib skills must not require unsafe-mode python.** A regular operator
+who does not pass `--allow-unsafe-python` should be able to run any
+stdlib skill end-to-end. Stdlib that demands unsafe contradicts the
+user-trust model Reyn promises.
+
+This is the operating rule established by
+[FP-0042](../deep-dives/proposals/0042-stdlib-safe-only-and-permission-gated-file-api.md)
+and enforced by `tests/test_fp0042_stdlib_safe_only.py`:
+
+- No file under `src/reyn/stdlib/` imports from `reyn.api.unsafe.*`.
+  Use the `reyn.safe.*` permission-gated surface instead (= `file`,
+  `process`, `mcp.registry`).
+- No new stdlib `skill.md` declares `mode: unsafe` python steps. The
+  default mode for new stdlib code is `mode: safe`.
+
+### Grandfathered exemptions
+
+A small set of pre-FP-0042 stdlib entries remain `mode: unsafe`. Each is
+either a deprecated compatibility path or a skill that was outside the
+proposal's Phase 2 migration scope. The enforcement test
+(`GRANDFATHERED_UNSAFE` set) is the authoritative list — this table
+mirrors it for human reference.
+
+| Skill | Function | Why it remains unsafe |
+|-------|----------|----------------------|
+| `index_docs` | `apply_strategy` | Deprecated monolithic step kept for project-override compatibility (FP-0042 Phase 2.1 / 2.2 split the active flow into safe-mode `extract_and_split` + `write_chunks_with_lock`). |
+| `ops_report` | `collect_aggregate_fallback` | Globs event log + reads raw events. Outside FP-0042 Phase 2 listed scope. |
+| `ops_report` | `aggregate_from_raw_events` | Same as above — direct events read. |
+| `ops_report` | `collect_aggregate` | Back-compat wrapper that delegates to the fallback. |
+| `skill_improver` | `resolve_paths` | Legacy path resolver kept for direct callers (= same shape as the `eval_builder` migration finished in Phase 2.5). |
+| `skill_improver` | `collect_traces_fallback` | Globs `.reyn/events/**/*.jsonl` for trace dispatch. |
+| `skill_improver` | `collect_traces` | Back-compat wrapper. |
+| `skill_improver` | `save_snapshot` | Reads `skill.md`, writes `.reyn/skill-versions/`, manages a `current` pointer file. |
+| `skill_improver` | `read_on_propose_config` | Reads the `self_improvement` slice of `reyn.yaml`. |
+
+Adding an entry to this list is a deliberate decision — pair it with
+both an update to the test exemption set and a row here.
+
+### Migrating an exemption
+
+If you migrate one of the entries above off `mode: unsafe`:
+
+1. Refactor the step to use `reyn.safe.*` (= file read / write / mkdir /
+   glob / write_atomic, process identity, registry lookup) or split the
+   I/O into a `run_op`. The five Phase 2 PRs are the worked examples —
+   see `chunkers_preproc_safe.py`, `chunkers_safe.py`,
+   `chunkers_preproc_safe.py` of `index_events`, `reyn.safe.mcp.registry`,
+   and the `eval_builder` Class D pattern.
+2. Switch the `skill.md` declaration to `mode: safe`.
+3. Remove the corresponding entry from both `GRANDFATHERED_UNSAFE` in
+   `tests/test_fp0042_stdlib_safe_only.py` and the table above. The
+   "stale exemption" test in the same file will fail if you forget the
+   test side.
+
 ## See also
 
 - [Concept: permission model](permission-model.md) — the broader `python.safe` / `python.unsafe` permission keys and the `mode: safe` auto-allow rules
@@ -214,3 +270,5 @@ ambient sources. Everything else is a `run_op`.**
 - [Concept: preprocessor](preprocessor.md) — the deterministic-split story
 - [Concept: postprocessor](postprocessor.md) — finish-side mirror
 - [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py) — list of record
+- [FP-0042 proposal](../deep-dives/proposals/0042-stdlib-safe-only-and-permission-gated-file-api.md) — stdlib safe-only + permission-gated `reyn.safe.file` API
+- [`tests/test_fp0042_stdlib_safe_only.py`](https://github.com/tya5/reyn/blob/main/tests/test_fp0042_stdlib_safe_only.py) — CI enforcement for the doctrine above

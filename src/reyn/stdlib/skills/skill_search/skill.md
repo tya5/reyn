@@ -16,9 +16,15 @@ graph:
   search: []
 permissions:
   python:
+    # FP-0042 Phase 3 drift-fix (2026-05-23): migrated from mode: unsafe
+    # to mode: safe via reyn.safe.http (= urllib-backed; no per-call
+    # permission gate, see Issue #571 for the deferred gate-design
+    # discussion). The skill_search → GitHub Contents API + raw URL
+    # fetches stay structurally identical, only the import path moved
+    # into the safe-mode-callable namespace.
     - module: ./registry_fetch.py
       function: fetch_registry_results
-      mode: unsafe
+      mode: safe
       timeout: 30
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []

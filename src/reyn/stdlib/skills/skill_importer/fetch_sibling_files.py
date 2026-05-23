@@ -37,8 +37,8 @@ from __future__ import annotations
 
 import re
 
-from reyn.api.safe.json import loads_strict
-from reyn.api.unsafe.http import get as http_get
+from reyn.safe.http import get as http_get
+from reyn.safe.json import loads_strict
 
 _USER_AGENT = "reyn/1.0"
 
