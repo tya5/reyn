@@ -92,6 +92,8 @@ The reason is composition safety. Skill A might be trusted; skill A invoking sub
 
 ## `mcp_install` permission {#mcp_install-permission}
 
+> Compat-shim form during the [Collapse arc](#collapse-arc-571). The canonical decomposition is `file.write: [.reyn/mcp.yaml]` + `http.get: [{host: registry.modelcontextprotocol.io}]` + `secret.write: [<env_key>]`; the bool form below is preserved through Phase 4.
+
 `mcp_install` gates **adding a new MCP server to the configuration** — it is distinct from `permissions.mcp` (which gates runtime tool calls from an already-configured server).
 
 ```yaml
@@ -228,68 +230,60 @@ is configured — there is no regression for environments that already use env v
 - **Internal dev environment with self-signed certs**: set `verify_ssl: false`
 - **Enforce verification regardless of env vars**: set `verify_ssl: true`
 
-## Declaration axis taxonomy (= when to use a bool flag vs a resource list)
+## Permission is an OS I/O primitive
 
-The `permissions:` block in `skill.md` frontmatter mixes axes of three
-shapes. This section names each axis explicitly and gives the criterion
-for picking a shape when a new axis is added.
+The permission system is part of the OS runtime, not a separate layer above it. Every side-effect performed by reyn — whether from skill code, op handler, or any other OS-internal path — goes through the same permission resolver against the calling skill's `PermissionDecl`. There is no inside/outside split: the OS uses the permission system as its core abstraction for all I/O.
 
-### Current axes
+Concretely, `op_runtime/mcp_install.py` writing `.reyn/mcp.yaml` routes through `reyn.safe.file.write` — the same gate a skill-level safe-mode python step would use. The PermissionDecl in scope is the skill's; the OS honors it uniformly regardless of where the call originates. The older "OS gates its callers, not itself" framing is dissolved by this: a single uniform mechanism, no cyclic concern.
+
+## Declaration axis taxonomy
+
+Each side-effect kind has a corresponding declarable axis. The axis vocabulary is small, and **bool axes are reserved for truly capability-shaped operations** — those not reducible to a single file / network / secret I/O scope.
+
+### Axes
 
 | Axis | Type | Granularity | Gate site | Notes |
 |---|---|---|---|---|
-| `file.read` | `list[{path, scope}]` | resource (per-path) | `require_file_read()` | scope ∈ {`just_path`, `recursive`} |
-| `file.write` | `list[{path, scope}]` | resource (per-path) | `require_file_write()` | covers write / edit / delete |
-| `python` | `list[{module, function, mode, timeout}]` | resource (per-step) | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
-| `mcp` | `list[str]` | resource (per-server) | implicit at MCP call | per-server-name allowlist |
-| `tool` | `list[str]` | resource (per-tool) | `require_tool()` | named-tool allowlist |
+| `file.read` | `list[{path, scope}]` | per-path | `require_file_read()` | scope ∈ {`just_path`, `recursive`} |
+| `file.write` | `list[{path, scope}]` | per-path | `require_file_write()` | covers write / edit / delete |
+| `http.get` | `list[{host}]` | per-host | planned (Phase 3) | for `reyn.safe.http.*` |
+| `secret.write` | `list[<key>]` | per-key | planned (Phase 3) | for `~/.reyn/secrets.env` writes |
+| `mcp` | `list[str]` | per-server | implicit at MCP call | per-server-name allowlist |
+| `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
+| `tool` | `list[str]` | per-tool | `require_tool()` | named-tool allowlist |
 | `shell` | `bool` | abstract | `require_shell()` | binary: any shell access at all |
-| `mcp_install` | `bool` (declaration) + per-server approval key | hybrid | `require_mcp_install()` | declaration is bool; approval persists per `<server_id>` |
-| `mcp_drop_server` | `bool` (= same shape as `mcp_install`) | hybrid | `require_mcp_drop_server()` | counter-op to `mcp_install` |
-| `index_drop` | `bool` (= same shape) | hybrid | `require_index_drop()` | RAG corpus / source drop |
-| `cron_register` | `bool` (= same shape; per-job approval key) | hybrid | `require_cron_register()` | covers register / unregister / enable / disable |
-| `allowed_mcp` | `list[str]` or `None` | ACL filter | implicit at MCP call | per-agent restriction, cross-cuts `mcp` |
+| `allowed_mcp` | `list[str] \| None` | ACL filter | implicit at MCP call | per-agent restriction, cross-cuts `mcp` |
 
-### Criterion — `bool` axis vs `list` axis
+### Why `shell` is the only bool
 
-A capability lives on a **bool axis** when **all** of the following hold:
+`shell` is process exec of an arbitrary command. The side-effect set is unbounded (= a shell command can read any file, write any file, network any host) and the author cannot enumerate which side effects a particular invocation will produce. There is no single I/O scope to reduce it to — process exec **is** the irreducible primitive.
 
-1. The capability fires a **side-effect set** that no single resource scope can describe — e.g. config write + chain-notify peers + state-change emit (the `mcp_install` triad).
-2. The skill author has no natural way to enumerate which instances will be touched at write-time (= "which server I'll install" is determined by the user / LLM at runtime, not by the skill author).
-3. The user wants to see a **per-instance** approval surface at runtime even though the **declaration** is intent-shaped (= the hybrid shape: declaration bool, approval key resource-keyed).
+Every other former bool axis (`mcp_install`, `mcp_drop_server`, `cron_register`, `index_drop`) has been re-expressed as one or more list axes, because each is actually reducible to a small set of file / network / secret operations:
 
-A capability lives on a **list axis** when **all** of the following hold:
+| Former bool axis | Equivalent list-axis decomposition |
+|---|---|
+| `mcp_install: true` | `file.write: [.reyn/mcp.yaml]` + `http.get: [{host: registry.modelcontextprotocol.io}]` + `secret.write: [<env_key>]` |
+| `mcp_drop_server: true` | `file.write: [.reyn/mcp.yaml]` |
+| `cron_register: true` | `file.write: [.reyn/cron.yaml]` |
+| `index_drop: true` | `file.write: [.reyn/index/sources.yaml]` + delete on `.reyn/index/<source>/index.db` |
 
-1. The capability is reducible to a **single I/O scope** (= one path / one host / one server).
-2. The skill author knows the inventory at write-time (= "I'll read these specific paths").
-3. Per-instance runtime approval is not needed beyond the declared list (= the list **is** the scope; no further per-call prompt unless config tier asks).
+The criterion is: **if a capability reduces to a finite I/O scope (file path / host / secret key), use a list axis; otherwise use bool**. Currently the only irreducible primitive is shell.
 
-The **`allowed_mcp` ACL axis** is a third shape — it doesn't grant capability; it **restricts** which subset of an already-granted resource list a specific agent may use. ACL filters cross-cut both bool and list axes.
+### What was lost in the collapse, and what wasn't
 
-Worked examples:
+Bool axes carried a per-instance approval surface (= `mcp_install:<server_id>` keyed per server). After collapse:
 
-| Capability | Shape | Why |
-|---|---|---|
-| `file.write` | list (resource) | single I/O scope (= one path); author knows the inventory; no chain effects |
-| `mcp_install` | bool (hybrid) | side-effect set (= config write + emit + notify); author doesn't know server name at write time; user wants per-server prompt |
-| `shell` | bool | side-effect set is unbounded (= shell is arbitrary process execution); author can't list "these specific commands" |
-| `cron_register` | bool (hybrid) | side-effect set (= cron.yaml write + emit); job name determined at runtime; per-job approval key |
+- **MCP per-server granularity is preserved** at *call time* via the existing `permissions.mcp: [<server>]` axis. Installing a server (= writing `.reyn/mcp.yaml`) becomes a one-step grant; using a specific server still requires the call-time per-server check, so download + execute of the server's package still passes a per-server gate.
+- **Cron per-job granularity is reduced** to "may write `.reyn/cron.yaml` at all", but cron-fired skills still go through their own runtime permission gates when they execute. The granularity reduction does not bypass downstream protections.
+- **Index per-source granularity is reduced** — there is no equivalent post-write gate. Drop is destructive and the per-source distinction was operator-UX, not security; the reduction is accepted.
 
-### Hidden axis — the cross-cutting "intent ↔ raw I/O" correlation
+### `allowed_mcp` is an ACL filter, not a capability
 
-A bool axis declares **intent**; the actual side effects (= file writes / HTTP calls / process spawns) still happen through underlying primitives. When the **same raw I/O** is reachable directly (= via `file.write` in a default-zone path), the bool axis's intent is **bypassable**.
+`allowed_mcp` doesn't grant capability — it **restricts** which subset of an already-granted `mcp` server list a specific agent may use. ACL filters cross-cut capability axes.
 
-Concretely: `mcp_install: true` declares "this skill installs MCP servers", but the side effect ("write `.reyn/mcp.yaml`") is also reachable via `reyn.safe.file.write(".reyn/mcp.yaml", ...)` because `.reyn/` is in the default-zone write paths. The two paths don't reconcile — see [Known gaps](#known-gaps) below.
+## Trust boundary layers
 
-The correlation rule (= proposed canonical, not enforced today) is:
-
-> When a bool axis B describes a side-effect set that includes raw I/O R, then performing R by any path (declared list OR default zone OR internal-OS code) MUST also pass B's gate.
-
-Today's implementation does not enforce this rule for any of the four bool axes (`mcp_install`, `mcp_drop_server`, `index_drop`, `cron_register`).
-
-## Trust boundary layers (= where enforcement actually happens)
-
-The four execution surfaces that perform side-effects, ordered by enforcement strength:
+The execution surfaces that perform side-effects, ordered by enforcement strength:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐  ← STRONGEST
@@ -306,79 +300,46 @@ The four execution surfaces that perform side-effects, ordered by enforcement st
 │    No gate after the `--allow-unsafe-python` opt-in          │
 │    Trusted-by-declaration: author asserts the step is safe   │
 ├──────────────────────────────────────────────────────────────┤
-│  reyn package internal code (OS handlers, registry client)   │  ← WEAKEST
-│    permission_resolver not in the call path                  │
-│    Trust boundary: this code IS the OS, gates its callers    │
-│    not itself                                                │
+│  reyn package internal code (op handlers, registry client)   │
+│    Uses the same `reyn.safe.*` primitives as skill code,     │
+│    against the calling skill's PermissionDecl                │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The asymmetry is intentional for the top and bottom layers and a current limitation for the middle two:
-
 - **Top (sandboxed_exec)** is the only layer with OS-kernel enforcement. argv / network / fs scope is declarative per call and enforced by the platform sandbox.
-- **Bottom (reyn package internal)** is trusted by construction — the OS gates its callers, not itself. Adding gates here would require either a separate inside-OS permission model (= cyclic) or moving the I/O out to the `op_runtime` layer (= where gates already exist).
-- **Safe-mode python** is honor-system: AST validation prevents `import os`, and `reyn.safe.file` checks declared paths. A motivated user with `mode: unsafe` access can bypass; a non-motivated `mode: safe` author cannot accidentally bypass via normal coding patterns.
+- **Internal OS code** uses the same `reyn.safe.*` primitives as skill code, against the calling skill's PermissionDecl. There is no inside/outside split — the OS exercises its own permission mechanism uniformly.
+- **Safe-mode python** is honor-system: AST validation prevents `import os`, and `reyn.safe.*` checks declared paths / hosts / keys. A motivated user with `mode: unsafe` access can bypass; a non-motivated `mode: safe` author cannot accidentally bypass via normal coding patterns.
 - **Unsafe-mode python** is trust-by-declaration: the operator approves `--allow-unsafe-python` at runtime and accepts that the step has full host access.
 
-## Industry comparison (= reference for design choices)
+## Industry comparison
 
 | Platform | Declaration shape | Runtime ask | Granularity | Enforcement |
 |---|---|---|---|---|
 | iOS (TCC + Entitlements) | `Info.plist` capability + purpose string | First-use prompt | Capability axis | OS kernel + signed entitlements |
 | Android (≥ M) | `AndroidManifest.xml` `uses-permission` | First-use prompt for "dangerous" tier | Permission class + scoped storage | OS kernel + per-app UID |
-| Web Permissions API | Per-feature query | Per-permission prompt | **Origin-scoped** (= per-domain capability) | Browser sandbox |
+| Web Permissions API | Per-feature query | Per-permission prompt | Origin-scoped (= per-domain capability) | Browser sandbox |
 | Anthropic Claude Code | Tool list (Bash / Edit / Read / Write) | None at default; sandbox-mode optional | Tool name (no path scope) | Seatbelt (sandbox-mode) or trust |
 | MCP servers | Server-side tool list exposed to client | Server owns its boundary | Per-tool, server-defined | Process boundary |
-| **Reyn** | `permissions:` block (this doc) | startup_guard + interactive on first use | **Hybrid** (= per-path list + abstract bool) | AST + honor-system for safe-mode; kernel for `sandboxed_exec` only |
+| **Reyn** | `permissions:` block (list-axis dominant; one bool: `shell`) | startup_guard + interactive on first use | per-path / per-host / per-server (resource scope) | AST + `reyn.safe.*` honor-system for safe-mode; kernel for `sandboxed_exec` |
 
-The industry pattern is **abstract capability declaration + runtime per-instance prompt + OS-kernel enforcement**. Reyn deviates on two axes:
+Reyn deviates from the iOS / Android "capability + first-use prompt" pattern on two axes:
 
-1. **Granularity is finer than industry default** — path-list `file.read` / `file.write` is closer to Web's origin-scope than to iOS / Android's capability axis. The justification is that Reyn skills are workflow code (= author knows the file inventory), whereas iOS / Android apps are general-purpose (= author cannot enumerate at write-time).
-2. **Enforcement is honor-system for safe-mode python** — iOS / Android rely on kernel boundaries; Reyn relies on AST validation + path-list checks. The trade-off is implementation simplicity (= no per-step seatbelt setup) for weaker enforcement.
+1. **Granularity is finer than industry default** — list-axis path / host / server scope is closer to Web's origin-scope than to iOS / Android's capability axis. The justification is that Reyn skills are workflow code (= author knows the inventory), whereas iOS / Android apps are general-purpose.
+2. **Enforcement is honor-system for safe-mode python** — iOS / Android rely on kernel boundaries; Reyn relies on AST validation + path / host / key checks via the `reyn.safe.*` primitives. The trade-off is implementation simplicity (= no per-step seatbelt setup) for weaker enforcement.
 
-These deviations are explicit design choices, but they constrain the safe-mode-python honor-system contract: anything that bypasses `reyn.safe.*` (= via an AST hole, or via a direct I/O path the AST doesn't catch) silently escapes the declared-path check. The bool-axis cross-cutting correlation rule from the criterion section above is the surface that this honor-system breakdown is most visible on.
+## Collapse arc (#571)
 
-## Known gaps (= 2026-05-23 audit, follow-up tracked)
+The axis taxonomy above is the target state. The 2026-05-23 audit (#571) identified that the prior design carried four bool axes (`mcp_install`, `mcp_drop_server`, `cron_register`, `index_drop`) which were redundant with `file.write` — the side effects all reduced to a canonical `.reyn/*.yaml` write reachable through `reyn.safe.file.write`, so the bool axes were duplicating coverage rather than gating new capability. The collapse arc removes them in stages:
 
-Three architectural inconsistencies identified during the 2026-05-23 axis-taxonomy audit, captured here so the gap is explicit while individual remediation PRs are scoped separately.
+| Phase | Scope | Status |
+|---|---|---|
+| 1 | This doc — articulate "permission is an OS I/O primitive" and the collapse map | this PR |
+| 2 | Route `op_runtime` handlers (= `mcp_install` / `mcp_drop_server` / `cron_register` / `index_drop`) through `reyn.safe.file.write`; loader compat shim accepts both bool form and explicit list form | follow-up PR |
+| 3 | Introduce `http.get: [{host}]` axis (= gates `reyn.safe.http.*` per-host) and `secret.write: [<key>]` axis (= gates `~/.reyn/secrets.env` writes per-key) | follow-up |
+| 4 | Migrate stdlib skills to explicit list-axis form | follow-up |
+| 5 | Remove bool axes (`mcp_install` etc.) and `require_mcp_install` / `require_cron_register` / `require_index_drop` / `require_mcp_drop_server` from the OS surface | follow-up |
 
-### Gap A — bool intent vs raw I/O default-zone bypass
-
-The four bool axes (`mcp_install`, `mcp_drop_server`, `index_drop`, `cron_register`) declare **intent** but their side-effect set (= config writes under `.reyn/`) is also reachable through `reyn.safe.file.write()` because `.reyn/` is a default-zone write path (= `src/reyn/kernel/preprocessor_executor.py:493-499`).
-
-Concrete bypass: a safe-mode python step can write `.reyn/mcp.yaml` directly, mutating the MCP server registry, without declaring `mcp_install: true` and without going through `require_mcp_install()`'s approval prompt.
-
-Remediation candidates (= future PR):
-
-- Cross-axis correlation gate: `_check_write(path)` consults a "raw I/O → bool axis" registry (= `.reyn/mcp.yaml` → `mcp_install`, `.reyn/cron.yaml` → `cron_register`, etc.) and additionally enforces the bool axis when the path matches.
-- OR move the canonical MCP-registry mutation out of `safe.file` reach (= keep it inside `op_runtime/mcp_install.py` only, refuse direct write at the safe.file layer).
-
-The cross-cutting rule is articulated in the [Declaration axis taxonomy](#declaration-axis-taxonomy--when-to-use-a-bool-flag-vs-a-resource-list) section above; no implementation enforces it today.
-
-### Gap B — reyn package internal code bypasses the permission resolver
-
-OS-internal code (= `src/reyn/registry/client.py` MCP registry HTTP, `src/reyn/op_runtime/mcp_install.py` config writes) performs I/O without consulting `PermissionResolver`. This is a deliberate trust boundary — the OS gates its callers, not itself — but the boundary is undocumented.
-
-This gap is **not necessarily a bug**: any tight gate around internal OS code would either need a separate inside-OS permission model (= cyclic) or push the I/O into the `op_runtime` layer (= where gates already exist). Either is a significant architectural commitment.
-
-Disposition: documented as a known trust-boundary choice. Re-open if a specific OS-internal I/O path becomes user-visible and operators want to gate it (= e.g. logging a `web.fetch` event for the MCP registry call).
-
-### Gap C — `safe.http` exists but is un-gated
-
-`src/reyn/safe/http.py` (= landed during FP-0042 Phase 3 drift-fix) ships `get` / `post` / `put` / `delete` — urllib-backed, callable from safe-mode steps via the AST allowlist. However it has **no per-call permission gate**: the module's docstring is explicit that the "safe" label here matches the namespace (= AST-allowlisted) rather than the stronger per-call permission-resolver pattern that `reyn.safe.file` enforces, and the docstring references this issue as the design question to resolve.
-
-Stdlib usage today:
-
-- `mcp_search` / `mcp_install` use the domain-specific `reyn.safe.mcp.registry` (= hardcoded registry URL, no host parameter exposed to the skill).
-- `skill_search` / `skill_importer` use bare `reyn.safe.http.get` (= arbitrary URL, no host check).
-
-The shape question (= what gate to add when one is added) remains:
-
-- **Per-host allowlist** (= `http.get: [{host: "registry.modelcontextprotocol.io"}]`) — matches the resource-list criterion (single I/O scope, author knows the inventory).
-- **Bool flag** (= `http: true`) — matches the bool criterion only if HTTP carries side effects beyond the fetch itself (= it doesn't, by definition; HTTP GET is read-only).
-- **Origin-scope with method** (= Web Permissions API style) — most aligned with industry pattern, granular enough for Reyn's workflow-code use case.
-
-Per the criterion section above: HTTP read is a single I/O scope, author knows the hosts at write-time, no side effects beyond the fetch → resource list, **not** bool. The current un-gated state is the gap; adding a per-host allowlist on `safe.http` is the consistent remediation.
+During Phases 1–4 the bool form (= `mcp_install: true`) is accepted as a compat shim that implicitly expands to the equivalent list-axis decomposition. The bool form is removed in Phase 5.
 
 ## `python` permission and `mode: safe` allowlist
 
