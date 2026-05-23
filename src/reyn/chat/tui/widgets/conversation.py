@@ -1105,6 +1105,27 @@ class ConversationView(Widget):
         if row is not None:
             row.set_detail(detail)
 
+    def in_flight_skill_rows(self) -> list[SkillActivityRow]:
+        """Return SkillActivityRow widgets whose skill is still running.
+
+        Powers the F3 keyboard expand action (= toggle drill-down on
+        whatever's executing right now). The mouse path can target any
+        specific row by clicking it; the keyboard path needs a default
+        target, and "everything currently running" is the most useful
+        — typically that's a single row, but if multiple skills are
+        concurrent the user can drill into all of them at once.
+
+        Finished rows are excluded — once a skill completes, the user
+        can still click it individually to expand, but F3 should not
+        surprise them by toggling old finished rows that have scrolled
+        far up. Returns an empty list when nothing is in flight; the
+        caller surfaces a status hint in that case.
+        """
+        return [
+            row for row in self._skill_rows.values()
+            if not row._finished
+        ]
+
     # ── Tool-call rows (issue #427 step 4) ───────────────────────────────────
 
     def start_tool_call_row(
