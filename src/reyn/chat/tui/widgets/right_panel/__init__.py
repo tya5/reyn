@@ -646,6 +646,12 @@ class RightPanel(Widget):
             # correct architectural seam.
             event.prevent_default()
             self._prefill_attach_for_cursor()
+        elif event.key == "d" and self._panel_type == "events":
+            # T2-5a (Wave-12): Events tab [d] → jump Docs tab to runtime/events.md.
+            # Scoped to events tab only so the pending tab's `d` = discard and
+            # any future per-tab `d` bindings remain unaffected.
+            event.prevent_default()
+            self._jump_docs_to_events_md()
         elif event.key == "d" and self._panel_type == "pending":
             # Issue #277 — Pending tab `d` = discard the cursor's iv.
             event.prevent_default()
@@ -1835,6 +1841,53 @@ class RightPanel(Widget):
             inputbar.focus_input()
         except Exception as exc:
             logger.warning("right_panel prefill docs filter focus failed: %s", exc)
+
+    def _jump_docs_to_events_md(self) -> None:
+        """Events tab [d] — switch to Docs tab, cursor on runtime/events.md.
+
+        T2-5a (Wave-12): closes the navigation gap between the events tab
+        (the densest jargon surface) and the runtime/events.md reference.
+        Builds the docs index from the current project root, finds the first
+        file whose stem equals ``events`` inside the ``reference/runtime``
+        section (or any section), sets the cursor there, then activates the
+        Docs tab. Falls through silently when docs/ or the target file are
+        absent — the user stays on the events tab.
+        """
+        groups, ordered = build_docs_index(self._project_root, "")
+        if not ordered:
+            self._flash_status("docs/: not found")
+            return
+        # Find index of the file whose stem is "events" under reference/runtime
+        # (preferred) or anywhere in the flat list (fallback).
+        target_idx: int | None = None
+        for i, path in enumerate(ordered):
+            if path.stem == "events" and "runtime" in str(path):
+                target_idx = i
+                break
+        if target_idx is None:
+            # Fallback: first file named events.md anywhere
+            for i, path in enumerate(ordered):
+                if path.stem == "events":
+                    target_idx = i
+                    break
+        if target_idx is None:
+            self._flash_status("runtime/events.md: not found in docs/")
+            return
+        self._docs_groups = groups
+        self._docs_files = ordered
+        self._docs_cursor = target_idx
+        self.set_panel_type("docs")
+
+    def current_doc_stem(self) -> str:
+        """Return the stem of the currently highlighted doc file, or "".
+
+        Public accessor for tests (and future callers) that need to verify
+        the Docs tab cursor position without reading private state directly.
+        """
+        if not self._docs_files:
+            return ""
+        idx = max(0, min(len(self._docs_files) - 1, self._docs_cursor))
+        return self._docs_files[idx].stem
 
     def _build_recent_skill_bundle(self, item: dict) -> str:
         """Header + events YAML for a finished skill run."""

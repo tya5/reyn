@@ -695,6 +695,9 @@ def render_events(
                     lines.append(f"[#444444]       ↳ [/][#777777]{short}[/]")
 
     del filter_name
+    # Dim footer hint — always appended after the event rows so the user
+    # can discover the [d] docs shortcut from the events tab itself.
+    lines.append("[#555555]  ? press [d] for events.md reference[/]")
     return "\n".join(lines), windowed, event_ys
 
 
