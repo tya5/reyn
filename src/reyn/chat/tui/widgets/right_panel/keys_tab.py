@@ -16,6 +16,12 @@ if TYPE_CHECKING:
 # Maps the lowercase key string → multi-line "what does this REALLY do" text.
 # ---------------------------------------------------------------------------
 _KEY_DETAILS: dict[str, str] = {
+    "f7": (
+        "Toggle expand on the most-recent failed tool-call row so the\n"
+        "full failure reason surfaces inline (mouse-click does the same).\n"
+        "If the row was already flushed to scroll history, surfaces a\n"
+        "Ctrl+B -> Events hint. No-op hint when no failure exists yet."
+    ),
     "f3": (
         "Drill-down expands the cursor's skill row to show phase history,\n"
         "tool calls, and per-phase events. Mouse-click on the row does\n"
@@ -95,7 +101,7 @@ _KEY_PRETTY: dict[str, str] = {
     "ctrl+shift+g": "⌃⇧G",
     "enter": "Enter", "tab": "Tab", "escape": "Esc", "space": "Space",
     "up": "↑", "down": "↓", "left": "←", "right": "→",
-    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4",
+    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f7": "F7",
     # Quick-jump number keys for the right-panel tabs (Ctrl+1 .. Ctrl+7).
     "ctrl+1": "⌃1", "ctrl+2": "⌃2", "ctrl+3": "⌃3", "ctrl+4": "⌃4",
     "ctrl+5": "⌃5", "ctrl+6": "⌃6", "ctrl+7": "⌃7", "ctrl+8": "⌃8",
@@ -115,6 +121,9 @@ _CONVERSATION_KEYS = {
     # inline expand on widgets that live in the conv pane (=
     # mouse-click + F3 are the two trigger paths to the same UX).
     "f3",
+    # W13 T2-1: ToolCallRow failure drill-down. Same rationale as F3 --
+    # toggles inline expand on a widget that lives in the conv pane.
+    "f7",
 }
 # ``j`` / ``k`` / ``space`` / ``c`` are routed via ``RightPanel.on_key``
 # (not ``app.BINDINGS``) and dispatch per-tab inside the panel handler,
@@ -147,6 +156,7 @@ _GROUP_ORDER = [
 # affordances that have no Binding entry but are discoverable here).
 _MOUSE_EXPLICIT: list[tuple[str, str]] = [
     ("click skill row", "Drill-down (= F3 mouse equivalent)"),
+    ("click failed tool row", "Expand failure detail (= F7 mouse equivalent)"),
     ("click header [N pending]", "Jump to Pending tab"),
     ("click header [find: ...]", "Clear find filter"),
 ]

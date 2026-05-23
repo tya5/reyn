@@ -286,6 +286,15 @@ class ConversationView(Widget):
         # meta). Mounted on tool_call_started, finalised on
         # tool_call_completed / tool_call_failed.
         self._tool_call_rows: dict[str, ToolCallRow] = {}
+        # W13 T2-1: reference to the most-recent ToolCallRow that was
+        # transitioned to failure state, kept so the F7 keyboard drill-down
+        # action can toggle its expand state. The reference is cleared on
+        # Ctrl+L (clear()) and updated on every fail_tool_call_row() call.
+        # The row may still be mounted (= live widget, F7 can toggle expand)
+        # or already flushed into the RichLog (= widget removed; F7 surfaces
+        # a "Ctrl+B -> events" hint instead). A None value means no failure
+        # has occurred yet in this session.
+        self._last_failed_tool_row: ToolCallRow | None = None
         # Header-grouping state (B1)
         self._last_speaker: str = ""
         self._last_speaker_at: float = 0.0
@@ -1208,6 +1217,9 @@ class ConversationView(Widget):
         if row is None:
             return
         row.finish_failure(reason=error)
+        # W13 T2-1: record the most-recent failure before flushing so the
+        # F7 keyboard drill-down can find it even after the flush timer fires.
+        self._last_failed_tool_row = row
         self._flush_tool_call_row(row)
 
     def abort_tool_call_rows(self, reason: str = "cancelled") -> int:
@@ -1233,6 +1245,26 @@ class ConversationView(Widget):
                 # Defensive: don't let one bad row stop the sweep.
                 pass
         return cancelled
+
+    def latest_failed_tool_row(self) -> "ToolCallRow | None":
+        """Return the most-recent ToolCallRow that entered failure state.
+
+        Returns the row object regardless of whether it is still mounted
+        (= live widget, F7 can toggle expand) or already flushed into the
+        RichLog (= widget removed via ``row.remove()``). The caller must
+        check ``row.is_mounted`` to distinguish the two cases:
+
+          - Mounted  (``is_mounted=True``)  -> ``toggle_expand()`` works.
+          - Flushed  (``is_mounted=False``) -> surface a hint directing the
+            user to Ctrl+B -> Events tab for the full trace.
+
+        Returns None when no failure has been recorded in this session
+        (= all tool calls so far succeeded / aborted, or the view was
+        cleared via Ctrl+L).
+
+        W13 T2-1 public accessor.
+        """
+        return self._last_failed_tool_row
 
     def _flush_tool_call_row(self, row: ToolCallRow) -> None:
         """Render the row's two-line shape into the RichLog and unmount.
@@ -2043,6 +2075,9 @@ class ConversationView(Widget):
             except Exception:
                 pass
         self._tool_call_rows.clear()
+        # W13 T2-1: reset the most-recent failure reference so F7 on a
+        # fresh-cleared pane correctly shows "no recent tool failure".
+        self._last_failed_tool_row = None
         # AsyncStackPanel wiring: drop all bottom-stack entries so a
         # Ctrl+L leaves the panel empty alongside the conv log.
         # Without this the running-task overview would survive the

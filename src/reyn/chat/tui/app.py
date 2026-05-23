@@ -158,6 +158,11 @@ class ReynTUIApp(App):
         # skills are concurrent the user can expand them all at once
         # with one keypress. Status hint when nothing is running.
         Binding("f3", "skill_expand_toggle", "Toggle skill row drill-down", priority=True, show=False),
+        # W13 T2-1: F7 keyboard drill for the most-recent failed ToolCallRow.
+        # F4 is reserved for async-stack panel focus (Wave-9 / keys_tab
+        # description); F5/F6 reserved for conv-pane error-jump (#586).
+        # F7 is the first free function key after those reservations.
+        Binding("f7", "drill_failed_tool", "Toggle most-recent failed tool row", priority=True, show=False),
     ]
 
     _REYN_THEME = Theme(
@@ -1439,6 +1444,63 @@ class ReynTUIApp(App):
         if tip_shown:
             # Auto-hide the tip after ~4 s once expand has been applied.
             self.set_timer(4.0, conv.hide_status)
+
+    def action_drill_failed_tool(self) -> None:
+        """F7 — toggle expand on the most-recent failed ToolCallRow.
+
+        Keyboard parity for the mouse-click expand path on tool-failure
+        rows (W13 audit finding A#5). Three cases:
+
+        1. A failed row is live (= still mounted as a widget, not yet
+           flushed to the RichLog scroll history): toggle its expand state
+           so the full failure reason becomes readable inline without
+           switching tabs.
+
+        2. A failed row exists but has already been flushed (= widget
+           removed after ``_TOOL_CALL_MIN_DISPLAY_S``): surface a hint
+           pointing the user at Ctrl+B -> Events tab where the full trace
+           is always available.
+
+        3. No failed row in this session: surface a "no recent tool
+           failure" hint so the user knows the key registered (= not a
+           silent no-op).
+        """
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+        except Exception:
+            return
+        row = conv.latest_failed_tool_row()
+        if row is None:
+            try:
+                conv.show_status("no recent tool failure", kind="general")
+                self.set_timer(2.0, conv.hide_status)
+            except Exception:
+                pass
+            return
+        # Determine whether the row is still mounted (= live widget) or
+        # already flushed into the RichLog (= widget removed).
+        # Textual's ``is_mounted`` property reflects whether the widget
+        # is currently in the DOM. A flushed row has been removed; its
+        # Python object persists but the widget is no longer attached.
+        try:
+            still_mounted = row.is_mounted
+        except Exception:
+            still_mounted = False
+        if not still_mounted:
+            # Row already in scroll history -- point at events for full trace.
+            try:
+                conv.show_status(
+                    "tool row flushed — Ctrl+B → Events tab for full trace",
+                    kind="general",
+                )
+                self.set_timer(3.0, conv.hide_status)
+            except Exception:
+                pass
+            return
+        try:
+            row.toggle_expand()
+        except Exception:
+            pass
 
     def action_next_turn(self) -> None:
         """ctrl+n — scroll the conversation log to the next agent turn."""
