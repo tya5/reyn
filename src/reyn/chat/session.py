@@ -2061,7 +2061,16 @@ class ChatSession:
     async def _put_inbox(self, kind: str, payload: dict) -> str:
         """Append `inbox_put` to WAL via journal, then queue on the async
         inbox. Returns the assigned message id (also stamped into payload
-        as `_msg_id` so the consumer can look it up)."""
+        as `_msg_id` so the consumer can look it up).
+
+        **Internal API — plugin authors should NOT call directly**
+        (FP-0041 plugins-api). Use ``reyn.plugins.api.push_to_agent``
+        instead; this signature may change between Reyn versions.
+        Other internal Reyn modules (= A2AHandler, MCP handler,
+        InterventionHandler, ChatLifecycleForwarder) keep calling
+        this directly because they manage their own additional state
+        machines (= chain_id / request_id / etc.) on top.
+        """
         msg_id = await self._journal.append_inbox(kind=kind, payload=payload)
         full_payload = {**payload, "_msg_id": msg_id}
         await self.inbox.put((kind, full_payload))

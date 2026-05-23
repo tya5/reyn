@@ -230,13 +230,24 @@ def build_router(*, target_agent: str) -> APIRouter:
             # No events array → ack (= e.g. LINE verify ping).
             return JSONResponse({"status": "ignored"}, status_code=200)
 
+        # Push each dispatchable event via the stable plugin API
+        # (= reyn.plugins.api, FP-0041 plugins-api).
+        from reyn.plugins.api import push_to_agent
+
         dispatched = 0
         for event in events:
             envelope = mint_envelope_from_line_event(event)
             if envelope is None:
                 continue
             try:
-                session = await registry.ensure_running(target_agent)
+                await push_to_agent(
+                    target_agent=target_agent,
+                    text=envelope["text"],
+                    sender=envelope["sender"],
+                    reply_to=envelope["reply_to"],
+                    registry=registry,
+                )
+                dispatched += 1
             except FileNotFoundError:
                 logger.warning(
                     "LINE webhook: target agent %r not found in registry",
@@ -246,9 +257,6 @@ def build_router(*, target_agent: str) -> APIRouter:
                     {"error": f"target agent {target_agent!r} not found"},
                     status_code=503,
                 )
-            try:
-                await session._put_inbox("user", dict(envelope))
-                dispatched += 1
             except Exception as exc:
                 logger.exception("LINE webhook: inbox push failed: %s", exc)
                 return JSONResponse(

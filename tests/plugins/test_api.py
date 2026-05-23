@@ -1,0 +1,210 @@
+"""Tier 2: reyn.plugins.api — public plugin helper API (FP-0041 follow-up).
+
+Pins the stable contract that webhook plugins consume:
+
+  push_to_agent(target_agent, text, sender, reply_to=None,
+                kind="user", extra_meta=None, registry=None)
+
+Internal ``ChatSession._put_inbox`` is deliberately private; the
+helper is the documented path. Tests cover:
+
+  1. Happy path: helper resolves registry, calls ensure_running,
+     and pushes the right envelope shape.
+  2. Optional ``reply_to`` propagates when set, absent when None.
+  3. Optional ``extra_meta`` becomes the envelope's ``meta``.
+  4. Non-default ``kind`` is forwarded to ``_put_inbox`` (= future
+     A2A/MCP unify path).
+  5. Custom ``registry`` override is honored (= tests stub out the
+     process singleton).
+  6. ``FileNotFoundError`` from registry propagates (= caller
+     handles, e.g. webhook returns 503).
+
+Tier 2 because the API is the stable contract for all webhook
+plugins; a regression in envelope shape breaks every plugin's
+integration with Reyn.
+"""
+from __future__ import annotations
+
+import pytest
+
+from reyn.chat.transport import ExternalRef
+from reyn.plugins.api import push_to_agent
+
+# ── stub registry / session ───────────────────────────────────────────
+
+
+class _StubSession:
+    def __init__(self):
+        self.pushed: list = []
+
+    async def _put_inbox(self, kind, payload):
+        self.pushed.append((kind, payload))
+        return f"msg-{len(self.pushed)}"
+
+
+class _StubRegistry:
+    def __init__(self, *, missing: list[str] | None = None):
+        self._sessions: dict[str, _StubSession] = {}
+        self._missing = set(missing or [])
+
+    async def ensure_running(self, name):
+        if name in self._missing:
+            raise FileNotFoundError(name)
+        if name not in self._sessions:
+            self._sessions[name] = _StubSession()
+        return self._sessions[name]
+
+
+# ── tests ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_push_to_agent_minimal_call():
+    """Tier 2: a minimal call (= target_agent + text + sender) lands
+    a ``kind="user"`` envelope with no reply_to / meta.
+    """
+    reg = _StubRegistry()
+    await push_to_agent(
+        target_agent="news",
+        text="hello",
+        sender="slack:U1",
+        registry=reg,
+    )
+    sess = await reg.ensure_running("news")
+    assert sess.pushed == [("user", {"text": "hello", "sender": "slack:U1"})]
+
+
+@pytest.mark.asyncio
+async def test_push_to_agent_with_reply_to():
+    """Tier 2: ``reply_to`` propagates into the envelope so the
+    outbox interceptor (= PR-D2) can route replies externally.
+    """
+    reg = _StubRegistry()
+    ref = ExternalRef(transport="slack", destination={"channel": "C1"})
+    await push_to_agent(
+        target_agent="news",
+        text="hello",
+        sender="slack:U1",
+        reply_to=ref,
+        registry=reg,
+    )
+    sess = await reg.ensure_running("news")
+    kind, payload = sess.pushed[0]
+    assert kind == "user"
+    assert payload["reply_to"] is ref
+
+
+@pytest.mark.asyncio
+async def test_push_to_agent_omits_reply_to_when_none():
+    """Tier 2: when ``reply_to=None`` the envelope does NOT carry
+    a ``reply_to`` key (= keeps the dispatch attribution code from
+    re-checking a None value).
+    """
+    reg = _StubRegistry()
+    await push_to_agent(
+        target_agent="news",
+        text="hello",
+        sender="slack:U1",
+        registry=reg,
+    )
+    sess = await reg.ensure_running("news")
+    _, payload = sess.pushed[0]
+    assert "reply_to" not in payload
+
+
+@pytest.mark.asyncio
+async def test_push_to_agent_extra_meta_propagates():
+    """Tier 2: ``extra_meta`` is stored in the envelope as ``meta``.
+    Used by future unification paths (= A2A chain_id, MCP request_id).
+    """
+    reg = _StubRegistry()
+    await push_to_agent(
+        target_agent="news",
+        text="hello",
+        sender="a2a:peer",
+        extra_meta={"chain_id": "abc-123"},
+        registry=reg,
+    )
+    sess = await reg.ensure_running("news")
+    _, payload = sess.pushed[0]
+    assert payload["meta"] == {"chain_id": "abc-123"}
+
+
+@pytest.mark.asyncio
+async def test_push_to_agent_kind_override():
+    """Tier 2: non-default ``kind`` is forwarded to ``_put_inbox``.
+    Reserved for future A2A / MCP unification; webhook plugins use
+    the default ``"user"``.
+    """
+    reg = _StubRegistry()
+    await push_to_agent(
+        target_agent="news",
+        text="please respond",
+        sender="a2a:peer",
+        kind="agent_request",
+        registry=reg,
+    )
+    sess = await reg.ensure_running("news")
+    kind, _ = sess.pushed[0]
+    assert kind == "agent_request"
+
+
+@pytest.mark.asyncio
+async def test_push_to_agent_registry_override_for_tests():
+    """Tier 2: the ``registry`` kwarg lets tests pass a stub instead
+    of using the process-shared singleton. Production callers omit
+    it; the singleton is fetched lazily inside the helper.
+    """
+    reg = _StubRegistry()
+    await push_to_agent(
+        target_agent="agent_a",
+        text="x",
+        sender="user:tui",
+        registry=reg,
+    )
+    # Pushed to the supplied stub, not the global registry.
+    session = await reg.ensure_running("agent_a")
+    assert len(session.pushed) == 1
+
+
+@pytest.mark.asyncio
+async def test_push_to_agent_propagates_file_not_found():
+    """Tier 2: when the registry can't resolve the agent (=
+    operator typo in ``target_agent`` or agent not yet created),
+    ``FileNotFoundError`` surfaces to the caller. Webhook plugins
+    catch this to return 503 with a clear message.
+    """
+    reg = _StubRegistry(missing=["nonexistent"])
+    with pytest.raises(FileNotFoundError):
+        await push_to_agent(
+            target_agent="nonexistent",
+            text="x",
+            sender="user:tui",
+            registry=reg,
+        )
+
+
+@pytest.mark.asyncio
+async def test_push_to_agent_full_envelope_shape():
+    """Tier 2: a full-args call produces the documented envelope
+    shape (= text + sender + reply_to + meta).
+    """
+    reg = _StubRegistry()
+    ref = ExternalRef(transport="line", destination={"reply_token": "T1"})
+    await push_to_agent(
+        target_agent="news",
+        text="hi",
+        sender="line:user:U1",
+        reply_to=ref,
+        extra_meta={"trace_id": "abc"},
+        registry=reg,
+    )
+    sess = await reg.ensure_running("news")
+    kind, payload = sess.pushed[0]
+    assert kind == "user"
+    assert payload == {
+        "text": "hi",
+        "sender": "line:user:U1",
+        "reply_to": ref,
+        "meta": {"trace_id": "abc"},
+    }
