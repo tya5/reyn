@@ -63,6 +63,8 @@ from textual.widgets import Static
 
 from reyn.chat.tui._palette import _AMBER, _CORAL
 
+from ._renderable_cache import RenderableCacheMixin
+
 # Visible cap. Past this, overflow collapses to a single "… +N more" row
 # so the panel never crowds the input bar even under unusual fan-out.
 _CAP = 5
@@ -75,6 +77,36 @@ _GLYPH_RUNNING = "⟳"
 _GLYPH_PENDING = "⚑"
 
 _RIGHT_MARGIN_CELLS = 4
+
+# Wave-11 B#5: when the row is narrow enough that summary would be
+# wiped to 0 cells, the agent_id (often a 36-char UUID) gets
+# middle-elided to free cells for the more-informative summary.
+# Below this many cells of summary budget, prefer to elide id over
+# blanking summary entirely. 8 cells fits a typical short word.
+_MIN_SUMMARY_BUDGET_CELLS = 8
+
+# Minimum cells preserved for the elided agent_id: 4 head + 1 "…"
+# + 4 tail = 9. Typical UUID head ``abcd`` + tail ``7890`` is
+# enough to disambiguate among ≤ _CAP simultaneous tasks.
+_MIN_ELIDED_ID_CELLS = 9
+
+
+def _middle_elide_id(agent_id: str, max_cells: int) -> str:
+    """Middle-elide an identifier to fit ``max_cells`` cells.
+
+    Returns ``head + '…' + tail``. Below 3 cells degrades to plain
+    head truncation (= can't fit head+ellipsis+tail meaningfully).
+    Input shorter than the budget round-trips unchanged so calling
+    this on already-fitting IDs is a safe no-op.
+    """
+    if cell_len(agent_id) <= max_cells:
+        return agent_id
+    if max_cells < 3:
+        return agent_id[:max_cells]
+    keep = max_cells - 1  # 1 cell for "…"
+    head_n = keep // 2
+    tail_n = keep - head_n
+    return agent_id[:head_n] + "…" + agent_id[-tail_n:]
 
 
 @dataclass
@@ -100,7 +132,7 @@ def _fmt_elapsed(seconds: float) -> str:
     return f"{h}h{m:02d}m"
 
 
-class AsyncStackPanel(Widget):
+class AsyncStackPanel(RenderableCacheMixin, Widget):
     """Bottom-docked sticky list of non-attach agent activity.
 
     State machine per entry:
@@ -313,6 +345,25 @@ class AsyncStackPanel(Widget):
         summary_budget = max(
             0, body_budget - prefix_cells - sep_cells - elapsed_cells,
         )
+        # Wave-11 B#5: when summary would be wiped to ≤ a few cells
+        # by a long agent_id (typical UUID = 36 cells), middle-elide
+        # the id to free room for the more-informative summary.
+        # Identity preserved via head+tail preview; full id is rarely
+        # needed at-a-glance, but the summary tells the user what's
+        # actually running.
+        if entry.summary and summary_budget < _MIN_SUMMARY_BUDGET_CELLS:
+            fixed_cells = cell_len(f"{glyph} async: ") + sep_cells + elapsed_cells
+            target_id_cells = max(
+                _MIN_ELIDED_ID_CELLS,
+                body_budget - fixed_cells - _MIN_SUMMARY_BUDGET_CELLS,
+            )
+            if target_id_cells < cell_len(agent_id):
+                agent_id = _middle_elide_id(agent_id, target_id_cells)
+                prefix = f"{glyph} async: {agent_id}"
+                prefix_cells = cell_len(prefix)
+                summary_budget = max(
+                    0, body_budget - prefix_cells - sep_cells - elapsed_cells,
+                )
         summary_display = self._truncate_to_cells(entry.summary, summary_budget)
 
         t.append(f"{glyph} ", style=glyph_style)
@@ -373,7 +424,14 @@ class AsyncStackPanel(Widget):
         # incompatible runtimes.
         if not getattr(self, "is_mounted", True):
             return
-        self._static.update(self._build_lines())
+        text = self._build_lines()
+        self._static.update(text)
+        # Wave-11 (mixin migration): cache the rendered Text so the
+        # RenderableCacheMixin's ``rendered_text()`` accessor stays
+        # in sync with what's on screen. Matches the funnel pattern
+        # used by SkillActivityRow / SlashPicker / ReynHeader /
+        # ToolCallRow — 5th widget on the shared mixin.
+        self._set_rendered_cache(text)
 
 
 __all__ = ["AsyncStackPanel"]
