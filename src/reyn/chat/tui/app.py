@@ -138,6 +138,14 @@ class ReynTUIApp(App):
         # win against any widget-level binding.
         Binding("ctrl+g", "find_next", "Find next match", priority=True, show=False),
         Binding("ctrl+shift+g", "find_prev", "Find prev match", priority=True, show=False),
+        # Keyboard companion to the mouse-click skill-row drill-down
+        # (= toggle phase-history expand). F3 avoids the Ctrl+letter
+        # collision with TextArea's default editing shortcuts (ctrl+e
+        # end-of-line, ctrl+a start-of-line, etc.). Target is every
+        # in-flight skill row — typically one row, but if multiple
+        # skills are concurrent the user can expand them all at once
+        # with one keypress. Status hint when nothing is running.
+        Binding("f3", "skill_expand_toggle", "Toggle skill row drill-down", priority=True, show=False),
     ]
 
     _REYN_THEME = Theme(
@@ -1329,6 +1337,42 @@ class ReynTUIApp(App):
         if router is None:
             return
         router.cycle_find(-1)
+
+    def action_skill_expand_toggle(self) -> None:
+        """F3 — toggle drill-down on every in-flight SkillActivityRow.
+
+        Keyboard companion to the row-click expand: instead of clicking
+        each row individually, F3 flips them all at once. The new
+        target state matches the FIRST in-flight row's current state
+        flipped, then applied uniformly — so a mixed-state set (one
+        expanded, one collapsed) converges to a single state per
+        keypress rather than oscillating in place.
+
+        No-op with a status hint when nothing is in flight (= the
+        user pressed F3 expecting drill-down but no skill is running).
+        """
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+        except Exception:
+            return
+        rows = conv.in_flight_skill_rows()
+        if not rows:
+            try:
+                conv.show_status(
+                    "no active skill row to expand", kind="general",
+                )
+                self.set_timer(2.0, conv.hide_status)
+            except Exception:
+                pass
+            return
+        # Pick a single target state for THIS keypress so the set
+        # converges. Without this, F3 on a mixed set (one expanded,
+        # one collapsed) would flip each individually and the next
+        # F3 press would oscillate — not what the user wants.
+        target_expand = not rows[0].is_expanded
+        for row in rows:
+            if row.is_expanded != target_expand:
+                row.toggle_expand()
 
     def action_next_turn(self) -> None:
         """ctrl+n — scroll the conversation log to the next agent turn."""

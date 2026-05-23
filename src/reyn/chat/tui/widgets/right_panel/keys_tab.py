@@ -23,8 +23,10 @@ _KEY_PRETTY: dict[str, str] = {
     "shift+tab": "⇧Tab",
     "ctrl+shift+o": "⌃⇧O",
     "ctrl+shift+w": "⌃⇧W",
+    "ctrl+shift+g": "⌃⇧G",
     "enter": "Enter", "tab": "Tab", "escape": "Esc", "space": "Space",
     "up": "↑", "down": "↓", "left": "←", "right": "→",
+    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4",
 }
 _CONVERSATION_KEYS = {
     "ctrl+p", "ctrl+n", "ctrl+shift+n", "ctrl+shift+p",
@@ -34,6 +36,12 @@ _CONVERSATION_KEYS = {
     # would land in the generic GLOBAL group and be harder to
     # discover next to their conceptual peers.
     "ctrl+g", "ctrl+shift+g",
+    # SkillActivityRow drill-down toggle. F3 doesn't start with
+    # "ctrl+" so the default routing would land it under OTHER;
+    # CONVERSATION is the right home because the action toggles
+    # inline expand on widgets that live in the conv pane (=
+    # mouse-click + F3 are the two trigger paths to the same UX).
+    "f3",
 }
 # ``j`` / ``k`` / ``space`` / ``c`` are routed via ``RightPanel.on_key``
 # (not ``app.BINDINGS``) and dispatch per-tab inside the panel handler,
