@@ -120,6 +120,11 @@ class AgentRegistry:
     def state_log(self) -> StateLog | None:
         return self._state_log
 
+    @property
+    def last_truncation_ts(self) -> "float | None":
+        """Return the monotonic timestamp of the last truncation attempt, or None."""
+        return self._last_truncation_ts
+
     # ── persistence ──────────────────────────────────────────────────────────
 
     def list_names(self) -> list[str]:

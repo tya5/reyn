@@ -145,6 +145,11 @@ class ControlIRExecutor:
         # (= preserves backward compat for callers that don't supply a store).
         self._secret_store = secret_store
 
+    @property
+    def resume_plan(self) -> "Any":
+        """Return the ResumePlan this executor was constructed with, or None."""
+        return self._resume_plan
+
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor advertises to the LLM.
 
