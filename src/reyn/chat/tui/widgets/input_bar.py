@@ -325,6 +325,14 @@ class InputBar(Widget):
         else:
             self.remove_class("disconnected")
 
+    def is_in_flight(self) -> bool:
+        """Return whether the in-flight lock is currently held.
+
+        Public accessor for tests (avoids asserting on private ``_in_flight``
+        per the project testing policy: feedback_test_public_surface_not_private_state).
+        """
+        return self._in_flight
+
     def append_text(self, text: str) -> None:
         """Append text to the current input (used by voice dictation).
 
