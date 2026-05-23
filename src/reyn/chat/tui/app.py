@@ -1486,17 +1486,24 @@ class ReynTUIApp(App):
         self._jump_error(+1)
 
     def action_skill_expand_toggle(self) -> None:
-        """F3 — toggle drill-down on every in-flight SkillActivityRow.
+        """F3 — toggle drill-down on every in-flight inline row.
 
-        Keyboard companion to the row-click expand: instead of clicking
-        each row individually, F3 flips them all at once. The new
-        target state matches the FIRST in-flight row's current state
-        flipped, then applied uniformly — so a mixed-state set (one
-        expanded, one collapsed) converges to a single state per
-        keypress rather than oscillating in place.
+        Keyboard companion to the mouse-click expand: instead of
+        clicking each row individually, F3 flips them all at once.
+        Targets both SkillActivityRow + ToolCallRow in-flight rows —
+        a single keypress expands the full "what's happening right
+        now" view (= skill phase trajectory + each running tool
+        call's full args / result).
 
-        No-op with a status hint when nothing is in flight (= the
-        user pressed F3 expecting drill-down but no skill is running).
+        Convergence: the new target state matches the FIRST in-flight
+        row's current state flipped, then applied uniformly across
+        all rows. Mixed-state sets (= one expanded, one collapsed)
+        thus converge to a single state per keypress instead of
+        oscillating per-row.
+
+        No-op with a status hint when nothing is in flight in either
+        widget kind (= the user pressed F3 expecting drill-down but
+        nothing is currently running).
 
         First-use: shows a one-time onboarding tip via the conv-pane
         status bar (gated by ``tip_f3_seen`` in tui_prefs.json).
@@ -1505,12 +1512,14 @@ class ReynTUIApp(App):
             conv = self.query_one("#conversation", ConversationView)
         except Exception:
             return
-        # First-use tip fires regardless of whether any skill rows are
+        # First-use tip fires regardless of whether any rows are
         # in flight — teaching what F3 does is useful either way.
         tip_shown = self._maybe_emit_f3_tip(
             lambda msg: conv.show_status(msg, kind="general"),
         )
-        rows = conv.in_flight_skill_rows()
+        skill_rows = conv.in_flight_skill_rows()
+        tool_rows = conv.in_flight_tool_call_rows()
+        rows: list = list(skill_rows) + list(tool_rows)
         if not rows:
             if tip_shown:
                 # Tip replaces the "no rows" hint for this first press only;
@@ -1519,7 +1528,7 @@ class ReynTUIApp(App):
             else:
                 try:
                     conv.show_status(
-                        "no active skill row to expand", kind="general",
+                        "no active rows to expand", kind="general",
                     )
                     self.set_timer(2.0, conv.hide_status)
                 except Exception:
