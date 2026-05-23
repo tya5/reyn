@@ -52,10 +52,32 @@ async def list_cmd(session: "ChatSession", args: str) -> None:
     await reply(session, "\n".join(lines))
 
 
+def _running_run_id_completer(
+    session: "object", arg_partial: str = "",
+) -> list[str]:
+    """Wave-11 C#3 — completer for /cancel <id-prefix>.
+
+    Surfaces running ``run_id`` keys from ``session.running_skills``
+    so the user can Tab through them in the picker hint instead of
+    eye-balling them from ``/list`` output. Defensive: empty list
+    on any access failure (= test stubs / pre-init session) so a
+    broken completer can't break the picker.
+    """
+    try:
+        running = list(getattr(session, "running_skills", {}).keys())
+    except Exception:
+        return []
+    if not arg_partial:
+        return running
+    last_word = arg_partial.rsplit(" ", 1)[-1] if " " in arg_partial else arg_partial
+    return [rid for rid in running if rid.startswith(last_word)]
+
+
 @slash(
     "cancel",
     summary="Cancel a running skill",
     usage="/cancel <id-prefix>",
+    completer=_running_run_id_completer,
 )
 async def cancel_cmd(session: "ChatSession", args: str) -> None:
     """``/cancel <id-prefix>`` — cancel a running skill task."""
@@ -88,10 +110,43 @@ async def cancel_cmd(session: "ChatSession", args: str) -> None:
     ))
 
 
+def _intervention_id_completer(
+    session: "object", arg_partial: str = "",
+) -> list[str]:
+    """Wave-11 C#3 — completer for /answer <id-prefix> <text>.
+
+    Surfaces active intervention ids from
+    ``session._interventions.list_active()`` so the user can Tab
+    through them. ``/answer`` takes ``<id-prefix> <text>`` — only
+    the FIRST word is the id; once the user has typed past the
+    space the input is the answer body and the picker hint is
+    irrelevant. We filter by the LAST whitespace-delimited token
+    of ``arg_partial`` so the prefix-match still works regardless
+    of where the cursor sits.
+    """
+    try:
+        interventions = getattr(session, "_interventions", None)
+        if interventions is None:
+            return []
+        ids = [iv.id for iv in interventions.list_active()]
+    except Exception:
+        return []
+    if not arg_partial:
+        return ids
+    # If the user has already typed past the first whitespace,
+    # the picker hint is no longer useful (= they're typing the
+    # answer body, not the id). The empty-match list naturally
+    # falls back to ``set_hint`` upstream.
+    if " " in arg_partial:
+        return []
+    return [iid for iid in ids if iid.startswith(arg_partial)]
+
+
 @slash(
     "answer",
     summary="Answer a pending intervention",
     usage="/answer <id-prefix> <text>",
+    completer=_intervention_id_completer,
 )
 async def answer_cmd(session: "ChatSession", args: str) -> None:
     """``/answer <id-prefix> <text>`` — deliver answer to a non-head
