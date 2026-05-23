@@ -64,6 +64,30 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_ROOT = REPO_ROOT / "dogfood" / "fixtures"
 
 
+def _override_workspace_model(workspace: Path, model_string: str) -> None:
+    """Rewrite the workspace's reyn.yaml so every tier points at
+    ``model_string`` (= LiteLLM-style string like
+    ``openai/gemini-2.5-flash``).
+
+    Cheap line-rewrite (= no yaml parser dep) because reyn.yaml is
+    fixture-shaped and the ``models:`` block has one entry per tier.
+    """
+    yaml_path = workspace / "reyn.yaml"
+    if not yaml_path.exists():
+        return
+    out_lines: list[str] = []
+    for raw in yaml_path.read_text().splitlines():
+        stripped = raw.lstrip()
+        # Match "  light:    openai/gemini-2.5-flash-lite" etc.
+        for tier in ("light", "standard", "strong"):
+            if stripped.startswith(f"{tier}:"):
+                indent = raw[: len(raw) - len(stripped)]
+                raw = f"{indent}{tier}: {model_string}"
+                break
+        out_lines.append(raw)
+    yaml_path.write_text("\n".join(out_lines) + "\n")
+
+
 def setup_workspace(scenario: str, target: Path) -> str:
     """Copy the scenario's fixture files into ``target`` and return the
     scenario-specific directive prompt.
@@ -227,7 +251,11 @@ def _scenario_files(scenario: str) -> tuple[str, str]:
 
 
 def run_one(
-    scenario: str, idx: int, timeout: int, keep_workspace: bool,
+    scenario: str,
+    idx: int,
+    timeout: int,
+    keep_workspace: bool,
+    model_override: str | None = None,
 ) -> dict:
     """One full trial: workspace setup → chat → pytest verdict."""
     test_file, impl_file = _scenario_files(scenario)
@@ -236,6 +264,8 @@ def run_one(
     )
     try:
         prompt = setup_workspace(scenario, workspace)
+        if model_override:
+            _override_workspace_model(workspace, model_override)
         trace_file = workspace / "llm_trace.jsonl"
         chat = run_chat(prompt, workspace, trace_file, timeout)
         trace = parse_trace(trace_file, impl_file)
@@ -263,13 +293,20 @@ def main() -> None:
     ap.add_argument("--timeout", type=int, default=240, help="per-run timeout (s)")
     ap.add_argument("--keep-workspace", action="store_true",
                     help="don't delete tmp workspaces (debug)")
+    ap.add_argument("--model", default=None,
+                    help="Override the workspace reyn.yaml model string "
+                         "(= sets all tiers to this value, e.g. "
+                         "'openai/gemini-2.5-flash'). Default: use the "
+                         "fixture's reyn.yaml unchanged.")
     args = ap.parse_args()
 
-    print(f"[scenario] {args.scenario}", flush=True)
+    print(f"[scenario] {args.scenario}"
+          + (f"  [model] {args.model}" if args.model else ""), flush=True)
     results = []
     for i in range(1, args.n + 1):
         print(f"[run {i}/{args.n}] starting ...", flush=True)
-        r = run_one(args.scenario, i, args.timeout, args.keep_workspace)
+        r = run_one(args.scenario, i, args.timeout, args.keep_workspace,
+                    model_override=args.model)
         results.append(r)
         print(
             f"[run {i}/{args.n}] verdict={r['verdict']} "
@@ -288,6 +325,7 @@ def main() -> None:
 
     summary = {
         "scenario": args.scenario,
+        "model": args.model or "(fixture default)",
         "n": n,
         "pass_rate": round(n_pass / max(n, 1), 2),
         "n_pass": n_pass,
