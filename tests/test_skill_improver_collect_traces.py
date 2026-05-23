@@ -2,7 +2,7 @@
 
 Tests for:
   - DSL compile-time assertions (skill graph, phase file existence)
-  - trace_collector.collect_traces pure-function behavior
+  - trace_collector + trace_collector_pure functional behavior
     (recall path, raw-events fallback, empty data, skill-name filtering,
      lookback cap, error aggregation)
   - R-PURE-MODE wave 4: dispatch_traces / collect_traces_fallback split
@@ -11,20 +11,60 @@ Tests for:
 
 No mocks, no AsyncMock, no patch decorators — per CLAUDE.md testing policy.
 Real filesystem I/O via tmp_path; real Python function calls.
+
+FP-0042 Phase 2.7 (2026-05-23): ``trace_collector.py`` migrated from
+mode: unsafe to mode: safe; file I/O now goes through ``reyn.safe.file``.
+The autouse ``_safe_file_context`` fixture grants reads under
+``tmp_path`` so the safe-mode helpers can run inside the test process.
+
+The legacy ``collect_traces`` back-compat wrapper was removed from
+production — its composition is hosted here as a local test helper
+since cross-module ``reyn.stdlib.*`` imports are rejected by the
+safe-mode AST validator.
 """
 from __future__ import annotations
 
+import copy
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from reyn.stdlib.skills.skill_improver.trace_collector import (
-    collect_traces,
-    collect_traces_fallback,
-)
+from reyn.safe import file as sf
+from reyn.stdlib.skills.skill_improver.trace_collector import collect_traces_fallback
 from reyn.stdlib.skills.skill_improver.trace_collector_pure import dispatch_traces
+
+
+def collect_traces(artifact: dict) -> dict:
+    """Test helper: dispatches to dispatch_traces then collect_traces_fallback.
+
+    Was the back-compat wrapper in ``trace_collector.py`` before FP-0042
+    Phase 2.7; relocated here because the active preprocessor chain in
+    ``phases/collect_traces.md`` calls the two underlying steps directly
+    via skill.md, and the only consumer was this test module.
+    """
+    dispatched = dispatch_traces(artifact)
+    patched = copy.deepcopy(artifact)
+    data = patched.setdefault("data", {})
+    data["traces_summary"] = dispatched
+    return collect_traces_fallback(patched)
+
+
+@pytest.fixture(autouse=True)
+def _safe_file_context(tmp_path: Path):
+    """Grant reyn.safe.file read access over tmp_path for each test."""
+    sf._read_paths = ()
+    sf._write_paths = ()
+    sf._context_initialised = False
+    sf._set_permission_context(
+        read_paths=[str(tmp_path)],
+        write_paths=[str(tmp_path)],
+    )
+    yield
+    sf._read_paths = ()
+    sf._write_paths = ()
+    sf._context_initialised = False
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 

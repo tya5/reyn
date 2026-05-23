@@ -26,24 +26,84 @@ from reyn.skill.skill_paths import (
     SkillNotFoundError,
     eval_md_path_for,
     resolve_skill_path,
+    stdlib_root,
 )
 from reyn.stdlib.skills.skill_improver.copy_to_work import extract_skill_name
-from reyn.stdlib.skills.skill_improver.copy_to_work_resolver import resolve_paths
+from reyn.stdlib.skills.skill_improver.copy_to_work_resolver_pure import (
+    resolve_paths_from_op,
+)
+
+
+def _categorize_source(skill_dir: Path) -> str | None:
+    """Mirror of ``op_runtime.skill_resolve._categorize_source``.
+
+    Replicated here so the test helper can synthesise the
+    ``skill_resolve`` run_op output dict without standing up an
+    OpContext. The categorisation logic itself is covered separately by
+    op_runtime tests; this copy is for self-containment only.
+    """
+    try:
+        skill_dir.resolve().relative_to(stdlib_root().resolve())
+        return "stdlib"
+    except ValueError:
+        pass
+    parts = skill_dir.parts
+    for i, part in enumerate(parts):
+        if part == "reyn" and i + 1 < len(parts):
+            nxt = parts[i + 1]
+            if nxt == "local":
+                return "local"
+            if nxt == "project":
+                return "project"
+    return None
+
+
+def _synth_skill_resolve_op(name: str) -> dict:
+    """Synthesise the ``skill_resolve`` run_op output for ``name``.
+
+    Matches the production op handler at
+    ``src/reyn/op_runtime/skill_resolve.py`` so the downstream
+    ``resolve_paths_from_op`` sees the same shape it would in a live
+    preprocessor.
+    """
+    try:
+        skill_dir, _ = resolve_skill_path(name)
+    except (SkillNotFoundError, FileNotFoundError):
+        return {
+            "name": name,
+            "resolved": False,
+            "skill_md_path": None,
+            "source": None,
+            "skill_dir": None,
+        }
+    source = _categorize_source(skill_dir)
+    return {
+        "name": name,
+        "resolved": True,
+        "skill_md_path": str(skill_dir / "skill.md"),
+        "source": source,
+        "skill_dir": str(skill_dir),
+    }
 
 
 def compute_paths(artifact: dict) -> dict:
-    """Test helper: chain extract_skill_name → resolve_paths, mimicking the preprocessor.
+    """Test helper: chain extract_skill_name + synth skill_resolve + resolve_paths_from_op.
 
-    Simulates the two-step preprocessor chain introduced by R-PURE-MODE-REDEFINE
-    Class B. Tests that previously called compute_paths directly now call this
-    helper to exercise the same end-to-end path resolution behaviour.
+    Mirrors the active preprocessor in ``phases/copy_to_work.md`` post-
+    FP-0042 Phase 2.7 (= the legacy unsafe ``copy_to_work_resolver.py``
+    was deleted in the same PR).
     """
     name_result = extract_skill_name(artifact)
+    target = name_result["target_skill"]
+    op_output = _synth_skill_resolve_op(target)
+
     enriched = dict(artifact)
     enriched.setdefault("data", {})
     enriched["data"] = dict(enriched["data"])
     enriched["data"]["_name"] = name_result
-    return resolve_paths(enriched)
+    # skill_improver/phases/copy_to_work.md binds the op output at data._resolved.
+    enriched["data"]["_resolved"] = op_output
+    return resolve_paths_from_op(enriched)
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -185,37 +245,50 @@ def test_compute_paths_stdlib_skill(tmp_path, monkeypatch):
     )
 
 
-def test_compute_paths_missing_skill_raises(tmp_path, monkeypatch):
-    """Tier 2: compute_paths raises SkillNotFoundError for unknown skill names.
+def test_compute_paths_missing_skill_surfaces_error(tmp_path, monkeypatch):
+    """Tier 2: compute_paths surfaces an unresolved skill via the resolver dict.
 
-    If the LLM hallucinates a non-existent skill name, compute_paths must
-    raise rather than silently constructing a bogus path (which would cause
-    copy 0 → workspace empty → eval FileNotFoundError, as in B6-S1).
+    Post-FP-0042 Phase 2.7 the active preprocessor chain runs the
+    ``skill_resolve`` run_op with ``on_error: skip``; the downstream
+    safe-mode ``resolve_paths_from_op`` reflects the unresolved op
+    output via null fields plus an ``error`` key. The structural
+    guarantee (= no LLM-constructed path silently becomes a real path)
+    still holds — downstream copy steps see null work_dir / skill_dir
+    fields and refuse to proceed.
+
+    Guards B6-S1: hallucinated skill names must NOT produce a bogus path.
     """
     monkeypatch.chdir(tmp_path)
     artifact = {
         "type": "improvement_session",
         "data": {"target_skill": "nonexistent_skill_hallucination_xyz"},
     }
-    with pytest.raises(SkillNotFoundError):
-        compute_paths(artifact)
+    result = compute_paths(artifact)
+
+    assert result.get("target_skill_root") is None
+    assert result.get("work_dir") is None
+    assert result.get("skill_glob") is None
+    assert "skill not found" in (result.get("error") or "").lower()
 
 
 def test_compute_paths_no_path_in_target_skill_field(tmp_path, monkeypatch):
     """Tier 2: compute_paths must NOT accept path strings in target_skill.
 
-    If a path string slips through (e.g. "reyn/local/my_app/skill.md"), the
-    resolver must fail with SkillNotFoundError — the LLM must not be able to
-    supply a path.  This guards the structural boundary: target_skill is a
-    name, not a path.
+    Post-FP-0042 Phase 2.7 the rejection surfaces as the unresolved
+    op-output dict (null fields + ``error`` key) rather than as a raised
+    SkillNotFoundError — the active preprocessor chain runs
+    ``skill_resolve`` with ``on_error: skip``. The structural guarantee
+    still holds: downstream steps refuse to operate on null paths.
     """
     monkeypatch.chdir(tmp_path)
     _make_local_skill(tmp_path, "my_app")
 
-    # Hallucinated path string — must be rejected by the resolver
     artifact = {
         "type": "improvement_session",
         "data": {"target_skill": "reyn/local/my_app/skill.md"},
     }
-    with pytest.raises(SkillNotFoundError):
-        compute_paths(artifact)
+    result = compute_paths(artifact)
+
+    assert result.get("target_skill_root") is None
+    assert result.get("work_dir") is None
+    assert "skill not found" in (result.get("error") or "").lower()

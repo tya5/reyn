@@ -9,6 +9,11 @@ Component D — SelfImprovementConfig / load_config():
 
 Testing policy: Tier 2 (OS invariant — deterministic logic + real fs ops).
 No MagicMock / AsyncMock / patch. No private-state assertions.
+
+FP-0042 Phase 2.7 (2026-05-23): ``version_snapshot.py`` migrated from
+mode: unsafe to mode: safe; file I/O now goes through ``reyn.safe.file``.
+The autouse ``_safe_file_context`` fixture grants reads + writes under
+``tmp_path`` so the safe-mode helpers can run inside the test process.
 """
 from __future__ import annotations
 
@@ -16,6 +21,29 @@ import textwrap
 from pathlib import Path
 
 import pytest
+
+from reyn.safe import file as sf
+
+
+@pytest.fixture(autouse=True)
+def _safe_file_context(tmp_path: Path):
+    """Grant reyn.safe.file read+write over tmp_path for each test.
+
+    Mirrors the production wiring (= CWD as default read zone, .reyn/ as
+    default write zone). Tests in this module operate exclusively under
+    tmp_path, so a wide grant there matches the per-test sandbox model.
+    """
+    sf._read_paths = ()
+    sf._write_paths = ()
+    sf._context_initialised = False
+    sf._set_permission_context(
+        read_paths=[str(tmp_path)],
+        write_paths=[str(tmp_path)],
+    )
+    yield
+    sf._read_paths = ()
+    sf._write_paths = ()
+    sf._context_initialised = False
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -31,15 +59,28 @@ def _make_skill_dir(tmp_path: Path, skill_name: str, skill_md_content: str = "")
     return root
 
 
-def _make_artifact(skill_root: str, termination_reason: str = "score_threshold_met") -> dict:
-    """Build a minimal improvement_result artifact dict for save_snapshot."""
-    return {
-        "data": {
-            "termination_reason": termination_reason,
-            "original_skill_root": skill_root,
-            "files_modified": [],
-        }
+def _make_artifact(
+    skill_root: str,
+    termination_reason: str = "score_threshold_met",
+    max_versions: int | None = None,
+) -> dict:
+    """Build a minimal improvement_result artifact dict for save_snapshot.
+
+    FP-0042 Phase 2.7: ``save_snapshot`` reads ``max_versions`` from
+    ``data._on_propose_config`` (= what the Wave 3b file_read + parse
+    chain populates). Tests that exercise the cap inject it here.
+    """
+    data = {
+        "termination_reason": termination_reason,
+        "original_skill_root": skill_root,
+        "files_modified": [],
     }
+    if max_versions is not None:
+        data["_on_propose_config"] = {
+            "on_propose": "ask_user",
+            "max_versions": max_versions,
+        }
+    return {"data": data}
 
 
 def _make_versions_dir(tmp_path: Path, skill_name: str) -> Path:
@@ -135,12 +176,9 @@ def test_max_versions_cap_drops_oldest(tmp_path, monkeypatch):
 
     from reyn.stdlib.skills.skill_improver import version_snapshot
 
-    # Patch _get_max_versions to return 10 so cap is enforced at exactly 10
-    monkeypatch.setattr(version_snapshot, "_get_max_versions", lambda: 10)
-
-    artifact = _make_artifact(str(skill_root))
-    result = save_snapshot_fn = version_snapshot.save_snapshot
-    result = save_snapshot_fn(artifact)
+    # max_versions = 10 is delivered via the artifact (post-FP-0042 Phase 2.7).
+    artifact = _make_artifact(str(skill_root), max_versions=10)
+    result = version_snapshot.save_snapshot(artifact)
 
     # v11 must be created
     assert (versions_dir / "v11.md").exists(), "v11.md should be written"
@@ -177,10 +215,9 @@ def test_max_versions_cap_never_deletes_current(tmp_path, monkeypatch):
 
     from reyn.stdlib.skills.skill_improver import version_snapshot
 
-    # max_versions = 10: after adding v11 (total=11) → drop 1 oldest non-current
-    monkeypatch.setattr(version_snapshot, "_get_max_versions", lambda: 10)
-
-    artifact = _make_artifact(str(skill_root))
+    # max_versions = 10: after adding v11 (total=11) → drop 1 oldest non-current.
+    # Delivered via the artifact post-FP-0042 Phase 2.7.
+    artifact = _make_artifact(str(skill_root), max_versions=10)
     result = version_snapshot.save_snapshot(artifact)
 
     # v11 must be created (the new snapshot = save_n)

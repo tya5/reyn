@@ -233,11 +233,6 @@ mirrors it for human reference.
 | Skill | Function | Why it remains unsafe |
 |-------|----------|----------------------|
 | `index_docs` | `apply_strategy` | Deprecated monolithic step kept for project-override compatibility (FP-0042 Phase 2.1 / 2.2 split the active flow into safe-mode `extract_and_split` + `write_chunks_with_lock`). |
-| `skill_improver` | `resolve_paths` | Legacy path resolver kept for direct callers (= same shape as the `eval_builder` migration finished in Phase 2.5). |
-| `skill_improver` | `collect_traces_fallback` | Globs `.reyn/events/**/*.jsonl` for trace dispatch. |
-| `skill_improver` | `collect_traces` | Back-compat wrapper. |
-| `skill_improver` | `save_snapshot` | Reads `skill.md`, writes `.reyn/skill-versions/`, manages a `current` pointer file. |
-| `skill_improver` | `read_on_propose_config` | Reads the `self_improvement` slice of `reyn.yaml`. |
 
 Adding an entry to this list is a deliberate decision — pair it with
 both an update to the test exemption set and a row here.
