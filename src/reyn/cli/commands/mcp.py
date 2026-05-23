@@ -383,6 +383,11 @@ def run_serve(args: argparse.Namespace) -> None:
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
+            # Same fix as web/deps.py: A2A / MCP-serve ChatSession factory
+            # was missing ``sandbox_config`` propagation. Without it, the
+            # operator's reyn.yaml ``sandbox.backend`` selection (e.g.
+            # ``noop``) never reaches the sandboxed_exec handler.
+            sandbox_config=session_cfg.config.sandbox,
             multimodal_config=session_cfg.config.multimodal,
             action_retrieval_config=session_cfg.config.action_retrieval,
             embedding_config=session_cfg.config.embedding,

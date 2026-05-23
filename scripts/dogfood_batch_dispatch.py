@@ -233,6 +233,33 @@ def setup_worktree(worker: WorkerSpec, head: str, repo_root: Path) -> None:
         "strong:   openai/gemini-2.5-flash\n",
         "strong:   openai/gemini-2.5-flash-lite\n",
     )
+
+    # Dogfood-runner env grants (B52 retro finding):
+    #   - ``web.fetch: allow`` — bypasses the 4-layer permission prompt for
+    #     web_fetch scenarios. In non-interactive worker subprocesses the
+    #     prompt can't surface, so without this scenarios like
+    #     control_ir_ops/web_fetch_url get auto-denied (= R for an env
+    #     reason, not an OS bug).
+    #   - ``sandbox.backend: noop`` — disables macOS Seatbelt enforcement
+    #     for sandboxed_exec scenarios. Default ``auto`` picks Seatbelt on
+    #     macOS, which then can't see the venv's Python interpreter
+    #     because the LLM-emitted op rarely includes the venv path in
+    #     read_paths. Dogfood tests "does the op route + emit events?",
+    #     not "does Seatbelt enforce policy", so noop is the right backend
+    #     for the runner.
+    runner_grants = (
+        "\n"
+        "# ── Dogfood worker env grants (B52 retro) ─────────────────────\n"
+        "# Auto-injected by scripts/dogfood_batch_dispatch.py; see\n"
+        "# docs/deep-dives/journal/dogfood/2026-05-23-batch-52-post-fp0042-complete/\n"
+        "# retrospective.md for the rationale.\n"
+        "permissions:\n"
+        "  web.fetch: allow\n"
+        "sandbox:\n"
+        "  backend: noop\n"
+    )
+    if "Dogfood worker env grants" not in text:
+        text = text.rstrip() + "\n" + runner_grants
     dst.write_text(text)
 
 
