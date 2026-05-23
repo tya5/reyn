@@ -605,6 +605,39 @@ class _PlanStepHost:
     def captured_text(self) -> str:
         return self._captured_text
 
+    # ── Workspace / op_context passthrough (B50 NF-W6-2 fix) ──────────────
+    #
+    # _PlanStepHost previously omitted ``workspace`` and
+    # ``make_router_op_context`` from the parent passthrough surface.
+    # Consequence: when a plan step's LLM called a router-side tool
+    # whose handler builds an OpContext (e.g. ``recall``, which dispatches
+    # ``index_query`` via op_runtime), RouterLoop built the ToolContext
+    # with ``workspace=getattr(self.host, "workspace", None)`` → None,
+    # and the recall handler fell into its minimal-context fallback that
+    # also propagates None, so ``index_query`` raised
+    # ``op_runtime context has no workspace``. Observed B50 W6-S3 plan
+    # step s4 (3x ``control_ir_failed kind=index_query``).
+    #
+    # Pass through both surfaces to the parent so plan-step tool calls
+    # see the same workspace + OpContext factory the chat router uses.
+    # The narrowing this facade provides is at the catalog / tool-set
+    # layer (= what tools the step can see); workspace itself is a
+    # global property of the agent and must not be narrowed.
+
+    @property
+    def workspace(self) -> Any:
+        return getattr(self._parent, "workspace", None)
+
+    @property
+    def permission_resolver(self) -> Any:
+        return getattr(self._parent, "permission_resolver", None)
+
+    def make_router_op_context(self) -> Any:
+        factory = getattr(self._parent, "make_router_op_context", None)
+        if factory is None:
+            return None
+        return factory()
+
 
 # ── Executor ────────────────────────────────────────────────────────────────
 
