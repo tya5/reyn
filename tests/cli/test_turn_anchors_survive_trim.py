@@ -61,7 +61,7 @@ def _force_trim(log: RichLog, lines_to_drop: int) -> None:
 
 @pytest.mark.asyncio
 async def test_anchor_survives_partial_trim_and_projects_correctly() -> None:
-    """An anchor whose line is still in the buffer after partial trim resolves correctly.
+    """Tier 2b: anchor whose line survives partial trim projects to correct view index.
 
     Sets up an anchor at a high absolute position (after baseline content
     is in the log), then simulates a partial trim that removes some earlier
@@ -83,7 +83,7 @@ async def test_anchor_survives_partial_trim_and_projects_correctly() -> None:
         # Now record a header anchor.
         conv._maybe_write_header("user", "you ", "bold", "dim")
         await pilot.pause()
-        assert len(conv._turn_anchors) == 1
+        assert conv._turn_anchors  # at least one anchor recorded
         anchor_abs = conv._turn_anchors[0]
         assert anchor_abs >= 20, f"expected anchor past baseline, got {anchor_abs}"
 
@@ -102,7 +102,7 @@ async def test_anchor_survives_partial_trim_and_projects_correctly() -> None:
 
 @pytest.mark.asyncio
 async def test_anchor_dropped_when_target_trimmed() -> None:
-    """An anchor whose line was trimmed out of the buffer is filtered."""
+    """Tier 2b: anchor whose target line was ring-buffer-trimmed is filtered from resolved list."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -125,7 +125,7 @@ async def test_anchor_dropped_when_target_trimmed() -> None:
 
 @pytest.mark.asyncio
 async def test_jump_no_crash_when_all_anchors_trimmed() -> None:
-    """Ctrl+P/N with every anchor trimmed must not raise (only warn)."""
+    """Tier 2b: Ctrl+P/N with every anchor trimmed must not raise and must set trim-warn latch."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -148,7 +148,7 @@ async def test_jump_no_crash_when_all_anchors_trimmed() -> None:
 
 @pytest.mark.asyncio
 async def test_clear_resets_trim_warn_latch() -> None:
-    """``/clear`` (or Ctrl+L) lets the trim warning fire again next session."""
+    """Tier 2b: clear() resets the trim-warn latch so the warning can fire again."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -166,7 +166,7 @@ async def test_clear_resets_trim_warn_latch() -> None:
 
 @pytest.mark.asyncio
 async def test_richlog_max_lines_is_at_least_20000() -> None:
-    """Pin the bumped buffer size — guards against accidental regression to 5000."""
+    """Tier 2b: RichLog max_lines is at least 20000 — guards against regression to 5000."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()

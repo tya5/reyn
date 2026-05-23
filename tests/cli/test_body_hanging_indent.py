@@ -60,7 +60,7 @@ def _find_first_line_containing(log: RichLog, needle: str) -> int:
 
 @pytest.mark.asyncio
 async def test_user_message_body_is_indented() -> None:
-    """``render_user_message`` writes its body at the hanging-indent column.
+    """Tier 2b: ``render_user_message`` writes its body at the hanging-indent column.
 
     The header (``HH:MM  you  ───``) stays at column 0; the body line
     "hello world" starts at column 7 so a wrap continuation visually
@@ -85,7 +85,7 @@ async def test_user_message_body_is_indented() -> None:
 
 @pytest.mark.asyncio
 async def test_agent_markdown_body_is_indented() -> None:
-    """Agent markdown turns render their content at the indent column."""
+    """Tier 2b: Agent markdown turns render their content at the indent column."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -105,7 +105,7 @@ async def test_agent_markdown_body_is_indented() -> None:
 
 @pytest.mark.asyncio
 async def test_system_message_body_is_indented() -> None:
-    """``/slash`` output rendered as system kind also gets indented."""
+    """Tier 2b: ``/slash`` output rendered as system kind also gets indented."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -129,7 +129,7 @@ async def test_system_message_body_is_indented() -> None:
 
 @pytest.mark.asyncio
 async def test_header_line_is_not_indented() -> None:
-    """The timestamp + speaker label header stays at column 0.
+    """Tier 2b: The timestamp + speaker label header stays at column 0.
 
     This is the load-bearing distinction the fix delivers: header at
     column 0, body at column ``_BODY_INDENT_COLS``. Without it the wrap
@@ -159,7 +159,7 @@ async def test_header_line_is_not_indented() -> None:
 
 @pytest.mark.asyncio
 async def test_long_user_line_wrap_continuation_is_indented() -> None:
-    """Wrap continuation of a long body line lands at the indent column.
+    """Tier 2b: Wrap continuation of a long body line lands at the indent column.
 
     This is the user-visible behaviour the agent's UX audit flagged:
     a long URL or code line that wraps used to put the continuation at
@@ -196,7 +196,7 @@ async def test_long_user_line_wrap_continuation_is_indented() -> None:
 
 
 def test_body_indent_constant_matches_header_name_column() -> None:
-    """``_BODY_INDENT_COLS`` aligns with where the name column starts.
+    """Tier 2b: ``_BODY_INDENT_COLS`` aligns with where the name column starts.
 
     Header layout: ``HH:MM`` (5) + 2-space gap = 7 cells before the
     name. The body indent must match so wrapped content nests under

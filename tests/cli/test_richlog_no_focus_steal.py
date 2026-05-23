@@ -42,7 +42,7 @@ def _make_app() -> ReynTUIApp:
 
 @pytest.mark.asyncio
 async def test_conv_richlog_is_not_focusable() -> None:
-    """The conv-pane RichLog must declare ``can_focus = False``.
+    """Tier 2b: The conv-pane RichLog must declare ``can_focus = False``.
 
     Pinned at the instance level (not the class level — the right-panel
     preview RichLog stays focusable for j/k scrolling).
@@ -59,7 +59,7 @@ async def test_conv_richlog_is_not_focusable() -> None:
 
 @pytest.mark.asyncio
 async def test_clicking_conv_pane_does_not_steal_focus_from_input() -> None:
-    """Mouse click on the conv pane keeps focus on the input TextArea."""
+    """Tier 2b: Mouse click on the conv pane keeps focus on the input TextArea."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -82,7 +82,7 @@ async def test_clicking_conv_pane_does_not_steal_focus_from_input() -> None:
 
 @pytest.mark.asyncio
 async def test_shift_tab_from_input_does_not_land_in_richlog() -> None:
-    """Shift+Tab from the input bar must not focus the conv RichLog.
+    """Tier 2b: Shift+Tab from the input bar must not focus the conv RichLog.
 
     With ``can_focus = False``, Textual's DOM walker skips the RichLog and
     either wraps around or lands on the next focusable peer. Either way
@@ -103,7 +103,7 @@ async def test_shift_tab_from_input_does_not_land_in_richlog() -> None:
 
 @pytest.mark.asyncio
 async def test_ctrl_p_turn_nav_still_scrolls_without_focus() -> None:
-    """Ctrl+P/N turn-nav must continue to work even though RichLog can't focus.
+    """Tier 2b: Ctrl+P/N turn-nav must continue to work even though RichLog can't focus.
 
     Defensive check: the existing nav path uses ``log.scroll_to`` which
     operates on the widget directly rather than via the focused widget,
