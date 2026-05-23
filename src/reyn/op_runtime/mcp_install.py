@@ -247,11 +247,13 @@ async def handle(
         )
         # Registry fetch happened via RegistryClient above — gate the
         # host symmetrically so the OS exercises its own permission
-        # primitive uniformly.
+        # primitive uniformly. #571 Phase 7: require_http_get is async
+        # because the wildcard branch prompts the operator.
         if not op.source:
-            ctx.permission_resolver.require_http_get(
+            await ctx.permission_resolver.require_http_get(
                 ctx.permission_decl,
                 "registry.modelcontextprotocol.io",
+                ctx.intervention_bus,
                 ctx.skill_name,
             )
 

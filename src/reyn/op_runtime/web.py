@@ -212,13 +212,26 @@ def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
 async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     import httpx
 
-    # FP-0022: Tier 1 handler-level gate — 4-layer approval (config / approvals.yaml
-    # / session / interactive). Replaces the catalog-level `web.fetch: allow` gate.
-    # `web.fetch: allow` existing config entries continue to pre-approve via Layer 1.
+    # #571 Phase 7: route through ``require_http_get`` (= unified
+    # ``http.get`` axis). Declared specific hosts pass silently if
+    # approved at startup_guard; wildcard ``http.get: ["*"]`` fires
+    # a per-host 4-layer prompt; the legacy ``web.fetch`` config /
+    # approvals keys remain honored during the segmented migration
+    # window. A skill with no http.get declaration falls back to the
+    # legacy ``web.fetch`` prompt with a DeprecationWarning.
     if ctx.permission_resolver is not None:
         if ctx.intervention_bus is None:
             raise RuntimeError("web_fetch op requires intervention_bus on OpContext")
-        await ctx.permission_resolver.require_web_fetch(op.url, ctx.intervention_bus)
+        from urllib.parse import urlparse
+        host = urlparse(op.url).hostname or ""
+        if not host:
+            return {
+                "kind": "web_fetch", "url": op.url, "status": "error",
+                "error": f"web_fetch: cannot resolve host from URL {op.url!r}",
+            }
+        await ctx.permission_resolver.require_http_get(
+            ctx.permission_decl, host, ctx.intervention_bus, ctx.skill_name,
+        )
 
     ctx.events.emit("web_fetch_started", url=op.url)
     try:
