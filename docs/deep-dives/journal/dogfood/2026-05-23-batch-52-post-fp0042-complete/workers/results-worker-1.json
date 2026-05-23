@@ -1,0 +1,78 @@
+{
+  "batch": "B52",
+  "worker": 1,
+  "head": "8e9be379",
+  "date": "2026-05-23",
+  "scenario_set": "chat_router_smoke.yaml",
+  "env_vars": {"REYN_EMPTY_STOP_RETRY": "1", "REYN_SPAWN_ACK_TO_LLM": "1"},
+  "user_params": {"hot_list_n": 10, "models_tier": "flash-lite"},
+  "verdicts": {"V": 5, "I": 0, "R": 2, "B": 0},
+  "vs_past": {
+    "B51": {"V": 4, "I": 0, "R": 3, "B": 0},
+    "B52": {"V": 5, "I": 0, "R": 2, "B": 0},
+    "delta_V": "+1",
+    "delta_R": "-1"
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "verdict": "V",
+      "http_status": 200,
+      "events_pass": true,
+      "rubric_pass": true,
+      "notes": "Reply explains Reyn capabilities (skills + tasks); user_message_received=1; no permission_denied. No artifact requirement."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "verdict": "V",
+      "http_status": 200,
+      "events_pass": true,
+      "rubric_pass": true,
+      "notes": "Reply explains idempotency clearly (math + API meaning). must_emit=[]; no permission_denied. No artifact requirement after B49 fix."
+    },
+    {
+      "id": "skill_discovery_request",
+      "verdict": "V",
+      "http_status": 200,
+      "events_pass": true,
+      "rubric_pass": true,
+      "notes": "Reply lists multiple skill names (skill__direct_llm, skill__eval, skill__eval_builder, skill__index_docs, ...). chat_turn_completed_inline=1 satisfies must_emit_any; no permission_denied."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "verdict": "V",
+      "http_status": 200,
+      "events_pass": true,
+      "rubric_pass": true,
+      "notes": "Reply returns word count (9) and token estimate. routing_decided=1, skill_run_spawned(word_stats_demo)=1, skill_run_completed(status=finished)=1; artifact via word_stats_demo skill_run present."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "verdict": "R",
+      "http_status": 200,
+      "events_pass": true,
+      "rubric_pass": false,
+      "notes": "Reply asks user to pick a theme instead of producing a poem (= no poem text, fewer than 2 lines of poetic form). Rubric requires poem with >=2 lines and natural poetic form. chat_turn_completed_inline=1 (must_emit_any OK); however artifacts requirement (direct_llm present) NOT met — no skill_run_spawned. Rubric + artifact both fail."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "verdict": "V",
+      "http_status": 200,
+      "events_pass": true,
+      "rubric_pass": true,
+      "notes": "Turn 2 reply contains [x*x for x in range(10)] coherent with turn 1 (list comprehension). Both turns: user_message_received=2; no permission_denied."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "verdict": "R",
+      "http_status": 200,
+      "events_pass": true,
+      "rubric_pass": false,
+      "notes": "Reply asks for image-generation parameters (subject/style/mood/colour) as if it can generate the image — neither politely declines nor explains capability unavailable. Pretends generation is possible. must_emit=[]; no permission_denied (events_pass holds)."
+    }
+  ],
+  "new_findings": [
+    "S5 (catalog_routing_decided_emitted): flash-lite router answers '短い詩を書いてください' by asking for theme clarification instead of producing a poem inline; no direct_llm dispatch either, so artifacts requirement also fails. Same R verdict as B51 baseline (pattern persists at HEAD 8e9be379).",
+    "S7 (out_of_scope_graceful_decline): flash-lite does not decline image generation; instead it elicits image specs as if it could fulfil the request. Behavioural attractor — router treats '画像を生成してください' as a normal task with missing parameters."
+  ]
+}

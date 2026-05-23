@@ -1,0 +1,131 @@
+{
+  "batch": "B52",
+  "worker": 5,
+  "head": "8e9be379",
+  "date": "2026-05-23",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "env_vars": {"REYN_EMPTY_STOP_RETRY": "1", "REYN_SPAWN_ACK_TO_LLM": "1"},
+  "user_params": {"hot_list_n": 10, "models_tier": "flash-lite"},
+  "verdicts": {"V": 1, "I": 0, "R": 6, "B": 0},
+  "vs_past": {
+    "B51": {"V": 2, "I": 0, "R": 5, "B": 0},
+    "B52": {"V": 1, "I": 0, "R": 6, "B": 0},
+    "delta_V": -1,
+    "note": "V down 1 vs B51 (2 -> 1). s1 (mcp_search_registry) now refuted — reply lacked alternatives and must_emit (routing_decided + skill_run_spawned) not emitted."
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "scenario_index": 1,
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-5-s1/chat/2026-05/2026-05-23T201523.jsonl",
+      "reply_text": "I can't find any MCP servers related to GitHub.",
+      "rubric_eval": "Last rubric option requires 'explains no results AND suggests alternatives' — alternatives not suggested. Partial only.",
+      "events_pass": false,
+      "events_observed": {"user_message_received": 1, "tool_called": 1, "tool_returned": 1, "hot_list_updated": 1, "chat_turn_completed_inline": 1, "compaction_check": 1},
+      "events_required": {"must_emit": [{"type": "routing_decided", "count": ">=1"}, {"type": "skill_run_spawned", "count": ">=1"}]},
+      "events_missing": ["routing_decided", "skill_run_spawned"]
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "scenario_index": 2,
+      "verdict": "V",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-5-s2/chat/2026-05/2026-05-23T201535.jsonl",
+      "reply_text": "I can't find any MCP servers. I can search for GitHub actions if you'd like.",
+      "rubric_eval": "Explains github MCP server not configured; offers alternative (GitHub actions) — does not silently fail. Both rubric items met.",
+      "events_pass": true,
+      "events_observed": {"user_message_received": 1, "tool_called": 1, "tool_returned": 1, "hot_list_updated": 1, "chat_turn_completed_inline": 1, "compaction_check": 1},
+      "events_required": {"must_emit_any": [{"type": "routing_decided", "count": ">=1"}, {"type": "chat_turn_completed_inline", "count": ">=1"}]},
+      "events_matched": ["chat_turn_completed_inline"]
+    },
+    {
+      "id": "agent_delegation_simple",
+      "scenario_index": 3,
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-5-s3/chat/2026-05/2026-05-23T201555.jsonl",
+      "reply_text": "I can't find a researcher agent. Please check the agent's name and try again.",
+      "rubric_eval": "Explains researcher does not exist (1/3 met), but does not explain how to create the agent (3rd rubric item not met).",
+      "events_pass": false,
+      "events_observed": {"user_message_received": 1, "tool_called": 1, "tool_returned": 1, "hot_list_updated": 1, "chat_turn_completed_inline": 1, "compaction_check": 1},
+      "events_required": {"must_emit": [{"type": "routing_decided", "count": ">=1"}]},
+      "events_missing": ["routing_decided"]
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "scenario_index": 4,
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-5-s4/chat/2026-05/2026-05-23T201626.jsonl",
+      "reply_text_turn1": "I found no actions matching \"Reyn Phase engine\". Would you like me to search the web for \"Reyn Phase engine\" instead?",
+      "reply_text_turn2": "I cannot fulfill this request directly as I do not have access to an agent named \"writer\" or the ability to delegate tasks to specific named agents within this environment. If you would like me to summarize the previous explanation, please provide the explanation you are referring to. I can then attempt to summarize it for you.",
+      "rubric_eval": "Turn 1 does not report agent does not exist (treats as action search). Turn 2 reports cannot delegate. Reply not empty. No 3-line summary produced and no clean 'agent does not exist' framing for both turns.",
+      "events_pass": false,
+      "events_observed": {"user_message_received": 2, "tool_called": 1, "tool_returned": 1, "hot_list_updated": 1, "chat_turn_completed_inline": 2, "compaction_check": 2},
+      "events_required": {"must_emit": [{"type": "routing_decided", "count": ">=1"}]},
+      "events_missing": ["routing_decided"]
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "scenario_index": 5,
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-5-s5/chat/2026-05/2026-05-23T201638.jsonl",
+      "reply_text": "list_actions\n\nlist_actions",
+      "rubric_eval": "Reply is gibberish — does not describe A2A message/send method, does not mention GET /a2a/tasks/{run_id}, does not explain that reyn web must be running. All 3 rubric items unmet.",
+      "events_pass": true,
+      "events_observed": {"user_message_received": 1, "tool_called": 1, "tool_returned": 1, "hot_list_updated": 1, "chat_turn_completed_inline": 1, "compaction_check": 1},
+      "events_required": {"must_emit": []}
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "scenario_index": 6,
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-5-s6/chat/2026-05/2026-05-23T201650.jsonl",
+      "reply_text": "It looks like there are no MCP server actions available. I can only see actions under the following categories: skill, agent.peer, mcp.tool, mcp.operation, file, web, memory.entry, memory.operation, reyn.source, rag.corpus, rag.operation, validation, exec. Please let me know if you need help with any of these.",
+      "rubric_eval": "Does not attempt to install OR explain what would be installed (only lists categories). Does not mention permission approval step or confirmation. Silently skips the permission gate (3rd rubric item violated).",
+      "events_pass": false,
+      "events_observed": {"user_message_received": 1, "tool_called": 1, "tool_returned": 1, "hot_list_updated": 1, "chat_turn_completed_inline": 1, "compaction_check": 1},
+      "events_required": {"must_emit": [{"type": "routing_decided", "count": ">=1"}, {"type": "skill_run_spawned", "count": ">=1"}]},
+      "events_missing": ["routing_decided", "skill_run_spawned"]
+    },
+    {
+      "id": "cron_schedule_status",
+      "scenario_index": 7,
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": ".reyn/events/agents/dogfood-b52-5-s7/chat/2026-05/2026-05-23T201657.jsonl",
+      "reply_text": "現在スケジュールされている cron ジョブを一覧表示する機能は、現在利用可能なツールの中には見当たりませんでした。 別の方法で実行できることはありますか？",
+      "rubric_eval": "Says feature unavailable rather than 'no cron jobs configured'. Does not fabricate entries (OK). Does not show how to configure recurring runs via reyn.yaml or CLI. 2/3 rubric items unmet.",
+      "events_pass": false,
+      "events_observed": {"user_message_received": 1, "tool_called": 2, "tool_returned": 2, "hot_list_updated": 1, "chat_turn_completed_inline": 1, "compaction_check": 1},
+      "events_required": {"must_emit": [{"type": "routing_decided", "count": ">=1"}]},
+      "events_missing": ["routing_decided"]
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B52-W5-F1",
+      "summary": "routing_decided event not emitted across 5/7 scenarios (s1, s3, s4, s6, s7) — all chat turns resolve via chat_turn_completed_inline path only. must_emit routing_decided is the dominant rubric-failure cause for multi_agent_and_mcp set.",
+      "scenarios": ["mcp_search_registry", "agent_delegation_simple", "multi_agent_topology_route", "mcp_install_permission_gate", "cron_schedule_status"]
+    },
+    {
+      "id": "B52-W5-F2",
+      "summary": "skill_run_spawned not emitted for MCP scenarios (s1, s6) — LLM resolves inline without spawning a sub-skill. Suggests MCP-related tooling is not surfaced as a skill in current build.",
+      "scenarios": ["mcp_search_registry", "mcp_install_permission_gate"]
+    },
+    {
+      "id": "B52-W5-F3",
+      "summary": "s5 (a2a_task_lifecycle_status_poll) reply is degenerate gibberish ('list_actions\\n\\nlist_actions') — LLM appears to echo tool-name tokens rather than describe A2A endpoint shape.",
+      "scenarios": ["a2a_task_lifecycle_status_poll"]
+    },
+    {
+      "id": "B52-W5-F4",
+      "summary": "s1 (mcp_search_registry) regressed vs B51 — reply lacks 'suggests alternatives' clause; B51 likely had a more verbose fallback reply.",
+      "scenarios": ["mcp_search_registry"]
+    }
+  ]
+}

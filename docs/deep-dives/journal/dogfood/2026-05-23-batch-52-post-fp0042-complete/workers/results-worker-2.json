@@ -1,0 +1,104 @@
+{
+  "batch": "B52", "worker": 2,
+  "head": "8e9be379", "date": "2026-05-23",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "env_vars": {"REYN_EMPTY_STOP_RETRY": "1", "REYN_SPAWN_ACK_TO_LLM": "1"},
+  "user_params": {"hot_list_n": 10, "models_tier": "flash-lite"},
+  "verdicts": {"V": 2, "I": 3, "R": 2, "B": 0},
+  "vs_past": {
+    "B51": {"V": 3, "I": 2, "R": 2, "B": 0},
+    "delta": {"V": -1, "I": "+1", "R": 0, "B": 0},
+    "note": "S2 (skill_builder_web_summariser) regressed V->I: router selected wrong skill 'simple_memo_app' (which then failed to load 'built_app' artifact) instead of skill_builder; reply mentions skill name and concrete error reason, but skill_builder workflow never ran (no skill_run_completed, no phase_started, no skill_builder artifact). S3/S4/S5/S6/S1/S7 stable vs B51."
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "scenario_num": 1,
+      "verdict": "R",
+      "vs_b51": "same",
+      "events_pass": false,
+      "artifact_present": false,
+      "rubric_met": false,
+      "notes": "Router only called list_actions tool; no routing_decided, no skill_run_spawned, no skill_run_completed, no phase_started emitted. Reply says 'skill__index_docs という名前のスキルが見つかりました' (= skill was found) — does not confirm indexing started/completed. Rubric line 1 not met. No index_docs artifact produced. Same R as B51."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "scenario_num": 2,
+      "verdict": "I",
+      "vs_b51": "V->I",
+      "events_pass": false,
+      "artifact_present": false,
+      "rubric_met": false,
+      "notes": "Routing went to simple_memo_app (not skill_builder); spawned skill failed: 'Artifact built_app not found' (= stdlib artifact load env-ish failure). routing_decided=1, skill_run_spawned=1 (simple_memo_app), skill_run_failed=1, no skill_run_completed, no phase_started. Reply mentions 'web_article_summariser' name (rubric 2 OK) and concrete error 'Artifact built_app not found' (rubric 3 OK), but rubric 1 (skill generated/lint passed) NOT met. No skill_builder artifact. Partial rubric + env-ish skill load failure -> I."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "scenario_num": 3,
+      "verdict": "V",
+      "vs_b51": "same",
+      "events_pass": true,
+      "artifact_present": true,
+      "rubric_met": true,
+      "notes": "All must_emit present (routing_decided=1, skill_run_spawned=1, skill_run_completed=1 status=finished, phase_started=1, llm_called=1). word_stats_demo artifact present (review/review_preprocessed/_input). Reply: '44 characters, 9 words, 1 line, ~11 tokens' — stats consistent with input and references actual text. All rubric items met."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "scenario_num": 4,
+      "verdict": "V",
+      "vs_b51": "same",
+      "events_pass": true,
+      "artifact_present": true,
+      "rubric_met": true,
+      "notes": "All must_emit present (routing_decided=1, skill_run_spawned=1, skill_run_completed=1 status=finished). word_stats_demo artifact present. Reply: '128 characters across 4 lines, longest line 40 chars, ~32 tokens' — references precomputed stats for multi-line text. Both rubric items met."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "scenario_num": 5,
+      "verdict": "I",
+      "vs_b51": "same",
+      "events_pass": false,
+      "artifact_present": true,
+      "rubric_met": false,
+      "notes": "eval skill spawned and ran (workflow_started, phase_started=1, llm_called=2) but workflow_aborted; skill_run_failed; skill_run_completed=0. eval artifact present (_input only). Reply: 'ターゲットスキルファイルが見つからない' (concrete env error, rubric 3 OK) but does not report eval pass/fail/score (rubric 1 NO) or reference こんにちは criterion (rubric 2 NO). Same env-reason failure as B51 W2-F2 (SkillNotFoundError pattern)."
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "scenario_num": 6,
+      "verdict": "I",
+      "vs_b51": "same",
+      "events_pass": false,
+      "artifact_present": false,
+      "rubric_met": true,
+      "notes": "5-turn conversation completed; turn 5 reply explains routing mechanism + universal action catalog + routing_decided event coherently (all 3 rubric items met). However events.must_emit FAIL: skill_run_spawned=0, llm_called=0 (router answered directly without spawning direct_llm or chat_compactor). Compaction threshold not reached (env constraint with flash-lite shorter responses). No direct_llm artifact. Same as B51 W2-F3."
+    },
+    {
+      "id": "chained_find_then_index",
+      "scenario_num": 7,
+      "verdict": "R",
+      "vs_b51": "same",
+      "events_pass": false,
+      "artifact_present": false,
+      "rubric_met": false,
+      "notes": "Turn 1 listed markdown files successfully. Turn 2 emitted plan (plan_emitted=1, plan_step_started=3, plan_step_completed=3) but no skill_run_spawned, no skill_run_completed, no phase_started. routing_decided=1 (turn 1 only). Final reply: 'architecture.md と events.md は Reyn リポジトリ内に見つかりませんでした' — does NOT confirm indexing was requested (rubric 1 NO), does NOT reference 'arch_events_index' source name (rubric 2 NO). No index_docs artifact. Plan path produced wrong outcome (claim files not found when turn 1 listed them)."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "W2-F1",
+      "severity": "medium",
+      "description": "S2 routing regression vs B51: skill_builder request routed to 'simple_memo_app' (which then failed to load stdlib artifact 'built_app'). LLM picked wrong skill name from catalog despite explicit 'スキル名は web_article_summariser で' instruction. In B51 the same scenario invoked skill_builder correctly and completed with lint pass. Suggests router/SP change between B51 (HEAD 9d4a45f3) and B52 (HEAD 8e9be379) may have shifted skill_builder routability for this prompt shape, or simple_memo_app stdlib artifact 'built_app' is missing/misregistered.",
+      "scenario": "skill_builder_web_summariser"
+    },
+    {
+      "id": "W2-F2",
+      "severity": "low",
+      "description": "S7 plan path produced incorrect 'files not found' final reply for files (architecture.md, events.md) that were successfully listed in turn 1 of the same agent session. plan_emitted + 3 plan_step_completed but no skill_run_spawned for index_docs. Plan aggregator may have lost path context across plan steps, or the plan steps did not actually attempt indexing.",
+      "scenario": "chained_find_then_index"
+    },
+    {
+      "id": "W2-F3",
+      "severity": "known",
+      "description": "S5 (eval_run_direct_llm) and S6 (chat_compactor_long_session) reproduce B51 known env constraints: eval SkillNotFoundError('skill.py') target resolution, and 5-turn compaction threshold non-trigger with flash-lite shorter responses. No new behavior; stable I/I."
+    }
+  ]
+}

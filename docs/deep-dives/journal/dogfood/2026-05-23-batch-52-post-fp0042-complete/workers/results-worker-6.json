@@ -1,0 +1,115 @@
+{
+  "batch": "B52",
+  "worker": 6,
+  "head": "8e9be379",
+  "date": "2026-05-23",
+  "scenario_set": "plan_mode_fp_0011_mixed",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 1,
+    "I": 1,
+    "R": 1,
+    "B": 0
+  },
+  "vs_past": {
+    "B51": {"V": 1, "I": 0, "R": 2, "B": 0},
+    "B52": {"V": 1, "I": 1, "R": 1, "B": 0},
+    "delta_V": 0,
+    "delta_I": "+1",
+    "delta_R": "-1",
+    "delta_B": 0,
+    "note": "V flat at 1/3; one R converted to I (s3 plan ran end-to-end per events but reply was truncated to spawn-ack only — partial:true delivery rather than refutation)."
+  },
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "agent": "dogfood-b52-6-s1",
+      "verdict": "V",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b52-6/.reyn/events/agents/dogfood-b52-6-s1/chat/2026-05/2026-05-23T201515.jsonl",
+      "event_counts": {
+        "plan_emitted": 1,
+        "plan_step_started": 3,
+        "plan_step_completed": 3,
+        "plan_aggregated": 1,
+        "plan_step_failed": 0,
+        "plan_run_interrupted": 0,
+        "tool_called": 4,
+        "tool_returned": 4,
+        "router_empty_response_detected": 3,
+        "router_empty_response_retry_injected": 3
+      },
+      "events_pass": true,
+      "rubric_pass": true,
+      "reply_summary": "Returned both spawn_ack AND aggregated final reply with 3 concrete points referencing both permission-model.md and workspace.md, citing header names ('Data flow between phases', 'Replayability', 'default layer', 'skill-scoped permissions')."
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "agent": "dogfood-b52-6-s2",
+      "verdict": "R",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b52-6/.reyn/events/agents/dogfood-b52-6-s2/chat/2026-05/2026-05-23T201521.jsonl",
+      "event_counts": {
+        "plan_emitted": 0,
+        "plan_step_started": 0,
+        "plan_step_completed": 0,
+        "plan_aggregated": 0,
+        "plan_step_failed": 0,
+        "plan_run_interrupted": 0,
+        "tool_called": 5,
+        "tool_returned": 5,
+        "hot_list_updated": 3
+      },
+      "events_pass": false,
+      "rubric_pass": false,
+      "reply_summary": "Router loop exceeded max iterations (5). LLM repeatedly called list_actions/describe_action without ever firing the plan tool. Reply: 'list_actions … Router loop exceeded max iterations (5).'"
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "agent": "dogfood-b52-6-s3",
+      "verdict": "I",
+      "http_status": 200,
+      "events_path": "/tmp/reyn-worktrees/b52-6/.reyn/events/agents/dogfood-b52-6-s3/chat/2026-05/2026-05-23T201525.jsonl",
+      "event_counts": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_step_failed": 0,
+        "plan_run_interrupted": 0,
+        "tool_called": 4,
+        "tool_returned": 4,
+        "router_empty_response_detected": 3,
+        "router_empty_response_retry_injected": 3
+      },
+      "events_pass": true,
+      "rubric_pass": "partial",
+      "reply_summary": "Events fully met (4 steps started+completed, plan_aggregated content_len=3535). HTTP reply returned ONLY the spawn_ack (partial:true) — aggregated synthesis never delivered to the JSON-RPC caller in this round-trip. Reply text alone does not satisfy reply rubric (no pillars enumerated), but plan execution succeeded per events. Classified I per env/delivery (not refutation)."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B52-W6-1",
+      "type": "behavioral",
+      "severity": "med",
+      "scenario": "plan_explain_with_code_references (s2)",
+      "summary": "Router loop attractor: LLM calls list_actions repeatedly (5x) + describe_action (1x) instead of firing plan tool. plan_emitted=0. Same scenario verdict as B51 R for similar reasons (plan tool affordance not selected for code-reference synthesis prompt).",
+      "evidence": "tool_called sequence: list_actions, describe_action, list_actions, list_actions, list_actions, list_actions. Reply ends with 'Router loop exceeded max iterations (5).'"
+    },
+    {
+      "id": "B52-W6-2",
+      "type": "delivery",
+      "severity": "low",
+      "scenario": "plan_summary_across_n_files (s3)",
+      "summary": "HTTP A2A round-trip returned partial:true with only spawn_ack body for kind=plan task even though plan_aggregated fired (content_len=3535) within ~75s. s1 received both spawn_ack and aggregated reply in same response; s3 did not. Possible race/timing inconsistency in A2A delivery of plan aggregated content.",
+      "evidence": "s3 response metadata.partial=true, history.jsonl has only seq=0 spawn_ack assistant entry, but events show plan_aggregated event with result_len=3535 at 20:16:37."
+    }
+  ]
+}
