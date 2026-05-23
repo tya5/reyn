@@ -136,6 +136,29 @@ def test_require_secret_write_passes_for_declared_key(tmp_path):
     resolver.require_secret_write(decl, "GITHUB_TOKEN")
 
 
+def test_require_secret_write_wildcard_passes_any_key(tmp_path):
+    """Tier 2: secret.write: ['*'] wildcard authorises any key.
+
+    #571 Phase 6: covers the mcp_install case where the env-var key
+    set is determined at runtime from the registry response. The
+    actual security gate is the operator's per-value prompt at
+    op-execution time; the wildcard is the author's acknowledgement.
+    """
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
+    decl = PermissionDecl(secret_write=["*"])
+    resolver.require_secret_write(decl, "UNFORESEEN_KEY")
+    resolver.require_secret_write(decl, "ANOTHER_KEY")
+    resolver.require_secret_write(decl, "PG_PASSWORD")
+
+
+def test_require_secret_write_wildcard_alongside_specific_key(tmp_path):
+    """Tier 2: wildcard alongside specific keys still authorises any key."""
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
+    decl = PermissionDecl(secret_write=["GITHUB_TOKEN", "*"])
+    resolver.require_secret_write(decl, "GITHUB_TOKEN")
+    resolver.require_secret_write(decl, "OTHER_KEY")
+
+
 # ── reyn.safe.http enforcement ────────────────────────────────────────────────
 
 

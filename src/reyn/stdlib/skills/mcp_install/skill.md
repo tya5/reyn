@@ -26,6 +26,15 @@ permissions:
       scope: just_path
   http.get:
     - host: registry.modelcontextprotocol.io
+  # #571 Phase 6 (2026-05-23): wildcard secret.write reflects that the
+  # env-var keys to save are determined at runtime from the registry's
+  # ``isSecret`` environmentVariables block — the skill author cannot
+  # enumerate them statically. The actual security gate is the
+  # operator's per-value prompt at op-execution time; this declaration
+  # is the author's acknowledgement that the op routes through that
+  # prompt-then-save flow.
+  secret.write:
+    - "*"
   python:
     # FP-0042 Phase 2.4 (2026-05-23): migrated from mode: unsafe to mode: safe.
     # Registry HTTP + cache + JSON parse + dedup all hidden inside

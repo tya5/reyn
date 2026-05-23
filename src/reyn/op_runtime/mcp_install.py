@@ -256,8 +256,23 @@ async def handle(
             )
 
     # ── 4. Credentials: prompt for isSecret env vars + persist ───────────────
+    # #571 Phase 6: every save_secret call routes through
+    # require_secret_write against the calling skill's decl. The
+    # env-var key set is server-specific (= determined by the registry
+    # response, not statically known by the skill author) so skills
+    # that invoke mcp_install must declare the wildcard form
+    # ``secret.write: ['*']`` — the actual security gate is the
+    # operator's per-value prompt below.
     env_overrides = dict(op.env_overrides or {})
     secret_keys_set: list[str] = []
+
+    def _save_with_gate(key: str, value: str) -> None:
+        if ctx.permission_resolver is not None:
+            ctx.permission_resolver.require_secret_write(
+                ctx.permission_decl, key, ctx.skill_name,
+            )
+        from reyn.secrets.store import save_secret
+        save_secret(key, value)
 
     # Collect environmentVariables from packages[] that have isSecret=True
     for pkg_raw in packages_raw:
@@ -273,8 +288,7 @@ async def handle(
                 continue
             # Already supplied via env_overrides — skip prompt
             if key in env_overrides:
-                from reyn.secrets.store import save_secret
-                save_secret(key, env_overrides[key])
+                _save_with_gate(key, env_overrides[key])
                 secret_keys_set.append(key)
                 continue
             # Prompt via intervention_bus
@@ -290,8 +304,7 @@ async def handle(
                 answer = await ctx.intervention_bus.request(iv)
                 value = getattr(answer, "text", None) or getattr(answer, "choice_id", "")
                 if value:
-                    from reyn.secrets.store import save_secret
-                    save_secret(key, value)
+                    _save_with_gate(key, value)
                     secret_keys_set.append(key)
 
     # ── 5. Write mcp.servers.<name> to scope config file ─────────────────────

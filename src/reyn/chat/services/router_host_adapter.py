@@ -1010,6 +1010,9 @@ class RouterHostAdapter:
             mcp=mcp_names,
             allowed_mcp=self._allowed_mcp,
             http_get=[{"host": "registry.modelcontextprotocol.io"}],
+            # #571 Phase 6: wildcard secret.write — see ChatSession's
+            # matching pattern for rationale.
+            secret_write=["*"],
         )
         if self._perm is not None:
             for canonical in (".reyn/mcp.yaml", ".reyn/cron.yaml", ".reyn/index/sources.yaml"):

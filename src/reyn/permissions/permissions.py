@@ -879,15 +879,25 @@ class PermissionResolver:
     ) -> None:
         """Raise PermissionError if secret-store write of ``key`` is not declared.
 
-        #571 collapse arc Phase 3: axis declaration + resolver method.
-        Callers (= ``reyn.secrets.store.save_secret`` from op handlers)
-        are wired in Phase 5 when bool axes are removed and op handlers
-        route through this gate instead of their dedicated bool-axis
-        ``require_*`` methods. For Phase 3 / 4 this method exists so
-        the schema, parsing, and downstream config wiring can land
-        ahead of the op-handler migration.
+        Two declaration shapes are accepted:
+
+        - **Specific key** — ``secret.write: ["GITHUB_TOKEN"]`` authorises
+          only that exact key. Use when the skill knows at write-time
+          which env-var names it will save.
+        - **Wildcard** ``"*"`` — ``secret.write: ["*"]`` authorises any
+          key. Use when the key set is determined at runtime from
+          external metadata (= ``mcp_install``'s ``isSecret``
+          environment variables from the registry response). The
+          security gate in this case is the operator's per-value prompt
+          at op-execution time; the wildcard declaration is the
+          author's acknowledgement that the skill will route through
+          that prompt-then-save flow.
+
+        Specific entries take precedence — a skill that lists both
+        ``"GITHUB_TOKEN"`` and ``"*"`` is functionally equivalent to
+        just ``"*"`` but conveys intent more clearly.
         """
-        if key in decl.secret_write:
+        if key in decl.secret_write or "*" in decl.secret_write:
             return
         raise PermissionError(
             f"Secret-store write of key {key!r} not declared in skill permissions. "
@@ -895,6 +905,10 @@ class PermissionResolver:
             f"  permissions:\n"
             f"    secret.write:\n"
             f"      - {key}\n"
+            f"or use the wildcard form for runtime-determined keys:\n"
+            f"  permissions:\n"
+            f"    secret.write:\n"
+            f"      - '*'\n"
         )
 
     def is_read_allowed(self, path: str, skill_name: str = "") -> bool:
