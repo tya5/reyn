@@ -178,6 +178,7 @@ from reyn.chat.slash import pending as _pending_mod  # noqa: E402, F401
 from reyn.chat.slash import plan as _plan_mod  # noqa: E402, F401
 from reyn.chat.slash import quit as _quit_mod  # noqa: E402, F401
 from reyn.chat.slash import reset as _reset_mod  # noqa: E402, F401
+from reyn.chat.slash import save as _save_mod  # noqa: E402, F401
 from reyn.chat.slash import skill as _skill_mod  # noqa: E402, F401
 from reyn.chat.slash import skills as _skills_mod  # noqa: E402, F401
 from reyn.chat.slash import tasks as _tasks_mod  # noqa: E402, F401
