@@ -1,6 +1,6 @@
 """Tier 2 OS invariant tests for R-PURE-MODE-REDEFINE Class A split.
 
-Guards the Class A refactor that split apply_strategy into:
+Guards the active two-step chain (post-FP-0042 Phase 2.1 / 2.2):
   - extract_and_split (mode: safe): glob enum, no file content read
   - write_chunks_with_lock (mode: unsafe, minimal): lock + content + jsonl write
 
@@ -107,43 +107,26 @@ def test_extract_and_split_returns_path_list_without_content_read(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_index_docs_skill_permissions_python_active_steps_are_safe():
-    """Tier 2: skill.md permissions.python has the active postprocessor steps
-    (= extract_and_split + write_chunks_with_lock) both as mode=safe.
+def test_index_docs_skill_permissions_python_all_steps_safe():
+    """Tier 2: skill.md permissions.python has every active step as mode=safe.
 
-    Post-FP-0042 Phase 2.2 (2026-05-23) the active two-step chain runs
-    entirely safe-mode. Only the deprecated ``apply_strategy`` step
-    remains mode=unsafe for project-override compatibility.
-
-    The ``unsafe_reason`` annotation must still be present on
-    ``apply_strategy`` (= FP-0014 Component F documentation contract).
+    Post-FP-0042 Phase 2.8 (2026-05-23) the active two-step
+    postprocessor chain (extract_and_split + write_chunks_with_lock)
+    plus the two preprocessor steps all run mode: safe. The deprecated
+    ``apply_strategy`` was retired in the same phase, closing the last
+    grandfathered exemption.
     """
-    import re
-
-    skill_md_text = _SKILL_MD_PATH.read_text(encoding="utf-8")
-
     skill = _load_skill()
     fn_modes = {p.function: p.mode for p in skill.permissions.python}
 
     assert fn_modes.get("extract_and_split") == "safe", (
-        f"extract_and_split must be mode=safe, got {fn_modes.get('extract_and_split')!r}. "
-        "glob enum is pure (path list only, no file content read)."
+        f"extract_and_split must be mode=safe, got {fn_modes.get('extract_and_split')!r}."
     )
     assert fn_modes.get("write_chunks_with_lock") == "safe", (
-        f"write_chunks_with_lock must be mode=safe post-FP-0042 Phase 2.2, "
-        f"got {fn_modes.get('write_chunks_with_lock')!r}. It now uses "
-        "reyn.safe.file + reyn.safe.process."
+        f"write_chunks_with_lock must be mode=safe post-FP-0042, "
+        f"got {fn_modes.get('write_chunks_with_lock')!r}."
     )
-    assert fn_modes.get("apply_strategy") == "unsafe", (
-        f"apply_strategy stays mode=unsafe (= deprecated compat path), "
-        f"got {fn_modes.get('apply_strategy')!r}."
-    )
-
-    fm_match = re.match(r"^---\n(.*?)\n---", skill_md_text, re.DOTALL)
-    assert fm_match, "Could not parse skill.md frontmatter"
-    fm_text = fm_match.group(1)
-
-    assert "unsafe_reason" in fm_text, (
-        "apply_strategy must keep its unsafe_reason annotation "
-        "(FP-0014 Component F documentation contract)."
+    assert "apply_strategy" not in fn_modes, (
+        "apply_strategy was retired in FP-0042 Phase 2.8 — its skill.md "
+        "permission entry must stay removed."
     )

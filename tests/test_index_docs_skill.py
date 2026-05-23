@@ -241,21 +241,24 @@ def test_index_docs_postprocessor_step3_args_from():
 def test_index_docs_permissions_python_modes_declared():
     """Tier 2: skill declares the expected mode per chunker function.
 
-    Post-FP-0042 Phase 2.2:
+    Post-FP-0042 Phase 2.8 (= ``apply_strategy`` retired):
       - gather_samples / cost_preflight: safe (chunkers_preproc_safe.py)
       - extract_and_split / write_chunks_with_lock: safe (chunkers_safe.py)
-      - apply_strategy: unsafe deprecated, kept for override compat
+      - apply_strategy: REMOVED — was the last grandfathered exemption.
     """
     skill = _load()
     python_perms = skill.permissions.python
-    assert len(python_perms) >= 5, f"Expected at least 5 python perms, got {len(python_perms)}"
+    assert len(python_perms) >= 4, f"Expected at least 4 python perms, got {len(python_perms)}"
 
     fn_modes = {p.function: p.mode for p in python_perms}
     assert fn_modes.get("gather_samples") == "safe"
     assert fn_modes.get("cost_preflight") == "safe"
     assert fn_modes.get("extract_and_split") == "safe"
     assert fn_modes.get("write_chunks_with_lock") == "safe"
-    assert fn_modes.get("apply_strategy") == "unsafe"
+    assert "apply_strategy" not in fn_modes, (
+        "apply_strategy was retired in FP-0042 Phase 2.8 — its skill.md "
+        "permission entry must stay removed."
+    )
 
 
 def test_index_docs_permissions_python_module_is_relative_path():

@@ -222,36 +222,26 @@ and enforced by `tests/test_fp0042_stdlib_safe_only.py`:
 - No new stdlib `skill.md` declares `mode: unsafe` python steps. The
   default mode for new stdlib code is `mode: safe`.
 
-### Grandfathered exemptions
+### No grandfathered exemptions
 
-A small set of pre-FP-0042 stdlib entries remain `mode: unsafe`. Each is
-either a deprecated compatibility path or a skill that was outside the
-proposal's Phase 2 migration scope. The enforcement test
-(`GRANDFATHERED_UNSAFE` set) is the authoritative list — this table
-mirrors it for human reference.
+Post-FP-0042 Phase 2.8 (2026-05-23) the `GRANDFATHERED_UNSAFE` set is
+**empty** — stdlib has zero `mode: unsafe` python steps. The last
+holdout (`index_docs.apply_strategy`, a deprecated monolithic compat
+path) was retired in that phase; its surveyed project-override
+contract migrated to the two-step
+`extract_and_split` + `write_chunks_with_lock` chain.
 
-| Skill | Function | Why it remains unsafe |
-|-------|----------|----------------------|
-| `index_docs` | `apply_strategy` | Deprecated monolithic step kept for project-override compatibility (FP-0042 Phase 2.1 / 2.2 split the active flow into safe-mode `extract_and_split` + `write_chunks_with_lock`). |
+The enforcement tests in `tests/test_fp0042_stdlib_safe_only.py` now
+express two invariants:
 
-Adding an entry to this list is a deliberate decision — pair it with
-both an update to the test exemption set and a row here.
+- `test_stdlib_mode_unsafe_only_in_exemption_set` — fails on any
+  unsafe declaration outside the (empty) exemption set.
+- `test_stdlib_unsafe_surface_is_zero` — the positive form: fails fast
+  if any unsafe step appears anywhere in stdlib.
 
-### Migrating an exemption
-
-If you migrate one of the entries above off `mode: unsafe`:
-
-1. Refactor the step to use `reyn.safe.*` (= file read / write / mkdir /
-   glob / write_atomic, process identity, registry lookup) or split the
-   I/O into a `run_op`. The five Phase 2 PRs are the worked examples —
-   see `chunkers_preproc_safe.py`, `chunkers_safe.py`,
-   `chunkers_preproc_safe.py` of `index_events`, `reyn.safe.mcp.registry`,
-   and the `eval_builder` Class D pattern.
-2. Switch the `skill.md` declaration to `mode: safe`.
-3. Remove the corresponding entry from both `GRANDFATHERED_UNSAFE` in
-   `tests/test_fp0042_stdlib_safe_only.py` and the table above. The
-   "stale exemption" test in the same file will fail if you forget the
-   test side.
+Adding a new stdlib unsafe step requires deleting the second test (=
+deliberate architectural decision that needs broad review, not a
+CI-silent change).
 
 ## See also
 

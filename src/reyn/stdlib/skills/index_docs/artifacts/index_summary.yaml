@@ -4,7 +4,7 @@ description: |
   skill postprocessor after chunk + embed + index_write pipeline completes.
 
   Fields are nested under their respective postprocessor step outputs:
-  - chunk_stats: result of apply_strategy (python step)
+  - chunk_stats: result of write_chunks_with_lock (python step)
   - embed_result: result of embed op
   - index_result: result of index_write op
 
@@ -31,7 +31,7 @@ schema:
     chunk_stats:
       type: object
       required: [chunk_count, source_lock_acquired]
-      description: Result of the apply_strategy python step.
+      description: Result of the write_chunks_with_lock python step.
       properties:
         chunk_count:
           type: integer

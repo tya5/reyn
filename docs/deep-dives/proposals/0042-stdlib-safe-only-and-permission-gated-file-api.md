@@ -1,10 +1,10 @@
 # FP-0042: Stdlib safe-only + permission-gated file API for safe-mode python
 
-**Status**: accepted — Phase 1 + 2.1 + 2.2 + 2.3 + 2.4 + 2.5 + 3 landed (2026-05-23)
+**Status**: fully complete — all phases landed, stdlib unsafe surface = 0 (2026-05-23)
 **Proposed**: 2026-05-23
 **Author**: dogfood-coder (sandbox_2 session)
 
-**Landed PRs** (6-stack cascade):
+**Landed PRs** (10-stack cascade):
 
 | Phase | PR | Branch | Headline |
 |---|---|---|---|
@@ -14,12 +14,16 @@
 | 2.3 | #566 | `feat/index-events-migrate-to-safe-mode` | `index_events` all 3 python steps → safe + `safe.file.write_atomic` |
 | 2.4 | #573 | `feat/mcp-registry-safe-http` | `mcp_install` + `mcp_search` → safe via new `reyn.safe.mcp.registry` |
 | 2.5 | #575 | `feat/eval-builder-safe-mode` | `eval_builder` legacy unsafe resolver deleted |
-| 3 | (this PR) | `feat/fp0042-phase3-ci-guard-docs` | CI guard + docs doctrine + grandfathered exemption list |
+| 3 | #580 | `feat/fp0042-phase3-ci-guard-docs` | CI guard + docs doctrine + grandfathered exemption list |
+| 2.6 | #582 | `feat/ops-report-safe-mode` | `ops_report` all 3 unsafe steps → safe |
+| 2.7 | #587 | `feat/skill-improver-safe-mode` | `skill_improver` all 5 unsafe steps → safe |
+| 2.8 | (this PR) | `feat/retire-apply-strategy` | `apply_strategy` retired (= last grandfathered exemption removed) |
 
-**Deferred** (= follow-up issues):
+**Final stdlib unsafe surface**: **15 → 0 (= 100% reduction)**.
+
+**Deferred** (= follow-up Issues):
 - Permission granularity decomposition + reyn-internal HTTP/IO gating + generic `safe.http`: tracked at [Issue #571](https://github.com/tya5/reyn/issues/571).
-- `ops_report` + `skill_improver` migration (= grandfathered as Phase 3 exemptions; would be Phase 2.6 / 2.7).
-- `apply_strategy` retire decision (= deprecated compat path; pending the project-override survey).
+- `_pure.py` suffix cleanup (= ``aggregate_pure``, ``trace_collector_pure``, ``version_snapshot_pure``, ``copy_to_work_resolver_pure``, ``chunkers_preproc_safe``, ``chunkers_safe``): both halves are now safe; the suffix split is mechanical and can be revisited if naming clarity becomes a maintenance burden.
 
 ---
 
