@@ -444,6 +444,14 @@ class RightPanel(Widget):
         """Rotate through tail-N values; only meaningful on events tab."""
         self._event_tail_idx = (self._event_tail_idx + 1) % len(_TAIL_CYCLE)
         self._invalidate()
+        # Wave-11 A#4 — re-anchor the cursor in the viewport. Mirrors
+        # the ``cycle_event_filter`` idiom above. Without this, cycling
+        # 30→200 with cursor near the bottom of the old window left
+        # the cursor invisible until the next j/k press because the
+        # viewport stayed pinned at the old scroll position. Asymmetric
+        # absence; same root cause as #588's chain-isolate scroll
+        # restoration.
+        self._scroll_events_into_view()
 
     def cycle_memory_type_filter(self) -> str | None:
         """Cycle the memory tab's type-filter through the known kinds.
