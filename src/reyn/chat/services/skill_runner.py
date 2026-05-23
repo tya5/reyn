@@ -205,12 +205,20 @@ class SkillRunner:
         if self.running_skills:
             await asyncio.gather(*self.running_skills.values(), return_exceptions=True)
 
-    async def spawn(self, spec: dict, *, chain_id: str | None = None) -> None:
+    async def spawn(self, spec: dict, *, chain_id: str | None = None) -> "dict | None":
         """Launch a skill task and register it in the running dicts.
 
         Extracted from ``ChatSession._spawn_skill``.  Enforces the
-        allowlist, budget cap, and FP-0003 budget extension before
-        creating the asyncio Task.
+        allowlist, budget cap, FP-0003 budget extension, and pre-spawn
+        input_schema validation before creating the asyncio Task.
+
+        Returns ``None`` on successful spawn (= caller relies on
+        ``self.running_skills`` for the run_id). Returns a structured
+        error dict when pre-spawn checks reject the spawn before any
+        asyncio task is created — currently only the input_schema
+        validation path uses this return channel; other refusals (=
+        allowlist, budget) keep the legacy None-return + outbox-error
+        path for backward compat with non-router callers.
         """
         skill_name = spec.get("skill")
         input_artifact = spec.get("input")
@@ -218,7 +226,7 @@ class SkillRunner:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"invalid skill spec: {spec}",
             ))
-            return
+            return None
 
         # PR15: defense-in-depth allowlist check.
         if (
@@ -236,7 +244,7 @@ class SkillRunner:
                 "skill_spawn_refused",
                 reason="allowlist", skill=skill_name, agent=self._agent_name,
             )
-            return
+            return None
 
         # PR22: per-chain per-skill cap check.
         if chain_id is not None:
@@ -286,7 +294,7 @@ class SkillRunner:
                     text=format_refusal_message(check),
                     meta={"chain_id": chain_id, "skill": skill_name},
                 ))
-                return
+                return None
             for dim in check.warn_dimensions:
                 from reyn.budget.budget import format_warn_message
                 self._events.emit(
@@ -300,6 +308,112 @@ class SkillRunner:
                     meta={"chain_id": chain_id, "skill": skill_name},
                 ))
             self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
+
+        # Pre-spawn input_schema validation. Loads the skill the same way
+        # ``_run_one_skill`` does, validates ``input_artifact`` against the
+        # entry phase's input_schema, and rejects synchronously with a
+        # structured error before any asyncio task is created.
+        #
+        # Why pre-spawn: post-spawn validation arrives at the router LLM
+        # as an async ``[task_completed] kind=skill status=error`` message
+        # that's temporally separated from the originating invoke_action
+        # call. Weak-tier LLMs struggle to correlate the failure back to
+        # the original args + retry — they default to summarizing the
+        # error to the user. Validating sync at spawn time keeps the
+        # error in the same tool_result round-trip as the wrong args, so
+        # the LLM can react with full local context. Also avoids burning
+        # async-task setup cost on inputs that can never run.
+        try:
+            skill_dir, skill_root = resolve_skill_path(skill_name)
+            _skill_for_validation = load_dsl_skill(
+                str(skill_dir / "skill.md"), skill_root=str(skill_root),
+            )
+        except SkillNotFoundError as exc:
+            self._events.emit(
+                "skill_spawn_refused",
+                reason="skill_not_found",
+                skill=skill_name,
+                detail=str(exc),
+            )
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"skill not found: {skill_name}",
+                meta={"chain_id": chain_id, "skill": skill_name},
+            ))
+            return {
+                "status": "error",
+                "data": {
+                    "kind": "spawn_refused",
+                    "reason": "skill_not_found",
+                    "skill": skill_name,
+                    "error": str(exc),
+                },
+            }
+        except Exception as exc:
+            # Skill md parse / compile error — surface as spawn refusal
+            # so the LLM sees a structured failure instead of an async
+            # crash inside _run_one_skill.
+            self._events.emit(
+                "skill_spawn_refused",
+                reason="skill_load_error",
+                skill=skill_name,
+                detail=str(exc),
+            )
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"failed to load {skill_name}: {exc}",
+                meta={"chain_id": chain_id, "skill": skill_name},
+            ))
+            return {
+                "status": "error",
+                "data": {
+                    "kind": "spawn_refused",
+                    "reason": "skill_load_error",
+                    "skill": skill_name,
+                    "error": str(exc),
+                },
+            }
+
+        entry_schema = getattr(_skill_for_validation, "entry_input_schema", None)
+        if entry_schema:
+            import jsonschema
+            try:
+                jsonschema.validate(input_artifact, entry_schema)
+            except jsonschema.ValidationError as exc:
+                # Build the structured error response with a schema_hint
+                # the LLM can use directly on its next turn.
+                schema_hint = {
+                    "skill": skill_name,
+                    "input_schema": entry_schema,
+                    "retry_hint": (
+                        "Re-emit invoke_action with input matching "
+                        "input_schema above."
+                    ),
+                }
+                self._events.emit(
+                    "skill_spawn_refused",
+                    reason="input_schema_violation",
+                    skill=skill_name,
+                    detail=exc.message,
+                )
+                await self._put_outbox(OutboxMessage(
+                    kind="error",
+                    text=(
+                        f"input validation failed for skill "
+                        f"{skill_name!r}: {exc.message}"
+                    ),
+                    meta={"chain_id": chain_id, "skill": skill_name},
+                ))
+                return {
+                    "status": "error",
+                    "data": {
+                        "kind": "spawn_refused",
+                        "reason": "input_schema_violation",
+                        "skill": skill_name,
+                        "validation_error": exc.message,
+                        "schema_hint": schema_hint,
+                    },
+                }
 
         run_id = (
             f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
@@ -332,9 +446,17 @@ class SkillRunner:
         Extracted from ``ChatSession._spawn_skill_for_router``.  Wraps
         :meth:`spawn` and returns the spawn-ack dict the router LLM
         consumes via ``invoke_skill``'s tool_result.
+
+        When :meth:`spawn` rejects pre-spawn (= input_schema violation
+        / skill not found / load error), the structured error dict it
+        returns is forwarded verbatim so the router LLM sees a sync
+        tool_result with schema_hint in the same turn as its wrong
+        invoke_action call.
         """
         before = set(self.running_skills.keys())
-        await self.spawn(spec, chain_id=chain_id)
+        spawn_result = await self.spawn(spec, chain_id=chain_id)
+        if isinstance(spawn_result, dict):
+            return spawn_result
         after = set(self.running_skills.keys())
         new_run_ids = after - before
         if not new_run_ids:
