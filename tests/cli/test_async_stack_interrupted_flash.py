@@ -194,3 +194,100 @@ async def test_remove_no_kwarg_still_works() -> None:
         assert not _panel_has_id(panel.snapshot(), "p4"), (
             "no-kwarg remove() must still unmount immediately (backwards-compat)"
         )
+
+
+# ── test 6: elapsed freezes at flash start (not live) ────────────────────────
+
+@pytest.mark.asyncio
+async def test_elapsed_frozen_at_flash_start() -> None:
+    """Tier 2: elapsed_s in snapshot is frozen the moment remove(terminal!='ok') fires.
+
+    After calling remove(terminal='aborted'), the snapshot's elapsed_s for
+    the flashing row must not increase when time passes — it must stay at
+    (approximately) the value captured at the moment of remove().
+    """
+    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.chat.tui.widgets import ConversationView
+
+    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        panel = conv._async_stack()
+        assert panel is not None
+
+        panel.add("p5", "background job")
+        await pilot.pause()
+
+        # Let 0.2 s accumulate so elapsed_s is non-trivial at remove time.
+        await pilot.pause(0.2)
+
+        panel.remove("p5", terminal="aborted")
+        await pilot.pause()
+
+        # Snapshot immediately after remove — capture the frozen elapsed.
+        snap1 = panel.snapshot()
+        row1 = _panel_row(snap1, "p5")
+        assert row1 is not None, "row must still be present during flash window"
+        assert row1["flashing"] is True
+        elapsed_at_flash = row1["elapsed_s"]
+
+        # Wait ~1 s — well inside the 1.5 s flash window.
+        await pilot.pause(1.0)
+
+        snap2 = panel.snapshot()
+        row2 = _panel_row(snap2, "p5")
+        assert row2 is not None, "row must still be present within the flash window"
+        assert row2["flashing"] is True
+
+        # Elapsed must be frozen: same value as at flash start (within float noise).
+        assert row2["elapsed_s"] == elapsed_at_flash, (
+            f"elapsed_s must be frozen during flash; "
+            f"at flash start: {elapsed_at_flash}, after 1 s: {row2['elapsed_s']}"
+        )
+
+
+# ── test 7: non-flashing entry continues to update elapsed ───────────────────
+
+@pytest.mark.asyncio
+async def test_live_elapsed_for_running_entry() -> None:
+    """Tier 2: elapsed_s in snapshot increases for a non-flashing (running) entry.
+
+    Freeze logic must only apply to flashing entries; a still-running entry
+    must continue to report live elapsed so the user sees the task progressing.
+    """
+    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.chat.tui.widgets import ConversationView
+
+    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        panel = conv._async_stack()
+        assert panel is not None
+
+        panel.add("p6", "still running task")
+        await pilot.pause()
+
+        snap1 = panel.snapshot()
+        row1 = _panel_row(snap1, "p6")
+        assert row1 is not None
+        assert row1["flashing"] is False
+        elapsed1 = row1["elapsed_s"]
+
+        # Wait 1 s — elapsed must grow for a running entry.
+        await pilot.pause(1.0)
+
+        snap2 = panel.snapshot()
+        row2 = _panel_row(snap2, "p6")
+        assert row2 is not None
+        assert row2["flashing"] is False
+
+        assert row2["elapsed_s"] > elapsed1, (
+            f"live elapsed must increase for running entry; "
+            f"before: {elapsed1}, after 1 s: {row2['elapsed_s']}"
+        )
+
+        # Cleanup: remove cleanly so no timers dangle.
+        panel.remove("p6", terminal="ok")
+        await pilot.pause()
