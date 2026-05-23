@@ -430,6 +430,61 @@ class ReynTUIApp(App):
             source_agent=source_agent,
         )
 
+    async def on_intervention_widget_skip_rest(
+        self,
+        event: InterventionWidget.SkipRest,
+    ) -> None:
+        """Cancel every queued non-head intervention + emit one breadcrumb.
+
+        Wave-13 T2-4 / audit finding B#5.  When the user clicks the
+        "skip rest (N pending)" chip on the head InterventionWidget, we
+        cancel all interventions behind the head one (= all queue entries
+        except the one whose id matches ``event.iv_id``).  The head
+        intervention stays active so the user can still answer it.
+
+        A single dim breadcrumb is written to the conv log:
+            ✗ N interventions skipped (see /pending list)
+        This is surgical — it does NOT Ctrl+C, does NOT cancel running
+        skills, and does NOT remove the head widget.
+        """
+        event.stop()
+        session = self._get_session()
+        interventions = (
+            getattr(session, "_interventions", None) if session is not None else None
+        )
+        cancelled = 0
+        if interventions is not None:
+            for iv in list(interventions.list_active()):
+                if iv.id == event.iv_id:
+                    # Head intervention — leave it alive for the user.
+                    continue
+                if interventions.cancel(iv.id):
+                    cancelled += 1
+        if cancelled:
+            from rich.text import Text as _RichText
+            label = "intervention" if cancelled == 1 else "interventions"
+            breadcrumb = _RichText()
+            breadcrumb.append(
+                f"  ✗ {cancelled} {label} skipped (see /pending list)",
+                style="dim #aa6666",
+            )
+            try:
+                conv = self.query_one("#conversation", ConversationView)
+                conv._write_log(breadcrumb)
+            except Exception:
+                pass
+        # Remove the skip chip from the head widget so the button
+        # doesn't linger after there are no more queued IVs to skip.
+        try:
+            for w in self.query(InterventionWidget):
+                try:
+                    skip_btn = w.query_one("#chip__skip_rest")
+                    skip_btn.remove()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def set_title_state(self, state: str | None) -> None:
         """Set the terminal window title to reflect the agent's state.
 

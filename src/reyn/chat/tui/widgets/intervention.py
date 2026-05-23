@@ -107,6 +107,23 @@ class InterventionWidget(Widget):
         height: auto;
         width: 1fr;
     }
+    InterventionWidget Button.iv-skip-rest {
+        /* Dim amber — visually secondary to the answer chips (which use
+           $primary / coral).  The user's eyes land on the answer chips
+           first; the skip button is an escape hatch, not the main CTA. */
+        background: #443322;
+        color: #aa8866;
+        border: none;
+        padding: 0;
+        height: 1;
+        width: auto;
+        min-width: 6;
+        margin: 0 0 0 1;
+    }
+    InterventionWidget Button.iv-skip-rest:hover {
+        background: #664433;
+        color: #ddaa88;
+    }
     InterventionWidget Label.iv-detail {
         /* Issue #163: detail is secondary copy beneath the prompt.
            #aaaaaa on #1e1510 is ~6.3:1 (passes WCAG AA for body text).
@@ -134,6 +151,24 @@ class InterventionWidget(Widget):
             super().__init__()
             self.iv_id = iv_id
             self.answer = answer
+
+    class SkipRest(Message):
+        """Posted when the user clicks "skip rest (N pending)".
+
+        The handler (app-level ``on_intervention_widget_skip_rest``) should
+        cancel every non-head active intervention and emit one conv-log
+        breadcrumb.
+
+        ``iv_id`` is the HEAD intervention (= the one this widget
+        represents).  The handler must NOT cancel it — only the queued
+        ones behind it.  ``queued_count`` is the number that will be
+        cancelled (= ``queued_extra`` at render time) so the handler can
+        build the breadcrumb without re-querying the registry.
+        """
+        def __init__(self, iv_id: str, queued_count: int) -> None:
+            super().__init__()
+            self.iv_id = iv_id
+            self.queued_count = queued_count
 
     def __init__(
         self,
@@ -263,6 +298,16 @@ class InterventionWidget(Widget):
                     id="chip__free",
                     variant="default",
                 )
+                # "skip rest" escape-hatch — only surfaces when there are
+                # additional queued interventions behind this head one.
+                # Placed after "free response…" so the answer chips are
+                # the visual default; the skip button is secondary / dim.
+                if self._queued_extra > 0:
+                    yield Button(
+                        Text(f"skip rest ({self._queued_extra} pending)"),
+                        id="chip__skip_rest",
+                        classes="iv-skip-rest",
+                    )
             # Hint reflects the keyboard-first chip nav landed by the
             # wave-6 IV bundle: the first chip is auto-focused on mount,
             # so single-key hotkeys (``y`` / ``A`` / ``n`` / ``N``) fire
@@ -316,6 +361,19 @@ class InterventionWidget(Widget):
         btn_id = event.button.id or ""
         if btn_id == "chip__free":
             self._show_free_input()
+            return
+        if btn_id == "chip__skip_rest":
+            # Post SkipRest — the app-level handler cancels all queued
+            # non-head interventions and emits the conv-log breadcrumb.
+            # Do NOT remove the head widget here; only the queued ones
+            # behind it are skipped. The user still has to answer the
+            # head (or Ctrl+C to cancel everything).
+            self.post_message(
+                self.SkipRest(
+                    iv_id=self._iv_id,
+                    queued_count=self._queued_extra,
+                )
+            )
             return
         # Find the choice whose chip_ prefix matches, then submit its
         # *hotkey* — InterventionRegistry.deliver_answer routes through
