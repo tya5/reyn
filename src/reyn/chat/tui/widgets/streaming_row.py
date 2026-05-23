@@ -39,6 +39,38 @@ from reyn.chat.tui._palette import _AMBER
 _RENDER_INTERVAL_MS = 16  # ~60 fps max
 _RENDER_INTERVAL_S = _RENDER_INTERVAL_MS / 1000
 
+# Wave-11 B#1 — tiered stall escalation thresholds. The previous
+# single-tier ``> 5.0s`` cue gave identical visual signal whether
+# the stream was paused for 5 s or hung for 5 minutes; users with
+# a stuck LLM had no escalating prompt and Ctrl+C was the only
+# escape. Three tiers now:
+#
+#   t < 5s       — live cursor blink (= normal)
+#   5s ≤ t < 30s — dim " …" (= ambient stall, no fuss)
+#   30s ≤ t < 60s— amber " … (stalled <fmt>)" (= attention)
+#   t ≥ 60s      — red  " … (no token in <fmt>, Ctrl+C to cancel)"
+#
+# Boundaries match the SkillActivityRow elapsed-color thresholds
+# (= 30 s amber, 60 s red) so the cross-widget mental model is
+# consistent: 30 s = "taking a while", 60 s = "probably blocked".
+_STALL_TIER_1_S = 5.0
+_STALL_TIER_2_S = 30.0
+_STALL_TIER_3_S = 60.0
+
+
+def _fmt_idle(idle_seconds: float) -> str:
+    """Human-readable elapsed for the stall cue.
+
+    ``45s`` / ``1m`` / ``2m`` — minutes lose the trailing seconds
+    because at this scale the user wants order-of-magnitude, not
+    precision. Negative values clamp to ``0s`` so a clock-skew
+    artifact can't surface as ``-3s``.
+    """
+    secs = max(0.0, idle_seconds)
+    if secs < 60.0:
+        return f"{int(secs)}s"
+    return f"{int(secs // 60)}m"
+
 # Body content rendered inside ConversationView lives at a 7-cell
 # hanging indent (= ``conversation._BODY_INDENT_COLS``) so wrap
 # continuations sit under the speaker name and the column-0 turn
@@ -209,10 +241,24 @@ class StreamingRow(Widget):
         if not self._sealed:
             # ``_last_chunk_at`` is armed at construction (F-F2) so this
             # calculation is always meaningful — no sentinel-zero guard
-            # needed. Idle past 5s shows the stall cue regardless of
-            # whether any token has arrived yet.
+            # needed. Tiered stall cue (= wave-11 B#1):
+            #   - 60s+ : red "no token in <fmt>, Ctrl+C to cancel"
+            #            (= probably hung, user attention required)
+            #   - 30s+ : amber "stalled <fmt>" (= taking a while)
+            #   -  5s+ : dim "…" (= ambient pause)
+            #   - else : live cursor blink
             idle = monotonic() - self._last_chunk_at
-            if idle > 5.0:
+            if idle >= _STALL_TIER_3_S:
+                t.append(
+                    f" … (no token in {_fmt_idle(idle)}, Ctrl+C to cancel)",
+                    style="bold #ff6644",
+                )
+            elif idle >= _STALL_TIER_2_S:
+                t.append(
+                    f" … (stalled {_fmt_idle(idle)})",
+                    style="bold #ffaa44",
+                )
+            elif idle > _STALL_TIER_1_S:
                 t.append(" …", style="dim")
             else:
                 if self._cursor_visible:
