@@ -1721,12 +1721,27 @@ class RightPanel(Widget):
         idx = max(0, min(len(self._agents_items) - 1, self._agents_cursor))
         item = self._agents_items[idx]
         if item.get("kind") != "agent":
-            # The agents tab's cursor walks ALL rows (= agents +
-            # running/recent skills/plans). ``a`` only makes sense
-            # on the agent-label row; for other rows, silently no-op
-            # rather than dispatching a meaningless ``/attach`` for
-            # a skill name.
-            return
+            # Wave-11 A#6: walk UP through the flat list to the nearest
+            # agent-label row. The agents tab orders items per-agent
+            # (header row + that agent's running / recent items), so
+            # the first ``kind == "agent"`` above the cursor is the
+            # owning agent. Previously this was a silent no-op which
+            # gave the user no feedback (= "is the key broken?"); now
+            # we prefill the owning agent's /attach so the user gets
+            # a meaningful result regardless of which sub-row they
+            # landed on.
+            owning: dict | None = None
+            for upstream in reversed(self._agents_items[:idx]):
+                if upstream.get("kind") == "agent":
+                    owning = upstream
+                    break
+            if owning is None:
+                # No agent header found above cursor — surface a hint
+                # so the user knows the key did something (= they're
+                # likely on a malformed / empty agents tab; rare).
+                self._flash_status("a: no owning agent for this row")
+                return
+            item = owning
         name = str(item.get("name", "")).strip()
         if not name:
             return
