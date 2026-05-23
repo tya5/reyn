@@ -47,7 +47,7 @@ class _HeaderOnlyApp(App):
 
 @pytest.mark.asyncio
 async def test_long_agent_name_truncates_at_narrow_width():
-    """At 60 cells with a long agent name + model + tokens + cost, the
+    """Tier 2b: at 60 cells with a long agent name + model + tokens + cost, the
     rendered agent name surfaces with the ``…`` truncation marker.
     """
     app = _HeaderOnlyApp(
@@ -72,7 +72,7 @@ async def test_long_agent_name_truncates_at_narrow_width():
 
 @pytest.mark.asyncio
 async def test_short_agent_name_fits_no_truncation():
-    """A 4-cell agent name at standard width does NOT truncate."""
+    """Tier 2b: a 4-cell agent name at standard width does NOT truncate."""
     app = _HeaderOnlyApp(
         agent_name="aria",
         model="claude-opus-4-7",
@@ -94,7 +94,7 @@ async def test_short_agent_name_fits_no_truncation():
 
 @pytest.mark.asyncio
 async def test_truncated_name_keeps_minimum_3_cells():
-    """Even at an extreme width, the agent name keeps a minimum visible
+    """Tier 2b: even at an extreme width, the agent name keeps a minimum visible
     fragment so the user retains some identity signal.
     """
     app = _HeaderOnlyApp(
