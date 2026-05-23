@@ -141,8 +141,7 @@ def test_event_kind_difference_detected(tmp_path: Path):
         _wal_step_failed(seq=4, op_invocation_id="oid1", error="disk full"),
     ])
     frames = list(compare(str(before), str(after), scope="step"))
-    assert len(frames) == 1
-    df = frames[0]
+    (df,) = frames
     assert df.has_diff
     # events_diff should report step_completed / step_failed change.
     changes = df.events_diff.get("changes", [])
@@ -169,8 +168,7 @@ def test_state_diff_detected(tmp_path: Path):
         _wal_step_failed(seq=4, op_invocation_id="oid1", error="timeout"),
     ])
     frames = list(compare(str(before), str(after), scope="step"))
-    assert len(frames) == 1
-    df = frames[0]
+    (df,) = frames
     # state_diff should be populated (keys differ: last_completed_op vs last_error)
     assert df.has_diff
 
@@ -196,8 +194,7 @@ def test_llm_prompt_diff_detected(tmp_path: Path):
         _wal_step_completed(seq=4, op_invocation_id="oid1"),
     ])
     frames = list(compare(str(before), str(after), scope="step"))
-    assert len(frames) == 1
-    df = frames[0]
+    (df,) = frames
     assert "prompt_diff" in df.llm_diff
     assert df.llm_diff["prompt_diff"]["changed"] is True
 
@@ -223,8 +220,7 @@ def test_llm_response_diff_detected(tmp_path: Path):
         _wal_step_completed(seq=4, op_invocation_id="oid1"),
     ])
     frames = list(compare(str(before), str(after), scope="step"))
-    assert len(frames) == 1
-    df = frames[0]
+    (df,) = frames
     assert "response_diff" in df.llm_diff
     assert df.llm_diff["response_diff"]["changed"] is True
 
@@ -245,9 +241,9 @@ def test_scope_phase_aggregation(tmp_path: Path):
         ])
     frames = list(compare(str(before), str(after), scope="phase"))
     # Two steps aggregate to one phase frame.
-    assert len(frames) == 1
-    assert frames[0].before is not None
-    assert frames[0].before.checkpoint.phase == "phase_a"
+    (only,) = frames
+    assert only.before is not None
+    assert only.before.checkpoint.phase == "phase_a"
 
 
 def test_scope_skill_run_aggregation(tmp_path: Path):
@@ -262,8 +258,8 @@ def test_scope_skill_run_aggregation(tmp_path: Path):
             _wal_step_completed(seq=4, run_id="run_x", phase="p1", op_invocation_id="oid1"),
         ])
     frames = list(compare(str(before), str(after), scope="skill_run"))
-    assert len(frames) == 1
-    assert frames[0].before.checkpoint.run_id == "run_x"
+    (only,) = frames
+    assert only.before.checkpoint.run_id == "run_x"
 
 
 def test_compare_unequal_length_traces(tmp_path: Path):
@@ -286,10 +282,10 @@ def test_compare_unequal_length_traces(tmp_path: Path):
         _wal_step_completed(seq=6, op_invocation_id="oid2"),
     ])
     frames = list(compare(str(before), str(after), scope="step"))
-    assert len(frames) == 2
+    (first, second) = frames
     # First frame: both before and after present.
-    assert frames[0].before is not None
-    assert frames[0].after is not None
+    assert first.before is not None
+    assert first.after is not None
     # Second frame: only after present.
-    assert frames[1].before is None
-    assert frames[1].after is not None
+    assert second.before is None
+    assert second.after is not None
