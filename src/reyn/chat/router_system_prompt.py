@@ -200,11 +200,18 @@ def build_system_prompt(
         " web__fetch.",
         "- Already in your training: answer directly.",
         "",
-        "**A task to perform** — pick the action:",
-        "- Obvious from the query (file__read for \"read this file\","
-        " reyn.source__read for \"open Reyn doc X\", web__fetch for a"
-        " specific URL, etc.): invoke directly.",
-        f"- Not obvious: {_wrapper_chain}.",
+        "**A task to perform** — pick by target shape:",
+        "- Single-target action (= one file, one URL, one skill, one"
+        " item): if the action is obvious (file__read for \"read this"
+        " file\", reyn.source__read for \"open Reyn doc X\", web__fetch"
+        " for a specific URL, invoke_action(skill__X) for an explicit"
+        " named skill), invoke directly. Otherwise"
+        f" {_wrapper_chain}.",
+        "- Multi-target / iteration (= \"do X for each Y\", \"process N"
+        " files\", \"run X on every Y\"): decompose with plan into"
+        " per-target steps + a final aggregate step. Do NOT invoke a"
+        " per-target action directly without decomposition — it loses"
+        " the iteration shape and gets stuck on the first item.",
         "",
         "**Ambiguous or missing essential information** → ask ONE"
         " clarifying question instead of guessing.",
