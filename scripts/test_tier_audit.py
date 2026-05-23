@@ -53,6 +53,17 @@ SNAPSHOT_RE = re.compile(
     re.DOTALL,
 )
 
+# Exclusion: both sides are dynamic file reads (= file-copy faithfulness
+# invariant, NOT a snapshot pin). Common in tests that verify a preprocessor
+# copies source → target without mutation. Example:
+#   assert copied.read_text() == source.read_text()
+# This is a Tier 2b sub-system invariant (copy correctness), not a snapshot test
+# (which would compare a runtime output against a frozen golden file).
+INVARIANT_FILE_COPY_RE = re.compile(
+    r"assert\b.*\.(read|read_text)\s*\([^)]*\)\s*==.*\.(read|read_text)\s*\(",
+    re.DOTALL,
+)
+
 RULE_NAMES = {
     "tier-docstring",
     "format-pinning",
@@ -261,6 +272,9 @@ class TestAuditor:
         if self._rule_active("snapshot") and not in_scaffold:
             for rel_lineno, line in enumerate(node_lines):
                 if SNAPSHOT_RE.search(line):
+                    # Exclude file-copy invariant pattern (both sides .read_text())
+                    if INVARIANT_FILE_COPY_RE.search(line):
+                        continue
                     abs_lineno = node.lineno + rel_lineno
                     result.findings.append(
                         Finding(
