@@ -68,8 +68,44 @@ From the source's frontmatter (or the registry candidate name) derive:
 
 - **Slug** — lowercase snake_case, e.g. `pdf_summarizer`, `code_reviewer`.
   Used as the directory name and the skill `name:` field.
-- **Description** — one line, in the user's language if the source had it
-  in that language.
+- **Description** — **preserve the source's full description verbatim** if
+  it already lists trigger contexts / synonyms. Do NOT compress to a
+  one-line summary — that loses the trigger fan-out and causes
+  under-triggering (= same defect class ``skill_builder`` PR #564 fights
+  for new skills, ``skill_improver`` Step 4c remediates for existing ones).
+
+  Anthropic skills typically ship a "pushy + trigger-aware" description
+  already, e.g. the PDF skill's source has:
+
+      Use this skill whenever the user wants to do anything with PDF files.
+      This includes reading or extracting text/tables from PDFs, combining
+      or merging multiple PDFs into one, splitting PDFs apart, rotating
+      pages, adding watermarks, creating new PDFs, filling PDF forms,
+      encrypting/decrypting PDFs, extracting images, and OCR on scanned
+      PDFs to make them searchable. If the user mentions a .pdf file or
+      asks to produce one, use this skill.
+
+  Copy that whole block into the imported ``description:`` field. Yes,
+  it's multiple sentences — that's correct. Reyn's chat router reads the
+  full ``description`` for trigger matching; trimming this is the most
+  common reason an imported skill stops getting picked.
+
+  When the source's description IS too narrow (= one short summary
+  sentence with no trigger fan-out), augment it Reyn-style by appending
+  "Use whenever the user asks to <action1>, <action2>, or
+  <related-phrasing> — even if they don't explicitly say
+  ``<skill_name>``." — derived from the body / phase instructions of the
+  source. Keep total ≤ 2-3 sentences, ≤ ~300 chars. Don't fabricate
+  capabilities the source doesn't describe.
+
+  Multi-line ``description`` in YAML uses the block-scalar form:
+
+  ```yaml
+  description: |
+    Use this skill whenever the user wants to do anything with PDF files.
+    This includes reading or extracting text/tables ...
+  ```
+
 - **Final output** — typically a `text` or `result` artifact. If the source
   produces structured data, declare a per-skill artifact for it; otherwise
   reuse `user_message` as a passthrough wrapper.
@@ -84,7 +120,8 @@ In one act turn, emit `file` ops with `op: write` for:
 ---
 type: skill
 name: <slug>
-description: <one-line>
+description: |
+  <source description, preserved verbatim or augmented per Step 3>
 entry: <first_phase_name>
 final_output: <output_artifact_name>
 final_output_description: <one-line>
