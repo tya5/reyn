@@ -1,9 +1,9 @@
-"""/help — list all available slash commands with one-line summaries."""
+"""/help — slash command listing with optional per-command focus mode."""
 from __future__ import annotations
 
 import textwrap
 
-from reyn.chat.slash import REGISTRY, reply, slash
+from reyn.chat.slash import REGISTRY, reply, reply_error, slash, suggest_for_unknown
 
 # Built-ins handled outside the registry. ``/quit`` + ``/exit`` were
 # previously here but moved into ``reyn.chat.slash.quit`` (= wave-2 P3)
@@ -21,8 +21,70 @@ _BUILTIN_HINTS: list[tuple[str, str]] = []
 _TARGET_WIDTH = 65
 
 
-@slash("help", summary="Show this list of slash commands")
+def _render_command_focus(name: str) -> str:
+    """Build a focused help panel for a single command.
+
+    Surfaces name + aliases + summary + usage (if the command opted in
+    via :class:`SlashCommand.usage`). When the typed name doesn't
+    resolve, returns the "unknown" branch with ``suggest_for_unknown``
+    suggestions so the user can recover without re-running ``/help``.
+    """
+    cmd = REGISTRY.get(name)
+    if cmd is None:
+        suggestions = suggest_for_unknown(name)
+        sugg_list = " ".join(f"/{s}" for s in suggestions)
+        return f"unknown command /{name} — did you mean: {sugg_list}?"
+
+    lines: list[str] = [f"/{cmd.name}"]
+    if cmd.aliases:
+        alias_list = ", ".join(f"/{a}" for a in cmd.aliases)
+        lines.append(f"  aliases: {alias_list}")
+    # Summary, with continuation-indent for the wrap so multi-line
+    # summaries read as continuations of the same field.
+    summary_indent = "  summary: "
+    summary_cont = " " * len(summary_indent)
+    lines.append(textwrap.fill(
+        cmd.summary,
+        width=_TARGET_WIDTH,
+        initial_indent=summary_indent,
+        subsequent_indent=summary_cont,
+        break_long_words=False,
+        break_on_hyphens=False,
+    ))
+    if cmd.usage:
+        lines.append(f"  usage:   {cmd.usage}")
+    # Hidden-command hint: ``/help <hidden>`` is the way to discover
+    # commands that intentionally don't appear in the bare ``/help``
+    # list (matrix / donut / zen). Surface this once per focus view.
+    if cmd.hidden:
+        lines.append("  (hidden — not listed in /help)")
+    return "\n".join(lines)
+
+
+@slash(
+    "help",
+    summary="Slash command help — list all, or focus on one",
+    usage="/help [<cmd>]",
+)
 async def help_cmd(session: "object", args: str) -> None:
+    arg = (args or "").strip()
+    if arg:
+        # Per-command focus mode. Strip a leading "/" if the user
+        # typed ``/help /find`` — the slash is harmless here, the
+        # registry only stores names without one.
+        target = arg.lstrip("/")
+        if not target:
+            await reply_error(session, "usage: /help [<cmd>]")
+            return
+        panel = _render_command_focus(target)
+        # Unknown-command branch deserves the error styling — same
+        # signalling as a dispatched-but-unknown command.
+        if panel.startswith("unknown"):
+            await reply_error(session, panel)
+        else:
+            await reply(session, panel)
+        return
+
     rows: list[tuple[str, str]] = [
         (cmd.name, cmd.summary)
         for cmd in REGISTRY.all_commands()
@@ -53,7 +115,8 @@ async def help_cmd(session: "object", args: str) -> None:
     lines.append("")
     footer = (
         "Type / to open the command palette. Tab inserts the highlighted "
-        "command (and keeps the cursor); Enter inserts + submits."
+        "command (and keeps the cursor); Enter inserts + submits. "
+        "Type /help <cmd> for command-specific detail."
     )
     lines.append(textwrap.fill(footer, width=_TARGET_WIDTH))
 
