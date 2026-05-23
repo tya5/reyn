@@ -10,7 +10,7 @@ input: "Build a skill that writes a short article about a given topic."
 ### phase: plan_skill
 quality:
 - The generated skill_name is in snake_case.
-- The skill_description accurately summarizes the skill's purpose in one sentence.
+- The skill_description (a) accurately summarizes the skill's purpose AND (b) lists at least one trigger context / synonym set the chat router can match against (e.g. "Use whenever the user asks to <action>, <synonym>, or <related-phrasing> — even if they don't explicitly say <skill_name>"). A bare one-line summary without trigger guidance is a fail (= under-triggers in practice).
 - The skill_path is correctly formatted as 'reyn/local/{skill_name}'.
 - The entry_phase is correctly identified and matches a phase name.
 - finish_criteria are relevant and clearly stated.
@@ -58,7 +58,7 @@ input: "Create a skill that generates a legal disclaimer and allows a reviewer t
 ### phase: plan_skill
 quality:
 - The generated skill_name is in snake_case.
-- The skill_description accurately summarizes the skill's purpose in one sentence.
+- The skill_description (a) accurately summarizes the skill's purpose AND (b) lists at least one trigger context / synonym set the chat router can match against (e.g. "Use whenever the user asks to <action>, <synonym>, or <related-phrasing> — even if they don't explicitly say <skill_name>"). A bare one-line summary without trigger guidance is a fail (= under-triggers in practice).
 - The skill_path is correctly formatted as 'reyn/local/{skill_name}'.
 - The entry_phase is correctly identified and matches a phase name.
 - finish_criteria are relevant and clearly stated.
