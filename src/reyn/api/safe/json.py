@@ -1,35 +1,7 @@
-"""Strict / canonical JSON helpers."""
+"""Shim re-export — canonical module is :mod:`reyn.safe.json`.
 
-from __future__ import annotations
-
-import json as _json
-from typing import Any
-
-
-def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    seen: set[str] = set()
-    out: dict[str, Any] = {}
-    for k, v in pairs:
-        if k in seen:
-            raise ValueError(f"duplicate key in JSON object: {k!r}")
-        seen.add(k)
-        out[k] = v
-    return out
-
-
-def loads_strict(s: str) -> Any:
-    """Parse ``s`` as JSON, rejecting objects with duplicate keys.
-
-    Standard ``json.loads`` silently overwrites duplicate keys; this
-    wrapper raises ``ValueError`` instead.
-    """
-    return _json.loads(s, object_pairs_hook=_no_duplicate_keys)
-
-
-def dumps_canonical(d: Any) -> str:
-    """Dump ``d`` in canonical form (= ``sort_keys=True``, non-ASCII kept).
-
-    Suitable for content addressing — two equal objects produce the
-    same byte sequence.
-    """
-    return _json.dumps(d, sort_keys=True, ensure_ascii=False)
+FP-0042 backward-compat: import from reyn.api.safe.json is
+forwarded to the canonical reyn.safe.json. Scheduled for removal
+in the next release — please migrate to from reyn.safe import json.
+"""
+from reyn.safe.json import *  # noqa: F401,F403 — re-export

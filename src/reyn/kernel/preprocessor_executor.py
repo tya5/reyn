@@ -469,6 +469,22 @@ class PreprocessorExecutor:
             module=step.module, function=step.function, mode=perm.mode,
         )
 
+        # FP-0042: forward the skill's declared file-read / file-write
+        # paths into the subprocess so ``reyn.safe.file.*`` calls inside
+        # the user step can gate against them. Paths are passed verbatim
+        # — the subprocess-side check is decl-membership, not the full
+        # 4-layer ask flow (= those layers already fired at startup_guard
+        # time before this step ran). Empty lists mean "no file access
+        # granted" and any reyn.safe.file.* call raises PermissionError.
+        file_read_paths = [
+            entry["path"] for entry in self._skill.permissions.file_read
+            if isinstance(entry, dict) and entry.get("path")
+        ]
+        file_write_paths = [
+            entry["path"] for entry in self._skill.permissions.file_write
+            if isinstance(entry, dict) and entry.get("path")
+        ]
+
         try:
             result = await asyncio.to_thread(
                 self._python_runner.run,
@@ -479,6 +495,8 @@ class PreprocessorExecutor:
                 artifact=artifact,
                 timeout=perm.timeout,
                 allowed_modules=self._python_allowed_modules,
+                file_read_paths=file_read_paths,
+                file_write_paths=file_write_paths,
             )
         except PythonStepError as exc:
             self._events.emit(

@@ -186,6 +186,12 @@ def main() -> int:
         mode = str(req.get("mode", "safe"))
         artifact = req.get("artifact", {})
         allowed_modules = frozenset(req.get("allowed_modules") or [])
+        # FP-0042: file-permission paths declared by the skill, forwarded
+        # by the parent's PreprocessorExecutor / PythonRunner. Either may
+        # be empty (= no read / write granted). The values gate every
+        # ``reyn.safe.file.*`` call from the user step.
+        file_read_paths = list(req.get("file_read_paths") or [])
+        file_write_paths = list(req.get("file_write_paths") or [])
 
         if mode not in ("safe", "unsafe"):
             raise ValueError(f"unknown mode: {mode!r}")
@@ -200,6 +206,23 @@ def main() -> int:
             raise AttributeError(
                 f"function {function_name!r} not found in {module_path}"
             )
+
+        # FP-0042: initialise reyn.safe.file's permission context before
+        # the user step runs. The user code already executed (= module
+        # exec at _exec_user_module) but the file-call paths only fire
+        # when the function below is invoked. Safe either way: the
+        # context is established before any guarded call.
+        try:
+            from reyn.safe import file as _safe_file
+            _safe_file._set_permission_context(
+                read_paths=file_read_paths,
+                write_paths=file_write_paths,
+            )
+        except ImportError:
+            # reyn.safe.file may not be available in older parent
+            # installations (= shouldn't happen post-FP-0042 land but
+            # defence-in-depth for parent / harness version skew).
+            pass
 
         # Defensive copy so user mutations don't affect the parent's data.
         result = fn(copy.deepcopy(artifact))
