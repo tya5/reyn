@@ -192,6 +192,9 @@ def main() -> int:
         # ``reyn.safe.file.*`` call from the user step.
         file_read_paths = list(req.get("file_read_paths") or [])
         file_write_paths = list(req.get("file_write_paths") or [])
+        # #571 collapse arc Phase 3: host allowlist for reyn.safe.http
+        # gating. Empty = no HTTP via safe.http.
+        http_hosts = list(req.get("http_hosts") or [])
 
         if mode not in ("safe", "unsafe"):
             raise ValueError(f"unknown mode: {mode!r}")
@@ -222,6 +225,15 @@ def main() -> int:
             # reyn.safe.file may not be available in older parent
             # installations (= shouldn't happen post-FP-0042 land but
             # defence-in-depth for parent / harness version skew).
+            pass
+
+        # #571 collapse arc Phase 3: initialise reyn.safe.http's host
+        # allowlist before the user step runs. Mirrors the file-context
+        # wiring above.
+        try:
+            from reyn.safe import http as _safe_http
+            _safe_http._set_permission_context(http_hosts=http_hosts)
+        except ImportError:
             pass
 
         # Defensive copy so user mutations don't affect the parent's data.

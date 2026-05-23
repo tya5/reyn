@@ -192,6 +192,20 @@ class PermissionDecl:
     # rejects immediately. Covers register / unregister / enable /
     # disable on the LLM-callable ``cron`` action category.
     cron_register: bool = False
+    # #571 collapse arc Phase 3: per-host HTTP allowlist for
+    # ``reyn.safe.http.*`` calls from safe-mode python steps. Each
+    # entry: {"host": str}. Empty list = no HTTP allowed via safe.http
+    # (the ``web_fetch`` Tier-1 op route is unaffected — that's a
+    # separate, LLM-callable surface with its own approval flow).
+    http_get: list[dict] = field(default_factory=list)
+    # #571 collapse arc Phase 3: per-key secret-store write allowlist
+    # for ``~/.reyn/secrets.env`` writes. Each entry is a key name
+    # (env var name). Declared here so the axis exists in the schema
+    # and the compat shim can wire mcp_install secret prompts to it;
+    # actual enforcement at the ``reyn.secrets.store.save_secret``
+    # boundary is a Phase 5 task (= op handlers route through
+    # ``require_secret_write`` when bool axes are removed).
+    secret_write: list[str] = field(default_factory=list)
 
     @staticmethod
     def _parse_path_list(raw: object) -> list[dict]:
@@ -209,6 +223,41 @@ class PermissionDecl:
                     "scope": str(item.get("scope", "just_path")),
                 })
         return out
+
+    @staticmethod
+    def _parse_host_list(raw: object) -> list[dict]:
+        """Parse a ``http.get`` list. Accepts ``[{host: str}]`` or ``[str]``.
+
+        A bare string is normalised to ``{"host": <str>}``. Empty / non-list
+        / non-dict / non-string entries are dropped silently — same lenient
+        shape as ``_parse_path_list``.
+        """
+        if not raw:
+            return []
+        if not isinstance(raw, list):
+            raw = [raw]
+        out: list[dict] = []
+        for item in raw:
+            if isinstance(item, str):
+                out.append({"host": item})
+            elif isinstance(item, dict):
+                host = str(item.get("host", ""))
+                if host:
+                    out.append({"host": host})
+        return out
+
+    @staticmethod
+    def _parse_secret_key_list(raw: object) -> list[str]:
+        """Parse a ``secret.write`` list of key names.
+
+        Accepts ``list[str]`` or a bare ``str`` (normalised to a single-item
+        list). Non-string entries are dropped silently.
+        """
+        if not raw:
+            return []
+        if not isinstance(raw, list):
+            raw = [raw]
+        return [str(item) for item in raw if isinstance(item, (str, int))]
 
     @staticmethod
     def _parse_python_list(raw: object) -> list[PythonPermission]:
@@ -248,6 +297,16 @@ class PermissionDecl:
         "index_drop":      (".reyn/index/sources.yaml",),
     }
 
+    # #571 collapse arc Phase 3: each bool axis also gates a set of
+    # HTTP hosts (= the registry the bool-axis op talks to). The compat
+    # shim expands these into the equivalent ``http_get`` entries so
+    # bool-axis decls continue to authorise the op handler's HTTP
+    # traffic without needing an explicit ``http.get`` declaration. The
+    # actual ``reyn.safe.http`` gate is wired against ``http_get``.
+    _BOOL_AXIS_TO_HTTP_GET: ClassVar[dict[str, tuple[str, ...]]] = {
+        "mcp_install": ("registry.modelcontextprotocol.io",),
+    }
+
     @classmethod
     def from_dict(cls, d: dict | None) -> "PermissionDecl":
         if not d:
@@ -263,28 +322,57 @@ class PermissionDecl:
             index_drop=bool(d.get("index_drop", False)),
             mcp_drop_server=bool(d.get("mcp_drop_server", False)),
             cron_register=bool(d.get("cron_register", False)),
+            http_get=cls._parse_host_list(d.get("http.get")),
+            secret_write=cls._parse_secret_key_list(d.get("secret.write")),
         )
         decl._compat_expand_bool_axes()
         return decl
 
     def _compat_expand_bool_axes(self) -> None:
-        """Expand each set bool axis into the equivalent ``file_write`` entry.
+        """Expand each set bool axis into the equivalent list-axis entries.
 
-        Idempotent and additive: paths already present in ``file_write``
-        are not duplicated; explicit entries with a different scope are
-        kept as-is. The expansion runs once at load time; bool axis
-        fields stay set so ``require_mcp_install`` / etc. continue to
-        gate the op route until they are removed in Phase 5.
+        Idempotent and additive: entries already present are not
+        duplicated; explicit entries with different metadata are kept
+        as-is. The expansion runs once at load time; bool axis fields
+        stay set so ``require_mcp_install`` / etc. continue to gate the
+        op route until they are removed in Phase 5.
+
+        Two cross-cutting expansions:
+          - ``_BOOL_AXIS_TO_FILE_WRITE``: bool → ``file_write`` entries
+            (Phase 2, canonical ``.reyn/*.yaml`` config writes).
+          - ``_BOOL_AXIS_TO_HTTP_GET``: bool → ``http_get`` entries
+            (Phase 3, the registry host the op talks to).
+
+        ``secret_write`` is NOT auto-expanded — the env-var keys the op
+        will save are determined at runtime from the registry response,
+        not statically by the skill author, so there is no useful
+        compat-shim mapping. Skills that need explicit secret-write
+        authorisation declare it manually.
         """
-        existing = {entry.get("path") for entry in self.file_write if isinstance(entry, dict)}
+        # file.write expansion (Phase 2).
+        existing_writes = {
+            entry.get("path") for entry in self.file_write if isinstance(entry, dict)
+        }
         for axis, paths in self._BOOL_AXIS_TO_FILE_WRITE.items():
             if not getattr(self, axis, False):
                 continue
             for p in paths:
-                if p in existing:
+                if p in existing_writes:
                     continue
                 self.file_write.append({"path": p, "scope": "just_path"})
-                existing.add(p)
+                existing_writes.add(p)
+        # http.get expansion (Phase 3).
+        existing_hosts = {
+            entry.get("host") for entry in self.http_get if isinstance(entry, dict)
+        }
+        for axis, hosts in self._BOOL_AXIS_TO_HTTP_GET.items():
+            if not getattr(self, axis, False):
+                continue
+            for h in hosts:
+                if h in existing_hosts:
+                    continue
+                self.http_get.append({"host": h})
+                existing_hosts.add(h)
 
 
 class PermissionResolver:
@@ -838,6 +926,56 @@ class PermissionResolver:
             f"      - path: {path}\n"
             f"        scope: just_path\n"
             f"Then re-run — the startup guard will ask for approval before execution starts."
+        )
+
+    def require_http_get(
+        self, decl: PermissionDecl, host: str, skill_name: str = "",
+    ) -> None:
+        """Raise PermissionError if HTTP access to ``host`` is not declared.
+
+        #571 collapse arc Phase 3: gates ``reyn.safe.http.*`` calls from
+        safe-mode python steps. Skills declare hosts in their
+        ``permissions.http.get: [{host: "..."}]`` block (or via the bool
+        axis compat shim, which auto-expands ``mcp_install: true`` to
+        include the registry host).
+
+        Sync, no prompt — the declaration IS the authorisation at this
+        layer. Operator-level pre-approval / startup_guard prompts for
+        HTTP are not in scope for Phase 3 (the bool-axis op route still
+        carries the operator confirmation in transitional phases).
+        """
+        for entry in decl.http_get:
+            if isinstance(entry, dict) and entry.get("host") == host:
+                return
+        raise PermissionError(
+            f"HTTP access to host {host!r} not declared in skill permissions. "
+            f"Add to skill.md frontmatter:\n"
+            f"  permissions:\n"
+            f"    http.get:\n"
+            f"      - host: {host}\n"
+        )
+
+    def require_secret_write(
+        self, decl: PermissionDecl, key: str, skill_name: str = "",
+    ) -> None:
+        """Raise PermissionError if secret-store write of ``key`` is not declared.
+
+        #571 collapse arc Phase 3: axis declaration + resolver method.
+        Callers (= ``reyn.secrets.store.save_secret`` from op handlers)
+        are wired in Phase 5 when bool axes are removed and op handlers
+        route through this gate instead of their dedicated bool-axis
+        ``require_*`` methods. For Phase 3 / 4 this method exists so
+        the schema, parsing, and downstream config wiring can land
+        ahead of the op-handler migration.
+        """
+        if key in decl.secret_write:
+            return
+        raise PermissionError(
+            f"Secret-store write of key {key!r} not declared in skill permissions. "
+            f"Add to skill.md frontmatter:\n"
+            f"  permissions:\n"
+            f"    secret.write:\n"
+            f"      - {key}\n"
         )
 
     def is_read_allowed(self, path: str, skill_name: str = "") -> bool:
