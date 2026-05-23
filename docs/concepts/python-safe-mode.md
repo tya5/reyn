@@ -233,9 +233,6 @@ mirrors it for human reference.
 | Skill | Function | Why it remains unsafe |
 |-------|----------|----------------------|
 | `index_docs` | `apply_strategy` | Deprecated monolithic step kept for project-override compatibility (FP-0042 Phase 2.1 / 2.2 split the active flow into safe-mode `extract_and_split` + `write_chunks_with_lock`). |
-| `ops_report` | `collect_aggregate_fallback` | Globs event log + reads raw events. Outside FP-0042 Phase 2 listed scope. |
-| `ops_report` | `aggregate_from_raw_events` | Same as above — direct events read. |
-| `ops_report` | `collect_aggregate` | Back-compat wrapper that delegates to the fallback. |
 | `skill_improver` | `resolve_paths` | Legacy path resolver kept for direct callers (= same shape as the `eval_builder` migration finished in Phase 2.5). |
 | `skill_improver` | `collect_traces_fallback` | Globs `.reyn/events/**/*.jsonl` for trace dispatch. |
 | `skill_improver` | `collect_traces` | Back-compat wrapper. |

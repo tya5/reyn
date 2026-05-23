@@ -42,14 +42,6 @@ GRANDFATHERED_UNSAFE: set[tuple[str, str]] = {
     # back-compat. See docs/concepts/python-safe-mode.md.
     ("index_docs", "apply_strategy"),
 
-    # ops_report — outside FP-0042 Phase 2 listed scope. The fallback +
-    # back-compat steps perform event-log globbing + raw events read.
-    # Future "Phase 2.6" candidate; until then the existing operator
-    # opt-in via --allow-unsafe-python remains the gate.
-    ("ops_report", "collect_aggregate_fallback"),
-    ("ops_report", "aggregate_from_raw_events"),
-    ("ops_report", "collect_aggregate"),
-
     # skill_improver — outside FP-0042 Phase 2 listed scope. The fallback,
     # back-compat, and snapshot steps perform glob + skill.md read + write
     # to .reyn/skill-versions. Future "Phase 2.7" candidate.
