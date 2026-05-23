@@ -107,6 +107,10 @@ class InterventionRegistry:
         """Return the number of currently-registered listeners."""
         return len(self._listeners)
 
+    def is_listener_enforcement_enabled(self) -> bool:
+        """Return True iff the registry was constructed with enforce_listener_presence=True."""
+        return self._enforce_listener_presence
+
     # ── Stalled queue operations (issue #268 Phase 1) ────────────────────────
 
     def mark_stalled(self, iv_id: str) -> bool:

@@ -237,7 +237,7 @@ def test_resume_plan_threads_into_control_ir_executor():
     rt = _StubRuntime(skill, resume_plan=plan)
 
     # ControlIRExecutor was constructed in OSRuntime.__init__
-    assert rt.control_ir_executor._resume_plan is plan
+    assert rt.control_ir_executor.resume_plan is plan
 
 
 def test_resume_plan_completes_normally_after_fast_forward():
