@@ -168,7 +168,7 @@ async def test_keys_tab_render_includes_quick_jump_descriptions() -> None:
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        markup = render_keys(app)
+        markup, _ = render_keys(app)
         for n in range(1, 8):
             assert f"⌃{n}" in markup, f"⌃{n} not in Keys tab markup"
         # Spot-check a couple of description strings.

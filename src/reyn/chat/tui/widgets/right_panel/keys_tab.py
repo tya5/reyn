@@ -11,6 +11,46 @@ if TYPE_CHECKING:
     from textual.app import App
 
 
+# ---------------------------------------------------------------------------
+# Inline detail table (T1-4, Wave-12).
+# Maps the lowercase key string → multi-line "what does this REALLY do" text.
+# Initial 6 entries; content sweep (Tab / Up / Down / F2 / f / t / i / etc.)
+# is deferred to Wave-12 T2-3.
+# ---------------------------------------------------------------------------
+_KEY_DETAILS: dict[str, str] = {
+    "f3": (
+        "Drill-down expands the cursor's skill row to show phase history,\n"
+        "tool calls, and per-phase events. Mouse-click on the row does\n"
+        "the same. No-op when no skill row has cursor focus."
+    ),
+    "esc": (
+        "Context-aware back/cancel:\n"
+        "  • voice mode → cancel recording\n"
+        "  • error box → dismiss\n"
+        "  • right panel → close (= drop focus back to input)\n"
+        "  • docs filter active → clear filter"
+    ),
+    "ctrl+b": (
+        "Open/close right panel. Opens to the most recent context tab\n"
+        "(= last skill activity → Agents; last error jump → Events)."
+    ),
+    "space": (
+        "Toggle preview pane for cursor row. Works on Events / Agents /\n"
+        "Memory / Pending tabs. No-op on Cost / Docs / Keys (= those tabs\n"
+        "have no per-row preview, except Keys uses Space for THIS expand)."
+    ),
+    "f4": (
+        "Focus the async-stack panel at the bottom of the screen so its\n"
+        "rows can be cursored with j/k and inspected."
+    ),
+    "ctrl+r": (
+        "Toggle voice recording. While recording: Enter stops, transcribes,\n"
+        "and submits immediately (= dictate-and-send). Esc cancels.\n"
+        "F2 is an alias (macOS may intercept F2 — prefer Ctrl+R there)."
+    ),
+}
+
+
 _KEY_PRETTY: dict[str, str] = {
     "ctrl+a": "⌃A", "ctrl+b": "⌃B", "ctrl+c": "⌃C", "ctrl+d": "⌃D",
     "ctrl+e": "⌃E", "ctrl+f": "⌃F", "ctrl+g": "⌃G", "ctrl+h": "⌃H",
@@ -71,7 +111,15 @@ _EVENTS_KEYS = {"f", "t", "i"}
 _DOCS_KEYS = {"/"}
 _GROUP_ORDER = [
     "GLOBAL", "INPUT", "CONVERSATION", "PANEL",
-    "EVENTS (gated)", "DOCS (gated)", "OTHER",
+    "EVENTS (gated)", "DOCS (gated)", "OTHER", "MOUSE",
+]
+
+# Explicit mouse-interaction rows (no key-press semantics — cross-cutting
+# affordances that have no Binding entry but are discoverable here).
+_MOUSE_EXPLICIT: list[tuple[str, str]] = [
+    ("click skill row", "Drill-down (= F3 mouse equivalent)"),
+    ("click header [N pending]", "Jump to Pending tab"),
+    ("click header [find: ...]", "Clear find filter"),
 ]
 
 # Keys whose app-level binding is voice-mode-gated (active only during
@@ -105,14 +153,31 @@ def _pretty_key(key: str) -> str:
     return key
 
 
-def render_keys(app: "App") -> str:
-    """Return Rich markup listing bindings grouped by context."""
+def render_keys(
+    app: "App",
+    *,
+    cursor: int = 0,
+    expanded: set[int] | None = None,
+) -> tuple[str, list[str]]:
+    """Return (Rich markup, flat_key_list) listing bindings grouped by context.
+
+    ``cursor`` selects the cursor row (0-indexed over the flat key list).
+    ``expanded`` is the set of cursor indices whose detail block is visible.
+    ``flat_key_list`` is a parallel list of lowercase key strings (or ``""``
+    for MOUSE rows) so callers can look up ``_KEY_DETAILS`` by row index.
+    """
+    if expanded is None:
+        expanded = set()
+
     # Local import keeps right_panel/keys_tab decoupled from widget-init
     # order (InputBar imports from chat.slash, which would otherwise be
     # pulled in at module-load time).
     from ..input_bar import InputBar
 
     groups: dict[str, list[tuple[str, str]]] = {g: [] for g in _GROUP_ORDER}
+    # Parallel dict: group_name → list of raw key strings (lowercase) for
+    # detail lookup. MOUSE rows use "" since they have no key semantics.
+    group_keys: dict[str, list[str]] = {g: [] for g in _GROUP_ORDER}
     seen: set[str] = set()
     # App-level bindings first — they take precedence on same-key conflicts
     # (the InputBar's ctrl+c / ctrl+d / ctrl+l shadow app's, but app's
@@ -130,6 +195,7 @@ def render_keys(app: "App") -> str:
         if group not in groups:
             group = "OTHER"
         groups[group].append((_pretty_key(b.key), b.description))
+        group_keys[group].append(b.key.lower())
     # InputBar-level bindings: chat-input affordances (Enter / Tab / arrows
     # / Esc / Ctrl+J Newline / Ctrl+U Clear input). Without surfacing
     # these the Keys tab silently omitted "how do I insert a newline"
@@ -140,6 +206,7 @@ def render_keys(app: "App") -> str:
             continue
         seen.add(b.key)
         groups["INPUT"].append((_pretty_key(b.key), b.description))
+        group_keys["INPUT"].append(b.key.lower())
 
     # Right-panel keys handled via ``RightPanel.on_key`` (not declared
     # ``Binding`` objects) are invisible to the BINDINGS iterations above.
@@ -179,29 +246,129 @@ def render_keys(app: "App") -> str:
     for key, desc in _PANEL_EXPLICIT:
         if key not in seen:
             groups["PANEL"].append((_pretty_key(key), desc))
+            group_keys["PANEL"].append(key.lower())
             seen.add(key)
 
+    # MOUSE group (T1-4, Wave-12): explicit click-interaction rows.
+    # These have no key semantics so raw_key is "" for all of them.
+    for display, desc in _MOUSE_EXPLICIT:
+        groups["MOUSE"].append((display, desc))
+        group_keys["MOUSE"].append("")
+
+    # Build flat list of (key_display, desc, raw_key) across all groups in
+    # _GROUP_ORDER order for cursor + expand tracking.
+    flat_rows: list[tuple[str, str, str]] = []  # (display, desc, raw_key)
+    for group_name in _GROUP_ORDER:
+        entries = groups.get(group_name, [])
+        raw_keys = group_keys.get(group_name, [])
+        for (kd, desc), rk in zip(entries, raw_keys):
+            flat_rows.append((kd, desc, rk))
+
+    # Render.
     lines: list[str] = []
+    flat_key_list: list[str] = []  # parallel to the rendered "key rows" only
     # Key column width: max key length within the group, capped at 6
     # (longest pretty key is ⇧Tab / Enter / Space = 5 chars + 1 pad).
     # Single-line "<key>  <desc>" fits the narrow panel; previously the
     # column was a fixed 16 chars which forced every binding onto two
     # rows after wrapping.
+
+    # Row index tracking — increments only for key/mouse entries, not headers.
+    row_idx = 0
+
     for group_name in _GROUP_ORDER:
         entries = groups.get(group_name, [])
+        raw_keys = group_keys.get(group_name, [])
         if not entries:
             continue
         lines.append(f"[bold #aaaaaa]  \\[{_esc(group_name)}][/]")
-        key_width = min(6, max((len(k) for k, _ in entries), default=2) + 1)
-        for key_display, desc in entries:
+        # MOUSE rows can be much longer than 6 chars — use a wider cap for
+        # the MOUSE group so the descriptions don't collide with the key col.
+        if group_name == "MOUSE":
+            key_width = max((len(k) for k, _ in entries), default=2) + 2
+        else:
+            key_width = min(6, max((len(k) for k, _ in entries), default=2) + 1)
+        for (key_display, desc), raw_key in zip(entries, raw_keys):
+            is_cursor = row_idx == cursor
+            flat_key_list.append(raw_key)
+
+            # Cursor indicator — subtle highlight so the row is identifiable.
+            cursor_prefix = f"[bold {_CORAL}]▶[/] " if is_cursor else "  "
             key_col = f"{_esc(key_display):<{key_width}}"
             lines.append(
-                f"  [{_CORAL}]{key_col}[/]  [#dddddd]{_esc(desc)}[/]"
+                f"{cursor_prefix}[{_CORAL}]{key_col}[/]  [#dddddd]{_esc(desc)}[/]"
             )
+
+            # Inline detail block when this row is expanded.
+            if row_idx in expanded:
+                detail = _KEY_DETAILS.get(raw_key, "")
+                if detail:
+                    for detail_line in detail.splitlines():
+                        lines.append(
+                            f"  [dim #aaaaaa]    {_esc(detail_line)}[/]"
+                        )
+
+            row_idx += 1
         lines.append("")
     if not lines:
         lines.append("[#555555]  (no bindings)[/]")
-    return "\n".join(lines)
+    return "\n".join(lines), flat_key_list
 
 
-__all__ = ["render_keys"]
+# ---------------------------------------------------------------------------
+# Keys-tab cursor + expand state (owned at module level so RightPanel can
+# delegate to these helpers without carrying keys-specific state itself).
+# ---------------------------------------------------------------------------
+_keys_cursor: int = 0
+_keys_expanded: set[int] = set()
+
+
+def keys_move(delta: int, n_rows: int) -> None:
+    """Move the keys-tab cursor by ``delta``; wraps around ``n_rows``."""
+    global _keys_cursor
+    if n_rows == 0:
+        _keys_cursor = 0
+        return
+    _keys_cursor = (_keys_cursor + delta) % n_rows
+
+
+def toggle_expand_cursor(flat_key_list: list[str]) -> bool:
+    """Toggle the inline detail block for the cursor row.
+
+    Returns True if a detail block is now visible (= toggle-on), False if
+    hidden or no-op. No-op when the cursor row has no ``_KEY_DETAILS`` entry.
+    """
+    global _keys_cursor, _keys_expanded
+    if not flat_key_list:
+        return False
+    idx = max(0, min(len(flat_key_list) - 1, _keys_cursor))
+    raw_key = flat_key_list[idx]
+    if not raw_key or raw_key not in _KEY_DETAILS:
+        # No detail entry → no-op (no crash, no state change).
+        return False
+    if idx in _keys_expanded:
+        _keys_expanded.discard(idx)
+        return False
+    else:
+        _keys_expanded.add(idx)
+        return True
+
+
+def get_keys_cursor() -> int:
+    """Return the current keys-tab cursor index."""
+    return _keys_cursor
+
+
+def get_keys_expanded() -> set[int]:
+    """Return the current set of expanded row indices (read-only copy)."""
+    return set(_keys_expanded)
+
+
+__all__ = [
+    "render_keys",
+    "_KEY_DETAILS",
+    "keys_move",
+    "toggle_expand_cursor",
+    "get_keys_cursor",
+    "get_keys_expanded",
+]
