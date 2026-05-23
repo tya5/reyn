@@ -1,310 +1,158 @@
-"""Slack inbound webhook router — FP-0041 #489 PR-D.
+"""Slack Events API webhook — sample_slack plugin (FP-0041 #489 plugins-api PR-2).
 
-Inbound chat-transport adapter: receives Slack Events API webhook
-POSTs at ``/webhook/slack``, verifies the signing secret, parses
-the event, mints an inbox envelope with ``sender="slack:<user_id>:
-<display>"`` + ``reply_to=ExternalRef(transport="slack",
-destination={...})``, and pushes to the target agent's inbox.
+⚠️  **SAMPLE / EXAMPLE ONLY** ⚠️ — see ``README.md``.
 
-The agent's router_loop then processes the message as an attributed
-turn (= PR-A dispatch attribution emits a ``[context shift]``
-state_change before the LLM sees the text). Replies flow back out
-via PR-D2 (= outbox subscriber + route_to_mcp via Slack MCP server).
-This PR covers inbound only.
+Inbound chat-transport for the Slack Events API, wired through
+``slack-bolt`` (= Slack's official SDK). This refactor demonstrates
+the canonical pattern for a Reyn webhook plugin:
+
+  OSS SDK (= slack-bolt)  for transport-specific protocol
+  reyn.plugins.api        for Reyn-side envelope dispatch
+
+The plugin's own glue is intentionally minimal (= ~50 lines) so
+plugin authors see exactly what "API-to-API" looks like.
 
 ## Slack Events API integration
 
-Reyn's Slack App is configured at api.slack.com → Event Subscriptions:
-  Request URL: https://<reyn>/webhook/slack
-  Subscribe to bot events: ``app_mention`` (= bot is @mentioned),
-    ``message.im`` (= DM to bot)
+Reyn's Slack App is configured at api.slack.com:
+
+  Request URL:    https://<reyn>/webhook/slack
+  Bot Events:     ``app_mention`` (= bot is @mentioned),
+                  ``message.im`` (= DM to bot)
   Signing Secret: set as ``SLACK_SIGNING_SECRET`` env var on Reyn
 
-## Signing verification
+## What slack-bolt handles (= we don't)
 
-Slack signs every request with HMAC-SHA256 using the signing secret.
-Verification per https://api.slack.com/authentication/verifying-requests-from-slack:
+- HMAC-SHA256 v0 signature verification + replay window
+- URL verification handshake challenge / response
+- Event subscription dispatch (= ``@app.event(...)`` decorators)
+- Retry deduplication via ``X-Slack-Retry-Num``
+- OAuth flows (= if Reyn adds multi-workspace later)
+- Socket Mode (= future option for hosted Reyn)
 
-  base_string = f"v0:{timestamp}:{body}"
-  signature = "v0=" + hmac.sha256(secret, base_string).hexdigest()
+## What we glue (= the ~30 lines)
 
-  Reject when:
-    - Request older than 5 minutes (= replay guard)
-    - X-Slack-Signature mismatch (= constant-time compare)
+- Map ``app_mention`` / ``message`` event → Reyn envelope
+- Use ``reyn.plugins.api.make_sender`` for the attribution string
+- Use ``reyn.plugins.api.push_to_agent`` for inbox dispatch
 
-## URL verification handshake
+## Reference
 
-When Slack first calls the Request URL, it sends:
-  {"type": "url_verification", "challenge": "<random>"}
-
-Reyn echoes back ``{"challenge": "<random>"}`` (= 200 OK).
-
-## Event shapes handled
-
-  app_mention / message:
-    {"event": {"type": "app_mention", "user": "U456",
-               "text": "<@U_BOT> help", "channel": "C123",
-               "ts": "1234.5678", "thread_ts": "..." | absent}}
-
-Other event types (= reactions, channel join, etc.) are accepted
-and acknowledged but produce no inbox envelope.
-
-## Target agent routing
-
-Phase 1 (= this PR): single target agent configured per Slack workspace
-via ``SLACK_TARGET_AGENT`` env var (or ``slack.target_agent`` in
-reyn.yaml). Per-user / per-channel ACL is follow-up.
-
-## Defensive posture
-
-- Signing failure → 401 + log warning
-- URL verification → 200 + challenge echo
-- Unknown event type → 200 (= Slack will keep delivering)
-- Inbox push failure → 500 + log; Slack will retry
-- Reyn target agent not found → 500 + log
-
-The handler never crashes the FastAPI route; all error paths return
-the appropriate HTTP status with no exception propagation.
+- slack-bolt-python:    https://slack.dev/bolt-python/
+- FastAPI adapter:      ``slack_bolt.adapter.fastapi.async_handler``
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
 import logging
 import os
-import time
-from typing import Any
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse, Response
-
-from reyn.chat.transport import ExternalRef
-from reyn.web.deps import get_registry
+from fastapi import APIRouter, Request
 
 logger = logging.getLogger(__name__)
-
-# Replay-protection window for Slack signing. Per Slack docs, ts older
-# than 5 minutes should be rejected to prevent replay attacks.
-_SLACK_REPLAY_WINDOW_SECONDS = 60 * 5
-
-
-# ── signing verification ──────────────────────────────────────────────
-
-
-def verify_slack_signature(
-    *,
-    body: bytes,
-    timestamp: str,
-    signature: str,
-    signing_secret: str,
-    now: float | None = None,
-) -> tuple[bool, str]:
-    """Verify a Slack-signed webhook request.
-
-    Returns ``(ok, detail)``. ``ok=True`` means the signature
-    matches AND the timestamp is within the replay window;
-    ``detail`` is a short reason string for ``ok=False`` cases
-    (= "missing-timestamp" / "missing-signature" / "stale" /
-    "mismatch"). Constant-time comparison via ``hmac.compare_digest``.
-
-    Exported for test injection — callers (= the route handler) use
-    this with ``now=time.time()``.
-    """
-    if not timestamp:
-        return False, "missing-timestamp"
-    if not signature:
-        return False, "missing-signature"
-    try:
-        ts = int(timestamp)
-    except (TypeError, ValueError):
-        return False, "invalid-timestamp"
-    current = now if now is not None else time.time()
-    if abs(current - ts) > _SLACK_REPLAY_WINDOW_SECONDS:
-        return False, "stale"
-    base_string = f"v0:{timestamp}:".encode() + body
-    digest = hmac.new(
-        signing_secret.encode(), base_string, hashlib.sha256,
-    ).hexdigest()
-    expected = f"v0={digest}"
-    if not hmac.compare_digest(expected, signature):
-        return False, "mismatch"
-    return True, "ok"
-
-
-# ── envelope minting ─────────────────────────────────────────────────
-
-
-def mint_envelope_from_slack_event(event: dict) -> dict | None:
-    """Convert a Slack event payload into a Reyn inbox envelope.
-
-    Returns the envelope dict (= ``{"text", "sender", "reply_to"}``)
-    or ``None`` when the event isn't a kind we should dispatch (=
-    bot's own message, reaction, channel-join, etc.).
-
-    Sender shape: ``slack:<user_id>`` (= per PR-A sender
-    convention). Display name lookup is not implemented in this PR
-    (= optional augmentation in follow-up if Slack MCP exposes a
-    ``users.info`` call).
-
-    Reply-to shape: ``ExternalRef(transport="slack",
-    destination={"channel": <id>, "thread_ts": <id>})`` — the
-    ``thread_ts`` defaults to the message's own ``ts`` so the agent
-    reply lands in a thread; if the user is replying in an existing
-    thread, that ``thread_ts`` is preserved.
-
-    Stored as a plain dict because the existing inbox mechanism uses
-    dict payloads. The ``reply_to`` is the ExternalRef instance; PR-D2
-    outbox subscriber will read it back.
-    """
-    inner = event.get("event") if isinstance(event, dict) else None
-    if not isinstance(inner, dict):
-        return None
-    event_type = inner.get("type")
-    # Only dispatch message-class events. App-home / reaction / etc.
-    # land here but produce no inbox push.
-    if event_type not in ("app_mention", "message"):
-        return None
-    # Ignore bot's own messages (= prevent feedback loops).
-    if inner.get("bot_id") or inner.get("subtype") == "bot_message":
-        return None
-    text = inner.get("text")
-    if not isinstance(text, str) or not text.strip():
-        return None
-    user_id = inner.get("user")
-    channel = inner.get("channel")
-    if not isinstance(channel, str):
-        return None
-    ts = inner.get("ts")
-    thread_ts = inner.get("thread_ts") or ts
-    from reyn.plugins.api import make_sender
-    sender = make_sender("slack", user_id or "unknown")
-    reply_to = ExternalRef(
-        transport="slack",
-        destination={"channel": channel, "thread_ts": thread_ts},
-    )
-    return {
-        "text": text,
-        "sender": sender,
-        "reply_to": reply_to,
-    }
-
-
-# ── route factory ─────────────────────────────────────────────────────
 
 
 def build_router(*, target_agent: str) -> APIRouter:
     """Build the Slack webhook router for the configured target agent.
 
-    Called by the plugin's ``register_router`` entry-point with the
-    resolved target agent name from ``reyn.yaml``. Captures the agent
-    in the closure so the route handler doesn't need to re-resolve
-    per request.
+    Wires ``slack-bolt``'s ``AsyncApp`` to a FastAPI router via the
+    ``AsyncSlackRequestHandler``. The bot's incoming events (=
+    ``app_mention`` + ``message``) are dispatched to Reyn's agent
+    inbox via ``reyn.plugins.api.push_to_agent``.
 
-    Signing secret is read from ``SLACK_SIGNING_SECRET`` env var at
-    request time (= not captured at build time, so operator can
-    rotate without restarting Reyn — Slack-side rotation requires
-    a brief overlap window anyway).
+    Raises ``RuntimeError`` if ``slack-bolt`` isn't installed; the
+    ``register_router`` entry point handles this by returning ``None``
+    so the loader logs + skips.
     """
-    router = APIRouter(tags=["plugin-sample_slack"])
+    # SDK imports kept inside ``build_router`` so the module is
+    # importable without the SDK (= ``register_router`` decides the
+    # opt-out behaviour).
+    from slack_bolt.adapter.fastapi.async_handler import (
+        AsyncSlackRequestHandler,
+    )
+    from slack_bolt.async_app import AsyncApp
+    from slack_bolt.authorization import AuthorizeResult
 
-    @router.post("/webhook/slack")
-    async def slack_webhook(
-        request: Request,
-        registry=Depends(get_registry),
-    ) -> Response:
-        """Receive a Slack Events API POST.
+    from reyn.chat.transport import ExternalRef
+    from reyn.plugins.api import make_sender, push_to_agent
 
-        Three branches:
-          1. URL verification → echo challenge.
-          2. Event with no dispatchable payload (= non-message events,
-             malformed payload) → 200 ack only.
-          3. Message event → verify signing, mint envelope, push to
-             target agent's inbox, return 200.
+    signing_secret = os.environ.get("SLACK_SIGNING_SECRET", "")
+    # Reyn dispatches outbound replies via the Slack MCP server, NOT
+    # through bolt. Bolt's default ``single_team_authorization`` calls
+    # ``auth.test`` against Slack to verify the bot token at request
+    # time — we skip that probe with a custom ``authorize`` that
+    # returns a stub AuthorizeResult so inbound dispatch works without
+    # a real bot token configured.
+    bot_token = os.environ.get("SLACK_BOT_TOKEN") or "xoxb-placeholder"
 
-        Errors return appropriate HTTP status without raising; Slack
-        will retry on non-2xx so we avoid 4xx/5xx for transient cases.
-        """
-        body_bytes = await request.body()
-
-        # Parse body up-front so we can handle url_verification before
-        # signing check (= URL verification doesn't have a signature
-        # during initial setup with some Slack App configurations).
-        try:
-            import json
-            payload = json.loads(body_bytes.decode("utf-8") or "{}")
-        except Exception:
-            logger.warning("Slack webhook: malformed JSON body")
-            return JSONResponse(
-                {"error": "malformed body"}, status_code=400,
-            )
-
-        # URL verification handshake — Slack POSTs this on initial setup.
-        if isinstance(payload, dict) and payload.get("type") == "url_verification":
-            challenge = payload.get("challenge")
-            return JSONResponse(
-                {"challenge": challenge if isinstance(challenge, str) else ""},
-                status_code=200,
-            )
-
-        # Signing verification for all other paths.
-        signing_secret = os.environ.get("SLACK_SIGNING_SECRET")
-        if not signing_secret:
-            logger.warning(
-                "Slack webhook received but SLACK_SIGNING_SECRET is unset; rejecting.",
-            )
-            return JSONResponse(
-                {"error": "Slack signing secret not configured"},
-                status_code=503,
-            )
-        ok, detail = verify_slack_signature(
-            body=body_bytes,
-            timestamp=request.headers.get("X-Slack-Request-Timestamp", ""),
-            signature=request.headers.get("X-Slack-Signature", ""),
-            signing_secret=signing_secret,
+    async def _authorize(*args, **kwargs):
+        return AuthorizeResult(
+            enterprise_id=None,
+            team_id=None,
+            user_id=None,
+            bot_user_id=None,
+            bot_id=None,
+            bot_token=bot_token,
         )
-        if not ok:
-            logger.warning("Slack webhook signing verify failed: %s", detail)
-            return JSONResponse(
-                {"error": f"signature verification failed: {detail}"},
-                status_code=401,
-            )
 
-        # Mint envelope from the event.
-        envelope = mint_envelope_from_slack_event(payload)
-        if envelope is None:
-            # Non-dispatchable event (= reaction / channel_join / bot
-            # message echo / etc.). Slack expects 2xx so it won't retry.
-            return JSONResponse({"status": "ignored"}, status_code=200)
+    bolt_app = AsyncApp(
+        signing_secret=signing_secret,
+        authorize=_authorize,
+    )
 
-        # Push to inbox via the stable plugin API (= reyn.plugins.api,
-        # FP-0041 plugins-api). The helper handles registry lookup +
-        # session.ensure_running internally; plugin code should NOT
-        # touch ChatSession internals (= _put_inbox) directly.
-        from reyn.plugins.api import push_to_agent
+    async def _dispatch(event: dict) -> None:
+        """Translate a Slack message-class event → Reyn envelope +
+        push via the stable plugin API.
+        """
+        text = event.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return
+        if event.get("bot_id") or event.get("subtype") == "bot_message":
+            return  # bot echo, drop
+        user_id = event.get("user") or "unknown"
+        channel = event.get("channel")
+        if not isinstance(channel, str):
+            return
+        ts = event.get("ts")
+        thread_ts = event.get("thread_ts") or ts
+
         try:
             await push_to_agent(
                 target_agent=target_agent,
-                text=envelope["text"],
-                sender=envelope["sender"],
-                reply_to=envelope["reply_to"],
-                registry=registry,
+                text=text,
+                sender=make_sender("slack", user_id),
+                reply_to=ExternalRef(
+                    transport="slack",
+                    destination={"channel": channel, "thread_ts": thread_ts},
+                ),
             )
         except FileNotFoundError:
             logger.warning(
-                "Slack webhook: target agent %r not found in registry",
+                "sample_slack: target agent %r not in registry; skipping",
                 target_agent,
             )
-            return JSONResponse(
-                {"error": f"target agent {target_agent!r} not found"},
-                status_code=503,
-            )
         except Exception as exc:
-            logger.exception("Slack webhook: inbox push failed: %s", exc)
-            return JSONResponse(
-                {"error": f"inbox dispatch failed: {type(exc).__name__}"},
-                status_code=500,
-            )
+            logger.exception("sample_slack: inbox push failed: %s", exc)
 
-        return JSONResponse({"status": "ok"}, status_code=200)
+    @bolt_app.event("app_mention")
+    async def on_app_mention(event):  # noqa: D401
+        await _dispatch(event)
+
+    @bolt_app.event("message")
+    async def on_message(event):  # noqa: D401
+        await _dispatch(event)
+
+    handler = AsyncSlackRequestHandler(bolt_app)
+    router = APIRouter(tags=["plugin-sample_slack"])
+
+    @router.post("/webhook/slack")
+    async def slack_webhook(req: Request):
+        """Forward incoming Slack POSTs to bolt's handler.
+
+        Bolt internally verifies signing, parses events, and routes
+        to the registered handlers (= ``on_app_mention`` /
+        ``on_message`` above). URL verification handshake +
+        retry dedup are bolt's responsibility too.
+        """
+        return await handler.handle(req)
 
     return router

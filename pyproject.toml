@@ -94,6 +94,19 @@ voice = [
 eval = [
     "opentelemetry-exporter-otlp-proto-http>=1.20",
 ]
+# FP-0041 #489 plugins-api PR-2: sample webhook plugins use OSS SDKs.
+# Reyn core stays SDK-free for operators who don't activate the
+# samples; SDK deps are opt-in via these extras:
+#
+#   pip install reyn[sample_slack]      # = reyn + slack-bolt
+#   pip install reyn[sample_line]       # = reyn + line-bot-sdk
+#   pip install reyn[all-samples]       # = reyn + both
+#
+# When the SDK isn't installed, ``register_router`` returns ``None``
+# with a clear log message; reyn boots without crashing.
+sample_slack = ["slack-bolt>=1.18"]
+sample_line = ["line-bot-sdk>=3.0"]
+all-samples = ["slack-bolt>=1.18", "line-bot-sdk>=3.0"]
 
 [project.scripts]
 reyn = "reyn._cli:main"
@@ -103,6 +116,18 @@ reyn = "reyn._cli:main"
 [project.entry-points."reyn.webhooks"]
 sample_slack = "reyn.plugins.sample_slack:register_router"
 sample_line = "reyn.plugins.sample_line:register_router"
+
+# FP-0041 #489 plugins-api PR-2: sample plugins now use OSS SDKs for
+# transport-specific protocol (= slack-bolt / line-bot-sdk). Installed
+# via optional pip extras so reyn core stays SDK-free for operators
+# who don't activate the samples:
+#
+#   pip install reyn[sample_slack]      # = reyn + slack-bolt
+#   pip install reyn[sample_line]       # = reyn + line-bot-sdk
+#   pip install reyn[all-samples]       # = reyn + both
+#
+# When the SDK isn't installed, ``register_router`` returns ``None``
+# with a clear log message so reyn boots without crashing.
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

@@ -21,23 +21,27 @@ handler, mirror of ``sample_slack`` for LINE. Demonstrates:
 
 ## Operator setup
 
-1. Create a LINE Messaging API channel at
+1. Install Reyn with the ``sample_line`` extra:
+   ```bash
+   pip install 'reyn[sample_line]'   # = reyn + line-bot-sdk
+   ```
+2. Create a LINE Messaging API channel at
    https://developers.line.biz/console/
-2. Note the **Channel Secret** + **Channel Access Token** from the
+3. Note the **Channel Secret** + **Channel Access Token** from the
    channel's "Basic settings" + "Messaging API" tabs
-3. Set the **Webhook URL** to ``https://<your-reyn-host>/webhook/line``
-4. Enable **Use webhook** in the Messaging API settings
-5. Activate the plugin in ``webhooks.yaml``:
+4. Set the **Webhook URL** to ``https://<your-reyn-host>/webhook/line``
+5. Enable **Use webhook** in the Messaging API settings
+6. Activate the plugin in ``webhooks.yaml``:
    ```yaml
    sample_line:
      target_agent: line_agent     # agent that receives LINE messages
    ```
-6. Set env vars on Reyn:
+7. Set env vars on Reyn:
    ```bash
    export LINE_CHANNEL_SECRET=<channel-secret>
    export LINE_CHANNEL_ACCESS_TOKEN=<channel-access-token>   # for outbound replies
    ```
-7. Send a message to your LINE bot; it reaches the target agent's inbox.
+8. Send a message to your LINE bot; it reaches the target agent's inbox.
 
 ## Configuration (= webhooks.yaml)
 

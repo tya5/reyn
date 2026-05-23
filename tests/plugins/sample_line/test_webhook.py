@@ -1,25 +1,20 @@
-"""Tier 2: sample_line plugin (FP-0041 #489 PR-E).
+"""Tier 2: sample_line plugin (FP-0041 plugins-api PR-2).
 
-LINE Messaging API webhook handler — mirror of ``sample_slack``
-with LINE-specific protocol (= base64 HMAC, events array, source
-type variants, replyToken).
+The hand-rolled webhook handler that landed in PR #524 has been
+replaced with ``line-bot-sdk`` v3. The SDK handles signature
+verification + event parsing; the plugin glues SDK events → Reyn
+``push_to_agent``.
 
-Tests:
+Tests focus on:
 
-  1. ``verify_line_signature`` — base64 HMAC matches, mismatch,
-     missing header, channel secret rotation
-  2. ``mint_envelope_from_line_event``: text message / user / group /
-     room source / non-text events skipped / non-message skipped /
-     replyToken forwarded
-  3. ``register_router`` entry point — missing target_agent /
-     missing channel secret → None; happy path → APIRouter
-  4. Route via TestClient + stubbed registry: signed valid event →
-     inbox push; bad signature → 401; LINE verify ping (= events
-     [] or absent) → 200 ignored
-
-Tier 2 because the plugin is the only inbound path for LINE chat-
-transport; a regression in signing / parsing / dispatch silently
-breaks the integration.
+  1. ``register_router`` entry-point opt-out paths.
+  2. ``build_router`` mounts ``/webhook/line``.
+  3. End-to-end via TestClient + signed body + stubbed registry:
+     - User-source text message → envelope with user-scoped sender
+     - Group-source → group-scoped sender + group ``source_id``
+     - Room-source → room-scoped sender + room ``source_id``
+     - Non-text / non-message events skip dispatch
+     - Bad signature → 401
 """
 from __future__ import annotations
 
@@ -29,175 +24,22 @@ import hmac
 import json
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from reyn.chat.transport import ExternalRef
-from reyn.plugins.sample_line.webhook import (
-    build_router,
-    mint_envelope_from_line_event,
-    verify_line_signature,
-)
+linebot = pytest.importorskip("linebot.v3")
 
 
 def _sign(body: bytes, secret: str) -> str:
+    """Build LINE's X-Line-Signature header value."""
     return base64.b64encode(
         hmac.new(secret.encode(), body, hashlib.sha256).digest(),
     ).decode()
 
 
-# ── verify_line_signature ─────────────────────────────────────────────
-
-
-def test_verify_signature_accepts_well_formed():
-    """Tier 2: a base64-encoded HMAC-SHA256 of the body matches."""
-    secret = "channel-secret"
-    body = b'{"events": []}'
-    sig = _sign(body, secret)
-    ok, detail = verify_line_signature(
-        body=body, signature=sig, channel_secret=secret,
-    )
-    assert ok is True
-    assert detail == "ok"
-
-
-def test_verify_signature_rejects_mismatch():
-    """Tier 2: a signature computed with a different secret fails the
-    constant-time compare with ``mismatch`` detail.
-    """
-    body = b'{"x":1}'
-    bad_sig = _sign(body, "wrong-secret")
-    ok, detail = verify_line_signature(
-        body=body, signature=bad_sig, channel_secret="real-secret",
-    )
-    assert ok is False
-    assert detail == "mismatch"
-
-
-def test_verify_signature_rejects_missing_header():
-    """Tier 2: no ``X-Line-Signature`` header → ``missing-signature``."""
-    ok, detail = verify_line_signature(
-        body=b"", signature="", channel_secret="s",
-    )
-    assert ok is False
-    assert detail == "missing-signature"
-
-
-# ── mint_envelope_from_line_event ─────────────────────────────────────
-
-
-def test_mint_envelope_user_message():
-    """Tier 2: a ``message`` event from a 1:1 user chat mints an
-    envelope with ``sender="line:user:<userId>"`` and ExternalRef
-    reply_to carrying the replyToken + source_id.
-    """
-    event = {
-        "type": "message",
-        "replyToken": "TOK_123",
-        "source": {"type": "user", "userId": "U456"},
-        "message": {"type": "text", "text": "hello bot"},
-    }
-    env = mint_envelope_from_line_event(event)
-    assert env is not None
-    assert env["text"] == "hello bot"
-    assert env["sender"] == "line:user:U456"
-    rt = env["reply_to"]
-    assert isinstance(rt, ExternalRef)
-    assert rt.transport == "line"
-    assert rt.destination["reply_token"] == "TOK_123"
-    assert rt.destination["source_type"] == "user"
-    assert rt.destination["source_id"] == "U456"
-
-
-def test_mint_envelope_group_message():
-    """Tier 2: group source has both groupId + userId. Sender
-    encodes both so the agent knows who said what in which group.
-    """
-    event = {
-        "type": "message",
-        "replyToken": "TOK",
-        "source": {"type": "group", "groupId": "G999", "userId": "U456"},
-        "message": {"type": "text", "text": "hi everyone"},
-    }
-    env = mint_envelope_from_line_event(event)
-    assert env is not None
-    assert env["sender"] == "line:group:G999:U456"
-    assert env["reply_to"].destination["source_id"] == "G999"
-
-
-def test_mint_envelope_room_message():
-    """Tier 2: room source variant (= LINE multi-user chat without
-    a group)."""
-    event = {
-        "type": "message",
-        "replyToken": "TOK",
-        "source": {"type": "room", "roomId": "R777", "userId": "U456"},
-        "message": {"type": "text", "text": "hello room"},
-    }
-    env = mint_envelope_from_line_event(event)
-    assert env is not None
-    assert env["sender"] == "line:room:R777:U456"
-
-
-def test_mint_envelope_skips_non_text_message():
-    """Tier 2: sticker / image / location messages don't dispatch
-    as plain text turns. Future multimodal envelope shape could
-    surface them; this sample doesn't.
-    """
-    for msg_type in ("sticker", "image", "location", "video", "audio"):
-        event = {
-            "type": "message",
-            "replyToken": "TOK",
-            "source": {"type": "user", "userId": "U1"},
-            "message": {"type": msg_type},
-        }
-        assert mint_envelope_from_line_event(event) is None
-
-
-def test_mint_envelope_skips_non_message_events():
-    """Tier 2: follow / unfollow / postback / etc. don't dispatch."""
-    for event_type in ("follow", "unfollow", "postback", "join", "leave"):
-        event = {
-            "type": event_type,
-            "source": {"type": "user", "userId": "U1"},
-        }
-        assert mint_envelope_from_line_event(event) is None
-
-
-def test_mint_envelope_skips_empty_text():
-    """Tier 2: a message with whitespace-only text doesn't dispatch."""
-    event = {
-        "type": "message",
-        "replyToken": "TOK",
-        "source": {"type": "user", "userId": "U1"},
-        "message": {"type": "text", "text": "   "},
-    }
-    assert mint_envelope_from_line_event(event) is None
-
-
-def test_mint_envelope_handles_missing_reply_token():
-    """Tier 2: an event without ``replyToken`` (= unusual but
-    possible for some event types) still mints an envelope with an
-    empty reply_token string. Outbound dispatcher fall back to push
-    API based on source_id.
-    """
-    event = {
-        "type": "message",
-        "source": {"type": "user", "userId": "U1"},
-        "message": {"type": "text", "text": "hi"},
-    }
-    env = mint_envelope_from_line_event(event)
-    assert env is not None
-    assert env["reply_to"].destination["reply_token"] == ""
-
-
-# ── register_router entry point ────────────────────────────────────────
+# ── register_router entry-point ────────────────────────────────────────
 
 
 def test_register_router_returns_none_when_target_agent_missing(monkeypatch):
-    """Tier 2: register_router returns None if config has no
-    ``target_agent`` — loader warns + skips mount.
-    """
+    """Tier 2: register_router skips when target_agent absent."""
     from reyn.plugins.sample_line import register_router
     monkeypatch.setenv("LINE_CHANNEL_SECRET", "x")
     assert register_router({}) is None
@@ -205,18 +47,14 @@ def test_register_router_returns_none_when_target_agent_missing(monkeypatch):
 
 
 def test_register_router_returns_none_when_channel_secret_missing(monkeypatch):
-    """Tier 2: register_router returns None if
-    ``LINE_CHANNEL_SECRET`` env var is unset.
-    """
+    """Tier 2: register_router skips when channel secret env unset."""
     from reyn.plugins.sample_line import register_router
     monkeypatch.delenv("LINE_CHANNEL_SECRET", raising=False)
     assert register_router({"target_agent": "x"}) is None
 
 
 def test_register_router_returns_apirouter_when_configured(monkeypatch):
-    """Tier 2: with both target_agent + channel secret, returns
-    an APIRouter (= loader mounts it).
-    """
+    """Tier 2: with both present, returns an APIRouter."""
     from fastapi import APIRouter
 
     from reyn.plugins.sample_line import register_router
@@ -225,63 +63,65 @@ def test_register_router_returns_apirouter_when_configured(monkeypatch):
     assert isinstance(router, APIRouter)
 
 
-# ── route end-to-end via TestClient ───────────────────────────────────
+# ── route mount ───────────────────────────────────────────────────────
+
+
+def test_build_router_mounts_webhook_line_path(monkeypatch):
+    """Tier 2: the router exposes POST ``/webhook/line``."""
+    from fastapi import FastAPI
+
+    from reyn.plugins.sample_line.webhook import build_router
+    monkeypatch.setenv("LINE_CHANNEL_SECRET", "x")
+    app = FastAPI()
+    app.include_router(build_router(target_agent="line_agent"))
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/webhook/line" in paths
+
+
+# ── end-to-end via TestClient + stubbed registry ──────────────────────
 
 
 @pytest.fixture()
 def _line_client(monkeypatch):
-    """FastAPI TestClient with a stubbed registry.
+    """FastAPI TestClient with stubbed registry; captures pushes."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
 
-    Mounts the LINE plugin's router on a fresh app so tests stay
-    hermetic (= no dependency on reyn.web.server module state).
-    """
-    pushes: list = []
+    pushed: list = []
 
     class _StubSession:
         async def _put_inbox(self, kind, payload):
-            pushes.append((kind, payload))
+            pushed.append((kind, payload))
             return "stub-msg-id"
 
     class _StubRegistry:
         async def ensure_running(self, name):
             return _StubSession()
 
-    def _stub_get_registry():
-        return _StubRegistry()
+        def list_names(self):
+            return ["line_agent"]
+
+        def exists(self, name):
+            return name == "line_agent"
 
     from reyn.web import deps
-    monkeypatch.setattr(deps, "_get_registry", _stub_get_registry)
+    monkeypatch.setattr(deps, "_get_registry", lambda: _StubRegistry())
     monkeypatch.setattr(deps, "_registry", None, raising=False)
+    monkeypatch.setenv("LINE_CHANNEL_SECRET", "channel-secret")
 
+    from reyn.plugins.sample_line.webhook import build_router
     app = FastAPI()
-    router = build_router(target_agent="line_agent")
-    app.include_router(router)
-    app.dependency_overrides[deps.get_registry] = _stub_get_registry
+    app.include_router(build_router(target_agent="line_agent"))
 
     client = TestClient(app)
-    client.pushes = pushes  # type: ignore[attr-defined]
+    client.pushed = pushed  # type: ignore[attr-defined]
     yield client
 
 
-def test_route_dispatches_signed_event_to_inbox(monkeypatch, _line_client):
-    """Tier 2 end-to-end: a properly-signed LINE message event reaches
-    the target agent's inbox with the right envelope.
-    """
-    secret = "channel-secret"
-    monkeypatch.setenv("LINE_CHANNEL_SECRET", secret)
-
-    body = json.dumps({
-        "destination": "U-bot",
-        "events": [{
-            "type": "message",
-            "replyToken": "TOK_xyz",
-            "source": {"type": "user", "userId": "U456"},
-            "message": {"type": "text", "text": "hello LINE bot"},
-        }],
-    }).encode()
+def _post_signed(client, secret: str, payload: dict):
+    body = json.dumps(payload).encode()
     sig = _sign(body, secret)
-
-    response = _line_client.post(
+    return client.post(
         "/webhook/line",
         content=body,
         headers={
@@ -289,28 +129,127 @@ def test_route_dispatches_signed_event_to_inbox(monkeypatch, _line_client):
             "X-Line-Signature": sig,
         },
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert response.json()["dispatched"] == 1
 
-    pushes = _line_client.pushes
-    assert len(pushes) == 1
-    kind, payload = pushes[0]
+
+def _user_text_event(text: str, user_id: str = "U456",
+                      reply_token: str = "TOK1") -> dict:
+    return {
+        "type": "message",
+        "replyToken": reply_token,
+        "source": {"type": "user", "userId": user_id},
+        "message": {
+            "type": "text",
+            "id": "M1",
+            "text": text,
+            "quoteToken": "Q1",
+        },
+        "timestamp": 1234,
+        "mode": "active",
+        "webhookEventId": "EV1",
+        "deliveryContext": {"isRedelivery": False},
+    }
+
+
+def test_user_text_message_dispatches_to_agent(_line_client):
+    """Tier 2 end-to-end: a 1:1 user text message reaches the agent
+    with sender=line:user:<id>.
+    """
+    response = _post_signed(_line_client, "channel-secret", {
+        "destination": "U-bot",
+        "events": [_user_text_event("hello LINE bot")],
+    })
+    assert response.status_code == 200
+    pushed = _line_client.pushed
+    assert len(pushed) == 1
+    kind, payload = pushed[0]
     assert kind == "user"
     assert payload["text"] == "hello LINE bot"
     assert payload["sender"] == "line:user:U456"
-    rt = payload["reply_to"]
-    assert isinstance(rt, ExternalRef)
-    assert rt.transport == "line"
-    assert rt.destination["reply_token"] == "TOK_xyz"
+
+    from reyn.chat.transport import ExternalRef
+    assert isinstance(payload["reply_to"], ExternalRef)
+    assert payload["reply_to"].transport == "line"
+    assert payload["reply_to"].destination["reply_token"] == "TOK1"
+    assert payload["reply_to"].destination["source_type"] == "user"
+    assert payload["reply_to"].destination["source_id"] == "U456"
 
 
-def test_route_rejects_bad_signature(monkeypatch, _line_client):
-    """Tier 2: wrong signature returns 401, no inbox push."""
-    monkeypatch.setenv("LINE_CHANNEL_SECRET", "real-secret")
-    body = json.dumps({"events": []}).encode()
+def test_group_source_text_message(_line_client):
+    """Tier 2: group source produces line:group:<groupId>:<userId>."""
+    event = {
+        "type": "message",
+        "replyToken": "TOK2",
+        "source": {"type": "group", "groupId": "G999", "userId": "U456"},
+        "message": {
+            "type": "text", "id": "M2", "text": "hi", "quoteToken": "Q2",
+        },
+        "timestamp": 1234, "mode": "active", "webhookEventId": "EV2",
+        "deliveryContext": {"isRedelivery": False},
+    }
+    response = _post_signed(_line_client, "channel-secret", {
+        "destination": "U-bot",
+        "events": [event],
+    })
+    assert response.status_code == 200
+    _, payload = _line_client.pushed[0]
+    assert payload["sender"] == "line:group:G999:U456"
+    assert payload["reply_to"].destination["source_id"] == "G999"
+
+
+def test_room_source_text_message(_line_client):
+    """Tier 2: room source produces line:room:<roomId>:<userId>."""
+    event = {
+        "type": "message",
+        "replyToken": "TOK3",
+        "source": {"type": "room", "roomId": "R777", "userId": "U456"},
+        "message": {
+            "type": "text", "id": "M3", "text": "hi room", "quoteToken": "Q3",
+        },
+        "timestamp": 1234, "mode": "active", "webhookEventId": "EV3",
+        "deliveryContext": {"isRedelivery": False},
+    }
+    response = _post_signed(_line_client, "channel-secret", {
+        "destination": "U-bot",
+        "events": [event],
+    })
+    assert response.status_code == 200
+    _, payload = _line_client.pushed[0]
+    assert payload["sender"] == "line:room:R777:U456"
+    assert payload["reply_to"].destination["source_id"] == "R777"
+
+
+def test_non_text_message_skipped(_line_client):
+    """Tier 2: sticker / image / etc. messages aren't dispatched
+    as text turns. line-bot-sdk parses them as separate Content
+    types; our handler only dispatches TextMessageContent.
+    """
+    event = {
+        "type": "message",
+        "replyToken": "TOK4",
+        "source": {"type": "user", "userId": "U1"},
+        "message": {
+            "type": "sticker",
+            "id": "M4",
+            "packageId": "1",
+            "stickerId": "1",
+            "stickerResourceType": "STATIC",
+            "quoteToken": "Q4",
+        },
+        "timestamp": 1234, "mode": "active", "webhookEventId": "EV4",
+        "deliveryContext": {"isRedelivery": False},
+    }
+    response = _post_signed(_line_client, "channel-secret", {
+        "destination": "U-bot",
+        "events": [event],
+    })
+    assert response.status_code == 200
+    assert _line_client.pushed == []
+
+
+def test_bad_signature_returns_401(_line_client):
+    """Tier 2: an incorrectly-signed body → 401, no inbox push."""
+    body = json.dumps({"destination": "U-bot", "events": []}).encode()
     bad_sig = _sign(body, "wrong-secret")
-
     response = _line_client.post(
         "/webhook/line",
         content=body,
@@ -320,84 +259,17 @@ def test_route_rejects_bad_signature(monkeypatch, _line_client):
         },
     )
     assert response.status_code == 401
-    assert len(_line_client.pushes) == 0
+    assert _line_client.pushed == []
 
 
-def test_route_rejects_missing_channel_secret(monkeypatch, _line_client):
-    """Tier 2: ``LINE_CHANNEL_SECRET`` env var unset → 503."""
-    monkeypatch.delenv("LINE_CHANNEL_SECRET", raising=False)
-    response = _line_client.post(
-        "/webhook/line",
-        content=b'{"events": []}',
-        headers={"Content-Type": "application/json"},
-    )
-    assert response.status_code == 503
-
-
-def test_route_acks_empty_events_array(monkeypatch, _line_client):
-    """Tier 2: a verify ping with empty events array returns 200
-    ``ignored`` without pushing to inbox.
+def test_empty_events_array_returns_ok(_line_client):
+    """Tier 2: an empty events array (= LINE verify ping) returns
+    200 ``dispatched=0`` without crashing.
     """
-    secret = "channel-secret"
-    monkeypatch.setenv("LINE_CHANNEL_SECRET", secret)
-    body = json.dumps({"events": []}).encode()
-    sig = _sign(body, secret)
-
-    response = _line_client.post(
-        "/webhook/line",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Line-Signature": sig,
-        },
-    )
-    # Empty events array → 200 with dispatched=0.
+    response = _post_signed(_line_client, "channel-secret", {
+        "destination": "U-bot",
+        "events": [],
+    })
     assert response.status_code == 200
     assert response.json()["dispatched"] == 0
-    assert len(_line_client.pushes) == 0
-
-
-def test_route_dispatches_multiple_events_in_one_post(monkeypatch, _line_client):
-    """Tier 2: LINE bundles multiple events in a single webhook POST
-    when they fire close together; the handler iterates and pushes
-    each dispatchable one.
-    """
-    secret = "channel-secret"
-    monkeypatch.setenv("LINE_CHANNEL_SECRET", secret)
-
-    body = json.dumps({
-        "events": [
-            {
-                "type": "message",
-                "replyToken": "T1",
-                "source": {"type": "user", "userId": "U1"},
-                "message": {"type": "text", "text": "first"},
-            },
-            {
-                "type": "follow",   # skipped (= non-message)
-                "source": {"type": "user", "userId": "U1"},
-            },
-            {
-                "type": "message",
-                "replyToken": "T2",
-                "source": {"type": "user", "userId": "U1"},
-                "message": {"type": "text", "text": "second"},
-            },
-        ],
-    }).encode()
-    sig = _sign(body, secret)
-
-    response = _line_client.post(
-        "/webhook/line",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Line-Signature": sig,
-        },
-    )
-    assert response.status_code == 200
-    assert response.json()["dispatched"] == 2
-    pushes = _line_client.pushes
-    assert len(pushes) == 2
-    assert pushes[0][1]["text"] == "first"
-    assert pushes[1][1]["text"] == "second"
+    assert _line_client.pushed == []

@@ -1,20 +1,29 @@
-"""Tier 2: Slack inbound webhook router — FP-0041 #489 PR-D.
+"""Tier 2: sample_slack plugin (FP-0041 plugins-api PR-2).
 
-Tests the ``/webhook/slack`` route + the helpers it depends on:
+The hand-rolled webhook handler that landed in PR #522 has been
+replaced with ``slack-bolt`` (= Slack's official SDK). Bolt handles
+signing / event parsing / URL verification; the plugin just glues
+bolt events → Reyn ``push_to_agent``.
 
-  ``verify_slack_signature`` — HMAC-SHA256 + replay window
-  ``mint_envelope_from_slack_event`` — Slack payload → Reyn envelope
-  POST /webhook/slack — full route flow (URL verification / signing /
-    event dispatch / target agent resolution / inbox push)
+These tests are deliberately thin compared to the pre-refactor
+suite (= old tests pinned hand-rolled signing + envelope mint
+which are now bolt's responsibility). What we test now:
 
-The actual end-to-end "Slack message reaches LLM via agent inbox" is
-exercised via FastAPI TestClient + a registry mock that captures
-inbox pushes. The signing helper is unit-tested directly so the
-crypto path is verified independent of the route plumbing.
+  1. ``register_router`` entry-point contract (= missing config /
+     env / SDK → None opt-out).
+  2. ``build_router`` actually mounts a ``/webhook/slack`` route.
+  3. Round-trip integration via TestClient + a signed bolt-shaped
+     payload + stubbed registry: agent receives the right envelope
+     (= sender via ``make_sender``, ``ExternalRef`` reply_to with
+     channel + thread_ts).
+  4. Non-text / bot-echo events skip dispatch (= filter logic in
+     our ``_dispatch`` closure).
 
-Tier 2 because the webhook is the **only entry point** for Slack
-messages reaching Reyn. A regression in signing / parsing / inbox
-push silently breaks the entire Slack chat-transport.
+Tier 2 because the sample is the operator-facing reference for
+Slack chat-transport — a regression silently breaks the integration.
+
+When ``slack-bolt`` isn't installed, the SDK-using tests skip via
+``pytest.importorskip``.
 """
 from __future__ import annotations
 
@@ -22,371 +31,123 @@ import hashlib
 import hmac
 import json
 import time
-from typing import Any
 
 import pytest
 
-from reyn.chat.transport import ExternalRef
-from reyn.plugins.sample_slack.webhook import (
-    _SLACK_REPLAY_WINDOW_SECONDS,
-    build_router,
-    mint_envelope_from_slack_event,
-    verify_slack_signature,
-)
-
-# ── verify_slack_signature ────────────────────────────────────────────
+# Skip the SDK-dependent tests when slack-bolt isn't installed (= when
+# reyn is installed without the ``sample_slack`` extra).
+slack_bolt = pytest.importorskip("slack_bolt")
 
 
-def _sign(body: bytes, ts: str, secret: str) -> str:
-    """Helper: produce the Slack-format signature for body + timestamp."""
+def _sign(body: bytes, secret: str, ts: str) -> str:
+    """Build the Slack signature header value for body + timestamp."""
     base = f"v0:{ts}:".encode() + body
     digest = hmac.new(secret.encode(), base, hashlib.sha256).hexdigest()
     return f"v0={digest}"
 
 
-def test_verify_signature_accepts_well_formed_request():
-    """Tier 2: a request signed with the correct secret + fresh timestamp
-    passes verification.
+# ── register_router entry point ────────────────────────────────────────
+
+
+def test_register_router_returns_none_when_target_agent_missing(monkeypatch):
+    """Tier 2: register_router returns None if config has no
+    ``target_agent`` — loader warns + skips mount.
     """
-    secret = "test-secret"
-    body = b'{"hello": "world"}'
-    ts = str(int(time.time()))
-    sig = _sign(body, ts, secret)
-
-    ok, detail = verify_slack_signature(
-        body=body, timestamp=ts, signature=sig, signing_secret=secret,
-    )
-    assert ok is True
-    assert detail == "ok"
+    from reyn.plugins.sample_slack import register_router
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")
+    assert register_router({}) is None
+    assert register_router({"target_agent": ""}) is None
 
 
-def test_verify_signature_rejects_stale_timestamp():
-    """Tier 2: a request older than the replay window is rejected as
-    ``stale`` — protects against replay attacks.
+def test_register_router_returns_none_when_signing_secret_missing(monkeypatch):
+    """Tier 2: register_router returns None if SLACK_SIGNING_SECRET
+    env var is unset.
     """
-    secret = "test-secret"
-    body = b'{"hello": "world"}'
-    # Stale timestamp = 10 minutes ago.
-    ts = str(int(time.time()) - 600)
-    sig = _sign(body, ts, secret)
-
-    ok, detail = verify_slack_signature(
-        body=body, timestamp=ts, signature=sig, signing_secret=secret,
-    )
-    assert ok is False
-    assert detail == "stale"
+    from reyn.plugins.sample_slack import register_router
+    monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
+    assert register_router({"target_agent": "x"}) is None
 
 
-def test_verify_signature_rejects_signature_mismatch():
-    """Tier 2: signature computed with a different secret fails the
-    constant-time compare with ``mismatch`` detail.
+def test_register_router_returns_apirouter_when_configured(monkeypatch):
+    """Tier 2: with both target_agent + signing secret, returns an
+    APIRouter (= loader mounts it).
     """
-    body = b'{"x":1}'
-    ts = str(int(time.time()))
-    # Sign with the wrong secret.
-    bad_sig = _sign(body, ts, "wrong-secret")
+    from fastapi import APIRouter
 
-    ok, detail = verify_slack_signature(
-        body=body, timestamp=ts, signature=bad_sig,
-        signing_secret="real-secret",
-    )
-    assert ok is False
-    assert detail == "mismatch"
+    from reyn.plugins.sample_slack import register_router
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")
+    router = register_router({"target_agent": "news_agent"})
+    assert isinstance(router, APIRouter)
 
 
-def test_verify_signature_rejects_missing_headers():
-    """Tier 2: missing timestamp or signature returns a clear reason."""
-    secret = "s"
-
-    ok, detail = verify_slack_signature(
-        body=b"", timestamp="", signature="sig", signing_secret=secret,
-    )
-    assert ok is False
-    assert detail == "missing-timestamp"
-
-    ok, detail = verify_slack_signature(
-        body=b"", timestamp="1234", signature="", signing_secret=secret,
-    )
-    assert ok is False
-    assert detail == "missing-signature"
+# ── route mounted on a FastAPI app ────────────────────────────────────
 
 
-def test_verify_signature_replay_window_boundary_inclusive():
-    """Tier 2: at exactly the window boundary (= 5 minutes), the
-    request still passes; one second past, it's stale. Pins the
-    boundary semantics.
+def test_build_router_mounts_webhook_slack_path(monkeypatch):
+    """Tier 2: ``build_router`` produces a router with ``/webhook/slack``
+    registered as POST. Without this, the operator's Slack App
+    Request URL hits 404.
     """
-    secret = "s"
-    body = b""
-    now = 1_000_000.0
-    ts_at_boundary = str(int(now) - _SLACK_REPLAY_WINDOW_SECONDS)
-    sig = _sign(body, ts_at_boundary, secret)
-    ok, _ = verify_slack_signature(
-        body=body, timestamp=ts_at_boundary, signature=sig,
-        signing_secret=secret, now=now,
-    )
-    assert ok is True
+    from fastapi import FastAPI
 
-    ts_past = str(int(now) - _SLACK_REPLAY_WINDOW_SECONDS - 1)
-    sig = _sign(body, ts_past, secret)
-    ok, detail = verify_slack_signature(
-        body=body, timestamp=ts_past, signature=sig,
-        signing_secret=secret, now=now,
-    )
-    assert ok is False
-    assert detail == "stale"
+    from reyn.plugins.sample_slack.webhook import build_router
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")
+
+    app = FastAPI()
+    app.include_router(build_router(target_agent="news_agent"))
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/webhook/slack" in paths
 
 
-# ── mint_envelope_from_slack_event ────────────────────────────────────
-
-
-def test_mint_envelope_for_app_mention():
-    """Tier 2: an ``app_mention`` event mints an envelope with
-    sender=slack:<user_id> and ExternalRef reply_to carrying
-    channel + thread_ts.
-    """
-    event = {
-        "event": {
-            "type": "app_mention",
-            "user": "U456",
-            "text": "<@U_BOT> help me",
-            "channel": "C123",
-            "ts": "1234.5678",
-        },
-    }
-    env = mint_envelope_from_slack_event(event)
-    assert env is not None
-    assert env["text"] == "<@U_BOT> help me"
-    assert env["sender"] == "slack:U456"
-    rt = env["reply_to"]
-    assert isinstance(rt, ExternalRef)
-    assert rt.transport == "slack"
-    assert rt.destination == {"channel": "C123", "thread_ts": "1234.5678"}
-
-
-def test_mint_envelope_preserves_existing_thread_ts():
-    """Tier 2: when the user replies inside an existing thread, the
-    envelope's reply_to.thread_ts is the thread's ts, NOT the
-    message's own ts — so the agent reply joins the right thread.
-    """
-    event = {
-        "event": {
-            "type": "message",
-            "user": "U456",
-            "text": "follow-up",
-            "channel": "C123",
-            "ts": "9999.0001",
-            "thread_ts": "1234.5678",  # original parent
-        },
-    }
-    env = mint_envelope_from_slack_event(event)
-    assert env is not None
-    assert env["reply_to"].destination["thread_ts"] == "1234.5678"
-
-
-def test_mint_envelope_skips_bot_echo():
-    """Tier 2: a ``bot_message`` subtype (= echo of bot's own post) is
-    NOT dispatched to inbox — prevents feedback loops where the bot
-    receives its own messages.
-    """
-    event = {
-        "event": {
-            "type": "message",
-            "subtype": "bot_message",
-            "bot_id": "B999",
-            "text": "I (the bot) just posted",
-            "channel": "C123",
-            "ts": "1.0",
-        },
-    }
-    assert mint_envelope_from_slack_event(event) is None
-
-
-def test_mint_envelope_skips_non_message_events():
-    """Tier 2: reaction / channel_join / app_home events produce no
-    envelope. Operator can subscribe to broad event scopes without
-    risking accidental dispatch.
-    """
-    for event_type in ("reaction_added", "channel_join", "app_home_opened"):
-        event = {"event": {"type": event_type, "user": "U1", "channel": "C1"}}
-        assert mint_envelope_from_slack_event(event) is None
-
-
-def test_mint_envelope_skips_empty_text():
-    """Tier 2: an event with no text (= whitespace or missing) is
-    skipped. Nothing to dispatch to the LLM.
-    """
-    event = {
-        "event": {
-            "type": "app_mention",
-            "user": "U1",
-            "channel": "C1",
-            "ts": "1.0",
-            "text": "   ",
-        },
-    }
-    assert mint_envelope_from_slack_event(event) is None
-
-
-def test_mint_envelope_handles_missing_user_field():
-    """Tier 2: events without a ``user`` (= system messages, channel
-    purpose updates) get sender=slack:unknown but still dispatch
-    if they have text — defensive about Slack edge cases.
-    """
-    event = {
-        "event": {
-            "type": "message",
-            "text": "hi",
-            "channel": "C1",
-            "ts": "1.0",
-        },
-    }
-    env = mint_envelope_from_slack_event(event)
-    assert env is not None
-    assert env["sender"] == "slack:unknown"
-
-
-# ── route end-to-end via TestClient ───────────────────────────────────
+# ── end-to-end: signed Slack event → Reyn agent inbox ─────────────────
 
 
 @pytest.fixture()
 def _slack_client(monkeypatch):
     """FastAPI TestClient with a stubbed AgentRegistry.
 
-    Builds a fresh minimal FastAPI app, mounts the sample_slack
-    plugin's router via ``build_router``, and overrides the registry
-    dependency to capture inbox pushes. Each test gets its own client
-    (= no shared state across tests). Avoids loading the full
-    ``reyn.web.server.app`` since the plugin would otherwise be
-    mounted only when the operator activates it via reyn.yaml.
+    Patches the reyn.plugins.api module so push_to_agent dispatches
+    to the stub registry; captures pushed envelopes for assertions.
     """
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    pushes: list = []
+    pushed: list = []
 
     class _StubSession:
         async def _put_inbox(self, kind, payload):
-            pushes.append((kind, payload))
+            pushed.append((kind, payload))
             return "stub-msg-id"
 
     class _StubRegistry:
         async def ensure_running(self, name):
             return _StubSession()
 
-    def _stub_get_registry():
-        return _StubRegistry()
+        def list_names(self):
+            return ["news_agent"]
 
-    # Patch the deps module so build_router's dependency closure
-    # resolves to the stub.
+        def exists(self, name):
+            return name == "news_agent"
+
     from reyn.web import deps
-    monkeypatch.setattr(deps, "_get_registry", _stub_get_registry)
+    monkeypatch.setattr(deps, "_get_registry", lambda: _StubRegistry())
     monkeypatch.setattr(deps, "_registry", None, raising=False)
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "test-secret")
 
+    from reyn.plugins.sample_slack.webhook import build_router
     app = FastAPI()
-    router = build_router(target_agent="news_agent")
-    app.include_router(router)
-    app.dependency_overrides[deps.get_registry] = _stub_get_registry
+    app.include_router(build_router(target_agent="news_agent"))
 
     client = TestClient(app)
-    client.pushes = pushes  # type: ignore[attr-defined]
+    client.pushed = pushed  # type: ignore[attr-defined]
     yield client
 
 
-def test_route_url_verification_echoes_challenge(_slack_client):
-    """Tier 2 (#489 PR-D): the Slack URL verification handshake echoes
-    the challenge string back so api.slack.com can verify Reyn is
-    reachable + responding. This MUST work without signing — Slack
-    doesn't always sign the initial verify.
-    """
-    body = json.dumps({
-        "type": "url_verification",
-        "challenge": "abc123-test-challenge",
-    })
-    response = _slack_client.post(
-        "/webhook/slack",
-        content=body,
-        headers={"Content-Type": "application/json"},
-    )
-    assert response.status_code == 200
-    assert response.json() == {"challenge": "abc123-test-challenge"}
-
-
-def test_route_rejects_missing_signing_secret(monkeypatch, _slack_client):
-    """Tier 2: with no ``SLACK_SIGNING_SECRET`` env var set, the
-    route returns 503 instead of crashing. Operator forgot to
-    configure → clear error in logs.
-    """
-    monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
-    body = json.dumps({
-        "event": {
-            "type": "app_mention", "user": "U1", "channel": "C1",
-            "text": "hi", "ts": "1.0",
-        },
-    })
-    response = _slack_client.post(
-        "/webhook/slack",
-        content=body,
-        headers={"Content-Type": "application/json"},
-    )
-    assert response.status_code == 503
-    assert "signing secret" in response.json()["error"].lower()
-
-
-def test_route_rejects_bad_signature(monkeypatch, _slack_client):
-    """Tier 2: a request with the wrong signature returns 401. Even
-    if the body looks like a valid event, Reyn won't dispatch.
-    """
-    monkeypatch.setenv("SLACK_SIGNING_SECRET", "real-secret")
-    monkeypatch.setenv("SLACK_TARGET_AGENT", "test_agent")
-    body = json.dumps({
-        "event": {
-            "type": "app_mention", "user": "U1", "channel": "C1",
-            "text": "hi", "ts": "1.0",
-        },
-    }).encode()
+def _post_signed_event(client, secret: str, event_payload: dict):
+    body = json.dumps({"event": event_payload, "type": "event_callback"}).encode()
     ts = str(int(time.time()))
-    bad_sig = _sign(body, ts, "wrong-secret")
-    response = _slack_client.post(
-        "/webhook/slack",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Slack-Request-Timestamp": ts,
-            "X-Slack-Signature": bad_sig,
-        },
-    )
-    assert response.status_code == 401
-
-
-def test_route_dispatches_signed_app_mention_to_inbox(
-    monkeypatch, _slack_client,
-):
-    """Tier 2 (#489 PR-D end-to-end): a properly-signed ``app_mention``
-    event reaches the target agent's inbox with the right envelope.
-
-    This is the **happy path** for the Slack chat-transport: Slack
-    user @mentions the bot → Reyn webhook verifies signing → mints
-    envelope with sender + ExternalRef reply_to → pushes to inbox.
-    PR-A dispatch attribution + LLM processing kick in from there.
-    """
-    secret = "real-secret"
-    monkeypatch.setenv("SLACK_SIGNING_SECRET", secret)
-    monkeypatch.setenv("SLACK_TARGET_AGENT", "news_agent")
-
-    body = json.dumps({
-        "event": {
-            "type": "app_mention",
-            "user": "U456",
-            "text": "<@U_BOT> today's news?",
-            "channel": "C123",
-            "ts": "1234.5678",
-        },
-    }).encode()
-    ts = str(int(time.time()))
-    sig = _sign(body, ts, secret)
-
-    response = _slack_client.post(
+    sig = _sign(body, secret, ts)
+    return client.post(
         "/webhook/slack",
         content=body,
         headers={
@@ -395,101 +156,78 @@ def test_route_dispatches_signed_app_mention_to_inbox(
             "X-Slack-Signature": sig,
         },
     )
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
 
-    # One inbox push happened with the expected envelope.
-    pushes = _slack_client.pushes
-    assert len(pushes) == 1
-    kind, payload = pushes[0]
+
+def test_app_mention_dispatches_to_agent_inbox(_slack_client):
+    """Tier 2 end-to-end: an ``app_mention`` event signed correctly
+    reaches the target agent's inbox with the right envelope.
+    """
+    response = _post_signed_event(_slack_client, "test-secret", {
+        "type": "app_mention",
+        "user": "U456",
+        "text": "<@U_BOT> hello",
+        "channel": "C123",
+        "ts": "1234.5678",
+    })
+    assert response.status_code == 200
+    pushed = _slack_client.pushed
+    assert len(pushed) == 1
+    kind, payload = pushed[0]
     assert kind == "user"
-    assert payload["text"] == "<@U_BOT> today's news?"
+    assert payload["text"] == "<@U_BOT> hello"
     assert payload["sender"] == "slack:U456"
-    rt = payload["reply_to"]
-    assert isinstance(rt, ExternalRef)
-    assert rt.transport == "slack"
-    assert rt.destination == {"channel": "C123", "thread_ts": "1234.5678"}
+
+    from reyn.chat.transport import ExternalRef
+    assert isinstance(payload["reply_to"], ExternalRef)
+    assert payload["reply_to"].transport == "slack"
+    assert payload["reply_to"].destination == {
+        "channel": "C123",
+        "thread_ts": "1234.5678",
+    }
 
 
-def test_route_acks_non_dispatchable_events_with_200(
-    monkeypatch, _slack_client,
-):
-    """Tier 2: an event with no dispatchable payload (= reaction)
-    returns 200 with ``status="ignored"``. Slack won't retry.
+def test_message_event_with_thread_preserves_thread_ts(_slack_client):
+    """Tier 2: when the user replies in an existing thread,
+    ``reply_to.thread_ts`` is the thread's parent ts (= not the
+    message's own ts) so agent replies join the right thread.
     """
-    secret = "real-secret"
-    monkeypatch.setenv("SLACK_SIGNING_SECRET", secret)
-
-    body = json.dumps({
-        "event": {
-            "type": "reaction_added", "user": "U1", "channel": "C1",
-        },
-    }).encode()
-    ts = str(int(time.time()))
-    sig = _sign(body, ts, secret)
-
-    response = _slack_client.post(
-        "/webhook/slack",
-        content=body,
-        headers={
-            "Content-Type": "application/json",
-            "X-Slack-Request-Timestamp": ts,
-            "X-Slack-Signature": sig,
-        },
-    )
+    response = _post_signed_event(_slack_client, "test-secret", {
+        "type": "message",
+        "user": "U456",
+        "text": "follow-up",
+        "channel": "C123",
+        "ts": "9999.0001",
+        "thread_ts": "1234.5678",
+    })
     assert response.status_code == 200
-    assert response.json() == {"status": "ignored"}
-    assert len(_slack_client.pushes) == 0
+    _, payload = _slack_client.pushed[0]
+    assert payload["reply_to"].destination["thread_ts"] == "1234.5678"
 
 
-def test_route_malformed_json_returns_400(monkeypatch, _slack_client):
-    """Tier 2: non-JSON body returns 400 (= operator misconfig / bad
-    network, not Reyn's fault).
+def test_bot_echo_message_is_not_dispatched(_slack_client):
+    """Tier 2: a message with ``subtype=bot_message`` (= our own bot
+    posting) is filtered out to prevent feedback loops.
     """
-    response = _slack_client.post(
-        "/webhook/slack",
-        content=b"not json",
-        headers={"Content-Type": "application/json"},
-    )
-    assert response.status_code == 400
+    _post_signed_event(_slack_client, "test-secret", {
+        "type": "message",
+        "subtype": "bot_message",
+        "bot_id": "B999",
+        "text": "I (bot) just posted",
+        "channel": "C123",
+        "ts": "1.0",
+    })
+    assert _slack_client.pushed == []
 
 
-# ── register_router (= plugin entry-point) ────────────────────────────
-
-
-def test_register_router_returns_none_when_target_agent_missing(monkeypatch):
-    """Tier 2: ``register_router`` (= the plugin entry-point) returns
-    ``None`` when ``target_agent`` is missing from config — the
-    loader logs a warning and the route is not mounted. Operator's
-    forgotten config surfaces in logs rather than crashing.
+def test_empty_text_message_is_not_dispatched(_slack_client):
+    """Tier 2: whitespace-only text doesn't dispatch (= no value
+    forwarding to the LLM, no envelope spam).
     """
-    from reyn.plugins.sample_slack import register_router
-    monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")  # signing OK, target missing
-
-    assert register_router({}) is None
-    assert register_router({"target_agent": ""}) is None
-
-
-def test_register_router_returns_none_when_signing_secret_missing(monkeypatch):
-    """Tier 2: ``register_router`` returns ``None`` when
-    ``SLACK_SIGNING_SECRET`` env var is unset — clear operator
-    error in logs without crashing reyn web.
-    """
-    from reyn.plugins.sample_slack import register_router
-    monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
-
-    assert register_router({"target_agent": "news_agent"}) is None
-
-
-def test_register_router_returns_apirouter_when_configured(monkeypatch):
-    """Tier 2: ``register_router`` returns a FastAPI ``APIRouter``
-    when both ``target_agent`` config + signing secret env are
-    present. The loader mounts this on the app.
-    """
-    from fastapi import APIRouter
-
-    from reyn.plugins.sample_slack import register_router
-    monkeypatch.setenv("SLACK_SIGNING_SECRET", "x")
-
-    router = register_router({"target_agent": "news_agent"})
-    assert isinstance(router, APIRouter)
+    _post_signed_event(_slack_client, "test-secret", {
+        "type": "message",
+        "user": "U1",
+        "text": "   ",
+        "channel": "C1",
+        "ts": "1.0",
+    })
+    assert _slack_client.pushed == []
