@@ -28,6 +28,10 @@ permissions:
       function: detect
       mode: unsafe
       timeout: 30
+    - module: ./fetch_sibling_files.py
+      function: fetch
+      mode: unsafe
+      timeout: 60
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 routing:
