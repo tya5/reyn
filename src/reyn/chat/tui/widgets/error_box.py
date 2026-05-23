@@ -74,15 +74,23 @@ class ErrorBox(Widget):
         width: 1fr;
         padding: 0 2;
     }
-    /* Inline recovery hint extracted from the message — always visible
-       (= no display:none) so users can read "• retry or check provider
-       status" without expanding. Distinct color from `.eb-hint` so it
+    /* Inline recovery hint extracted from the message. Default
+       `display: none` (= matches `.eb-hint` symmetry, wave-10
+       follow-up I-F12) so an accidentally-yielded empty hint
+       doesn't grab a row of layout. The `.-has-content` modifier
+       toggles it visible — applied at yield time so the visibility
+       contract is "the Label was created WITH content, not just
+       attached to the DOM". Distinct color from `.eb-hint` so it
        reads as actionable, not just metadata. */
     ErrorBox Label.eb-inline-hint {
+        display: none;
         color: #8a7a4a;
         height: 1;
         width: 1fr;
         padding: 0 2;
+    }
+    ErrorBox Label.eb-inline-hint.-has-content {
+        display: block;
     }
     /* Expanded state — reveal details */
     ErrorBox.-expanded Static.eb-details {
@@ -190,8 +198,16 @@ class ErrorBox(Widget):
     def compose(self) -> ComposeResult:
         yield Label(self._header_text(), classes="eb-header")
         if self._inline_hint:
+            # Wave-10 follow-up I-F12: tag the Label with
+            # ``-has-content`` so the CSS visibility toggles to
+            # ``display: block``. The ``if`` guard above is still the
+            # primary gate (= we don't mount empty Labels at all);
+            # the class is defense-in-depth so a future refactor that
+            # drops the guard or yields the Label with empty content
+            # doesn't grab a layout row for an empty hint.
             yield Label(
-                f"• {self._inline_hint}", classes="eb-inline-hint",
+                f"• {self._inline_hint}",
+                classes="eb-inline-hint -has-content",
             )
 
         # The trace hint only makes sense when this error came from a
