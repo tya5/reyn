@@ -26,6 +26,8 @@ module — no mocks.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from reyn.permissions.permissions import (
@@ -94,31 +96,142 @@ def test_legacy_bool_keys_do_not_expand_to_http_get_or_secret_write():
 
 
 def test_require_http_get_raises_for_undeclared_host(tmp_path):
-    """Tier 2: require_http_get raises with a structured error."""
+    """Tier 2: require_http_get raises with DeprecationWarning fallback for undeclared hosts.
+
+    #571 Phase 7: with no http.get declaration at all, the resolver
+    emits a DeprecationWarning and falls back to the legacy
+    ``web.fetch`` prompt. Without a bus, it raises with a clear
+    "not declared" message.
+    """
+    import warnings
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl(http_get=[{"host": "api.github.com"}])
-    with pytest.raises(PermissionError, match="example.com"):
-        resolver.require_http_get(decl, "example.com")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        with pytest.raises(PermissionError, match="example.com"):
+            asyncio.run(resolver.require_http_get(decl, "example.com"))
 
 
 def test_require_http_get_passes_for_declared_host(tmp_path):
-    """Tier 2: require_http_get passes for an exact host match."""
+    """Tier 2: require_http_get passes silently for a persisted approval.
+
+    #571 Phase 7: specific declarations expect to be approved at
+    startup_guard time. This test simulates that — session-approve
+    the host as the resolver would after startup_guard's prompt,
+    then verify runtime require_http_get passes silently.
+    """
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl(http_get=[{"host": "api.github.com"}])
-    resolver.require_http_get(decl, "api.github.com")
+    resolver._session["test_skill/http.get/api.github.com"] = True
+    asyncio.run(resolver.require_http_get(decl, "api.github.com", skill_name="test_skill"))
 
 
 def test_require_http_get_passes_via_explicit_decl(tmp_path):
-    """Tier 2: explicit http.get declaration authorises the host check.
-
-    Phase 5 removed the bool-axis → http.get compat shim, so the
-    explicit form is the only path.
-    """
+    """Tier 2: explicit http.get declaration with persisted approval passes silently."""
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl.from_dict({
         "http.get": [{"host": "registry.modelcontextprotocol.io"}],
     })
-    resolver.require_http_get(decl, "registry.modelcontextprotocol.io")
+    resolver._session["mcp_install/http.get/registry.modelcontextprotocol.io"] = True
+    asyncio.run(resolver.require_http_get(
+        decl, "registry.modelcontextprotocol.io", skill_name="mcp_install",
+    ))
+
+
+def test_require_http_get_wildcard_prompts_via_bus(tmp_path):
+    """Tier 2: wildcard http.get fires per-host 4-layer prompt via bus.
+
+    #571 Phase 7: ``http.get: ["*"]`` means "ask the operator at
+    runtime per host". The 4-layer flow uses ``_approve`` against
+    the ``<skill>/http.get/<host>`` key.
+    """
+    from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
+
+    class _AlwaysBus(InterventionBus):
+        def __init__(self) -> None:
+            self.requests: list[UserIntervention] = []
+        async def request(self, iv: UserIntervention) -> InterventionAnswer:
+            self.requests.append(iv)
+            return InterventionAnswer(choice_id="always")
+
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
+    decl = PermissionDecl(http_get=[{"host": "*"}])
+    bus = _AlwaysBus()
+    asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
+    assert len(bus.requests) == 1
+    assert "example.com" in bus.requests[0].prompt
+
+
+def test_require_http_get_wildcard_persists_after_always(tmp_path):
+    """Tier 2: ALWAYS choice persists, so subsequent same-host calls pass silently."""
+    from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
+
+    class _AlwaysBus(InterventionBus):
+        def __init__(self) -> None:
+            self.requests: list[UserIntervention] = []
+        async def request(self, iv: UserIntervention) -> InterventionAnswer:
+            self.requests.append(iv)
+            return InterventionAnswer(choice_id="always")
+
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
+    decl = PermissionDecl(http_get=[{"host": "*"}])
+    bus = _AlwaysBus()
+    asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
+    asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
+    # Second call should not have prompted again — total still 1.
+    assert len(bus.requests) == 1
+
+
+def test_require_http_get_wildcard_without_bus_raises(tmp_path):
+    """Tier 2: wildcard without bus raises (= sync subprocess can't prompt)."""
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
+    decl = PermissionDecl(http_get=[{"host": "*"}])
+    with pytest.raises(PermissionError, match="interactive prompt"):
+        asyncio.run(resolver.require_http_get(decl, "example.com", None, "test_skill"))
+
+
+def test_require_http_get_no_decl_emits_deprecation_warning(tmp_path):
+    """Tier 2: no http.get declaration → DeprecationWarning + legacy compat path."""
+    import warnings
+
+    from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
+
+    class _AlwaysBus(InterventionBus):
+        async def request(self, iv: UserIntervention) -> InterventionAnswer:
+            return InterventionAnswer(choice_id="always")
+
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
+    decl = PermissionDecl()  # no http.get declared at all
+    bus = _AlwaysBus()
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
+    deprecation_warnings = [w for w in recorded if issubclass(w.category, DeprecationWarning)]
+    assert len(deprecation_warnings) == 1
+    assert "http.get" in str(deprecation_warnings[0].message)
+
+
+def test_require_http_get_legacy_web_fetch_allow_pre_approves(tmp_path):
+    """Tier 2: legacy ``web.fetch: allow`` config short-circuits all hosts."""
+    resolver = PermissionResolver(
+        config_permissions={"web.fetch": "allow"},
+        project_root=tmp_path,
+    )
+    decl = PermissionDecl(http_get=[{"host": "*"}])  # wildcard
+    # Should pass without prompting because legacy web.fetch: allow wins.
+    asyncio.run(resolver.require_http_get(decl, "example.com", None, "test_skill"))
+
+
+def test_require_http_get_config_deny_overrides_wildcard(tmp_path):
+    """Tier 2: ``web.fetch: deny`` config raises regardless of wildcard decl."""
+    resolver = PermissionResolver(
+        config_permissions={"web.fetch": "deny"},
+        project_root=tmp_path,
+    )
+    decl = PermissionDecl(http_get=[{"host": "*"}])
+    with pytest.raises(PermissionError, match="deny"):
+        asyncio.run(resolver.require_http_get(decl, "example.com", None, "test_skill"))
 
 
 def test_require_secret_write_raises_for_undeclared_key(tmp_path):

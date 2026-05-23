@@ -3956,7 +3956,16 @@ class ChatSession:
             file_write=file_write,
             mcp=mcp_names,
             allowed_mcp=self._allowed_mcp,
-            http_get=[{"host": "registry.modelcontextprotocol.io"}],
+            # #571 Phase 7: wildcard http.get authorises LLM-driven
+            # ``web_fetch`` ops to any host via a per-host 4-layer
+            # prompt at runtime — unifies the safe.http + web_fetch
+            # paths under a single ``http.get`` axis. The MCP registry
+            # host is also listed specifically so mcp_install's
+            # startup_guard pre-approves it without an extra prompt.
+            http_get=[
+                {"host": "registry.modelcontextprotocol.io"},
+                {"host": "*"},
+            ],
             # #571 Phase 6: wildcard secret.write authorises LLM-emitted
             # mcp_install ops to save runtime-determined ``isSecret`` env
             # vars from the registry — the actual security gate is the

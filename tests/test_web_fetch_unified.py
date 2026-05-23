@@ -360,7 +360,7 @@ def test_router_invoke_action_web_fetch_deny_raises_permission_error(
         router_state=rs,
     )
 
-    with pytest.raises(PermissionError, match="web fetch denied by config"):
+    with pytest.raises(PermissionError, match="denied by config"):
         asyncio.run(
             WEB_FETCH.handler({"url": "https://example.com"}, tool_ctx),
         )

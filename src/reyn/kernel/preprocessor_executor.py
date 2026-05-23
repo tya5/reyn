@@ -510,13 +510,20 @@ class PreprocessorExecutor:
             entry["path"] for entry in self._skill.permissions.file_write
             if isinstance(entry, dict) and entry.get("path")
         ]
-        # #571 collapse arc Phase 3: forward the skill's declared http.get
-        # host allowlist into the subprocess so ``reyn.safe.http.*`` calls
-        # gate against it. Empty list = no HTTP allowed via safe.http
-        # (web_fetch's Tier-1 path is unaffected — separate surface).
+        # #571 collapse arc Phase 3 / Phase 7: forward the skill's
+        # declared http.get host allowlist into the subprocess so
+        # ``reyn.safe.http.*`` calls gate against it. Wildcard ``"*"``
+        # entries are stripped here — the subprocess cannot prompt
+        # the operator, so wildcard hosts can only be reached via the
+        # ``web_fetch`` op handler (main-process async path). A skill
+        # that needs runtime-chosen hosts from a safe-mode python step
+        # must instead emit a ``web_fetch`` Control IR op so the prompt
+        # can fire.
         http_hosts = [
             entry["host"] for entry in self._skill.permissions.http_get
-            if isinstance(entry, dict) and entry.get("host")
+            if isinstance(entry, dict)
+            and entry.get("host")
+            and entry.get("host") != "*"
         ]
 
         try:

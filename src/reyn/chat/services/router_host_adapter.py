@@ -1009,9 +1009,13 @@ class RouterHostAdapter:
             file_write=file_write,
             mcp=mcp_names,
             allowed_mcp=self._allowed_mcp,
-            http_get=[{"host": "registry.modelcontextprotocol.io"}],
-            # #571 Phase 6: wildcard secret.write — see ChatSession's
-            # matching pattern for rationale.
+            # #571 Phase 7: wildcard http.get + specific MCP registry —
+            # see ChatSession's matching pattern.
+            http_get=[
+                {"host": "registry.modelcontextprotocol.io"},
+                {"host": "*"},
+            ],
+            # #571 Phase 6: wildcard secret.write — see ChatSession.
             secret_write=["*"],
         )
         if self._perm is not None:

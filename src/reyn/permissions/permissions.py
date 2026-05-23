@@ -567,6 +567,21 @@ class PermissionResolver:
     def _is_path_approved(self, path: str, skill_name: str) -> bool:
         return self._is_path_approved_for(path, skill_name, "file.write")
 
+    def _is_host_approved_for(
+        self, host: str, skill_name: str, kind: str = "http.get",
+    ) -> bool:
+        """Return True if ``host`` is covered by a saved/session approval.
+
+        Hosts are exact-string-matched against the persisted approval
+        key (= ``<skill>/http.get/<host>``). Mirrors
+        :meth:`_is_path_approved_for` but skips the filesystem
+        resolution because hosts are network identifiers, not paths.
+        """
+        if not skill_name or not host:
+            return False
+        key = f"{skill_name}/{kind}/{host}"
+        return bool(self._saved.get(key) or self._session.get(key))
+
     def session_approve_path(
         self, path: str, skill_name: str, kind: str, recursive: bool = False,
     ) -> None:
@@ -725,7 +740,31 @@ class PermissionResolver:
                     f"to enable unsafe-mode Python preprocessor steps."
                 )
 
-        if not (write_requests or read_requests or python_requests):
+        # #571 Phase 7: http.get specific declarations follow the
+        # file.write pattern — startup_guard prompts the operator once
+        # per skill+host and persists under ``<skill>/http.get/<host>``.
+        # Wildcard ``"*"`` entries are skipped here; their prompt fires
+        # JIT in ``require_http_get`` at the actual host gate.
+        http_get_requests: list[dict] = []
+        http_get_seen: set[str] = set()
+        for entry in decl.http_get:
+            if not isinstance(entry, dict):
+                continue
+            host = entry.get("host", "")
+            if not host or host == "*":
+                continue
+            if host in http_get_seen:
+                continue
+            if self._is_config_approved("web.fetch"):
+                continue
+            if self._is_config_approved(f"http.get.{host}"):
+                continue
+            if self._is_host_approved_for(host, skill_name, "http.get"):
+                continue
+            http_get_seen.add(host)
+            http_get_requests.append({"host": host})
+
+        if not (write_requests or read_requests or python_requests or http_get_requests):
             return
 
         # B49 W2-S5 fix (2026-05-22): bus may be None in non-interactive
@@ -738,6 +777,7 @@ class PermissionResolver:
                 [f"file.read:{r['path']}" for r in read_requests]
                 + [f"file.write:{r['path']}" for r in write_requests]
                 + [f"python:{r['module']}:{r['function']}" for r in python_requests]
+                + [f"http.get:{r['host']}" for r in http_get_requests]
             )
             raise RuntimeError(
                 f"Skill '{skill_name}' has unapproved permissions "
@@ -759,6 +799,41 @@ class PermissionResolver:
             kind = "python.unsafe" if req["mode"] == "unsafe" else "python.safe"
             key = f"{skill_name}/{kind}/{req['module']}:{req['function']}"
             await self._prompt_python(key, req["module"], req["function"], req["mode"], bus)
+        for req in http_get_requests:
+            await self._prompt_http_get(req["host"], skill_name, bus)
+
+    async def _prompt_http_get(
+        self, host: str, skill_name: str, bus: RequestBus,
+    ) -> bool:
+        """Approve a specific http.get host at startup; persist on yes.
+
+        #571 Phase 7: mirrors ``_prompt_file_access`` for HTTP host
+        approvals. Uses the generic yes/no/always choice set (= host
+        has no scope axis, so the file-access ``just_path`` /
+        ``recursive`` choice doesn't apply). Persistence key is
+        ``<skill>/http.get/<host>``.
+        """
+        if not self._interactive:
+            self._session[f"{skill_name}/http.get/{host}"] = False
+            return False
+        iv = UserIntervention(
+            kind="permission.http.get",
+            prompt=f"Allow fetching from {host!r}?",
+            detail=f"skill {skill_name!r} requests http.get for host {host!r}",
+            choices=generic_yn_choices(),
+        )
+        answer = await bus.request(iv)
+        choice = answer.choice_id
+        key = f"{skill_name}/http.get/{host}"
+        if choice == YES:
+            self._session[key] = True
+            return True
+        if choice == ALWAYS:
+            self._persist(key, True)
+            return True
+        # NO or unknown → deny (session-only)
+        self._session[key] = False
+        return False
 
     async def _prompt_python(
         self, key: str, module: str, function: str, mode: str, bus: RequestBus,
@@ -847,32 +922,140 @@ class PermissionResolver:
             f"Then re-run — the startup guard will ask for approval before execution starts."
         )
 
-    def require_http_get(
-        self, decl: PermissionDecl, host: str, skill_name: str = "",
+    async def require_http_get(
+        self,
+        decl: PermissionDecl,
+        host: str,
+        bus: "RequestBus | None" = None,
+        skill_name: str = "",
     ) -> None:
-        """Raise PermissionError if HTTP access to ``host`` is not declared.
+        """Gate HTTP access to ``host`` (#571 Phase 7 unification).
 
-        #571 collapse arc Phase 3: gates ``reyn.safe.http.*`` calls from
-        safe-mode python steps. Skills declare hosts in their
-        ``permissions.http.get: [{host: "..."}]`` block (or via the bool
-        axis compat shim, which auto-expands ``mcp_install: true`` to
-        include the registry host).
+        Mirrors the ``file.write`` model — declaration is intent, the
+        prompt fires at the timing where the host actually becomes
+        known:
 
-        Sync, no prompt — the declaration IS the authorisation at this
-        layer. Operator-level pre-approval / startup_guard prompts for
-        HTTP are not in scope for Phase 3 (the bool-axis op route still
-        carries the operator confirmation in transitional phases).
+        - **Specific declared host** (``http.get: [{host: "api.github.com"}]``):
+          ``startup_guard`` prompts the operator once per skill+host
+          at startup and persists the decision to approvals.yaml under
+          ``<skill>/http.get/<host>``. Runtime is then silent — this
+          method finds the persisted approval and passes.
+        - **Wildcard** (``http.get: [{host: "*"}]`` or ``["*"]``): host
+          set is unknown at write-time (= LLM picks at runtime), so
+          the prompt fires here at the actual host gate. Same
+          ``<skill>/http.get/<host>`` persistence; ALWAYS / NEVER
+          choices apply per-host.
+        - **No declaration**: legacy ``web.fetch`` compat fallback
+          (deprecation-warned). Will become a hard error in a future
+          release.
+
+        Backward-compat:
+
+        - ``web.fetch: deny`` config overrides any wildcard permission.
+        - ``web.fetch: allow`` config pre-approves any host without
+          prompting (= equivalent to selecting ALWAYS for all hosts).
+        - The legacy ``web.fetch`` session/saved approval still
+          authorises any host while the deprecation period is active.
+
+        ``bus`` is required when the wildcard path or the
+        legacy-fallback path needs to prompt; sync contexts (=
+        safe.http subprocess) must use specific declarations only.
         """
-        for entry in decl.http_get:
-            if isinstance(entry, dict) and entry.get("host") == host:
-                return
-        raise PermissionError(
-            f"HTTP access to host {host!r} not declared in skill permissions. "
-            f"Add to skill.md frontmatter:\n"
+        # Config-tier deny always wins.
+        if self._is_config_denied("web.fetch"):
+            raise PermissionError(
+                f"HTTP access to host {host!r} denied by config "
+                f"(web.fetch: deny)."
+            )
+        if self._is_config_denied(f"http.get.{host}"):
+            raise PermissionError(
+                f"HTTP access to host {host!r} denied by config "
+                f"(http.get.{host}: deny)."
+            )
+
+        # Config-tier allow short-circuits everything (= operator's
+        # blanket pre-approval — present today as ``web.fetch: allow``).
+        if self._is_config_approved("web.fetch"):
+            return
+        if self._is_config_approved(f"http.get.{host}"):
+            return
+
+        # Persisted per-host approval (= startup_guard for specific,
+        # prior runtime decision for wildcard).
+        if skill_name and self._is_host_approved_for(host, skill_name, "http.get"):
+            return
+        # Legacy session/saved ``web.fetch`` approval still authorises
+        # every host while the deprecation window is open.
+        if self._saved.get("web.fetch") or self._session.get("web.fetch"):
+            return
+
+        # Did the skill declare this host explicitly or via wildcard?
+        has_specific = any(
+            isinstance(e, dict) and e.get("host") == host for e in decl.http_get
+        )
+        has_wildcard = any(
+            isinstance(e, dict) and e.get("host") == "*" for e in decl.http_get
+        )
+
+        if has_specific or has_wildcard:
+            # Need to prompt — either startup_guard was skipped (=
+            # non-interactive run with a still-unapproved specific decl)
+            # or this is the wildcard JIT path.
+            if bus is None:
+                raise PermissionError(
+                    f"HTTP access to host {host!r} requires an interactive "
+                    f"prompt but no bus is available. Pre-approve via "
+                    f"reyn.yaml (`permissions.web.fetch: allow` for blanket, "
+                    f"or run interactively so startup_guard can collect "
+                    f"approvals)."
+                )
+            approval_key = f"{skill_name}/http.get/{host}"
+            label = (
+                f"web fetch from host: {host!r}"
+                if has_wildcard
+                else f"http.get for host: {host!r}"
+            )
+            approved = await self._approve(
+                approval_key, label, bus,
+                user_prompt=f"Allow fetching from {host!r}?",
+            )
+            if not approved:
+                raise PermissionError(
+                    f"HTTP access to host {host!r} denied."
+                )
+            return
+
+        # No declaration at all — legacy ``web_fetch`` compat path
+        # for the segmented migration window. Skills that previously
+        # relied on the Tier-1 default-allow behaviour still work
+        # while we wait for them to declare ``http.get`` explicitly.
+        import warnings
+        warnings.warn(
+            f"HTTP access to host {host!r} from skill {skill_name!r} "
+            f"without an http.get declaration. This will become a hard "
+            f"error in a future release. Add to skill.md:\n"
             f"  permissions:\n"
             f"    http.get:\n"
-            f"      - host: {host}\n"
+            f"      - host: '*'   # LLM-driven host selection\n"
+            f"or list specific hosts.",
+            DeprecationWarning,
+            stacklevel=2,
         )
+        if bus is None:
+            raise PermissionError(
+                f"HTTP access to host {host!r} not declared and no "
+                f"interactive bus available for legacy compat prompt."
+            )
+        approved = await self._approve(
+            "web.fetch",  # legacy key — shared across all hosts during the compat window
+            f"web fetch from host: {host!r} (legacy compat)",
+            bus,
+            user_prompt=f"Allow fetching from {host!r}?",
+        )
+        if not approved:
+            raise PermissionError(
+                f"HTTP access to host {host!r} denied (legacy compat path)."
+            )
 
     def require_secret_write(
         self, decl: PermissionDecl, key: str, skill_name: str = "",

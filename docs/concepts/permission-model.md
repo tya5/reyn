@@ -246,8 +246,8 @@ Each side-effect kind has a corresponding declarable axis. The axis vocabulary i
 |---|---|---|---|---|
 | `file.read` | `list[{path, scope}]` | per-path | `require_file_read()` | scope ∈ {`just_path`, `recursive`} |
 | `file.write` | `list[{path, scope}]` | per-path | `require_file_write()` | covers write / edit / delete |
-| `http.get` | `list[{host}]` | per-host | planned (Phase 3) | for `reyn.safe.http.*` |
-| `secret.write` | `list[<key>]` | per-key | planned (Phase 3) | for `~/.reyn/secrets.env` writes |
+| `http.get` | `list[{host}]` | per-host | `require_http_get()` | specific host = startup prompt + silent runtime; `"*"` wildcard = per-host runtime prompt. Covers both `reyn.safe.http.*` (skill-internal, specific only) and `web_fetch` (LLM-driven, accepts wildcard) |
+| `secret.write` | `list[<key>]` | per-key | `require_secret_write()` | per-key for `~/.reyn/secrets.env`; `"*"` wildcard for runtime-determined keys (= the per-value prompt is the actual gate) |
 | `mcp` | `list[str]` | per-server | implicit at MCP call | per-server-name allowlist |
 | `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
 | `tool` | `list[str]` | per-tool | `require_tool()` | named-tool allowlist |
@@ -340,6 +340,26 @@ The axis taxonomy above is the target state. The 2026-05-23 audit (#571) identif
 | 5 | Remove bool axes (`mcp_install` etc.) and `require_mcp_install` / `require_cron_register` / `require_index_drop` / `require_mcp_drop_server` from the OS surface | follow-up |
 
 During Phases 1–4 the bool form (= `mcp_install: true`) is accepted as a compat shim that implicitly expands to the equivalent list-axis decomposition. The bool form is removed in Phase 5.
+
+### Phase 7 — prompt-timing model unification + `safe.http`/`web_fetch` collapse
+
+Phase 7 (PR-7 in the arc, post-#631 follow-up) finishes the alignment by giving the `http.get` axis the same prompt model as `file.write`:
+
+- **Specific declared host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts the operator once per `<skill, host>` and persists the decision to approvals.yaml under `<skill>/http.get/<host>`. Runtime is then silent. Mirrors `file.write` for paths outside the default zone.
+- **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime, e.g. `web_fetch` follow-up of `web_search` results), so the prompt fires at the actual host gate inside `require_http_get`. Same `<skill>/http.get/<host>` persistence; ALWAYS / NEVER choices apply per host.
+- **No declaration** — legacy `web.fetch` compat path with a `DeprecationWarning` until the segmented-migration window closes; existing skills that relied on Tier-1 default-allow keep working.
+
+The `web_fetch` op handler routes through `require_http_get` instead of the legacy `require_web_fetch`; the chat router's PermissionDecl declares `http.get: [{host: "*"}]` so LLM-driven fetches go through the wildcard branch. The `reyn.safe.http` subprocess path strips wildcard entries at the preprocessor — sync subprocesses can't prompt, so wildcard-host fetches must go through the async `web_fetch` op route.
+
+This unifies the two HTTP surfaces (`safe.http` skill-internal + `web_fetch` LLM-driven) under one axis with one prompt model. It matches the browser-extension `host_permissions` (= declared, install-time prompt) + Web Permissions API (= runtime per-feature prompt) hybrid — see the [Industry comparison](#industry-comparison) section.
+
+| Aspect | Pre-Phase-7 | Post-Phase-7 |
+|---|---|---|
+| `safe.http` skill-internal | per-host decl, silent runtime, no prompt | unchanged for specific decl; wildcard rejected (= subprocess can't prompt) |
+| `web_fetch` LLM-driven | Tier-1 default-allow, 4-layer per-URL prompt | routed through `http.get` axis; chat router decl carries wildcard so behaviour is preserved |
+| Operator prompt granularity | per-URL (`web.fetch` key) | per-host (`<skill>/http.get/<host>` key) — ALWAYS covers all URLs on that host |
+| Skill author control over LLM fetch scope | none | declare specific `http.get` hosts to constrain (= LLM can only fetch declared hosts; wildcard absent = no fallback) |
+| Legacy `web.fetch: allow` / `deny` config | direct gate | honored as backward-compat alias inside `require_http_get` during the migration window |
 
 ## `python` permission and `mode: safe` allowlist
 
