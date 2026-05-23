@@ -159,6 +159,13 @@ class RightPanel(Widget):
         # Memory tab state — flat cursor over all entries
         self._memory_cursor: int = 0
         self._memory_entries: list[Any] = []
+        # Wave-11 A#1 — memory tab per-type filter. Cycled by the ``t``
+        # key on memory tab (events tab's ``t`` is gated to events-only
+        # via check_action, so the two share the key without conflict).
+        # Cycle: None → "user" → "feedback" → "project" → "reference"
+        # → None. Pinned at None on cold-default so the full list is
+        # the starting view.
+        self._memory_type_filter: str | None = None
         # Latest ARS hot-list ranking from ChatLifecycleForwarder (issue
         # #192). ``[{"qualified_name": str, "freq": int, "last_ts": str},
         # ...]`` full ranking. Fed by ``update_hot_list`` (= driven from
@@ -438,6 +445,25 @@ class RightPanel(Widget):
         self._event_tail_idx = (self._event_tail_idx + 1) % len(_TAIL_CYCLE)
         self._invalidate()
 
+    def cycle_memory_type_filter(self) -> str | None:
+        """Cycle the memory tab's type-filter through the known kinds.
+
+        Order: ``None`` → ``"user"`` → ``"feedback"`` → ``"project"``
+        → ``"reference"`` → ``None``. Returns the new value. Resets
+        the memory cursor to 0 because the visible-list shape just
+        changed and clamping the old index would land arbitrarily.
+        """
+        _cycle = (None, "user", "feedback", "project", "reference")
+        try:
+            current_idx = _cycle.index(self._memory_type_filter)
+        except ValueError:
+            current_idx = 0  # garbage state → start fresh
+        new_filter = _cycle[(current_idx + 1) % len(_cycle)]
+        self._memory_type_filter = new_filter
+        self._memory_cursor = 0
+        self._invalidate()
+        return new_filter
+
     def toggle_chain_isolate(self) -> bool:
         """Toggle events-tab chain isolation centered on the cursor.
 
@@ -549,6 +575,16 @@ class RightPanel(Widget):
                 self._pending_move(-1)
             else:
                 self._scroll_panel(-1)
+        elif event.key == "t" and self._panel_type == "memory":
+            # Wave-11 A#1 — memory tab ``t`` cycles per-type filter.
+            # Events tab's ``t`` (= cycle_event_tail) is gated to
+            # events-only via App.check_action, so the same key here
+            # is contention-free. Picker for filter values cycles in
+            # the order: None → user → feedback → project → reference.
+            event.prevent_default()
+            new_filter = self.cycle_memory_type_filter()
+            label = new_filter.upper() if new_filter else "ALL"
+            self._flash_status(f"memory filter: {label}")
         elif event.key == "i" and self._panel_type == "events":
             # Wave-11 A#2 — Events tab ``i`` = isolate cursor's chain_id.
             # First press: filter list to that chain only. Re-press:
@@ -2125,6 +2161,7 @@ class RightPanel(Widget):
                     self._project_root,
                     cursor=self._memory_cursor,
                     hot_list=self._hot_list_ranking,
+                    type_filter=self._memory_type_filter,
                 )
                 self._memory_entries = flat_entries
                 self._memory_entry_ys = entry_ys

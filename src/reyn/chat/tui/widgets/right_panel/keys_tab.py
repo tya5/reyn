@@ -170,6 +170,12 @@ def render_keys(app: "App") -> str:
         # interleaving noise from other concurrent chains.
         ("i", "Isolate cursor's chain (events tab)"),
     ]
+    # Note: memory tab's ``t`` (= cycle_memory_type_filter, wave-11
+    # A#1) is intentionally NOT in this list because ``t`` is already
+    # in ``seen`` via the events-tab tail-cycle binding, and the
+    # de-dupe guard would silently swallow this entry. The memory
+    # binding self-documents via ``_flash_status("memory filter: <X>")``
+    # on every press.
     for key, desc in _PANEL_EXPLICIT:
         if key not in seen:
             groups["PANEL"].append((_pretty_key(key), desc))
