@@ -479,20 +479,29 @@ permissions:
       - statistics
       - json
       - re
-  mcp_install: ask      # deny | ask | allow (default: ask)
+  # MCP server install is gated via file.write on .reyn/mcp.yaml +
+  # http.get on the registry host. See "MCP install" below.
+  file.write: allow
 ```
 
-### `permissions.mcp_install`
+### MCP install (post-#571 collapse arc)
 
-Controls whether MCP servers can be added to the configuration via `reyn mcp install` or the `mcp_install` Control IR op. Three tiers:
+The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed in the #571 collapse arc (Phase 5, 2026-05-23). MCP install is now gated by the same list axes the rest of the OS uses:
 
-| Value | Behaviour |
-|-------|-----------|
-| `ask` (default) | Interactive prompt on first install per server. Approval is persisted to `.reyn/approvals.yaml` under key `mcp_install:<server_id>`. |
-| `allow` | Install proceeds without a prompt. Useful when combined with a private registry to implement "approved servers only" policy. |
-| `deny` | All install attempts are rejected. Appropriate for project-scope `reyn.yaml` in team settings where the server list is centrally managed. |
+```yaml
+# reyn.yaml — install permissions express through file.write + http.get
+permissions:
+  file.write: allow      # blanket allow for .reyn/mcp.yaml (= install target)
+  web.fetch: allow       # blanket allow for the registry fetch (= legacy alias)
+```
 
-The setting participates in the standard scope-tier merge — you can set `deny` in project-scope `reyn.yaml` and allow individual developers to override with `mcp_install: ask` in `reyn.local.yaml`.
+For finer control, the skill's `skill.md` declares the canonical paths and hosts; `startup_guard` prompts the operator once per skill+host, and the runtime check is silent after that (= `file.write` model for paths outside the default zone, `http.get` per-host).
+
+| Want | New shape |
+|------|-----------|
+| Block all installs project-wide | `file.write: deny` for `.reyn/mcp.yaml` paths, or `web.fetch: deny` for the registry host |
+| Allow installs without prompting | `file.write: allow` and `web.fetch: allow` at the project scope |
+| Allow only certain hosts | Skill declares `http.get: [{host: "..."}]` explicitly; wildcard `["*"]` defers to per-host prompts |
 
 Enterprise pattern — restrict installs to a private registry:
 
@@ -503,10 +512,12 @@ mcp:
     - https://mcp-registry.internal.acme.com/    # private registry first
     - https://registry.modelcontextprotocol.io/   # public fallback
 permissions:
-  mcp_install: allow    # team can install, but only from the registry above
+  web.fetch: allow      # team can fetch from any host in the registries; the registry ordering does the gating
 ```
 
-See [Concepts: permission model](../../concepts/permission-model.md#mcp_install-permission) for the full interaction with scope tiers and the enterprise use case.
+See [Concepts: permission model](../../concepts/permission-model.md) → "Collapse arc" for the full migration story and the canonical decomposition table.
+
+> Legacy `permissions.mcp_install` keys in older `reyn.yaml` files are accepted with a `DeprecationWarning` and translate to the equivalent `file.write` / `http.get` gates during the migration window.
 
 The full permission grammar is documented in `reference/config/permissions.md`.
 

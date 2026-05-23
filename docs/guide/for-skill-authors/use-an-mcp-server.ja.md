@@ -154,7 +154,7 @@ permissions:
 
 **`MCP config references undefined environment variable: ${TOKEN}`.** 設定内の `${VAR}` 参照が解決できませんでした。`reyn secret set TOKEN` で値を保存するか、シェルで変数をエクスポートしてください。変数が未定義の場合は空文字列に展開されて失敗ではなく警告になります。
 
-**初回インストール時に `mcp_install` パーミッションプロンプトが表示される。** これは期待される動作です。reyn はデフォルトでサーバーの追加をゲートします（`mcp_install: ask`）。`j` を選択すると、このサーバーの承認が永続化されます。非インタラクティブな CI 実行では `--non-interactive` を渡し、事前に設定で `mcp_install: allow` を設定してください。
+**初回インストール時にパーミッションプロンプトが表示される。** これは期待される動作です — reyn はサーバー追加を標準の list axes（`.reyn/mcp.yaml` への `file.write`、 registry host への `http.get`）でゲートします。 `j` (just this path) または `r` (recursive) で永続化を選択。 非インタラクティブな CI 実行では `--non-interactive` を渡し、 事前に `permissions.file.write: allow` + `permissions.web.fetch: allow` を設定してください。 旧 `mcp_install: ask | allow | deny` キーも migration window 中は動作します（= `DeprecationWarning` を発生）。
 
 **`reyn events tail` に `mcp_called` が表示されない。** Skill が `mcp` op に到達していません — Phase ログを確認して LLM がそれを発行したかどうか確認してください。よくある原因は、パスがプロジェクト内にあるため LLM が `mcp` ではなく `file.read`（デフォルト capability、プロジェクトスコープ）を選択したケースです。これは正しい動作であり、エラーではありません。
 

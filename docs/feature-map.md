@@ -335,7 +335,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | Layer 2: saved approvals | `.reyn/approvals.yaml` — persisted per path/server | [reyn permissions CLI](reference/cli/permissions.md) |
 | Layer 3: session approvals | In-memory for current invocation only | [Permission model](concepts/permission-model.md) |
 | Layer 4: interactive prompt | Ask user with persist choices (yes / always / just-this-path) | [Permission model](concepts/permission-model.md) |
-| Skill-level declarations | `shell` / `file.read+write` / `mcp` / `python` / `mcp_install` / `index_drop` | [Skill frontmatter](reference/dsl/skill-md.md) |
+| Skill-level declarations | `shell` / `file.read+write` / `http.get` / `secret.write` / `mcp` / `python` / `tool` | [Skill frontmatter](reference/dsl/skill-md.md) |
 | CLI gates | `--allow-shell` / `--allow-unsafe-python` required at invocation | [Common flags](reference/cli/common-flags.md) |
 
 ---
