@@ -119,12 +119,24 @@ async def test_f3_converges_mixed_state_to_single_target() -> None:
 
 
 @pytest.mark.asyncio
-async def test_f3_with_no_in_flight_shows_status_hint() -> None:
-    """Tier 2: F3 with no in-flight rows surfaces a status hint."""
+async def test_f3_with_no_in_flight_shows_status_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: F3 with no in-flight rows surfaces a status hint.
+
+    The first-use tip is pre-seeded as seen so the standard "no active
+    skill" hint is what gets shown (= this test exercises the non-tip
+    code path; first-use tip path is covered in test_f3_first_use_tip.py).
+    """
     from reyn.chat.tui.app import ReynTUIApp
+    from reyn.chat.tui.prefs import save_tui_prefs
     from reyn.chat.tui.widgets import ConversationView
 
+    # Mark tip already seen so the standard "no rows" hint appears.
+    save_tui_prefs(tmp_path, {"tip_f3_seen": True})
+
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
+    monkeypatch.setattr(app, "_project_root_path", lambda: tmp_path)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
