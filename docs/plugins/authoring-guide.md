@@ -118,35 +118,41 @@ plugin author defines this schema.
 Secrets (= API keys, signing secrets) belong in **environment
 variables**, never in webhooks.yaml.
 
-## Inbound envelope shape
+## Inbound envelope shape + stable plugin API
 
-When the plugin's route receives a webhook, it should mint an
-envelope and push to the target agent's inbox:
+When the plugin's route receives a webhook, push to the target
+agent's inbox via the **stable plugin API** in ``reyn.plugins.api``::
 
 ```python
 from reyn.chat.transport import ExternalRef
+from reyn.plugins.api import push_to_agent
 
-envelope = {
-    "text": "<message body>",
-    "sender": f"<transport>:<external_user_id>",
-    "reply_to": ExternalRef(
-        transport="<transport>",        # e.g. "slack", "line"
+await push_to_agent(
+    target_agent=target_agent,
+    text="<message body>",
+    sender=f"<transport>:<external_user_id>",
+    reply_to=ExternalRef(
+        transport="<transport>",       # e.g. "slack", "line"
         destination={                   # transport-specific routing
             "channel": "...",
             "thread_ts": "...",
         },
     ),
-}
-
-# Push via the AgentRegistry (= from reyn.web.deps):
-session = await registry.ensure_running(target_agent)
-await session._put_inbox("user", envelope)
+)
 ```
+
+**Do NOT call internal session methods directly.** ``ChatSession.
+_put_inbox`` etc. are private API and may change between Reyn
+versions; ``reyn.plugins.api`` is the contract that stays stable.
 
 Reyn's session dispatch automatically:
 - Surfaces ``sender`` as a state_change history entry (= PR-A
   attribution)
 - Captures ``reply_to`` for outbound reply routing (= PR-D2)
+
+The plugin API receives an optional ``registry`` kwarg for tests
+(= inject an ``AgentRegistry`` stub). Production code omits it
+and uses the process-shared registry.
 
 ## Outbound replies via MCP
 

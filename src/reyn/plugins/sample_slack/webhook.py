@@ -275,11 +275,19 @@ def build_router(*, target_agent: str) -> APIRouter:
             # message echo / etc.). Slack expects 2xx so it won't retry.
             return JSONResponse({"status": "ignored"}, status_code=200)
 
-        # Push to inbox via the registry (= ensure_running so the agent's
-        # router_loop is live to consume). ``target_agent`` was captured
-        # in the closure at ``build_router`` time from the plugin config.
+        # Push to inbox via the stable plugin API (= reyn.plugins.api,
+        # FP-0041 plugins-api). The helper handles registry lookup +
+        # session.ensure_running internally; plugin code should NOT
+        # touch ChatSession internals (= _put_inbox) directly.
+        from reyn.plugins.api import push_to_agent
         try:
-            session = await registry.ensure_running(target_agent)
+            await push_to_agent(
+                target_agent=target_agent,
+                text=envelope["text"],
+                sender=envelope["sender"],
+                reply_to=envelope["reply_to"],
+                registry=registry,
+            )
         except FileNotFoundError:
             logger.warning(
                 "Slack webhook: target agent %r not found in registry",
@@ -289,8 +297,6 @@ def build_router(*, target_agent: str) -> APIRouter:
                 {"error": f"target agent {target_agent!r} not found"},
                 status_code=503,
             )
-        try:
-            await session._put_inbox("user", dict(envelope))
         except Exception as exc:
             logger.exception("Slack webhook: inbox push failed: %s", exc)
             return JSONResponse(
