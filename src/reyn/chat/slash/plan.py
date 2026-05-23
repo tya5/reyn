@@ -182,6 +182,24 @@ async def _discard_plan_run(session: "ChatSession", args: str) -> None:
             pass
         session.running_plans.pop(plan_id, None)
 
+    # 1.5. Emit plan_aborted system outbox so TUI subscribers (=
+    # AsyncStackPanel, PR #532) can clear their plan row. Placed
+    # before the journal record / chain notify so later steps
+    # raising doesn't leave the bottom-strip stale (#536).
+    try:
+        from reyn.chat.outbox import OutboxMessage
+        await session._put_outbox(OutboxMessage(
+            kind="system",
+            text=f"plan discarded · {plan_id}",
+            meta={"plan_id": plan_id, "source": "plan_aborted"},
+        ))
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "plan_aborted outbox emit on /plan discard failed for %s: %r",
+            plan_id, exc,
+        )
+
     # 2. Record plan_aborted (= prunes active_plan_ids, surfaces audit).
     try:
         await session._journal.record_plan_aborted(
