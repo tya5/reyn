@@ -23,7 +23,13 @@ from .base import _CORAL, _esc, logger
 from .cost_tab import render_cost
 from .docs_tab import build_docs_index, render_docs
 from .events_tab import _FILTER_GROUPS, _TAIL_CYCLE, render_events
-from .keys_tab import render_keys
+from .keys_tab import (
+    get_keys_cursor,
+    get_keys_expanded,
+    keys_move,
+    render_keys,
+    toggle_expand_cursor,
+)
 from .memory_tab import render_memory
 from .pending_tab import render_pending
 from .shells import (
@@ -547,17 +553,33 @@ class RightPanel(Widget):
             except Exception:
                 pass
         elif event.key == "space":
-            # Space is a uniform preview toggle: works on any tab when
-            # focus is anywhere inside the right panel (tabs included).
-            # _update_preview() dispatches per-tab content (docs/events/
-            # memory); other tabs render a cleared preview pane.
             event.prevent_default()
-            self._toggle_preview()
-            if self._preview_visible:
-                self._update_preview()
+            if self._panel_type == "keys":
+                # Keys tab: Space toggles inline detail block for cursor row
+                # (T1-4, Wave-12). Delegates to keys_tab module-level state
+                # so the detail dict and cursor live close to the render logic.
+                # Other tabs' Space semantics (= preview pane toggle) are
+                # unchanged — gated by this branch.
+                markup, flat_key_list = render_keys(
+                    self.app,
+                    cursor=get_keys_cursor(),
+                    expanded=get_keys_expanded(),
+                )
+                toggle_expand_cursor(flat_key_list)
+                self._invalidate()
+            else:
+                # Space is a uniform preview toggle: works on any tab when
+                # focus is anywhere inside the right panel (tabs included).
+                # _update_preview() dispatches per-tab content (docs/events/
+                # memory); other tabs render a cleared preview pane.
+                self._toggle_preview()
+                if self._preview_visible:
+                    self._update_preview()
         elif event.key == "j":
             event.prevent_default()
-            if self._panel_type == "docs":
+            if self._panel_type == "keys":
+                self._keys_move(+1)
+            elif self._panel_type == "docs":
                 self._docs_move(+1)
             elif self._panel_type == "events":
                 self._events_move(+1)
@@ -571,7 +593,9 @@ class RightPanel(Widget):
                 self._scroll_panel(+1)
         elif event.key == "k":
             event.prevent_default()
-            if self._panel_type == "docs":
+            if self._panel_type == "keys":
+                self._keys_move(-1)
+            elif self._panel_type == "docs":
                 self._docs_move(-1)
             elif self._panel_type == "events":
                 self._events_move(-1)
@@ -1019,6 +1043,24 @@ class RightPanel(Widget):
         body_md = RichMarkdown(getattr(entry, "body", "") or "")
         title = getattr(entry, "slug", "") or getattr(entry, "name", "") or "memory"
         pane.show_text(title, RichGroup(head, body_md))
+
+    # ── keys tab cursor (T1-4, Wave-12) ─────────────────────────────────────
+
+    def _keys_move(self, delta: int) -> None:
+        """Move the keys-tab cursor by ``delta`` and re-render.
+
+        The flat row count is derived from a speculative ``render_keys`` call
+        so ``keys_move`` knows the list length for wrapping. This is cheap
+        (= no IO, pure string construction) and keeps the cursor consistent
+        with whatever rows ``render_keys`` would actually emit.
+        """
+        _, flat_key_list = render_keys(
+            self.app,
+            cursor=get_keys_cursor(),
+            expanded=get_keys_expanded(),
+        )
+        keys_move(delta, len(flat_key_list))
+        self._invalidate()
 
     # ── pending tab cursor + actions (issue #277) ────────────────────────────
 
@@ -2152,7 +2194,12 @@ class RightPanel(Widget):
     def _panel_markup(self) -> Any:
         try:
             if self._panel_type == "keys":
-                return render_keys(self.app)
+                markup, _ = render_keys(
+                    self.app,
+                    cursor=get_keys_cursor(),
+                    expanded=get_keys_expanded(),
+                )
+                return markup
             if self._panel_type == "events":
                 rendered, windowed, event_ys = render_events(
                     self._project_root,
