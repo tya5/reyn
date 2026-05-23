@@ -20,6 +20,8 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label
 
+from ._renderable_cache import RenderableCacheMixin
+
 # Trailing date suffix on a model id: ``-YYYYMMDD`` (8 digits) or the
 # ``-YYYY-MM-DD`` form. Both rotate per release and add 9-11 cells to
 # the header without changing within a session. Stripping them recovers
@@ -84,7 +86,7 @@ def _shorten_model_id(model: str) -> str:
     return stripped or model  # paranoia: never return empty
 
 
-class ReynHeader(Widget):
+class ReynHeader(RenderableCacheMixin, Widget):
     """Single-line status bar docked at the top of the screen."""
 
     DEFAULT_CSS = """
@@ -139,10 +141,25 @@ class ReynHeader(Widget):
         # mutation). Omitted from the status entirely when 0 so the
         # cold-default UX is unchanged.
         self._stalled_count: int = 0
+        # ``/find`` cycle-state badge — {"query", "position", "total"} dict
+        # when a /find query is active (= router has seeded cycle state),
+        # None otherwise. Surfaced as ``[find: 'q' 2/3]`` next to the
+        # ``[N pending]`` badge so the user has a persistent "you're in
+        # find mode" cue. The sticky status itself auto-hides after
+        # ~2.5 s, so without the header badge the user couldn't tell
+        # at a glance whether Ctrl+G is currently armed.
+        self._find_state: dict | None = None
+        # ``RenderableCacheMixin`` provides the cache slot +
+        # ``rendered_text`` accessor. Every ``Label.update`` is paired
+        # with ``self._set_rendered_cache(text)`` via the
+        # ``_repaint_status`` funnel so the cache stays in lockstep
+        # with the visible content.
 
     def compose(self) -> ComposeResult:
         yield Label("Reyn", id="title")
-        yield Label(self._format_status(), id="status")
+        initial = self._format_status()
+        self._set_rendered_cache(initial)
+        yield Label(initial, id="status")
 
     def on_mount(self) -> None:
         # Re-render once per second so the embedded clock stays current.
@@ -164,8 +181,20 @@ class ReynHeader(Widget):
         return time.strftime("%H:%M:%S")
 
     def _tick_clock(self) -> None:
+        self._repaint_status()
+
+    def _repaint_status(self) -> None:
+        """Render + cache the status Text, push to the Label widget.
+
+        Single funnel for "status changed → repaint" so the mixin's
+        cache stays in sync with what the user sees. Three sites
+        previously did ``Label.update(_format_status())`` directly;
+        they all delegate here now.
+        """
+        new_text = self._format_status()
+        self._set_rendered_cache(new_text)
         try:
-            self.query_one("#status", Label).update(self._format_status())
+            self.query_one("#status", Label).update(new_text)
         except Exception:
             pass
 
@@ -308,6 +337,18 @@ class ReynHeader(Widget):
             parts.append(
                 (f"[{self._stalled_count} pending]", "#ffaa44"),
             )
+        # ``/find`` active-state badge — placed alongside [N pending]
+        # as a sibling "active state" indicator. Subtle blue
+        # (= ``#88aacc``) so it doesn't compete with the amber pending
+        # marker or red error styling; complementary palette signals
+        # "informational state, no action required".
+        if self._find_state is not None:
+            fs = self._find_state
+            badge = (
+                f"[find: '{fs.get('query', '')}' "
+                f"{fs.get('position', 0)}/{fs.get('total', 0)}]"
+            )
+            parts.append((badge, "#88aacc"))
         # Clock always present, last — the canary for "is the UI frozen?"
         parts.append((self._now_text(), None))
 
@@ -347,11 +388,35 @@ class ReynHeader(Widget):
             self._cost_cap = cost_cap
         if stalled_count is not None:
             self._stalled_count = max(0, int(stalled_count))
-        try:
-            label = self.query_one("#status", Label)
-            label.update(self._format_status())
-        except Exception:
-            pass
+        self._repaint_status()
+
+    def set_find_state(
+        self,
+        query: str | None,
+        position: int = 0,
+        total: int = 0,
+    ) -> None:
+        """Update or clear the ``/find`` active-state badge.
+
+        ``query=None`` clears the badge (= no /find currently active).
+        Any non-empty query installs the badge as
+        ``[find: 'q' position/total]``. The header re-renders only
+        when the new state differs from the previous, so a stream
+        of redundant updates from the router doesn't generate paint
+        churn.
+        """
+        if query is None:
+            new_state: dict | None = None
+        else:
+            new_state = {
+                "query": query,
+                "position": int(position),
+                "total": int(total),
+            }
+        if new_state == self._find_state:
+            return
+        self._find_state = new_state
+        self._repaint_status()
 
     def on_reyn_header_status_update(self, msg: StatusUpdate) -> None:
         """Handle StatusUpdate message."""
