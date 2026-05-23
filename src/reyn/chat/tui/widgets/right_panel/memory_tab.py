@@ -48,6 +48,7 @@ def render_memory(
     *,
     cursor: int = 0,
     hot_list: list[dict] | None = None,
+    type_filter: str | None = None,
 ) -> tuple[str, list[Any], list[int]]:
     """Return Rich markup + the flat ordered list of MemoryEntry items
     + the y-coordinate (= 0-indexed line number) of each entry's name row.
@@ -77,6 +78,22 @@ def render_memory(
     lines: list[str] = []
     flat_entries: list[Any] = []
     entry_ys: list[int] = []
+    # Wave-11 A#1 — memory-type filter banner. When type_filter is one
+    # of the four known kinds, prepend a 2-row banner so the user has
+    # a persistent cue that the list is narrowed (rather than the
+    # missing types looking like "this scope has no FEEDBACK entries
+    # actually"). Press [t] to cycle next; banner disappears when
+    # back to None.
+    if type_filter in _TYPE_COLORS:
+        banner_color = _TYPE_COLORS[type_filter]
+        lines.append(
+            f"  [bold {banner_color}]⌕ filter: [/]"
+            f"[bold {_CORAL}]{_esc(type_filter.upper())}[/]"
+        )
+        lines.append(
+            "  [#555555]  press [/][bold #aaaaaa]\\[t][/]"
+            "[#555555] to cycle filter[/]"
+        )
 
     # Hot now section (issue #192). Always renders the header so the
     # feature is discoverable on cold-start (= before any router
@@ -138,6 +155,16 @@ def render_memory(
                 groups[e.type].append(e)
             else:
                 other.append(e)
+        # Wave-11 A#1 — when type_filter is active, drop every type
+        # except the one named. ``other`` is also wiped because the
+        # filter contract is "show ONLY this type". Sub-headers for
+        # skipped types vanish too because the ``if not group``
+        # guard below skips empty buckets.
+        if type_filter in groups:
+            for k in list(groups.keys()):
+                if k != type_filter:
+                    groups[k] = []
+            other = []
         for type_key in ("user", "feedback", "project", "reference"):
             group = groups[type_key]
             if not group:
