@@ -13,11 +13,27 @@ Each scenario folder must contain:
   - ``<impl>.py``    — implementation file the agent must edit
   - ``reyn.yaml``    — model alias + sandbox + permissions for the workspace
 
-Built-in scenarios:
+Built-in scenarios (= difficulty curve, gemini-2.5-flash-lite baseline):
 
-  - ``fizzbuzz_tdd``         — failing tests + empty stub (often 1-shot)
-  - ``fizzbuzz_bug_planted`` — working-looking impl with 3 subtle bugs
-    (forces iteration: agent must run pytest, locate root cause, fix)
+  | scenario                       | N  | pass | mean_iter | dominant defect    |
+  |--------------------------------|----|------|-----------|--------------------|
+  | ``fizzbuzz_tdd``               | 5  | 80%  | 1.6       | early-bail         |
+  | ``fizzbuzz_bug_planted``       | 5  | 100% | 2.2       | —                  |
+  | ``fizzbuzz_5bugs_interleaved`` | 10 | 40%  | 1.7       | early-bail +       |
+  |                                |    |      |           | zero-special-case  |
+
+  - ``fizzbuzz_tdd``: failing tests + empty stub. Agent reads tests +
+    writes impl; iteration only fires when first guess misses an
+    edge case.
+  - ``fizzbuzz_bug_planted``: 3 independent bugs (zero special-case +
+    positive-only guard + int-return-on-default). Each bug fails a
+    distinct test, agent fixes via diagnose-then-write.
+  - ``fizzbuzz_5bugs_interleaved``: 5 bugs that mask each other —
+    fixing the order-of-check bug surfaces the typo it hid, fixing
+    the positive-only guard surfaces the int-return bug for negatives,
+    etc. Forces real iteration: 60% non-pass rate exposes two
+    attractor patterns (early-bail, zero-special-case "obvious-idiom
+    preservation").
 
 Per-run observations:
 
