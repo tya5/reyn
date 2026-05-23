@@ -170,9 +170,7 @@ def test_walk_single_step_yields_one_frame(tmp_path: Path):
         _wal_step_completed(seq=4, op_invocation_id="oid1"),
     ])
     engine = ReplayEngine(str(trace))
-    frames = list(engine.walk())
-    assert len(frames) == 1
-    frame = frames[0]
+    (frame,) = engine.walk()
     assert isinstance(frame, StepFrame)
     assert frame.checkpoint.run_id == "run1"
     assert frame.checkpoint.phase == "p1"
@@ -192,9 +190,7 @@ def test_walk_two_steps_same_phase(tmp_path: Path):
     ])
     engine = ReplayEngine(str(trace))
     frames = list(engine.walk())
-    assert len(frames) == 2
-    assert frames[0].checkpoint.step_idx == 0
-    assert frames[1].checkpoint.step_idx == 1
+    assert [f.checkpoint.step_idx for f in frames] == [0, 1]
 
 
 def test_walk_step_failed_produces_frame(tmp_path: Path):
@@ -207,9 +203,8 @@ def test_walk_step_failed_produces_frame(tmp_path: Path):
         _wal_step_failed(seq=4, op_invocation_id="oid1", error="disk full"),
     ])
     engine = ReplayEngine(str(trace))
-    frames = list(engine.walk())
-    assert len(frames) == 1
-    snap = frames[0].state_snapshot
+    (only,) = engine.walk()
+    snap = only.state_snapshot
     assert snap.get("last_error") == "disk full"
 
 
@@ -224,9 +219,8 @@ def test_walk_events_attached_to_frame(tmp_path: Path):
     ]
     _write_trace(trace, records)
     engine = ReplayEngine(str(trace))
-    frames = list(engine.walk())
-    assert len(frames) == 1
-    kinds = [ev.get("kind") for ev in frames[0].events]
+    (frame,) = engine.walk()
+    kinds = [ev.get("kind") for ev in frame.events]
     assert "step_started" in kinds
     assert "step_completed" in kinds
 
@@ -243,13 +237,12 @@ def test_walk_multi_source_merge(tmp_path: Path):
         _wal_step_completed(seq=4, op_invocation_id="oid1"),
     ])
     engine = ReplayEngine(str(trace))
-    frames = list(engine.walk())
-    assert len(frames) == 1
+    (frame,) = engine.walk()
     # LLM payload should be attached.
-    assert frames[0].llm_payload is not None
-    assert frames[0].llm_payload.get("model") == "test-model"
-    assert frames[0].llm_result is not None
-    assert frames[0].llm_result.get("finish_reason") == "stop"
+    assert frame.llm_payload is not None
+    assert frame.llm_payload.get("model") == "test-model"
+    assert frame.llm_result is not None
+    assert frame.llm_result.get("finish_reason") == "stop"
 
 
 # ---------------------------------------------------------------------------
@@ -305,9 +298,10 @@ def test_list_checkpoints_step_scope(tmp_path: Path):
     ])
     engine = ReplayEngine(str(trace))
     cps = engine.list_checkpoints(scope="step")
-    assert len(cps) == 2
-    assert cps[0] == Checkpoint(run_id="run1", phase="p1", step_idx=0)
-    assert cps[1] == Checkpoint(run_id="run1", phase="p1", step_idx=1)
+    assert cps == [
+        Checkpoint(run_id="run1", phase="p1", step_idx=0),
+        Checkpoint(run_id="run1", phase="p1", step_idx=1),
+    ]
 
 
 def test_list_checkpoints_phase_scope(tmp_path: Path):
@@ -341,9 +335,8 @@ def test_list_checkpoints_skill_run_scope(tmp_path: Path):
         _wal_step_completed(seq=4, run_id="run_a", phase="p1", op_invocation_id="oid1"),
     ])
     engine = ReplayEngine(str(trace))
-    cps = engine.list_checkpoints(scope="skill_run")
-    assert len(cps) == 1
-    assert cps[0].run_id == "run_a"
+    (only_cp,) = engine.list_checkpoints(scope="skill_run")
+    assert only_cp.run_id == "run_a"
 
 
 # ---------------------------------------------------------------------------
@@ -372,9 +365,8 @@ def test_malformed_lines_are_skipped(tmp_path: Path):
         encoding="utf-8",
     )
     engine = ReplayEngine(str(trace))
-    frames = list(engine.walk())
     # Should parse the valid lines and produce one frame.
-    assert len(frames) == 1
+    (only,) = engine.walk()
 
 
 def test_missing_trace_raises_file_not_found():
@@ -415,11 +407,10 @@ def test_init_with_list_of_paths_merges_records(tmp_path: Path):
         _llm_response(request_id="req1", content="ok"),
     ])
     engine = ReplayEngine([str(wal_path), str(llm_path)])
-    frames = list(engine.walk())
-    assert len(frames) == 1
+    (frame,) = engine.walk()
     # LLM payload should be attached because phase matches caller_hint.
-    assert frames[0].llm_payload is not None
-    assert frames[0].llm_result is not None
+    assert frame.llm_payload is not None
+    assert frame.llm_result is not None
 
 
 def test_multi_file_equivalent_to_concatenated_single_file(tmp_path: Path):
@@ -448,10 +439,11 @@ def test_multi_file_equivalent_to_concatenated_single_file(tmp_path: Path):
     single = list(ReplayEngine(str(concat_path)).walk())
 
     # Same number of frames, same checkpoints, same LLM attachment.
-    assert len(multi) == len(single) == 1
-    assert multi[0].checkpoint == single[0].checkpoint
-    assert (multi[0].llm_payload is not None) == (single[0].llm_payload is not None)
-    assert (multi[0].llm_result is not None) == (single[0].llm_result is not None)
+    (multi_frame,) = multi
+    (single_frame,) = single
+    assert multi_frame.checkpoint == single_frame.checkpoint
+    assert (multi_frame.llm_payload is not None) == (single_frame.llm_payload is not None)
+    assert (multi_frame.llm_result is not None) == (single_frame.llm_result is not None)
 
 
 def test_init_with_empty_list_raises_value_error():
@@ -479,5 +471,4 @@ def test_init_with_single_string_still_works(tmp_path: Path):
         _wal_step_completed(seq=4, op_invocation_id="oid1"),
     ])
     engine = ReplayEngine(str(trace))
-    frames = list(engine.walk())
-    assert len(frames) == 1
+    (only,) = engine.walk()
