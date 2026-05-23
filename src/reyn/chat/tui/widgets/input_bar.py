@@ -333,6 +333,7 @@ class InputBar(Widget):
         """
         return self._in_flight
 
+
     def append_text(self, text: str) -> None:
         """Append text to the current input (used by voice dictation).
 
