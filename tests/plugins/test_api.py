@@ -208,3 +208,108 @@ async def test_push_to_agent_full_envelope_shape():
         "reply_to": ref,
         "meta": {"trace_id": "abc"},
     }
+
+
+# ── list_agents / agent_exists ─────────────────────────────────────────
+
+
+class _StubDiscoveryRegistry:
+    """Registry stub exposing list_names + exists for discovery tests."""
+    def __init__(self, names: list[str]):
+        self._names = list(names)
+
+    def list_names(self) -> list[str]:
+        return sorted(self._names)
+
+    def exists(self, name: str) -> bool:
+        return name in self._names
+
+
+def test_list_agents_returns_registry_names():
+    """Tier 2: ``list_agents`` returns the registry's sorted
+    ``list_names()``. Plugin authors use this at register_router
+    time to validate config or discover available agents.
+    """
+    from reyn.plugins.api import list_agents
+    reg = _StubDiscoveryRegistry(["zeta", "alpha", "beta"])
+    assert list_agents(registry=reg) == ["alpha", "beta", "zeta"]
+
+
+def test_list_agents_empty_when_no_agents():
+    """Tier 2: a project with no agents on disk returns empty list."""
+    from reyn.plugins.api import list_agents
+    reg = _StubDiscoveryRegistry([])
+    assert list_agents(registry=reg) == []
+
+
+def test_agent_exists_true_for_known():
+    """Tier 2: ``agent_exists`` matches the registry's ``exists``."""
+    from reyn.plugins.api import agent_exists
+    reg = _StubDiscoveryRegistry(["news_agent"])
+    assert agent_exists("news_agent", registry=reg) is True
+    assert agent_exists("missing", registry=reg) is False
+
+
+def test_agent_exists_returns_false_on_registry_error():
+    """Tier 2: ``agent_exists`` is defensive — registry exception
+    yields False rather than propagating. A boot-time registry
+    hiccup shouldn't crash plugin discovery.
+    """
+    from reyn.plugins.api import agent_exists
+
+    class _BrokenRegistry:
+        def exists(self, name):
+            raise RuntimeError("registry broken")
+
+    assert agent_exists("anything", registry=_BrokenRegistry()) is False
+
+
+# ── make_sender ────────────────────────────────────────────────────────
+
+
+def test_make_sender_basic_transport_id():
+    """Tier 2: minimal call produces ``<transport>:<external_id>``."""
+    from reyn.plugins.api import make_sender
+    assert make_sender("slack", "U456") == "slack:U456"
+
+
+def test_make_sender_with_display():
+    """Tier 2: ``display`` appends as the trailing segment."""
+    from reyn.plugins.api import make_sender
+    assert make_sender("slack", "U456", display="bob") == "slack:U456:bob"
+
+
+def test_make_sender_with_source_scope():
+    """Tier 2: ``source_scope`` inserts between transport and id —
+    LINE 1:1 chat shape per ``_format_sender_label`` expectations.
+    """
+    from reyn.plugins.api import make_sender
+    assert (
+        make_sender("line", "U456", source_scope="user")
+        == "line:user:U456"
+    )
+
+
+def test_make_sender_line_group_full_shape():
+    """Tier 2: a LINE group sender combines transport + source_scope
+    + group_id + posting user. Pins the documented shape that
+    ``_format_sender_label`` recognises.
+    """
+    from reyn.plugins.api import make_sender
+    sender = make_sender(
+        "line", "G999", source_scope="group", display="U456",
+    )
+    assert sender == "line:group:G999:U456"
+
+
+def test_make_sender_omits_falsy_display_and_scope():
+    """Tier 2: empty / None ``display`` and ``source_scope`` are
+    NOT included (= no trailing colons, no doubled separators).
+    """
+    from reyn.plugins.api import make_sender
+    assert make_sender("slack", "U1", display=None) == "slack:U1"
+    assert make_sender("slack", "U1", display="") == "slack:U1"
+    assert (
+        make_sender("slack", "U1", source_scope=None, display=None)
+        == "slack:U1"
+    )
