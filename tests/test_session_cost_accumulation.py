@@ -13,7 +13,6 @@ and real estimate_cost with a fake model_cost entry.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
 
 from reyn.chat.router_loop import RouterLoop
 from reyn.chat.session import ChatSession
@@ -153,10 +152,11 @@ def test_router_loop_total_usage_propagates_to_session(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     session = ChatSession(agent_name="test_agent")
 
-    # Patch call_llm_tools to return a text reply with known usage
-    with patch("reyn.chat.router_loop.call_llm_tools") as mock_clt:
-        mock_clt.return_value = _text_result("こんにちは")
-        _run(session._handle_user_message("hello", chain_id="c1"))
+    async def _stub_call_llm_tools(**kwargs):
+        return _text_result("こんにちは")
+
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _stub_call_llm_tools)
+    _run(session._handle_user_message("hello", chain_id="c1"))
 
     assert session.total_usage.prompt_tokens > 0, (
         "RouterLoop usage was not propagated to session._total_usage (Bug 2 not fixed)"
@@ -228,8 +228,13 @@ def test_router_loop_run_accumulates_usage_across_iterations():
         return results_queue.pop(0)
 
     async def run_it():
-        with patch("reyn.chat.router_loop.call_llm_tools", side_effect=fake_call_llm_tools):
+        import reyn.chat.router_loop as _rl_mod
+        original = _rl_mod.call_llm_tools
+        _rl_mod.call_llm_tools = fake_call_llm_tools
+        try:
             return await loop.run(user_text="hi", history=[])
+        finally:
+            _rl_mod.call_llm_tools = original
 
     total = asyncio.run(run_it())
 
