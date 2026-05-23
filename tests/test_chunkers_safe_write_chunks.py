@@ -281,3 +281,96 @@ def test_suffix_no_dot(path: str, expected: str):
     """Tier 2: _suffix_no_dot strips the leading dot; mirrors
     pathlib.PurePath.suffix.lstrip(".") for the production paths."""
     assert _C._suffix_no_dot(path) == expected
+
+
+# ---------------------------------------------------------------------------
+# Split-strategy invariants (moved from test_chunkers.py when the deprecated
+# chunkers.py + apply_strategy were retired post-FP-0042 Phase 2.8).
+# Targets the identical split helpers duplicated in chunkers_safe.py for the
+# write_chunks_with_lock path.
+# ---------------------------------------------------------------------------
+
+
+def test_split_heading_simple_markdown():
+    """Tier 2: _split_heading on structured Markdown returns per-heading chunks."""
+    text = "# Title\n\nIntro text.\n\n## Section A\n\nContent A.\n\n## Section B\n\nContent B."
+    chunks = list(_C._split_heading(text, max_size=500, min_size=1, overlap=0.0))
+
+    assert len(chunks) >= 2
+    assert all(ctx is not None for _, ctx in chunks)
+    texts = [t for t, _ in chunks]
+    assert any("Title" in t for t in texts)
+
+
+def test_split_heading_fallback_no_headings():
+    """Tier 2: _split_heading falls back to blank_line when no headings present."""
+    text = "Paragraph one.\n\nParagraph two.\n\nParagraph three."
+    chunks = list(_C._split_heading(text, max_size=500, min_size=1, overlap=0.0))
+    assert len(chunks) >= 1
+
+
+def test_split_heading_large_section_sub_splits():
+    """Tier 2: _split_heading sub-splits a section that exceeds max_size."""
+    many_paras = "\n\n".join(["word " * 20] * 10)
+    text = f"# Big Section\n\n{many_paras}"
+    chunks = list(_C._split_heading(text, max_size=10, min_size=1, overlap=0.0))
+    assert len(chunks) > 1
+
+
+def test_split_blank_line_packs_paragraphs_into_max_size():
+    """Tier 2: _split_blank_line packs paragraphs into chunks <= max_size."""
+    paras = [f"Paragraph {i} with some text here." for i in range(10)]
+    text = "\n\n".join(paras)
+    chunks = list(_C._split_blank_line(text, max_size=30, min_size=1, overlap=0.0))
+
+    assert len(chunks) >= 3
+    for chunk_text, _ in chunks:
+        assert _C._approx_tokens(chunk_text) <= 40
+
+
+def test_split_blank_line_parent_context_is_none():
+    """Tier 2: _split_blank_line always yields None as parent_context."""
+    text = "Para one.\n\nPara two.\n\nPara three."
+    for _, parent_ctx in _C._split_blank_line(text, max_size=200, min_size=1, overlap=0.0):
+        assert parent_ctx is None
+
+
+def test_split_blank_line_respects_min_size():
+    """Tier 2: _split_blank_line discards chunks smaller than min_size."""
+    text = "Tiny.\n\nA longer paragraph with sufficient content to pass min size check."
+    chunks = list(_C._split_blank_line(text, max_size=1000, min_size=20, overlap=0.0))
+    for chunk_text, _ in chunks:
+        assert _C._approx_tokens(chunk_text) >= 5
+
+
+def test_split_sentence_splits_at_sentence_boundaries():
+    """Tier 2: _split_sentence splits at sentence end (., !, ?)."""
+    text = "First sentence. Second sentence. Third sentence! Fourth sentence? Fifth."
+    chunks = list(_C._split_sentence(text, max_size=10, min_size=1, overlap=0.0))
+
+    assert len(chunks) >= 2
+    joined = " ".join(t for t, _ in chunks)
+    assert "First" in joined
+
+
+def test_split_sentence_no_sentence_boundary_single_chunk():
+    """Tier 2: _split_sentence yields single chunk when text has no sentence boundaries."""
+    text = "no terminal punctuation in this long run-on line with many words"
+    chunks = list(_C._split_sentence(text, max_size=1000, min_size=1, overlap=0.0))
+
+    assert len(chunks) == 1
+    assert chunks[0][1] is None
+
+
+def test_split_fallback_unknown_boundary():
+    """Tier 2: _split falls back to blank_line for unknown boundary type."""
+    text = "Para one.\n\nPara two.\n\nPara three."
+    chunks_unknown = list(
+        _C._split(text, "unknown_boundary", max_size=200, min_size=1, overlap=0.0)
+    )
+    chunks_blank = list(
+        _C._split(text, "blank_line", max_size=200, min_size=1, overlap=0.0)
+    )
+
+    assert len(chunks_unknown) == len(chunks_blank)
+    assert [t for t, _ in chunks_unknown] == [t for t, _ in chunks_blank]

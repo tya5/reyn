@@ -57,11 +57,6 @@ permissions:
       function: write_chunks_with_lock
       mode: safe
       timeout: 300
-    - module: ./chunkers.py
-      function: apply_strategy
-      mode: unsafe
-      unsafe_reason: "deprecated monolithic step kept for project override compatibility"
-      timeout: 300
   # FP-0042 Phase 2.2: write_chunks_with_lock writes the chunked JSONL
   # output to ``<cwd>/artifacts/chunks.jsonl`` — outside the default
   # ``.reyn/`` write zone, so it needs an explicit grant. The lock file
@@ -74,8 +69,6 @@ postprocessor:
   output_schema: index_summary
   steps:
     # Step 1: safe — glob enum (path list only, no file content read).
-    # Lives in chunkers_safe.py (separate module) so the safe-mode AST
-    # validator does not inherit chunkers.py's legitimate unsafe imports.
     - type: python
       module: ./chunkers_safe.py
       function: extract_and_split
@@ -88,12 +81,12 @@ postprocessor:
           required: [source_path]
           properties:
             source_path: {type: string}
-    # Step 2: unsafe (minimal) — lock + file content read + .jsonl write
+    # Step 2: safe — lock + file content read + .jsonl write via reyn.safe.file.
     - type: python
-      module: ./chunkers.py
+      module: ./chunkers_safe.py
       function: write_chunks_with_lock
       into: data.chunk_stats
-      mode: unsafe
+      mode: safe
       output_schema:
         type: object
         required: [chunk_count, source_lock_acquired]
@@ -140,8 +133,11 @@ the LLM has decided the chunking strategy.
    - LLM aborts if cost exceeds `cost_warn_threshold` (UX gap fix B)
 
 2. **Skill.postprocessor** (deterministic, LLM not involved):
-   - `apply_strategy` (python step, trusted): reads files, splits into chunks
-     per strategy, acquires source-level advisory lock (UX gap fix D), writes
+   - `extract_and_split` (python step, safe): enumerates source files via
+     glob; no file content read
+   - `write_chunks_with_lock` (python step, safe): reads each source file
+     via `reyn.safe.file`, splits into chunks per strategy, acquires
+     source-level advisory lock (UX gap fix D), writes
      `artifacts/chunks.jsonl` to the workspace
    - `embed` (run_op): reads `chunks.jsonl`, embeds via LiteLLM, writes
      `artifacts/chunks_with_vectors.jsonl` (progress events = UX gap fix C)
@@ -175,7 +171,10 @@ flag-form CLI wrapper is tracked as carry-over but not implemented in 1.0.
 
 ## Override pattern (ADR-0033 §2.1)
 
-Override the chunkers module for project-specific file formats:
+Override the chunker modules for project-specific file formats by replacing
+the two-step chain. Both override steps should declare `mode: safe` and use
+the `reyn.safe.file` API for any file I/O (= the FP-0042 stdlib safe-only
+doctrine applies to project chunkers too):
 
 ```yaml
 # reyn/project/index_python_src/skill.md
@@ -189,12 +188,23 @@ phases:
 postprocessor:
   steps:
     - type: python
-      module: ./ast_chunkers.py   # project-local Python AST chunker
-      function: apply_strategy
+      module: ./ast_chunkers.py   # project-local Python AST enumerator
+      function: extract_and_split
+      into: data.chunk_list
+      mode: safe
+      output_schema: ...
+    - type: python
+      module: ./ast_chunkers.py
+      function: write_chunks_with_lock
       into: data.chunk_stats
+      mode: safe
       output_schema: ...
     # embed + index_write steps unchanged (inherited)
 ```
+
+The pre-FP-0042 single-step `apply_strategy` override path was retired in
+Phase 2.8 — projects that previously overrode it should split into the
+two-step chain above.
 
 ## Cost preflight (UX gap fix B)
 
@@ -204,9 +214,9 @@ postprocessor does not run — no API calls are made.
 
 ## Concurrent lock (UX gap fix D)
 
-`apply_strategy` acquires `.reyn/index/<source>/.lock` before processing.
-Concurrent `index_docs` runs for the same source are rejected with a
-`SourceLockedError` (= clear error message listing the holder PID).
+`write_chunks_with_lock` acquires `.reyn/index/<source>/.lock` before
+processing. Concurrent `index_docs` runs for the same source are rejected
+with a `SourceLockedError` (= clear error message listing the holder PID).
 
 ## Progress feedback (UX gap fix C)
 

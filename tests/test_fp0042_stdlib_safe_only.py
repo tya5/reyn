@@ -36,12 +36,12 @@ import yaml
 # Rationale for each is documented in the safe-mode concept page.
 # Adding an entry here is a deliberate decision — pair it with a doc update.
 
-GRANDFATHERED_UNSAFE: set[tuple[str, str]] = {
-    # index_docs — Phase 2.1 / 2.2 migrated all active steps; this one
-    # is the deprecated monolithic path kept for project override
-    # back-compat. See docs/concepts/python-safe-mode.md.
-    ("index_docs", "apply_strategy"),
-}
+GRANDFATHERED_UNSAFE: set[tuple[str, str]] = set()
+# FP-0042 Phase 2.8 (2026-05-23): the last grandfathered exemption,
+# ``index_docs.apply_strategy``, was retired. stdlib unsafe surface is
+# now zero, and ``GRANDFATHERED_UNSAFE`` stays empty. The Phase 3 test
+# below now expresses a stricter invariant: any new stdlib ``mode:
+# unsafe`` declaration fails CI — there is no escape hatch.
 
 
 # ---------------------------------------------------------------------------
@@ -147,10 +147,12 @@ def test_stdlib_mode_unsafe_only_in_exemption_set() -> None:
     """Tier 2: every ``mode: unsafe`` python step declared in a stdlib
     skill.md must appear in :data:`GRANDFATHERED_UNSAFE`.
 
-    The exemption set is the documented carve-out — adding an entry here
-    is a deliberate decision that also requires updating
-    ``docs/concepts/python-safe-mode.md``. The default expectation for
-    new stdlib code is ``mode: safe``.
+    Post-FP-0042 Phase 2.8 (2026-05-23) the exemption set is empty —
+    stdlib is fully safe-mode. Adding any new ``mode: unsafe`` entry
+    fails this test; the right path is to refactor through
+    ``reyn.safe.*`` primitives or split the I/O via a ``run_op``. If a
+    new exemption is genuinely required, both this test and
+    ``docs/concepts/python-safe-mode.md`` need to be updated together.
     """
     found = _collect_unsafe_python_entries()
     unexpected = found - GRANDFATHERED_UNSAFE
@@ -162,6 +164,26 @@ def test_stdlib_mode_unsafe_only_in_exemption_set() -> None:
         "extend GRANDFATHERED_UNSAFE in this test AND add the entry to "
         "docs/concepts/python-safe-mode.md under the FP-0042 stdlib "
         "safe-only doctrine section."
+    )
+
+
+def test_stdlib_unsafe_surface_is_zero() -> None:
+    """Tier 2: stdlib unsafe surface is at the architectural goal of zero.
+
+    Post-FP-0042 Phase 2.8 there are no ``mode: unsafe`` python steps
+    in stdlib. This test is the positive form of
+    :func:`test_stdlib_mode_unsafe_only_in_exemption_set` — fails fast
+    if any unsafe step appears anywhere in stdlib, regardless of the
+    exemption set.
+
+    If you must add a stdlib unsafe step, you also need to delete this
+    test (= breaking the safe-only doctrine is a deliberate decision
+    that needs broad review, not a CI-silent change).
+    """
+    found = _collect_unsafe_python_entries()
+    assert found == set(), (
+        f"Stdlib mode: unsafe declarations are not allowed (FP-0042 "
+        f"Phase 2.8 closed the last exemption). Found: {sorted(found)}."
     )
 
 

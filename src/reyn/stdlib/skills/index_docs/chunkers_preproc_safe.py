@@ -11,24 +11,17 @@ per call.
 
 Module split rationale (matches the existing ``chunkers_safe.py``
 pattern from R-PURE-MODE-REDEFINE Class A): the safe-mode AST
-validator walks every module-level import. ``chunkers.py`` still
-contains ``import os`` / ``import reyn.api.unsafe.file`` for the
-remaining unsafe-mode steps (``write_chunks_with_lock``,
-``apply_strategy``); inheriting those imports would force every
-safe-mode step in the same module to fail validation. Splitting the
-safe steps into their own file with safe-only imports keeps both
-sides clean.
-
-The remaining unsafe step ``write_chunks_with_lock`` will migrate to
-safe-mode in a follow-up PR (FP-0042 Phase 2.2) once the
-``reyn.safe.file`` surface grows ``delete`` / ``mkdir_parents`` and
-the lock mechanism is reworked off ``os.getpid``.
+validator walks every module-level import. Keeping the preprocessor
+steps in their own file with safe-only imports lets them coexist
+with the postprocessor steps in ``chunkers_safe.py`` without either
+side worrying about the other's import set.
 
 Output-shape contract: the two functions here return the same shape
-as the legacy ``chunkers.py`` implementations so the LLM-facing
-artifact at ``data.samples_result`` / ``data.cost`` is bit-compatible
-across the migration. Field names, key sets, rounding, and the
-``_detect_structure`` heuristic all mirror the unsafe-mode versions.
+as the pre-FP-0042 ``chunkers.py`` implementations did, so the
+LLM-facing artifact at ``data.samples_result`` / ``data.cost`` is
+bit-compatible across the migration. Field names, key sets,
+rounding, and the ``_detect_structure`` heuristic all mirror the
+legacy unsafe-mode versions.
 """
 from __future__ import annotations
 
@@ -90,11 +83,8 @@ def _approx_tokens(text: str) -> int:
 def _detect_structure(text: str, ext: str) -> str:
     """Heuristic structure hint for LLM strategy context.
 
-    Mirrors ``chunkers.py``'s unsafe-mode helper exactly so the LLM
-    sees identical ``structure_hint`` strings across the migration.
-    Duplicated rather than imported because importing back into
-    ``chunkers.py`` would re-inherit its unsafe imports under the
-    safe-mode AST walk.
+    Mirrors the pre-FP-0042 ``chunkers.py`` heuristic exactly so the
+    LLM sees identical ``structure_hint`` strings across the migration.
     """
     if ext in {".md", ".markdown", ".mdx"}:
         if _re.search(r"^#+\s", text, _re.MULTILINE):

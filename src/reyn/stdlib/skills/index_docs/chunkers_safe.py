@@ -2,13 +2,14 @@
 
 Hosts the two postprocessor python steps that run mode: safe —
 ``extract_and_split`` (glob enumeration) and ``write_chunks_with_lock``
-(advisory lock + chunked JSONL write). Split out from ``chunkers.py``
-so that the safe-mode AST validator does not inherit chunkers.py's
-``os`` / ``pathlib`` imports through ``ast.walk(tree)`` (= same pattern
-as ``chunkers_preproc_safe.py`` from FP-0042 Phase 2.1).
+(advisory lock + chunked JSONL write).
 
-FP-0042 Phase 2.2 (2026-05-23): migrated ``write_chunks_with_lock``
-from chunkers.py mode: unsafe to here. File reads / writes / mkdir /
+FP-0042 Phase 2.1 split the safe-mode preprocessor steps into
+``chunkers_preproc_safe.py`` (= ``gather_samples`` + ``cost_preflight``);
+Phase 2.2 migrated ``write_chunks_with_lock`` from the pre-FP-0042
+``chunkers.py`` (mode: unsafe) into this module. Phase 2.8
+(2026-05-23) retired the last unsafe holdout, ``apply_strategy``,
+and deleted ``chunkers.py`` entirely. File reads / writes / mkdir /
 delete go through :mod:`reyn.safe.file`; PID identity + liveness go
 through :mod:`reyn.safe.process`. Path manipulation uses plain string
 operations because ``pathlib`` is not on the safe-mode import
@@ -156,11 +157,9 @@ def write_chunks_with_lock(artifact: dict) -> dict:
 
 # ─── JSONL writer + split helpers ───────────────────────────────────────────
 #
-# Duplicated from chunkers.py's deprecated ``apply_strategy`` codepath. The
-# safe-mode AST validator walks every import in this module — chunkers.py
-# legitimately imports ``os`` / ``pathlib`` for its remaining unsafe-mode
-# steps, so we cannot re-use those helpers from here. The split is pure
-# regex + string ops, so divergence risk is low.
+# Originally duplicated from the (now-deleted) ``chunkers.py``
+# ``apply_strategy`` codepath; kept here as the canonical home. Pure regex
+# + string ops, no external dependencies.
 
 
 def _write_chunks_jsonl_from_paths(file_paths: list[str], strategy: dict) -> int:
