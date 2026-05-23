@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from rich.cells import cell_len
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.message import Message
 from textual.widget import Widget
@@ -159,6 +160,13 @@ class ReynHeader(RenderableCacheMixin, Widget):
         # Without this, after switching focus away + back the user
         # couldn't tell at a glance whether they were still recording.
         self._voice_state: str | None = None
+        # Cell-offset ranges for clickable status badges. Populated
+        # in ``_format_status`` on every repaint so the mouse-click
+        # dispatch ``on_click`` can map x-coord → badge → app action.
+        # Keys: ``"find"`` / ``"pending"`` / ``"voice"``. Values:
+        # ``(start_cell, end_cell)`` in the rendered status text.
+        # Empty when no badge is currently rendered.
+        self._badge_offsets: dict[str, tuple[int, int]] = {}
         # ``RenderableCacheMixin`` provides the cache slot +
         # ``rendered_text`` accessor. Every ``Label.update`` is paired
         # with ``self._set_rendered_cache(text)`` via the
@@ -375,14 +383,32 @@ class ReynHeader(RenderableCacheMixin, Widget):
         # Clock always present, last — the canary for "is the UI frozen?"
         parts.append((self._now_text(), None))
 
+        # Build the assembled Text + track cell offsets for each
+        # clickable badge so ``on_click`` can dispatch by mouse-x
+        # position. Each badge gets a tuple of (start_cell, end_cell)
+        # in the *rendered* text — separator widths are included as
+        # they advance ``cur`` between parts.
         out = Text()
+        sep = "  │  "
+        sep_w = cell_len(sep)
+        self._badge_offsets: dict[str, tuple[int, int]] = {}
+        cur = 0
         for i, (text, style) in enumerate(parts):
             if i > 0:
-                out.append("  │  ", style="dim #555555")
+                out.append(sep, style="dim #555555")
+                cur += sep_w
+            seg_w = cell_len(text)
+            if text.startswith("[find:"):
+                self._badge_offsets["find"] = (cur, cur + seg_w)
+            elif text.startswith("[") and text.endswith("pending]"):
+                self._badge_offsets["pending"] = (cur, cur + seg_w)
+            elif text.startswith("🔴 voice") or text.startswith("⏳ voice"):
+                self._badge_offsets["voice"] = (cur, cur + seg_w)
             if style is None:
                 out.append(text)
             else:
                 out.append(text, style=style)
+            cur += seg_w
         return out
 
     def refresh_status(
@@ -459,6 +485,98 @@ class ReynHeader(RenderableCacheMixin, Widget):
             return
         self._voice_state = state
         self._repaint_status()
+
+    def badge_at_x(self, x: int) -> str | None:
+        """Return the badge key under widget-local cell column ``x``, or None.
+
+        Public for tests so the click-dispatch math can be exercised
+        without faking a Click event. The status label right-aligns,
+        so we convert the widget-local x to a position within the
+        rendered text using ``self.size.width``. Returns None when
+        the click lands outside any badge's cell range.
+
+        Layout assumptions encoded here:
+          - Title label ("Reyn", padding 0 1) occupies the leftmost
+            ``len("Reyn") + 2 = 6`` cells.
+          - Status label fills the remaining width with
+            ``text-align: right; padding: 0 1`` — so the text right
+            edge is at widget x = (widget_width - 2), and the text
+            left edge is at (widget_width - 2 - text_cells).
+        """
+        try:
+            total_width = int(self.size.width)
+        except Exception:
+            return None
+        if total_width <= 0:
+            return None
+        rendered = self.rendered_text()
+        text_cells = cell_len(rendered)
+        if text_cells <= 0:
+            return None
+        # Right padding cell of status label.
+        text_right_edge = total_width - 2
+        text_left_edge = text_right_edge - text_cells
+        pos_in_text = x - text_left_edge
+        if pos_in_text < 0 or pos_in_text >= text_cells:
+            return None
+        for name, (start, end) in self._badge_offsets.items():
+            if start <= pos_in_text < end:
+                return name
+        return None
+
+    def on_click(self, event: events.Click) -> None:
+        """Dispatch a click on a status badge to the corresponding app action.
+
+        Per-badge mapping:
+          - find    → Ctrl+G equivalent (= ``action_find_next``);
+                      cycles to the next match
+          - pending → opens the right panel + switches to the
+                      Pending tab
+          - voice   → toggles voice recording (= ``action_voice_toggle``,
+                      same as Ctrl+R)
+
+        Click outside any badge cell range → silent no-op (= the
+        rest of the header has no click semantics; users clicking
+        the agent name / model / cost expect nothing to happen).
+        Stops propagation only when a badge was actually hit.
+        """
+        badge = self.badge_at_x(event.x)
+        if badge is None:
+            return
+        event.stop()
+        app = self.app
+        if badge == "find":
+            try:
+                app.action_find_next()
+            except Exception:
+                pass
+        elif badge == "pending":
+            self._dispatch_pending_click(app)
+        elif badge == "voice":
+            # ``action_voice_toggle`` is async — schedule via
+            # ``call_later`` so the click handler stays sync.
+            try:
+                app.call_later(app.action_voice_toggle)
+            except Exception:
+                pass
+
+    def _dispatch_pending_click(self, app: "Widget") -> None:
+        """Open the right panel + switch to the Pending tab.
+
+        Inlines the "open + jump" sequence so this PR stays
+        independent of the Ctrl+1..7 quick-jump PR (= #579, still
+        in flight) — when that lands, the body here can collapse
+        to ``app.action_panel_jump_pending()``.
+        """
+        from .right_panel import RightPanel
+        try:
+            panel_visible = getattr(app, "_panel_visible", False)
+            if not panel_visible:
+                app.action_toggle_panel()
+            panel = app.query_one("#right_panel", RightPanel)
+            panel.set_panel_type("pending")
+        except Exception:
+            pass
 
     def on_reyn_header_status_update(self, msg: StatusUpdate) -> None:
         """Handle StatusUpdate message."""
