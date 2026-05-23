@@ -514,6 +514,19 @@ class ReynTUIApp(App):
                     self._run_id_to_user_message.pop(
                         next(iter(self._run_id_to_user_message)),
                     )
+            # AsyncStackPanel wiring: this branch is the "task spawned"
+            # signal for the TUI (= first trace for this run_id, the
+            # ``[task_spawned] kind=skill`` notification the LLM sees
+            # in its context). Add the row to the bottom-docked
+            # running-tasks overview. The corresponding remove fires
+            # in ``_handle_trace_for_skill_row`` on the
+            # ``"skill done: …"`` trace (= the matching
+            # ``[task_completed]`` boundary).
+            try:
+                conv = self.query_one("#conversation", ConversationView)
+                conv.add_async_task(run_id, skill_name or "skill")
+            except Exception:
+                pass
         # Text pattern: "phase started: <phase_name>"
         if text.startswith("phase started: "):
             phase = text[len("phase started: "):].strip()
@@ -666,6 +679,11 @@ class ReynTUIApp(App):
             self._skill_exec.pop(run_id, None)
             self._push_exec_state()
             self._last_focal_tab = "agents"
+            # AsyncStackPanel wiring: the ``[task_completed]`` boundary
+            # for the attached agent's task — drop the row from the
+            # bottom-docked overview. Mirrors the ``add_async_task``
+            # call in ``_update_skill_exec``'s first-trace branch.
+            conv.remove_async_task(run_id)
             # Wave-9 D-F11: release the input-bar lock when the last
             # tracked skill finishes. Sub-skills popping during a
             # nested run keep the lock held — only the empty state
@@ -1021,6 +1039,17 @@ class ReynTUIApp(App):
                         )
                     except Exception:
                         pass
+                    # AsyncStackPanel: drop the row for this cancelled
+                    # task — the remote cancel path tears down the
+                    # task locally without waiting for a
+                    # workflow_aborted trace, so the bottom-stack
+                    # entry needs explicit removal here (= same
+                    # rationale as the ``_skill_exec.pop`` directly
+                    # below).
+                    try:
+                        conv.remove_async_task(run_id)
+                    except Exception:
+                        pass
                     self._skill_exec.pop(run_id, None)
                 self._push_exec_state()
             # C-F1: seal in-flight ToolCallRow widgets too. Without this
@@ -1059,6 +1088,16 @@ class ReynTUIApp(App):
                         reason="cancelled",
                         aborted=True,
                     )
+                except Exception:
+                    pass
+                # AsyncStackPanel: drop the cancelled task from the
+                # bottom-stack overview. Mirrors the remote-cancel
+                # branch above + the natural ``"skill done:"`` trace
+                # path; needs explicit handling here because
+                # ``task.cancel()`` doesn't produce a
+                # workflow_aborted trace.
+                try:
+                    conv.remove_async_task(run_id)
                 except Exception:
                     pass
                 self._skill_exec.pop(run_id, None)
