@@ -74,7 +74,7 @@ def _write_op(path: str) -> FileIROp:
 
 
 def test_read_inside_scope_allowed(tmp_path, monkeypatch):
-    """read op on a path inside CWD (default read zone) succeeds — no PermissionError.
+    """Tier 2: read op on a path inside CWD (default read zone) succeeds — no PermissionError.
 
     The file may not exist, but that should yield status='not_found', not a
     permission error.
@@ -91,7 +91,7 @@ def test_read_inside_scope_allowed(tmp_path, monkeypatch):
 
 
 def test_read_outside_scope_denied(tmp_path, monkeypatch):
-    """read op on an absolute path outside CWD raises PermissionError."""
+    """Tier 2: read op on an absolute path outside CWD raises PermissionError."""
     monkeypatch.chdir(tmp_path)
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
@@ -101,7 +101,7 @@ def test_read_outside_scope_denied(tmp_path, monkeypatch):
 
 
 def test_read_with_no_decl_denied(tmp_path, monkeypatch):
-    """Empty PermissionDecl + path outside CWD → PermissionError.
+    """Tier 2: Empty PermissionDecl + path outside CWD → PermissionError.
 
     Even when file.read is not declared at all, the resolver still denies
     paths outside the default read zone.
@@ -115,7 +115,7 @@ def test_read_with_no_decl_denied(tmp_path, monkeypatch):
 
 
 def test_read_with_no_resolver_skips_check(tmp_path, monkeypatch):
-    """When permission_resolver is None in OpContext, the op-level check is skipped.
+    """Tier 2: When permission_resolver is None in OpContext, the op-level check is skipped.
 
     Backward-compatibility: callers that don't supply a resolver get the old
     behaviour — no PermissionError from the op-level gate. The Workspace still
@@ -133,7 +133,7 @@ def test_read_with_no_resolver_skips_check(tmp_path, monkeypatch):
 
 
 def test_read_config_allow_grants_access(tmp_path, monkeypatch):
-    """file.read: allow in config satisfies the op-level require_file_read check.
+    """Tier 2: file.read: allow in config satisfies the op-level require_file_read check.
 
     The op-level check (require_file_read) is satisfied. We use a path inside
     CWD so the Workspace layer also passes, isolating the op-level resolver check.
@@ -152,7 +152,7 @@ def test_read_config_allow_grants_access(tmp_path, monkeypatch):
 
 
 def test_glob_subject_to_read_check(tmp_path, monkeypatch):
-    """glob op on a path outside CWD raises PermissionError."""
+    """Tier 2: glob op on a path outside CWD raises PermissionError."""
     monkeypatch.chdir(tmp_path)
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
@@ -162,7 +162,7 @@ def test_glob_subject_to_read_check(tmp_path, monkeypatch):
 
 
 def test_glob_inside_cwd_allowed(tmp_path, monkeypatch):
-    """glob inside CWD is allowed without explicit declaration."""
+    """Tier 2: glob inside CWD is allowed without explicit declaration."""
     monkeypatch.chdir(tmp_path)
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
@@ -176,7 +176,7 @@ def test_glob_inside_cwd_allowed(tmp_path, monkeypatch):
 
 
 def test_grep_subject_to_read_check(tmp_path, monkeypatch):
-    """grep op on a path outside CWD raises PermissionError."""
+    """Tier 2: grep op on a path outside CWD raises PermissionError."""
     monkeypatch.chdir(tmp_path)
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
@@ -186,7 +186,7 @@ def test_grep_subject_to_read_check(tmp_path, monkeypatch):
 
 
 def test_grep_inside_cwd_allowed(tmp_path, monkeypatch):
-    """grep inside CWD is allowed without explicit declaration."""
+    """Tier 2: grep inside CWD is allowed without explicit declaration."""
     monkeypatch.chdir(tmp_path)
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
@@ -200,7 +200,7 @@ def test_grep_inside_cwd_allowed(tmp_path, monkeypatch):
 
 
 def test_write_check_unchanged(tmp_path, monkeypatch):
-    """Existing write permission check is not broken by the refactor.
+    """Tier 2: Existing write permission check is not broken by the refactor.
 
     write to a path outside the default write zone (.reyn/, reyn/) that has
     not been approved should still raise PermissionError.
@@ -215,7 +215,7 @@ def test_write_check_unchanged(tmp_path, monkeypatch):
 
 
 def test_write_inside_default_zone_allowed(tmp_path, monkeypatch):
-    """write to .reyn/ directory succeeds — default write zone is preserved."""
+    """Tier 2: write to .reyn/ directory succeeds — default write zone is preserved."""
     monkeypatch.chdir(tmp_path)
     resolver = _resolver(tmp_path)
     ctx = _make_ctx(tmp_path, permission_resolver=resolver)
