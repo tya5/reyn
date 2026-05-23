@@ -351,16 +351,21 @@ class SlashPicker(RenderableCacheMixin, Static):
         t.append(name, style="dim #888888")
         t.append("  ")
         t.append(summary, style="dim #888888")
-        # Structured usage line — surfaced as a second hint row when the
-        # command opts in via ``SlashCommand.usage``. Indented under the
-        # summary with a ``↳`` connector so the eye groups them as
-        # "one command, two informational rows". Commands without
-        # usage stay 1-line (backward compatible). Skipped when
-        # completions are present — completions already carry
-        # actionable arg info, and stacking usage + completions would
-        # push the picker past ``max-height: 11`` for /attach-like
-        # cases with many agent names.
-        if cmd.usage and not self._completions:
+        # Structured usage line — surfaced as a second hint row when
+        # the command opts in via ``SlashCommand.usage``. Indented
+        # under the summary with a ``↳`` connector so the eye groups
+        # them as "one command, two informational rows". Commands
+        # without usage stay 1-line (backward compatible).
+        #
+        # Wave-11 C#5: previously skipped when ``_completions`` was
+        # non-empty — but the commands with both required args AND a
+        # finite arg list (/attach, /memory view, /plan resume) were
+        # exactly the ones that benefit most from showing usage.
+        # The guard meant usage rarely rendered in practice. Now
+        # always renders when ``cmd.usage`` is set; total row count
+        # (= 1 summary + 1 usage + ≤ 8 completions + optional "+N
+        # more") stays within the CSS ``max-height: 11`` budget.
+        if cmd.usage:
             indent = " " * (2 + len(name) + 2)
             usage_budget = max(10, content_w - len(indent) - 9)  # 9 = "↳ usage: "
             usage_text = cmd.usage
