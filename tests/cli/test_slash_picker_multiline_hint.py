@@ -134,13 +134,16 @@ async def test_hint_without_usage_renders_one_line() -> None:
 
 
 @pytest.mark.asyncio
-async def test_completions_suppress_usage_line() -> None:
-    """Tier 2: when completions are surfaced, the usage line is suppressed.
+async def test_usage_and_completions_render_together() -> None:
+    """Tier 2: usage line + completions BOTH render in the picker hint.
 
-    The completions are themselves arg-list context — adding the
-    usage line on top would be redundant + push the picker past
-    its height cap on commands with many matching completions
-    (e.g. /attach with 8 agent names).
+    Wave-11 C#5 reversed the original "suppress usage when
+    completions present" guard. The commands with both required
+    args AND a finite arg list (= /attach, /memory view, /plan
+    resume) were exactly the ones that benefit most from showing
+    usage; the prior guard hid usage from them. Total row count
+    (= 1 summary + 1 usage + ≤ 8 completions + optional "+N more")
+    stays within the CSS ``max-height: 11`` budget.
     """
     from reyn.chat.slash import SlashCommand
     from reyn.chat.tui.app import ReynTUIApp
@@ -165,8 +168,9 @@ async def test_completions_suppress_usage_line() -> None:
         # Completions visible.
         assert "alpha" in text
         assert "beta" in text
-        # Usage line suppressed.
-        assert "↳ usage:" not in text
+        # Usage line ALSO visible (= wave-11 C#5 reversal).
+        assert "↳ usage:" in text
+        assert "/testcmd2 <name>" in text
 
 
 def test_find_command_has_usage() -> None:
