@@ -65,7 +65,7 @@ _PANEL_KEYS = {
     "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4",
     "ctrl+5", "ctrl+6", "ctrl+7",
 }
-_EVENTS_KEYS = {"f", "t"}
+_EVENTS_KEYS = {"f", "t", "i"}
 # ``/`` stays DOCS-only — it opens the docs name filter, no other tab
 # consumes it.
 _DOCS_KEYS = {"/"}
@@ -165,6 +165,10 @@ def render_keys(app: "App") -> str:
         # Same "per-tab action" idiom as the pending-tab ``d`` / ``c``
         # discard / claim shortcuts.
         ("a", "Attach to cursor agent (agents tab)"),
+        # Wave-11 A#2: ``i`` on the Events tab isolates the cursor's
+        # chain_id so the user can read one chain's lifecycle without
+        # interleaving noise from other concurrent chains.
+        ("i", "Isolate cursor's chain (events tab)"),
     ]
     for key, desc in _PANEL_EXPLICIT:
         if key not in seen:

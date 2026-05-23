@@ -533,6 +533,7 @@ def render_events(
     cursor: int = 0,
     cache: dict | None = None,
     filelist_cache: list | None = None,
+    chain_isolate: str | None = None,
 ) -> tuple[str, list[dict], list[int]]:
     """Render the recent-events list for the events tab.
 
@@ -567,6 +568,17 @@ def render_events(
         visible = [ev for ev in all_events if ev.get("type") in filter_set]
     else:
         visible = list(all_events)
+
+    # Chain isolation (wave-11 A#2): when a chain_id is pinned, restrict
+    # the visible list to just that chain. Empty result is rare — the
+    # cursor's own chain seeds the isolate, so at least one matching
+    # event is guaranteed — but the post-isolation list might shrink
+    # below 1 if cache has rotated. Treated like any empty result.
+    if chain_isolate:
+        visible = [
+            ev for ev in visible
+            if ((ev.get("data") or {}).get("chain_id") or "") == chain_isolate
+        ]
 
     # File-path iteration order doesn't match wall-clock: the events root
     # holds agents/<id>/events/*.jsonl alongside direct/<id>/skill_runs/*
@@ -612,6 +624,21 @@ def render_events(
 
     lines: list[str] = []
     event_ys: list[int] = []
+    # Wave-11 A#2 — chain isolation header. When active, surface the
+    # isolated chain_id (truncated to 8-char prefix for readability)
+    # + the unset key cue. This adds 2 visual rows above the event
+    # list so ``event_ys`` indices still align to ``lines`` because
+    # ``event_ys.append(len(lines))`` is computed AFTER the header
+    # rows are appended (= each event row gets the post-header y).
+    if chain_isolate:
+        short = chain_isolate[:8] + ("…" if len(chain_isolate) > 8 else "")
+        lines.append(
+            f"  [#88aacc]⛓ chain isolated:[/] [bold {_CORAL}]{_esc(short)}[/]"
+        )
+        lines.append(
+            "  [#555555]  press [/][bold #aaaaaa]\\[i][/]"
+            "[#555555] to clear isolation[/]"
+        )
     prev_chain: str | None = None
     for i, ev in enumerate(windowed):
         ev_type = ev.get("type", "?")
