@@ -22,10 +22,12 @@ from textual.widgets import Static
 from reyn.chat.slash import SlashCommand
 from reyn.chat.tui._palette import _CORAL
 
+from ._renderable_cache import RenderableCacheMixin
+
 _MAX_VISIBLE = 8
 
 
-class SlashPicker(Static):
+class SlashPicker(RenderableCacheMixin, Static):
     """Inline list of slash-command matches shown above the TextArea."""
 
     class Clicked(Message):
@@ -81,13 +83,10 @@ class SlashPicker(Static):
         # single dim row reading ``unknown /<typed> — did you mean /<…>?``.
         self._unknown_token: str = ""
         self._unknown_suggestions: list[str] = []
-        # Cached copy of the most-recently-rendered Text (= what's
-        # currently displayed). Updated on every ``_repaint``. Read by
-        # ``rendered_text`` for inspection — used by Tier 2 tests to
-        # assert on the visible content without reaching into Textual's
-        # private Static internals (= ``Static.renderable`` is API-
-        # unstable across versions, sometimes ``_renderable``).
-        self._rendered_cache = ""
+        # ``RenderableCacheMixin`` provides ``_set_rendered_cache`` +
+        # ``rendered_text``. Every ``self.update(...)`` call in
+        # ``_repaint*`` pairs with ``self._set_rendered_cache(...)`` so
+        # the cache stays in lockstep with the visible content.
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -105,17 +104,6 @@ class SlashPicker(Static):
     @property
     def has_matches(self) -> bool:
         return bool(self._matches)
-
-    def rendered_text(self) -> str:
-        """Plain-text rendering of the last frame sent to ``Static.update``.
-
-        Stable testing surface — ``Static.renderable`` is API-unstable
-        across Textual versions (sometimes ``_renderable``, sometimes
-        a different accessor), so the picker caches the rendered Text
-        on every ``_repaint`` and exposes it here. Returns "" when the
-        picker is empty / hidden.
-        """
-        return self._rendered_cache
 
     def set_matches(self, matches: list[SlashCommand]) -> None:
         """Replace the match list. Resets selection to row 0."""
@@ -279,7 +267,7 @@ class SlashPicker(Static):
                 self._repaint_unknown_hint()
             else:
                 self.update("")
-                self._rendered_cache = ""
+                self._set_rendered_cache("")
             return
 
         # Width for the command-name column (left)
@@ -332,7 +320,7 @@ class SlashPicker(Static):
                 style="dim #888888",
             )
         self.update(body)
-        self._rendered_cache = str(body.plain)
+        self._set_rendered_cache(body)
 
     def _repaint_hint(self) -> None:
         """Render a single dim hint row showing the matched command's summary.
@@ -345,7 +333,7 @@ class SlashPicker(Static):
         cmd = self._hint_cmd
         if cmd is None:
             self.update("")
-            self._rendered_cache = ""
+            self._set_rendered_cache("")
             return
         try:
             term_w = self.app.size.width
@@ -397,7 +385,7 @@ class SlashPicker(Static):
                     style="dim #555555",
                 )
         self.update(t)
-        self._rendered_cache = str(t.plain)
+        self._set_rendered_cache(t)
 
     def _repaint_unknown_hint(self) -> None:
         """Render the unknown-command in-input feedback line.
@@ -426,4 +414,4 @@ class SlashPicker(Static):
                 t.append(f"/{sug}", style="dim #aaaaaa")
             t.append("?", style="dim #888888")
         self.update(t)
-        self._rendered_cache = str(t.plain)
+        self._set_rendered_cache(t)

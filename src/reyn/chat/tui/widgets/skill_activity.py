@@ -36,6 +36,8 @@ from textual.widgets import Static
 
 from reyn.chat.tui._palette import _CORAL
 
+from ._renderable_cache import RenderableCacheMixin
+
 _TICK_INTERVAL_S = 0.5  # elapsed-time refresh rate
 
 # Max tool calls rendered inline in the drill-down expand view.
@@ -58,7 +60,7 @@ _ELAPSED_AMBER_S = 30.0
 _ELAPSED_RED_S = 60.0
 
 
-class SkillActivityRow(Widget):
+class SkillActivityRow(RenderableCacheMixin, Widget):
     """One ambient skill-progress row that updates in-place.
 
     Transitions from a live running line to a compact completion line on
@@ -165,13 +167,10 @@ class SkillActivityRow(Widget):
 
         # DOM ref
         self._static: Static | None = None
-        # Cached copy of the most-recently-rendered Text (= what's
-        # currently displayed). Updated on every ``_refresh``. Read
-        # by ``rendered_text`` for inspection — used by Tier 2 tests
-        # to assert on the visible content without reaching into
-        # Textual's private Static internals (= ``static._renderable``
-        # is API-unstable across versions).
-        self._rendered_cache: Text | None = None
+        # ``RenderableCacheMixin`` provides the cache + ``rendered_text``
+        # accessor; we just call ``self._set_rendered_cache(text)`` on
+        # every ``Static.update`` so the cache stays in sync with what
+        # the user sees.
 
     # ── Textual lifecycle ──────────────────────────────────────────────────────
 
@@ -487,26 +486,13 @@ class SkillActivityRow(Widget):
             t.append(f", +{hidden} more", style="dim #666666")
         return t
 
-    def rendered_text(self) -> str:
-        """Plain-text rendering of the last frame sent to ``Static.update``.
-
-        Stable testing surface — Textual's ``Static`` does not expose
-        a public getter for its current renderable across versions, so
-        we cache locally in ``_refresh`` and read here. Returns "" when
-        nothing has been rendered yet (= pre-mount).
-        """
-        cache = self._rendered_cache
-        if cache is None:
-            return ""
-        return str(cache.plain)
-
     def _refresh(self) -> None:
         if self._static is None:
             return
         head = self._build_finished() if self._finished else self._build_running()
         if not self._expanded:
             self._static.update(head)
-            self._rendered_cache = head
+            self._set_rendered_cache(head)
             return
         # Expanded view: append the history line under the head with a
         # newline separator. Rich Text handles newlines inside update().
@@ -521,4 +507,4 @@ class SkillActivityRow(Widget):
             body.append("\n")
             body.append_text(self._build_tools_line())
         self._static.update(body)
-        self._rendered_cache = body
+        self._set_rendered_cache(body)
