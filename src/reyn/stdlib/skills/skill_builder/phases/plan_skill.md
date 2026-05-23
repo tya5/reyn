@@ -79,7 +79,40 @@ Do NOT add review phases unless the output is subjective or hard to verify.
 ## Step 3 — Define structure
 
 skill_name: snake_case name of the target skill
-skill_description: one sentence describing what the skill does (used in `reyn skills` listing)
+skill_description: 1–2 sentences that the chat router uses to decide WHEN to dispatch this skill.
+  The router compares the user's turn against this string in addition to the skill name, so the
+  description is the **primary triggering signal** — not just human-facing documentation.
+
+  Reyn's chat router (like Claude generally) **under-triggers** skills by default — it tends to
+  hand-wave a request instead of dispatching the right skill when the description is too narrow
+  or too literal. Combat under-triggering by writing descriptions that are deliberately
+  **slightly pushy**: include the trigger contexts in the description itself, not just the
+  one-line summary.
+
+  Concretely, the description should answer **both** "what does this do?" and "when should it
+  fire?" — the latter listing the words/phrases/scenarios that should route here even when the
+  user does not name the skill explicitly.
+
+  Length guidance: ≤ 2 sentences total. ≤ 250 characters is comfortable; 300 is the soft cap.
+  Past that, the description starts to crowd out other skills' descriptions in the router's
+  context budget.
+
+  ❌ Too narrow (under-triggers):
+
+      description: Generate a short article on a topic.
+
+  ✅ Pushy + scoped (catches the natural phrasings):
+
+      description: Generate a short article on a topic. Use whenever the user asks to write,
+        draft, or compose a blog post, article, short essay, write-up, or any short-form prose
+        on a given subject — even if they don't explicitly say "article".
+
+  Do NOT pad descriptions with non-trigger fluff (= marketing-sounding phrases like "robust"
+  / "production-quality" / "powerful"). Every word should either say what the skill does or
+  signal a trigger context. If a `routing:` block exists on the target skill (= `when_to_use`
+  / `when_not_to_use` / `examples`), the bare `description` field still carries the under-trigger
+  weight, so keep it pushy independently of the routing block.
+
 skill_path: "reyn/local/{skill_name}"
 entry_phase: name of the first phase
 finish_criteria: 2–4 bullet strings describing when the TARGET workflow is done
