@@ -224,6 +224,25 @@ class LoopConfig:
     skill_calls_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
     skill_tokens_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
 
+    # B51 NF-W6-3 fix: plan() tool call parse-error self-correction loop.
+    #
+    # When the router LLM emits ``plan(args={steps_json: <malformed>})``
+    # and the plan tool returns ``{status: error, error: {kind:
+    # plan_invalid, ...}}``, the router loop appends a user-role
+    # directive carrying the error message + an "escape inner quotes"
+    # hint and re-enters the LLM loop so the LLM gets a chance to
+    # re-emit with valid JSON. ``0`` disables the retry (= the LLM
+    # receives the plain error tool result and decides next step
+    # itself, the pre-fix behaviour). ``1`` (= default) allows one
+    # directive-driven correction per chat turn.
+    #
+    # Dedicated counter rather than reusing ``max_router_calls_per_turn``
+    # so the operator can tune plan-revision attempts independently
+    # from the broader router-call cap. The natural outer bounds
+    # (``max_router_calls_per_turn`` + ``RouterLoop.max_iterations``)
+    # still apply on top.
+    plan_invalid_retries: int = 1
+
 
 @dataclass
 class TimeoutConfig:
@@ -2027,6 +2046,9 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         skill_tokens_per_chain=_build_cost_limit(
             loop_raw.get("skill_tokens_per_chain")
         ),
+        plan_invalid_retries=int(loop_raw.get(
+            "plan_invalid_retries", loop_defaults.plan_invalid_retries,
+        )),
     )
     timeout = TimeoutConfig(
         llm_call_seconds=float(timeout_raw.get(

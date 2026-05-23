@@ -4233,6 +4233,14 @@ class ChatSession:
         # FP-0005: now async (consults safety.on_limit on hit).
         await self._check_and_increment_router_cap(user_text)
         from reyn.chat.router_loop import RouterLoop
+        # B51 NF-W6-3: plan_invalid self-correction cap, sourced from
+        # safety.loop.plan_invalid_retries (default 1). When set to 0
+        # the retry is disabled and the LLM sees the plain tool error.
+        _plan_invalid_retries_cap = getattr(
+            getattr(self._safety, "loop", None),
+            "plan_invalid_retries",
+            1,
+        )
         loop = RouterLoop(
             host=self._router_host, chain_id=chain_id, max_iterations=5,
             budget=self._budget_tracker,
@@ -4240,6 +4248,7 @@ class ChatSession:
             # mechanic as PR #265's plan-step wiring — directive plumbed
             # unconditionally, runtime gated by ``REYN_EMPTY_STOP_RETRY=1``.
             empty_stop_retry_directive=_CHAT_ROUTER_EMPTY_STOP_RETRY_DIRECTIVE,
+            plan_invalid_retries=_plan_invalid_retries_cap,
         )
         history = self._build_history_for_router()
         router_usage = await loop.run(user_text=user_text, history=history)

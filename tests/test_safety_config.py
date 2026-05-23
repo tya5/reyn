@@ -70,12 +70,29 @@ safety:
     max_agent_hops: 5
     skill_calls_per_chain:
       hard_limit: 12
+    plan_invalid_retries: 2
 """.lstrip())
     cfg = load_config(cwd=isolated_project)
     assert cfg.safety.loop.max_phase_visits == 50
     assert cfg.safety.loop.max_router_calls_per_turn == 7
     assert cfg.safety.loop.max_agent_hops == 5
     assert cfg.safety.loop.skill_calls_per_chain.hard_limit == 12.0
+    assert cfg.safety.loop.plan_invalid_retries == 2
+
+
+def test_safety_loop_plan_invalid_retries_default_is_one(
+    isolated_project: Path,
+) -> None:
+    """Tier 2: ``safety.loop.plan_invalid_retries`` default is 1.
+
+    Out-of-the-box behaviour: one directive-driven correction attempt
+    after a plan_invalid tool result, before falling through to the
+    plain tool-error path. Operators dial up / down via
+    ``safety.loop.plan_invalid_retries`` in reyn.yaml.
+    """
+    _write_yaml(isolated_project / "reyn.yaml", "")
+    cfg = load_config(cwd=isolated_project)
+    assert cfg.safety.loop.plan_invalid_retries == 1
 
 
 def test_safety_timeout_keys_populate(
