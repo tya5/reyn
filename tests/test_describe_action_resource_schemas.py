@@ -77,7 +77,7 @@ def _describe(qualified_name: str, ctx: ToolContext) -> dict:
 
 
 def test_skill_describe_returns_skill_input_schema():
-    """``describe_action(skill__X)`` returns the SKILL's input fields, not
+    """Tier 1: ``describe_action(skill__X)`` returns the SKILL's input fields, not
     invoke_skill's ``{name, input}`` envelope."""
     ctx = _make_ctx(skills=[
         {
@@ -108,7 +108,7 @@ def test_skill_describe_returns_skill_input_schema():
 
 
 def test_skill_without_input_schema_falls_back_to_dispatcher():
-    """When the catalogue entry has no ``input_schema`` (= caller didn't
+    """Tier 1: When the catalogue entry has no ``input_schema`` (= caller didn't
     enrich), describe_action falls back to ``invoke_skill``'s parameters
     so the LLM at least sees the dispatcher contract."""
     ctx = _make_ctx(skills=[
@@ -127,7 +127,7 @@ def test_skill_without_input_schema_falls_back_to_dispatcher():
 
 
 def test_agent_peer_describe_drops_curried_to_field():
-    """``describe_action(agent.peer__X)`` exposes delegate_to_agent's
+    """Tier 1: ``describe_action(agent.peer__X)`` exposes delegate_to_agent's
     parameters MINUS ``to`` (the routing rule curries ``to=<name>``)."""
     ctx = _make_ctx()
     out = _describe("agent.peer__alice", ctx)
@@ -142,7 +142,7 @@ def test_agent_peer_describe_drops_curried_to_field():
 
 
 def test_mcp_server_describe_returns_empty_schema():
-    """``mcp.server__X`` resolves to ``list_mcp_tools(server=X)`` — the
+    """Tier 1: ``mcp.server__X`` resolves to ``list_mcp_tools(server=X)`` — the
     user-facing args are empty (the server name is curried)."""
     ctx = _make_ctx()
     out = _describe("mcp.server__gh", ctx)
@@ -155,7 +155,7 @@ def test_mcp_server_describe_returns_empty_schema():
 
 
 def test_rag_corpus_describe_drops_curried_sources_field():
-    """``rag.corpus__X`` resolves to ``recall(sources=[X], …)`` — expose
+    """Tier 1: ``rag.corpus__X`` resolves to ``recall(sources=[X], …)`` — expose
     recall's parameters MINUS ``sources``."""
     ctx = _make_ctx()
     out = _describe("rag.corpus__my_docs", ctx)
@@ -170,7 +170,7 @@ def test_rag_corpus_describe_drops_curried_sources_field():
 
 
 def test_mcp_tool_describe_returns_target_input_schema():
-    """``describe_action(mcp.tool__server.tool)`` returns the tool's
+    """Tier 1: ``describe_action(mcp.tool__server.tool)`` returns the tool's
     declared ``inputSchema`` (FP-0032 expanded shape), not
     ``call_mcp_tool``'s ``{server, tool, args}`` envelope."""
     mcp_servers = [
@@ -206,7 +206,7 @@ def test_mcp_tool_describe_returns_target_input_schema():
 
 
 def test_mcp_tool_describe_accepts_snake_case_input_schema_alias():
-    """``inputSchema`` is the FP-0032 canonical, but some sources emit
+    """Tier 1: ``inputSchema`` is the FP-0032 canonical, but some sources emit
     ``input_schema`` (snake_case) — both must resolve."""
     mcp_servers = [
         {
@@ -229,7 +229,7 @@ def test_mcp_tool_describe_accepts_snake_case_input_schema_alias():
 
 
 def test_mcp_tool_describe_missing_server_falls_back_to_dispatcher():
-    """No matching server / tool → fall back to call_mcp_tool dispatcher
+    """Tier 1: No matching server / tool → fall back to call_mcp_tool dispatcher
     schema rather than crashing or returning nothing."""
     ctx = _make_ctx(mcp_servers=[])
     out = _describe("mcp.tool__nonexistent.thing", ctx)
@@ -243,7 +243,7 @@ def test_mcp_tool_describe_missing_server_falls_back_to_dispatcher():
 
 
 def test_operation_category_describe_returns_target_parameters():
-    """Operation categories (``web__fetch``, …) are NOT remapped — their
+    """Tier 1: Operation categories (``web__fetch``, …) are NOT remapped — their
     target IS the resource so ``target.parameters`` is correct."""
     ctx = _make_ctx()
     out = _describe("web__fetch", ctx)
@@ -257,7 +257,7 @@ def test_operation_category_describe_returns_target_parameters():
 
 
 def test_no_router_state_falls_back_for_resource_categories():
-    """Phase-side / test sites with no router_state get the dispatcher's
+    """Tier 1: Phase-side / test sites with no router_state get the dispatcher's
     schema as a fallback — better than crashing."""
     ctx = ToolContext(
         events=_FakeEvents(),
@@ -282,7 +282,7 @@ def test_no_router_state_falls_back_for_resource_categories():
     "rag.corpus__my_docs",
 ])
 def test_metadata_envelope_preserved(qn: str):
-    """All cases preserve the §D11 metadata envelope (qualified_name +
+    """Tier 1: All cases preserve the §D11 metadata envelope (qualified_name +
     description + metadata.{target_tool_name, category, purity}); only
     input_schema is enriched."""
     ctx = _make_ctx(skills=[{
