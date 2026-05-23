@@ -13,20 +13,24 @@ After the fix:
   - ``_GLYPHS["error"]`` = ``"✗"`` (= same glyph as ToolCallRow /
     SkillActivityRow failure terminals — cross-surface vocabulary
     uniform)
-  - ``_KIND_PRIORITY["error"]`` = 80 (above ``general``, below
-    ``thinking``) so an error can displace a turn-flash but not
-    yank a live ``⟳ thinking…`` while the LLM is still working
+  - ``_KIND_PRIORITY["error"]`` = 80 (above ``general``) so an
+    error can displace a turn-flash
   - ``_repaint`` paints the error glyph in bold red so the alert
     semantic reads even on monochrome terminals (= shape + color
     as redundant cues)
+
+Note: the original "error does NOT overwrite active thinking"
+test has been removed. The ``"thinking"`` kind was removed from
+StickyStatus — the inline Braille spinner (``InlineThinkingRow``)
+replaced it. Error (priority 80) is now the highest-priority kind.
 
 Public surfaces tested:
   - ``show("err", kind="error")`` → snapshot kind == "error"
     (no longer silent thinking fallback)
   - error overwrites general (= priority > 50)
-  - error does NOT overwrite active thinking (= priority < 100)
   - error glyph + body appear in the rendered output (= the
     ``Static.update`` Text carries ``✗`` not ``⟳``)
+  - unknown kind falls back to ``general`` (not ``thinking``)
 """
 from __future__ import annotations
 
@@ -49,7 +53,7 @@ async def _sticky(pilot):
 
 @pytest.mark.asyncio
 async def test_error_kind_is_registered_not_silent_fallback() -> None:
-    """Tier 2: ``show(kind="error")`` records "error" not "thinking"."""
+    """Tier 2: ``show(kind="error")`` records "error" not "general"."""
     from reyn.chat.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
@@ -82,13 +86,12 @@ async def test_error_overwrites_active_general() -> None:
 
 
 @pytest.mark.asyncio
-async def test_error_does_not_overwrite_active_thinking() -> None:
-    """Tier 2: ``error`` priority 80 < ``thinking`` priority 100.
+async def test_unknown_kind_falls_back_to_general() -> None:
+    """Tier 2: unknown kind falls back to ``general`` (not ``thinking``).
 
-    During an active LLM call, an error sticky must NOT yank the
-    ``⟳ thinking…`` indicator (= the user needs both signals — the
-    error is recorded as a conv-log line elsewhere, the thinking
-    must keep ticking). Lower-priority suppression catches this.
+    ``show()`` formerly fell back to ``kind="thinking"`` for unknown
+    kinds. After ``"thinking"`` was removed, the fallback is now
+    ``"general"``.
     """
     from reyn.chat.tui.app import ReynTUIApp
 
@@ -96,12 +99,11 @@ async def test_error_does_not_overwrite_active_thinking() -> None:
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         s = await _sticky(pilot)
-        s.show("thinking…", kind="thinking")
-        s.show("backround validation failed", kind="error")
+        s.show("some message", kind="unknown_kind")
         snap = s.snapshot()
-        # Thinking stays.
-        assert snap["kind"] == "thinking"
-        assert snap["body"] == "thinking…"
+        assert snap["kind"] == "general", (
+            f"unknown kind should fall back to 'general', got {snap['kind']!r}"
+        )
 
 
 @pytest.mark.asyncio
@@ -124,5 +126,5 @@ async def test_error_glyph_resolves_to_check_cross() -> None:
         assert s._glyph == "✗", (
             f"error kind glyph should be ✗, got {s._glyph!r}"
         )
-        # And the thinking glyph must NOT have been selected.
+        # And the old thinking glyph must NOT have been selected.
         assert s._glyph != "⟳"

@@ -344,9 +344,10 @@ class OutboxRouter:
     ) -> str:
         """`__end__` — registry signals shutdown; loop should break.
 
-        Also clears any leftover ``⟳ thinking…`` sticky so the final
-        TUI frame on shutdown isn't a phantom indicator.
+        Also clears any leftover ``⟳ thinking…`` sticky and inline spinner
+        so the final TUI frame on shutdown isn't a phantom indicator.
         """
+        conv.stop_thinking()
         conv.hide_status()
         return _STOP
 
@@ -390,6 +391,7 @@ class OutboxRouter:
             app._agent_name = new_name
             header.refresh_status(agent_name=new_name)
             self._cancel_transient_timer()
+            conv.stop_thinking()
             conv.hide_status()
             # Capture the running-skill identities BEFORE conv.clear() so
             # we can leave a breadcrumb after the wipe. Without this, a
@@ -917,11 +919,12 @@ class OutboxRouter:
         app = self._app
         msg_id = msg.meta.get("msg_id", id(msg))
         app._current_stream_id = msg_id
-        # Hide the "thinking…" sticky now that the reply is starting. Cancel
-        # any pending transient timer too — a transient that fired right
-        # before the reply must not auto-hide a fresh sticky armed later
-        # in this same turn.
+        # Stop the inline thinking spinner and clear sticky now that the reply
+        # is starting. Cancel any pending transient timer too — a transient
+        # that fired right before the reply must not auto-hide a fresh sticky
+        # armed later in this same turn.
         self._cancel_transient_timer()
+        conv.stop_thinking()
         conv.hide_status()
         conv.begin_stream(msg_id, app._agent_name)
 
@@ -974,9 +977,9 @@ class OutboxRouter:
     ) -> None:
         """`intervention` — mount inline ask_user widget.
 
-        Hides the sticky ``⟳ thinking…`` indicator first: while the
-        agent is waiting for a human answer, "thinking" is misleading
-        — the system is blocked on user input, not on the model.
+        Unmounts the inline thinking spinner first: while the agent is
+        waiting for a human answer, the spinner is misleading — the system
+        is blocked on user input, not on the model.
 
         Computes ``queued_extra`` from the session's intervention registry
         so the widget can render a persistent ``+N more pending`` badge.
@@ -984,6 +987,7 @@ class OutboxRouter:
         by the next ``thinking…`` event, so we need an inline persistent
         signal instead.
         """
+        conv.stop_thinking()
         conv.hide_status()
         iv_id = msg.meta.get("intervention_id", "")
         raw_choices = msg.meta.get("choices")
@@ -1159,7 +1163,7 @@ class OutboxRouter:
                 current_body = str(snap.get("body", ""))
                 if _is_plan_sourced_body(current_body):
                     return  # don't overwrite the higher-priority plan status
-        conv.show_status(msg.text, kind="thinking")
+        conv.start_thinking()
 
     def _on_system(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
@@ -1233,7 +1237,7 @@ class OutboxRouter:
     ) -> None:
         """`error` — render via conv (mounts ErrorBox) + remember focal tab.
 
-        Also clears the sticky ``⟳ thinking…`` indicator: a turn that
+        Also unmounts the inline spinner and clears the sticky: a turn that
         ends in error never reaches `__stream_start__` / `agent`, so
         without this the indicator would stick around indefinitely.
 
@@ -1255,6 +1259,7 @@ class OutboxRouter:
         normal server-side error frames on the existing transient path —
         only the WS-disconnect source triggers the persistent lock.
         """
+        conv.stop_thinking()
         conv.hide_status()
         conv.render_message(msg)
         self._app._last_focal_tab = "events"

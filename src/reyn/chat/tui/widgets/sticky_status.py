@@ -1,31 +1,33 @@
 """StickyStatus — a 1-line status bar pinned to the bottom of the conversation pane.
 
-Shows a live "currently happening" message with an elapsed timer that updates
-every 0.1 s. Auto-hides when nothing is being reported. Intended to replace
-inline "⟳ thinking…" log lines with a non-intrusive persistent indicator.
+Shows a currently-happening message. Auto-hides when nothing is being
+reported. Used for error notices, turn-position flashes, and "awaiting your
+answer" badges. The ``⟳ thinking…`` kind has been replaced by the inline
+Braille spinner (``InlineThinkingRow``).
 
 Usage::
 
     status = StickyStatus(id="sticky-status")
     await conversation.mount(status)
-    status.show("thinking", kind="thinking")
+    status.show("⚑ awaiting your answer", kind="general")
     # … later …
     status.hide()
 """
 from __future__ import annotations
 
-import time
-
 from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _AMBER, _CORAL
+from reyn.chat.tui._palette import _CORAL
 
 _TICK_INTERVAL_S = 0.1  # elapsed timer refresh rate
 
 _GLYPHS: dict[str, str] = {
-    "thinking": "⟳",
+    # ``"thinking"`` was removed — the inline Braille spinner
+    # (``InlineThinkingRow``) now handles the LLM-in-flight indicator
+    # directly in the conv pane flow. The sticky is no longer used for
+    # thinking state.
     "general": "●",
     # Wave-10 I-F1: ``"error"`` was passed by 7+ call sites
     # (``app_outbox._show_transient_status`` for ``/copy`` failures,
@@ -62,15 +64,12 @@ _GLYPHS: dict[str, str] = {
 # expected behaviour for genuine status updates, e.g. ``thinking`` →
 # ``thinking`` body update).
 _KIND_PRIORITY: dict[str, int] = {
-    # Live load-bearing state — must not be displaced by transients.
-    "thinking": 100,
+    # ``"thinking"`` removed — the inline Braille spinner
+    # (``InlineThinkingRow``) replaces the sticky thinking indicator.
     # Wave-10 I-F1: critical transient signal — an action failed and
     # the user needs to notice. Higher than ``general`` (= routine
     # breadcrumbs / turn-position flashes shouldn't overwrite an
-    # error the user hasn't read yet) but lower than ``thinking`` —
-    # if the LLM is mid-call, the live indicator stays visible and
-    # the error log line in the conv pane remains the load-bearing
-    # record.
+    # error the user hasn't read yet).
     "error": 80,
     # Transient flashes / breadcrumbs / one-shot notices.
     "general": 50,
@@ -109,10 +108,9 @@ class StickyStatus(Static):
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__("", id=id)
         self._active: bool = False
-        self._kind: str = "thinking"
-        self._glyph: str = _GLYPHS["thinking"]
+        self._kind: str = "general"
+        self._glyph: str = _GLYPHS["general"]
         self._body: str = ""
-        self._start: float = 0.0
 
     def on_mount(self) -> None:
         """Start the 0.1 s elapsed timer tick."""
@@ -120,19 +118,22 @@ class StickyStatus(Static):
 
     # ── public API ────────────────────────────────────────────────────────────
 
-    def show(self, text: str, kind: str = "thinking") -> None:
+    def show(self, text: str, kind: str = "general") -> None:
         """Activate the status bar with the given body text and glyph kind.
 
         Wave-10 G-F8 + I-F8: when the sticky is already active with a
         higher-priority ``kind``, a lower-priority ``show()`` is
         silently suppressed (= the call is a no-op). This protects
-        load-bearing live indicators (``⟳ thinking…``) from being
-        displaced by transient breadcrumbs (turn-position flash,
-        boundary hint). Same-or-higher priority overwrites freely.
+        load-bearing error notices from being displaced by transient
+        breadcrumbs (turn-position flash, boundary hint). Same-or-higher
+        priority overwrites freely.
 
         ``hide()`` is unconditional — explicit dismissal always wins.
+
+        Note: ``kind="thinking"`` is no longer valid — use
+        ``ConversationView.start_thinking()`` for the inline spinner.
         """
-        new_kind = kind if kind in _GLYPHS else "thinking"
+        new_kind = kind if kind in _GLYPHS else "general"
         if self._active:
             current_priority = _KIND_PRIORITY.get(self._kind, 0)
             new_priority = _KIND_PRIORITY.get(new_kind, 0)
@@ -140,7 +141,6 @@ class StickyStatus(Static):
                 return
         self._kind = new_kind
         self._glyph = _GLYPHS[self._kind]
-        self._start = time.monotonic()
         self._active = True
         self.add_class("active")
         self.update_text(text)
@@ -173,44 +173,18 @@ class StickyStatus(Static):
         self._repaint()
 
     def _repaint(self) -> None:
-        elapsed = max(0.1, time.monotonic() - self._start)
         # On 8-color terminals, hex _CORAL (#C8553D) degrades to ANSI bright
-        # red — confusable with error indicators. The thinking sticky shows
-        # while the agent is working, so route its glyph through _AMBER
-        # (which degrades to ANSI yellow / bright yellow) — neutrally
-        # signalling "in progress" rather than "alert". The error kind
-        # WANTS to read as alert, so bold red (#aa6666). General keeps
-        # _CORAL since it's a transient flash, not the load-bearing "is
-        # the agent working?" indicator.
-        if self._kind == "thinking":
-            glyph_color = _AMBER
-        elif self._kind == "error":
+        # red — confusable with error indicators. The error kind WANTS to
+        # read as alert, so bold red (#aa6666). General keeps _CORAL since
+        # it's a transient flash. (The ``"thinking"`` kind is no longer
+        # handled here — the inline Braille spinner replaced it.)
+        if self._kind == "error":
             glyph_color = "bold #aa6666"
         else:
             glyph_color = _CORAL
-        # Wave-10 follow-up I-F2: elapsed suffix is only meaningful for
-        # the ``thinking`` kind (= the user genuinely wants to know how
-        # long the agent has been working). For ``general`` (turn-flash,
-        # boundary hint, breadcrumb) and ``error`` (one-shot failure
-        # notice), elapsed is noise — a turn flash like
-        # ``↑ turn 3 / 8  · 1.4s`` reads as "this turn marker has been
-        # showing for 1.4s", which the user neither needs nor expects.
-        # The internal ``_start`` is still refreshed on every ``show()``
-        # so the value is meaningful for any future kind that opts in.
-        # Total cells in the fixed-width suffix segments so we can truncate
-        # the body when narrow terminals would otherwise clip the
-        # ``Ctrl+C cancel`` hint behind the right edge.
+        # Chrome budget: glyph + 1 space + padding 0 1 (= 2 cells) + 1 margin.
         glyph_cells = cell_len(self._glyph) + 1  # ``<glyph> ``
-        elapsed_suffix = (
-            f" · {elapsed:.1f}s" if self._kind == "thinking" else ""
-        )
-        elapsed_cells = cell_len(elapsed_suffix)
-        cancel_suffix = "  · Ctrl+C cancel" if self._kind == "thinking" else ""
-        cancel_cells = cell_len(cancel_suffix)
-        # Padding 0 1 → 2 cells consumed; another 1-cell safety margin
-        # keeps the body off the right edge even if Textual reserves
-        # something additional (cursor / scrollbar on certain themes).
-        chrome_cells = glyph_cells + elapsed_cells + cancel_cells + 2 + 1
+        chrome_cells = glyph_cells + 2 + 1
         available = max(0, int(getattr(self.size, "width", 0)) - chrome_cells)
         body = self._body
         if available > 0 and cell_len(body) > available:
@@ -228,8 +202,4 @@ class StickyStatus(Static):
         t = Text()
         t.append(self._glyph + " ", style=glyph_color)
         t.append(body, style="dim italic")
-        if elapsed_suffix:
-            t.append(elapsed_suffix, style="dim italic")
-        if cancel_suffix:
-            t.append(cancel_suffix, style="dim italic")
         self.update(t)

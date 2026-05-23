@@ -58,6 +58,7 @@ from reyn.chat.tui._palette import _AMBER, _CORAL
 from .async_stack_panel import AsyncStackPanel
 from .error_box import ErrorBox
 from .foldable_markdown import FoldableMarkdown
+from .inline_thinking_row import InlineThinkingRow
 from .intervention import InterventionWidget
 from .skill_activity import SkillActivityRow
 from .sticky_status import StickyStatus
@@ -723,6 +724,7 @@ class ConversationView(Widget):
         deserve the same visual weight as a slash-command output.
         """
         self._consume_empty_hint()
+        self.stop_thinking()
         self.hide_status()
         text = msg.text or ""
         if _is_lifecycle_marker(text):
@@ -744,7 +746,8 @@ class ConversationView(Widget):
         was active for this turn.
         """
         self._consume_empty_hint()
-        self.hide_status()  # turn finished — clear "thinking…" sticky
+        self.stop_thinking()  # turn finished — unmount inline spinner
+        self.hide_status()    # also clear any sticky status
         meta_pfx = _meta_prefix(msg.meta)
         label = f"reyn  {meta_pfx}".rstrip() if meta_pfx else "reyn"
         # _AMBER for agent identity (header label) — distinct from _CORAL
@@ -992,6 +995,7 @@ class ConversationView(Widget):
         full = row.full_text()
         # Seal stops the cursor + 16ms tick.
         row.seal()
+        self.stop_thinking()  # unmount inline spinner (turn reply started)
         self.hide_status()
         if full:
             try:
@@ -1038,6 +1042,7 @@ class ConversationView(Widget):
             return ""
         full = row.full_text()
         row.seal()
+        self.stop_thinking()  # unmount inline spinner (cancelled stream)
         self.hide_status()
         if full:
             # Wave-10 G-F10: stash the partial in the recent-replies ring
@@ -1365,7 +1370,7 @@ class ConversationView(Widget):
 
     # ── sticky status (A3) ────────────────────────────────────────────────────
 
-    def show_status(self, text: str, kind: str = "thinking") -> None:
+    def show_status(self, text: str, kind: str = "general") -> None:
         s = self._sticky()
         if s is not None:
             s.show(text, kind=kind)
@@ -1379,6 +1384,34 @@ class ConversationView(Widget):
         s = self._sticky()
         if s is not None:
             s.hide()
+
+    # ── inline thinking spinner (A3b) ─────────────────────────────────────────
+
+    _THINKING_ROW_ID = "inline-thinking-row"
+
+    def start_thinking(self) -> None:
+        """Mount an InlineThinkingRow in the conv pane flow, below the last message.
+
+        Idempotent: calling twice mounts only one row (= second call is a
+        no-op when a row is already present).
+        """
+        try:
+            # Already mounted — idempotent.
+            self.query_one(f"#{self._THINKING_ROW_ID}", InlineThinkingRow)
+        except Exception:
+            row = InlineThinkingRow(id=self._THINKING_ROW_ID)
+            self.mount(row)
+
+    def stop_thinking(self) -> None:
+        """Unmount the InlineThinkingRow if present.
+
+        Idempotent: calling without a prior ``start_thinking`` is a no-op.
+        """
+        try:
+            row = self.query_one(f"#{self._THINKING_ROW_ID}", InlineThinkingRow)
+            row.remove()
+        except Exception:
+            pass  # not mounted — idempotent
 
     # ── error box (A2) ────────────────────────────────────────────────────────
 
@@ -1423,14 +1456,14 @@ class ConversationView(Widget):
                 f"  ✗ {old_summary} (rolled to log){old_trailer}",
                 style="dim #555555",
             ))
-        # Replace the sticky "thinking…" — the turn is over (it failed).
-        # When the user is at the tail, a bare ``hide_status`` is enough
-        # (they'll see the ErrorBox the next render tick). When they're
-        # scrolled up reading history, the sticky vanishing was their
-        # only feedback that something happened — leave a "✗ error
-        # below ↓" cue so they know to scroll down. The next user
-        # submit clears it via ``on_input_bar_user_submitted``'s own
-        # ``show_status("thinking…")``.
+        # Stop the inline thinking spinner — the turn is over (it failed).
+        # When the user is at the tail, a bare ``stop_thinking`` + ``hide_status``
+        # is enough (they'll see the ErrorBox the next render tick). When
+        # they're scrolled up reading history, the spinner vanishing was their
+        # only feedback that something happened — leave a "✗ error below ↓"
+        # cue so they know to scroll down. The next user submit clears it
+        # via ``on_input_bar_user_submitted``'s own ``start_thinking()``.
+        self.stop_thinking()  # turn ended in error — unmount inline spinner
         if self._user_scrolled:
             self.show_status("✗ error below ↓", kind="general")
         else:
@@ -2155,7 +2188,8 @@ class ConversationView(Widget):
             self._log().auto_scroll = True
         except Exception:
             pass
-        # Hide sticky status
+        # Stop inline spinner and hide sticky status
+        self.stop_thinking()
         self.hide_status()
         # Restore the empty-state hint so the next session looks fresh.
         self._has_first_message = False
