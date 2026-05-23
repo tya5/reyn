@@ -27,6 +27,10 @@ _KEY_PRETTY: dict[str, str] = {
     "enter": "Enter", "tab": "Tab", "escape": "Esc", "space": "Space",
     "up": "↑", "down": "↓", "left": "←", "right": "→",
     "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4",
+    # Quick-jump number keys for the right-panel tabs (Ctrl+1 .. Ctrl+7).
+    "ctrl+1": "⌃1", "ctrl+2": "⌃2", "ctrl+3": "⌃3", "ctrl+4": "⌃4",
+    "ctrl+5": "⌃5", "ctrl+6": "⌃6", "ctrl+7": "⌃7", "ctrl+8": "⌃8",
+    "ctrl+9": "⌃9",
 }
 _CONVERSATION_KEYS = {
     "ctrl+p", "ctrl+n", "ctrl+shift+n", "ctrl+shift+p",
@@ -55,6 +59,11 @@ _CONVERSATION_KEYS = {
 _PANEL_KEYS = {
     "ctrl+o", "ctrl+w", "ctrl+shift+o", "ctrl+shift+w", "tab", "shift+tab",
     "h", "l", "j", "k", "space", "c",
+    # Quick-jump tab keys (= Ctrl+1 .. Ctrl+7). They open the panel
+    # if hidden + switch to the Nth tab, so the PANEL group is the
+    # natural home.
+    "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4",
+    "ctrl+5", "ctrl+6", "ctrl+7",
 }
 _EVENTS_KEYS = {"f", "t"}
 # ``/`` stays DOCS-only — it opens the docs name filter, no other tab

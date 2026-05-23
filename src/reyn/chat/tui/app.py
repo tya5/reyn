@@ -87,6 +87,18 @@ class ReynTUIApp(App):
         Binding("ctrl+w", "panel_next_content", "Next tab", priority=True, show=False),
         Binding("ctrl+shift+w", "panel_prev_content", "Prev tab", priority=True, show=False),
         Binding("ctrl+shift+o", "panel_prev_content", "Prev tab (alt)", priority=True, show=False),
+        # Ctrl+1 .. Ctrl+7 — jump directly to the Nth right-panel tab
+        # (browser / IDE tab convention). Opens the panel if hidden so
+        # the user gets one-keypress access from a closed-panel state.
+        # Order matches ``PANEL_TYPES`` so Ctrl+N corresponds to the
+        # visual tab order — Ctrl+1=Keys, Ctrl+2=Events, …, Ctrl+7=Pending.
+        Binding("ctrl+1", "panel_jump_keys", "Jump to Keys tab", priority=True, show=False),
+        Binding("ctrl+2", "panel_jump_events", "Jump to Events tab", priority=True, show=False),
+        Binding("ctrl+3", "panel_jump_agents", "Jump to Agents tab", priority=True, show=False),
+        Binding("ctrl+4", "panel_jump_memory", "Jump to Memory tab", priority=True, show=False),
+        Binding("ctrl+5", "panel_jump_cost", "Jump to Cost tab", priority=True, show=False),
+        Binding("ctrl+6", "panel_jump_docs", "Jump to Docs tab", priority=True, show=False),
+        Binding("ctrl+7", "panel_jump_pending", "Jump to Pending tab", priority=True, show=False),
         Binding("ctrl+p", "prev_turn", "Prev turn", priority=True, show=False),
         Binding("ctrl+n", "next_turn", "Next turn", priority=True, show=False),
         Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
@@ -1443,6 +1455,57 @@ class ReynTUIApp(App):
     def action_panel_prev_content(self) -> None:
         """ctrl+shift+w — cycle to previous panel tab (gated: panel visible only)."""
         self.query_one("#right_panel", RightPanel).cycle(-1)
+
+    def _panel_jump(self, panel_type: str) -> None:
+        """Jump directly to ``panel_type`` tab, opening the panel if hidden.
+
+        Single funnel for the seven Ctrl+1 .. Ctrl+7 quick-jump
+        actions. The action_toggle_panel path may set the tab to the
+        smart-Ctrl+B focal target (``_last_focal_tab``) on open;
+        we override that with the user's explicit choice immediately
+        afterwards, so Ctrl+N always lands on the requested tab.
+
+        Defensive on lookup failure (= panel widget missing in tests
+        that bypass standard compose).
+        """
+        try:
+            panel = self.query_one("#right_panel", RightPanel)
+        except Exception:
+            return
+        if not self._panel_visible:
+            self.action_toggle_panel()
+        try:
+            panel.set_panel_type(panel_type)
+        except Exception:
+            pass
+
+    def action_panel_jump_keys(self) -> None:
+        """Ctrl+1 — open panel + jump to the Keys tab."""
+        self._panel_jump("keys")
+
+    def action_panel_jump_events(self) -> None:
+        """Ctrl+2 — open panel + jump to the Events tab."""
+        self._panel_jump("events")
+
+    def action_panel_jump_agents(self) -> None:
+        """Ctrl+3 — open panel + jump to the Agents tab."""
+        self._panel_jump("agents")
+
+    def action_panel_jump_memory(self) -> None:
+        """Ctrl+4 — open panel + jump to the Memory tab."""
+        self._panel_jump("memory")
+
+    def action_panel_jump_cost(self) -> None:
+        """Ctrl+5 — open panel + jump to the Cost tab."""
+        self._panel_jump("cost")
+
+    def action_panel_jump_docs(self) -> None:
+        """Ctrl+6 — open panel + jump to the Docs tab."""
+        self._panel_jump("docs")
+
+    def action_panel_jump_pending(self) -> None:
+        """Ctrl+7 — open panel + jump to the Pending tab."""
+        self._panel_jump("pending")
 
     def action_event_filter_cycle(self) -> None:
         """f — rotate event filter (gated: events tab visible)."""
