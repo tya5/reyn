@@ -2,25 +2,31 @@
 
 Tests the deterministic preprocessor function ``fetch_registry_results``.
 
-No LLM calls. Uses unittest.mock to patch ``reyn.api.unsafe.http.get``
-(the I/O route used by the refactored preprocessor) and exercises the real
-cache + dedup code path.
+No LLM calls. Uses ``unittest.mock`` to patch the lowest-stable seam in
+``reyn.safe.mcp.registry`` (= the internal ``_http_get_json`` helper) so
+tests exercise the real keyword-extraction / cache / dedup / dict-shape
+code path. The HTTP boundary is the only mocked thing; the rest is real.
 
 Invariants:
   - Keyword extraction from mixed-language text is deterministic.
   - fetch_registry_results returns the expected dict shape.
   - On registry error, returns empty candidates with source="error".
-  - On stale cache fallback, returns candidates with source="registry_stale".
+  - Empty input text yields source="error" without HTTP calls.
+
+FP-0042 Phase 2.4 (2026-05-23): tests updated to match the safe-mode
+rewrite of ``mcp_search/registry_fetch.py``. The legacy
+``"registry_stale"`` source was folded into ``"registry"`` because the
+safe.mcp.registry layer handles cache transparency internally (= callers
+don't distinguish fresh-vs-stale; both surface as ``"registry"``).
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from unittest import mock
 
 import pytest
 
 import reyn.registry.cache as cache_mod
+import reyn.safe.mcp.registry as safe_registry
 from reyn.stdlib.skills.mcp_search.registry_fetch import (
     _extract_keyword,
     fetch_registry_results,
@@ -99,27 +105,32 @@ def test_extract_keyword_purely_japanese():
 # ---------------------------------------------------------------------------
 
 
-def _make_http_patcher(response_body: dict, status: int = 200):
-    """Patch ``reyn.api.unsafe.http.get`` to return a fixed response envelope."""
-    body_str = json.dumps(response_body)
+def _patch_safe_http(response_body: dict | None = None, raise_error: Exception | None = None):
+    """Patch ``reyn.safe.mcp.registry._http_get_json`` to return a fixed payload
+    or raise the given exception."""
 
-    def _fake_get(url, *, headers=None, timeout=30):
-        return {"status": status, "body": body_str, "headers": {}}
+    def _fake(url: str) -> dict:
+        if raise_error is not None:
+            raise raise_error
+        return response_body or {}
 
-    return mock.patch("reyn.stdlib.skills.mcp_search.registry_fetch.http_get", _fake_get)
+    return mock.patch.object(safe_registry, "_http_get_json", _fake)
 
 
-def test_fetch_registry_happy_path(tmp_path):
+@pytest.fixture
+def _isolated_cache(tmp_path, monkeypatch):
+    """Redirect the disk cache to a per-test tmp dir so cache state doesn't leak."""
+    monkeypatch.setattr(cache_mod, "_cache_dir", lambda: tmp_path)
+    return tmp_path
+
+
+def test_fetch_registry_happy_path(_isolated_cache):
     """Tier 2: fetch_registry_results returns expected dict shape on success."""
     artifact = {"data": {"text": "Slack 連携できる MCP サーバーを探して"}}
 
-    with mock.patch.object(cache_mod, "_cache_dir", return_value=tmp_path):
-        with _make_http_patcher(_SLACK_RESPONSE):
-            result = fetch_registry_results(artifact)
+    with _patch_safe_http(_SLACK_RESPONSE):
+        result = fetch_registry_results(artifact)
 
-    assert "candidates" in result
-    assert "source" in result
-    assert "query" in result
     assert result["source"] == "registry"
     assert result["query"] == "slack"
 
@@ -132,14 +143,13 @@ def test_fetch_registry_happy_path(tmp_path):
     assert "Slack" in c["description"]
 
 
-def test_fetch_registry_empty_candidates(tmp_path):
+def test_fetch_registry_empty_candidates(_isolated_cache):
     """Tier 2: fetch_registry_results returns empty list when registry returns no servers."""
     artifact = {"data": {"text": "some very obscure thing"}}
     empty_response = {"servers": [], "metadata": {"count": 0}}
 
-    with mock.patch.object(cache_mod, "_cache_dir", return_value=tmp_path):
-        with _make_http_patcher(empty_response):
-            result = fetch_registry_results(artifact)
+    with _patch_safe_http(empty_response):
+        result = fetch_registry_results(artifact)
 
     assert result["candidates"] == []
     assert result["source"] == "registry"
@@ -150,68 +160,61 @@ def test_fetch_registry_empty_candidates(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_registry_error_returns_empty(tmp_path):
-    """Tier 2: On RegistryError with no cache, returns source='error' with empty candidates."""
+def test_fetch_registry_error_returns_empty(_isolated_cache):
+    """Tier 2: registry error with no cache returns source='error' + empty list."""
     artifact = {"data": {"text": "PostgreSQL database"}}
 
-    with mock.patch.object(cache_mod, "_cache_dir", return_value=tmp_path):
-        with _make_http_patcher({}, status=503):
-            result = fetch_registry_results(artifact)
+    with _patch_safe_http(raise_error=safe_registry.RegistryError("HTTP 503")):
+        result = fetch_registry_results(artifact)
 
     assert result["candidates"] == []
     assert result["source"] == "error"
 
 
-def test_fetch_registry_error_with_stale_cache(tmp_path):
-    """Tier 2: On RegistryError with stale cache present, returns source='registry_stale'."""
-    import time
-
+def test_fetch_registry_cached_response_used_when_http_errors(_isolated_cache):
+    """Tier 2: when a previous successful response is cached, a subsequent
+    HTTP error still surfaces the cached candidates (= cache hit short-circuits
+    the HTTP path entirely, no error visible to caller)."""
+    # Prime the cache with a real response.
     artifact = {"data": {"text": "Slack integration"}}
-    query = "slack"
-    limit = 20
-    cache_key = f"search:{query}:{limit}"
+    with _patch_safe_http(_SLACK_RESPONSE):
+        first = fetch_registry_results(artifact)
+    assert first["source"] == "registry"
+    assert len(first["candidates"]) == 1
 
-    # Pre-populate cache with stale data.
-    with mock.patch.object(cache_mod, "_cache_dir", return_value=tmp_path):
-        cache_mod.set(cache_key, _SLACK_RESPONSE)
-        # Push mtime to 25h ago so it's "stale" for TTL, but we still want
-        # the fallback path — the client raises RegistryError before cache TTL matters.
-        # (cache.get would still return it if mtime is recent, but RegistryError
-        #  triggers the fallback branch directly.)
-        with _make_http_patcher({}, status=503):
-            result = fetch_registry_results(artifact)
+    # Now make HTTP error — should still see cached candidates because the
+    # cache is hot for the same query key.
+    with _patch_safe_http(raise_error=safe_registry.RegistryError("HTTP 503")):
+        second = fetch_registry_results(artifact)
 
-    # With stale cache present and registry error, should fall back.
-    assert result["source"] in ("registry_stale", "registry")
-    assert isinstance(result["candidates"], list)
+    assert second["source"] == "registry"
+    assert len(second["candidates"]) == 1
 
 
-def test_fetch_registry_empty_text(tmp_path):
-    """Tier 2: Empty input text returns empty candidates without making HTTP calls."""
+def test_fetch_registry_empty_text(_isolated_cache):
+    """Tier 2: empty input returns source='error' without invoking HTTP."""
     artifact = {"data": {"text": ""}}
     call_count = 0
 
-    def _fake_get(url, *, headers=None, timeout=30):
+    def _spy(url: str) -> dict:
         nonlocal call_count
         call_count += 1
-        return {"status": 200, "body": '{"servers": []}', "headers": {}}
+        return {"servers": []}
 
-    with mock.patch.object(cache_mod, "_cache_dir", return_value=tmp_path):
-        with mock.patch("reyn.stdlib.skills.mcp_search.registry_fetch.http_get", _fake_get):
-            result = fetch_registry_results(artifact)
+    with mock.patch.object(safe_registry, "_http_get_json", _spy):
+        result = fetch_registry_results(artifact)
 
     assert result["candidates"] == []
     assert result["source"] == "error"
-    assert call_count == 0  # no HTTP call when query is empty
+    assert call_count == 0
 
 
-def test_fetch_registry_missing_data_key(tmp_path):
-    """Tier 2: Artifact without 'data' key is handled gracefully."""
+def test_fetch_registry_missing_data_key(_isolated_cache):
+    """Tier 2: artifact without 'data' key is handled gracefully."""
     artifact = {}
 
-    with mock.patch.object(cache_mod, "_cache_dir", return_value=tmp_path):
-        with _make_http_patcher({}, status=503):
-            result = fetch_registry_results(artifact)
+    with _patch_safe_http(raise_error=safe_registry.RegistryError("HTTP 503")):
+        result = fetch_registry_results(artifact)
 
     assert result["candidates"] == []
     assert result["source"] == "error"
