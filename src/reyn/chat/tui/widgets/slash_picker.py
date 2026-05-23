@@ -74,6 +74,20 @@ class SlashPicker(Static):
         # selection caret, no keyboard intercept.
         self._completions: list[str] = []
         self._total_completions: int = 0
+        # Unknown-command hint state. Set by ``set_unknown_hint`` when the
+        # user types a slash token that doesn't prefix any known command
+        # (= picker would otherwise silently hide, leaving the user with
+        # no in-input feedback that they're typing nonsense). Renders a
+        # single dim row reading ``unknown /<typed> — did you mean /<…>?``.
+        self._unknown_token: str = ""
+        self._unknown_suggestions: list[str] = []
+        # Cached copy of the most-recently-rendered Text (= what's
+        # currently displayed). Updated on every ``_repaint``. Read by
+        # ``rendered_text`` for inspection — used by Tier 2 tests to
+        # assert on the visible content without reaching into Textual's
+        # private Static internals (= ``Static.renderable`` is API-
+        # unstable across versions, sometimes ``_renderable``).
+        self._rendered_cache = ""
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -92,6 +106,17 @@ class SlashPicker(Static):
     def has_matches(self) -> bool:
         return bool(self._matches)
 
+    def rendered_text(self) -> str:
+        """Plain-text rendering of the last frame sent to ``Static.update``.
+
+        Stable testing surface — ``Static.renderable`` is API-unstable
+        across Textual versions (sometimes ``_renderable``, sometimes
+        a different accessor), so the picker caches the rendered Text
+        on every ``_repaint`` and exposes it here. Returns "" when the
+        picker is empty / hidden.
+        """
+        return self._rendered_cache
+
     def set_matches(self, matches: list[SlashCommand]) -> None:
         """Replace the match list. Resets selection to row 0."""
         self._total_matches = len(matches)
@@ -100,6 +125,8 @@ class SlashPicker(Static):
         self._hint_cmd = None
         self._completions = []
         self._total_completions = 0
+        self._unknown_token = ""
+        self._unknown_suggestions = []
         self.remove_class("hint-active")
         if self._matches:
             self.add_class("visible")
@@ -127,6 +154,8 @@ class SlashPicker(Static):
         self._hint_cmd = cmd
         self._completions = []
         self._total_completions = 0
+        self._unknown_token = ""
+        self._unknown_suggestions = []
         self.remove_class("visible")
         self.add_class("hint-active")
         self._repaint()
@@ -148,7 +177,39 @@ class SlashPicker(Static):
         self._hint_cmd = cmd
         self._total_completions = len(completions)
         self._completions = list(completions)[:_MAX_VISIBLE]
+        self._unknown_token = ""
+        self._unknown_suggestions = []
         self.remove_class("visible")
+        self.add_class("hint-active")
+        self._repaint()
+
+    def set_unknown_hint(self, typed: str, suggestions: list[str]) -> None:
+        """Show a single dim row reading ``unknown /<typed> — did you mean /<…>?``.
+
+        Used when the user has typed a slash token (= ``/xxxx``) that
+        doesn't prefix any registered command. Without this, the picker
+        silently hides and the user gets no in-input feedback that the
+        command is invalid — they only learn on submit, after the
+        backend returns an "unknown command" error.
+
+        ``typed`` is the typed token WITHOUT the leading ``/``;
+        ``suggestions`` is the prefix-suggestion list (already capped
+        upstream by ``suggest_for_unknown``). Same informational-only
+        contract as hint mode: no caret, no keyboard intercept; the
+        user keeps typing and Enter still submits whatever they have.
+        """
+        self._matches = []
+        self._total_matches = 0
+        self._selected = 0
+        self._hint_cmd = None
+        self._completions = []
+        self._total_completions = 0
+        self._unknown_token = typed
+        self._unknown_suggestions = list(suggestions)
+        self.remove_class("visible")
+        # Re-use the same display gate as hint mode so the existing
+        # ``visible_`` predicate (= matches-only) stays accurate and
+        # downstream keyboard/click paths skip via ``has_matches``.
         self.add_class("hint-active")
         self._repaint()
 
@@ -158,6 +219,8 @@ class SlashPicker(Static):
         self._hint_cmd = None
         self._completions = []
         self._total_completions = 0
+        self._unknown_token = ""
+        self._unknown_suggestions = []
         self.remove_class("visible")
         self.remove_class("hint-active")
         self._repaint()
@@ -212,8 +275,11 @@ class SlashPicker(Static):
         if not self._matches:
             if self._hint_cmd is not None:
                 self._repaint_hint()
+            elif self._unknown_token:
+                self._repaint_unknown_hint()
             else:
                 self.update("")
+                self._rendered_cache = ""
             return
 
         # Width for the command-name column (left)
@@ -266,6 +332,7 @@ class SlashPicker(Static):
                 style="dim #888888",
             )
         self.update(body)
+        self._rendered_cache = str(body.plain)
 
     def _repaint_hint(self) -> None:
         """Render a single dim hint row showing the matched command's summary.
@@ -278,6 +345,7 @@ class SlashPicker(Static):
         cmd = self._hint_cmd
         if cmd is None:
             self.update("")
+            self._rendered_cache = ""
             return
         try:
             term_w = self.app.size.width
@@ -311,3 +379,33 @@ class SlashPicker(Static):
                     style="dim #555555",
                 )
         self.update(t)
+        self._rendered_cache = str(t.plain)
+
+    def _repaint_unknown_hint(self) -> None:
+        """Render the unknown-command in-input feedback line.
+
+        Shape:
+            unknown /xxxx — did you mean /find /save /help?
+
+        The leading "unknown" is dim red so the user notices the
+        feedback at a glance; the suggestion list is dim grey so it
+        reads as helpful context, not as a separate error. Without
+        ``suggest_for_unknown`` upstream we just say "did you mean
+        /help?" because ``suggest_for_unknown`` always falls back
+        to that.
+        """
+        typed = self._unknown_token
+        suggestions = self._unknown_suggestions
+        t = Text()
+        t.append("  ", style="#1a1a1a")
+        t.append("unknown ", style="dim #d4756a")
+        t.append(f"/{typed}", style="dim #d4756a")
+        if suggestions:
+            t.append("  — did you mean ", style="dim #888888")
+            for i, sug in enumerate(suggestions):
+                if i > 0:
+                    t.append(" ", style="dim #888888")
+                t.append(f"/{sug}", style="dim #aaaaaa")
+            t.append("?", style="dim #888888")
+        self.update(t)
+        self._rendered_cache = str(t.plain)

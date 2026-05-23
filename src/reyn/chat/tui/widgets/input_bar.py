@@ -468,6 +468,23 @@ class InputBar(Widget):
             c for c in self._slash_commands
             if c.name.startswith(token)
         ]
+        # Unknown-command in-input feedback: when the token is
+        # non-empty (= the user is actively typing a command name)
+        # but no command matches the prefix, surface a dim "did you
+        # mean /<sug>?" row instead of silently hiding the picker.
+        # Without this the user only learns the command is invalid
+        # after pressing Enter, when the backend returns "unknown
+        # command". ``suggest_for_unknown`` already gives us up to 3
+        # fuzzy matches + /help as the escape hatch.
+        if token and not matches:
+            from reyn.chat.slash import suggest_for_unknown
+            picker.set_unknown_hint(
+                token,
+                suggest_for_unknown(
+                    token, names=[c.name for c in self._slash_commands],
+                ),
+            )
+            return
         # Alphabetical so muscle memory built from /help (which lists
         # alphabetically) transfers to the picker. The previous
         # ``(len(name), name)`` ordering pushed common-but-longer
