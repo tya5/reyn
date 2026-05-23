@@ -3704,7 +3704,28 @@ class ChatSession:
                 text=f"unknown command /{cmd}; try: {known}",
             ))
             return True
+        # Wave-13 T2-3: recall hint — detect if the handler emitted an error
+        # and surface a one-shot "↑ to recall" sticky so the user can
+        # re-edit instead of retyping from scratch.  We snapshot the queue
+        # size before the call and inspect only the new items afterwards via
+        # ``outbox._queue[pre_size:]`` (= asyncio.Queue internal deque slice;
+        # read-only, best-effort — the try/except ensures a CPython internals
+        # change never breaks slash dispatch).
+        pre_size = self.outbox.qsize()
         await slash_cmd.handler(self, args)
+        try:
+            new_items = list(self.outbox._queue)[pre_size:]  # type: ignore[attr-defined]
+            had_error = any(
+                getattr(item, "kind", None) == "error" for item in new_items
+            )
+        except Exception:
+            had_error = False
+        if had_error:
+            await self._put_outbox(OutboxMessage(
+                kind="status",
+                text=f"↑ to recall `/{cmd}`",
+                meta={"source": "slash_recall_hint"},
+            ))
         return True
 
     # NOTE: the 7 ``_slash_*`` handlers (list / cancel / answer / agents /

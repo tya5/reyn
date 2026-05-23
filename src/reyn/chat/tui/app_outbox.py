@@ -1154,6 +1154,14 @@ class OutboxRouter:
         """
         self._cancel_transient_timer()
         incoming_source = (msg.meta or {}).get("source")
+        # Wave-13 T2-3: slash error recall hint — show as a 3 s transient
+        # ``general`` sticky so it auto-hides and doesn't override an
+        # in-progress thinking indicator once the user re-submits.
+        if incoming_source == "slash_recall_hint":
+            self._show_transient_status(
+                conv, msg.text, kind="general", duration=3.0,
+            )
+            return
         if incoming_source != "plan":
             try:
                 snap = conv._sticky().snapshot() if conv._sticky() else None
