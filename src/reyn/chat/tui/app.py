@@ -101,8 +101,8 @@ class ReynTUIApp(App):
         Binding("ctrl+7", "panel_jump_pending", "Jump to Pending tab", priority=True, show=False),
         Binding("ctrl+p", "prev_turn", "Prev turn", priority=True, show=False),
         Binding("ctrl+n", "next_turn", "Next turn", priority=True, show=False),
-        Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
-        Binding("t", "event_tail_cycle", "Tail events", priority=True, show=False),
+        Binding("f", "event_filter_cycle", "Filter events (events tab)", priority=True, show=False),
+        Binding("t", "event_tail_cycle", "Tail events (events tab) / memory filter (memory tab)", priority=True, show=False),
         # Primary voice toggle: ctrl+r (Record). F2 kept as alias because it
         # ships with the user guide, but many terminals — and macOS by default
         # — intercept F-keys before they reach Textual.

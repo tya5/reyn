@@ -632,6 +632,26 @@ class RightPanel(Widget):
                 # Wasn't already-isolated AND toggle returned False →
                 # cursor event has no chain_id. Surface a hint.
                 self._flash_status("chain_id missing; cannot isolate")
+        elif event.key == "f" and self._panel_type != "events":
+            # T2-3 (Wave-12 B#5): ``f`` is only meaningful on the Events tab.
+            # When the panel is on another tab, the app-level ``event_filter_cycle``
+            # action silently no-ops (check_action returns False). Surface a
+            # flash hint so the silent no-op stops being mysterious.
+            event.prevent_default()
+            self._flash_status("'f' only active on the Events tab")
+        elif event.key == "t" and self._panel_type not in ("events", "memory"):
+            # T2-3 (Wave-12 B#5): ``t`` is tab-gated (events tab → tail cycle;
+            # memory tab → type filter). On any other tab it is silent no-op;
+            # flash a hint so the user knows what tab to switch to.
+            event.prevent_default()
+            self._flash_status("'t' active on Events tab or Memory tab")
+        elif event.key == "i" and self._panel_type != "events":
+            # T2-3 (Wave-12 B#5): ``i`` is only meaningful on the Events tab.
+            # The app-level binding doesn't gate this — RightPanel.on_key
+            # owns it exclusively and only matches events panel above. Surface
+            # a flash for the wrong-tab case.
+            event.prevent_default()
+            self._flash_status("'i' only active on the Events tab")
         elif event.key == "a" and self._panel_type == "agents":
             # Wave-10 follow-up H-F11: Agents tab `a` = switch to the
             # cursor's agent. Mirrors the per-tab action idiom landed

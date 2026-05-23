@@ -12,10 +12,8 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Inline detail table (T1-4, Wave-12).
+# Inline detail table (T1-4 / T2-3, Wave-12).
 # Maps the lowercase key string → multi-line "what does this REALLY do" text.
-# Initial 6 entries; content sweep (Tab / Up / Down / F2 / f / t / i / etc.)
-# is deferred to Wave-12 T2-3.
 # ---------------------------------------------------------------------------
 _KEY_DETAILS: dict[str, str] = {
     "f3": (
@@ -47,6 +45,37 @@ _KEY_DETAILS: dict[str, str] = {
         "Toggle voice recording. While recording: Enter stops, transcribes,\n"
         "and submits immediately (= dictate-and-send). Esc cancels.\n"
         "F2 is an alias (macOS may intercept F2 — prefer Ctrl+R there)."
+    ),
+    # T2-3 content sweep additions (Wave-12 Topic B #5 / #6 / #7 / #8).
+    "tab": (
+        "Confirm slash-picker selection (when picker is open).\n"
+        "No-op when picker is closed."
+    ),
+    "up": (
+        "Picker selection up (when picker is open).\n"
+        "Else: history previous, but only when cursor is on the\n"
+        "first row of the input textarea."
+    ),
+    "down": (
+        "Picker selection down (when picker is open).\n"
+        "Else: history next, but only when cursor is on the last\n"
+        "row of the input textarea."
+    ),
+    "f2": (
+        "Alias of Ctrl+R (voice toggle). macOS may intercept F2\n"
+        "for built-in shortcuts — prefer Ctrl+R there."
+    ),
+    "f": (
+        "Cycle the Events tab filter (groups: all / errors / actions /\n"
+        "phase / plan). Only active on the Events tab."
+    ),
+    "t": (
+        "Tail events (Events tab) OR cycle memory type filter\n"
+        "(Memory tab). Tab-gated — silent no-op on other tabs."
+    ),
+    "i": (
+        "Isolate the cursor's chain in the Events tab — hides events\n"
+        "not in the same chain_id. Only active on the Events tab."
     ),
 }
 
@@ -234,8 +263,9 @@ def render_keys(
         ("a", "Attach to cursor agent (agents tab)"),
         # Wave-11 A#2: ``i`` on the Events tab isolates the cursor's
         # chain_id so the user can read one chain's lifecycle without
-        # interleaving noise from other concurrent chains.
-        ("i", "Isolate cursor's chain (events tab)"),
+        # interleaving noise from other concurrent chains. T2-3: added
+        # "(events tab)" suffix so the gating is visible without Space-expand.
+        ("i", "Isolate cursor's chain (events tab only)"),
     ]
     # Note: memory tab's ``t`` (= cycle_memory_type_filter, wave-11
     # A#1) is intentionally NOT in this list because ``t`` is already
