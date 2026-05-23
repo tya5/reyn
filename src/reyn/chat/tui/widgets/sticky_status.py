@@ -75,6 +75,13 @@ _KIND_PRIORITY: dict[str, int] = {
     "general": 50,
 }
 
+# W13 A#7: terminal-failure priority (above thinking=100). Applied when
+# ``show(..., kind="error", terminal=True)`` is called — a budget-exceeded
+# or auth-failed event mid-streaming must not be suppressed by the live
+# ⟳ thinking indicator. ``terminal=False`` (the default) keeps the
+# existing priority=80 so transient errors stay below thinking.
+_TERMINAL_ERROR_PRIORITY: int = 110
+
 
 class StickyStatus(Static):
     """A 1-line sticky status bar with a live elapsed timer.
@@ -118,7 +125,7 @@ class StickyStatus(Static):
 
     # ── public API ────────────────────────────────────────────────────────────
 
-    def show(self, text: str, kind: str = "general") -> None:
+    def show(self, text: str, kind: str = "general", *, terminal: bool = False) -> None:
         """Activate the status bar with the given body text and glyph kind.
 
         Wave-10 G-F8 + I-F8: when the sticky is already active with a
@@ -128,15 +135,25 @@ class StickyStatus(Static):
         breadcrumbs (turn-position flash, boundary hint). Same-or-higher
         priority overwrites freely.
 
+        W13 A#7: ``terminal=True`` raises the effective priority to
+        ``_TERMINAL_ERROR_PRIORITY`` (110 > thinking=100) so a
+        terminal failure mid-streaming (budget exceeded, auth error)
+        is NOT suppressed by the live ⟳ thinking indicator. Only
+        valid when ``kind="error"``; ignored for other kinds.
+
         ``hide()`` is unconditional — explicit dismissal always wins.
 
         Note: ``kind="thinking"`` is no longer valid — use
         ``ConversationView.start_thinking()`` for the inline spinner.
         """
         new_kind = kind if kind in _GLYPHS else "general"
+        # W13 A#7: terminal error overrides thinking priority.
+        if terminal and new_kind == "error":
+            new_priority = _TERMINAL_ERROR_PRIORITY
+        else:
+            new_priority = _KIND_PRIORITY.get(new_kind, 0)
         if self._active:
             current_priority = _KIND_PRIORITY.get(self._kind, 0)
-            new_priority = _KIND_PRIORITY.get(new_kind, 0)
             if new_priority < current_priority:
                 return
         self._kind = new_kind
@@ -158,12 +175,22 @@ class StickyStatus(Static):
     def snapshot(self) -> dict:
         """Return the current display state for inspection by callers / tests.
 
-        Exposes ``{"active": bool, "body": str, "kind": str}`` so callers
-        (and Tier 2 tests) can verify the sticky's state through a public
-        surface rather than reading the ``_active`` / ``_body`` / ``_kind``
-        private attributes directly (= ``testing.ja.md`` anti-pattern).
+        Exposes ``{"active": bool, "body": str, "kind": str,
+        "priority": int}`` so callers (and Tier 2 tests) can verify the
+        sticky's state through a public surface rather than reading the
+        ``_active`` / ``_body`` / ``_kind`` private attributes directly
+        (= ``testing.ja.md`` anti-pattern).
+
+        W13 A#7: ``priority`` is the numeric priority that would be used
+        to decide whether the current kind could be displaced. Useful for
+        test assertions like ``snapshot()["priority"] > 100``.
         """
-        return {"active": self._active, "body": self._body, "kind": self._kind}
+        return {
+            "active": self._active,
+            "body": self._body,
+            "kind": self._kind,
+            "priority": _KIND_PRIORITY.get(self._kind, 0),
+        }
 
     # ── internal ──────────────────────────────────────────────────────────────
 

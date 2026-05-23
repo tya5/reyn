@@ -187,6 +187,16 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "recall_embed_failed", "postprocessor_step_failed", "workflow_aborted",
         "phase_failed", "skill_run_failed", "control_ir_failed",
         "web_search_failed", "normalization_error", "compaction_failed",
+        # W13 A#8: add events with hard-stop / terminal semantics that
+        # were missing from the error filter.
+        # ``safety_limit_checkpoint`` can carry a hard-stop signal
+        #   (allow_continue=False) and belongs beside budget_exceeded.
+        # ``chain_timeout`` is a timeout-induced terminal failure.
+        # ``chain_peer_discarded`` signals a peer chain was dropped —
+        #   relevant when debugging multi-agent errors.
+        "safety_limit_checkpoint",
+        "chain_timeout",
+        "chain_peer_discarded",
     })),
     ("user", frozenset({
         "user_message_received",

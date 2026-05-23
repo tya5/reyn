@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Literal
 
 from rich.cells import cell_len
 from rich.console import RenderableType
@@ -231,6 +232,50 @@ def _meta_prefix(meta: dict) -> str:
     if short:
         return f"[#{short}] "
     return ""
+
+
+# W13 A#3 — soft severity classifier for the TUI seam (no engine changes).
+# HIGH: terminal failures the operator must act on immediately.
+# MED:  recoverable / transient — default for unclassified errors.
+# LOW:  user-input mistakes that self-resolve on the next valid command.
+_HIGH_TEXT_MARKERS: tuple[str, ...] = (
+    "[budget exceeded]",
+    "[auth error]",
+    "[permission denied]",
+)
+_HIGH_META_SOURCE_SUFFIXES: tuple[str, ...] = ("_failed", "_aborted")
+_LOW_TEXT_PREFIXES: tuple[str, ...] = ("usage:", "unknown command")
+
+
+def _classify_error_severity(
+    message: str,
+    meta: dict,
+) -> Literal["high", "med", "low"]:
+    """Classify an error message into a 3-tier severity.
+
+    HIGH — terminal failure (budget / auth / permission) or a meta source
+    that ends with ``_failed`` / ``_aborted``.
+
+    LOW — user input mistake: message starts with ``usage:`` or
+    ``unknown command`` (case-insensitive).
+
+    MED — everything else (recoverable / transient / unclassified default).
+
+    TUI-internal helper only — no engine imports, no OS changes (P7).
+    """
+    lower = message.lower().lstrip()
+    # Meta source suffix check (HIGH).
+    source = str((meta or {}).get("source") or "")
+    if source and any(source.endswith(s) for s in _HIGH_META_SOURCE_SUFFIXES):
+        return "high"
+    # Text-marker check (HIGH).
+    msg_lower = message.lower()
+    if any(marker in msg_lower for marker in _HIGH_TEXT_MARKERS):
+        return "high"
+    # User-input mistake (LOW).
+    if any(lower.startswith(p) for p in _LOW_TEXT_PREFIXES):
+        return "low"
+    return "med"
 
 
 class ConversationView(Widget):
@@ -756,6 +801,7 @@ class ConversationView(Widget):
                 run_id_short=run_id_short,
                 skill_name=skill_name,
                 context_lines=context_lines,
+                meta=msg.meta,
             )
             return
 
@@ -1436,10 +1482,10 @@ class ConversationView(Widget):
 
     # ── sticky status (A3) ────────────────────────────────────────────────────
 
-    def show_status(self, text: str, kind: str = "general") -> None:
+    def show_status(self, text: str, kind: str = "general", *, terminal: bool = False) -> None:
         s = self._sticky()
         if s is not None:
-            s.show(text, kind=kind)
+            s.show(text, kind=kind, terminal=terminal)
 
     def update_status(self, text: str) -> None:
         s = self._sticky()
@@ -1489,6 +1535,7 @@ class ConversationView(Widget):
         run_id_short: str = "",
         skill_name: str = "",
         context_lines: list[str] | None = None,
+        meta: dict | None = None,
     ) -> ErrorBox:
         self._consume_empty_hint()
         # F5: cap the live stack. When more than _MAX_VISIBLE_ERROR_BOXES
@@ -1534,12 +1581,17 @@ class ConversationView(Widget):
             self.show_status("✗ error below ↓", kind="general")
         else:
             self.hide_status()
+        # W13 A#3: classify severity so ErrorBox can apply a per-tier
+        # border-left color.  Default meta={} keeps the classifier stable
+        # for callers that don't pass meta.
+        severity = _classify_error_severity(message, meta or {})
         box = ErrorBox(
             message=message,
             details=details,
             run_id_short=run_id_short,
             skill_name=skill_name,
             context_lines=context_lines,
+            severity=severity,
         )
         self.mount(box)
         self._error_boxes.append(box)
