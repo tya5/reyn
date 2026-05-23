@@ -137,11 +137,11 @@ class RightPanel(Widget):
         self._docs_files: list[Path] = []
         self._docs_groups: dict[str, list[Path]] = {}
         self._docs_filter: str = ""
-        # Language preference for the Docs tab. Two valid values: "ja"
-        # (default — Japanese preferred, English fallback when .ja.md absent)
-        # and "en" (English preferred, Japanese fallback). Toggled by the
+        # Language preference for the Docs tab. Two valid values: "en"
+        # (default — English preferred, Japanese fallback when .md absent)
+        # and "ja" (Japanese preferred, English fallback). Toggled by the
         # ``g`` key while the Docs tab is active.
-        self._docs_lang: str = "ja"
+        self._docs_lang: str = "en"
         self._preview_visible: bool = False
         self._panel_width: int = 0  # 0 = use CSS default (33%); set on first resize
         # run_id → {skill_name, agent_name, start_time, phase, phase_visits}

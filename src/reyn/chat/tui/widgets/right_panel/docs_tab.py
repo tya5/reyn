@@ -28,7 +28,7 @@ def build_docs_index(
     project_root: Path | None,
     docs_filter: str = "",
     *,
-    lang: str = "ja",
+    lang: str = "en",
 ) -> tuple[dict[str, list[Path]], list[Path]]:
     """Scan docs/ and return (groups_by_section, ordered_flat_list).
 
@@ -39,8 +39,8 @@ def build_docs_index(
 
     ``lang`` controls which language variant is preferred per concept:
 
-    * ``"ja"`` (default) — prefer ``.ja.md``; fall back to ``.md`` when absent.
-    * ``"en"``           — prefer ``.md``; fall back to ``.ja.md`` when absent.
+    * ``"en"`` (default) — prefer ``.md``; fall back to ``.ja.md`` when absent.
+    * ``"ja"``           — prefer ``.ja.md``; fall back to ``.md`` when absent.
 
     Each unique base concept appears exactly once in the returned lists.
     The fallback variant is still included but labelled so the caller can
@@ -104,11 +104,11 @@ def render_docs(
     groups: dict[str, list[Path]],
     *,
     docs_filter: str = "",
-    lang: str = "ja",
+    lang: str = "en",
 ) -> str:
     """Render the docs index with the file at ``docs_cursor`` highlighted.
 
-    ``lang`` must be ``"ja"`` or ``"en"`` — controls the preference header
+    ``lang`` must be ``"en"`` or ``"ja"`` — controls the preference header
     and which rows are annotated with a dim fallback suffix.
     """
     if project_root is None:

@@ -1,8 +1,8 @@
-"""Tier 2: Docs tab lang preference toggle — ja preferred + en fallback.
+"""Tier 2: Docs tab lang preference toggle — en preferred + ja fallback.
 
-Each doc concept appears once in the Docs tab. Default: ja preferred,
-en fallback when .ja.md absent. ``g`` key (docs tab only) toggles to
-en preferred (ja fallback).
+Each doc concept appears once in the Docs tab. Default: en preferred,
+ja fallback when .md absent. ``g`` key (docs tab only) toggles to
+ja preferred (en fallback).
 
 Fixture layout (created per-test via tmp_path):
   docs/
