@@ -76,9 +76,24 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     )
 
     rs = ctx.router_state
+    ps = ctx.phase_state
     if rs is not None and rs.op_context_factory is not None:
         legacy_ctx = rs.op_context_factory()
+    elif ps is not None and getattr(ps, "op_context", None) is not None:
+        # Phase-side dispatch: reuse the real OpContext built by
+        # control_ir_executor — it carries the InterventionBus that
+        # ``handle_web_fetch`` needs for the Tier 1 4-layer approval
+        # check (= ``op_runtime/web.py``). Without this, a phase that
+        # legitimately emits a ``web_fetch`` op (e.g. ``skill_importer``
+        # search/convert) fails with ``RuntimeError: web_fetch op
+        # requires intervention_bus on OpContext``.
+        legacy_ctx = ps.op_context
     else:
+        # Narrow test sites + future surfaces that aren't router/phase.
+        # ``intervention_bus=None`` is acceptable only because the
+        # fallback path doesn't have any bus to reuse anyway; the
+        # handler will raise the explicit RuntimeError above if a
+        # PermissionResolver is also present.
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,

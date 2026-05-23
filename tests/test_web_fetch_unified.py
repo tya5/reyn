@@ -413,3 +413,126 @@ def test_router_invoke_action_web_fetch_allow_no_deny_proceeds(
     assert isinstance(result, dict)
     assert result.get("kind") == "web_fetch"
     # The deny path would have raised before getting a dict back.
+
+
+# ── Phase-side dispatch — reuse the phase OpContext's intervention_bus ──────
+
+
+def test_phase_dispatch_reuses_op_context_intervention_bus(tmp_path: Path) -> None:
+    """Tier 2: WEB_FETCH._handle reuses ``ctx.phase_state.op_context`` when
+    the phase carries a real OpContext (= has an intervention_bus).
+
+    Regression for the ``skill_importer`` blocker:
+    ``RuntimeError: web_fetch op requires intervention_bus on OpContext``
+    fired whenever a skill phase emitted a ``web_fetch`` op via
+    ``control_ir_executor`` → ``invoke_tool(WEB_FETCH, ...)``. The handler
+    previously had only two branches (router_state factory, or a
+    fresh minimal OpContext with bus=None), so the phase path always hit
+    the fresh-minimal branch and lost the bus. The fix adds a middle
+    branch that picks up the OpContext stashed on
+    ``phase_state.op_context`` by ``control_ir_executor._build_ctx``.
+
+    Verification: with a config-allow, the gate must short-circuit before
+    needing the bus AND the handler must not raise the "requires
+    intervention_bus" RuntimeError. We use an unroutable URL so the HTTP
+    layer fails fast — what we're guarding is that the permission path
+    didn't trip on a missing bus.
+    """
+    from reyn.events.events import EventLog
+    from reyn.op_runtime.context import OpContext
+    from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+    from reyn.tools.types import PhaseCallerState, ToolContext
+    from reyn.workspace.workspace import Workspace
+
+    events = EventLog()
+    resolver = PermissionResolver(
+        config_permissions={"web.fetch": "allow"},
+        project_root=tmp_path,
+        interactive=True,
+    )
+    bus = _DenyAllInterventionBus()  # config-allow short-circuits before bus
+
+    workspace = Workspace(
+        events=events,
+        permission_resolver=resolver,
+        skill_name="skill_importer",
+    )
+    op_ctx_with_bus = OpContext(
+        workspace=workspace,
+        events=events,
+        permission_decl=PermissionDecl(),
+        permission_resolver=resolver,
+        skill_name="skill_importer",
+        intervention_bus=bus,
+    )
+
+    phase_state = PhaseCallerState(
+        skill_run_id="run-1",
+        phase_name="search",
+        op_context=op_ctx_with_bus,
+    )
+    tool_ctx = ToolContext(
+        events=events,
+        permission_resolver=resolver,
+        workspace=workspace,
+        caller_kind="phase",
+        phase_state=phase_state,
+    )
+
+    # Pre-fix this would raise:
+    #   RuntimeError: web_fetch op requires intervention_bus on OpContext
+    # Post-fix the call proceeds through the permission gate and the
+    # HTTP error becomes the visible failure shape instead.
+    result = asyncio.run(WEB_FETCH.handler(
+        {"url": "http://127.0.0.1:1/never-listens"},
+        tool_ctx,
+    ))
+    assert isinstance(result, dict)
+    assert result.get("kind") == "web_fetch"
+    # Specifically: no "intervention_bus" RuntimeError leaked through.
+
+
+def test_phase_dispatch_without_op_context_falls_back_to_minimal(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: When ``phase_state`` lacks an ``op_context`` (= narrow test
+    sites, future surfaces), the handler still falls back to building a
+    minimal OpContext. Only ``intervention_bus`` is None on that fallback
+    path — which is fine because the handler raises the explicit
+    "requires intervention_bus" RuntimeError if a resolver is also present.
+    """
+    from reyn.events.events import EventLog
+    from reyn.permissions.permissions import PermissionResolver
+    from reyn.tools.types import PhaseCallerState, ToolContext
+
+    events = EventLog()
+    resolver = PermissionResolver(
+        config_permissions={"web.fetch": "allow"},
+        project_root=tmp_path,
+        interactive=True,
+    )
+
+    # Phase state with no op_context (= test-site shape).
+    phase_state = PhaseCallerState(
+        skill_run_id="run-1",
+        phase_name="search",
+        op_context=None,
+    )
+    tool_ctx = ToolContext(
+        events=events,
+        permission_resolver=resolver,
+        workspace=None,
+        caller_kind="phase",
+        phase_state=phase_state,
+    )
+
+    # With a real PermissionResolver + no bus, the handler must raise the
+    # explicit RuntimeError rather than silently letting the fetch
+    # proceed without an approval surface.
+    with pytest.raises(
+        RuntimeError, match="web_fetch op requires intervention_bus",
+    ):
+        asyncio.run(WEB_FETCH.handler(
+            {"url": "http://127.0.0.1:1/never-listens"},
+            tool_ctx,
+        ))
