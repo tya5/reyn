@@ -85,7 +85,8 @@ async def agents_cmd(session: "ChatSession", args: str) -> None:
 
 @slash(
     "attach",
-    summary="Switch attached agent: /attach <name>",
+    summary="Switch attached agent",
+    usage="/attach <name>",
     completer=_attach_completer,
 )
 async def attach_cmd(session: "ChatSession", args: str) -> None:

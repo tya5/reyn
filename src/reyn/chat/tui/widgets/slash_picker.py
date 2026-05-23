@@ -363,6 +363,24 @@ class SlashPicker(Static):
         t.append(name, style="dim #888888")
         t.append("  ")
         t.append(summary, style="dim #888888")
+        # Structured usage line — surfaced as a second hint row when the
+        # command opts in via ``SlashCommand.usage``. Indented under the
+        # summary with a ``↳`` connector so the eye groups them as
+        # "one command, two informational rows". Commands without
+        # usage stay 1-line (backward compatible). Skipped when
+        # completions are present — completions already carry
+        # actionable arg info, and stacking usage + completions would
+        # push the picker past ``max-height: 11`` for /attach-like
+        # cases with many agent names.
+        if cmd.usage and not self._completions:
+            indent = " " * (2 + len(name) + 2)
+            usage_budget = max(10, content_w - len(indent) - 9)  # 9 = "↳ usage: "
+            usage_text = cmd.usage
+            if len(usage_text) > usage_budget:
+                usage_text = usage_text[: max(1, usage_budget - 1)] + "…"
+            t.append("\n")
+            t.append(indent + "↳ usage: ", style="dim #666666")
+            t.append(usage_text, style="dim #aaaaaa")
         # Completion rows (if the command supplied a CompleterFn — e.g.
         # /attach surfacing agent names). Indented under the hint row,
         # one per line, dim, informational only.

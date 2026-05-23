@@ -29,7 +29,8 @@ from reyn.chat.slash import slash
 
 @slash(
     "save",
-    summary="Save the conv pane to a file (/save [path])",
+    summary="Save the conv pane to a file",
+    usage="/save [path]",
 )
 async def save_cmd(session: "object", args: str) -> None:
     # Forward the raw arg; the TUI handler resolves the path
