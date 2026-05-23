@@ -1,29 +1,25 @@
-"""Default chunker implementations for index_docs stdlib skill.
+"""Deprecated unsafe-mode chunker step for index_docs stdlib skill.
 
-Each public function is a python preprocessor / postprocessor step that
-receives the full artifact dict from the OS harness and returns a
-JSON-serializable value that is placed at ``into`` in the artifact.
+Post-FP-0042 (2026-05-23) this module hosts only the deprecated
+``apply_strategy`` step, kept for project-override compatibility. All
+active stdlib code paths run mode: safe via the companion modules:
 
-Override pattern (ADR-0033 §2.1): project-specific chunkers (Python AST,
-custom Markdown) replace this module via skill.md ``module:`` override.
-
-Module split (= reduces unsafe surface in stdlib per FP-0042):
-  ``gather_samples`` / ``cost_preflight`` (mode: safe) — live in
-    ``chunkers_preproc_safe.py``; file I/O goes through
-    ``reyn.safe.file`` with permission-gated reads. Migrated 2026-05-22
-    from this module's prior mode: unsafe implementation.
-  ``extract_and_split`` (mode: safe) — lives in ``chunkers_safe.py``
-    (the original R-PURE-MODE-REDEFINE Class A split).
-  ``write_chunks_with_lock`` (mode: unsafe, minimal) — kept here:
-    source file content read, advisory lock acquire/release, .jsonl write.
-    Migration to safe-mode is FP-0042 Phase 2.2 pending ``reyn.safe.file``
-    growing ``delete`` / ``mkdir`` and a lock primitive.
-  ``apply_strategy`` (mode: unsafe, deprecated) — kept for project
-    override compatibility.
+  - ``chunkers_preproc_safe.py`` — Phase-1 preprocessor (gather_samples,
+    cost_preflight). Migrated in Phase 2.1.
+  - ``chunkers_safe.py`` — postprocessor safe-mode steps
+    (extract_and_split, write_chunks_with_lock). The latter migrated in
+    Phase 2.2.
 
 This module's ``import os`` / ``from pathlib import Path`` would be
 inherited by the safe-mode AST walk if the safe-mode steps lived here,
-which is why they live in companion modules.
+which is why they live in companion modules. ``apply_strategy``
+remains mode: unsafe so its imports are admitted.
+
+Override pattern (ADR-0033 §2.1): project-specific chunkers replace this
+module via skill.md ``module:`` override. Existing overrides that
+patch ``apply_strategy`` continue to work; new overrides should target
+the two-step chain (``extract_and_split`` → ``write_chunks_with_lock``)
+in ``chunkers_safe.py``.
 """
 from __future__ import annotations
 
@@ -36,90 +32,10 @@ from pathlib import Path
 from typing import Iterator
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Postprocessor python steps
+# Deprecated postprocessor python step (kept for project-override compat)
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CHUNKS_JSONL_PATH = "artifacts/chunks.jsonl"
-
-
-def write_chunks_with_lock(artifact: dict) -> dict:
-    """Postprocessor python step (mode: unsafe, minimal): lock + content read + jsonl write.
-
-    Receives the artifact after ``extract_and_split`` has placed the ordered
-    file list at ``data.chunk_list``. Acquires the source-level advisory lock,
-    reads each source file's content, splits into chunks per LLM strategy,
-    writes ``artifacts/chunks.jsonl``, then releases the lock.
-
-    This is the irreducible minimum unsafe step:
-      - ``Path.read_text`` (file content read — cannot be done in safe mode)
-      - ``.lock`` JSON write + PID alive check (advisory lock, concurrent safety)
-      - ``.jsonl`` write (workspace artifact output)
-
-    Returns a summary dict placed at ``data.chunk_stats``:
-        {
-            "chunk_count":          int,
-            "source_lock_acquired": bool,
-            "chunks_path":          str,
-        }
-    """
-    import time as _time
-
-    data = artifact.get("data") or {}
-    strategy = {
-        "boundary": data.get("boundary", "blank_line"),
-        "max_chunk_size_tokens": int(data.get("max_chunk_size_tokens") or 600),
-        "min_chunk_size_tokens": int(data.get("min_chunk_size_tokens") or 50),
-        "overlap_ratio": float(data.get("overlap_ratio") or 0.0),
-        "preserve_parent_context": bool(data.get("preserve_parent_context", True)),
-    }
-    source = str(data.get("source") or "unknown")
-    # chunk_list from extract_and_split: [{"source_path": str}, ...]
-    chunk_list = data.get("chunk_list") or []
-    file_paths: list[str] = []
-    seen: set[str] = set()
-    for entry in chunk_list:
-        fp = str(entry.get("source_path", ""))
-        if fp and fp not in seen:
-            file_paths.append(fp)
-            seen.add(fp)
-
-    # ── Concurrent lock (UX gap fix D) ───────────────────────────────────────
-    lock_path = Path(".reyn") / "index" / source / ".lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_acquired = False
-
-    if lock_path.exists():
-        try:
-            lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
-            holder_pid = int(lock_data.get("pid", 0))
-            if holder_pid and _pid_alive(holder_pid):
-                raise RuntimeError(
-                    f"Source '{source}' is currently being indexed by PID"
-                    f" {holder_pid}. Wait for completion or kill the holder."
-                )
-        except (json.JSONDecodeError, ValueError):
-            pass  # Corrupted lock — take over
-
-    lock_path.write_text(
-        json.dumps({"pid": os.getpid(), "ts": _time.time()}),
-        encoding="utf-8",
-    )
-    lock_acquired = True
-
-    try:
-        chunk_count = _write_chunks_jsonl_from_paths(file_paths, strategy)
-    finally:
-        # Release lock on completion or error
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
-
-    return {
-        "chunk_count": chunk_count,
-        "source_lock_acquired": lock_acquired,
-        "chunks_path": _CHUNKS_JSONL_PATH,
-    }
 
 
 def apply_strategy(artifact: dict) -> dict:
@@ -204,15 +120,15 @@ def apply_strategy(artifact: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JSONL writers (called by postprocessor steps)
+# JSONL writers (called by deprecated apply_strategy)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def _write_chunks_jsonl_from_paths(file_paths: list[str], strategy: dict) -> int:
     """Chunk an ordered list of file paths and write to artifacts/chunks.jsonl.
 
-    Called by ``write_chunks_with_lock`` (mode: unsafe). Reads file content,
-    splits per strategy, writes JSONL. Returns chunk count.
+    Called only by ``apply_strategy`` (the deprecated monolithic step).
+    The active two-step chain has its own writer in ``chunkers_safe.py``.
     """
     boundary = strategy["boundary"]
     max_size = strategy["max_chunk_size_tokens"]

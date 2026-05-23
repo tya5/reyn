@@ -107,24 +107,21 @@ def test_extract_and_split_returns_path_list_without_content_read(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_index_docs_skill_permissions_python_has_safe_extract_and_unsafe_write():
-    """Tier 2: skill.md permissions.python has extract_and_split as safe and
-    write_chunks_with_lock as unsafe with unsafe_reason annotation.
+def test_index_docs_skill_permissions_python_active_steps_are_safe():
+    """Tier 2: skill.md permissions.python has the active postprocessor steps
+    (= extract_and_split + write_chunks_with_lock) both as mode=safe.
 
-    Verifies the R-PURE-MODE-REDEFINE Class A permission declaration:
-    - extract_and_split: mode=safe (glob enum only, no I/O)
-    - write_chunks_with_lock: mode=unsafe (irreducible: lock + content + jsonl)
+    Post-FP-0042 Phase 2.2 (2026-05-23) the active two-step chain runs
+    entirely safe-mode. Only the deprecated ``apply_strategy`` step
+    remains mode=unsafe for project-override compatibility.
 
-    The unsafe_reason annotation is checked by parsing the raw YAML frontmatter
-    directly (the compiled PythonPermission dataclass does not carry unsafe_reason,
-    so we read the skill.md source and parse the permissions block to verify the
-    annotation exists in the YAML text).
+    The ``unsafe_reason`` annotation must still be present on
+    ``apply_strategy`` (= FP-0014 Component F documentation contract).
     """
     import re
 
     skill_md_text = _SKILL_MD_PATH.read_text(encoding="utf-8")
 
-    # ── Compiled model check: modes ───────────────────────────────────────────
     skill = _load_skill()
     fn_modes = {p.function: p.mode for p in skill.permissions.python}
 
@@ -132,19 +129,21 @@ def test_index_docs_skill_permissions_python_has_safe_extract_and_unsafe_write()
         f"extract_and_split must be mode=safe, got {fn_modes.get('extract_and_split')!r}. "
         "glob enum is pure (path list only, no file content read)."
     )
-    assert fn_modes.get("write_chunks_with_lock") == "unsafe", (
-        f"write_chunks_with_lock must be mode=unsafe, got {fn_modes.get('write_chunks_with_lock')!r}. "
-        "It performs lock acquire, Path.read_text, and .jsonl write."
+    assert fn_modes.get("write_chunks_with_lock") == "safe", (
+        f"write_chunks_with_lock must be mode=safe post-FP-0042 Phase 2.2, "
+        f"got {fn_modes.get('write_chunks_with_lock')!r}. It now uses "
+        "reyn.safe.file + reyn.safe.process."
+    )
+    assert fn_modes.get("apply_strategy") == "unsafe", (
+        f"apply_strategy stays mode=unsafe (= deprecated compat path), "
+        f"got {fn_modes.get('apply_strategy')!r}."
     )
 
-    # ── Raw YAML check: unsafe_reason annotation is present ──────────────────
-    # Extract the frontmatter block (between first --- and second ---)
     fm_match = re.match(r"^---\n(.*?)\n---", skill_md_text, re.DOTALL)
     assert fm_match, "Could not parse skill.md frontmatter"
     fm_text = fm_match.group(1)
 
     assert "unsafe_reason" in fm_text, (
-        "write_chunks_with_lock permissions entry must include an unsafe_reason "
-        "annotation in skill.md (FP-0014 Component F documentation contract). "
-        "Add `unsafe_reason: \"...\"` to the write_chunks_with_lock entry."
+        "apply_strategy must keep its unsafe_reason annotation "
+        "(FP-0014 Component F documentation contract)."
     )
