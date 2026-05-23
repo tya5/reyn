@@ -246,6 +246,15 @@ def _get_registry():
                 events_config=config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,
+                # B52 retro fix: A2A-side ChatSession was missing
+                # ``sandbox_config`` propagation — ``reyn.yaml`` ``sandbox.backend``
+                # set in reyn.local.yaml never reached the sandboxed_exec
+                # handler via the chat-router path. Cron-side
+                # ``web/server.py`` already passes this; the A2A factory
+                # was the only gap. Surfaced by B52 W3-S5 retest where
+                # ``sandbox.backend: noop`` config loaded correctly but
+                # the runtime kept using Seatbelt.
+                sandbox_config=config.sandbox,
                 multimodal_config=config.multimodal,
                 action_retrieval_config=config.action_retrieval,
                 embedding_config=config.embedding,

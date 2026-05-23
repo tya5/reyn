@@ -111,6 +111,16 @@ scenarios:
   - id: web_fetch_url
     covers:
       - control-ir-ops/web-fetch
+    # B52 retro: env-sensitive scenario — requires
+    # ``permissions.web.fetch: allow`` in worker reyn.yaml so the
+    # non-interactive worker subprocess can grant web_fetch without
+    # surfacing an interactive prompt. The dispatch script injects this
+    # for dogfood workers as of 2026-05-23
+    # (= scripts/dogfood_batch_dispatch.py setup_worktree).
+    # Local environments running this scenario without the pre-grant
+    # should classify a tool_failed denial as I (env), not R.
+    requires_permissions:
+      - "web.fetch: allow"
     input: "Fetch and summarise https://docs.python.org/3/whatsnew/3.12.html — what are the key new features?"
     expected:
       reply:
@@ -137,6 +147,17 @@ scenarios:
   - id: sandboxed_exec_simple
     covers:
       - control-ir-ops/sandboxed-exec
+    # B52 retro: env-sensitive scenario — macOS Seatbelt's default
+    # sandbox profile cannot see the host venv's Python interpreter
+    # unless the LLM-emitted op explicitly includes the venv bin in
+    # ``read_paths``, which weak-tier models rarely do. The dogfood
+    # runner pins ``sandbox.backend: noop`` (= sandboxed_exec_started
+    # / _completed events still fire, just without Seatbelt
+    # enforcement) so the scenario exercises the op-routing surface
+    # rather than the platform sandbox policy. Local environments
+    # running ``sandbox.backend: auto`` on macOS should classify a
+    # missing-interpreter denial as I, not R.
+    requires_sandbox_backend: noop  # or any backend that can reach the host venv
     input: "Run `python -c 'print(2 + 2)'` in the sandbox and show me the output."
     expected:
       reply:
