@@ -29,6 +29,7 @@ from __future__ import annotations
 import time
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
@@ -93,6 +94,17 @@ class SkillActivityRow(Widget):
         # Running state
         self._phase: str = ""
         self._visit: int = 1
+        # Phase history — each entry is ``(phase, visit, elapsed_at_entry)``
+        # recorded on every NEW phase transition via ``set_phase``. Powers
+        # the inline expand drill-down (= click the row to see "what phases
+        # has this skill been through and how long did each take?"). Stays
+        # empty until ``set_phase`` is first called, then grows by one per
+        # transition. Re-visits to the same phase (= ``v2`` / ``v3`` in
+        # the collapsed view) are recorded as separate entries with the
+        # incremented visit number so the user can see "we looped back to
+        # research three times". Bound is the natural skill phase count —
+        # typical Reyn skills have < 10 transitions; no explicit cap.
+        self._phase_history: list[tuple[str, int, float]] = []
         # Optional in-phase detail (= what's happening WITHIN the phase right
         # now — "calling llm", "running act op", etc.). Without this the row
         # showed only the phase name during a 10–30 s LLM call inside that
@@ -119,6 +131,14 @@ class SkillActivityRow(Widget):
         self._aborted = False
         self._reason = ""
 
+        # Expand state — when True, ``_refresh`` renders multi-line with
+        # the full phase history; when False, the single-line collapsed
+        # form. Toggled by mouse click on the row (see ``on_click``) or
+        # the public ``toggle_expand`` method. Preserved across
+        # ``finish()`` so the user can still drill down on a completed
+        # skill to see its phase trajectory.
+        self._expanded: bool = False
+
         # Timer
         self._start = time.monotonic()
         self._running = True
@@ -128,6 +148,13 @@ class SkillActivityRow(Widget):
 
         # DOM ref
         self._static: Static | None = None
+        # Cached copy of the most-recently-rendered Text (= what's
+        # currently displayed). Updated on every ``_refresh``. Read
+        # by ``rendered_text`` for inspection — used by Tier 2 tests
+        # to assert on the visible content without reaching into
+        # Textual's private Static internals (= ``static._renderable``
+        # is API-unstable across versions).
+        self._rendered_cache: Text | None = None
 
     # ── Textual lifecycle ──────────────────────────────────────────────────────
 
@@ -147,10 +174,21 @@ class SkillActivityRow(Widget):
         Also clears any in-phase detail — the previous phase's "llm:
         <model>" / "act: <op>" context is no longer relevant once the
         phase advances.
+
+        Each NEW (phase, visit) pair is appended to ``_phase_history``
+        for the drill-down expand view. Duplicates of the immediately-
+        previous (phase, visit) are suppressed so a stream of repeat
+        ``set_phase("execute", 1)`` calls (= forwarder noise) doesn't
+        bloat the history. Genuine re-visits (= same phase, higher
+        visit count) are recorded because they're meaningful: "we
+        looped back to research a 2nd time".
         """
         self._phase = phase
         self._visit = visit
         self._detail = ""
+        if not self._phase_history or self._phase_history[-1][:2] != (phase, visit):
+            elapsed = time.monotonic() - self._start
+            self._phase_history.append((phase, visit, elapsed))
         self._refresh()
 
     def set_detail(self, detail: str) -> None:
@@ -174,6 +212,32 @@ class SkillActivityRow(Widget):
             return
         self._detail = detail
         self._refresh()
+
+    def toggle_expand(self) -> None:
+        """Flip the collapsed / expanded render shape.
+
+        Expanded form appends a second line listing the phase history
+        (= each prior phase + its entry-elapsed) under the normal
+        running / finished summary. Useful for skills with a non-
+        trivial phase trajectory the user wants to drill into without
+        switching to the right panel.
+        """
+        self._expanded = not self._expanded
+        self._refresh()
+
+    @property
+    def is_expanded(self) -> bool:
+        """True when the row is currently rendering the drill-down view."""
+        return self._expanded
+
+    def on_click(self, event: events.Click) -> None:
+        """Mouse-click anywhere on the row toggles the drill-down view.
+
+        Stop-propagation so the click doesn't bubble up to the conv
+        pane's scroll handling and inadvertently move the viewport.
+        """
+        event.stop()
+        self.toggle_expand()
 
     def finish(
         self,
@@ -311,10 +375,73 @@ class SkillActivityRow(Widget):
             t.append("Ctrl+B → events", style="dim")
         return t
 
+    def _build_history_line(self) -> Text:
+        """Render the phase-history drill-down line shown when expanded.
+
+        Format:
+          ``  ↳ phases: plan(0.5s) → research(1.4s) → reviewing*(now)``
+
+        The trailing entry is the current phase (if running) marked with
+        ``*`` and ``(now)``; everything before it shows the elapsed-at-
+        entry timestamp so the user can see "this skill spent 1.4 s in
+        research before moving on". Re-visits to the same phase appear
+        as separate entries with their visit number (= ``research v2``)
+        so loop-backs are visible.
+        """
+        t = Text()
+        if self._label_prefix:
+            # Indent the history line under the same prefix so a sub-
+            # skill's drill-down nests visually with its parent.
+            t.append(" " * len(self._label_prefix), style="dim #666666")
+        t.append("  ↳ phases: ", style="dim")
+        if not self._phase_history:
+            t.append("(none yet)", style="dim #666666")
+            return t
+        # The history is "(phase, visit, elapsed_at_entry)" for each
+        # entry. Render each as "name(elapsed_at_entry)", with the
+        # current (= still-running) phase getting a different suffix.
+        for i, (phase, visit, entered_at) in enumerate(self._phase_history):
+            if i > 0:
+                t.append(" → ", style="dim")
+            label = phase if visit == 1 else f"{phase} v{visit}"
+            is_current = (
+                not self._finished
+                and (phase, visit) == (self._phase, self._visit)
+            )
+            if is_current:
+                t.append(label, style=f"italic {_CORAL}")
+                t.append("(now)", style="dim")
+            else:
+                t.append(label, style="dim #aaaaaa")
+                t.append(f"({entered_at:.1f}s)", style="dim")
+        return t
+
+    def rendered_text(self) -> str:
+        """Plain-text rendering of the last frame sent to ``Static.update``.
+
+        Stable testing surface — Textual's ``Static`` does not expose
+        a public getter for its current renderable across versions, so
+        we cache locally in ``_refresh`` and read here. Returns "" when
+        nothing has been rendered yet (= pre-mount).
+        """
+        cache = self._rendered_cache
+        if cache is None:
+            return ""
+        return str(cache.plain)
+
     def _refresh(self) -> None:
         if self._static is None:
             return
-        if self._finished:
-            self._static.update(self._build_finished())
-        else:
-            self._static.update(self._build_running())
+        head = self._build_finished() if self._finished else self._build_running()
+        if not self._expanded:
+            self._static.update(head)
+            self._rendered_cache = head
+            return
+        # Expanded view: append the history line under the head with a
+        # newline separator. Rich Text handles newlines inside update().
+        body = Text()
+        body.append_text(head)
+        body.append("\n")
+        body.append_text(self._build_history_line())
+        self._static.update(body)
+        self._rendered_cache = body
