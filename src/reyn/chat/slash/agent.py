@@ -31,7 +31,7 @@ _NO_REGISTRY = (
 
 @slash(
     "agent",
-    summary="Create new agent",
+    summary="Create new agent (new <name> only; rm via `reyn agent rm`)",
     usage="/agent new <name>",
 )
 async def agent_cmd(session: "ChatSession", args: str) -> None:

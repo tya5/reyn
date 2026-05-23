@@ -46,6 +46,7 @@ _EXPECTED_USAGE: dict[str, str] = {
     "image":       "/image <path>",
     "reset":       "/reset confirm",
     "budget":      "/budget [reset]",
+    "pending":     "/pending [list|discard <id>|claim <id>]",
 }
 
 
@@ -104,7 +105,7 @@ def test_no_arg_commands_have_no_usage() -> None:
     from reyn.chat.slash import REGISTRY
 
     no_arg_commands = [
-        "list", "tasks", "skills", "cost", "pending", "expand",
+        "list", "tasks", "skills", "cost", "expand",
         "quit", "exit", "cost-inline",
     ]
     for name in no_arg_commands:
