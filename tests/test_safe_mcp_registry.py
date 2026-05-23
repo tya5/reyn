@@ -281,3 +281,122 @@ def test_lookup_uses_overridden_base_url(monkeypatch, _isolated_cache):
 
     assert len(captured_urls) == 1
     assert captured_urls[0].startswith("https://private.example.com/mcp/v0.1/servers/")
+
+
+# ── multi-registry list (PR-10) ──────────────────────────────────────────
+
+
+def test_registry_urls_plural_env_var_takes_priority(monkeypatch):
+    """Tier 2: ``REYN_MCP_REGISTRY_URLS`` (plural) wins over singular."""
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URLS", "https://private.example.com,https://public.example.com")
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://singular.example.com")
+    assert sr._registry_urls() == [
+        "https://private.example.com",
+        "https://public.example.com",
+    ]
+
+
+def test_registry_urls_falls_back_to_singular(monkeypatch):
+    """Tier 2: when plural is unset, singular env var becomes a one-item list."""
+    monkeypatch.delenv("REYN_MCP_REGISTRY_URLS", raising=False)
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://singular.example.com")
+    assert sr._registry_urls() == ["https://singular.example.com"]
+
+
+def test_registry_urls_default(monkeypatch):
+    """Tier 2: with neither env var set, default to the public registry."""
+    monkeypatch.delenv("REYN_MCP_REGISTRY_URLS", raising=False)
+    monkeypatch.delenv("REYN_MCP_REGISTRY_URL", raising=False)
+    assert sr._registry_urls() == ["https://registry.modelcontextprotocol.io"]
+
+
+def test_registry_urls_strips_trailing_slashes(monkeypatch):
+    """Tier 2: trailing slashes are normalised per-entry."""
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URLS", "https://a.example/, https://b.example/mcp/")
+    assert sr._registry_urls() == ["https://a.example", "https://b.example/mcp"]
+
+
+def test_lookup_iterates_on_404_fallback(monkeypatch, _isolated_cache):
+    """Tier 2: lookup falls through to the next URL on 404 from the first."""
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URLS", "https://private.example.com,https://public.example.com")
+    captured_urls: list[str] = []
+
+    def _fake_get(url):
+        captured_urls.append(url)
+        if "private.example.com" in url:
+            raise sr.RegistryError(f"Registry returned HTTP 404 for {url}")
+        return _VERSIONS_LATEST_RESPONSE
+
+    with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
+        result = sr.lookup("io.github.modelcontextprotocol/server-filesystem")
+
+    # Both URLs tried; second returns the hit.
+    assert len(captured_urls) == 2
+    assert "private.example.com" in captured_urls[0]
+    assert "public.example.com" in captured_urls[1]
+    assert result is not None
+
+
+def test_lookup_returns_none_when_all_404(monkeypatch, _isolated_cache):
+    """Tier 2: lookup returns None when every URL replies 404 (= "not found anywhere").
+
+    Preserves the pre-existing single-URL semantics (= 404 → None) across
+    the multi-URL fallback. Non-404 errors still bubble up.
+    """
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URLS", "https://a.example,https://b.example")
+
+    def _fake_get(url):
+        raise sr.RegistryError(f"Registry returned HTTP 404 for {url}")
+
+    with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
+        result = sr.lookup("io.github.modelcontextprotocol/server-filesystem")
+    assert result is None
+
+
+def test_lookup_raises_when_non_404_after_404(monkeypatch, _isolated_cache):
+    """Tier 2: lookup re-raises non-404 when later URL fails after earlier 404."""
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URLS", "https://a.example,https://b.example")
+
+    def _fake_get(url):
+        if "a.example" in url:
+            raise sr.RegistryError(f"Registry returned HTTP 404 for {url}")
+        raise sr.RegistryError(f"Registry returned HTTP 500 for {url}")
+
+    with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
+        with pytest.raises(sr.RegistryError, match="500"):
+            sr.lookup("io.github.modelcontextprotocol/server-filesystem")
+
+
+def test_search_iterates_on_empty_first_returns_second(monkeypatch, _isolated_cache):
+    """Tier 2: search falls through to the next URL when the first returns empty."""
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URLS", "https://private.example.com,https://public.example.com")
+    captured_urls: list[str] = []
+
+    def _fake_get(url):
+        captured_urls.append(url)
+        if "private.example.com" in url:
+            return {"servers": [], "metadata": {"count": 0}}
+        return _SEARCH_RESPONSE
+
+    with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
+        result = sr.search("bar")
+
+    assert len(captured_urls) == 2
+    assert result and result[0]["name"] == "io.github.foo/bar-mcp"
+
+
+def test_search_first_hit_wins(monkeypatch, _isolated_cache):
+    """Tier 2: search returns the first non-empty result without trying later URLs."""
+    monkeypatch.setenv("REYN_MCP_REGISTRY_URLS", "https://private.example.com,https://public.example.com")
+    captured_urls: list[str] = []
+
+    def _fake_get(url):
+        captured_urls.append(url)
+        return _SEARCH_RESPONSE  # private has the hit
+
+    with mock.patch.object(sr, "_http_get_json", side_effect=_fake_get):
+        sr.search("bar")
+
+    # Only private was hit (= "private first" semantics).
+    assert len(captured_urls) == 1
+    assert "private.example.com" in captured_urls[0]

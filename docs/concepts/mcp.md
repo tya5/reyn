@@ -170,25 +170,38 @@ Before any MCP server can be added to the configuration, the install op's writes
 - `http.get` on `registry.modelcontextprotocol.io` (= the registry fetch). Same prompt model.
 - `secret.write` on the env-var keys the registry declares as `isSecret` (= wildcard `"*"` because the key set is runtime-determined).
 
-Enterprise teams point reyn at a private / corporate registry via the `REYN_MCP_REGISTRY_URL` environment variable (= operator-trusted single-URL override; both the async op-handler client and the safe-mode skill-internal lookup honour it):
+Enterprise teams point reyn at private / corporate registries via either of two equivalent mechanisms:
 
-```bash
-# operator's shell rc / systemd unit / CI runner env
-export REYN_MCP_REGISTRY_URL="https://mcp-registry.internal.acme.com"
-```
-
-Combined with project-scope `reyn.yaml` policy:
+**A. `reyn.yaml mcp.registries:` list config** — declarative, project-scoped, version-controlled:
 
 ```yaml
-# enterprise reyn.yaml — team-wide policy
+# reyn.yaml (project scope — committed to git)
+mcp:
+  registries:
+    - https://mcp-registry.internal.acme.com   # private registry (tried first)
+    - https://registry.modelcontextprotocol.io  # public fallback
 permissions:
-  web.fetch: allow      # blanket allow for registry fetches (= overrides per-host prompts)
+  web.fetch: allow      # blanket allow for registry fetches
   file.write: allow     # blanket approval for .reyn/mcp.yaml writes
 ```
 
-The result is "approved servers only" — only servers registered in the private registry are discoverable, and there's no skill-author lever to bypass the operator's URL choice.
+**B. `REYN_MCP_REGISTRY_URLS` (plural) env var** — explicit operator override, useful for CI / per-shell config:
 
-> **Multi-registry list config** (`mcp.registries: [private, public]` ordering) is referenced in older docs and ADRs but **is not yet wired** in this codebase. Only the single-URL env-var override is functional today. The list-form config is a future enhancement.
+```bash
+# operator's shell rc / systemd unit / CI runner env
+export REYN_MCP_REGISTRY_URLS="https://mcp-registry.internal.acme.com,https://registry.modelcontextprotocol.io"
+```
+
+The env var wins when both are set (= explicit operator override beats declarative config). The legacy singular `REYN_MCP_REGISTRY_URL` is honored as a one-item list for backward compat.
+
+Both the async op-handler client (`reyn.registry.client`) and the safe-mode skill-internal lookup (`reyn.safe.mcp.registry`) iterate the list in order with the following fallback semantics:
+
+| Operation | Behavior |
+|---|---|
+| `lookup(server_id)` | Try each URL in order; first non-404 hit wins; all 404 → `None`; non-404 error after 404 re-raises |
+| `search(query)` | Try each URL in order; first non-empty result wins; all empty → `[]` |
+
+This implements the "private first, public fallback" pattern: servers from the private registry shadow same-named public entries, and the public registry serves as a discoverability fallback for unrelated names.
 
 See [Concepts: permission model](permission-model.md) → "Collapse arc" for the full migration story.
 

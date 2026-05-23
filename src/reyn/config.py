@@ -1788,6 +1788,25 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     from reyn.secrets.interpolation import expand_env
     merged = expand_env(merged)
 
+    # #571 follow-up (post-collapse-arc): propagate ``mcp.registries: [...]``
+    # config list into the ``REYN_MCP_REGISTRY_URLS`` env var so the
+    # subprocess-side ``reyn.safe.mcp.registry`` (= subprocess inherits
+    # parent env) and the op-handler-side ``reyn.registry.client``
+    # (= same process, reads same env var) see the same list. Explicit
+    # operator-set env var wins over config (= the standard
+    # principle: env var = explicit override, config = declarative
+    # baseline). Only the singular ``REYN_MCP_REGISTRY_URL`` legacy
+    # form is also respected — when neither plural nor singular env
+    # var is set and the config has a list, we export the plural form
+    # for the rest of the process to read.
+    import os as _os_for_mcp
+    if not _os_for_mcp.environ.get("REYN_MCP_REGISTRY_URLS") and not _os_for_mcp.environ.get("REYN_MCP_REGISTRY_URL"):
+        raw_registries = merged.get("mcp", {}).get("registries") if isinstance(merged.get("mcp"), dict) else None
+        if isinstance(raw_registries, list) and raw_registries:
+            urls = [str(u).strip().rstrip("/") for u in raw_registries if isinstance(u, str) and u.strip()]
+            if urls:
+                _os_for_mcp.environ["REYN_MCP_REGISTRY_URLS"] = ",".join(urls)
+
     raw_ol = merged.get("output_language")
     output_language: str | None
     if isinstance(raw_ol, str) and raw_ol.strip():
