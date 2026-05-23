@@ -699,17 +699,35 @@ class ReynTUIApp(App):
                     f"{_visits} phase{'s' if _visits != 1 else ''}"
                     if _visits > 0 else ""
                 )
-            conv.finish_skill_row(
-                run_id, success=(status == "finished"), reason=_reason,
-            )
+            # Defensive cleanup: each action is wrapped independently so
+            # one widget's failure doesn't block subsequent cleanup steps.
+            # Previously the block was fully sequential — if finish_skill_row
+            # raised (e.g. for skills that failed before any phase_started
+            # trace fired, leaving no SkillActivityRow for the run_id),
+            # the subsequent remove_async_task call was skipped and the
+            # AsyncStackPanel row stayed mounted with its elapsed counter
+            # ticking forever (user-observed: mcp_search WorkflowAbortedError).
+            # Same defensive pattern as skill_runner.py:733-738 fallback emit.
+            try:
+                conv.finish_skill_row(
+                    run_id, success=(status == "finished"), reason=_reason,
+                )
+            except Exception:
+                pass
             # Out-of-band: an aborted skill is an attention case — flash the
             # title to "error" and ring the bell so a user with reyn in a
             # background tab sees something happened. Successful finishes
             # are silent here (the next agent reply / cost suffix is the
             # in-pane signal). The title resets on the next user submit.
             if status != "finished":
-                self.set_title_state("error")
-                self.alert()
+                try:
+                    self.set_title_state("error")
+                except Exception:
+                    pass
+                try:
+                    self.alert()
+                except Exception:
+                    pass
             # Wave-3 SK1: previously a second ``conv._write_log`` line
             # ``✓ skill_name: finished (Xs)`` was emitted here, but
             # ``SkillActivityRow._build_finished`` (= the row the
@@ -720,8 +738,14 @@ class ReynTUIApp(App):
             # ``_write_log`` block; book-keeping (= ``_skill_exec``
             # pop + ``_push_exec_state`` + ``_last_focal_tab``)
             # stays.
-            self._skill_exec.pop(run_id, None)
-            self._push_exec_state()
+            try:
+                self._skill_exec.pop(run_id, None)
+            except Exception:
+                pass
+            try:
+                self._push_exec_state()
+            except Exception:
+                pass
             self._last_focal_tab = "agents"
             # AsyncStackPanel wiring: the ``[task_completed]`` boundary
             # for the attached agent's task — drop the row from the
@@ -731,7 +755,10 @@ class ReynTUIApp(App):
             # not finish cleanly so the bottom strip briefly flashes
             # the red ✗ shape before unmounting (= audit finding A#6).
             _async_terminal = "ok" if status == "finished" else "aborted"
-            conv.remove_async_task(run_id, terminal=_async_terminal)
+            try:
+                conv.remove_async_task(run_id, terminal=_async_terminal)
+            except Exception:
+                pass
             # Wave-9 D-F11: release the input-bar lock when the last
             # tracked skill finishes. Sub-skills popping during a
             # nested run keep the lock held — only the empty state
