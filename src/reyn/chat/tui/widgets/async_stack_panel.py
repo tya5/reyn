@@ -145,6 +145,10 @@ class _Entry:
     # the render path reads this to show the red ✗ shape instead of
     # the normal ⟳ / ⚑ row.
     flashing: bool = False
+    # Captured at the moment flashing starts; None = compute live elapsed.
+    # Freeze elapsed so the row reads "stopped, fading out" rather than
+    # "still running" during the 1.5 s flash window.
+    frozen_elapsed_s: float | None = None
 
 
 def _fmt_elapsed(seconds: float) -> str:
@@ -293,6 +297,7 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
 
         # Non-ok terminal: transition to flash state and schedule unmount.
         entry = self._entries[agent_id]
+        entry.frozen_elapsed_s = time.monotonic() - entry.started_at
         entry.flashing = True
         self._refresh()
         try:
@@ -356,12 +361,16 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         """
         out: list[dict] = []
         for agent_id, entry, glyph in self._sorted_visible():
+            if entry.frozen_elapsed_s is not None:
+                elapsed_s = entry.frozen_elapsed_s
+            else:
+                elapsed_s = time.monotonic() - entry.started_at
             out.append({
                 "agent_id": agent_id,
                 "glyph": glyph,
                 "summary": entry.summary,
                 "pending_count": entry.pending_count,
-                "elapsed_s": time.monotonic() - entry.started_at,
+                "elapsed_s": elapsed_s,
                 "is_overflow": False,
                 "flashing": entry.flashing,
             })
@@ -460,7 +469,11 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
             t.append(self._truncate_to_cells(flash_text, body_budget), style="bold #ff6644")
             return
 
-        elapsed_str = _fmt_elapsed(time.monotonic() - entry.started_at)
+        if entry.frozen_elapsed_s is not None:
+            elapsed_s = entry.frozen_elapsed_s
+        else:
+            elapsed_s = time.monotonic() - entry.started_at
+        elapsed_str = _fmt_elapsed(elapsed_s)
         if entry.pending_count > 0:
             elapsed_segment = f"  ({entry.pending_count} pending)"
             elapsed_style = "bold #ffaa44"
