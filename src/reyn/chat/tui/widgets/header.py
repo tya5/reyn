@@ -365,8 +365,11 @@ class ReynHeader(RenderableCacheMixin, Widget):
         # audio (= "waiting on me, not on you"). Placed adjacent to the
         # find badge as a sibling "active state" cue; clock stays
         # rightmost.
+        # T2-3 (Wave-12 B#8): while recording, append a dim inline hint
+        # so users discover dictate-and-send / cancel without reading docs.
+        # Kept short (11 cells) so it survives narrow-terminal truncation.
         if self._voice_state == "recording":
-            parts.append(("🔴 voice", "bold #ff6644"))
+            parts.append(("🔴 voice · Enter→send Esc→cancel", "bold #ff6644"))
         elif self._voice_state == "transcribing":
             parts.append(("⏳ voice", "bold #ffaa44"))
         # Clock always present, last — the canary for "is the UI frozen?"
