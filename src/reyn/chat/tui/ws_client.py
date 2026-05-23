@@ -256,7 +256,11 @@ class _WSRegistry:
             await self.repl_outbox.put(OutboxMessage(
                 kind="error",
                 text=f"connection lost: {exc}",
-                meta={"source": "ws_client"},
+                # Wave-13 T1-3: sentinel lets app_outbox._on_error distinguish
+                # a WS disconnection from a normal server-side error frame, so
+                # the TUI can surface a persistent sticky and disable InputBar
+                # (= the session is unrecoverable without restart).
+                meta={"source": "ws_disconnected"},
             ))
 
 

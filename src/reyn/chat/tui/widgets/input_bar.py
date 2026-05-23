@@ -104,6 +104,15 @@ class InputBar(Widget):
     InputBar.in-flight #hints {
         color: #886633;
     }
+    InputBar.disconnected {
+        border-top: solid #553333;
+    }
+    InputBar.disconnected TextArea {
+        color: #555555;
+    }
+    InputBar.disconnected #hints {
+        color: #553333;
+    }
     """
 
     # ── messages ──────────────────────────────────────────────────────────────
@@ -158,6 +167,14 @@ class InputBar(Widget):
         # callers toggle it via ``set_in_flight``: True at submit
         # time, False at stream_end / cancel / slash-return.
         self._in_flight: bool = False
+        # Wave-13 T1-3: disconnected state for ``--connect`` WS mode.
+        # When the WS connection drops, the session is unrecoverable
+        # without a TUI restart. InputBar is locked permanently (= no
+        # submit) and receives the ``.disconnected`` CSS class so the
+        # border dims red and text goes grey. Toggle via
+        # ``set_disconnected(True)``; never reset to False in the same
+        # session (= the drop is permanent until restart).
+        self._disconnected: bool = False
 
     def compose(self) -> ComposeResult:
         # Picker docked above TextArea (compose order matters: top-down).
@@ -282,6 +299,31 @@ class InputBar(Widget):
             self.add_class("in-flight")
         else:
             self.remove_class("in-flight")
+
+    def set_disconnected(self, disconnected: bool) -> None:
+        """Mark the InputBar as permanently disconnected (Wave-13 T1-3).
+
+        Called when the WS connection drops in ``--connect`` mode.  The
+        session cannot recover without a TUI restart, so:
+          - ``_disconnected`` is set True (permanent guard in ``_submit``).
+          - ``set_in_flight(True)`` is applied so the existing in-flight
+            check also fires for any code path that reads ``_in_flight``.
+          - ``.disconnected`` CSS class mounts, dimming the border and text
+            as a visual cue that the input is permanently disabled.
+
+        Idempotent — calling again with the same value is a no-op.
+        """
+        if self._disconnected == disconnected:
+            return
+        self._disconnected = disconnected
+        if disconnected:
+            self.add_class("disconnected")
+            # Also hold the in-flight lock so all existing submit guards
+            # fire — belt-and-suspenders, since _submit checks
+            # _disconnected first.
+            self.set_in_flight(True)
+        else:
+            self.remove_class("disconnected")
 
     def append_text(self, text: str) -> None:
         """Append text to the current input (used by voice dictation).
@@ -675,6 +717,14 @@ class InputBar(Widget):
     def _submit(self, ta: TextArea) -> None:
         text = ta.text.strip()
         if not text:
+            return
+        # Wave-13 T1-3: WS disconnected — session is unrecoverable.
+        # Swallow silently (the sticky already explains why). Checking
+        # before ``_in_flight`` so the disconnected state is the
+        # canonical early-exit path; ``_in_flight`` is also True when
+        # disconnected (set by ``set_disconnected``), but the explicit
+        # guard documents the intent clearly.
+        if self._disconnected:
             return
         # Wave-9 D-F11: while a prior turn is still in flight, swallow
         # the Enter without posting / clearing. The typed text stays so

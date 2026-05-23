@@ -1190,6 +1190,24 @@ class OutboxRouter:
         Also clears the sticky ``⟳ thinking…`` indicator: a turn that
         ends in error never reaches `__stream_start__` / `agent`, so
         without this the indicator would stick around indefinitely.
+
+        Wave-13 T1-3: when the error frame carries
+        ``meta.source == "ws_disconnected"`` (= the WS receive loop in
+        ws_client.py detected a connection drop), two extra steps fire:
+
+        1. A **persistent** error sticky replaces the transient one so
+           the ``✗ connection lost — restart TUI to reconnect`` message
+           stays visible until the user exits. (Normal error stickies
+           are auto-hidden after ~2 s; the disconnect one intentionally
+           is not.)
+        2. InputBar is marked as disconnected via
+           ``set_disconnected(True)`` so subsequent typing is swallowed
+           and the border dims as a visual cue. The session cannot
+           recover without a TUI restart.
+
+        The scope guard (= check for the sentinel before forking) keeps
+        normal server-side error frames on the existing transient path —
+        only the WS-disconnect source triggers the persistent lock.
         """
         conv.hide_status()
         conv.render_message(msg)
@@ -1199,6 +1217,30 @@ class OutboxRouter:
         # Reset on the next user submit.
         self._app.set_title_state("error")
         self._app.alert()
+
+        # Wave-13 T1-3: WS disconnection → persistent sticky + lock InputBar.
+        if (msg.meta or {}).get("source") == "ws_disconnected":
+            # Bypass conv.show_status — that route goes through the
+            # priority guard which would suppress "error" (priority 80)
+            # if a "thinking" (priority 100) is somehow still active.
+            # We want the persistent disconnect sticky to always land.
+            # Call the StickyStatus directly via the same ``_sticky()``
+            # accessor the conv pane uses, then DON'T arm an auto-hide
+            # timer (= leave the show() call timer-free so it persists).
+            sticky = conv._sticky()
+            if sticky is not None:
+                # Force-clear first so the priority guard doesn't block us.
+                sticky.hide()
+                sticky.show(
+                    "✗ connection lost — restart TUI to reconnect",
+                    kind="error",
+                )
+            # Disable InputBar permanently for this session.
+            try:
+                from .widgets import InputBar  # local import — avoid cycle
+                self._app.query_one("#inputbar", InputBar).set_disconnected(True)
+            except Exception:
+                pass
 
     # ── Tool-call lifecycle (issue #427 step 4) ───────────────────────────────
 
