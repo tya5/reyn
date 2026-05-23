@@ -148,6 +148,14 @@ class RightPanel(Widget):
         # drift the viewport off the cursor (A-F3, wave-8). Same idiom
         # as ``_memory_entry_ys`` / ``_agents_item_ys``.
         self._events_event_ys: list[int] = []
+        # Chain isolation — when set to a chain_id string, ``render_events``
+        # restricts the visible list to events sharing that chain_id (=
+        # "show me only this one conversation thread"). Toggled by the
+        # ``i`` key on the events tab: first press captures the cursor's
+        # chain_id; second press clears. Wave-11 A#2 — interleaved-chain
+        # tail at tail=200 is unreadable; isolate makes one chain
+        # legible at a time.
+        self._events_chain_isolate: str | None = None
         # Memory tab state — flat cursor over all entries
         self._memory_cursor: int = 0
         self._memory_entries: list[Any] = []
@@ -430,6 +438,42 @@ class RightPanel(Widget):
         self._event_tail_idx = (self._event_tail_idx + 1) % len(_TAIL_CYCLE)
         self._invalidate()
 
+    def toggle_chain_isolate(self) -> bool:
+        """Toggle events-tab chain isolation centered on the cursor.
+
+        When isolation is OFF, captures the chain_id of the event under
+        the cursor and switches the visible list to that chain only.
+        When isolation is ON, clears it (= back to the full filtered
+        tail). Returns True if isolation became active, False if cleared
+        or no-op (= cursor outside list, or cursor event has no
+        chain_id).
+        """
+        if self._events_chain_isolate is not None:
+            # Clear isolation.
+            self._events_chain_isolate = None
+            self._invalidate()
+            self._scroll_events_into_view()
+            return False
+        # Capture cursor's chain_id.
+        if not self._events_visible:
+            return False
+        idx = max(0, min(len(self._events_visible) - 1, self._events_cursor))
+        ev = self._events_visible[idx]
+        chain_id = (ev.get("data") or {}).get("chain_id") or ""
+        if not chain_id:
+            # Cursor event has no chain_id (= bare system event). Don't
+            # silently set an empty-string isolate; let caller surface a
+            # hint instead.
+            return False
+        self._events_chain_isolate = chain_id
+        # Reset cursor to top of the filtered list (= the newest event
+        # in this chain). The filtered list ordering is preserved by
+        # render_events.
+        self._events_cursor = 0
+        self._invalidate()
+        self._scroll_events_into_view()
+        return True
+
     # ── tab activation ───────────────────────────────────────────────────────
 
     def on_key(self, event) -> None:
@@ -505,6 +549,21 @@ class RightPanel(Widget):
                 self._pending_move(-1)
             else:
                 self._scroll_panel(-1)
+        elif event.key == "i" and self._panel_type == "events":
+            # Wave-11 A#2 — Events tab ``i`` = isolate cursor's chain_id.
+            # First press: filter list to that chain only. Re-press:
+            # clear isolation. Status hint when cursor's event has no
+            # chain_id (= bare system event, can't isolate to nothing).
+            event.prevent_default()
+            became_active = self.toggle_chain_isolate()
+            if (
+                self._events_chain_isolate is None
+                and not became_active
+                and self._events_visible
+            ):
+                # Wasn't already-isolated AND toggle returned False →
+                # cursor event has no chain_id. Surface a hint.
+                self._flash_status("chain_id missing; cannot isolate")
         elif event.key == "a" and self._panel_type == "agents":
             # Wave-10 follow-up H-F11: Agents tab `a` = switch to the
             # cursor's agent. Mirrors the per-tab action idiom landed
@@ -2043,6 +2102,7 @@ class RightPanel(Widget):
                     cursor=self._events_cursor,
                     cache=self._events_cache,
                     filelist_cache=self._events_filelist_cache,
+                    chain_isolate=self._events_chain_isolate,
                 )
                 self._events_visible = windowed
                 self._events_event_ys = event_ys
