@@ -108,12 +108,25 @@ def build_system_prompt(
     # baking it into the SP for every turn is wasteful. Keep only the
     # empirically-mitigated parts (vendor identity leak ~50% → near 0)
     # and a single pointer to where the full content lives.
+    #
+    # B51 NF-W6-4 / W7-S1 fix (2026-05-23): the legacy preamble carried
+    # an inline ``invoke_action(reyn.source__read, README.md)`` example.
+    # Chain-replay verified that weak-tier LLMs (= flash-lite) parsed
+    # that example as "reyn.source__read is directly callable" and
+    # emitted the truncated ``source__read({"path":"README.md"})`` (= no
+    # wrapper, no namespace prefix) — observed B50/B51 W6-S2 + W7-S1 at
+    # 5/5 baseline rate on the "What is Reyn?" prompt class. The fix
+    # routes the LLM through the ``## Capabilities (routing guide)``
+    # block below, whose intent-2 path already carries the canonical
+    # invoke_action recipe in a structured routing context that flash-
+    # lite parses correctly (5/5 → 0/5 truncation in the same N=5
+    # diagnostic).
     parts.append(
         "# Identity"
         "\n\n"
         "You are a Reyn agent (open-source LLM workflow OS). "
-        "For details: invoke_action(action_name=\"reyn.source__read\", "
-        "args={\"path\": \"README.md\"})."
+        "To learn the project's runtime, see the Capabilities routing "
+        "guide below — the \"About Reyn itself\" path is the canonical entry."
         "\n\n"
         "**Identity rules (always apply):**"
         "\n"
