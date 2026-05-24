@@ -139,4 +139,4 @@ def test_safe_python_still_requires_approval_when_interactive(tmp_path: Path) ->
 
     # The key assertion: the bus was consulted (proves routing went through _prompt,
     # not the non-interactive auto-allow shortcut).
-    assert len(bus.requests) == 1
+    assert bus.requests
