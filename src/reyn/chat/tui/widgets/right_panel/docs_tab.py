@@ -127,7 +127,7 @@ def render_docs(
     other_lang = "en" if lang == "ja" else "ja"
     lines.append(
         f"[#aaaaaa]  lang: [/][{_CORAL}]{lang}[/]"
-        f"[#555555]  ({other_lang} fallback)  [g] to toggle[/]"
+        f"[#555555]  ({other_lang} fallback)  \\[g] to toggle[/]"
     )
     lines.append("")
 

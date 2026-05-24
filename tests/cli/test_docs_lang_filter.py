@@ -137,8 +137,9 @@ def test_render_docs_ja_lang_header(tmp_path: Path) -> None:
     assert "(en fallback)" in rendered, (
         f"render_docs(lang='ja') must contain '(en fallback)'; got:\n{rendered}"
     )
-    assert "[g] to toggle" in rendered, (
-        f"render_docs must contain '[g] to toggle' hint; got:\n{rendered}"
+    # After the MissingStyle fix, [g] is escaped as \[g] in the markup string.
+    assert "\\[g] to toggle" in rendered, (
+        f"render_docs must contain escaped '\\[g] to toggle' hint; got:\n{rendered}"
     )
 
 
@@ -303,3 +304,41 @@ def test_build_docs_index_filter_applied_after_lang_collapse(tmp_path: Path) -> 
     assert only_en.stem == "glossary", (
         f"The single result must be glossary.md; got {only_en.stem!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 9: render_docs lang footer markup is parseable by Rich (no MissingStyle)
+# ---------------------------------------------------------------------------
+
+
+def test_docs_lang_toggle_hint_no_missing_style(tmp_path: Path) -> None:
+    """Tier 2b: docs tab fallback hint markup is escaped (no MissingStyle on [g]).
+
+    Regression guard for dogfood report 2026-05-24:
+    `MissingStyle: Failed to get style 'g'` raised when opening Docs tab
+    because `[g] to toggle` in the lang fallback footer was interpreted as
+    a Rich style tag. Fixed by escaping to `\\[g]`.
+    """
+    from rich.text import Text
+
+    from reyn.chat.tui.widgets.right_panel.docs_tab import (
+        build_docs_index,
+        render_docs,
+    )
+
+    root = _make_docs_tree(tmp_path)
+    groups, _ = build_docs_index(root, lang="en")
+
+    # Both lang variants must render without raising MissingStyle.
+    for lang in ("en", "ja"):
+        groups_l, _ = build_docs_index(root, lang=lang)
+        markup = render_docs(root, 0, groups_l, lang=lang)
+        # Rich.Text.from_markup raises MissingStyle if any tag is an invalid
+        # style (e.g. [g]).  This must not raise.
+        try:
+            Text.from_markup(markup)
+        except Exception as exc:  # noqa: BLE001
+            raise AssertionError(
+                f"render_docs(lang={lang!r}) produced markup that Rich cannot parse "
+                f"(MissingStyle regression): {exc}\n\nmarkup:\n{markup}"
+            ) from exc
