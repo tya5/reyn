@@ -246,7 +246,7 @@ def test_fetch_server_multiple_results_source_search(tmp_path):
 
     assert result["source"] == "search"
     assert result["server_id"] == ""
-    assert len(result["candidates"]) == 2
+    (cand_a, cand_b) = result["candidates"]
 
 
 def test_fetch_server_empty_results_source_not_found(tmp_path):

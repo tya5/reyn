@@ -358,7 +358,7 @@ def test_top_failing_skills_sorted_desc(tmp_path: Path) -> None:
     result = aggregate_from_raw_events(str(events_dir), period_days=7, skills=None)
 
     top = result["top_failing_skills"]
-    assert len(top) == 3
+    (first, second, third) = top
 
     # Verify descending order by failure_count
     failure_counts = [entry["failure_count"] for entry in top]
@@ -367,8 +367,8 @@ def test_top_failing_skills_sorted_desc(tmp_path: Path) -> None:
     )
 
     # skill_c should be first (5 failures)
-    assert top[0]["skill"] == "skill_c"
-    assert top[0]["failure_count"] == 5
+    assert first["skill"] == "skill_c"
+    assert first["failure_count"] == 5
 
 
 # ── Test 8: error samples collected ───────────────────────────────────────────

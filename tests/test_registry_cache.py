@@ -112,9 +112,8 @@ def test_key_encoding_is_filesystem_safe(tmp_path):
     assert result == {"servers": []}
 
     # The filename must not contain raw colons or slashes.
-    files = list(tmp_path.iterdir())
-    assert len(files) == 1
-    filename = files[0].name
+    (only_file,) = tmp_path.iterdir()
+    filename = only_file.name
     assert ":" not in filename
     assert "/" not in filename
 
