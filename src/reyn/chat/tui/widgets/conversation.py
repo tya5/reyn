@@ -1804,8 +1804,9 @@ class ConversationView(Widget):
         cap lets an error storm stack 3 boxes each requiring its own
         Esc to dismiss. Before this helper there was no at-a-glance
         count + no clue that Esc was the dismiss key. The sticky now
-        reads ``✗ N errors — Esc to dismiss`` when ≥ 2 boxes are
-        live. The < 2 case is intentionally untouched here so the
+        reads ``✗ N errors — Esc=1, ⇧Esc=all`` when ≥ 2 boxes are
+        live (Wave-13 B#1: updated to hint at the bulk-dismiss shortcut).
+        The < 2 case is intentionally untouched here so the
         ``mount_error`` single-error sticky (``"✗ error below ↓"``)
         is preserved; ``dismiss_last_error`` clears the stale count
         sticky directly when it drops the live count below 2.
@@ -1813,7 +1814,7 @@ class ConversationView(Widget):
         n = len(self._error_boxes)
         if n >= 2:
             self.show_status(
-                f"✗ {n} errors — Esc to dismiss", kind="general",
+                f"✗ {n} errors — Esc=1, ⇧Esc=all", kind="general",
             )
 
     # ── intervention mounting ─────────────────────────────────────────────────

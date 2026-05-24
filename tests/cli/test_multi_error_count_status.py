@@ -6,7 +6,7 @@ own Esc to dismiss. Before this helper there was no at-a-glance
 count + no clue that Esc was the dismiss key.
 
 ``_maybe_show_error_count_status`` now:
-  - ≥ 2 boxes mounted → sticky reads ``"✗ N errors — Esc to dismiss"``
+  - ≥ 2 boxes mounted → sticky reads ``"✗ N errors — Esc=1, ⇧Esc=all"``
   - 1 box mounted → sticky stays at whatever ``mount_error`` set
     (= ``"✗ error below ↓"`` for scrolled-up, or hidden at tail)
   - 0 boxes (all dismissed) → sticky hidden
@@ -51,7 +51,7 @@ async def test_single_error_does_not_show_count_status() -> None:
 
 @pytest.mark.asyncio
 async def test_two_errors_show_count_in_sticky() -> None:
-    """Tier 2: ≥ 2 boxes → sticky reads ``"✗ 2 errors — Esc to dismiss"``."""
+    """Tier 2: ≥ 2 boxes → sticky reads ``"✗ 2 errors — Esc=1, ⇧Esc=all"``."""
     app = _ConvOnlyApp()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -64,7 +64,7 @@ async def test_two_errors_show_count_in_sticky() -> None:
         snap = sticky.snapshot()
         assert snap["active"] is True
         assert "2 errors" in snap["body"]
-        assert "Esc to dismiss" in snap["body"]
+        assert "Esc=1" in snap["body"]
 
 
 @pytest.mark.asyncio
