@@ -148,7 +148,7 @@ async def test_f3_first_press_shows_drill_down_tip(
 async def test_f3_second_press_no_drill_down_tip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Tier 2: F3 with tip already seen → status shows "no active skill", not tip."""
+    """Tier 2: F3 with tip already seen → status shows "rows to expand" hint, not tip."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.prefs import save_tui_prefs
     from reyn.chat.tui.widgets import ConversationView
@@ -171,4 +171,4 @@ async def test_f3_second_press_no_drill_down_tip(
         assert snap["active"] is True
         # "drill-down" tip must NOT appear; the standard hint should.
         assert "drill-down" not in snap["body"]
-        assert "no active skill" in snap["body"]
+        assert "rows to expand" in snap["body"]
