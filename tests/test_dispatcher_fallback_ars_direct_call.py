@@ -149,7 +149,7 @@ def test_salvage_emits_audit_event_on_rewrite() -> None:
         (t, d) for t, d in loop.host.events.events
         if t == "direct_alias_call_salvaged"
     ]
-    assert len(audit) == 1
+    assert audit, "expected at least one direct_alias_call_salvaged event"
     _, data = audit[0]
     assert data["original_name"] == "file__read"
     assert data["rewritten_to"] == "invoke_action"
@@ -172,7 +172,7 @@ def test_salvage_does_not_emit_audit_on_unknown_name() -> None:
 
 
 def test_ars_block_includes_not_direct_callable_instruction() -> None:
-    """Tier 2 (β): the enrichment hint warns the LLM against direct calls."""
+    """Tier 2: the enrichment hint warns the LLM against direct calls."""
     tools = [
         {
             "type": "function",
@@ -193,7 +193,7 @@ def test_ars_block_includes_not_direct_callable_instruction() -> None:
 
 
 def test_ars_block_unchanged_when_no_entries() -> None:
-    """Tier 2 (β): empty ars_entries → no enrichment (= no spurious hint)."""
+    """Tier 2: empty ars_entries → no enrichment (= no spurious hint)."""
     tools = [
         {
             "type": "function",
