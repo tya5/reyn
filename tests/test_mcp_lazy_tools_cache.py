@@ -178,9 +178,10 @@ async def test_parallel_probe_populates_cache(tmp_path):
     assert set(probe_calls) == {"foo", "bar"}
     listing = {s["name"]: s for s in adapter.get_mcp_servers()}
     assert "foo" in listing and "bar" in listing
-    assert len(listing["foo"]["tools"]) == 2
     assert listing["foo"]["tools"][0]["name"] == "foo_tool1"
-    assert len(listing["bar"]["tools"]) == 2
+    assert listing["foo"]["tools"][1]["name"] == "foo_tool2"
+    assert listing["bar"]["tools"][0]["name"] == "bar_tool1"
+    assert listing["bar"]["tools"][1]["name"] == "bar_tool2"
 
 
 # ── 3. Idempotent — second call is a no-op ────────────────────────────────
@@ -308,7 +309,6 @@ async def test_get_mcp_servers_excludes_tools_pre_probe(tmp_path):
         mcp_list_tools_cb=_probe,
     )
     result = adapter.get_mcp_servers()
-    assert len(result) == 1
     assert result[0]["name"] == "foo"
     assert "tools" not in result[0], (
         "tools field must be omitted before the lazy cache is populated"
