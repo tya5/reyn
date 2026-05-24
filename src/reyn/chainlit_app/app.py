@@ -30,6 +30,7 @@ import chainlit as cl
 
 from reyn.chainlit_app.adapter import outbox_to_chainlit
 from reyn.chainlit_app.history import DEFAULT_REPLAY_CAP, history_to_chainlit
+from reyn.chainlit_app.intervention import build_intervention_prompt
 from reyn.chainlit_app.profiles import list_agent_profiles
 from reyn.chainlit_app.settings import (
     LANGUAGE_ITEMS,
@@ -194,6 +195,17 @@ async def _drain_loop(registry: "AgentRegistry") -> None:
     """
     while True:
         msg = await registry.repl_outbox.get()
+        if msg.kind == "intervention":
+            # Intercept before the adapter — the adapter only knows how
+            # to render IVs as plain author="intervention" text, but
+            # `kind="intervention"` is the agent **blocking on user
+            # input**. Hand it off to the round-trip helper so the
+            # operator sees a real prompt + buttons (= AskActionMessage)
+            # or input box (= AskUserMessage) and the answer flows back
+            # to the awaiting skill via `answer_pending_intervention`.
+            await _handle_intervention(registry, msg)
+            continue
+
         payload = outbox_to_chainlit(msg)
         if payload is None:
             continue
@@ -206,6 +218,91 @@ async def _drain_loop(registry: "AgentRegistry") -> None:
                 content=payload.content,
                 author=payload.author,
             ).send()
+
+
+async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
+    """Render an IV outbox payload as a chainlit Ask* prompt + reply back.
+
+    Both branches are wrapped in defensive try/except so chainlit
+    version drift or an exception inside the Ask* round-trip leaves
+    the agent's await intact (= reyn-side timeout / fallback still
+    fires) and the drain loop keeps pumping subsequent messages.
+    """
+    from reyn.user_intervention import InterventionAnswer
+
+    prompt = build_intervention_prompt(msg.meta, text=msg.text or "")
+    session = registry.attached_session()
+    if session is None or prompt.run_id is None:
+        # Can't answer (= no attached session or legacy IV without
+        # run_id) — fall back to plain text render so the operator at
+        # least sees what was asked.
+        await cl.Message(
+            content=prompt.content, author="intervention",
+        ).send()
+        return
+
+    if prompt.is_choice:
+        try:
+            actions = [
+                cl.Action(
+                    name=f"iv_{spec.choice_id}",
+                    label=spec.label,
+                    payload={
+                        "intervention_run_id": prompt.run_id,
+                        "choice_id": spec.choice_id,
+                    },
+                )
+                for spec in prompt.choices
+            ]
+            response = await cl.AskActionMessage(
+                content=prompt.content,
+                actions=actions,
+                timeout=600,
+            ).send()
+        except Exception:
+            response = None
+        if response is None:
+            return
+        payload_dict = getattr(response, "payload", None) or response
+        choice_id = (
+            payload_dict.get("choice_id")
+            if isinstance(payload_dict, dict) else None
+        )
+        label = (
+            payload_dict.get("label")
+            if isinstance(payload_dict, dict) else None
+        ) or choice_id or ""
+        if not isinstance(choice_id, str):
+            return
+        await session.answer_pending_intervention(
+            prompt.run_id,
+            InterventionAnswer(text=str(label), choice_id=choice_id),
+        )
+        return
+
+    # Free-text branch.
+    try:
+        reply = await cl.AskUserMessage(
+            content=prompt.content,
+            timeout=600,
+        ).send()
+    except Exception:
+        reply = None
+    if reply is None:
+        return
+    # AskUserMessage returns a StepDict-like with ``output`` (or
+    # ``content`` on older chainlit). Pull whichever is present.
+    text = ""
+    if isinstance(reply, dict):
+        text = str(
+            reply.get("output") or reply.get("content") or ""
+        )
+    else:
+        text = str(getattr(reply, "output", None) or getattr(reply, "content", "") or "")
+    await session.answer_pending_intervention(
+        prompt.run_id,
+        InterventionAnswer(text=text),
+    )
 
 
 @cl.set_chat_profiles
