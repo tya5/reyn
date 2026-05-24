@@ -31,6 +31,7 @@ import chainlit as cl
 from reyn.chainlit_app.adapter import outbox_to_chainlit
 from reyn.chainlit_app.history import history_to_chainlit
 from reyn.chainlit_app.profiles import list_agent_profiles
+from reyn.chainlit_app.uploads import collect_image_blocks
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
@@ -281,6 +282,18 @@ async def _on_message(message: cl.Message) -> None:
             content="No agent attached. Reload the page to reconnect.",
         ).send()
         return
+
+    # Multimodal upload bridge: any image element dropped via the
+    # chainlit attachment button rides the same ``_pending_user_images``
+    # queue that ``/image PATH`` uses. The queue is drained on the
+    # next user turn by ``ChatSession._handle_user_message``.
+    elements = getattr(message, "elements", None) or []
+    if elements:
+        blocks = collect_image_blocks(elements)
+        queue = getattr(session, "_pending_user_images", None)
+        if queue is not None and blocks:
+            queue.extend(blocks)
+
     await session.submit_user_text(message.content)
 
 
