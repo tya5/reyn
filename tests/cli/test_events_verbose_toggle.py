@@ -344,7 +344,7 @@ async def test_keys_tab_render_includes_v_description() -> None:
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        markup, _ = render_keys(app)
+        markup, _, _ = render_keys(app)
         assert "verbose" in markup.lower() or "Toggle verbose" in markup, (
             "Keys tab markup should surface the v=Toggle verbose entry"
         )

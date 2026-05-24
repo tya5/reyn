@@ -211,7 +211,7 @@ async def test_keys_tab_render_includes_f5_f6_descriptions() -> None:
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        markup, _keys = render_keys(app)
+        markup, _keys, _ = render_keys(app)
         assert "F5" in markup
         assert "F6" in markup
         assert "error" in markup.lower()

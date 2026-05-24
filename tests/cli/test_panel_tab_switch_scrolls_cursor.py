@@ -47,10 +47,12 @@ def _instrument_scroll_helpers(panel: RightPanel) -> dict[str, list[None]]:
     that grows by one each time the helper is invoked.
     """
     calls: dict[str, list[None]] = {
-        "events": [],
-        "agents": [],
-        "memory": [],
-        "docs":   [],
+        "events":  [],
+        "agents":  [],
+        "memory":  [],
+        "docs":    [],
+        "pending": [],
+        "keys":    [],
     }
 
     def _make_recorder(key: str):
@@ -58,10 +60,12 @@ def _instrument_scroll_helpers(panel: RightPanel) -> dict[str, list[None]]:
             calls[key].append(None)
         return _fake
 
-    panel._scroll_events_into_view = _make_recorder("events")   # type: ignore[method-assign]
-    panel._scroll_agents_into_view = _make_recorder("agents")   # type: ignore[method-assign]
-    panel._scroll_memory_into_view = _make_recorder("memory")   # type: ignore[method-assign]
-    panel._scroll_docs_into_view   = _make_recorder("docs")     # type: ignore[method-assign]
+    panel._scroll_events_into_view  = _make_recorder("events")   # type: ignore[method-assign]
+    panel._scroll_agents_into_view  = _make_recorder("agents")   # type: ignore[method-assign]
+    panel._scroll_memory_into_view  = _make_recorder("memory")   # type: ignore[method-assign]
+    panel._scroll_docs_into_view    = _make_recorder("docs")     # type: ignore[method-assign]
+    panel._scroll_pending_into_view = _make_recorder("pending")  # type: ignore[method-assign]
+    panel._scroll_keys_into_view    = _make_recorder("keys")     # type: ignore[method-assign]
     return calls
 
 
@@ -82,7 +86,7 @@ async def test_cursor_tab_activation_invokes_matching_scroll_helper(
         panel = app.query_one("#right_panel", RightPanel)
         calls = _instrument_scroll_helpers(panel)
 
-        for tab_id in ("events", "agents", "memory", "docs"):
+        for tab_id in ("events", "agents", "memory", "docs", "pending", "keys"):
             panel.on_tabs_tab_activated(_make_tab_event(panel, tab_id))
             await pilot.pause()
             # Exactly one call on the matching helper, zero on the others.
@@ -106,7 +110,7 @@ async def test_cursor_tab_activation_invokes_matching_scroll_helper(
 async def test_non_cursor_tab_activation_invokes_no_scroll_helper(
     tmp_path,
 ) -> None:
-    """Tier 2: ``keys`` / ``cost`` tabs have no cursor → no helper called.
+    """Tier 2: ``cost`` tab has no cursor → no helper called.
 
     Defends against an accidentally over-broad dispatch (= "scroll
     something just in case") that could re-anchor the scroll incorrectly
@@ -118,7 +122,7 @@ async def test_non_cursor_tab_activation_invokes_no_scroll_helper(
         panel = app.query_one("#right_panel", RightPanel)
         calls = _instrument_scroll_helpers(panel)
 
-        for tab_id in ("keys", "cost"):
+        for tab_id in ("cost",):
             panel.on_tabs_tab_activated(_make_tab_event(panel, tab_id))
             await pilot.pause()
             assert all(v == [] for v in calls.values()), (

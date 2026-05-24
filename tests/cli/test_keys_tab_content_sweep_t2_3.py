@@ -86,7 +86,7 @@ async def test_f_row_rendered_contains_events_tab_suffix() -> None:
     app = _app()
     async with app.run_test(headless=True, size=(120, 40)) as pilot:
         await pilot.pause()
-        rendered, _ = render_keys(app, cursor=0, expanded=set())
+        rendered, _, _ = render_keys(app, cursor=0, expanded=set())
         assert "events tab" in rendered.lower(), (
             f"Rendered Keys tab must contain 'events tab' suffix for 'f' row;\n"
             f"rendered output:\n{rendered}"
@@ -103,7 +103,7 @@ async def test_t_row_rendered_contains_both_tab_contexts() -> None:
     app = _app()
     async with app.run_test(headless=True, size=(120, 40)) as pilot:
         await pilot.pause()
-        rendered, _ = render_keys(app, cursor=0, expanded=set())
+        rendered, _, _ = render_keys(app, cursor=0, expanded=set())
         lower = rendered.lower()
         # 't' is dual-purpose: events-tab tail cycle + memory-tab type filter.
         # The binding description must acknowledge at least one of the two tabs.
@@ -123,7 +123,7 @@ async def test_i_row_rendered_contains_events_tab_suffix() -> None:
     app = _app()
     async with app.run_test(headless=True, size=(120, 40)) as pilot:
         await pilot.pause()
-        rendered, _ = render_keys(app, cursor=0, expanded=set())
+        rendered, _, _ = render_keys(app, cursor=0, expanded=set())
         # The _PANEL_EXPLICIT entry for 'i' was updated to include "(events tab only)".
         assert "events tab" in rendered.lower(), (
             f"Rendered Keys tab must contain 'events tab' suffix for 'i' row;\n"

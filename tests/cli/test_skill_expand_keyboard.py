@@ -208,7 +208,7 @@ async def test_keys_tab_render_includes_f3_with_description() -> None:
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        markup, _ = render_keys(app)
+        markup, _, _ = render_keys(app)
         assert "F3" in markup
         # Description uses "skill row drill-down" (main UI wording).
         assert "skill row drill-down" in markup.lower()

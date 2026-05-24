@@ -138,7 +138,7 @@ def test_keys_tab_surfaces_a_attach_in_panel_group() -> None:
         )
         async with app.run_test(headless=True) as pilot:
             await pilot.pause()
-            markup, _ = render_keys(app)
+            markup, _, _ = render_keys(app)
             return markup
 
     markup = asyncio.run(_grab_markup())

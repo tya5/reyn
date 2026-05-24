@@ -53,7 +53,7 @@ def _reset_keys_state() -> None:
 
 def _render_plain(app: ReynTUIApp) -> str:
     """Return the rendered Keys tab markup (no cursor/expand override)."""
-    markup, _ = render_keys(
+    markup, _, _ = render_keys(
         app,
         cursor=get_keys_cursor(),
         expanded=get_keys_expanded(),
@@ -131,7 +131,7 @@ async def test_toggle_expand_f3_row_shows_detail() -> None:
         await pilot.pause()
 
         # Find the flat_key_list so we can locate the F3 row.
-        markup, flat_key_list = render_keys(
+        markup, flat_key_list, _ = render_keys(
             app,
             cursor=0,
             expanded=set(),
@@ -149,7 +149,7 @@ async def test_toggle_expand_f3_row_shows_detail() -> None:
         assert did_open, "toggle_expand_cursor should return True when opening"
 
         # Re-render with updated state and check for detail text.
-        markup_after, _ = render_keys(
+        markup_after, _, _ = render_keys(
             app,
             cursor=get_keys_cursor(),
             expanded=get_keys_expanded(),
@@ -171,14 +171,14 @@ async def test_toggle_expand_twice_hides_detail() -> None:
     async with app.run_test(headless=True, size=(120, 40)) as pilot:
         await pilot.pause()
 
-        markup, flat_key_list = render_keys(app, cursor=0, expanded=set())
+        markup, flat_key_list, _ = render_keys(app, cursor=0, expanded=set())
         assert "f3" in flat_key_list
         f3_idx = flat_key_list.index("f3")
         keys_move(f3_idx, len(flat_key_list))
 
         # First toggle: open.
         toggle_expand_cursor(flat_key_list)
-        markup_open, _ = render_keys(
+        markup_open, _, _ = render_keys(
             app, cursor=get_keys_cursor(), expanded=get_keys_expanded(),
         )
         assert "drill-down" in markup_open.lower(), (
@@ -187,7 +187,7 @@ async def test_toggle_expand_twice_hides_detail() -> None:
 
         # Second toggle: close.
         toggle_expand_cursor(flat_key_list)
-        markup_closed, _ = render_keys(
+        markup_closed, _, _ = render_keys(
             app, cursor=get_keys_cursor(), expanded=get_keys_expanded(),
         )
         # The bare row description for F3 is "Drill-down …" per _PANEL_EXPLICIT
@@ -214,7 +214,7 @@ async def test_toggle_expand_no_detail_row_is_noop() -> None:
     async with app.run_test(headless=True, size=(120, 40)) as pilot:
         await pilot.pause()
 
-        markup_before, flat_key_list = render_keys(app, cursor=0, expanded=set())
+        markup_before, flat_key_list, _ = render_keys(app, cursor=0, expanded=set())
 
         # Find a row whose raw_key is NOT in _KEY_DETAILS.
         # Most rows won't be in _KEY_DETAILS (only 6 initial entries).
@@ -240,7 +240,7 @@ async def test_toggle_expand_no_detail_row_is_noop() -> None:
 
         # Render after no-op: output must be unchanged (same markup since
         # expand state didn't change and cursor moved to same col).
-        markup_after, _ = render_keys(
+        markup_after, _, _ = render_keys(
             app, cursor=get_keys_cursor(), expanded=get_keys_expanded(),
         )
         # The expand-specific sentinel lines should not appear.
