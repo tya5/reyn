@@ -92,6 +92,17 @@ from typing import Callable
 #         as a sibling (= verb-collapse of the previous skill-space hidden
 #         install action, so installation requests don't require list_actions
 #         discovery first).
+#   2026-05-25 (post-#898): mcp__list_tools + mcp__call_tool added (= the
+#         "USE installed server" cold-start path observed missing in the
+#         5-server walkthrough). skill__skill_importer + rag.operation__
+#         drop_source dropped to keep seed size constant — skill_importer
+#         is the niche of the three flagship skill__skill_* verbs (=
+#         external import flow vs builder/improver), and drop_source's
+#         B37 schema-hallucination protection is now covered by the ARS
+#         scope expansion (= ``KNOWN_STATIC_QUALIFIED_NAMES`` is always in
+#         ARS regardless of hot-list per the B38 contract; see
+#         ``_collect_all_session_ars_entries``), so seed presence is no
+#         longer load-bearing for that invariant.
 DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "file__read",
     "file__list",
@@ -102,13 +113,13 @@ DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "reyn.source__list",
     "web__search",
     "web__fetch",
-    "rag.operation__drop_source",
     "memory.operation__remember_shared",
     "skill__skill_builder",
     "skill__skill_improver",
-    "skill__skill_importer",
     "mcp__search_server",
     "mcp__install_server",
+    "mcp__list_tools",
+    "mcp__call_tool",
     "skill__index_docs",
     "skill__eval",
 )

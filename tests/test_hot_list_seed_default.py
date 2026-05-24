@@ -23,16 +23,25 @@ from reyn.tools.universal_dispatch import UnknownActionError, resolve_invoke_act
 # file__write — W4 S1: LLM used args key "text" instead of "content" because
 # the action was absent from the hot list and the D2-wrapper ARS block had no
 # entry for it.
-# rag.operation__drop_source — W2 S1 / W4 S6: LLM used "source_id" then
-# "source_name" across batches; synonym normalization is bankrupt. Seeding
-# exposes the canonical {source} schema upfront.
+# 2026-05-25 (post-#898 hot-list seed swap): rag.operation__drop_source
+# removed from the required-entries pin. Its B37 schema-hallucination
+# protection is now covered by the ARS scope-expansion contract (=
+# KNOWN_STATIC_QUALIFIED_NAMES is always in ARS regardless of hot-list,
+# per B38; see test_invoke_action_scope_expansion.py::
+# test_static_ops_always_present_no_session_state). Seed presence is no
+# longer the load-bearing mechanism for that invariant.
+# mcp__list_tools + mcp__call_tool — 2026-05-25 walkthrough: cold-start
+# "use an installed MCP server" path required discovery via list_actions
+# before chaining mcp__list_tools / mcp__call_tool; seeding skips the
+# discovery turn.
 # web__fetch — W3 S4: present in seed since B34; this test asserts it remains.
 
 _B37_REQUIRED_ENTRIES: tuple[str, ...] = (
     "mcp__search_server",         # #879: mcp routing — search verb in hot list
     "mcp__install_server",        # #879: mcp routing — install verb in hot list
+    "mcp__list_tools",            # post-#898: cold-start "use server" verb
+    "mcp__call_tool",             # post-#898: cold-start "use server" verb
     "file__write",                # W4 S1: arg-key hallucination (text vs content)
-    "rag.operation__drop_source", # W2 S1 / W4 S6: hallucination drift source_id→source_name
     "web__fetch",                 # W3 S4: web fetch intent cold-start coverage
 )
 
