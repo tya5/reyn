@@ -118,6 +118,10 @@ class StickyStatus(Static):
         self._kind: str = "general"
         self._glyph: str = _GLYPHS["general"]
         self._body: str = ""
+        # W13 A#7: track the *effective* priority (= the value used for
+        # suppression decisions) separately from the kind-lookup so
+        # terminal=True calls (priority=110) are reflected in snapshot().
+        self._current_priority: int = 0
 
     def on_mount(self) -> None:
         """Start the 0.1 s elapsed timer tick."""
@@ -153,12 +157,12 @@ class StickyStatus(Static):
         else:
             new_priority = _KIND_PRIORITY.get(new_kind, 0)
         if self._active:
-            current_priority = _KIND_PRIORITY.get(self._kind, 0)
-            if new_priority < current_priority:
+            if new_priority < self._current_priority:
                 return
         self._kind = new_kind
         self._glyph = _GLYPHS[self._kind]
         self._active = True
+        self._current_priority = new_priority
         self.add_class("active")
         self.update_text(text)
 
@@ -170,6 +174,7 @@ class StickyStatus(Static):
     def hide(self) -> None:
         """Deactivate and hide the status bar."""
         self._active = False
+        self._current_priority = 0
         self.remove_class("active")
 
     def snapshot(self) -> dict:
@@ -189,7 +194,11 @@ class StickyStatus(Static):
             "active": self._active,
             "body": self._body,
             "kind": self._kind,
-            "priority": _KIND_PRIORITY.get(self._kind, 0),
+            # W13 A#7: return the *effective* priority (= the value set at
+            # show()-time, which may be _TERMINAL_ERROR_PRIORITY=110 for
+            # terminal errors) rather than the kind-table lookup so tests
+            # can assert ``snapshot()["priority"] == 110`` for terminal errors.
+            "priority": self._current_priority,
         }
 
     # ── internal ──────────────────────────────────────────────────────────────

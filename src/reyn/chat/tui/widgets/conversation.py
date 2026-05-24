@@ -1804,6 +1804,17 @@ class ConversationView(Widget):
         # accurate after a dismiss. ``[2/3]`` after removing the
         # newest becomes ``[2/2]`` for the remaining tail entry.
         self._renumber_error_boxes()
+        # C[1] fix: keep session._error_box_count in sync.  Defensive:
+        # only decrement when the session exposes the attribute and the
+        # count is already > 0 (guard against going negative on
+        # double-dismiss or a session that initialises late).
+        try:
+            _session = self.app._get_session()  # type: ignore[attr-defined]
+            if getattr(_session, "_error_box_count", None) is not None:
+                if _session._error_box_count > 0:
+                    _session._error_box_count -= 1
+        except Exception:
+            pass
         # C-F4 (wave-8): after dismiss the live count drops by 1.
         # If still ≥ 2, refresh the count sticky to the new value;
         # otherwise the count form is stale and we clear the
@@ -1840,6 +1851,13 @@ class ConversationView(Widget):
             f"  ✗ {n} {noun} dismissed (see events)",
             style="dim #555555",
         ))
+        # C[1] fix: zero out session._error_box_count.  Defensive guard.
+        try:
+            _session = self.app._get_session()  # type: ignore[attr-defined]
+            if getattr(_session, "_error_box_count", None) is not None:
+                _session._error_box_count = 0
+        except Exception:
+            pass
         # Sticky count is now stale — clear it.
         self.hide_status()
 
@@ -2352,6 +2370,14 @@ class ConversationView(Widget):
             except Exception:
                 pass
         self._error_boxes.clear()
+        # C[1] fix: zero out session._error_box_count after all boxes
+        # are gone.  Defensive guard — _get_session() may return None.
+        try:
+            _session = self.app._get_session()  # type: ignore[attr-defined]
+            if getattr(_session, "_error_box_count", None) is not None:
+                _session._error_box_count = 0
+        except Exception:
+            pass
         # Wave-13 C#1: post-clear audit breadcrumb. Written AFTER _log().clear()
         # so it survives in the fresh log (writing before clear() would wipe it
         # along with the rest of the history). The message is intentionally
