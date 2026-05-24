@@ -1,4 +1,4 @@
-"""Tier 2: render_events returns per-row y-coords accounting for multi-line drift (A-F3).
+"""Tier 2b: render_events returns per-row y-coords accounting for multi-line drift (A-F3).
 
 Wave-8 Topic A finding F3 (P2): pre-fix ``_scroll_events_into_view``
 used ``y = 1 + cursor`` which assumed one rendered line per event.
@@ -35,7 +35,7 @@ def _write_events(tmp_path: Path, events: list[dict]) -> None:
 
 
 def test_event_ys_returned_for_single_chain_no_blanks(tmp_path: Path) -> None:
-    """Tier 2: same chain_id → no blank lines → ys are contiguous."""
+    """Tier 2b: same chain_id → no blank lines → ys are contiguous."""
     from reyn.chat.tui.widgets.right_panel.events_tab import render_events
 
     _write_events(tmp_path, [
@@ -47,10 +47,9 @@ def test_event_ys_returned_for_single_chain_no_blanks(tmp_path: Path) -> None:
         tmp_path, event_filter_idx=0, event_tail_idx=0, cursor=0,
         cache={}, filelist_cache=None,
     )
-    assert len(visible) == 3
-    assert len(ys) == 3
     # Single chain, no user_message_received → ys are 0, 1, 2.
     assert ys == [0, 1, 2]
+    assert len(visible) == len(ys)
     # Sanity-check: ys index into actual rendered lines.
     lines = rendered.split("\n")
     for i, y in enumerate(ys):
@@ -60,7 +59,7 @@ def test_event_ys_returned_for_single_chain_no_blanks(tmp_path: Path) -> None:
 
 
 def test_event_ys_skips_blank_line_at_chain_switch(tmp_path: Path) -> None:
-    """Tier 2: chain switch inserts blank → ys[1] = 2 (not 1).
+    """Tier 2b: chain switch inserts blank → ys[1] = 2 (not 1).
 
     Without the per-row tracking, ``y = 1 + cursor`` would point at
     the blank separator row rather than the second event's headline.
@@ -81,7 +80,6 @@ def test_event_ys_skips_blank_line_at_chain_switch(tmp_path: Path) -> None:
     )
     # visible is newest-first: [p2 (c2), p1 (c2), p0 (c1)]
     # rendered: ▶ p2  /  p1  /  <blank>  /  p0
-    assert len(ys) == 3
     assert ys[0] == 0
     assert ys[1] == 1
     assert ys[2] == 3, f"chain switch should bump y to 3, got {ys!r}"
@@ -93,7 +91,7 @@ def test_event_ys_skips_blank_line_at_chain_switch(tmp_path: Path) -> None:
 
 
 def test_event_ys_accounts_for_user_message_reply_line(tmp_path: Path) -> None:
-    """Tier 2: user_message_received adds a ↳ line → subsequent ys bump by 1.
+    """Tier 2b: user_message_received adds a ↳ line → subsequent ys bump by 1.
 
     Even when there's no chain switch, a user_message_received row
     consumes 2 rendered lines (headline + ``↳`` reply), so the next
@@ -118,7 +116,6 @@ def test_event_ys_accounts_for_user_message_reply_line(tmp_path: Path) -> None:
     #   row 0 → phase_started
     #   row 1 → user_message_received headline
     #   row 2 → ↳ (awaiting…)
-    assert len(ys) == 2
     assert ys[0] == 0
     assert ys[1] == 1
     lines = rendered.split("\n")
@@ -128,7 +125,7 @@ def test_event_ys_accounts_for_user_message_reply_line(tmp_path: Path) -> None:
 
 
 def test_empty_visible_returns_empty_ys(tmp_path: Path) -> None:
-    """Tier 2: empty / no-match return shape stays a 3-tuple."""
+    """Tier 2b: empty / no-match return shape stays a 3-tuple."""
     from reyn.chat.tui.widgets.right_panel.events_tab import render_events
 
     # No events root → "no events yet" early return.

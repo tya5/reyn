@@ -1,4 +1,4 @@
-"""Tier 2: InlineThinkingRow + ConversationView.start_thinking / stop_thinking.
+"""Tier 2b: InlineThinkingRow + ConversationView.start_thinking / stop_thinking.
 
 Validates the inline Braille spinner lifecycle that replaced the sticky
 ``kind="thinking"`` indicator.
@@ -26,7 +26,7 @@ if str(_SRC) not in sys.path:
 
 @pytest.mark.asyncio
 async def test_start_thinking_mounts_one_row() -> None:
-    """Tier 2: start_thinking() mounts exactly 1 InlineThinkingRow."""
+    """Tier 2b: start_thinking() mounts exactly 1 InlineThinkingRow."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
     from reyn.chat.tui.widgets.inline_thinking_row import InlineThinkingRow
@@ -37,15 +37,16 @@ async def test_start_thinking_mounts_one_row() -> None:
         conv = app.query_one("#conversation", ConversationView)
         conv.start_thinking()
         await pilot.pause()
-        rows = conv.query(InlineThinkingRow)
-        assert len(rows) == 1, (
-            f"expected 1 InlineThinkingRow after start_thinking(), got {len(rows)}"
+        rows = list(conv.query(InlineThinkingRow))
+        assert rows, "expected at least 1 InlineThinkingRow after start_thinking()"
+        assert not rows[1:], (
+            f"expected exactly 1 InlineThinkingRow after start_thinking(), got {len(rows)}"
         )
 
 
 @pytest.mark.asyncio
 async def test_start_thinking_idempotent() -> None:
-    """Tier 2: calling start_thinking() twice mounts only 1 row."""
+    """Tier 2b: calling start_thinking() twice mounts only 1 row."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
     from reyn.chat.tui.widgets.inline_thinking_row import InlineThinkingRow
@@ -58,16 +59,17 @@ async def test_start_thinking_idempotent() -> None:
         await pilot.pause()
         conv.start_thinking()
         await pilot.pause()
-        rows = conv.query(InlineThinkingRow)
-        assert len(rows) == 1, (
-            f"expected 1 InlineThinkingRow after two start_thinking() calls, "
+        rows = list(conv.query(InlineThinkingRow))
+        assert rows, "expected at least 1 InlineThinkingRow after two start_thinking() calls"
+        assert not rows[1:], (
+            f"expected exactly 1 InlineThinkingRow after two start_thinking() calls, "
             f"got {len(rows)}"
         )
 
 
 @pytest.mark.asyncio
 async def test_stop_thinking_unmounts_row() -> None:
-    """Tier 2: stop_thinking() after start_thinking() unmounts the row."""
+    """Tier 2b: stop_thinking() after start_thinking() unmounts the row."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
     from reyn.chat.tui.widgets.inline_thinking_row import InlineThinkingRow
@@ -80,15 +82,15 @@ async def test_stop_thinking_unmounts_row() -> None:
         await pilot.pause()
         conv.stop_thinking()
         await pilot.pause()
-        rows = conv.query(InlineThinkingRow)
-        assert len(rows) == 0, (
+        rows = list(conv.query(InlineThinkingRow))
+        assert not rows, (
             f"expected 0 InlineThinkingRow after stop_thinking(), got {len(rows)}"
         )
 
 
 @pytest.mark.asyncio
 async def test_stop_thinking_without_start_no_error() -> None:
-    """Tier 2: stop_thinking() without prior start_thinking() is a no-op."""
+    """Tier 2b: stop_thinking() without prior start_thinking() is a no-op."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
 
@@ -103,7 +105,7 @@ async def test_stop_thinking_without_start_no_error() -> None:
 
 @pytest.mark.asyncio
 async def test_inline_thinking_row_shows_braille_frame() -> None:
-    """Tier 2: InlineThinkingRow frame index is valid after mounting."""
+    """Tier 2b: InlineThinkingRow frame index is valid after mounting."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
     from reyn.chat.tui.widgets.inline_thinking_row import _FRAMES, InlineThinkingRow
@@ -126,7 +128,7 @@ async def test_inline_thinking_row_shows_braille_frame() -> None:
 
 @pytest.mark.asyncio
 async def test_tick_advances_frame() -> None:
-    """Tier 2: _tick() cycles the Braille frame index forward."""
+    """Tier 2b: _tick() cycles the Braille frame index forward."""
     from reyn.chat.tui.widgets.inline_thinking_row import _FRAMES, InlineThinkingRow
 
     # Exercise _tick() directly without a full app mount.
@@ -147,7 +149,7 @@ async def test_tick_advances_frame() -> None:
 
 
 def test_thinking_not_in_kind_priority() -> None:
-    """Tier 2: cleanup — 'thinking' no longer in _KIND_PRIORITY (sticky removed it)."""
+    """Tier 2b: cleanup — 'thinking' no longer in _KIND_PRIORITY (sticky removed it)."""
     from reyn.chat.tui.widgets.sticky_status import _KIND_PRIORITY
 
     assert "thinking" not in _KIND_PRIORITY, (
