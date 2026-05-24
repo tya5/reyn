@@ -70,6 +70,7 @@ _CALL_SITE_FILES = [
     "src/reyn/cli/commands/dogfood.py",
     "src/reyn/cli/commands/mcp.py",
     "src/reyn/web/deps.py",
+    "src/reyn/chainlit_app/app.py",
 ]
 
 
