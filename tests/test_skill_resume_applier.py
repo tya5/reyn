@@ -180,8 +180,8 @@ def test_resume_action_passed_through(tmp_path: Path):
         return await coord.apply_decisions([d], skill_registry=registry)
 
     remaining = asyncio.run(go())
-    assert len(remaining) == 1
-    assert remaining[0].action == "resume"
+    (only,) = remaining
+    assert only.action == "resume"
 
 
 def test_retry_action_passed_through(tmp_path: Path):
@@ -197,8 +197,8 @@ def test_retry_action_passed_through(tmp_path: Path):
         return await coord.apply_decisions([d], skill_registry=registry)
 
     remaining = asyncio.run(go())
-    assert len(remaining) == 1
-    assert remaining[0].action == "retry"
+    (only,) = remaining
+    assert only.action == "retry"
 
 
 def test_skip_action_passed_through(tmp_path: Path):
@@ -227,9 +227,9 @@ def test_skip_action_passed_through(tmp_path: Path):
         return await coord.apply_decisions([d], skill_registry=registry)
 
     remaining = asyncio.run(go())
-    assert len(remaining) == 1
-    assert remaining[0].action == "skip"
-    assert remaining[0].plan.committed_steps[0].result == {"status": "skipped"}
+    (only,) = remaining
+    assert only.action == "skip"
+    assert only.plan.committed_steps[0].result == {"status": "skipped"}
 
 
 def test_prompt_required_treated_as_retry_for_auto_resume(tmp_path: Path):
@@ -254,8 +254,8 @@ def test_prompt_required_treated_as_retry_for_auto_resume(tmp_path: Path):
     remaining = asyncio.run(go())
     # Remains in launchable list — the caller will launch it; ambiguous
     # steps are absent from committed_steps so they retry naturally.
-    assert len(remaining) == 1
-    assert remaining[0].action in ("prompt_required", "retry")
+    (only,) = remaining
+    assert only.action in ("prompt_required", "retry")
 
 
 # ---------------------------------------------------------------------------
@@ -300,5 +300,5 @@ def test_apply_decisions_mixed_batch(tmp_path: Path):
         e for e in log.iter_from(0)
         if e["kind"] == "skill_discarded"
     ]
-    assert len(discarded) == 1
-    assert discarded[0]["run_id"] == "run_b"
+    (only_discarded,) = discarded
+    assert only_discarded["run_id"] == "run_b"
