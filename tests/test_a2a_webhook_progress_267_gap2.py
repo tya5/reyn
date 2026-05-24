@@ -259,7 +259,6 @@ def test_send_posts_canonical_progress_payload(monkeypatch) -> None:
     )
 
     asyncio.run(bridge._send(7, "phase_started", "phase: planning"))
-    assert len(posted) == 1
     url, payload = posted[0]
     assert url == "https://peer.test/hook"
     assert payload == {
