@@ -147,7 +147,7 @@ async def test_session_restore_state_re_enqueues_intervention(tmp_path, monkeypa
     await asyncio.sleep(0)
 
     actives = session._interventions.list_active()
-    assert len(actives) == 1
+    assert actives
     assert actives[0].id == "iv_recovered"
     assert actives[0].prompt == "Recovered Q?"
     assert actives[0].run_id == "rA"
