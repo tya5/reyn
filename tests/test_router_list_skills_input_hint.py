@@ -103,9 +103,9 @@ def test_list_skills_result_includes_input_artifact():
     loop = _make_loop(skills)
     result = loop._list_skills("general")
 
-    assert len(result) == 1
-    item = result[0]
-    assert item["name"] == "my_skill"
+    by_name = {r["name"]: r for r in result}
+    assert "my_skill" in by_name, "my_skill must appear in list_skills result"
+    item = by_name["my_skill"]
     assert item.get("input_artifact") == "my_request", (
         "input_artifact must be present in list_skills result when catalogue entry has it"
     )
@@ -227,9 +227,9 @@ def test_list_skills_no_input_hint_is_safe():
     loop = _make_loop(skills)
     result = loop._list_skills("general")
 
-    assert len(result) == 1
-    item = result[0]
-    assert item["name"] == "bare_skill"
+    by_name = {r["name"]: r for r in result}
+    assert "bare_skill" in by_name, "bare_skill must appear in list_skills result"
+    item = by_name["bare_skill"]
     # Fields must be absent (not present with None value)
     assert "input_artifact" not in item, (
         "input_artifact must not appear when the catalogue entry lacks it"

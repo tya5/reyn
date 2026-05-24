@@ -59,10 +59,10 @@ _STDLIB_ARTIFACTS = _REPO_ROOT / "src" / "reyn" / "stdlib" / "artifacts"
 
 
 def test_word_stats_demo_resolves_input_schema_from_stdlib_user_message():
-    """Tier 2 (B46-fix): ``word_stats_demo`` declares
-    ``input: user_message`` in its entry phase and has no local
-    ``artifacts/user_message.yaml``. After the fix, the hint must
-    resolve ``input_schema`` from the stdlib shared artifact at
+    """Tier 2: ``word_stats_demo`` declares ``input: user_message`` in
+    its entry phase and has no local ``artifacts/user_message.yaml``.
+    After the B46-fix, the hint must resolve ``input_schema`` from the
+    stdlib shared artifact at
     ``src/reyn/stdlib/artifacts/user_message.yaml``."""
     hint = _extract_skill_input_hint(
         _STDLIB_SKILLS / "word_stats_demo", "review",
@@ -100,10 +100,10 @@ def test_stdlib_shared_user_message_artifact_exists_and_declares_text():
 
 
 def test_enumerate_surfaces_input_schema_for_word_stats_demo():
-    """Tier 2 (B46-fix end-to-end): ``enumerate_available_skills``
-    must surface ``input_schema`` on the ``word_stats_demo`` entry.
-    This is the data the hot-list alias builder reads to construct
-    ``skill__word_stats_demo`` wrapper parameters — without
+    """Tier 2: ``enumerate_available_skills`` must surface
+    ``input_schema`` on the ``word_stats_demo`` entry (B46-fix
+    end-to-end). This is the data the hot-list alias builder reads to
+    construct ``skill__word_stats_demo`` wrapper parameters — without
     input_schema present here, the wrapper falls back to
     ``properties: {}, additionalProperties: true`` and the LLM
     calls the skill with ``{}`` (= B46 W2 S6 R verdict)."""
