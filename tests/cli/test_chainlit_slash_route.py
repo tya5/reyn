@@ -20,6 +20,7 @@ from reyn.chainlit_app.slash_route import (
     QUICK_ACTIONS,
     QuickAction,
     action_name_for,
+    is_chainlit_history_wipe,
     is_slash,
 )
 
@@ -81,3 +82,33 @@ def test_action_name_for_uses_slash_prefix():
     the welcome button builder)."""
     qa = QuickAction(name="example", label="/example", slash_text="/example")
     assert action_name_for(qa) == "slash_example"
+
+
+# ── is_chainlit_history_wipe ──────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("/clear-history confirm", True),
+        ("  /clear-history confirm ", True),  # leading/trailing ws
+        ("/clear-history   confirm", True),   # multiple internal spaces
+        ("/CLEAR-HISTORY CONFIRM", True),     # case insensitive
+        ("/clear-history", False),            # missing confirm token
+        ("/clear-history maybe", False),      # wrong token
+        ("/reset confirm", False),            # different slash
+        ("clear-history confirm", False),     # missing leading slash
+        ("", False),
+    ],
+)
+def test_is_chainlit_history_wipe_truth_table(text: str, expected: bool):
+    """Tier 1: only the exact (after normalisation) ``/clear-history
+    confirm`` form triggers the chainlit-side UI cleanup."""
+    assert is_chainlit_history_wipe(text) is expected
+
+
+def test_is_chainlit_history_wipe_handles_none():
+    """Tier 1: None / empty input → False (= safe for `message.content
+    or ''` shorthand callers)."""
+    assert is_chainlit_history_wipe(None) is False  # type: ignore[arg-type]
+    assert is_chainlit_history_wipe("") is False
