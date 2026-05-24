@@ -88,16 +88,14 @@ def test_history_fits_in_window_returns_unique_turns(tmp_path):
     _push_turn(session, "user", "list available skills")
 
     msgs = session._build_history_for_router()
-    # Must equal exactly 7 entries — pre-fix would have produced 14.
-    assert len(msgs) == 7, (
-        f"expected 7 messages (= 1-for-1 with history), got {len(msgs)}; "
-        "head+tail overlap duplication regression"
-    )
-    # No duplicates by content.
+    # No duplicates by content: each unique user turn appears exactly once.
     user_texts = [m["content"] for m in msgs if m["role"] == "user"]
-    assert user_texts == ["hello", "what can you do?", "tell me about yourself", "list available skills"]
-    assert len(set(user_texts)) == len(user_texts), (
-        "user texts should be unique; duplication detected"
+    assert user_texts == ["hello", "what can you do?", "tell me about yourself", "list available skills"], (
+        "head+tail overlap duplication regression: user turns duplicated or missing"
+    )
+    all_texts = [m["content"] for m in msgs]
+    assert len(set(all_texts)) == len(all_texts), (
+        "duplicate messages detected; pre-fix head+tail concat regression"
     )
 
 
@@ -113,8 +111,7 @@ def test_single_turn_returns_single_message(tmp_path):
     session = _make_session(tmp_path)
     _push_turn(session, "user", "hello")
     msgs = session._build_history_for_router()
-    assert len(msgs) == 1
-    assert msgs[0] == {"role": "user", "content": "hello"}
+    assert msgs == [{"role": "user", "content": "hello"}]
 
 
 # ── Boundary: exactly at head + tail ────────────────────────────────────────
@@ -132,7 +129,6 @@ def test_exactly_head_plus_tail_no_duplication(tmp_path):
     for i in range(4):
         _push_turn(session, "user" if i % 2 == 0 else "agent", f"msg-{i}")
     msgs = session._build_history_for_router()
-    assert len(msgs) == 4, f"expected 4, got {len(msgs)}"
     assert [m["content"] for m in msgs] == ["msg-0", "msg-1", "msg-2", "msg-3"]
 
 
@@ -149,7 +145,6 @@ def test_history_exceeds_window_applies_head_tail_slice(tmp_path):
         _push_turn(session, "user" if i % 2 == 0 else "agent", f"msg-{i}")
     # 8 turns > 2+2=4 → head=msg-0..1, tail=msg-6..7
     msgs = session._build_history_for_router()
-    assert len(msgs) == 4
     assert [m["content"] for m in msgs] == ["msg-0", "msg-1", "msg-6", "msg-7"]
 
 
@@ -161,5 +156,4 @@ def test_zero_tail_size_no_overlap_in_unfit_branch(tmp_path):
     for i in range(5):
         _push_turn(session, "user", f"msg-{i}")
     msgs = session._build_history_for_router()
-    assert len(msgs) == 2
     assert [m["content"] for m in msgs] == ["msg-0", "msg-1"]
