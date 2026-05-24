@@ -42,7 +42,7 @@ _EXPECTED_USAGE: dict[str, str] = {
     "memory":      "/memory [list|view <name>]",
     "docs-filter": "/docs-filter [<substring>]",
     "skill":       "/skill [list|discard <id>]",
-    "agent":       "/agent new <name>",
+    "agent":       "/agent new <name> | /agent edit role <text>",
     "image":       "/image <path>",
     "reset":       "/reset confirm",
     "budget":      "/budget [reset]",
