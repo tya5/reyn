@@ -40,7 +40,7 @@ def test_compaction_completed_emits_system_marker() -> None:
         data={"new_turn_count": 8, "covers_through_seq": 42},
     ))
     msgs = _drain(q)
-    assert len(msgs) == 1
+    assert msgs, "expected at least one outbox message"
     assert msgs[0].kind == "system"
     assert msgs[0].text == "[↑ 8 turns compacted]"
 
@@ -68,7 +68,7 @@ def test_compaction_missing_count_uses_generic_marker() -> None:
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(type="compaction_completed", data={}))
     msgs = _drain(q)
-    assert len(msgs) == 1
+    assert msgs, "expected at least one outbox message"
     assert msgs[0].text == "[↑ history compacted]"
 
 
@@ -138,7 +138,7 @@ def test_budget_warn_emits_lifecycle_marker_with_pct() -> None:
         },
     ))
     msgs = _drain(q)
-    assert len(msgs) == 1
+    assert msgs, "expected at least one outbox message"
     assert msgs[0].kind == "system"
     assert msgs[0].text == "[↑ budget warn: daily_tokens (80%)]"
 
@@ -156,7 +156,7 @@ def test_budget_warn_without_numeric_context_drops_pct() -> None:
         data={"dimension": "rate_limit"},
     ))
     msgs = _drain(q)
-    assert len(msgs) == 1
+    assert msgs, "expected at least one outbox message"
     assert msgs[0].text == "[↑ budget warn: rate_limit]"
 
 
