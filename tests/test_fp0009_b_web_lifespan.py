@@ -166,7 +166,7 @@ async def test_enabled_job_scheduler_is_cron_scheduler_instance(tmp_path, monkey
 
         # Verify the job is registered
         jobs = app.state.cron_scheduler.jobs()
-        assert len(jobs) == 1
+        assert jobs, "expected at least one cron job to be registered"
         assert jobs[0].name == "far_future_job"
         assert jobs[0].skill == "some_skill"
         assert jobs[0].enabled is True

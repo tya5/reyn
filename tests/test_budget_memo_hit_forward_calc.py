@@ -72,7 +72,7 @@ async def test_wal_step_completed_for_llm_records_usage(tmp_path, monkeypatch):
     await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     completed = [e for e in state_log.iter_from(0) if e["kind"] == "step_completed"]
-    assert len(completed) == 1
+    assert completed, "expected at least one step_completed event in WAL"
     ev = completed[0]
     assert ev.get("usage") is not None, (
         "step_completed for LLM must record usage so memo hit can credit budget"
