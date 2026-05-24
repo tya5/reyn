@@ -31,7 +31,7 @@ retries ``mcp__install_server``.
 """
 from __future__ import annotations
 
-import re
+from dataclasses import asdict
 from typing import Any, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
@@ -61,41 +61,35 @@ _MCP_SEARCH_SERVER_PARAMETERS: dict[str, Any] = {
 }
 
 
-def _extract_keyword(text: str) -> str:
-    """Best-effort English keyword extraction.
-
-    First run of ASCII letters ≥ 3 chars wins (e.g. embedded English
-    product names inside mixed-language text). Falls back to the first
-    whitespace token lowercased.
-    """
-    match = re.search(r"[A-Za-z]{3,}", text)
-    if match:
-        return match.group(0).lower()
-    token = text.split()[0] if text.split() else text
-    return token.lower()
-
-
 async def _handle_mcp_search_server(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """Pure op-runtime registry search — no skill spawn, no ask_user."""
-    text = str(args.get("text", "") or "")
-    if not text.strip():
+    """Registry search — uses the same RegistryClient backend as the CLI
+    ``reyn mcp search`` so chat and CLI surfaces stay in lock-step.
+
+    Passes the user's text verbatim to the registry; the registry's own
+    indexing handles multilingual matching. The pre-#882 ``mcp_search``
+    skill applied a Japanese→English keyword extraction preprocessor
+    (= `_extract_keyword`); that workaround is dropped now that the
+    handler runs in the router context with full async HTTP available.
+    """
+    text = str(args.get("text", "") or "").strip()
+    if not text:
         return {
             "status": "error",
             "data": {"error": "text is required"},
         }
 
-    from reyn.safe.mcp.registry import RegistryError, search
+    from reyn.registry.client import RegistryClient, RegistryError
 
-    query = _extract_keyword(text)
     try:
-        candidates = search(query, limit=20)
+        async with RegistryClient() as client:
+            candidates = await client.search(text, limit=20)
     except RegistryError as exc:
         return {
             "status": "error",
             "data": {
-                "query": query,
+                "query": text,
                 "candidates": [],
                 "error": str(exc),
             },
@@ -104,8 +98,8 @@ async def _handle_mcp_search_server(
     return {
         "status": "ok",
         "data": {
-            "query": query,
-            "candidates": candidates,
+            "query": text,
+            "candidates": [asdict(c) for c in candidates],
         },
     }
 
