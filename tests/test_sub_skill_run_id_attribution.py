@@ -84,10 +84,9 @@ def test_forwarder_uses_event_run_id_when_present() -> None:
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatEventForwarder("router", q, run_id="parent-run")
     fwd(Event(type="phase_started", data={"phase": "code_review", "run_id": "child-run"}))
-    msgs = _drain(q)
-    assert len(msgs) == 1
-    assert msgs[0].meta["run_id"] == "child-run"
-    assert msgs[0].meta["run_id_short"] == "-run"
+    (msg,) = _drain(q)
+    assert msg.meta["run_id"] == "child-run"
+    assert msg.meta["run_id_short"] == "-run"
 
 
 def test_forwarder_stamps_parent_run_id_when_differs() -> None:

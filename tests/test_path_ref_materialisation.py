@@ -172,10 +172,9 @@ def test_followup_handles_mixed_pathref_and_inline(tmp_path, monkeypatch):
         tool_name="mixed", media_blocks=[pathref, inline], media_store=store,
     )
     assert msg is not None
-    urls = [p["image_url"]["url"] for p in msg["content"] if p.get("type") == "image_url"]
-    assert len(urls) == 2
-    assert base64.b64decode(urls[0].split(",", 1)[1]) == b"first"
-    assert base64.b64decode(urls[1].split(",", 1)[1]) == b"second"
+    (url0, url1) = [p["image_url"]["url"] for p in msg["content"] if p.get("type") == "image_url"]
+    assert base64.b64decode(url0.split(",", 1)[1]) == b"first"
+    assert base64.b64decode(url1.split(",", 1)[1]) == b"second"
 
 
 # ── ChatMessage round-trip with path-ref content ───────────────────────
