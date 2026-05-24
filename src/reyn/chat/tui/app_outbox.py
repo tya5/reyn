@@ -1364,17 +1364,30 @@ class OutboxRouter:
         from .widgets.conversation import _classify_error_severity
         severity = _classify_error_severity(msg.text or "", msg.meta or {})
         if severity == "high":
-            # Don't unconditionally hide first — instead show with terminal
-            # priority so it beats any active thinking indicator. The
-            # render_message call below will mount the ErrorBox which
-            # triggers its own scroll-based hide_status logic.
+            # C[2] fix: render_message FIRST so mount_error's hide_status
+            # fires before we set the terminal sticky.  If we set the
+            # sticky first and then call render_message, mount_error's own
+            # ``hide_status()`` (unconditional when not scrolled) would
+            # immediately clear the terminal-priority sticky we just set —
+            # effective display time ZERO.  By rendering first the sticky
+            # is set AFTER the hide_status inside mount_error has already
+            # run, so it persists for the user to read.
+            conv.render_message(msg)
             try:
                 conv.show_status("✗ terminal error", kind="error", terminal=True)
             except Exception:
-                conv.hide_status()
+                pass
         else:
             conv.hide_status()
-        conv.render_message(msg)
+            conv.render_message(msg)
+        # C[1] fix: increment session._error_box_count to keep slash-
+        # command surfaces (/pending list, /reset preview) in sync with
+        # the actual number of mounted ErrorBoxes.  Defensive: only write
+        # if the session exposes the attribute (= stripped / mock sessions
+        # in tests don't crash).
+        _session = self._app._get_session()
+        if getattr(_session, "_error_box_count", None) is not None:
+            _session._error_box_count += 1  # type: ignore[union-attr]
         self._app._last_focal_tab = "events"
         # Out-of-band: flag the terminal title and ring the bell so a
         # user with reyn in a background tab notices something failed.
