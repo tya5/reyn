@@ -55,20 +55,29 @@ The Agent Card surfaces:
 
 ## What's supported
 
-| Method | v1 | v2 (planned) |
+| Method / capability | Status | Notes |
 |---|---|---|
-| `message/send` | ✅ synchronous reply | — |
-| `message/stream` | ❌ | streaming SSE responses |
-| `tasks/get` / `tasks/cancel` | ❌ | task lifecycle for long-running runs |
-| Push notifications | ❌ | callback-style results |
-| Authentication | ❌ | bearer tokens / OAuth |
-| Non-text parts (`file`, `data`) | ❌ | file uploads via Reyn workspace |
+| `message/send` (synchronous reply) | ✅ | Default mode — peer waits for the final reply text. |
+| `message/send` (async via `async_mode: true`) | ✅ | Returns an A2A `Task` envelope; peer polls or subscribes. See [Task lifecycle](#task-lifecycle-and-async-execution-fp-0001). |
+| `GET /a2a/tasks/{run_id}` (status polling) | ✅ | Reports `running` / `input-required` / `completed` / `failed` / `cancelled`. |
+| `POST /a2a/tasks/{run_id}/cancel` | ✅ | Cancels the underlying `asyncio.Task` (idempotent). |
+| `GET /a2a/tasks/{run_id}/events` (SSE stream) | ✅ | Reyn-native streaming surface; closes on terminal status. |
+| Mid-run `ask_user` injection | ✅ | Task transitions to `input-required`; reply with `message/send` + `task_id`. |
+| Push notifications (`params.webhook_url`) | ✅ | Reyn POSTs JSON payloads on each status transition. |
+| Agent Card discovery (`.well-known/agent-card.json`) | ✅ | Per-agent + multi-agent index endpoints. |
+| Multi-turn history persistence | ✅ | Same backing as MCP; per-agent `ChatSession.history`. |
+| `message/stream` (standalone JSON-RPC method) | ❌ | Use the `/events` SSE endpoint above instead. |
+| Authentication (bearer tokens / OAuth) | ❌ | Out of scope for v1; relies on network-level access control. |
+| Non-text message parts (`file`, `data`) | ❌ | Files exchanged via the Reyn workspace today. |
 
 `message/send` is the headline of the MVP because it covers the most
 common interop pattern: peer agent has a question for a Reyn agent,
 gets the final reply text. Multi-turn history is preserved across
 calls because Reyn's `ChatSession.history` is per-agent and
-persistent — exactly the same property the MCP path relies on.
+persistent — exactly the same property the MCP path relies on. The
+async task lifecycle layered on top (FP-0001, detailed below) lets
+peers drive long-running skills, react to mid-run `ask_user`, and
+cancel without changing the wire shape of the `message/send` call.
 
 ## Why both MCP and A2A
 
