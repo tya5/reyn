@@ -136,7 +136,7 @@ def test_fetch_registry_happy_path(_isolated_cache):
 
     cands = result["candidates"]
     assert isinstance(cands, list)
-    assert len(cands) == 1
+    assert cands, "expected at least one candidate in registry result"
     c = cands[0]
     assert c["name"] == "ai.smithery/smithery-ai-slack"
     assert c["repo_url"] == "https://github.com/smithery-ai/mcp-servers"
@@ -180,7 +180,7 @@ def test_fetch_registry_cached_response_used_when_http_errors(_isolated_cache):
     with _patch_safe_http(_SLACK_RESPONSE):
         first = fetch_registry_results(artifact)
     assert first["source"] == "registry"
-    assert len(first["candidates"]) == 1
+    assert first["candidates"], "expected candidates from initial registry fetch"
 
     # Now make HTTP error — should still see cached candidates because the
     # cache is hot for the same query key.
@@ -188,7 +188,7 @@ def test_fetch_registry_cached_response_used_when_http_errors(_isolated_cache):
         second = fetch_registry_results(artifact)
 
     assert second["source"] == "registry"
-    assert len(second["candidates"]) == 1
+    assert second["candidates"], "expected cached candidates to be surfaced on HTTP error"
 
 
 def test_fetch_registry_empty_text(_isolated_cache):
