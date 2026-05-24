@@ -107,8 +107,7 @@ def test_build_cron_config_parses_message_based_shape():
         ],
     }
     cfg = _build_cron_config(raw)
-    assert len(cfg.jobs) == 1
-    j = cfg.jobs[0]
+    (j,) = cfg.jobs
     assert j.name == "morning_news"
     assert j.to == "news_agent"
     assert j.message == "今日のニュース"
@@ -131,8 +130,7 @@ def test_build_cron_config_parses_legacy_skill_shape():
         ],
     }
     cfg = _build_cron_config(raw)
-    assert len(cfg.jobs) == 1
-    j = cfg.jobs[0]
+    (j,) = cfg.jobs
     assert j.skill == "index_events"
     assert j.to is None
     assert j.message is None
@@ -207,9 +205,9 @@ def test_build_cron_config_rejects_partial_message_shape():
 
 
 def test_load_config_reads_dynamic_cron_yaml(tmp_path, monkeypatch):
-    """Tier 2 (#470 invariant align): ``load_config`` reads
-    ``.reyn/cron.yaml`` and merges its ``cron.jobs`` into the merged
-    config. Sister to ``.reyn/mcp.yaml`` from #470.
+    """Tier 2: ``load_config`` reads ``.reyn/cron.yaml`` and merges its
+    ``cron.jobs`` into the merged config (#470 invariant align). Sister
+    to ``.reyn/mcp.yaml`` from #470.
     """
     from reyn.config import load_config
 
@@ -283,8 +281,7 @@ def test_load_config_dynamic_cron_yaml_overrides_legacy_on_name_collision(
     monkeypatch.chdir(tmp_path)
     config = load_config(cwd=tmp_path)
 
-    assert len(config.cron.jobs) == 1
-    j = config.cron.jobs[0]
+    (j,) = config.cron.jobs
     assert j.name == "shared"
     # Dynamic shape wins.
     assert j.to == "new_agent"
@@ -309,8 +306,8 @@ def test_load_config_works_without_dynamic_cron_yaml(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = load_config(cwd=tmp_path)
 
-    assert len(config.cron.jobs) == 1
-    assert config.cron.jobs[0].name == "legacy"
+    (only,) = config.cron.jobs
+    assert only.name == "legacy"
 
 
 # ── build_default_runner dispatch ─────────────────────────────────────
@@ -346,8 +343,8 @@ async def test_runner_dispatches_message_based_to_inbox_pusher():
     result = await runner(job)
 
     assert result == "ok"
-    assert len(pushed) == 1
-    target, envelope = pushed[0]
+    (pushed_item,) = pushed
+    target, envelope = pushed_item
     assert target == "news_agent"
     assert envelope["text"] == "今日のニュース"
     assert envelope["sender"] == "cron:morning_news"
@@ -379,8 +376,8 @@ async def test_runner_dispatches_skill_based_to_legacy_runner():
     result = await runner(job)
 
     assert result == "ok"
-    assert len(called_with) == 1
-    assert called_with[0].skill == "index_events"
+    (dispatched,) = called_with
+    assert dispatched.skill == "index_events"
 
 
 @pytest.mark.asyncio
