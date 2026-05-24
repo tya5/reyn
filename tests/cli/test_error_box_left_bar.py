@@ -38,7 +38,7 @@ def _make_app() -> ReynTUIApp:
 
 @pytest.mark.asyncio
 async def test_error_box_declares_left_border() -> None:
-    """An ErrorBox mounted in the conv pane has a coloured left border.
+    """Tier 2b: An ErrorBox mounted in the conv pane has a coloured left border.
 
     Pinned at the computed-styles level so a refactor that moves the rule
     out of ``DEFAULT_CSS`` (and forgets to re-add it elsewhere) fails fast.
@@ -68,7 +68,7 @@ async def test_error_box_declares_left_border() -> None:
 
 @pytest.mark.asyncio
 async def test_error_box_border_color_matches_header_red() -> None:
-    """The left bar uses the same hue family as the header text.
+    """Tier 2b: The left bar uses the same hue family as the header text.
 
     Visual consistency check: the bar is the *non-color* channel, but
     when colour IS available it must agree with the header — otherwise
@@ -94,7 +94,7 @@ async def test_error_box_border_color_matches_header_red() -> None:
 
 @pytest.mark.asyncio
 async def test_error_box_left_bar_visible_in_render() -> None:
-    """The border actually renders — Textual reserves a column for it.
+    """Tier 2b: The border actually renders — Textual reserves a column for it.
 
     Sanity check beyond the styles property: the widget's region must
     include the 1-cell border on its left edge. Without the border the
