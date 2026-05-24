@@ -89,7 +89,7 @@ def test_attached_agent_pinned_when_already_first() -> None:
 
 
 def test_no_attached_falls_back_to_alphabetical() -> None:
-    """Tier 2 (regression): no attached agent → pure alphabetical order."""
+    """Tier 2b: no attached agent → pure alphabetical order (regression)."""
     reg = _StubRegistry(
         names=["zulu", "alpha", "mike"],
         attached=None,

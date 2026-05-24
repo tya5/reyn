@@ -123,7 +123,7 @@ async def test_clear_async_tasks_empties_panel() -> None:
 
 @pytest.mark.asyncio
 async def test_helpers_safe_when_panel_absent() -> None:
-    """Tier 2 (defensive): ``add/remove/clear_async_tasks`` are safe no-ops.
+    """Tier 2b: ``add/remove/clear_async_tasks`` are safe no-ops (defensive).
 
     ``_async_stack()`` returns None when the panel isn't mounted
     (= ConversationView used outside the standard compose path,

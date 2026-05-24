@@ -129,9 +129,10 @@ class _CapturingRouterLoop(rl.RouterLoop):
 
 @pytest.mark.asyncio
 async def test_chat_session_passes_directive_to_router_loop(monkeypatch, tmp_path):
-    """Tier 2 (B43-NF-W6-1): ``ChatSession._handle_user_message`` constructs
-    its ``RouterLoop`` with ``empty_stop_retry_directive=
-    _CHAT_ROUTER_EMPTY_STOP_RETRY_DIRECTIVE``.
+    """Tier 2c: ``ChatSession._handle_user_message`` wires directive to ``RouterLoop`` (B43-NF-W6-1).
+
+    ``ChatSession._handle_user_message`` constructs its ``RouterLoop``
+    with ``empty_stop_retry_directive=_CHAT_ROUTER_EMPTY_STOP_RETRY_DIRECTIVE``.
 
     Without this wiring, the env-var-gated retry path remains dormant at
     the chat-router layer (= PR #265 only covered the planner sub_loop

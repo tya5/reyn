@@ -63,7 +63,7 @@ async def test_inline_hint_label_carries_has_content_class_when_set() -> None:
 
 @pytest.mark.asyncio
 async def test_empty_inline_hint_does_not_mount_label() -> None:
-    """Tier 2 (regression): no `• …` trailer → no inline hint Label."""
+    """Tier 2b: no `• …` trailer → no inline hint Label (regression)."""
     from textual.widgets import Label
 
     from reyn.chat.tui.app import ReynTUIApp

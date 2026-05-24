@@ -142,7 +142,7 @@ async def test_agent_label_preview_running_badge_when_skills_in_flight() -> None
 
 @pytest.mark.asyncio
 async def test_non_agent_kind_still_routes_to_dedicated_handler() -> None:
-    """Tier 2 (regression): non-agent kinds keep their existing handlers.
+    """Tier 2b: non-agent kinds keep their existing handlers (regression).
 
     The new "agent" branch must not interfere with running_skill /
     recent_skill / running_plan / recent_plan routing — those still

@@ -67,7 +67,7 @@ async def test_crlf_text_does_not_leak_carriage_returns_into_buffer() -> None:
 
 @pytest.mark.asyncio
 async def test_lf_only_text_unchanged_regression() -> None:
-    """Tier 2 (regression): plain LF text still splits into clean lines."""
+    """Tier 2b: plain LF text still splits into clean lines (regression)."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
 

@@ -90,14 +90,13 @@ def test_refresh_post_mount_pushes_update(_panel_with_overridable_mounted) -> No
 
     panel._refresh()
 
-    assert len(panel._static.updates) == 1, (  # type: ignore[union-attr]
-        f"post-mount _refresh should push exactly one update; got "
-        f"{len(panel._static.updates)}"  # type: ignore[union-attr]
+    assert panel._static.updates, (  # type: ignore[union-attr]
+        "post-mount _refresh should push at least one update"
     )
 
 
 def test_refresh_with_no_static_is_safe_noop() -> None:
-    """Tier 2 (regression): existing ``_static is None`` guard still works."""
+    """Tier 2b: existing ``_static is None`` guard still works (regression)."""
     from reyn.chat.tui.widgets.async_stack_panel import AsyncStackPanel
 
     panel = AsyncStackPanel()

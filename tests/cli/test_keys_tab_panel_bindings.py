@@ -174,9 +174,11 @@ async def test_keys_tab_renders_h_l_resize_keys() -> None:
 
 @pytest.mark.asyncio
 async def test_keys_tab_lists_pending_d_discard_action() -> None:
-    """Tier 2 A-F2 (wave-8): the pending-tab ``d=discard`` action is
-    listed in the PANEL section so users can discover it from the Keys
-    tab without reading the pending tab's own header.
+    """Tier 2b: pending-tab ``d=discard`` action listed in PANEL section (A-F2 wave-8).
+
+    The pending-tab ``d=discard`` action is listed in the PANEL section
+    so users can discover it from the Keys tab without reading the
+    pending tab's own header.
 
     Before A-F2, ``_PANEL_EXPLICIT`` listed ``c`` (= claim) but not ``d``
     (= discard). The pending tab's primary destructive action was

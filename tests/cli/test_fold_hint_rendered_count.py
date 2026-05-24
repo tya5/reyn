@@ -121,7 +121,7 @@ async def test_wrap_heavy_reply_reports_rendered_count_not_source_count() -> Non
 
 @pytest.mark.asyncio
 async def test_no_wrap_reply_count_stays_close_to_source_count() -> None:
-    """Tier 2 (regression): short-line replies still get sensible counts.
+    """Tier 2b: short-line replies still get sensible counts (regression).
 
     A reply of 35 single-word lines (= each fits on one screen
     line, no wrap) should report a count near 5 (= 35 - 30) — the

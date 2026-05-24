@@ -47,7 +47,7 @@ class _StubLog:
 
 @pytest.mark.asyncio
 async def test_normal_call_returns_attribute_value() -> None:
-    """Tier 2 (regression): present ``_start_line`` value is returned."""
+    """Tier 2b: present ``_start_line`` value is returned (regression)."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
 
