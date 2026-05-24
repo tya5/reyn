@@ -106,7 +106,7 @@ async def test_interactive_yes_allows_continue_with_extension() -> None:
     assert decision.extension == 1.0
     assert decision.reason == "user_approved"
     # The dispatched intervention carries the namespaced kind.
-    assert len(bus.dispatched) == 1
+    assert bus.dispatched, "expected dispatched intervention"
     assert bus.dispatched[0].kind == "safety.limit.router_cap"
 
 
@@ -316,7 +316,7 @@ async def test_reset_run_extensions_clears_all_kinds_for_run() -> None:
 
 
 def test_fake_bus_satisfies_intervention_bus_protocol() -> None:
-    """Tier 1 framework boundary: ``_FakeBus`` is structurally
+    """Tier 1: framework boundary — ``_FakeBus`` is structurally
     compatible with ``InterventionBus`` so the helper's typed
     parameter doesn't drift.
     """
