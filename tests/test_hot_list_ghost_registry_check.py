@@ -279,14 +279,16 @@ def test_r10_integration_tracker_ghost_excluded_from_hot_list(tmp_path: Path) ->
     Assert: result contains skill__word_stats_demo, not skill__nonexistent_xyz.
     """
     now = time.time()
-    persist_path = tmp_path / "action_usage.jsonl"
-    _write_jsonl(persist_path, [
-        {"qualified_name": "skill__word_stats_demo", "ts": now},
-        {"qualified_name": "skill__word_stats_demo", "ts": now},  # freq=2
-        {"qualified_name": "skill__nonexistent_xyz", "ts": now},  # freq=1, ghost
+    # Post-FP-0034-refactor: write directly via merge_compacted instead of
+    # writing a JSONL log. Both names are structurally valid qualified
+    # names so they enter the tracker; the registry-existence filter
+    # downstream is what drops the ghost.
+    tracker = ActionUsageTracker(persist_path=None)
+    tracker.merge_compacted([
+        ("skill__word_stats_demo", now),
+        ("skill__word_stats_demo", now),  # freq=2
+        ("skill__nonexistent_xyz", now),  # freq=1, ghost vs registry
     ])
-
-    tracker = ActionUsageTracker(persist_path=persist_path)
 
     # Both names pass structural check and are loaded into tracker.
     top_names = tracker.get_top_n(10, seed=[])

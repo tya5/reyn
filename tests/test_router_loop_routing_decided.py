@@ -243,10 +243,10 @@ def test_routing_decided_emitted_for_hot_list_alias(monkeypatch: pytest.MonkeyPa
     That makes the alias a valid catalog entry, so dispatch_tool succeeds
     and outcome='success' is recorded.
     """
-    # Build a real tracker with skill__bar pre-recorded (high frequency).
+    # Build a real tracker with skill__bar pre-loaded (high frequency)
+    # via merge_compacted — the post-FP-0034-refactor write path.
     tracker = ActionUsageTracker()
-    for _ in range(5):
-        tracker.record("skill__bar")
+    tracker.merge_compacted([("skill__bar", 1000.0 + i) for i in range(5)])
 
     host = _FakeRouterHost(
         universal_wrappers_enabled=True,
