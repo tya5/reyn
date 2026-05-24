@@ -164,7 +164,8 @@ async def test_async_dispatch_returns_spawned_status_immediately() -> None:
     assert "chain_id" in result
     assert result["n_steps"] == 2
     # Host received the spawn handoff but plan hasn't run yet.
-    assert len(host.spawn_calls) == 1
+    (only_spawn,) = host.spawn_calls
+    assert only_spawn["plan_id"] == result["plan_id"]
     # Runtime not yet executed → no plan_started / plan_completed.
     assert host.plan_started_calls == []
     assert host.plan_completed_calls == []
@@ -198,8 +199,10 @@ async def test_async_dispatch_decomposition_written_before_spawn() -> None:
         parent_host=host, chain_id="c0",
         available_tool_names=set(),
     )
-    assert len(host.write_decomp_calls) == 1
-    assert len(host.spawn_calls) == 1
+    (only_write,) = host.write_decomp_calls
+    assert "plan_id" in only_write
+    (only_spawn,) = host.spawn_calls
+    assert "plan_id" in only_spawn
     # No artifact deletion yet — runtime hasn't completed.
     assert host.delete_decomp_calls == []
 
@@ -217,14 +220,16 @@ async def test_async_runtime_runs_to_completion_via_host() -> None:
     )
     # Drive the runtime now (= mirror ChatSession.spawn_plan_task wrapper).
     await host.run_spawned()
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 1
+    (only_started,) = host.plan_started_calls
+    assert "plan_id" in only_started
+    (only_completed,) = host.plan_completed_calls
+    assert "plan_id" in only_completed
     # Step events recorded via WAL host methods.
     assert {c["step_id"] for c in host.plan_step_started_calls} == {"s1", "s2"}
     # Terminal text emitted via outbox by host.run_spawned().
     agent_msgs = [m for m in host.outbox if m["kind"] == "agent"
                   and m.get("meta", {}).get("source") == "plan"]
-    assert len(agent_msgs) == 1
+    (only_agent_msg,) = agent_msgs
 
 
 # ── sync fallback (= host without spawn_plan_task) ──────────────────────
@@ -292,10 +297,13 @@ async def test_sync_fallback_returns_status_ok_with_text() -> None:
     assert "text" in result
     # plan_started + plan_completed BOTH fire (= execute_plan finally
     # not corrupted by enclosing exception context).
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 1
+    (only_started,) = host.plan_started_calls
+    assert "plan_id" in only_started
+    (only_completed,) = host.plan_completed_calls
+    assert "plan_id" in only_completed
     # Artifact deleted on clean exit.
-    assert len(host.delete_decomp_calls) == 1
+    (only_deleted,) = host.delete_decomp_calls
+    assert "plan_id" in only_deleted
 
 
 @pytest.mark.asyncio
@@ -312,7 +320,8 @@ async def test_sync_fallback_uses_per_plan_chain_id_internally() -> None:
     # No way to assert chain_id on the result dict in legacy shape
     # (kept absent for backward compat); we assert via plan completion
     # not crashing — the runtime had to operate with the new chain_id.
-    assert len(host.plan_completed_calls) == 1
+    (only_completed,) = host.plan_completed_calls
+    assert "plan_id" in only_completed
 
 
 # ── validation failure short-circuit ────────────────────────────────────
@@ -333,10 +342,10 @@ async def test_async_runtime_emits_step_status_narration() -> None:
     status_msgs = [m for m in host.outbox if m["kind"] == "status"
                    and m.get("meta", {}).get("source") == "plan"]
     # plan_started + 2 step_done messages (= 3 total for 2-step plan)
-    assert len(status_msgs) == 3
-    assert "plan started" in status_msgs[0]["text"]
-    assert "1/2" in status_msgs[1]["text"]
-    assert "2/2" in status_msgs[2]["text"]
+    (msg0, msg1, msg2) = status_msgs
+    assert "plan started" in msg0["text"]
+    assert "1/2" in msg1["text"]
+    assert "2/2" in msg2["text"]
 
 
 @pytest.mark.asyncio
@@ -396,18 +405,16 @@ async def test_plan_step_failure_emits_status_text() -> None:
         planner_mod.RouterLoop = orig_router_loop
 
     # Both steps fail.
-    assert len(result["step_failures"]) == 2
+    (fail0, fail1) = result["step_failures"]
+    assert fail0 and fail1  # non-empty failure records
 
     # Failure status messages emitted — source="plan" (same meta as success).
     failure_msgs = [
         m for m in host.outbox
         if m["kind"] == "status" and "失敗" in m["text"]
     ]
-    assert len(failure_msgs) == 2, (
-        f"Expected 2 failure status messages, got {len(failure_msgs)}: "
-        f"{[m['text'] for m in host.outbox]}"
-    )
+    (fmsg0, fmsg1) = failure_msgs
     # Each failure message includes the step description preview.
-    texts = [m["text"] for m in failure_msgs]
+    texts = [fmsg0["text"], fmsg1["text"]]
     assert any("first" in t for t in texts), texts
     assert any("second" in t for t in texts), texts
