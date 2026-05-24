@@ -1,17 +1,23 @@
-"""Tier 2: message bodies render at the dynamic hanging-indent column.
+"""Tier 2: message bodies render inline with the header — Claude Code style.
 
-With timestamps shown (default), bodies start at col 8 (= ``_BODY_INDENT_WITH_TS``);
-with timestamps hidden (F9 toggle), bodies start at col 2 (= ``_BODY_INDENT_NO_TS``).
+#646 design intent: ``HH:MM > message text`` on the same logical line with
+wrap continuations landing at col 8 (= ``_BODY_INDENT_WITH_TS``) to nest
+visually under the body text, not the symbol.
 
-Before the hanging-indent fix, ``RichLog(wrap=True)`` wrapped long lines
-without any leading indent so a continuation landed at column 0 —
-indistinguishable from a new speaker header. The Padding at every body
-write site keeps wrap continuations visually nested under the symbol.
+With timestamps shown (default):
+  - User  header prefix: ``HH:MM > `` (8 cells → body inline at col 8)
+  - Agent header prefix: ``HH:MM ⏺ `` (8 cells → body inline at col 8)
+  - First body line: inline with the header on the same RichLog line.
+  - Wrap continuations: col 8 via Padding.
+
+With timestamps hidden (F9 toggle):
+  - Header prefix is ``> `` (2 cells).
+  - First body line inline at col 2.
+  - Wrap continuations at col 2.
 
 These tests inspect the rendered RichLog Strips (= what the user
-actually sees on screen) for body lines vs header lines, so a future
-refactor that drops the indent or accidentally applies it to headers
-would surface immediately.
+actually sees on screen) for inline layout, wrap continuation indent,
+and the invariant that the header line is never indented.
 """
 from __future__ import annotations
 
@@ -29,7 +35,11 @@ from textual.widgets import RichLog
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.tui.app import ReynTUIApp
 from reyn.chat.tui.widgets import ConversationView
-from reyn.chat.tui.widgets.conversation import _BODY_INDENT_NO_TS, _BODY_INDENT_WITH_TS
+from reyn.chat.tui.widgets.conversation import (
+    _BODY_INDENT_NO_TS,
+    _BODY_INDENT_WITH_TS,
+    _GLYPH_USER,
+)
 
 
 def _make_app() -> ReynTUIApp:
@@ -55,39 +65,52 @@ def _find_first_line_containing(log: RichLog, needle: str) -> int:
     raise AssertionError(f"text {needle!r} never appeared in RichLog")
 
 
-# ── body indent applied to common write paths ────────────────────────────────
+# ── inline header + body (the new Claude Code-style layout) ──────────────────
 
 
 @pytest.mark.asyncio
-async def test_user_message_body_is_indented() -> None:
-    """Tier 2b: ``render_user_message`` writes its body at the ts-on hanging-indent column.
+async def test_user_message_body_is_inline_with_header() -> None:
+    """Tier 2b: ``render_user_message`` puts body inline with the header (ts on).
 
-    The header (``HH:MM >`` with ts on) stays at column 0; the body line
-    "hello world" starts at column ``_BODY_INDENT_WITH_TS`` (8) so a wrap
-    continuation visually nests under the symbol column.
+    #646 design: the header prefix (``HH:MM > ``) and body appear on the
+    same logical line.  The line found in the RichLog for "hello world"
+    must start with an HH:MM timestamp (col 0, no leading spaces) and
+    contain the body text — not start with col-8 spaces as in the old
+    2-line layout.
     """
+    import re
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         log = conv.query_one(RichLog)
 
-        # Default state: timestamps on → indent 8.
+        # Default state: timestamps on.
         conv._show_timestamps = True
         conv.render_user_message("hello world")
         await pilot.pause()
 
         idx = _find_first_line_containing(log, "hello world")
-        body = _line_text(log, idx)
-        assert body.startswith(" " * _BODY_INDENT_WITH_TS), (
-            f"user body (ts on) must start at indent col {_BODY_INDENT_WITH_TS}; got {body!r}"
+        line = _line_text(log, idx)
+        # Inline: the body-containing line must start with HH:MM (col 0, no indent).
+        assert re.search(r"^\d{2}:\d{2}", line), (
+            f"ts-on inline line must start with HH:MM at col 0; got {line!r}"
         )
-        assert "hello world" in body
+        assert _GLYPH_USER in line, f"user symbol must be on the same line; got {line!r}"
+        assert "hello world" in line, f"body text must be inline; got {line!r}"
+        # Must NOT start with spaces (= old 2-line indented body).
+        assert not line.startswith(" "), (
+            f"inline line must NOT start with spaces (col 0 anchor); got {line!r}"
+        )
 
 
 @pytest.mark.asyncio
-async def test_user_message_body_is_indented_ts_off() -> None:
-    """Tier 2b: ``render_user_message`` with ts off uses the narrow indent (col 2)."""
+async def test_user_message_body_is_inline_ts_off() -> None:
+    """Tier 2b: ``render_user_message`` with ts off puts body inline at col 0.
+
+    When timestamps are hidden, header prefix is ``> `` (2 cells).
+    The first body line is inline and starts with ``>`` at col 0.
+    """
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -99,15 +122,22 @@ async def test_user_message_body_is_indented_ts_off() -> None:
         await pilot.pause()
 
         idx = _find_first_line_containing(log, "hello ts-off")
-        body = _line_text(log, idx)
-        assert body.startswith(" " * _BODY_INDENT_NO_TS), (
-            f"user body (ts off) must start at indent col {_BODY_INDENT_NO_TS}; got {body!r}"
+        line = _line_text(log, idx)
+        # ts-off: line starts with symbol at col 0.
+        assert line.startswith(_GLYPH_USER), (
+            f"ts-off inline line must start with user symbol; got {line!r}"
+        )
+        assert "hello ts-off" in line, f"body text must be inline; got {line!r}"
+        # Must NOT start with 2-space indent (= old 2-line layout).
+        assert not line.startswith("  "), (
+            f"ts-off inline line must NOT start with spaces; got {line!r}"
         )
 
 
 @pytest.mark.asyncio
-async def test_agent_markdown_body_is_indented() -> None:
-    """Tier 2b: Agent markdown turns render their content at the ts-on indent column."""
+async def test_agent_markdown_body_is_inline_with_header() -> None:
+    """Tier 2b: Agent markdown first line is inline with the speaker symbol."""
+    import re
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -120,15 +150,25 @@ async def test_agent_markdown_body_is_indented() -> None:
         await pilot.pause()
 
         idx = _find_first_line_containing(log, "this is the agent body line")
-        body = _line_text(log, idx)
-        assert body.startswith(" " * _BODY_INDENT_WITH_TS), (
-            f"agent body must start at indent col {_BODY_INDENT_WITH_TS}; got {body!r}"
+        line = _line_text(log, idx)
+        # Inline: body line starts with HH:MM at col 0 (not with spaces).
+        assert re.search(r"^\d{2}:\d{2}", line), (
+            f"agent inline line must start with HH:MM; got {line!r}"
+        )
+        assert not line.startswith(" "), (
+            f"agent inline line must NOT start with spaces; got {line!r}"
         )
 
 
 @pytest.mark.asyncio
 async def test_system_message_body_is_indented() -> None:
-    """Tier 2b: ``/slash`` output rendered as system kind also gets indented."""
+    """Tier 2b: ``/slash`` output rendered as system kind still gets indented.
+
+    System messages (= slash-command output) use the legacy 2-line path
+    (``_maybe_write_header`` + ``_write_body``).  They are multi-line text
+    blocks and are not subject to the #646 inline fix.  Body lines must
+    start at col ``_BODY_INDENT_WITH_TS`` (8).
+    """
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -148,17 +188,16 @@ async def test_system_message_body_is_indented() -> None:
             )
 
 
-# ── header lines stay at column 0 ────────────────────────────────────────────
+# ── header line is never indented ────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_header_line_is_not_indented() -> None:
-    """Tier 2b: The symbol header stays at column 0.
+    """Tier 2b: The inline header+body line starts at column 0 (no leading spaces).
 
-    This is the load-bearing distinction: header at column 0,
-    body at column ``_BODY_INDENT_WITH_TS``. Without it the wrap
-    continuation of a body line and the start of a new header become
-    visually identical.
+    With the inline layout the line containing the user symbol and body
+    text is also the header line — it must start at col 0 so it is
+    visually distinct from any hanging-indent wrap continuations.
     """
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -170,25 +209,26 @@ async def test_header_line_is_not_indented() -> None:
         conv.render_user_message("payload")
         await pilot.pause()
 
-        # The header line contains the ``>`` user symbol.
-        # With ts on the line is ``HH:MM >`` — starts at column 0 (no leading space).
+        # The inline header+body line contains the ``>`` user symbol.
+        # With ts on the line is ``HH:MM > payload`` — starts at col 0.
         header_idx = _find_first_line_containing(log, ">")
         header = _line_text(log, header_idx)
         assert not header.startswith(" "), (
-            f"header line must NOT be indented (column-0 anchor); got {header!r}"
+            f"header+body inline line must NOT be indented (col-0 anchor); got {header!r}"
         )
 
 
-# ── wrap continuation also indented (the user-visible bug) ───────────────────
+# ── wrap continuation indented (load-bearing invariant) ──────────────────────
 
 
 @pytest.mark.asyncio
 async def test_long_user_line_wrap_continuation_is_indented() -> None:
     """Tier 2b: Wrap continuation of a long body line lands at the indent column.
 
-    This is the user-visible behaviour the agent's UX audit flagged:
-    a long URL or code line that wraps used to put the continuation at
-    column 0, indistinguishable from a new header.
+    The first body line is inline with the header at col 0.  When the
+    body wraps, the continuation must land at ``_BODY_INDENT_WITH_TS``
+    (= col 8) so it nests under the body text, not back at col 0 which
+    would be visually indistinguishable from a new speaker header.
     """
     app = _make_app()
     # Narrow terminal forces a wrap on a moderate-length payload.
@@ -198,23 +238,26 @@ async def test_long_user_line_wrap_continuation_is_indented() -> None:
         log = conv.query_one(RichLog)
 
         conv._show_timestamps = True
-        # ~60 chars — well past the 40-cell terminal so it wraps.
+        # ~60 chars — well past the 40-cell terminal body width so it wraps.
         long_payload = "abcdefghij" * 6
         conv.render_user_message(long_payload)
         await pilot.pause()
 
-        # First body line should be the one containing the start of payload.
+        # The first line containing the payload start is the inline header line.
         first_body_idx = _find_first_line_containing(log, "abcdefghij")
         first_body = _line_text(log, first_body_idx)
-        assert first_body.startswith(" " * _BODY_INDENT_WITH_TS), first_body
+        # First line: inline — starts with HH:MM (no leading space).
+        assert not first_body.startswith(" "), (
+            f"first (inline) line must start at col 0; got {first_body!r}"
+        )
 
-        # If wrap fired, the next line should also lead with the indent.
+        # If wrap fired, the next non-empty line is a continuation at indent.
         if first_body_idx + 1 < len(log.lines):
             cont = _line_text(log, first_body_idx + 1)
             stripped = cont.strip()
-            if stripped:  # non-empty continuation
+            if stripped:  # non-empty continuation line
                 assert cont.startswith(" " * _BODY_INDENT_WITH_TS), (
-                    f"wrap continuation must also be indented; got {cont!r}"
+                    f"wrap continuation must be at col {_BODY_INDENT_WITH_TS}; got {cont!r}"
                 )
 
 
@@ -224,9 +267,9 @@ async def test_long_user_line_wrap_continuation_is_indented() -> None:
 def test_body_indent_constants_have_correct_values() -> None:
     """Tier 2b: ``_BODY_INDENT_WITH_TS`` and ``_BODY_INDENT_NO_TS`` match the spec.
 
-    ts-on layout:  ``HH:MM <sym>`` = 5 (ts) + 1 (space) + 1 (sym) + 1 (space)
-                   → body starts col 8.
-    ts-off layout: ``<sym>`` = 1 (sym) + 1 (space) → body starts col 2.
+    ts-on layout:  ``HH:MM <sym> `` = 5 (ts) + 1 (space) + 1 (sym) + 1 (space)
+                   → body inline starting at col 8; wrap continuation at col 8.
+    ts-off layout: ``<sym> `` = 1 (sym) + 1 (space) → body at col 2.
     """
     assert _BODY_INDENT_WITH_TS == 8, f"ts-on indent should be 8, got {_BODY_INDENT_WITH_TS}"
     assert _BODY_INDENT_NO_TS == 2, f"ts-off indent should be 2, got {_BODY_INDENT_NO_TS}"
