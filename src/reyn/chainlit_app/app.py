@@ -31,6 +31,12 @@ import chainlit as cl
 from reyn.chainlit_app.adapter import outbox_to_chainlit
 from reyn.chainlit_app.history import history_to_chainlit
 from reyn.chainlit_app.profiles import list_agent_profiles
+from reyn.chainlit_app.slash_route import (
+    QUICK_ACTIONS,
+    QuickAction,
+    action_name_for,
+    is_slash,
+)
 from reyn.chainlit_app.uploads import collect_image_blocks
 
 if TYPE_CHECKING:
@@ -267,9 +273,18 @@ async def _on_chat_start() -> None:
 
     task = asyncio.create_task(_drain_loop(registry))
     cl.user_session.set(_DRAIN_KEY, task)
+    actions = [
+        cl.Action(
+            name=action_name_for(qa),
+            label=qa.label,
+            payload={"slash": qa.slash_text},
+        )
+        for qa in QUICK_ACTIONS
+    ]
     await cl.Message(
         content=f"Connected to agent **{name}**.",
         author="system",
+        actions=actions,
     ).send()
 
 
@@ -294,7 +309,58 @@ async def _on_message(message: cl.Message) -> None:
         if queue is not None and blocks:
             queue.extend(blocks)
 
-    await session.submit_user_text(message.content)
+    # Slash routing parity with the CUI / TUI surfaces. ``submit_user_text``
+    # bypasses slash dispatch — slash handling lives on the wrapper layer
+    # via ``session._maybe_handle_slash``. Without this, typing ``/help``
+    # would be sent to the agent as plain text instead of running the
+    # slash command. Returning True from the dispatcher consumes the line
+    # (including unknown slashes, which get a hint on the outbox).
+    text = message.content or ""
+    if is_slash(text):
+        await session._maybe_handle_slash(text)
+        return
+
+    await session.submit_user_text(text)
+
+
+async def _run_quick_action(action_payload: dict) -> None:
+    """Shared handler body for every ``slash_<name>`` action callback.
+
+    Lives outside the decorator so the per-action wrappers stay tiny
+    and the dispatch logic is testable on its own.
+    """
+    registry = await _get_or_build_registry()
+    session = registry.attached_session()
+    if session is None:
+        await cl.ErrorMessage(
+            content="No agent attached. Reload the page to reconnect.",
+        ).send()
+        return
+    slash_text = action_payload.get("slash") if action_payload else None
+    if not isinstance(slash_text, str) or not is_slash(slash_text):
+        return
+    await session._maybe_handle_slash(slash_text)
+
+
+def _register_action_callbacks() -> None:
+    """Bind one ``@cl.action_callback("slash_<name>")`` per QuickAction.
+
+    Done at module load via a loop so adding a new entry to
+    ``QUICK_ACTIONS`` is the only edit needed — no duplicated handler
+    boilerplate per command.
+    """
+
+    def _make_handler(qa: QuickAction):
+        async def _handler(action: cl.Action) -> None:
+            await _run_quick_action(getattr(action, "payload", None) or {})
+        _handler.__name__ = f"_on_action_{qa.name}"
+        return _handler
+
+    for qa in QUICK_ACTIONS:
+        cl.action_callback(action_name_for(qa))(_make_handler(qa))
+
+
+_register_action_callbacks()
 
 
 @cl.on_chat_end
