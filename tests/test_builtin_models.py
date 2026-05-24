@@ -1,7 +1,7 @@
 """Tier 1: BUILTIN_MODELS catalog contract tests (PR-MODEL-SPEC-EXTENDS).
 
 Pinned invariants:
-  - Exactly 8 built-in entries (catalog is a sealed set)
+  - Catalog names match the expected sealed set (via set equality)
   - Every entry has a ``model`` field that is a non-empty str
   - Every ``model`` field starts with a provider prefix (contains ``/``)
   - ``claude-sonnet-thinking`` has extra_body.thinking.{type, budget_tokens}
@@ -31,11 +31,6 @@ EXPECTED_NAMES = {
     "gemini-3.1-flash-preview",
     "gemini-2.0-flash",
 }
-
-
-def test_builtin_models_has_exactly_8_entries():
-    """Tier 1: BUILTIN_MODELS contains exactly 8 entries (sealed catalog)."""
-    assert len(BUILTIN_MODELS) == 8
 
 
 def test_builtin_models_names_match_expected():
