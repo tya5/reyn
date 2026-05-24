@@ -159,10 +159,11 @@ def test_pypi_package_name_strips_prefix() -> None:
 
 
 def test_resolve_npm_canonical_server_name_post_319() -> None:
-    """Tier 2 (= integration): the resolver's ``server_name`` is the
-    prefix-stripped short form. Pin the install→loader→stdlib-skill
-    contract so stdlib expectations (= ``mcp.servers.filesystem``,
-    not ``mcp.servers.server-filesystem``) are met without rename.
+    """Tier 2: resolver's ``server_name`` is the prefix-stripped short form (integration).
+
+    Pins the install→loader→stdlib-skill contract so stdlib expectations
+    (= ``mcp.servers.filesystem``, not ``mcp.servers.server-filesystem``)
+    are met without rename.
     """
     r = resolve("npm:@modelcontextprotocol/server-filesystem")
     assert r.server_name == "filesystem"
