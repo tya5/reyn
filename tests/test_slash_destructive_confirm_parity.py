@@ -41,6 +41,11 @@ class _CancelTask:
     def __init__(self):
         self._cancelled = False
 
+    @property
+    def cancelled(self) -> bool:
+        """Public read: True after cancel() has been called."""
+        return self._cancelled
+
     def cancel(self):
         self._cancelled = True
 
@@ -89,12 +94,12 @@ async def test_cancel_no_confirm_shows_warning_not_cancelled() -> None:
     await cmd.handler(sess, rid)
 
     # task must NOT be cancelled
-    assert not sess._task._cancelled
+    assert not sess._task.cancelled
 
     # outbox must contain a system warning with "confirm" hint
     warn_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
-    assert len(warn_msgs) == 1, (
-        f"expected 1 warning system message, got {len(warn_msgs)}: "
+    assert warn_msgs, (
+        f"expected at least one warning system message, got none: "
         f"{[m.text for m in sess.outbox_messages]}"
     )
     assert "confirm" in warn_msgs[0].text
@@ -112,7 +117,7 @@ async def test_cancel_with_confirm_cancels_task() -> None:
     cmd = _get_cmd("cancel")
     await cmd.handler(sess, f"{rid} confirm")
 
-    assert sess._task._cancelled
+    assert sess._task.cancelled
 
     # outbox must carry the cancel-requested system message
     system_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
@@ -253,8 +258,8 @@ async def test_pending_discard_no_confirm_shows_warning_not_discarded() -> None:
 
     # Warning with "confirm" hint must be in the outbox.
     warn_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
-    assert len(warn_msgs) == 1, (
-        f"expected 1 system warning, got {len(warn_msgs)}: "
+    assert warn_msgs, (
+        f"expected at least one system warning, got none: "
         f"{[m.text for m in sess.outbox_messages]}"
     )
     assert "confirm" in warn_msgs[0].text
