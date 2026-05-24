@@ -98,10 +98,9 @@ def test_paired_started_and_completed_become_committed_no_ambiguity():
         _step_completed(seq=11, oid="draft.0", result={"ok": True}),
     ]
     plan = analyzer.analyze(snapshot=snap, wal_events=events)
-    assert len(plan.committed_steps) == 1
-    assert len(plan.ambiguous_steps) == 0
+    (cs,) = plan.committed_steps
+    assert not plan.ambiguous_steps
     assert plan.has_ambiguity is False
-    cs = plan.committed_steps[0]
     assert cs.op_invocation_id == "draft.0"
     assert cs.result == {"ok": True}
     assert cs.error_kind is None
@@ -116,9 +115,9 @@ def test_world_op_with_only_completed_event_is_committed():
                         result={"content": "hello"}),
     ]
     plan = analyzer.analyze(snapshot=snap, wal_events=events)
-    assert len(plan.committed_steps) == 1
-    assert plan.committed_steps[0].op_kind == "web_fetch"
-    assert len(plan.ambiguous_steps) == 0
+    (cs,) = plan.committed_steps
+    assert cs.op_kind == "web_fetch"
+    assert not plan.ambiguous_steps
 
 
 def test_failed_step_is_committed_with_error_kind():
@@ -131,8 +130,7 @@ def test_failed_step_is_committed_with_error_kind():
                      message="nope"),
     ]
     plan = analyzer.analyze(snapshot=snap, wal_events=events)
-    assert len(plan.committed_steps) == 1
-    cs = plan.committed_steps[0]
+    (cs,) = plan.committed_steps
     assert cs.error_kind == "permission_denied"
     assert cs.error_message == "nope"
     assert cs.result is None
@@ -159,9 +157,8 @@ def test_orphan_started_without_completion_is_ambiguous():
     ]
     plan = analyzer.analyze(snapshot=snap, wal_events=events)
     assert plan.has_ambiguity is True
-    assert len(plan.ambiguous_steps) == 1
-    assert len(plan.committed_steps) == 0
-    amb = plan.ambiguous_steps[0]
+    (amb,) = plan.ambiguous_steps
+    assert not plan.committed_steps
     assert amb.op_invocation_id == "draft.0"
     assert amb.op_kind == "mcp"
     assert amb.args == {"tool": "create"}
@@ -184,13 +181,13 @@ def test_completed_pairs_with_oldest_unpaired_started_for_repeated_invocation_id
         # second started has no completion → ambiguous
     ]
     plan = analyzer.analyze(snapshot=snap, wal_events=events)
-    assert len(plan.committed_steps) == 1
-    assert len(plan.ambiguous_steps) == 1
+    (committed,) = plan.committed_steps
+    (ambiguous,) = plan.ambiguous_steps
     # Committed pairs with the older started (args_hash hash_v1)
-    assert plan.committed_steps[0].args_hash == "hash_v1"
+    assert committed.args_hash == "hash_v1"
     # Ambiguous is the newer started
-    assert plan.ambiguous_steps[0].args_hash == "hash_v2"
-    assert plan.ambiguous_steps[0].started_seq == 12
+    assert ambiguous.args_hash == "hash_v2"
+    assert ambiguous.started_seq == 12
 
 
 def test_multiple_ambiguous_steps_sorted_by_started_seq():
@@ -262,8 +259,8 @@ def test_unknown_event_kinds_are_ignored():
         {"seq": 6, "kind": "skill_completed"},
     ]
     plan = analyzer.analyze(snapshot=snap, wal_events=events)
-    assert len(plan.committed_steps) == 1
-    assert len(plan.ambiguous_steps) == 0
+    (cs,) = plan.committed_steps
+    assert not plan.ambiguous_steps
 
 
 def test_completion_without_matching_started_still_recorded():
@@ -280,6 +277,6 @@ def test_completion_without_matching_started_still_recorded():
         _step_completed(seq=10, oid="draft.0", result={"v": "old"}),
     ]
     plan = analyzer.analyze(snapshot=snap, wal_events=events)
-    assert len(plan.committed_steps) == 1
-    assert plan.committed_steps[0].result == {"v": "old"}
-    assert plan.ambiguous_steps == []
+    (cs,) = plan.committed_steps
+    assert cs.result == {"v": "old"}
+    assert not plan.ambiguous_steps
