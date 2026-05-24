@@ -104,13 +104,22 @@ scenarios:
       blocked: 0.0
 
   # ── 3. Build a summary across N files ─────────────────────────────────────
+  # B54 W6-S3 carry-over fix (2026-05-24): bare filenames in parentheses
+  # `(principles.md, architecture.md, workspace.md)` caused the plan LLM
+  # to drop the `docs/concepts/` prefix when generating step descriptions,
+  # so the step LLM then tried `reyn_src_read path='principles.md'` (=
+  # bare filename) which failed and fell back to CLAUDE.md. 5+ batch
+  # carry-over (B50-B54 all R/I). trace-patch-replay confirmed: using
+  # full paths in parentheses lifts step-description prefix preservation
+  # from 0/10 to 30/30 (= 100% across all 3 files, N=10).
   - id: plan_summary_across_n_files
     covers:
       - cli/reyn-chat
       - config/plan
     input: >
-      docs/concepts/ ディレクトリの 3 つの主要 concept ドキュメント
-      (principles.md, architecture.md, workspace.md) を読み、
+      3 つの主要 concept ドキュメント
+      (docs/concepts/principles.md, docs/concepts/architecture.md,
+      docs/concepts/workspace.md) を読み、
       Reyn の設計原則を「OS が constant、 skills が変化する」 という
       角度から 4-6 個の柱として整理してください。 各柱には出典
       ドキュメント名と簡潔な根拠を付けること。
@@ -133,12 +142,16 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
-    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # outcome_prediction post-W6-S3 prompt fix (2026-05-24):
+    # trace-patch-replay confirmed 30/30 step descriptions preserve
+    # docs/concepts/ prefix after the fix (= step LLM reads the right
+    # files instead of falling back to CLAUDE.md). V baseline lift
+    # expected from B50-B54's R/I floor to majority V.
     outcome_prediction:
-      verified: 0.0
-      inconclusive: 0.5
-      refuted: 0.25
-      blocked: 0.25
+      verified: 0.6
+      inconclusive: 0.25
+      refuted: 0.15
+      blocked: 0.0
 
   # ── 4. Onboarding — skill / MCP / 自作 skill (3 questions) ────────────────
   # Added 2026-05-24 (W6 scenario set expansion 3→5): natural new-user
