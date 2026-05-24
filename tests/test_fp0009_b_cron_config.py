@@ -85,17 +85,16 @@ cron:
 """
     (tmp_path / "reyn.yaml").write_text(yaml_content, encoding="utf-8")
     cfg = load_config(cwd=tmp_path)
-    assert len(cfg.cron.jobs) == 2
-
+    assert cfg.cron.jobs, "Expected at least one cron job parsed"
     job0 = cfg.cron.jobs[0]
+    job1 = cfg.cron.jobs[1]  # IndexError if fewer than 2 jobs parsed
+    assert not cfg.cron.jobs[2:], f"Expected exactly 2 cron jobs, got extras: {cfg.cron.jobs[2:]}"
     assert isinstance(job0, CronJobConfig)
     assert job0.name == "index_events_hourly"
     assert job0.skill == "index_events"
     assert job0.schedule == "0 */6 * * *"
     assert job0.input == {}
     assert job0.enabled is True
-
-    job1 = cfg.cron.jobs[1]
     assert isinstance(job1, CronJobConfig)
     assert job1.name == "weekly_ops_report"
     assert job1.skill == "ops_report"
@@ -151,7 +150,8 @@ cron:
 """
     (tmp_path / "reyn.yaml").write_text(yaml_content, encoding="utf-8")
     cfg = load_config(cwd=tmp_path)
-    assert len(cfg.cron.jobs) == 1
+    assert cfg.cron.jobs, "Expected exactly one cron job parsed"
+    assert not cfg.cron.jobs[1:], f"Expected exactly one cron job, got extras: {cfg.cron.jobs[1:]}"
     assert cfg.cron.jobs[0].enabled is False
 
 

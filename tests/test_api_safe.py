@@ -26,8 +26,11 @@ def test_hash_md5_blake2b_lengths() -> None:
     """Tier 2: md5 and blake2b digests are lowercase hex of correct length."""
     md5 = safe_hash.md5(b"abc")
     blake = safe_hash.blake2b(b"abc")
-    assert len(md5) == 32 and md5 == md5.lower()
-    assert len(blake) == 128 and blake == blake.lower()
+    # md5 hex digest is 32 chars; blake2b-512 hex digest is 128 chars.
+    # Verify by matching against a known-length hex pattern rather than pinning len().
+    import re
+    assert re.fullmatch(r"[0-9a-f]{32}", md5), f"md5 must be 32-char lowercase hex, got {md5!r}"
+    assert re.fullmatch(r"[0-9a-f]{128}", blake), f"blake2b must be 128-char lowercase hex, got {blake!r}"
 
 
 # -- schema ------------------------------------------------------------
