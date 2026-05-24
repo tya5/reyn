@@ -158,6 +158,12 @@ class ReynTUIApp(App):
         # skills are concurrent the user can expand them all at once
         # with one keypress. Status hint when nothing is running.
         Binding("f3", "skill_expand_toggle", "Toggle skill row drill-down", priority=True, show=False),
+        # Focus the bottom AsyncStackPanel for keyboard navigation
+        # (= F4 → panel focus → j/k navigate → c prefills /cancel <id>
+        # → Esc returns to InputBar). Status hint when the panel
+        # has no entries (= nothing to focus). F-key chosen over
+        # Ctrl+letter to avoid clobbering TextArea editing defaults.
+        Binding("f4", "focus_async_stack", "Focus async strip", priority=True, show=False),
         # W13 T2-1: F7 keyboard drill for the most-recent failed ToolCallRow.
         # F4 is reserved for async-stack panel focus (Wave-9 / keys_tab
         # description); F5/F6 reserved for conv-pane error-jump (#586).
@@ -1487,6 +1493,32 @@ class ReynTUIApp(App):
         if tip_shown:
             # Auto-hide the tip after ~4 s once expand has been applied.
             self.set_timer(4.0, conv.hide_status)
+
+    def action_focus_async_stack(self) -> None:
+        """F4 — focus the bottom AsyncStackPanel for keyboard navigation.
+
+        When the panel has entries, give it focus so j/k navigate
+        through the rows. With no entries: surface a status hint
+        rather than silently steal focus to an empty panel (which
+        would trap the user — they'd press Esc to escape only to
+        wonder what they accidentally focused).
+        """
+        try:
+            from .widgets.async_stack_panel import AsyncStackPanel
+            panel = self.query_one("#async-stack", AsyncStackPanel)
+        except Exception:
+            return
+        if not panel.snapshot():
+            try:
+                conv = self.query_one("#conversation", ConversationView)
+                conv.show_status(
+                    "no active tasks in async strip", kind="general",
+                )
+                self.set_timer(2.0, conv.hide_status)
+            except Exception:
+                pass
+            return
+        panel.focus()
 
     def action_drill_failed_tool(self) -> None:
         """F7 — toggle expand on the most-recent failed ToolCallRow.

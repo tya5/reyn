@@ -75,6 +75,7 @@ from typing import Literal
 
 from rich.cells import cell_len
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
@@ -186,9 +187,16 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         padding: 0 1;
         background: transparent;
     }
+    AsyncStackPanel:focus {
+        background: #1a1a1a;
+    }
     """
 
-    can_focus = False
+    # Focusable so the F4 binding can route focus here and j/k
+    # navigation works. Focus visibility is the ``:focus`` CSS
+    # background change above; the per-row selection caret is in
+    # ``_build_lines`` (= ``▌`` glyph on the cursor row when focused).
+    can_focus = True
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
@@ -206,6 +214,14 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         # timer fires, the pending timer is cancelled and the entry is
         # unmounted immediately.
         self._flash_timers: dict[str, object] = {}
+        # Cursor index for keyboard navigation when the panel is
+        # focused (= F4 + j/k path). Indexes into the
+        # ``_sorted_visible`` result, NOT the underlying
+        # ``_entries`` dict, so visual ordering and cursor ordering
+        # stay aligned (= pending entries float to top in both).
+        # Clamped on every navigation step + on render so deletes
+        # / completions can't leave a dangling out-of-range cursor.
+        self._cursor: int = 0
 
     # ── Textual lifecycle ────────────────────────────────────────────────────
 
@@ -215,6 +231,19 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
 
     def on_mount(self) -> None:
         self.set_interval(_TICK_INTERVAL_S, self._tick)
+        self._refresh()
+
+    def on_focus(self, event: events.Focus) -> None:
+        """Repaint to show the cursor caret on the selected entry."""
+        # Reset cursor to top on every fresh focus — predictable
+        # entry point regardless of where the user navigated last
+        # time. Without this, returning to the panel after entries
+        # changed could land on a stale offset.
+        self._cursor = 0
+        self._refresh()
+
+    def on_blur(self, event: events.Blur) -> None:
+        """Repaint to drop the cursor caret when focus leaves."""
         self._refresh()
 
     # ── Public API ───────────────────────────────────────────────────────────
@@ -347,6 +376,96 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
             self._entries.clear()
             self._refresh()
 
+    # ── keyboard navigation (F4-driven focus path) ──────────────────────────
+
+    def move_cursor(self, delta: int) -> None:
+        """Move the keyboard cursor by ``delta`` rows (clamped to visible range).
+
+        Visible range = ``_sorted_visible`` count (= up to ``_CAP``,
+        sorted with pending entries first). Wraps modulo the count
+        so j/k can cycle indefinitely without hitting an edge — same
+        idiom as SlashPicker's row navigation. Empty panel: no-op.
+        """
+        visible = self._sorted_visible()
+        if not visible:
+            self._cursor = 0
+            return
+        self._cursor = (self._cursor + delta) % len(visible)
+        self._refresh()
+
+    def selected_agent_id(self) -> str:
+        """Return the agent_id under the keyboard cursor, or "" when empty.
+
+        Used by the F4-mode ``c`` key handler to populate the
+        InputBar with ``/cancel <id>``. Returns the visible-order
+        entry at ``_cursor``; clamps to the first entry if the
+        cursor drifted out of range (= entries removed since
+        last navigation step).
+        """
+        visible = self._sorted_visible()
+        if not visible:
+            return ""
+        idx = max(0, min(self._cursor, len(visible) - 1))
+        return visible[idx][0]
+
+    def on_key(self, event: events.Key) -> None:
+        """Keyboard handler — j/k navigate, c prefills /cancel, Esc unfocus.
+
+        Active only when the panel itself has focus (= F4-driven).
+        The keys bubble up from the focused panel; consumed ones
+        call ``event.stop()`` so they don't fall through to App-level
+        bindings (e.g. ``j`` would scroll the right panel otherwise).
+        """
+        key = event.key
+        if key in ("down", "j"):
+            self.move_cursor(+1)
+            event.stop()
+            return
+        if key in ("up", "k"):
+            self.move_cursor(-1)
+            event.stop()
+            return
+        if key == "c":
+            self._prefill_cancel_and_unfocus()
+            event.stop()
+            return
+        if key == "escape":
+            self._return_focus_to_input()
+            event.stop()
+            return
+
+    def _prefill_cancel_and_unfocus(self) -> None:
+        """``c`` — pre-populate ``/cancel <id>`` in the InputBar and refocus it.
+
+        The user is on the panel via F4 with a task highlighted;
+        ``c`` is the discoverable "cancel this" key. We don't
+        actually cancel here — slash-side ``/cancel <id>`` already
+        owns the cancel contract — we just stage the command so the
+        user reviews + Enters. Empty selection (= no entries) is a
+        silent no-op; focus stays on the panel.
+        """
+        agent_id = self.selected_agent_id()
+        if not agent_id:
+            return
+        try:
+            from .input_bar import InputBar
+            ib = self.app.query_one("#inputbar", InputBar)
+            ta = ib.query_one("#input")
+            ta.load_text(f"/cancel {agent_id}")
+            # Move cursor to end so Enter sends immediately.
+            ta.move_cursor((0, len(f"/cancel {agent_id}")))
+            ib.focus_input()
+        except Exception:
+            pass
+
+    def _return_focus_to_input(self) -> None:
+        """Esc — return focus to the InputBar without staging anything."""
+        try:
+            from .input_bar import InputBar
+            self.app.query_one("#inputbar", InputBar).focus_input()
+        except Exception:
+            pass
+
     def snapshot(self) -> list[dict]:
         """Public read of the current entry list for tests / introspection.
 
@@ -420,9 +539,17 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         return ordered[:_CAP]
 
     def _build_lines(self) -> Text:
-        """Multi-line Text — one row per visible entry + overflow indicator."""
+        """Multi-line Text — one row per visible entry + overflow indicator.
+
+        When the panel itself has focus (= F4 path), the row under
+        the keyboard cursor gets a leading ``▌`` caret (= same idiom
+        as SlashPicker's selection marker) so the user sees which
+        entry the next ``c`` / Enter will target. Unfocused: no
+        caret — the panel stays in its ambient single-line mode.
+        """
         t = Text()
         if not self._entries:
+            self._cursor = 0
             return t
         try:
             total_width = int(getattr(self.size, "width", 0))
@@ -432,9 +559,20 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
             total_width = 80
         body_budget = max(20, total_width - _RIGHT_MARGIN_CELLS)
         visible = self._sorted_visible()
+        # Clamp cursor to current visible range — entries can
+        # disappear between navigation steps (task completed /
+        # cancelled), so the cursor might drift out of bounds.
+        if visible:
+            self._cursor = max(0, min(self._cursor, len(visible) - 1))
+        focused = self.has_focus
         for i, (agent_id, entry, glyph) in enumerate(visible):
             if i > 0:
                 t.append("\n")
+            if focused:
+                if i == self._cursor:
+                    t.append("▌ ", style=_CORAL)
+                else:
+                    t.append("  ", style="#1a1a1a")
             self._append_row(t, agent_id, entry, glyph, body_budget)
         overflow = len(self._entries) - len(visible)
         if overflow > 0:
