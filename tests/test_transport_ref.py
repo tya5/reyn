@@ -161,15 +161,14 @@ async def test_run_one_iteration_processes_single_kind(tmp_path, monkeypatch):
     # First iteration: consumes exactly one.
     result1 = await session.run_one_iteration()
     assert result1 is True
-    assert len(processed) == 1
-    assert processed[0] == "first"
+    (only,) = processed
+    assert only == "first"
     assert session.inbox.qsize() == 1  # one still pending
 
     # Second iteration: consumes the second.
     result2 = await session.run_one_iteration()
     assert result2 is True
-    assert len(processed) == 2
-    assert processed[1] == "second"
+    assert processed == ["first", "second"]
     assert session.inbox.empty()
 
 
@@ -288,10 +287,10 @@ async def test_routing_layer_dispatches_by_ref_type():
     await routing.dispatch(tui_msg)
     await routing.dispatch(a2a_msg)
 
-    assert len(tui_received) == 1
-    assert tui_received[0].text == "to tui"
-    assert len(a2a_received) == 1
-    assert a2a_received[0].text == "to a2a"
+    (tui_only,) = tui_received
+    assert tui_only.text == "to tui"
+    (a2a_only,) = a2a_received
+    assert a2a_only.text == "to a2a"
 
 
 @pytest.mark.asyncio
@@ -312,8 +311,8 @@ async def test_routing_layer_none_reply_to_falls_back_to_tui():
     msg = OutboxMessage(kind="status", text="no ref here")  # reply_to=None
     await routing.dispatch(msg)
 
-    assert len(tui_received) == 1
-    assert tui_received[0].text == "no ref here"
+    (tui_only,) = tui_received
+    assert tui_only.text == "no ref here"
 
 
 @pytest.mark.asyncio
@@ -410,9 +409,7 @@ async def test_message_bus_collects_multiple_outbox_messages(tmp_path, monkeypat
     )
 
     texts = [r.text for r in replies if r.kind == "agent"]
-    assert "first_fragment" in texts
-    assert "done" in texts
-    assert len(texts) == 2
+    assert texts == ["first_fragment", "done"]
 
 
 @pytest.mark.asyncio
