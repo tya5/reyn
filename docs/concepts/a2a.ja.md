@@ -41,16 +41,22 @@ Agent Card に含まれる情報：
 
 ## サポート状況
 
-| Method | v1 | v2（予定） |
+| メソッド / 機能 | 状態 | 備考 |
 |---|---|---|
-| `message/send` | ✅ 同期返信 | — |
-| `message/stream` | ❌ | streaming SSE レスポンス |
-| `tasks/get` / `tasks/cancel` | ❌ | 長時間実行のタスクライフサイクル |
-| プッシュ通知 | ❌ | コールバック形式の結果 |
-| 認証 | ❌ | bearer トークン / OAuth |
-| テキスト以外のパーツ（`file`、`data`） | ❌ | Reyn workspace 経由のファイルアップロード |
+| `message/send`（同期返信） | ✅ | デフォルトモード。ピアは最終返信テキストまで待機します。 |
+| `message/send`（`async_mode: true` による非同期） | ✅ | A2A `Task` envelope を返し、ピアはポーリングまたは購読します。下記 [タスクライフサイクル](#タスクライフサイクルと非同期実行-fp-0001) 参照。 |
+| `GET /a2a/tasks/{run_id}`（ステータスポーリング） | ✅ | `running` / `input-required` / `completed` / `failed` / `cancelled` を返します。 |
+| `POST /a2a/tasks/{run_id}/cancel` | ✅ | 内部 `asyncio.Task` をキャンセル（idempotent）。 |
+| `GET /a2a/tasks/{run_id}/events`（SSE ストリーム） | ✅ | Reyn ネイティブのストリーミング窓口。終了状態でクローズ。 |
+| 実行中の `ask_user` 介入 | ✅ | タスクは `input-required` に遷移し、ピアは `task_id` 付き `message/send` で応答します。 |
+| プッシュ通知（`params.webhook_url`） | ✅ | 各ステータス遷移で Reyn が JSON を POST。 |
+| Agent Card discovery（`.well-known/agent-card.json`） | ✅ | agent ごとと multi-agent index の両エンドポイント。 |
+| マルチターン履歴の永続化 | ✅ | MCP と同じ backing。agent ごとに `ChatSession.history`。 |
+| `message/stream`（単独 JSON-RPC メソッド） | ❌ | 代替として上記 `/events` SSE エンドポイントを使用。 |
+| 認証（bearer トークン / OAuth） | ❌ | v1 では対象外。ネットワーク層のアクセス制御に依存。 |
+| テキスト以外のパーツ（`file`、`data`） | ❌ | 現状はファイルを Reyn workspace 経由で交換。 |
 
-`message/send` が MVP の中心機能です。最も一般的な interop パターン（ピア agent が Reyn agent に質問し、最終返信テキストを受け取る）をカバーするためです。マルチターンの履歴は呼び出し間で保持されます。Reyn の `ChatSession.history` は agent ごとに永続化されており — MCP パスと同じ特性です。
+`message/send` が MVP の中心機能です。最も一般的な interop パターン（ピア agent が Reyn agent に質問し、最終返信テキストを受け取る）をカバーするためです。マルチターンの履歴は呼び出し間で保持されます。Reyn の `ChatSession.history` は agent ごとに永続化されており — MCP パスと同じ特性です。上に重ねた非同期タスクライフサイクル（FP-0001、下記詳細）により、ピアは長時間実行 skill を駆動し、実行中の `ask_user` に応答し、キャンセルできます。`message/send` のワイヤー形状は変わりません。
 
 ## MCP と A2A の両方を使う理由
 

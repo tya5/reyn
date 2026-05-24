@@ -312,11 +312,34 @@ curl -X POST http://localhost:8080/a2a/agents/default \
 
 The reply comes back as a standard A2A `Message` (`role: agent`, with text parts). Multi-turn history is preserved across calls — same backing as MCP.
 
-### v1 supported / not yet
+### Async tasks (`async_mode: true`)
 
-Supported: `message/send` (synchronous), Agent Card discovery, multi-turn history persistence.
+For long-running skills — including ones that fire `ask_user` mid-execution — set `params.async_mode: true` (or supply `params.webhook_url`) on `message/send`. The response is an A2A `Task` envelope (`{kind: "task", id: <run_id>, status: "running", ...}`); the agent runs in the background and the peer polls or subscribes to the lifecycle:
 
-Not yet (tracked as A2A v2 follow-ups): `message/stream`, task lifecycle (`tasks/get`, `tasks/cancel`, push notifications), authentication, non-text message parts.
+- `GET /a2a/tasks/{run_id}` — poll status (`running` / `input-required` / `completed` / `failed` / `cancelled`). Carries `question`, `result`, `error` fields as the task progresses.
+- `GET /a2a/tasks/{run_id}/events` — SSE stream of task events; closes on terminal status.
+- `POST /a2a/tasks/{run_id}/cancel` — cancel the underlying `asyncio.Task` (idempotent).
+- Mid-run `ask_user`: when the task transitions to `input-required`, the prompt is exposed as `question`. Reply with another `message/send` carrying `params.task_id` and the user's answer in `params.message`.
+- Push notifications: when `params.webhook_url` is set on the initial call, Reyn POSTs JSON payloads to the URL on each status transition.
+
+Details: [`docs/concepts/a2a.md`](docs/concepts/a2a.md#task-lifecycle-and-async-execution-fp-0001).
+
+### Supported
+
+| Method / capability | Status |
+|---|---|
+| `message/send` (synchronous reply) | ✅ |
+| `message/send` (async via `async_mode: true`) | ✅ |
+| `GET /a2a/tasks/{run_id}` (status polling) | ✅ |
+| `POST /a2a/tasks/{run_id}/cancel` | ✅ |
+| `GET /a2a/tasks/{run_id}/events` (SSE) | ✅ |
+| Mid-run `ask_user` injection | ✅ |
+| Push notifications (`params.webhook_url`) | ✅ |
+| Agent Card discovery (`.well-known/agent-card.json`) | ✅ |
+| Multi-turn history persistence | ✅ |
+| `message/stream` standalone method | ❌ (use the SSE endpoint above) |
+| Authentication (bearer tokens / OAuth) | ❌ |
+| Non-text message parts (`file`, `data`) | ❌ |
 
 Spec reference: <https://google.github.io/A2A/>.
 
