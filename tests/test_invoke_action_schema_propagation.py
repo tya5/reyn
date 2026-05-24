@@ -347,11 +347,9 @@ class TestCollectArsEntriesEmptySchemaSkills:
             known_skill_names=frozenset({"skill__alpha"}),
         )
         alpha_entries = [e for e in entries if e[0] == "skill__alpha"]
-        assert len(alpha_entries) == 1, (
-            f"skill__alpha must appear exactly once, got {alpha_entries}"
-        )
+        (only_entry,) = alpha_entries
         # The single entry retains its full properties (Source 2 wins over 2b)
-        assert alpha_entries[0][1] == {"q": {"type": "string"}}
+        assert only_entry[1] == {"q": {"type": "string"}}
 
     def test_known_skill_names_empty_frozenset_is_noop(self) -> None:
         """Tier 2: empty known_skill_names produces no Source 2b entries."""

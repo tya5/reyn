@@ -76,9 +76,9 @@ def test_extract_and_split_returns_path_list_without_content_read(tmp_path):
     result = extract_and_split(artifact)
 
     assert isinstance(result, list), f"Expected list, got {type(result)}"
-    assert len(result) == 2, f"Expected 2 entries for 2 files, got {len(result)}"
+    (entry_a, entry_b) = result
 
-    for entry in result:
+    for entry in (entry_a, entry_b):
         assert isinstance(entry, dict), f"Each entry must be a dict, got {type(entry)}"
         assert "source_path" in entry, f"Entry missing 'source_path': {entry}"
         # Structural purity check: no file content field should appear
