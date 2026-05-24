@@ -70,8 +70,8 @@ def _make_ctx() -> ToolContext:
 
 @pytest.mark.asyncio
 async def test_recall_returns_error_when_both_args_missing():
-    """Tier 2 (B45/B46 fix): empty args dict must not raise; instead
-    returns ToolResult mapping with ok=False + missing list."""
+    """Tier 2: empty args dict must not raise; instead
+    returns ToolResult mapping with ok=False + missing list (B45/B46 fix)."""
     result = await _handle_recall({}, _make_ctx())
     assert result["ok"] is False
     assert result["error_kind"] == "missing_required_arg"

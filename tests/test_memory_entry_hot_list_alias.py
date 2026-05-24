@@ -192,7 +192,7 @@ def test_resource_alias_memory_entry_without_meta_still_resolves():
 
 
 def test_read_memory_body_args_sends_canonical_layer_slug_pair():
-    """Tier 2 contract: transform output must match ``read_memory_body`` parameters
+    """Tier 2: transform output must match ``read_memory_body`` parameters
     (= ``{layer, slug}``). Previously sent ``{name}``, causing dispatch failure when
     a memory.entry alias was invoked (= the 'pre-existing dispatch shape mismatch'
     deferred in FP-0034 D2-full).
