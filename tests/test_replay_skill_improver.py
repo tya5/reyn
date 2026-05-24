@@ -254,7 +254,7 @@ def _candidate_apply_finalize() -> CandidateOutput:
 
 @pytest.mark.replay("fixtures/llm/skill_improver/validation_fails_after_attempt.jsonl")
 def test_validation_fails_after_attempt_force_decides():
-    """Tier 3a corner: prior_attempts shows validation failure → LLM must produce a valid artifact this time.
+    """Tier 3a: prior_attempts shows validation failure → LLM must produce a valid artifact this time.
 
     Protects: the prior_attempts injection path. When a phase has previously
     emitted an artifact that failed validation, the next call shows that
@@ -353,7 +353,7 @@ def _candidate_loop_back() -> CandidateOutput:
 # step-3 termination path on regression. xfail removed in B29.
 @pytest.mark.replay("fixtures/llm/skill_improver/improvement_makes_worse.jsonl")
 def test_improvement_regression_handled():
-    """Tier 3a corner: latest_eval < previous score → finalize with regression_detected.
+    """Tier 3a: latest_eval < previous score → finalize with regression_detected.
 
     Per skill.md (apply_improvements step 3), regression_detected is the
     termination reason when latest_eval.overall_score < history[-1].eval_score
