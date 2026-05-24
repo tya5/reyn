@@ -178,8 +178,8 @@ async def test_replace_mode_clears_existing(tmp_path: Path, monkeypatch: pytest.
     # Verify only the new chunk exists via backend query
     backend = SqliteIndexBackend(workspace_root=tmp_path)
     hits = await backend.query("test_src", [0.0, 1.0, 0.0], top_k=10, filters={})
-    assert len(hits) == 1
-    assert hits[0]["text"] == "new content"
+    (hit,) = hits  # exactly one chunk after replace: unpacking raises ValueError if not
+    assert hit["text"] == "new content"
 
 
 @pytest.mark.asyncio

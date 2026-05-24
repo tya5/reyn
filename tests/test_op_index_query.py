@@ -160,7 +160,7 @@ async def test_top_k_limits_results(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     result = await execute_op(op, ctx, caller="control_ir")
 
     assert result.get("status") != "error", result
-    assert len(result["chunks"]) <= 3
+    assert not result["chunks"][3:]  # top_k=3 caps result count
 
 
 @pytest.mark.asyncio
