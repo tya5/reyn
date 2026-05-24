@@ -56,13 +56,16 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 
 ## クイックスタート: `reyn chat` から MCP を試す（手動設定パス）
 
-手動でサーバーを設定したい場合や、公開レジストリにないサーバーを追加する場合は、`reyn.yaml` に直接追加します。サーバーを設定すると、`reyn chat` は自動的に 3 つの router tool を使えます：
+手動でサーバーを設定したい場合や、公開レジストリにないサーバーを追加する場合は、`reyn.yaml` に直接追加します。 サーバーを設定すると、 `reyn chat` は自動的に 6 個の MCP verb actions を使えます (issue #879 で旧 `mcp.server` / `mcp.tool` / `mcp.operation` の 3 sub-category を collapse):
 
-| Tool | 何をするか |
+| Action | 何をするか |
 |------|-----------|
-| `list_mcp_servers` | `reyn.yaml` に設定された全サーバー名を返す |
-| `list_mcp_tools(server)` | 1 つのサーバーが露出する tool 一覧を返す |
-| `call_mcp_tool(server, tool, args)` | サーバー上の tool を呼び出して結果を返す |
+| `mcp__search_server({text})`        | 公開 registry で新規サーバーを検索 |
+| `mcp__install_server({server_id})`  | サーバーを現 scope の config に install |
+| `mcp__list_servers()`               | `reyn.yaml` に設定された全サーバー名を返す |
+| `mcp__list_tools({server})`         | 1 サーバーが露出する tool 一覧を `{name: "<server>__<tool>", description, inputSchema}` 形式で返す |
+| `mcp__call_tool({tool, args})`      | `<server>__<tool>` ID + tool の declared args で tool を call |
+| `mcp__drop_server({server})`        | install 済サーバーを config から削除 |
 
 LLM router がチャット turn 内で直接これらを呼べます。 初回利用の典型 flow:
 
@@ -85,7 +88,7 @@ reyn chat
 > このディレクトリにある README.md を要約して
 ```
 
-router が自動的に `list_mcp_tools` → `call_mcp_tool` を呼び出します。 どの skill にも `permissions.mcp:` 宣言を書く必要はありません。 **Skill 作成は、 繰り返し使うワークフローを形式化したい時** (= phase graph / validation / retry policy が必要になった時) に検討するものであって、 MCP を使う前提条件ではありません。 以下の deep-dive はその場合の話で、 ad-hoc 利用だけならここで読み終えて問題ありません。
+router が自動的に `mcp__list_tools` → `mcp__call_tool` を呼び出します。 どの skill にも `permissions.mcp:` 宣言を書く必要はありません。 **Skill 作成は、 繰り返し使うワークフローを形式化したい時** (= phase graph / validation / retry policy が必要になった時) に検討するものであって、 MCP を使う前提条件ではありません。 以下の deep-dive はその場合の話で、 ad-hoc 利用だけならここで読み終えて問題ありません。
 
 ## ロール 1：MCP クライアント — Reyn が外部サーバーを呼ぶ
 

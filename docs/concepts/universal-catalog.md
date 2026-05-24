@@ -45,15 +45,13 @@ The architectural win is that **the LLM's tool list is now O(1) in
 resource categories**. A 14th category does not add a 14th tool — it
 adds an entry to the `CATEGORIES` tuple and one routing rule.
 
-## The 13 categories (§D18 master taxonomy)
+## The categories (§D18 master taxonomy)
 
 | Category | Holds | Canonical invoke semantic |
 |---|---|---|
 | `skill` | Project / stdlib skills | run the skill with `input` artifact |
 | `agent.peer` | Peer agents in the topology | delegate a message to that peer |
-| `mcp.server` | Configured MCP servers (resource) | list this server's tools |
-| `mcp.tool` | Individual tools on each server | call the tool with `args` |
-| `mcp.operation` | MCP server management ops | run the op (e.g. `drop_server`) |
+| `mcp` | MCP server management + tool dispatch (issue #879) | six verb_object actions — see below |
 | `file` | Workspace file ops | read / write / delete / list |
 | `web` | Web search + fetch | search or fetch |
 | `memory.entry` | Persistent memory records | read the entry's body |
@@ -62,6 +60,19 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 | `rag.corpus` | Indexed corpora (resource) | recall against this single source |
 | `rag.operation` | RAG management ops | multi-source recall / drop source |
 | `exec` | Sandboxed argv execution | run argv under the sandbox backend |
+
+Issue #879 collapsed the previous `mcp.server` / `mcp.tool` /
+`mcp.operation` sub-categories into a single `mcp` category whose six
+verb_object actions cover the LLM-visible surface:
+
+| Action | Purpose |
+|---|---|
+| `mcp__search_server`  | Search the MCP registry for new servers |
+| `mcp__install_server` | Install a server into the current scope's config |
+| `mcp__list_servers`   | Enumerate installed servers |
+| `mcp__list_tools`     | Enumerate one server's tools as `<server>__<tool>` ids |
+| `mcp__call_tool`      | Call a tool by `<server>__<tool>` id with `args` |
+| `mcp__drop_server`    | Remove an installed server |
 
 `exec` is gated by `is_exec_available()` — it only appears when a real
 sandbox backend (= not `"noop"`) is configured. The rest are always
@@ -74,10 +85,10 @@ visible.
 ```
 
 The separator is **double underscore** (`__`). Categories may contain
-dots (`mcp.tool`); entry names may contain anything except the `__`
-sequence at the boundary. The split rule is "first `__` after the
-category name" so `mcp.tool__brave.search` correctly parses as
-(`mcp.tool`, `brave.search`).
+dots (`agent.peer`, `rag.corpus`, `reyn.source`, …); entry names may
+contain anything except the `__` sequence at the boundary. The split
+rule is "first `__` after the category name" so `agent.peer__alice`
+correctly parses as (`agent.peer`, `alice`).
 
 Examples:
 
@@ -85,8 +96,8 @@ Examples:
 |---|---|
 | `skill__index_docs` | (`skill`, `index_docs`) |
 | `agent.peer__alice` | (`agent.peer`, `alice`) |
-| `mcp.tool__brave.search` | (`mcp.tool`, `brave.search`) |
-| `mcp.operation__drop_server` | (`mcp.operation`, `drop_server`) |
+| `mcp__call_tool` | (`mcp`, `call_tool`) |
+| `mcp__install_server` | (`mcp`, `install_server`) |
 | `rag.corpus__meetings` | (`rag.corpus`, `meetings`) |
 | `file__read` | (`file`, `read`) |
 
@@ -94,7 +105,7 @@ Examples:
 
 OpenAI's native function-call API restricts tool names to
 `^[a-zA-Z0-9_-]{1,64}$` (= no `.`). Reyn's qualified names with
-dotted categories (`mcp.tool`, `agent.peer`, `reyn.source`, etc.)
+dotted categories (`agent.peer`, `rag.corpus`, `reyn.source`, etc.)
 therefore **work via a LiteLLM proxy** but may be rejected by direct
 OpenAI native callers.
 
@@ -157,10 +168,13 @@ resource runs the *canonical default operation* for that kind:
 |---|---|
 | `skill` | run the skill |
 | `agent.peer` | delegate a message |
-| `mcp.server` | list this server's tools |
-| `mcp.tool` | call the tool |
 | `memory.entry` | read the body |
 | `rag.corpus` | single-source recall |
+
+Issue #879 removed the previous `mcp.server` / `mcp.tool` resource
+entries; per-MCP-server / per-MCP-tool dispatch now flows through the
+verb actions in the `mcp` category (= `mcp__list_tools` →
+`mcp__call_tool({tool: "<server>__<tool>", args})`).
 
 This means an LLM can say `invoke_action("rag.corpus__meetings",
 {"query": "Q3 roadmap"})` and the wrapper expands it to
@@ -177,18 +191,17 @@ the routing:
 
 - **`_OPERATION_RULES`** — qualified name → `(target_tool_name,
   arg_transformer)` for static operation categories (file / web /
-  memory.operation / reyn.source / rag.operation / mcp.operation).
+  memory.operation / reyn.source / rag.operation / mcp).
 - **`_RESOURCE_RULES`** — category → `(target_tool_name,
   arg_transformer)` for resource categories whose entries come from
-  `RouterCallerState` (skills / agents / mcp servers / mcp tools /
-  memory entries / rag corpora).
+  `RouterCallerState` (skills / agents / memory entries / rag corpora).
 
 Routing always:
 
 1. Splits the qualified name into (`category`, `entry_name`).
 2. Looks up the rule for that category / qualified name.
-3. Runs the arg transformer (e.g. `_call_mcp_tool_args` splits the
-   `entry_name` into `(server, tool)` and packs `args`).
+3. Runs the arg transformer (e.g. `_invoke_skill_args` wraps the
+   caller args under the skill's input artifact).
 4. Returns a `ResolvedAction(target_tool_name, target_args)` that
    the wrapper hands to the unified `ToolRegistry`.
 
@@ -232,8 +245,8 @@ sandbox backend. Hidden categories appear neither in the
 ## System prompt placement (§D9)
 
 When `action_retrieval.universal_wrappers_enabled` is true, the router
-system prompt gains a **`## Action categories`** section listing all
-13 categories with their canonical-default semantic. The section sits
+system prompt gains a **`## Action categories`** section listing every
+category with its canonical-default semantic. The section sits
 between `## Capabilities` and `## Behaviour` so it stays inside the
 static prompt-cache prefix (= every request after the first hits the
 warm cache).

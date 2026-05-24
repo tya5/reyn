@@ -44,15 +44,13 @@ hallucination 0/35)。
 て O(1) になる** こと。 14 番目の category を足しても 14 番目の tool は
 増えない — `CATEGORIES` tuple に 1 行 + routing rule 1 件で済む。
 
-## 13 category (§D18 master taxonomy)
+## Category 一覧 (§D18 master taxonomy)
 
 | Category | 保持するもの | Canonical invoke 意味論 |
 |---|---|---|
 | `skill` | project / stdlib skill | `input` artifact を持って skill を実行 |
 | `agent.peer` | topology 内の peer agent | その peer にメッセージを delegate |
-| `mcp.server` | 設定済み MCP server (resource) | この server の tools を列挙 |
-| `mcp.tool` | 各 server の個別 tool | `args` を持って tool を call |
-| `mcp.operation` | MCP server 管理 op | op を実行 (例: `drop_server`) |
+| `mcp` | MCP server 管理 + tool dispatch (issue #879) | 6 個の verb_object actions — 下表参照 |
 | `file` | workspace の file op | read / write / delete / list |
 | `web` | web search + fetch | search または fetch |
 | `memory.entry` | 永続 memory record | entry の body を read |
@@ -66,6 +64,19 @@ hallucination 0/35)。
 (= `"noop"` 以外) が configure されている場合のみ surface に出る。 残り
 は常に visible。
 
+Issue #879 で旧 `mcp.server` / `mcp.tool` / `mcp.operation` の 3
+sub-category を `mcp` 1 category に collapse、 LLM に見える surface は
+6 個の verb_object actions:
+
+| Action | 用途 |
+|---|---|
+| `mcp__search_server`  | MCP registry で新規 server を検索 |
+| `mcp__install_server` | server を現 scope の config に install |
+| `mcp__list_servers`   | install 済 server を列挙 |
+| `mcp__list_tools`     | 1 server の tool を `<server>__<tool>` ID で列挙 |
+| `mcp__call_tool`      | `<server>__<tool>` ID + `args` で tool を call |
+| `mcp__drop_server`    | install 済 server を削除 |
+
 ## Qualified-name format
 
 ```
@@ -73,10 +84,10 @@ hallucination 0/35)。
 ```
 
 separator は **double underscore** (`__`)。 category は `.` を含んでよく
-(`mcp.tool`)、 entry name は boundary の `__` sequence 以外なら任意。
-split rule は 「category 名直後の最初の `__`」 なので
-`mcp.tool__brave.search` は (`mcp.tool`, `brave.search`) と正しくパース
-される。
+(`agent.peer`, `rag.corpus`, `reyn.source` 等)、 entry name は boundary
+の `__` sequence 以外なら任意。 split rule は 「category 名直後の最初の
+`__`」 なので `agent.peer__alice` は (`agent.peer`, `alice`) と正しく
+パースされる。
 
 例:
 
@@ -84,8 +95,8 @@ split rule は 「category 名直後の最初の `__`」 なので
 |---|---|
 | `skill__index_docs` | (`skill`, `index_docs`) |
 | `agent.peer__alice` | (`agent.peer`, `alice`) |
-| `mcp.tool__brave.search` | (`mcp.tool`, `brave.search`) |
-| `mcp.operation__drop_server` | (`mcp.operation`, `drop_server`) |
+| `mcp__call_tool` | (`mcp`, `call_tool`) |
+| `mcp__install_server` | (`mcp`, `install_server`) |
 | `rag.corpus__meetings` | (`rag.corpus`, `meetings`) |
 | `file__read` | (`file`, `read`) |
 
@@ -93,7 +104,7 @@ split rule は 「category 名直後の最初の `__`」 なので
 
 OpenAI native function-call API は tool 名を `^[a-zA-Z0-9_-]{1,64}$` に
 制限している (= `.` は不可)。 Reyn の qualified name はカテゴリに `.` を
-含む形 (`mcp.tool`, `agent.peer`, `reyn.source` 等) があり、 **LiteLLM
+含む形 (`agent.peer`, `rag.corpus`, `reyn.source` 等) があり、 **LiteLLM
 proxy 経由なら OK** だが OpenAI native を直接叩く場合 reject される
 可能性がある。
 
@@ -151,10 +162,13 @@ invoke すると、 その種別の *canonical default operation* が走る:
 |---|---|
 | `skill` | skill を実行 |
 | `agent.peer` | message を delegate |
-| `mcp.server` | この server の tools を列挙 |
-| `mcp.tool` | tool を call |
 | `memory.entry` | body を read |
 | `rag.corpus` | single-source recall |
+
+Issue #879 で旧 `mcp.server` / `mcp.tool` の resource entry は削除。
+per-MCP-server / per-MCP-tool dispatch は `mcp` category 内の verb
+actions 経由 (= `mcp__list_tools` →
+`mcp__call_tool({tool: "<server>__<tool>", args})`) で flow する。
 
 これにより LLM は `invoke_action("rag.corpus__meetings", {"query": "Q3
 roadmap"})` と書くだけで wrapper が `recall(sources=["meetings"],
@@ -171,18 +185,17 @@ qualified name → target tool 名のマッピングは
 
 - **`_OPERATION_RULES`** — qualified name → `(target_tool_name,
   arg_transformer)`、 static operation category 向け (file / web /
-  memory.operation / reyn.source / rag.operation / mcp.operation)。
+  memory.operation / reyn.source / rag.operation / mcp)。
 - **`_RESOURCE_RULES`** — category → `(target_tool_name,
   arg_transformer)`、 entry が `RouterCallerState` 由来の resource
-  category 向け (skills / agents / mcp servers / mcp tools / memory
-  entries / rag corpora)。
+  category 向け (skills / agents / memory entries / rag corpora)。
 
 Routing は常に:
 
 1. qualified name を (`category`, `entry_name`) に split。
 2. その category / qualified name の rule を lookup。
-3. arg transformer を実行 (例: `_call_mcp_tool_args` は `entry_name`
-   を `(server, tool)` に分け、 `args` を pack)。
+3. arg transformer を実行 (例: `_invoke_skill_args` は caller の args を
+   skill の input artifact に wrap)。
 4. `ResolvedAction(target_tool_name, target_args)` を返し、 wrapper が
    それを unified `ToolRegistry` に渡す。
 
