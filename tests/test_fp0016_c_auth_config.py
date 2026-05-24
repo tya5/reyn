@@ -28,7 +28,7 @@ def test_default_is_empty() -> None:
     """Tier 2: AuthConfig() has empty providers dict by default."""
     cfg = AuthConfig()
     assert isinstance(cfg.providers, dict)
-    assert len(cfg.providers) == 0
+    assert not cfg.providers
 
 
 def test_reyn_config_carries_auth_default() -> None:
