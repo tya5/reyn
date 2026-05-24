@@ -51,12 +51,20 @@ def test_render_focus_known_command_has_summary() -> None:
 
 def test_render_focus_known_command_with_usage_includes_usage_line() -> None:
     """Tier 2: when ``cmd.usage`` is set (= /find / /save / /copy / /attach
-    from PR #552), the focus panel surfaces it on its own row."""
+    from PR #552), the focus panel surfaces it on its own row.
+
+    The /find usage string was expanded in PR #561 (regex + case opt-in
+    flags) from ``/find <query>`` to ``/find [-r|-c|-rc] <query>``.
+    Pin only that the usage row is present and contains the placeholder,
+    not the exact flag syntax (= avoids re-pinning on every /find
+    evolution).
+    """
     from reyn.chat.slash.help import _render_command_focus
 
     panel = _render_command_focus("find")
     assert "usage:" in panel
-    assert "/find <query>" in panel
+    assert "/find" in panel
+    assert "<query>" in panel
 
 
 def test_render_focus_without_usage_omits_usage_line() -> None:
