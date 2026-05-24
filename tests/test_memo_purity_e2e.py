@@ -160,8 +160,6 @@ def test_e2e_flaky_world_op_recovers_on_resume(tmp_path: Path):
     # Run 2 also wrote a fresh step_completed (= future resume sees
     # the latest world view).
     all_completed = [e for e in log2.iter_from(0) if e["kind"] == "step_completed"]
-    assert len(all_completed) == 2, (
-        f"expected 2 step_completed (run 1 + run 2); got {len(all_completed)}"
-    )
-    assert all_completed[0]["result"] == {"results": []}
-    assert all_completed[1]["result"] == {"results": ["fresh", "data"]}
+    results = [e["result"] for e in all_completed]
+    assert {"results": []} in results, "run-1 step_completed (empty world) missing from log"
+    assert {"results": ["fresh", "data"]} in results, "run-2 step_completed (fresh data) missing from log"

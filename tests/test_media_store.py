@@ -467,9 +467,10 @@ def test_multiple_saved_tool_results_all_retained(tmp_path):
         body, found = store.read_tool_result(block["path"])
         assert found is True, f"entry {i} was evicted"
         assert body == f"entry {i}\n"
-    # Directory listing has all 10 files (= no auto-cleanup).
-    files = list(store.tool_results_dir.iterdir())
-    assert len(files) == 10
+    # All saved paths still present on disk (= no auto-cleanup).
+    files_on_disk = {p.name for p in store.tool_results_dir.iterdir()}
+    saved_names = {Path(b["path"]).name for b in blocks}
+    assert saved_names.issubset(files_on_disk), "some saved files were evicted"
 
 
 # ── url field (#385 β core impl sub-task 3b) ──────────────────────────

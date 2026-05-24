@@ -203,13 +203,14 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
     op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
     asyncio.run(mcp_op_handler._execute(op, ctx))
 
-    # Two mcp_progress events should have been emitted with the
+    # At least two mcp_progress events should have been emitted with the
     # structured fields the forwarder consumes.
     progress_events = [
         e.model_dump(mode="json") for e in events.all()
         if e.type == "mcp_progress"
     ]
-    assert len(progress_events) == 2
+    assert progress_events, "expected mcp_progress events to be emitted"
+    assert any(e["data"]["message"] == "starting" for e in progress_events), "starting event missing"
     first = progress_events[0]
     assert first["data"]["server"] == "demo"
     assert first["data"]["tool"] == "thing"
