@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -247,15 +246,15 @@ class _ScriptedLLM:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_chitchat_no_tools():
+async def test_chitchat_no_tools(monkeypatch):
     """Tier 1: RouterLoop text-reply path puts one agent message in outbox."""
     host = FakeRouterHost()
     loop = make_loop(host)
 
     scripted = _ScriptedLLM([text_result("hello")])
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("hi", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("hi", [])
 
     (msg,) = host.outbox
     assert msg["kind"] == "agent"
@@ -265,7 +264,7 @@ async def test_chitchat_no_tools():
 
 
 @pytest.mark.asyncio
-async def test_single_skill_round():
+async def test_single_skill_round(monkeypatch):
     """Tier 1: RouterLoop dispatches invoke_skill on round 1 and produces text reply on round 2."""
     host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
     loop = make_loop(host)
@@ -279,8 +278,8 @@ async def test_single_skill_round():
     ]
     scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("run my skill", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("run my skill", [])
 
     (skill_call,) = host.skill_calls
     assert skill_call["skill"] == "my_skill"
@@ -292,7 +291,7 @@ async def test_single_skill_round():
 
 
 @pytest.mark.asyncio
-async def test_two_round_sequential():
+async def test_two_round_sequential(monkeypatch):
     """Tier 1: multi-round message accumulation — tool results from round 1 and 2 appear in round 3 messages."""
     host = FakeRouterHost(
         file_permissions={"read": ["/docs"], "write": []},
@@ -316,8 +315,8 @@ async def test_two_round_sequential():
         messages_seen.append(list(messages))
         return rounds[len(messages_seen) - 1]
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
-        await loop.run("process the file", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    await loop.run("process the file", [])
 
     # Round 3 messages should include tool results from both prior rounds
     final_messages = messages_seen[2]
@@ -328,7 +327,7 @@ async def test_two_round_sequential():
 
 
 @pytest.mark.asyncio
-async def test_parallel_tool_calls_executed():
+async def test_parallel_tool_calls_executed(monkeypatch):
     """Tier 1: RouterLoop executes all tool_calls from a single round concurrently."""
     host = FakeRouterHost(
         skills=[
@@ -349,8 +348,8 @@ async def test_parallel_tool_calls_executed():
     ]
     scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("run both", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("run both", [])
 
     called_skills = {c["skill"] for c in host.skill_calls}
     assert called_skills == {"skill_a", "skill_b"}
@@ -358,7 +357,7 @@ async def test_parallel_tool_calls_executed():
 
 
 @pytest.mark.asyncio
-async def test_max_iterations_exhausted():
+async def test_max_iterations_exhausted(monkeypatch):
     """Tier 2: OS invariant — RouterLoop emits error outbox message after exceeding max_iterations cap. Loop never runs more iterations than configured."""
     host = FakeRouterHost()
     loop = make_loop(host, max_iterations=3)
@@ -367,8 +366,8 @@ async def test_max_iterations_exhausted():
     always_tool = tool_result([{"name": "bogus_tool", "args": {}}])
     scripted = _ScriptedLLM([always_tool] * 3)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("do stuff", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("do stuff", [])
 
     assert scripted.call_count == 3
     (msg,) = host.outbox
@@ -378,7 +377,7 @@ async def test_max_iterations_exhausted():
 
 
 @pytest.mark.asyncio
-async def test_unknown_tool_returns_error_in_result():
+async def test_unknown_tool_returns_error_in_result(monkeypatch):
     """Tier 1: unknown tool name produces error tool result with kind=unknown_tool; loop continues to next round."""
     host = FakeRouterHost()
     loop = make_loop(host)
@@ -394,8 +393,8 @@ async def test_unknown_tool_returns_error_in_result():
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
-        await loop.run("try bogus", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    await loop.run("try bogus", [])
 
     # Find the tool result message from round 1
     round2_messages = messages_captured[1]
@@ -411,7 +410,7 @@ async def test_unknown_tool_returns_error_in_result():
 
 
 @pytest.mark.asyncio
-async def test_remember_shared_writes_file_and_regenerates_index():
+async def test_remember_shared_writes_file_and_regenerates_index(monkeypatch):
     """Tier 1: remember_shared tool writes memory file with correct frontmatter and triggers index regeneration."""
     host = FakeRouterHost(file_permissions={"read": ["/memory"], "write": ["/memory"]})
     loop = make_loop(host)
@@ -431,8 +430,8 @@ async def test_remember_shared_writes_file_and_regenerates_index():
     ]
     scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("remember: I'm a developer", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("remember: I'm a developer", [])
 
     # file_write should have been called with the right path
     written_paths = [path for path, _ in host.file_writes]
@@ -510,7 +509,7 @@ async def test_list_memory_top_level():
 
 
 @pytest.mark.asyncio
-async def test_delegate_to_agent():
+async def test_delegate_to_agent(monkeypatch):
     """Tier 2: OS invariant — RouterLoop exits after first delegate_to_agent dispatch and emits awaiting-peer-reply status; does not iterate further in the same turn.
 
     Earlier (pre-PR-tui-4-followup) the loop continued and the LLM
@@ -533,8 +532,8 @@ async def test_delegate_to_agent():
     ]
     scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("send to peer", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("send to peer", [])
 
     (agent_send,) = host.agent_sends
     assert agent_send["to"] == "peer_agent"
@@ -550,7 +549,7 @@ async def test_delegate_to_agent():
 
 
 @pytest.mark.asyncio
-async def test_delegate_does_not_re_delegate_in_same_turn():
+async def test_delegate_does_not_re_delegate_in_same_turn(monkeypatch):
     """Tier 2: OS invariant — RouterLoop.run() exits after first delegate dispatch even if LLM keeps emitting delegate calls; exactly one dispatch occurs regardless of max_iterations.
 
     Real LLM behavior (dogfood verify): with the old code the LLM saw
@@ -568,8 +567,8 @@ async def test_delegate_does_not_re_delegate_in_same_turn():
     }])
     scripted = _ScriptedLLM([delegate_round] * 5)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("delegate", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("delegate", [])
 
     # Exactly one delegate dispatch; loop exited after the first iteration.
     (only_send,) = host.agent_sends
@@ -577,7 +576,7 @@ async def test_delegate_does_not_re_delegate_in_same_turn():
 
 
 @pytest.mark.asyncio
-async def test_dedupe_duplicate_async_tool_calls_in_same_round():
+async def test_dedupe_duplicate_async_tool_calls_in_same_round(monkeypatch):
     """Tier 2: OS invariant — duplicate async tool_calls (same name, same
     args) in a single LLM round are deduped before dispatch (F5 fix).
 
@@ -600,8 +599,8 @@ async def test_dedupe_duplicate_async_tool_calls_in_same_round():
     ])
     scripted = _ScriptedLLM([duplicate_round])
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("send", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("send", [])
 
     # Only one send_to_agent — duplicate suppressed.
     (agent_send,) = host.agent_sends
@@ -618,7 +617,7 @@ async def test_dedupe_duplicate_async_tool_calls_in_same_round():
 
 
 @pytest.mark.asyncio
-async def test_dedupe_does_not_collapse_distinct_async_args():
+async def test_dedupe_does_not_collapse_distinct_async_args(monkeypatch):
     """Tier 2: OS invariant — async tool_calls with different args are
     NOT deduped (F5 false-positive guard).
 
@@ -637,8 +636,8 @@ async def test_dedupe_does_not_collapse_distinct_async_args():
     ])
     scripted = _ScriptedLLM([distinct_round])
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("send two tasks", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("send two tasks", [])
 
     # Both dispatch — different args.
     requests = sorted(s["request"] for s in host.agent_sends)
@@ -652,7 +651,7 @@ async def test_dedupe_does_not_collapse_distinct_async_args():
 
 
 @pytest.mark.asyncio
-async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls():
+async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls(monkeypatch):
     """Tier 2: OS invariant — duplicate SYNC tool_calls (other than
     invoke_skill) in same round are NOT deduped.
 
@@ -676,8 +675,8 @@ async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls():
     ]
     scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("describe", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("describe", [])
 
     # No dedupe events for non-invoke_skill sync tools.
     deduped_events = [
@@ -692,7 +691,7 @@ async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dedupe_duplicate_invoke_skill_in_same_round():
+async def test_dedupe_duplicate_invoke_skill_in_same_round(monkeypatch):
     """Tier 2: OS invariant — duplicate invoke_skill calls with identical
     name+input in one LLM round are deduplicated before dispatch (G3 fix).
 
@@ -718,8 +717,8 @@ async def test_dedupe_duplicate_invoke_skill_in_same_round():
     ])
     scripted = _ScriptedLLM([duplicate_round, text_result("done")])
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("improve the skill", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("improve the skill", [])
 
     # Only one skill invocation — two duplicates suppressed.
     (skill_call,) = host.skill_calls
@@ -737,7 +736,7 @@ async def test_dedupe_duplicate_invoke_skill_in_same_round():
 
 
 @pytest.mark.asyncio
-async def test_dedupe_does_not_collapse_distinct_invoke_skill_args():
+async def test_dedupe_does_not_collapse_distinct_invoke_skill_args(monkeypatch):
     """Tier 2: OS invariant — invoke_skill calls with different args in
     the same round are NOT deduped (G3 false-positive guard).
 
@@ -759,8 +758,8 @@ async def test_dedupe_does_not_collapse_distinct_invoke_skill_args():
     ])
     scripted = _ScriptedLLM([distinct_round, text_result("done")])
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("run two skills", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("run two skills", [])
 
     # Both skills executed — different args, no collapse.
     called = {c["skill"] for c in host.skill_calls}
@@ -775,7 +774,7 @@ async def test_dedupe_does_not_collapse_distinct_invoke_skill_args():
 
 
 @pytest.mark.asyncio
-async def test_tool_call_deduped_event_emitted_for_invoke_skill():
+async def test_tool_call_deduped_event_emitted_for_invoke_skill(monkeypatch):
     """Tier 2: P6 invariant — deduped invoke_skill calls emit
     `tool_call_deduped` events with correct name and reason fields,
     making the dedupe visible in the audit log (P6).
@@ -793,8 +792,8 @@ async def test_tool_call_deduped_event_emitted_for_invoke_skill():
     ])
     scripted = _ScriptedLLM([duplicate_round, text_result("done")])
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("run skill", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("run skill", [])
 
     deduped_events = [
         e for e in host.events.emitted
@@ -807,7 +806,7 @@ async def test_tool_call_deduped_event_emitted_for_invoke_skill():
 
 
 @pytest.mark.asyncio
-async def test_forget_memory_deletes_file_and_regenerates_index():
+async def test_forget_memory_deletes_file_and_regenerates_index(monkeypatch):
     """Tier 1: forget_memory tool deletes the memory file and triggers index regeneration."""
     host = FakeRouterHost(file_permissions={"read": ["/memory"], "write": ["/memory"]})
     host._files["/memory/shared/user_role.md"] = "# old memory"
@@ -822,8 +821,8 @@ async def test_forget_memory_deletes_file_and_regenerates_index():
     ]
     scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("forget my role", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("forget my role", [])
 
     assert "/memory/shared/user_role.md" in host.file_deletes
     (only_regen,) = host.index_regenerations
@@ -831,7 +830,7 @@ async def test_forget_memory_deletes_file_and_regenerates_index():
 
 
 @pytest.mark.asyncio
-async def test_history_appended_to_messages():
+async def test_history_appended_to_messages(monkeypatch):
     """Tier 1: prior history turns appear in LLM messages before the current user utterance, in correct role order."""
     host = FakeRouterHost()
     loop = make_loop(host)
@@ -847,8 +846,8 @@ async def test_history_appended_to_messages():
         messages_seen.append(list(messages))
         return text_result("reply")
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
-        await loop.run("new message", history)
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    await loop.run("new message", history)
 
     first_call_messages = messages_seen[0]
     roles = [m["role"] for m in first_call_messages]
@@ -862,7 +861,7 @@ async def test_history_appended_to_messages():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_unknown_tool_name_returns_error_not_dispatched():
+async def test_unknown_tool_name_returns_error_not_dispatched(monkeypatch):
     """Tier 2: OS invariant — tool_call for a name absent from the current catalog returns status=error/kind=unknown_tool; underlying host method is never called.
 
     LLM emits tool_call with name='read_file' (not in catalog for no-file host).
@@ -886,8 +885,8 @@ async def test_unknown_tool_name_returns_error_not_dispatched():
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
-        await loop.run("read README.md", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    await loop.run("read README.md", [])
 
     # host.file_read must NOT have been called.
     assert not host.file_reads, "file_read must not be called for unknown tool"
@@ -907,7 +906,7 @@ async def test_unknown_tool_name_returns_error_not_dispatched():
 
 
 @pytest.mark.asyncio
-async def test_tool_names_populated_per_run():
+async def test_tool_names_populated_per_run(monkeypatch):
     """Tier 1: tool catalog reflects host configuration.
 
     File-class tools (list_directory, read_file, write_file,
@@ -923,8 +922,8 @@ async def test_tool_names_populated_per_run():
     loop = RouterLoop(host=host_no_file, chain_id="chain-test")
 
     scripted1 = _ScriptedLLM([text_result("ok")])
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted1):
-        await loop.run("hello", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted1)
+    await loop.run("hello", [])
 
     names_no_file = frozenset(loop._tool_names)
     # File tools all gated.
@@ -946,8 +945,8 @@ async def test_tool_names_populated_per_run():
     loop2 = RouterLoop(host=host_with_file, chain_id="chain-test-2")
 
     scripted2 = _ScriptedLLM([text_result("ok")])
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted2):
-        await loop2.run("hello", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted2)
+    await loop2.run("hello", [])
 
     names_with_file = frozenset(loop2._tool_names)
     assert "read_file" in names_with_file
@@ -962,8 +961,8 @@ async def test_tool_names_populated_per_run():
     loop3 = RouterLoop(host=host_with_write, chain_id="chain-test-3")
 
     scripted3 = _ScriptedLLM([text_result("ok")])
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted3):
-        await loop3.run("hello", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted3)
+    await loop3.run("hello", [])
 
     names_with_write = frozenset(loop3._tool_names)
     assert "write_file" in names_with_write
@@ -971,7 +970,7 @@ async def test_tool_names_populated_per_run():
 
 
 @pytest.mark.asyncio
-async def test_known_tool_still_dispatches():
+async def test_known_tool_still_dispatches(monkeypatch):
     """Tier 1: valid catalog tool (list_skills) dispatches and returns status=ok with list data. Sanity check that tool name validation does not block legitimate tools."""
     host = FakeRouterHost(
         skills=[{"name": "my_skill", "category": "general"}],
@@ -989,8 +988,8 @@ async def test_known_tool_still_dispatches():
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
-        await loop.run("what skills do you have?", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    await loop.run("what skills do you have?", [])
 
     # The tool result should not be an error
     round2_messages = messages_captured[1]
@@ -1009,7 +1008,7 @@ async def test_known_tool_still_dispatches():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dispatch_tool_emits_tool_called_and_tool_returned_events():
+async def test_dispatch_tool_emits_tool_called_and_tool_returned_events(monkeypatch):
     """Tier 2: P6 invariant — dispatch_tool emits tool_called and tool_returned events on successful skill invocation."""
     host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
     loop = make_loop(host)
@@ -1023,8 +1022,8 @@ async def test_dispatch_tool_emits_tool_called_and_tool_returned_events():
     ]
     scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("run skill", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("run skill", [])
 
     event_types = [e["type"] for e in host.events.emitted]
     assert "tool_called" in event_types
@@ -1032,7 +1031,7 @@ async def test_dispatch_tool_emits_tool_called_and_tool_returned_events():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_tool_emits_tool_failed_on_unknown_tool():
+async def test_dispatch_tool_emits_tool_failed_on_unknown_tool(monkeypatch):
     """Tier 2: P6 invariant — dispatch_tool emits tool_failed event with error_kind=unknown_tool when tool name is not in catalog."""
     host = FakeRouterHost()
     loop = make_loop(host)
@@ -1048,8 +1047,8 @@ async def test_dispatch_tool_emits_tool_failed_on_unknown_tool():
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
-        await loop.run("try bogus", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    await loop.run("try bogus", [])
 
     event_types = [e["type"] for e in host.events.emitted]
     assert "tool_failed" in event_types
@@ -1058,7 +1057,7 @@ async def test_dispatch_tool_emits_tool_failed_on_unknown_tool():
 
 
 @pytest.mark.asyncio
-async def test_invoke_skill_with_unknown_skill_name_rejected():
+async def test_invoke_skill_with_unknown_skill_name_rejected(monkeypatch):
     """Tier 2: OS invariant — invoke_skill with a hallucinated skill name is rejected
     and emits a deterministic i18n error message; no skill spawned (G10 / B2-M2 fix).
 
@@ -1084,8 +1083,8 @@ async def test_invoke_skill_with_unknown_skill_name_rejected():
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
-        await loop.run("run bogus skill", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    await loop.run("run bogus skill", [])
 
     # No skill should have been spawned
     assert not host.skill_calls, "No skill must be spawned for unknown name"
@@ -1105,7 +1104,7 @@ async def test_invoke_skill_with_unknown_skill_name_rejected():
 
 
 @pytest.mark.asyncio
-async def test_invoke_skill_with_known_name_dispatches():
+async def test_invoke_skill_with_known_name_dispatches(monkeypatch):
     """Tier 1: invoke_skill with a valid skill name dispatches and produces text reply. Happy-path sanity check for skill name validation."""
     host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
     loop = make_loop(host)
@@ -1119,8 +1118,8 @@ async def test_invoke_skill_with_known_name_dispatches():
     ]
     scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("run real skill", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+    await loop.run("run real skill", [])
 
     (skill_call,) = host.skill_calls
     assert skill_call["skill"] == "real_skill"
@@ -1216,7 +1215,7 @@ async def test_list_skills_empty_path_returns_all_categories():
 
 
 @pytest.mark.asyncio
-async def test_no_events_attribute_needed_for_unknown_tool_path():
+async def test_no_events_attribute_needed_for_unknown_tool_path(monkeypatch):
     """Tier 2: P6 invariant — unknown tool error emits tool_failed via host.events through dispatch_tool; event routing is not bypassed on the error path."""
     host = FakeRouterHost()
     loop = make_loop(host)
@@ -1232,8 +1231,8 @@ async def test_no_events_attribute_needed_for_unknown_tool_path():
         messages_captured.append(list(messages))
         return rounds[len(messages_captured) - 1]
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
-        await loop.run("try nonexistent", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", mock_llm)
+    await loop.run("try nonexistent", [])
 
     round2_messages = messages_captured[1]
     tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
