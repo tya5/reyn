@@ -151,17 +151,15 @@ def _user_text_event(text: str, user_id: str = "U456",
 
 
 def test_user_text_message_dispatches_to_agent(_line_client):
-    """Tier 2 end-to-end: a 1:1 user text message reaches the agent
-    with sender=line:user:<id>.
+    """Tier 2: a 1:1 user text message reaches the agent with
+    sender=line:user:<id>.
     """
     response = _post_signed(_line_client, "channel-secret", {
         "destination": "U-bot",
         "events": [_user_text_event("hello LINE bot")],
     })
     assert response.status_code == 200
-    pushed = _line_client.pushed
-    assert len(pushed) == 1
-    kind, payload = pushed[0]
+    (kind, payload), = _line_client.pushed
     assert kind == "user"
     assert payload["text"] == "hello LINE bot"
     assert payload["sender"] == "line:user:U456"

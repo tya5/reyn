@@ -159,8 +159,8 @@ def _post_signed_event(client, secret: str, event_payload: dict):
 
 
 def test_app_mention_dispatches_to_agent_inbox(_slack_client):
-    """Tier 2 end-to-end: an ``app_mention`` event signed correctly
-    reaches the target agent's inbox with the right envelope.
+    """Tier 2: an ``app_mention`` event signed correctly reaches the
+    target agent's inbox with the right envelope.
     """
     response = _post_signed_event(_slack_client, "test-secret", {
         "type": "app_mention",
@@ -170,9 +170,7 @@ def test_app_mention_dispatches_to_agent_inbox(_slack_client):
         "ts": "1234.5678",
     })
     assert response.status_code == 200
-    pushed = _slack_client.pushed
-    assert len(pushed) == 1
-    kind, payload = pushed[0]
+    (kind, payload), = _slack_client.pushed
     assert kind == "user"
     assert payload["text"] == "<@U_BOT> hello"
     assert payload["sender"] == "slack:U456"
