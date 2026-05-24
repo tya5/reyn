@@ -293,9 +293,9 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         to="beta", request="hello from alpha", depth=1, chain_id="chain-x",
     ))
 
-    assert len(tracker) == 1, f"Expected 1 delegation entry; got {tracker}"
-    assert tracker[0]["to"] == "beta"
-    assert tracker[0]["request"] == "hello from alpha"
+    (entry,) = tracker
+    assert entry["to"] == "beta"
+    assert entry["request"] == "hello from alpha"
 
 
 # ---------------------------------------------------------------------------
