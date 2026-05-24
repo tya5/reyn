@@ -325,19 +325,35 @@ def test_list_mcp_tools_returns_mcp_tools_key():
 # ---------------------------------------------------------------------------
 
 
-def test_list_mcp_tools_omits_input_schema():
-    """Tier 2: each entry in mcp_tools result has no 'inputSchema' key.
+def test_list_mcp_tools_includes_input_schema():
+    """Tier 2: each entry in mcp_tools result carries the tool's
+    declared ``inputSchema`` verbatim.
 
-    FP-0032 structural fix: inputSchema presence makes the entry structurally
-    identical to an OpenAI function tool definition, causing the LLM to treat
-    mcp_tools as directly callable. Removing inputSchema breaks the false affordance.
-    Full schema is available via describe_mcp_tool.
+    Issue #879 collapsed MCP dispatch into a single ``mcp__call_tool``
+    verb whose ``tool`` arg takes a ``<server>__<tool>`` self-contained
+    identifier. The entry name is no longer a top-level callable
+    function name (= the FP-0032 shape-collision concern no longer
+    applies), and the LLM needs the schema directly to construct
+    mcp__call_tool's ``args`` field without an extra describe_mcp_tool
+    round-trip.
     """
     class _FakeHost:
         async def mcp_list_tools(self, server: str) -> list[dict]:
             return [
-                {"name": "search", "description": "Search", "inputSchema": {"type": "object"}},
-                {"name": "news", "description": "News", "inputSchema": {"type": "object"}},
+                {
+                    "name": "search",
+                    "description": "Search",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"q": {"type": "string"}},
+                        "required": ["q"],
+                    },
+                },
+                {
+                    "name": "news",
+                    "description": "News",
+                    "inputSchema": {"type": "object"},
+                },
             ]
         async def mcp_list_servers(self) -> list[dict]:
             return []
@@ -357,11 +373,16 @@ def test_list_mcp_tools_omits_input_schema():
     result = asyncio.run(
         _handle_list_mcp_tools({"server": "brave"}, ctx)
     )
-    for entry in result["mcp_tools"]:
-        assert "inputSchema" not in entry, (
-            f"list_mcp_tools entry must not contain 'inputSchema' (FP-0032); got: {entry}"
-        )
-        assert "name" in entry, "Each mcp_tools entry must have 'name'"
+    by_name = {e["name"]: e for e in result["mcp_tools"]}
+    # Issue #879: names are <server>__<tool> identifiers.
+    assert set(by_name) == {"brave__search", "brave__news"}
+    # Schema preserved verbatim from MCP server's declaration.
+    assert by_name["brave__search"]["inputSchema"] == {
+        "type": "object",
+        "properties": {"q": {"type": "string"}},
+        "required": ["q"],
+    }
+    assert by_name["brave__news"]["inputSchema"] == {"type": "object"}
 
 
 # ---------------------------------------------------------------------------

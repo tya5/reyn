@@ -169,32 +169,44 @@ async def _handle_list_mcp_tools(
     Phase path: registered with gates.phase=allow (Type C metadata closure)
     but unreachable today — see module docstring for full status.
 
-    FP-0032: returns ``mcp_tools`` key (not ``tools``) to avoid structural
-    collision with OpenAI tool-definition shape. Each entry is trimmed to
-    ``{name, description}`` only — ``inputSchema`` is omitted so the LLM
-    cannot mistake an mcp_tool for a top-level callable. Full schema is
-    available via ``describe_mcp_tool``.
+    Response shape: ``{"mcp_tools": [{"name": "<server>__<tool>",
+    "description": "...", "inputSchema": {...}}, ...]}``.
+
+    Background:
+      - FP-0032 returned ``mcp_tools`` key (not ``tools``) to avoid
+        structural collision with OpenAI tool-definition shape, and
+        also stripped ``inputSchema`` so the entries could not be
+        mistaken for top-level callable functions.
+      - Issue #879 collapsed MCP dispatch into a single
+        ``mcp__call_tool`` verb whose ``tool`` arg takes a
+        ``<server>__<tool>`` self-contained identifier. In that
+        world the entry name is **not** a callable function name in
+        the router's ``tools=`` array, so the FP-0032 shape-collision
+        concern no longer applies — and the LLM needs the schema
+        directly to construct ``mcp__call_tool``'s ``args`` field
+        without an extra ``describe_mcp_tool`` round-trip. Include
+        ``inputSchema`` in each entry verbatim from the MCP server's
+        declared shape.
     """
     if ctx.caller_kind == "router":
         host = _require_host(ctx)
         server = str(args["server"])
         result = await host.mcp_list_tools(server)
-        # Strip inputSchema from each entry so the shape does not resemble
-        # an OpenAI tool definition (FP-0032 root-cause fix). Issue #879:
-        # each entry's ``name`` is rewritten to the self-contained
-        # ``<server>__<tool>`` identifier the LLM passes verbatim to
-        # mcp__call_tool's ``tool`` arg.
-        trimmed: list[dict] = []
+        # Issue #879: rewrite each entry's ``name`` to the
+        # ``<server>__<tool>`` identifier; preserve description + the
+        # tool's declared ``inputSchema`` so the LLM can construct
+        # mcp__call_tool args in a single follow-up turn.
+        rebuilt: list[dict] = []
         for t in (result or []):
             if not isinstance(t, Mapping):
                 continue
             inner_name = t.get("name", "")
             if not inner_name:
                 continue
-            entry = {k: v for k, v in t.items() if k != "inputSchema"}
+            entry = dict(t)
             entry["name"] = f"{server}__{inner_name}"
-            trimmed.append(entry)
-        return {"mcp_tools": trimmed}
+            rebuilt.append(entry)
+        return {"mcp_tools": rebuilt}
 
     return {
         "error": (
