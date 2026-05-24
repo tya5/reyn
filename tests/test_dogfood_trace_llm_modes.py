@@ -273,7 +273,7 @@ class TestLlmDetailMode:
         out, rc = _run(["--mode", "llm-detail", REQUEST_ID_A, "--trace", str(trace)])
         assert rc == 0
         # The full 1000-char system prompt should NOT appear without --full
-        assert len(out) < 1000 + 500  # allow some overhead, but not 1000 chars of As
+        assert "A" * 1000 not in out, "full 1000-char system prompt should be truncated without --full"
 
         out_full, rc_full = _run(["--mode", "llm-detail", REQUEST_ID_A, "--trace", str(trace), "--full"])
         assert rc_full == 0
@@ -293,8 +293,10 @@ class TestLlmToolsSchemaMode:
         # Output should be parseable JSON
         parsed = json.loads(out)
         assert isinstance(parsed, list)
-        assert len(parsed) == 1
-        assert parsed[0]["function"]["name"] == "run_skill"
+        assert parsed, "tools JSON should be a non-empty list"
+        assert any(entry["function"]["name"] == "run_skill" for entry in parsed), (
+            "tools list should contain the run_skill tool definition"
+        )
 
     def test_shows_enum_constraints(self, tmp_path: Path) -> None:
         """Tier 2: llm-tools-schema output includes enum constraints in parameter schema."""

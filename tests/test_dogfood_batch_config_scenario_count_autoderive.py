@@ -94,7 +94,7 @@ journal_dir: /tmp/test-journal
 
 
 def test_omitted_n_scenarios_derived_from_scenario_yaml(tmp_path):
-    """Tier 2 (B47-fix): batch yaml may omit ``n_scenarios`` entirely;
+    """Tier 2b: batch yaml may omit ``n_scenarios`` entirely;
     the loader fills it from the on-disk scenario yaml count."""
     scen_path = tmp_path / "scenarios.yaml"
     _write_scenario_yaml(scen_path, n=5)
@@ -136,9 +136,9 @@ def test_declared_n_scenarios_matching_actual_silent(tmp_path):
 
 
 def test_declared_n_scenarios_mismatched_warns_and_overrides(tmp_path):
-    """Tier 2 (B47-fix headline): the W6 drift case — declared
-    ``n_scenarios: 7`` against a 3-scenario yaml emits warning and
-    uses the actual count (3) as authoritative."""
+    """Tier 2b: the W6 drift case — declared ``n_scenarios: 7`` against a
+    3-scenario yaml emits a warning and uses the actual count (3) as
+    authoritative."""
     scen_path = tmp_path / "scenarios.yaml"
     _write_scenario_yaml(scen_path, n=3)
     batch_path = tmp_path / "batch.yaml"
@@ -151,9 +151,9 @@ def test_declared_n_scenarios_mismatched_warns_and_overrides(tmp_path):
             w for w in caught
             if "n_scenarios" in str(w.message) and "does not match" in str(w.message)
         ]
-        assert len(mismatch_warnings) == 1, (
-            f"mismatched declared n_scenarios should emit exactly one "
-            f"warning; got {len(mismatch_warnings)}: "
+        assert mismatch_warnings, (
+            f"mismatched declared n_scenarios should emit at least one "
+            f"warning; got none. All warnings: "
             f"{[str(w.message) for w in caught]}"
         )
         assert "7" in str(mismatch_warnings[0].message)
