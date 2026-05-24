@@ -56,13 +56,16 @@ For the full `reyn mcp` CLI reference, see [Reference: `reyn mcp`](../reference/
 
 ## Quick start: try MCP from `reyn chat` (manual config path)
 
-If you prefer to configure a server manually (or are adding a server not in the public registry), add it directly to `reyn.yaml`. `reyn chat` exposes three router tools that work automatically once the server is configured:
+If you prefer to configure a server manually (or are adding a server not in the public registry), add it directly to `reyn.yaml`. `reyn chat` exposes six MCP verb actions (issue #879 collapsed the previous `mcp.server` / `mcp.tool` / `mcp.operation` sub-categories) that work automatically once the server is configured:
 
-| Tool | What it does |
+| Action | What it does |
 |------|--------------|
-| `list_mcp_servers` | Returns the names of all servers configured in `reyn.yaml` |
-| `list_mcp_tools(server)` | Returns the tools exposed by one server |
-| `call_mcp_tool(server, tool, args)` | Invokes a tool on a server, returning its result |
+| `mcp__search_server({text})`        | Search the public registry for new servers |
+| `mcp__install_server({server_id})`  | Install a server into the current scope's config |
+| `mcp__list_servers()`               | Returns the names of all servers configured in `reyn.yaml` |
+| `mcp__list_tools({server})`         | Returns the tools exposed by one server (each entry has `name="<server>__<tool>"`, `description`, `inputSchema`) |
+| `mcp__call_tool({tool, args})`      | Call a tool by `<server>__<tool>` identifier (from `mcp__list_tools`) with its declared args |
+| `mcp__drop_server({server})`        | Remove an installed server from the config |
 
 The LLM router can call these directly during a chat turn. Typical first-time flow:
 
@@ -85,7 +88,7 @@ reyn chat
 > このディレクトリにある README.md を要約して
 ```
 
-The router invokes `list_mcp_tools` → `call_mcp_tool` automatically; no `permissions.mcp:` declaration in any skill is required. **Skill authoring is for when you want to formalize a recurring workflow** (= phase graph, validation, retry policy) — not a prerequisite to using MCP. The deep-dive below is for that case; if you only need ad-hoc invocation, you can stop reading here.
+The router invokes `mcp__list_tools` → `mcp__call_tool` automatically; no `permissions.mcp:` declaration in any skill is required. **Skill authoring is for when you want to formalize a recurring workflow** (= phase graph, validation, retry policy) — not a prerequisite to using MCP. The deep-dive below is for that case; if you only need ad-hoc invocation, you can stop reading here.
 
 ## Role 1: MCP client — Reyn calls external servers
 
