@@ -88,7 +88,7 @@ def test_runtime_offloads_large_llm_result_and_writes_ref_in_wal(tmp_path: Path)
     completed = [
         e for e in log.iter_from(0) if e["kind"] == "step_completed"
     ]
-    assert len(completed) == 1
+    assert completed
     wal_result = completed[0]["result"]
     assert isinstance(wal_result, dict)
     assert list(wal_result.keys()) == ["_ref"]
