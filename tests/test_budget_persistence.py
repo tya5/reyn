@@ -70,8 +70,7 @@ def test_save_state_includes_per_chain_skill_counters(tmp_path):
     chain_skill_calls = data.get("chain_skill_calls", [])
     matched = [
         e for e in chain_skill_calls
-        if (isinstance(e, list) and len(e) >= 3
-            and e[0] == "c1" and e[1] == "my_skill")
+        if isinstance(e, list) and e[:2] == ["c1", "my_skill"]
     ]
     assert matched, (
         f"chain_skill_calls must include c1/my_skill; got {chain_skill_calls}"
@@ -81,8 +80,7 @@ def test_save_state_includes_per_chain_skill_counters(tmp_path):
     chain_skill_tokens = data.get("chain_skill_tokens", [])
     matched_tokens = [
         e for e in chain_skill_tokens
-        if (isinstance(e, list) and len(e) >= 3
-            and e[0] == "c1" and e[1] == "my_skill")
+        if isinstance(e, list) and e[:2] == ["c1", "my_skill"]
     ]
     assert matched_tokens
     assert matched_tokens[0][2] == 150
