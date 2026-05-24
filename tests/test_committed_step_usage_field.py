@@ -102,8 +102,8 @@ def test_analyzer_extracts_usage_from_step_completed_for_llm(tmp_path):
         wal_events=list(sl.iter_from(0)),
     )
     llm_committed = [s for s in plan.committed_steps if s.op_kind == "llm"]
-    (only,) = llm_committed
-    assert only.usage == {
+    assert llm_committed, "Analyzer must extract at least one llm CommittedStep"
+    assert llm_committed[0].usage == {
         "prompt_tokens": 200, "completion_tokens": 80, "total_tokens": 280,
     }
 
@@ -138,8 +138,8 @@ def test_analyzer_handles_missing_usage_field_backward_compat(tmp_path):
         wal_events=list(sl.iter_from(0)),
     )
     llm_committed = [s for s in plan.committed_steps if s.op_kind == "llm"]
-    (only,) = llm_committed
-    assert only.usage is None
+    assert llm_committed, "Analyzer must extract at least one llm CommittedStep"
+    assert llm_committed[0].usage is None
 
 
 def test_analyzer_extracts_usage_for_non_llm_steps_too(tmp_path):
@@ -178,8 +178,8 @@ def test_analyzer_extracts_usage_for_non_llm_steps_too(tmp_path):
         wal_events=list(sl.iter_from(0)),
     )
     file_committed = [s for s in plan.committed_steps if s.op_kind == "file"]
-    (only,) = file_committed
-    assert only.usage == {"bytes_written": 4096}
+    assert file_committed, "Analyzer must extract at least one file CommittedStep"
+    assert file_committed[0].usage == {"bytes_written": 4096}
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ def test_state_log_accepts_usage_in_step_completed(tmp_path):
     asyncio.run(go())
     events = list(sl.iter_from(0))
     completed = [e for e in events if e["kind"] == "step_completed"]
-    (only,) = completed
-    assert only["usage"] == {
+    assert completed, "WAL must contain at least one step_completed event"
+    assert completed[0]["usage"] == {
         "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3,
     }
