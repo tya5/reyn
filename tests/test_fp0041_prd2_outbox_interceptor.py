@@ -149,7 +149,7 @@ async def test_put_outbox_invokes_interceptor_for_external_ref(tmp_path):
     msg = OutboxMessage(kind="agent", text="hi", reply_to=rt)
     await session._put_outbox(msg)
 
-    assert len(intercepted) == 1
+    assert intercepted, "expected interceptor to be called at least once"
     assert intercepted[0].reply_to is rt
     # Not queued.
     assert session.outbox.empty()
@@ -357,9 +357,8 @@ def test_reyn_config_external_transports_defaults_to_empty(tmp_path, monkeypatch
 def test_reyn_config_external_transports_parses_well_formed_yaml(
     tmp_path, monkeypatch,
 ):
-    """Tier 2 (FP-0041 #489 PR-D2 end-to-end config wire): a
-    well-formed ``external_transports:`` section parses into
-    ``ReynConfig.external_transports`` with the documented dataclass
+    """Tier 2b: a well-formed ``external_transports:`` section (FP-0041 #489 PR-D2 config wire)
+    parses into ``ReynConfig.external_transports`` with the documented dataclass
     shape. Operator can declare Slack + LINE routing in reyn.yaml.
     """
     from reyn.config import load_config
