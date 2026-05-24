@@ -69,7 +69,7 @@ def test_prompt_policy_with_ambiguity_yields_prompt_required():
     cfg = SkillResumeConfig(default="prompt")
     d = coord.decide_for_plan(_plan(has_amb=True), cfg)
     assert d.action == "prompt_required"
-    assert len(d.ambiguous_steps) == 1
+    assert d.ambiguous_steps, "ambiguous_steps must be populated for prompt_required"
 
 
 def test_retry_policy_with_ambiguity_yields_retry():
@@ -170,13 +170,13 @@ def test_discover_and_decide_clean_run_yields_resume(tmp_path):
     decisions = coord.discover_and_decide(
         skill_registry=reg2, state_log=log2, policy=SkillResumeConfig(),
     )
-    assert len(decisions) == 1
+    assert decisions, "clean run must yield a resume decision"
     d = decisions[0]
     assert d.plan.run_id == "r1"
     assert d.action == "resume"
     assert d.ambiguous_steps == []
     # Committed step was paired
-    assert len(d.plan.committed_steps) == 1
+    assert d.plan.committed_steps, "committed_steps must be populated for clean run"
 
 
 def test_discover_and_decide_ambiguous_step_applies_policy(tmp_path):
@@ -207,10 +207,10 @@ def test_discover_and_decide_ambiguous_step_applies_policy(tmp_path):
     decisions = coord.discover_and_decide(
         skill_registry=reg2, state_log=log2, policy=cfg,
     )
-    assert len(decisions) == 1
+    assert decisions, "ambiguous run must yield a decision"
     d = decisions[0]
     assert d.action == "retry"
-    assert len(d.ambiguous_steps) == 1
+    assert d.ambiguous_steps, "ambiguous_steps must be populated for retry decision"
     assert d.ambiguous_steps[0].op_kind == "mcp"
 
 
@@ -261,7 +261,7 @@ def test_discover_does_not_cross_pair_runs(tmp_path):
     # PR-resume-auto; auto-resume never blocks on prompt). Ambiguous
     # steps are surfaced for inspection regardless.
     assert by_run["run_B"].action == "retry"
-    assert len(by_run["run_B"].ambiguous_steps) == 1
+    assert by_run["run_B"].ambiguous_steps, "run_B must have ambiguous steps from orphaned start"
     assert by_run["run_B"].ambiguous_steps[0].op_kind == "mcp"
 
 

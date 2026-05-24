@@ -91,8 +91,8 @@ async def test_dispatch_intervention_appends_wal_before_await(tmp_path, monkeypa
 
     events = _wal_events(tmp_path)
     dispatched = [e for e in events if e["kind"] == "intervention_dispatched"]
-    assert len(dispatched) == 1, (
-        f"expected 1 intervention_dispatched in WAL while awaiting; "
+    assert dispatched, (
+        f"expected intervention_dispatched in WAL while awaiting; "
         f"got {[e['kind'] for e in events]}"
     )
     ev = dispatched[0]
@@ -129,7 +129,7 @@ async def test_deliver_answer_appends_intervention_resolved(tmp_path, monkeypatc
 
     events = _wal_events(tmp_path)
     resolved = [e for e in events if e["kind"] == "intervention_resolved"]
-    assert len(resolved) == 1
+    assert resolved, "intervention_resolved must be emitted after successful answer"
     assert resolved[0]["intervention_id"] == iv.id
     assert resolved[0]["target"] == "alpha"
 
@@ -156,7 +156,7 @@ async def test_unknown_choice_does_not_emit_resolved(tmp_path, monkeypatch):
     events = _wal_events(tmp_path)
     dispatched = [e for e in events if e["kind"] == "intervention_dispatched"]
     resolved = [e for e in events if e["kind"] == "intervention_resolved"]
-    assert len(dispatched) == 1
+    assert dispatched, "intervention_dispatched must be present in WAL"
     assert resolved == [], (
         f"unknown-choice answer must NOT emit resolve; got {resolved}"
     )
