@@ -138,10 +138,20 @@ async def _get_or_build_registry() -> "AgentRegistry":
         budget_tracker.set_state_path(budget_state_path)
 
         perm_config = getattr(session_cfg.config, "permissions", {}) or {}
+        # ``interactive=True``: route permission prompts through the
+        # intervention bus so they reach the chainlit surface as
+        # ``kind="intervention"`` outbox messages. PR #907 wires
+        # ``_handle_intervention`` in the drain loop to render those
+        # via ``cl.AskActionMessage`` and post the user's choice back
+        # via ``session.answer_pending_intervention``. With
+        # ``interactive=False`` (the prior value), ``_prompt`` is
+        # short-circuited at ``permissions.py:499`` and every gated
+        # action auto-denies — operator sees a silent "permission
+        # denied" without the chance to allow.
         perm_resolver = PermissionResolver(
             config_permissions=perm_config,
             project_root=project_root,
-            interactive=False,
+            interactive=True,
             unsafe_python_allowed=False,
         )
 
@@ -241,6 +251,16 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
         ).send()
         return
 
+    # Empty-answer fallback used on every "no response" path below.
+    # Without this, the agent stays awaiting ``iv.future`` forever and
+    # ChatSession.run_one_iteration never picks up the next inbox
+    # message — the entire chat appears frozen.
+    async def _resolve_empty() -> None:
+        await session.answer_pending_intervention(
+            prompt.run_id,
+            InterventionAnswer(text=""),
+        )
+
     if prompt.is_choice:
         try:
             actions = [
@@ -262,6 +282,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
         except Exception:
             response = None
         if response is None:
+            await _resolve_empty()
             return
         payload_dict = getattr(response, "payload", None) or response
         choice_id = (
@@ -273,6 +294,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
             if isinstance(payload_dict, dict) else None
         ) or choice_id or ""
         if not isinstance(choice_id, str):
+            await _resolve_empty()
             return
         await session.answer_pending_intervention(
             prompt.run_id,
@@ -289,6 +311,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
     except Exception:
         reply = None
     if reply is None:
+        await _resolve_empty()
         return
     # AskUserMessage returns a StepDict-like with ``output`` (or
     # ``content`` on older chainlit). Pull whichever is present.
@@ -391,6 +414,20 @@ async def _on_chat_start() -> None:
 
     await registry.restore_all()
     session = await registry.attach(name)
+
+    # Register chainlit as an intervention listener so the session's
+    # ``InterventionRegistry`` (= built with
+    # ``enforce_listener_presence=True`` at session.py:1529) actually
+    # dispatches IVs through the bus → outbox. Without this, every
+    # ``bus.request(iv)`` short-circuits at registry.py:230 with an
+    # empty ``InterventionAnswer(text="")``, which the permission
+    # gate treats as a refusal → user sees silent "permission
+    # denied" instead of the AskActionMessage wired in PR #907.
+    try:
+        session.register_intervention_listener("chainlit")
+    except AttributeError:
+        # Stripped / mocked session in tests — degrade gracefully.
+        pass
 
     # Replay prior chat turns from ``ChatSession.history`` (= what
     # ``load_history`` read from ``history.jsonl``) so the operator
@@ -612,3 +649,14 @@ async def _on_chat_end() -> None:
     task = cl.user_session.get(_DRAIN_KEY)
     if task is not None:
         task.cancel()
+    # Drop the chainlit listener registration so a subsequent
+    # ``_on_chat_start`` re-adds cleanly and idle-state IVs aren't
+    # mis-classified as listener-present. Best-effort: registry
+    # missing / session detached is a no-op.
+    try:
+        registry = await _get_or_build_registry()
+        session = registry.attached_session()
+        if session is not None:
+            session.unregister_intervention_listener("chainlit")
+    except Exception:
+        pass
