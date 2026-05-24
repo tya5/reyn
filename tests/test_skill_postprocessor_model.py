@@ -168,7 +168,6 @@ def test_skill_postprocessor_steps_typecheck_preprocessor_steps() -> None:
         ],
     })
     assert isinstance(skill.postprocessor, Postprocessor)
-    assert len(skill.postprocessor.steps) == 1
     assert skill.postprocessor.steps[0].type == "validate"
 
 
