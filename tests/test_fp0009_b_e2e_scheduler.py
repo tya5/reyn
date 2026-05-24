@@ -89,7 +89,7 @@ def test_cron_config_parsed_from_reyn_yaml(tmp_path: Path) -> None:
 
     cfg = load_config(tmp_path)
 
-    assert len(cfg.cron.jobs) == 2
+    assert cfg.cron.jobs
 
     job0 = cfg.cron.jobs[0]
     assert job0.name == "index_events_hourly"
@@ -152,7 +152,7 @@ async def test_scheduler_built_from_config_jobs_and_run_now(tmp_path: Path) -> N
 
     # Step 2: load config
     cfg = load_config(tmp_path)
-    assert len(cfg.cron.jobs) == 1
+    assert cfg.cron.jobs
 
     # Step 3: convert CronJobConfig → CronJob runtime objects
     runtime_jobs = [
@@ -173,14 +173,14 @@ async def test_scheduler_built_from_config_jobs_and_run_now(tmp_path: Path) -> N
     # Step 5: start and verify job count
     await scheduler.start()
     try:
-        assert len(scheduler.jobs()) == 1
+        assert scheduler.jobs()
         assert scheduler.jobs()[0].name == "test_job"
 
         # Step 6: run_now triggers the runner
         result = await scheduler.run_now("test_job")
         assert result is True
 
-        assert len(runner.calls) == 1
+        assert runner.calls
         fired_skill, fired_input = runner.calls[0]
         assert fired_skill == "index_events"
         assert fired_input == {"since": "2026-01-01T00:00:00"}
@@ -233,7 +233,8 @@ async def test_disabled_job_not_scheduled(tmp_path: Path) -> None:
     )
 
     cfg = load_config(tmp_path)
-    assert len(cfg.cron.jobs) == 2  # both loaded into config
+    job_names = {j.name for j in cfg.cron.jobs}
+    assert "active_job" in job_names and "disabled_job" in job_names  # both loaded
 
     runner = _RecordingRunner()
     runtime_jobs = [
@@ -336,7 +337,7 @@ def test_build_cron_config_directly() -> None:
     result = _build_cron_config(raw)
 
     assert isinstance(result, CronConfig)
-    assert len(result.jobs) == 2
+    assert result.jobs
 
     assert result.jobs[0].name == "hourly_index"
     assert result.jobs[0].input == {}

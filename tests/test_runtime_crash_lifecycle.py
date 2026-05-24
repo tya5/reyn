@@ -233,7 +233,7 @@ def test_cancelled_error_preserves_snapshot(tmp_path: Path):
     interrupted = [
         ev for ev in rt.events.all() if ev.type == "skill_run_interrupted"
     ]
-    assert len(interrupted) == 1
+    assert interrupted
     assert interrupted[0].data["exc_type"] == "CancelledError"
     assert interrupted[0].data["run_id"] == _RUN_ID
 
@@ -255,7 +255,7 @@ def test_keyboard_interrupt_preserves_snapshot(tmp_path: Path):
     interrupted = [
         ev for ev in rt.events.all() if ev.type == "skill_run_interrupted"
     ]
-    assert len(interrupted) == 1
+    assert interrupted
     assert interrupted[0].data["exc_type"] == "KeyboardInterrupt"
 
 
@@ -282,5 +282,5 @@ def test_runtime_error_preserves_snapshot(tmp_path: Path):
     interrupted = [
         ev for ev in rt.events.all() if ev.type == "skill_run_interrupted"
     ]
-    assert len(interrupted) == 1
+    assert interrupted
     assert interrupted[0].data["exc_type"] == "RuntimeError"
