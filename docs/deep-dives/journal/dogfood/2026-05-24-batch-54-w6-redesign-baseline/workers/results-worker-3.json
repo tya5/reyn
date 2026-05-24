@@ -1,0 +1,226 @@
+{
+  "batch": "B54",
+  "worker": 3,
+  "head": "e52fff99",
+  "date": "2026-05-24",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 6,
+    "I": 1,
+    "R": 2,
+    "B": 0
+  },
+  "vs_past": {
+    "B53": { "V": 6, "I": 0, "R": 3, "B": 0 },
+    "B54_delta": { "V": 0, "I": "+1", "R": "-1", "B": 0 }
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "scenario_index": 1,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_excerpt": "I have retrieved the contents of docs/concepts/principles.md. This document outlines the eight design principles (P1-P8) that underpin Reyn's architecture.",
+      "events_emitted": ["user_message_received", "tool_called", "tool_executed", "permission_granted", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check"],
+      "rubric_detail": {
+        "quotes or summarises content from the principles document": true,
+        "mentions at least one of P1 through P8 or their descriptions": true
+      },
+      "events_detail": {
+        "routing_decided_count": 1,
+        "tool_executed_count": 1,
+        "permission_denied_count": 0
+      }
+    },
+    {
+      "id": "file_glob_grep",
+      "scenario_index": 2,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_excerpt": "I found these skill.md files under src/ that mention preprocessor: src/reyn/stdlib/skills/direct_llm/skill.md, src/reyn/stdlib/skills/eval/skill.md, src/reyn/stdlib/skills/eval_builder/skill.md, ...",
+      "events_emitted": ["user_message_received", "tool_called", "tool_executed", "permission_granted", "tool_returned", "hot_list_updated", "routing_decided", "tool_called", "tool_executed", "permission_granted", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check"],
+      "rubric_detail": {
+        "lists at least one file path containing skill.md": true,
+        "mentions preprocessor in relation to the found file(s)": true
+      },
+      "events_detail": {
+        "routing_decided_count": 2,
+        "tool_executed_count": 2,
+        "permission_denied_count": 0
+      }
+    },
+    {
+      "id": "web_search_query",
+      "scenario_index": 3,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_excerpt": "The search results indicate that there have been updates to the OpenAI Python SDK, including changes to default models, authentication methods, and package pipelines. The most recent updates mentioned are from May 2026.",
+      "events_emitted": ["user_message_received", "tool_called", "web_search_started", "web_search_completed", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check"],
+      "rubric_detail": {
+        "reports search results or a summary of what was found": true,
+        "references OpenAI or the Python SDK in the response": true
+      },
+      "events_detail": {
+        "routing_decided_count": 1,
+        "web_search_started_count": 1,
+        "web_search_completed_count": 1,
+        "permission_denied_count": 0,
+        "web_search_failed_count": 0
+      }
+    },
+    {
+      "id": "web_fetch_url",
+      "scenario_index": 4,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_excerpt": "The key new features in Python 3.12 include: PEP 695 Type Parameter Syntax, PEP 701 Syntactic formalization of f-strings. The linked page provides a detailed overview.",
+      "events_emitted": ["user_message_received", "tool_called", "web_fetch_started", "web_fetch_completed", "tool_returned", "hot_list_updated", "routing_decided", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check"],
+      "rubric_detail": {
+        "mentions at least one Python 3.12 feature (e.g. f-string improvements, type parameter syntax, or similar)": true,
+        "reply is a summary, not a raw HTML dump": true
+      },
+      "events_detail": {
+        "routing_decided_count": 1,
+        "web_fetch_started_count": 1,
+        "permission_denied_count": 0
+      }
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "scenario_index": 5,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_excerpt": "The output of the command python -c print(2 + 2) is: 4",
+      "events_emitted": ["user_message_received", "tool_called", "sandboxed_exec_started", "sandboxed_exec_completed", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check"],
+      "rubric_detail": {
+        "reports the output as 4 (or that the command produced 4)": true,
+        "does not report an error or permission denial": true
+      },
+      "events_detail": {
+        "routing_decided_count": 1,
+        "sandboxed_exec_started_count": 1,
+        "sandboxed_exec_completed_count": 1,
+        "permission_denied_count": 0
+      }
+    },
+    {
+      "id": "lint_a_skill",
+      "scenario_index": 6,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_excerpt": "The index_events skill is available. To lint it, I need a more specific command or path. Could you please specify which aspect of the index_events skill you'd like me to lint?",
+      "events_emitted": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "router_empty_response_detected", "router_empty_response_retry_injected", "chat_turn_completed_inline", "compaction_check"],
+      "rubric_detail": {
+        "reports whether the skill passed linting or not": false,
+        "mentions error count or warning count": false
+      },
+      "events_detail": {
+        "routing_decided_count": 0,
+        "lint_completed_count": 0,
+        "permission_denied_count": 0,
+        "note": "routing_decided not emitted; lint_completed not emitted; LLM asked for clarification instead of running lint op"
+      }
+    },
+    {
+      "id": "recall_indexed_source",
+      "scenario_index": 7,
+      "verdict": "I",
+      "rubric_pass": "partial",
+      "events_pass": true,
+      "reply_excerpt": "The operation__recall tool is not available. The available recall tool is rag.operation__recall. Would you like to use that instead?",
+      "events_emitted": ["user_message_received", "tool_failed", "hot_list_updated", "routing_decided", "compaction_check"],
+      "rubric_detail": {
+        "returns relevant documentation chunks OR clearly reports no indexed sources found": "partial — reports tool unavailable (env: wrong tool name in LLM call), not 'no indexed sources'",
+        "does not fabricate phase rollback details without citing a source": true
+      },
+      "events_detail": {
+        "routing_decided_count": 1,
+        "tool_failed_count": 1,
+        "permission_denied_count": 0,
+        "note": "tool_failed due to env: LLM called operation__recall but registered name is rag.operation__recall — counts as env reason (inconclusive)"
+      }
+    },
+    {
+      "id": "judge_output_direct",
+      "scenario_index": 8,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_excerpt": "I've started the judge_phase skill to evaluate your artifact. The judge_phase skill has completed. The artifact passed the evaluation with a score of 1.0.",
+      "events_emitted": ["user_message_received", "tool_called", "skill_run_spawned", "tool_returned", "hot_list_updated", "routing_decided", "invoke_skill_spawn_ack_exit", "compaction_check", "skill_run_completed", "skill_completion_injected", "chat_turn_completed_inline", "workflow_started", "artifact_created", "phase_started", "context_built", "llm_called", "llm_response_received", "tool_called", "tool_executed", "permission_granted", "tool_returned", "act_executed", "context_built", "llm_called", "llm_response_received", "control_decided", "artifact_validated", "artifact_created", "phase_completed", "artifact_created", "postprocessor_step_started", "python_step_started", "python_step_completed", "postprocessor_step_completed", "workflow_finished"],
+      "rubric_detail": {
+        "mentions 'passed' or 'failed' (or equivalent verdict) for the judgment": true,
+        "reports a numeric score (e.g. '1.0', '0.5', 'score') or fraction of criteria met": true,
+        "references at least one of the two evaluation criteria in the reply": "implicit — reply confirms both criteria met via score 1.0"
+      },
+      "events_detail": {
+        "routing_decided_count": 1,
+        "skill_run_spawned_count": 1,
+        "tool_executed_count": 2,
+        "permission_denied_count": 0,
+        "validation_error_count": 0,
+        "artifact_created_count": 3,
+        "workflow_finished": true
+      }
+    },
+    {
+      "id": "ask_user_round_trip",
+      "scenario_index": 9,
+      "verdict": "R",
+      "rubric_pass": true,
+      "events_pass": false,
+      "reply_t1_excerpt": "I can help you scaffold a new skill using the skill_builder skill. What would you like to name this new skill?",
+      "reply_t2_excerpt": "The my_demo_skill is a demo skill designed to showcase basic functionality. It takes a text input, which represents the user's message, and processes it.",
+      "events_emitted_summary": ["user_message_received", "chat_turn_completed_inline", "user_message_received", "tool_called", "skill_run_spawned", "routing_decided", "skill_run_completed", "workflow_started", "artifact_created", "phase_started", "phase_completed", "workflow_finished"],
+      "rubric_detail": {
+        "the final reply references the skill name provided (my_demo_skill)": true,
+        "OR reports that scaffolding was started or completed": true
+      },
+      "events_detail": {
+        "routing_decided_count": 1,
+        "skill_run_spawned_count": 1,
+        "user_intervention_requested_count": 0,
+        "user_intervention_received_count": 0,
+        "permission_denied_count": 0,
+        "note": "must_emit user_intervention_requested and user_intervention_received not emitted. The chat router asked for skill name inline (chat_turn_completed_inline path) rather than via ask_user Control IR op, bypassing the intervention event system. Rubric reply criteria met but events criteria failed."
+      }
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B54-W3-F1",
+      "severity": "medium",
+      "scenario": "lint_a_skill",
+      "observation": "S6 lint_a_skill: LLM asked for clarification ('which aspect to lint?') instead of invoking the lint Control IR op directly. routing_decided and lint_completed events not emitted. Consecutive failure: same pattern observed in B53. Suggests the lint tool affordance is unclear to the LLM for skill-level linting requests.",
+      "hypothesis": "The lint op description may not clearly signal that 'lint the index_events skill' maps to a lint op call without additional parameters."
+    },
+    {
+      "id": "B54-W3-F2",
+      "severity": "low",
+      "scenario": "recall_indexed_source",
+      "observation": "S7 recall_indexed_source: LLM called 'operation__recall' but the registered tool name is 'rag.operation__recall'. tool_failed emitted. This is an env/tool-naming issue — the LLM hallucinated a bare name instead of the namespaced form.",
+      "hypothesis": "The recall tool's registered name includes the 'rag.' prefix but the LLM's hot-list or description does not make this sufficiently clear, leading to wrong tool name calls."
+    },
+    {
+      "id": "B54-W3-F3",
+      "severity": "medium",
+      "scenario": "ask_user_round_trip",
+      "observation": "S9 ask_user_round_trip: The chat router asked for the skill name via inline chat reply rather than via the ask_user Control IR op (user_intervention_requested not emitted). The skill_builder ran without the ask_user mechanism. Reply rubric met but event rubric failed.",
+      "hypothesis": "The chat router handles the clarification question inline rather than delegating to skill_builder which would emit user_intervention events. The ask_user path requires the skill itself to emit the intervention, but the chat layer short-circuits it."
+    }
+  ]
+}

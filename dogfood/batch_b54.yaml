@@ -1,0 +1,147 @@
+batch:
+  name: B54
+  date: "2026-05-24"
+  head: e52fff99  # post-PR #863 + #864 + #865 + #866 (= main as of B54 dispatch)
+  env_vars:
+    REYN_EMPTY_STOP_RETRY: "1"      # held on (apples-to-apples vs B49-B53)
+    REYN_SPAWN_ACK_TO_LLM: "1"      # held on
+  user_params:
+    hot_list_n: 10                  # held constant vs B43-B53
+    models_tier: flash-lite         # weak only per dogfood policy
+  hard_caps:
+    tool_uses: 50
+    wall_clock_min: 15
+
+# B54 = post-B53 carry-over re-measurement + W6 scenario set redesign (3→5).
+#
+# Landed since B53 (= HEAD 5f46af7b → e52fff99):
+#
+#   sandbox_2 axis (= dogfood-coder):
+#   - PR #635: index_docs strategy preprocessor module path fix
+#   - PR #645: skill_runner pre-spawn input_schema validation
+#   - PR #648: invoke_action ARG SCHEMAS sparse description (F3 decision-time)
+#   - PR #861: re-record F3-induced replay fixtures, drop xfail markers (= #647 close)
+#   - PR #863: intervention_registry stale docstring cleanup
+#   - PR #867: plan_mode W6 scenario set 3→5 + S2 redesign (= primary B54 axis)
+#
+#   Cross-author landings since B53:
+#   - PR #862: skill_runner reuse pre-spawn loaded Skill (= #644 close)
+#   - PR #864/#865/#866: TUI fixes (error count wiring, sticky race,
+#     events_tab CJK truncation, header narrow budget, a2a docs refresh).
+#     These are TUI/docs surface; no specific dogfood-scenario impact
+#     expected but watch W1 chat_router_smoke header rendering if visible.
+#
+# Primary B54 axis: **W6 scenario set redesign verify**
+#   - S1 plan_compare_two_concepts (unchanged): V baseline from B53
+#   - S2 plan_deep_dive_permission (REDESIGNED + renamed from
+#     plan_explain_with_code_references): post-B53 carry-over deep-dive
+#     concluded old prompt was structurally plan-unnatural (dim 4 NG).
+#     Expected: V (= plan-natural 3-facet 3-doc synthesis prompt).
+#     If R: scenario design still flawed OR W6 weak-tier ceiling beyond
+#     scenario.
+#   - S3 plan_summary_across_n_files (unchanged): R/I from B53, weak-tier
+#     ceiling family.
+#   - S4 plan_onboarding_skill_mcp (NEW): natural new-user onboarding
+#     query, 3-doc plan-natural. Baseline.
+#   - S5 plan_build_multi_doc_agent (NEW): task-driven decision, 3-doc
+#     plan-natural. Baseline.
+#
+# Secondary axes:
+#   - W1 chat_router_smoke: stability check (= TUI fixes shouldn't affect
+#     A2A router path)
+#   - W3 control_ir_ops: held V baseline (= sandbox_config + web_fetch
+#     fixes carry forward from B53)
+#   - W7 long_session: watch s3 for repeat of B53's LiteLLM/Gemini
+#     BadRequestError flake (= classify N+1 observation per
+#     feedback_cross_batch_pattern_threshold)
+#   - W2 sub-agent stuck-in-notification-loop: re-observe (B53 N=1)
+#
+# Expected ΔV vs B53 (= 29/48 = 60.4% → new denominator 50 with W6 +2):
+#   - W6 redesigned S2 + new S4/S5: optimistic +2 V (= S2 plan-natural,
+#     S4/S5 plan-natural), conservative +1V, pessimistic 0V
+#   - Other workers: ±1-2 V LLM noise band
+#   - New W6 baseline 3-4/5 (= 1V → 3-5V if redesign effective)
+#   - Total V: 29-33/50 = 58-66% range (= base rate ~60% + redesign effect)
+#
+# Carry-over re-measurement (per feedback_pre_conclusion_observation_checklist):
+#
+#   1. W7-s3 LiteLLM/Gemini BadRequestError (B53 N=1)
+#      - Recurs → infra residual classification
+#      - Absent → noise, dismiss
+#
+#   2. W2 sub-agent stuck-in-notification-loop (B53 N=1)
+#      - Recurs → consider worker prompt hardening
+#      - Absent → noise, dismiss
+#
+#   3. W6 plan-mode reply-path family (= W6-S3 plan_summary_across_n_files
+#      now alone, since S2 redesigned)
+#      - Continue tracking (= 4+ batches now, plan-natural prompt but
+#        weak-tier reply construction unstable)
+#
+# Discipline guardrails (per feedback_user_params_fixed_in_comparison):
+#   - user-tunable params held constant vs B53 (hot_list_n=10, default seed,
+#     fresh mode, flash-lite weak only)
+#   - Comparison is apples-to-apples on V trajectory
+
+workers:
+  - name: W1
+    scenario_set: chat_router_smoke.yaml
+    scenario_set_path: dogfood/scenarios/chat_router_smoke.yaml
+    port: 8381
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b54-1
+    agent_prefix: dogfood-b54-1-s
+
+  - name: W2
+    scenario_set: stdlib_skills_core.yaml
+    scenario_set_path: dogfood/scenarios/stdlib_skills_core.yaml
+    port: 8382
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b54-2
+    agent_prefix: dogfood-b54-2-s
+
+  - name: W3
+    scenario_set: control_ir_ops.yaml
+    scenario_set_path: dogfood/scenarios/control_ir_ops.yaml
+    port: 8383
+    n_scenarios: 9
+    worktree: /tmp/reyn-worktrees/b54-3
+    agent_prefix: dogfood-b54-3-s
+
+  - name: W4
+    scenario_set: permissions_and_safety.yaml
+    scenario_set_path: dogfood/scenarios/permissions_and_safety.yaml
+    port: 8384
+    n_scenarios: 8
+    worktree: /tmp/reyn-worktrees/b54-4
+    agent_prefix: dogfood-b54-4-s
+
+  - name: W5
+    scenario_set: multi_agent_and_mcp.yaml
+    scenario_set_path: dogfood/scenarios/multi_agent_and_mcp.yaml
+    port: 8385
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b54-5
+    agent_prefix: dogfood-b54-5-s
+
+  - name: W6
+    scenario_set: plan_mode_redesigned
+    scenario_set_path: dogfood/scenarios/plan_mode.yaml
+    port: 8386
+    n_scenarios: 5  # post PR #867 expansion 3→5
+    worktree: /tmp/reyn-worktrees/b54-6
+    agent_prefix: dogfood-b54-6-s
+
+  - name: W7
+    scenario_set: long_session_v1.yaml
+    scenario_set_path: dogfood/scenarios/long_session_v1.yaml
+    port: 8387
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b54-7
+    agent_prefix: dogfood-b54-7-s
+
+past_batches:
+  - name: B53
+    aggregate_path: docs/deep-dives/journal/dogfood/2026-05-23-batch-53-post-sandbox-config-fix/aggregate.json
+
+journal_dir: docs/deep-dives/journal/dogfood/2026-05-24-batch-54-w6-redesign-baseline

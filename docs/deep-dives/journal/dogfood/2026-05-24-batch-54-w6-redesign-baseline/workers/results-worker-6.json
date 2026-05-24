@@ -1,0 +1,204 @@
+{
+  "batch": "B54",
+  "worker": 6,
+  "head": "e52fff99",
+  "date": "2026-05-24",
+  "scenario_set": "plan_mode_redesigned",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 4,
+    "I": 0,
+    "R": 1,
+    "B": 0
+  },
+  "vs_past": {
+    "B53": {"V": 1, "I": 0, "R": 2, "B": 0, "total": 3, "note": "B53 ran old 3-scenario set (S1+S2_old+S3); S2_old was plan_explain_with_code_references (refuted), S3 was plan_summary (blocked/refuted). B54 runs redesigned 5-scenario set."},
+    "delta_note": "B54 V=4/5 vs B53 V=1/3. +3V net on redesigned set. S3 (plan_summary_across_n_files) remains R due to persistent wrong-path attractor."
+  },
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "scenario_index": 1,
+      "verdict": "V",
+      "agent": "dogfood-b54-6-s1",
+      "http_status": 200,
+      "elapsed_s": 22.0,
+      "events_path": ".reyn/events/agents/dogfood-b54-6-s1/chat/2026-05/2026-05-24T175231.jsonl",
+      "events_pass": true,
+      "plan_events": {
+        "plan_emitted": 1,
+        "plan_step_started": 3,
+        "plan_step_completed": 3,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_pass": true,
+      "rubric_detail": {
+        "references_both_docs": true,
+        "lists_3plus_points": true,
+        "cites_specific_evidence": true,
+        "no_fabrication": true
+      },
+      "tool_paths_used": [
+        "docs/concepts/permission-model.md",
+        "docs/concepts/workspace.md"
+      ],
+      "notes": "Plan read both docs successfully. 4 concrete points with section references. recall fallback (chunks=[]) did not block completion."
+    },
+    {
+      "id": "plan_deep_dive_permission",
+      "scenario_index": 2,
+      "verdict": "V",
+      "agent": "dogfood-b54-6-s2",
+      "http_status": 200,
+      "elapsed_s": 30.2,
+      "events_path": ".reyn/events/agents/dogfood-b54-6-s2/chat/2026-05/2026-05-24T175318.jsonl",
+      "events_pass": true,
+      "plan_events": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_pass": true,
+      "rubric_detail": {
+        "references_all_three_docs": true,
+        "organizes_by_3_facets": true,
+        "cites_specific_evidence": true,
+        "no_fabrication": true
+      },
+      "tool_paths_used": [
+        "docs/concepts/permission-model.md",
+        "docs/guide/for-users/manage-permissions.md",
+        "docs/reference/config/permissions.md"
+      ],
+      "notes": "REDESIGNED scenario. All 3 docs read with full paths. 3 facets clearly organized (kinds/setup/pitfalls). Config keys and section names cited. First run of redesigned S2 = V."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "scenario_index": 3,
+      "verdict": "R",
+      "agent": "dogfood-b54-6-s3",
+      "http_status": 200,
+      "elapsed_s": 28.8,
+      "events_path": ".reyn/events/agents/dogfood-b54-6-s3/chat/2026-05/2026-05-24T175319.jsonl",
+      "events_pass": true,
+      "plan_events": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_pass": false,
+      "rubric_detail": {
+        "references_all_three_files_or_states_missing_with_why": false,
+        "lists_4plus_pillars": true,
+        "each_pillar_cites_source": true,
+        "no_fabrication": true
+      },
+      "tool_paths_used": [
+        "principles.md (WRONG — tool returned not-found)",
+        "architecture.md (WRONG — tool returned not-found)",
+        "workspace.md (WRONG — tool returned not-found)",
+        "REYN.md (fallback)",
+        "CLAUDE.md (fallback)"
+      ],
+      "notes": "Persistent wrong-path attractor: LLM used bare filenames ('principles.md') instead of full paths ('docs/concepts/principles.md'). Files exist in repo but reyn_src_read returned not-found. Reply fell back to CLAUDE.md. Rubric item 1 not met: target files not referenced AND 'why missing' not explained. This is B53 carry-over bug — same attractor as B53 S3.",
+      "finding_ref": "NF-W6-1"
+    },
+    {
+      "id": "plan_onboarding_skill_mcp",
+      "scenario_index": 4,
+      "verdict": "V",
+      "agent": "dogfood-b54-6-s4",
+      "http_status": 200,
+      "elapsed_s": 22.6,
+      "events_path": ".reyn/events/agents/dogfood-b54-6-s4/chat/2026-05/2026-05-24T175319.jsonl",
+      "events_pass": true,
+      "plan_events": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_pass": true,
+      "rubric_detail": {
+        "references_all_three_docs": true,
+        "organizes_by_3_questions": true,
+        "cites_specific_evidence": true,
+        "no_fabrication": true
+      },
+      "tool_paths_used": [
+        "docs/concepts/phase-vs-skill-vs-os.md",
+        "docs/concepts/mcp.md",
+        "docs/guide/getting-started/03-your-first-skill.md"
+      ],
+      "notes": "NEW scenario (W6 expansion). All 3 docs read successfully with full paths. 3 questions clearly answered. skill_builder tool and MCP client/server distinction correctly explained."
+    },
+    {
+      "id": "plan_build_multi_doc_agent",
+      "scenario_index": 5,
+      "verdict": "V",
+      "agent": "dogfood-b54-6-s5",
+      "http_status": 200,
+      "elapsed_s": 52.8,
+      "events_path": ".reyn/events/agents/dogfood-b54-6-s5/chat/2026-05/2026-05-24T175317.jsonl",
+      "events_pass": true,
+      "plan_events": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_pass": true,
+      "rubric_detail": {
+        "references_all_three_docs": true,
+        "organizes_by_3_facets": true,
+        "cites_specific_evidence": true,
+        "no_fabrication": true
+      },
+      "tool_paths_used": [
+        "docs/guide/for-skill-authors/build-an-agent-team.md",
+        "docs/guide/for-users/manage-permissions.md",
+        "docs/concepts/mcp.md"
+      ],
+      "notes": "NEW scenario (W6 expansion). All 3 docs read successfully with full paths (also re-read in final aggregation step). 3 facets (skill/tool, permission, MCP) organized with concrete guidance. recall fallback (chunks=[]) did not block. Longest elapsed (52.8s) due to extra re-read pass."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF-W6-1",
+      "severity": "HIGH",
+      "scenario": "plan_summary_across_n_files",
+      "title": "S3 wrong-path attractor persists: LLM strips 'docs/concepts/' prefix when calling reyn_src_read",
+      "description": "In S3, the input prompt specifies 'docs/concepts/principles.md, architecture.md, workspace.md' but the LLM's plan step called reyn_src_read with bare paths ('principles.md', 'architecture.md', 'workspace.md'). reyn_src_read returned not-found for all three. Files exist at 'docs/concepts/principles.md' etc. This is the same wrong-path attractor documented in B53 S2 (old plan_explain_with_code_references). S3 fell back to CLAUDE.md and REYN.md. Contrast: S1/S2/S4/S5 all used full doc paths successfully — they had full paths in the prompt text. S3 prompt lists short-form filenames in parentheses ('principles.md, architecture.md, workspace.md') which may be the trigger for the path-stripping. Hypothesis: when file names appear as parenthetical short-form without directory prefix in the prompt, LLM omits the prefix in the tool call. Needs further verification.",
+      "observed_in_batch": "B54 W6",
+      "carry_over_from": "B53 S2 (plan_explain_with_code_references — different but same attractor class)",
+      "recommended_action": "Scenario redesign: rewrite S3 prompt to specify full paths ('docs/concepts/principles.md') in the main text rather than short-form names in parentheses. Alternatively, investigate if reyn_src_read should support partial-path resolution."
+    },
+    {
+      "id": "NF-W6-2",
+      "severity": "INFO",
+      "scenario": "all",
+      "title": "recall tool returns empty chunks (mode=fallback) consistently but plan completion is not blocked",
+      "description": "All 5 scenarios that called recall received {'chunks': [], 'mode': 'fallback'}. Despite this, plan steps completed and final aggregation produced valid replies. The LLM fell back to re-reading source files directly via reyn_src_read in the aggregation step. This is not a rubric failure but a signal that the recall/RAG path is non-functional in this env. S1, S3, S5 all called recall and all got fallback. Plan architecture is resilient to recall fallback.",
+      "recommended_action": "Informational — no fix needed for plan_mode verdicts. Track separately as recall/RAG infra gap."
+    }
+  ]
+}

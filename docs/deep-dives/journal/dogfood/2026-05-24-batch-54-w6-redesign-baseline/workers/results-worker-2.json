@@ -1,0 +1,193 @@
+{
+  "batch": "B54",
+  "worker": 2,
+  "head": "e52fff99",
+  "date": "2026-05-24",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 5,
+    "I": 0,
+    "R": 2,
+    "B": 0
+  },
+  "vs_past": {
+    "B53": { "V": 2, "I": 2, "R": 3, "B": 0 },
+    "delta": { "V": "+3", "I": "-2", "R": "-1", "B": "0" }
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "scenario_index": 1,
+      "agent": "dogfood-b54-2-s1",
+      "verdict": "V",
+      "reply_excerpt": "concepts_index という名前で、docs/concepts/ 以下の Markdown ファイルのセマンティック インデックス作成を開始しました。...803個のチャンクがインデックスに書き込まれました。",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_completed_status": "finished",
+        "phase_started": 1,
+        "phase_completed": 1,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "index_docs",
+      "notes": "Indexing completed successfully. 803 chunks written. skill_run_completed status=finished (= system success state)."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "scenario_index": 2,
+      "agent": "dogfood-b54-2-s2",
+      "verdict": "V",
+      "reply_excerpt": "\"web_article_summariser\" という名前のスキルを作成しました。このスキルは、ウェブ記事の URL を受け取り、その内容を 3 文で要約します。",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_completed_status": "finished",
+        "phase_started": 6,
+        "phase_completed": 6,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "skill_builder",
+      "notes": "skill_builder_result artifact with skill_name=web_article_summariser and files_written list. Reply was partial=true (timeout escalation) but skill completed successfully."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "scenario_index": 3,
+      "agent": "dogfood-b54-2-s3",
+      "verdict": "V",
+      "reply_excerpt": "1行あたり44文字が含まれています。この行は44文字で最長であり、約11トークンと推定されます。",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_completed_status": "finished",
+        "phase_started": 1,
+        "phase_completed": 1,
+        "llm_called": 1,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "word_stats_demo",
+      "notes": "Character count (44) reported and consistent with input. Reply references actual text. Rubric fully met."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "scenario_index": 4,
+      "agent": "dogfood-b54-2-s4",
+      "verdict": "V",
+      "reply_excerpt": "128文字、4行で構成されており、最も長い行は40文字です。",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_completed_status": "finished",
+        "phase_started": 1,
+        "phase_completed": 1,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "word_stats_demo",
+      "notes": "128 chars, 4 lines reported from precomputed stats via python preprocessor. Rubric fully met."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "scenario_index": 5,
+      "agent": "dogfood-b54-2-s5",
+      "verdict": "R",
+      "reply_excerpt": "エラーが発生したため、評価を完了できませんでした。エラーメッセージ: 「Postprocessor step[0] (python): Phase '__post__' preprocessor step[0] python ./postprocessor.py:compute_eval_score return value did not match output_schema: None is not of type 'string'」",
+      "rubric_pass": false,
+      "events_pass": false,
+      "events_observed": {
+        "routing_decided": 5,
+        "skill_run_spawned": 5,
+        "skill_run_completed": 0,
+        "skill_run_failed": 5,
+        "phase_started": 30,
+        "phase_completed": 30,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "eval",
+      "notes": "eval skill failed 5 times with postprocessor error: compute_eval_score returned None instead of string. Rubric item 1 not met (no pass/fail score reported). events_pass=false: skill_run_completed count=0 (all were skill_run_failed).",
+      "finding": "eval postprocessor bug: compute_eval_score returns None when eval run errors internally, violating output_schema requiring string."
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "scenario_index": 6,
+      "agent": "dogfood-b54-2-s6",
+      "verdict": "R",
+      "reply_excerpt": "[task_spawned] kind=plan plan_id=81136a67 chain_id=plan_81136a67\ngoal: Explain the routing mechanism in `reyn chat`...  n_steps: 5\n\nPlan is running in the background.",
+      "rubric_pass": false,
+      "events_pass": false,
+      "events_observed": {
+        "routing_decided": 4,
+        "skill_run_spawned": 0,
+        "skill_run_completed": 0,
+        "llm_called": 0,
+        "plan_emitted": 2,
+        "plan_aggregated": 2,
+        "permission_denied": 0
+      },
+      "artifact_present": false,
+      "artifact_skill": "direct_llm",
+      "notes": "Router used plan mode for turns 3-5 instead of skill dispatch. Final reply shows plan still running (spawned but not answered). Rubric items 1+2 not met: final reply does not answer routing question coherently, no skill routing mentioned. events_pass=false: skill_run_spawned=0 and llm_called=0 (plans use different event taxonomy).",
+      "finding": "Long-session multi-turn triggers plan mode rather than direct_llm skill dispatch. skill_run_spawned never fires (plans emit plan_emitted, not skill_run_spawned). chat_compactor did not trigger (no compaction events beyond compaction_check)."
+    },
+    {
+      "id": "chained_find_then_index",
+      "scenario_index": 7,
+      "agent": "dogfood-b54-2-s7",
+      "verdict": "V",
+      "reply_excerpt": "Architecture.md と events.md を arch_events_index というソース名でセマンティックインデックスに登録しました。インデックス作成はバックグラウンドで実行されており、完了次第通知されます。",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 3,
+        "skill_run_spawned": 2,
+        "skill_run_completed": 2,
+        "skill_run_completed_status": "finished",
+        "phase_started": 2,
+        "phase_completed": 2,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "index_docs",
+      "notes": "Turn 1: listed markdown files in docs/concepts/. Turn 2: indexed architecture.md and events.md as arch_events_index. Both index_docs runs completed (status=finished). Rubric fully met."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B54-W2-F1",
+      "scenario": "eval_run_direct_llm",
+      "severity": "HIGH",
+      "description": "eval postprocessor compute_eval_score returns None when underlying skill errors, violating output_schema (must be string). Causes all eval runs to fail with 'None is not of type string'. Repeated 5 times in retry loop.",
+      "event_evidence": "skill_run_failed x5 with error: Postprocessor step[0] (python): Phase '__post__' preprocessor step[0] python ./postprocessor.py:compute_eval_score return value did not match output_schema: None is not of type 'string'"
+    },
+    {
+      "id": "B54-W2-F2",
+      "scenario": "chat_compactor_long_session",
+      "severity": "MEDIUM",
+      "description": "Long multi-turn (5 turns) triggers plan mode routing rather than direct_llm skill dispatch. Router emits plan_emitted events instead of skill_run_spawned, causing must_emit checks for skill_run_spawned and llm_called to fail. chat_compactor never triggered (no compaction in this session).",
+      "event_evidence": "routing_decided=4, skill_run_spawned=0, plan_emitted=2, plan_aggregated=2, llm_called=0. Final reply: plan running in background, not answering routing question."
+    }
+  ]
+}
