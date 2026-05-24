@@ -63,10 +63,10 @@ def test_tracker_reset_empties_in_memory_state(tmp_path: Path):
     path = tmp_path / "action_usage.json"
     tracker = ActionUsageTracker(persist_path=path)
     tracker.merge_compacted([("file__read", 100.0), ("file__write", 101.0)])
-    assert len(tracker._compacted) == 2
+    assert len(tracker) == 2
 
     tracker.reset()
-    assert tracker._compacted == {}
+    assert len(tracker) == 0
 
 
 def test_tracker_reset_removes_persist_file(tmp_path: Path):
@@ -88,7 +88,7 @@ def test_tracker_reset_safe_when_file_already_gone(tmp_path: Path):
     tracker.reset()
     # Second reset should not raise even though file is gone.
     tracker.reset()
-    assert tracker._compacted == {}
+    assert len(tracker) == 0
 
 
 def test_tracker_reset_preserves_instance_identity(tmp_path: Path):
@@ -99,8 +99,9 @@ def test_tracker_reset_preserves_instance_identity(tmp_path: Path):
     tracker.merge_compacted([("file__read", 50.0)])
     tracker.reset()
     tracker.merge_compacted([("file__write", 200.0)])
-    assert "file__read" not in tracker._compacted
-    assert "file__write" in tracker._compacted
+    names = {r["qualified_name"] for r in tracker.full_ranking()}
+    assert "file__read" not in names
+    assert "file__write" in names
 
 
 def test_tracker_reset_with_no_persist_path():
@@ -109,7 +110,7 @@ def test_tracker_reset_with_no_persist_path():
     tracker = ActionUsageTracker(persist_path=None)
     tracker.merge_compacted([("file__read", 1.0)])
     tracker.reset()
-    assert tracker._compacted == {}
+    assert len(tracker) == 0
 
 
 # ── /clear-history slash command ──────────────────────────────────────────
@@ -148,7 +149,8 @@ async def test_bare_slash_prints_warning_and_does_not_wipe(tmp_path: Path):
     # Data still intact.
     assert session.history == ["turn1", "turn2"]
     assert history_path.exists()
-    assert "file__read" in tracker._compacted
+    names = {r["qualified_name"] for r in tracker.full_ranking()}
+    assert "file__read" in names
 
 
 @pytest.mark.asyncio
@@ -171,7 +173,7 @@ async def test_confirm_clears_history_and_tracker(tmp_path: Path):
 
     assert session.history == []
     assert not history_path.exists()
-    assert tracker._compacted == {}
+    assert len(tracker) == 0
     msgs = _drain_outbox(session)
     success_lines = [m.text for m in msgs if "Cleared" in m.text]
     assert success_lines, f"expected a confirmation; got {[m.text for m in msgs]}"

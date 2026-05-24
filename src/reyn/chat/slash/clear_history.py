@@ -35,7 +35,10 @@ def _format_currently_line(session: "object") -> str:
         word = "turn" if n_turns == 1 else "turns"
         parts.append(f"{n_turns} history {word}")
     if tracker is not None:
-        n_tools = len(getattr(tracker, "_compacted", {}) or {})
+        try:
+            n_tools = len(tracker)
+        except TypeError:
+            n_tools = 0
         word = "tool" if n_tools == 1 else "tools"
         parts.append(f"{n_tools} tracked {word}")
     if not parts:
@@ -90,7 +93,10 @@ async def clear_history_cmd(session: "object", args: str) -> None:
             return
 
     if tracker is not None and hasattr(tracker, "reset"):
-        n_tools_before = len(getattr(tracker, "_compacted", {}) or {})
+        try:
+            n_tools_before = len(tracker)
+        except TypeError:
+            n_tools_before = 0
         tracker.reset()
         cleared_parts.append(f"{n_tools_before} tracked tool(s)")
 

@@ -218,6 +218,16 @@ class ActionUsageTracker:
 
     # ── Public surface ────────────────────────────────────────────────────
 
+    def __len__(self) -> int:
+        """Number of qualified action names currently tracked.
+
+        Public counter for callers that want to surface "how many tools
+        are in the ranking" without reaching into the internal
+        compacted table (= ``len(tracker)`` reads cleanly in slash
+        previews / confirmation messages).
+        """
+        return len(self._compacted)
+
     def reset(self) -> None:
         """Clear the in-memory compacted table + remove the persist file.
 
