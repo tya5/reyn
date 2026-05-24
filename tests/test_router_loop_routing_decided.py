@@ -223,8 +223,7 @@ def test_routing_decided_emitted_for_invoke_action(monkeypatch: pytest.MonkeyPat
     )
 
     events = _routing_decided_events(host)
-    assert len(events) == 1, f"Expected 1 routing_decided event, got {events}"
-    ev = events[0]
+    (ev,) = events
     assert ev["action_name"] == "skill__foo"
     assert ev["source"] == "invoke_action"
     assert ev["outcome"] == "success"
@@ -269,8 +268,7 @@ def test_routing_decided_emitted_for_hot_list_alias(monkeypatch: pytest.MonkeyPa
     )
 
     events = _routing_decided_events(host)
-    assert len(events) == 1, f"Expected 1 routing_decided event, got {events}"
-    ev = events[0]
+    (ev,) = events
     assert ev["action_name"] == "skill__bar"
     assert ev["source"] == "hot_list_alias"
     assert ev["outcome"] == "success"
@@ -309,8 +307,7 @@ def test_routing_decided_outcome_error_on_tool_error(monkeypatch: pytest.MonkeyP
     )
 
     events = _routing_decided_events(host)
-    assert len(events) == 1, f"Expected 1 routing_decided event, got {events}"
-    ev = events[0]
+    (ev,) = events
     assert ev["action_name"] == "bogus_category__action"
     assert ev["outcome"] == "error", (
         f"Expected outcome='error' for unknown action, got {ev['outcome']!r}"
@@ -399,8 +396,7 @@ def test_routing_decided_source_ars_direct_for_unsalvageable_qualified_name(monk
         monkeypatch,
     )
     events = _routing_decided_events(host)
-    assert len(events) == 1
-    ev = events[0]
+    (ev,) = events
     assert ev["action_name"] == "bogus_category__action"
     assert ev["source"] == "ars_direct", (
         f"Expected source='ars_direct' for qualified name not in catalog, "
@@ -432,8 +428,7 @@ def test_routing_decided_source_hot_list_alias_only_when_in_catalog(monkeypatch:
         monkeypatch,
     )
     events = _routing_decided_events(host)
-    assert len(events) == 1
-    ev = events[0]
+    (ev,) = events
     assert ev["action_name"] == "skill__bar"
     assert ev["source"] == "ars_direct", (
         f"Without hot-list landing, source must be 'ars_direct' not "
