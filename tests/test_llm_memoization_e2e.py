@@ -223,7 +223,7 @@ def test_e2e_resume_memos_all_completed_llm_calls(tmp_path, monkeypatch):
         s for s in decision.plan.committed_steps if s.op_kind == "llm"
     ]
     assert llm_committed, (
-        f"expected LLM CommittedSteps in plan; got none"
+        "expected LLM CommittedSteps in plan; got none"
     )
     assert all(s.op_kind == "llm" for s in llm_committed)
 

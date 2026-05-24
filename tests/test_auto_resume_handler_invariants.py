@@ -170,7 +170,7 @@ def test_resume_active_emits_correct_events(tmp_path: Path, monkeypatch):
     assert count == 1, f"Expected 1 resumed, got {count}"
     resumed_events = [e for e in events.all() if e.type == "skill_run_resumed"]
     assert resumed_events, (
-        f"Expected at least one skill_run_resumed event, got none"
+        "Expected at least one skill_run_resumed event, got none"
     )
     ev = resumed_events[0]
     assert not resumed_events[1:], (
@@ -207,7 +207,7 @@ def test_resume_skill_runner_dispatch_correct(tmp_path: Path, monkeypatch):
     count = asyncio.run(handler.resume_active())
 
     assert count == 1, f"Expected 1 resumed, got {count}"
-    assert launched, f"Expected launcher to be called at least once"
+    assert launched, "Expected launcher to be called at least once"
     assert not launched[1:], f"Expected launcher called exactly once, got extras: {launched[1:]}"
     decision = launched[0]
     assert decision.plan.run_id == "run_dispatch_test", (
