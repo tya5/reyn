@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 import chainlit as cl
 
 from reyn.chainlit_app.adapter import outbox_to_chainlit
+from reyn.chainlit_app.history import history_to_chainlit
 from reyn.chainlit_app.profiles import list_agent_profiles
 
 if TYPE_CHECKING:
@@ -251,7 +252,18 @@ async def _on_chat_start() -> None:
         return
 
     await registry.restore_all()
-    await registry.attach(name)
+    session = await registry.attach(name)
+
+    # Replay prior chat turns from ``ChatSession.history`` (= what
+    # ``load_history`` read from ``history.jsonl``) so the operator
+    # sees the conversation they had previously with this agent
+    # instead of an empty thread on every re-attach / browser open.
+    history = getattr(session, "history", None) or []
+    for entry in history_to_chainlit(history):
+        await cl.Message(
+            content=entry.content, author=entry.author,
+        ).send()
+
     task = asyncio.create_task(_drain_loop(registry))
     cl.user_session.set(_DRAIN_KEY, task)
     await cl.Message(
