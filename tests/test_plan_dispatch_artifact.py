@@ -171,14 +171,14 @@ async def test_dispatch_uses_same_plan_id_across_lifecycle() -> None:
         parent_host=host, chain_id="c0",
         available_tool_names=set(),
     )
-    assert len(host.write_decomp_calls) == 1
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 1
-    assert len(host.delete_decomp_calls) == 1
-    plan_id = host.write_decomp_calls[0]["plan_id"]
-    assert host.plan_started_calls[0]["plan_id"] == plan_id
-    assert host.plan_completed_calls[0]["plan_id"] == plan_id
-    assert host.delete_decomp_calls[0]["plan_id"] == plan_id
+    (only_write,) = host.write_decomp_calls
+    (only_started,) = host.plan_started_calls
+    (only_completed,) = host.plan_completed_calls
+    (only_deleted,) = host.delete_decomp_calls
+    plan_id = only_write["plan_id"]
+    assert only_started["plan_id"] == plan_id
+    assert only_completed["plan_id"] == plan_id
+    assert only_deleted["plan_id"] == plan_id
 
 
 @pytest.mark.asyncio
@@ -191,11 +191,13 @@ async def test_dispatch_routes_step_events_through_record_methods() -> None:
         parent_host=host, chain_id="c0",
         available_tool_names=set(),
     )
-    assert len(host.plan_step_started_calls) == 2
-    assert len(host.plan_step_completed_calls) == 2
-    assert host.plan_step_started_calls[0]["step_id"] == "s1"
-    assert host.plan_step_started_calls[1]["step_id"] == "s2"
-    assert host.plan_step_started_calls[1]["depends_on"] == ["s1"]
+    (step_s1, step_s2) = host.plan_step_started_calls
+    (completed_s1, completed_s2) = host.plan_step_completed_calls
+    assert step_s1["step_id"] == "s1"
+    assert step_s2["step_id"] == "s2"
+    assert step_s2["depends_on"] == ["s1"]
+    assert completed_s1["step_id"] == "s1"
+    assert completed_s2["step_id"] == "s2"
 
 
 # ── artifact cleanup branches ─────────────────────────────────────────────
@@ -210,7 +212,8 @@ async def test_dispatch_deletes_artifact_on_normal_completion() -> None:
         parent_host=host, chain_id="c0",
         available_tool_names=set(),
     )
-    assert len(host.delete_decomp_calls) == 1
+    (only_deleted,) = host.delete_decomp_calls
+    assert "plan_id" in only_deleted
 
 
 @pytest.mark.asyncio
@@ -227,10 +230,14 @@ async def test_dispatch_deletes_artifact_when_workflow_abort_caught_per_step() -
         available_tool_names=set(),
     )
     # All steps recorded as failed (= per-step except catches WorkflowAbortedError).
-    assert len(host.plan_step_failed_calls) == 2
+    (failed_s1, failed_s2) = host.plan_step_failed_calls
+    assert failed_s1["step_id"] == "s1"
+    assert failed_s2["step_id"] == "s2"
     # Plan still completes cleanly; artifact cleaned up.
-    assert len(host.plan_completed_calls) == 1
-    assert len(host.delete_decomp_calls) == 1
+    (only_completed,) = host.plan_completed_calls
+    assert "plan_id" in only_completed
+    (only_deleted,) = host.delete_decomp_calls
+    assert "plan_id" in only_deleted
 
 
 @pytest.mark.asyncio
@@ -277,11 +284,13 @@ async def test_dispatch_records_step_failed_when_step_raises() -> None:
         available_tool_names=set(),
     )
     # All steps should be marked failed (= 2-step plan, both sub-loops crash).
-    assert len(host.plan_step_failed_calls) == 2
-    assert host.plan_step_failed_calls[0]["step_id"] == "s1"
+    (failed_s1, failed_s2) = host.plan_step_failed_calls
+    assert failed_s1["step_id"] == "s1"
+    assert failed_s2["step_id"] == "s2"
     # plan_completed is still emitted because execute_plan only
     # propagates uncaught exceptions; per-step errors are caught.
-    assert len(host.plan_completed_calls) == 1
+    (only_completed,) = host.plan_completed_calls
+    assert "plan_id" in only_completed
 
 
 @pytest.mark.asyncio
@@ -334,5 +343,7 @@ async def test_dispatch_tolerates_host_without_step6_methods() -> None:
         available_tool_names=set(),
     )
     assert result["status"] == "ok"
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 1
+    (only_started,) = host.plan_started_calls
+    assert "plan_id" in only_started
+    (only_completed,) = host.plan_completed_calls
+    assert "plan_id" in only_completed
