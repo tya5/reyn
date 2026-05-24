@@ -85,8 +85,8 @@ def run(args: argparse.Namespace) -> None:
     # operator sees reyn context (not chainlit's generic boilerplate)
     # the first time they hit the URL. Idempotent — operator edits
     # are preserved on subsequent launches.
-    from reyn.chainlit_app.first_run import ensure_chainlit_md
-    ensure_chainlit_md(Path.cwd())
+    from reyn.chainlit_app.first_run import ensure_all_assets
+    ensure_all_assets(Path.cwd())
 
     cmd: list[str] = [
         sys.executable,
