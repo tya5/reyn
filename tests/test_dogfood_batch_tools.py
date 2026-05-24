@@ -108,6 +108,7 @@ def test_load_batch_config_round_trips_required_fields(tmp_path):
 
 
 def test_load_batch_config_rejects_missing_required_key(tmp_path):
+    """Tier 2: missing batch.name → ValueError with the field name in message."""
     cfg_path = _write_config(tmp_path, """
 batch:
   date: 2026-06-01
@@ -123,6 +124,7 @@ journal_dir: /tmp/j
 
 
 def test_load_batch_config_rejects_empty_workers(tmp_path):
+    """Tier 2: empty workers list → ValueError with "workers" in message."""
     cfg_path = _write_config(tmp_path, """
 batch: {name: B, date: d, head: h}
 workers: []
@@ -139,11 +141,13 @@ journal_dir: /tmp/j
 
 
 def test_normalise_verdicts_handles_short_form_v_i_r_b():
+    """Tier 2: short-form keys V/I/R/B pass through unchanged."""
     out = _normalise_verdicts({"V": 5, "I": 2, "R": 3, "B": 1})
     assert out == {"V": 5, "I": 2, "R": 3, "B": 1}
 
 
 def test_normalise_verdicts_handles_long_form_verified_etc():
+    """Tier 2: long-form keys (verified/inconclusive/refuted/blocked) normalise to short form."""
     out = _normalise_verdicts(
         {"verified": 7, "inconclusive": 1, "refuted": 2, "blocked": 0},
     )
@@ -151,6 +155,7 @@ def test_normalise_verdicts_handles_long_form_verified_etc():
 
 
 def test_normalise_verdicts_treats_missing_as_zero():
+    """Tier 2: empty dict and None both produce all-zero verdict counts."""
     assert _normalise_verdicts({}) == {"V": 0, "I": 0, "R": 0, "B": 0}
     assert _normalise_verdicts(None) == {"V": 0, "I": 0, "R": 0, "B": 0}
 
@@ -161,7 +166,7 @@ def test_normalise_verdicts_treats_missing_as_zero():
 
 
 def test_load_worker_results_reads_existing_b43_journal():
-    """Tier 2 (regression guard against committed data): the real B43
+    """Tier 2: regression guard against committed data — the real B43
     journal in this repo loads to 7 workers (= W1..W7).
     """
     results = load_worker_results(B43_JOURNAL)
@@ -193,8 +198,8 @@ def test_load_worker_results_raises_on_missing_dir(tmp_path):
 
 
 def test_build_aggregate_against_b43_real_journal(tmp_path):
-    """Tier 2 end-to-end: feed the real B43 journal into the new tool
-    + verify the output aggregate.json has the same headline numbers
+    """Tier 2: end-to-end — feed the real B43 journal into the new tool
+    and verify the output aggregate.json has the same headline numbers
     as the published one (V=22, rate≈0.407, B=0). Detects any future
     semantic drift in the aggregate shape.
     """
