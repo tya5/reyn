@@ -85,39 +85,38 @@ def test_resolve_invoke_action_mcp_list_tools_passes_server_arg() -> None:
     assert result.target_args == {"server": "brave"}
 
 
-def test_resolve_invoke_action_mcp_call_tool_passes_handler_keys() -> None:
-    """Tier 2: mcp__call_tool forwards {server, mcp_tool_name, args} to
-    call_mcp_tool verbatim. The LLM-facing argument shape mirrors the
-    handler's parameter schema (no rename pass) — describe_action shows
-    those keys directly.
+def test_resolve_invoke_action_mcp_call_tool_passes_tool_id() -> None:
+    """Tier 2: mcp__call_tool routes to the mcp_call_tool verb wrapper
+    (#879). The LLM passes a self-contained ``<server>__<tool>``
+    identifier in the ``tool`` arg; the wrapper's handler splits it
+    before dispatching to ``call_mcp_tool`` internally.
     """
     result = resolve_invoke_action(
         "mcp__call_tool",
-        {"server": "brave", "mcp_tool_name": "search", "args": {"q": "reyn"}},
+        {"tool": "brave__search", "args": {"q": "reyn"}},
     )
-    assert result.target_tool_name == "call_mcp_tool"
+    assert result.target_tool_name == "mcp_call_tool"
     assert result.target_args == {
-        "server": "brave",
-        "mcp_tool_name": "search",
+        "tool": "brave__search",
         "args": {"q": "reyn"},
     }
 
 
-def test_resolve_invoke_action_mcp_call_tool_keys_match_handler_schema() -> None:
-    """Tier 2: the keys mcp__call_tool routes to call_mcp_tool are a
-    superset of the handler's required-fields list. Regression guard
-    against rename drift between dispatch and handler.
+def test_resolve_invoke_action_mcp_call_tool_keys_match_wrapper_schema() -> None:
+    """Tier 2: the keys mcp__call_tool routes to mcp_call_tool are a
+    superset of the wrapper's required-fields list (= ``tool``).
+    Regression guard against arg-name drift.
     """
-    from reyn.tools.mcp import CALL_MCP_TOOL
+    from reyn.tools.mcp_verbs import MCP_CALL_TOOL
 
     result = resolve_invoke_action(
         "mcp__call_tool",
-        {"server": "brave", "mcp_tool_name": "search", "args": {"q": "reyn"}},
+        {"tool": "brave__search", "args": {"q": "reyn"}},
     )
-    required = set(CALL_MCP_TOOL.parameters.get("required", []))
+    required = set(MCP_CALL_TOOL.parameters.get("required", []))
     assert required.issubset(result.target_args.keys()), (
         f"resolver produced keys {sorted(result.target_args.keys())} "
-        f"but call_mcp_tool requires {sorted(required)}"
+        f"but mcp_call_tool requires {sorted(required)}"
     )
 
 
@@ -317,7 +316,7 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
         # Issue #879 collapsed surface — six mcp__* verb actions.
         ("mcp__list_servers",        "list_mcp_servers"),
         ("mcp__list_tools",          "list_mcp_tools"),
-        ("mcp__call_tool",           "call_mcp_tool"),
+        ("mcp__call_tool",           "mcp_call_tool"),
         ("mcp__search_server",       "mcp_search_server"),
         ("mcp__install_server",      "mcp_install_server"),
         ("mcp__drop_server",         "mcp_drop_server"),
@@ -567,8 +566,7 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("mcp__install_server", {"text": "pypi:mcp-server-time"}),
     ("mcp__list_servers",   {}),
     ("mcp__list_tools",     {"server": "brave"}),
-    ("mcp__call_tool",
-     {"server": "brave", "mcp_tool_name": "search", "args": {"q": "reyn"}}),
+    ("mcp__call_tool",      {"tool": "brave__search", "args": {"q": "reyn"}}),
     ("mcp__drop_server",    {"server": "brave"}),
     ("file__read",   {"path": "a.txt"}),
     ("file__write",  {"path": "a.txt", "content": "x"}),

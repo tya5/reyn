@@ -180,11 +180,20 @@ async def _handle_list_mcp_tools(
         server = str(args["server"])
         result = await host.mcp_list_tools(server)
         # Strip inputSchema from each entry so the shape does not resemble
-        # an OpenAI tool definition (FP-0032 root-cause fix).
-        trimmed = [
-            {k: v for k, v in t.items() if k != "inputSchema"}
-            for t in (result or [])
-        ]
+        # an OpenAI tool definition (FP-0032 root-cause fix). Issue #879:
+        # each entry's ``name`` is rewritten to the self-contained
+        # ``<server>__<tool>`` identifier the LLM passes verbatim to
+        # mcp__call_tool's ``tool`` arg.
+        trimmed: list[dict] = []
+        for t in (result or []):
+            if not isinstance(t, Mapping):
+                continue
+            inner_name = t.get("name", "")
+            if not inner_name:
+                continue
+            entry = {k: v for k, v in t.items() if k != "inputSchema"}
+            entry["name"] = f"{server}__{inner_name}"
+            trimmed.append(entry)
         return {"mcp_tools": trimmed}
 
     return {

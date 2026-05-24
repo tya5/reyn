@@ -257,16 +257,21 @@ async def handle(
                 ctx.skill_name,
             )
 
-    # ── 4. Credentials: prompt for isSecret env vars + persist ───────────────
+    # ── 4. Credentials: resolve isSecret env vars from env_overrides or
+    # the pre-existing secret store. #879 removed the mid-flight ask_user
+    # prompt path; missing secrets short-circuit with a structured
+    # ``needs_secrets`` result so the LLM can guide the operator to
+    # ``reyn secret set <KEY>`` and retry.
     # #571 Phase 6: every save_secret call routes through
-    # require_secret_write against the calling skill's decl. The
-    # env-var key set is server-specific (= determined by the registry
-    # response, not statically known by the skill author) so skills
-    # that invoke mcp_install must declare the wildcard form
-    # ``secret.write: ['*']`` — the actual security gate is the
-    # operator's per-value prompt below.
+    # require_secret_write against the calling decl. The env-var key set
+    # is server-specific (= determined by the registry response), so
+    # callers must declare the wildcard form ``secret.write: ['*']``.
+    from reyn.secrets.store import list_secret_keys
+
     env_overrides = dict(op.env_overrides or {})
     secret_keys_set: list[str] = []
+    missing_secret_keys: list[dict] = []
+    already_set = set(list_secret_keys())
 
     def _save_with_gate(key: str, value: str) -> None:
         if ctx.permission_resolver is not None:
@@ -276,7 +281,6 @@ async def handle(
         from reyn.secrets.store import save_secret
         save_secret(key, value)
 
-    # Collect environmentVariables from packages[] that have isSecret=True
     for pkg_raw in packages_raw:
         env_vars = pkg_raw.get("environmentVariables", [])
         for ev in env_vars:
@@ -288,26 +292,39 @@ async def handle(
             is_secret = ev.get("isSecret", False)
             if not is_secret:
                 continue
-            # Already supplied via env_overrides — skip prompt
+            # Already supplied via env_overrides — persist + continue.
             if key in env_overrides:
                 _save_with_gate(key, env_overrides[key])
                 secret_keys_set.append(key)
                 continue
-            # Prompt via intervention_bus
-            if ctx.intervention_bus is not None:
-                from reyn.user_intervention import UserIntervention
-                description = ev.get("description", "")
-                iv = UserIntervention(
-                    kind="mcp_install.secret",
-                    prompt=f"環境変数 {key} の値を入力してください",
-                    detail=description or f"{op.server_id} が必要とするシークレット: {key}",
-                    choices=[],
-                )
-                answer = await ctx.intervention_bus.request(iv)
-                value = getattr(answer, "text", None) or getattr(answer, "choice_id", "")
-                if value:
-                    _save_with_gate(key, value)
-                    secret_keys_set.append(key)
+            # Already stored via ``reyn secret set`` previously — nothing
+            # to do; the server's runtime reads the env-var from the
+            # store at launch time.
+            if key in already_set:
+                continue
+            missing_secret_keys.append({
+                "name": key,
+                "description": ev.get("description", "") or "",
+            })
+
+    if missing_secret_keys:
+        missing_names = [k["name"] for k in missing_secret_keys]
+        sample_cmd = " && ".join(
+            f"reyn secret set {k}" for k in missing_names
+        )
+        return {
+            "kind": "mcp_install",
+            "status": "needs_secrets",
+            "server_id": op.server_id,
+            "missing_secret_keys": missing_secret_keys,
+            "guide": (
+                "Server requires secret env-vars not yet set: "
+                + ", ".join(missing_names)
+                + ". Set them via `reyn secret set <KEY>` "
+                "(or pass `env_overrides` arg) and retry "
+                "mcp__install_server. Example: " + sample_cmd
+            ),
+        }
 
     # ── 5. Write mcp.servers.<name> to scope config file ─────────────────────
     # project_root + config_path already resolved at the permission gate above.

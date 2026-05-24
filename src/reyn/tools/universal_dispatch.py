@@ -257,7 +257,7 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "mcp__install_server": ("mcp_install_server", _passthrough_args),
     "mcp__list_servers":   ("list_mcp_servers",   _passthrough_args),
     "mcp__list_tools":     ("list_mcp_tools",     _passthrough_args),
-    "mcp__call_tool":      ("call_mcp_tool",      _passthrough_args),
+    "mcp__call_tool":      ("mcp_call_tool",      _passthrough_args),
     "mcp__drop_server":    ("mcp_drop_server",    _passthrough_args),
 
     # validation category — lint op exposed to the router so users can request
