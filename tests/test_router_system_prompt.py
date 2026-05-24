@@ -32,6 +32,7 @@ _EMPTY_MEMORY: dict = {"status": "not_found", "content": ""}
 
 class TestEmptyStateRenders:
     def test_empty_state_renders(self):
+        """Tier 2: build_system_prompt returns a non-empty string with required sections."""
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="general assistant",
@@ -97,6 +98,7 @@ class TestSizeIsConstantInItems:
 
 class TestJapaneseInRolePreserved:
     def test_japanese_role(self):
+        """Tier 2: Japanese characters in agent_role are preserved verbatim in the system prompt."""
         role = "日本語エージェントの役割説明"
         prompt = build_system_prompt(
             agent_name="jp_bot",

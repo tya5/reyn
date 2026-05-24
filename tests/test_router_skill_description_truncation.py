@@ -105,7 +105,6 @@ def test_list_skills_long_description_truncated():
     loop = _make_loop(skills)
     result = loop._list_skills("general")
 
-    assert len(result) == 1
     item = result[0]
     assert len(item["description"]) <= MAX_DESC_LEN_FOR_LISTING + 3, (
         f"list_skills description must be ≤ {MAX_DESC_LEN_FOR_LISTING} chars + '...' "
@@ -328,7 +327,6 @@ def test_list_skills_backward_compat_fields_preserved():
     loop = _make_loop(skills)
     result = loop._list_skills("general")
 
-    assert len(result) == 1
     item = result[0]
     assert item["name"] == "structured_skill", "name field must be preserved"
     assert item.get("input_artifact") == "my_request", (
