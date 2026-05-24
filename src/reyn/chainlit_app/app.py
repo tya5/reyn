@@ -138,10 +138,20 @@ async def _get_or_build_registry() -> "AgentRegistry":
         budget_tracker.set_state_path(budget_state_path)
 
         perm_config = getattr(session_cfg.config, "permissions", {}) or {}
+        # ``interactive=True``: route permission prompts through the
+        # intervention bus so they reach the chainlit surface as
+        # ``kind="intervention"`` outbox messages. PR #907 wires
+        # ``_handle_intervention`` in the drain loop to render those
+        # via ``cl.AskActionMessage`` and post the user's choice back
+        # via ``session.answer_pending_intervention``. With
+        # ``interactive=False`` (the prior value), ``_prompt`` is
+        # short-circuited at ``permissions.py:499`` and every gated
+        # action auto-denies — operator sees a silent "permission
+        # denied" without the chance to allow.
         perm_resolver = PermissionResolver(
             config_permissions=perm_config,
             project_root=project_root,
-            interactive=False,
+            interactive=True,
             unsafe_python_allowed=False,
         )
 
