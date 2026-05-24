@@ -1,4 +1,4 @@
-"""Tier 2: /copy off-loads its blocking subprocess to a thread executor.
+"""Tier 2b: /copy off-loads its blocking subprocess to a thread executor.
 
 Streaming / perf UX audit (MED severity Finding F3): the ``/copy``
 handler called ``_copy_to_clipboard(text)`` synchronously inside the
@@ -63,14 +63,14 @@ def test_copy_to_clipboard_async_is_awaitable_coroutine() -> None:
 
 
 def test_copy_to_clipboard_async_returns_tuple_shape() -> None:
-    """Tier 2: ``await``-ing the helper produces a ``(bool, str)`` tuple.
+    """Tier 2b: ``await``-ing the helper produces a ``(bool, str)`` tuple.
 
     Drives the helper with empty text against the executor. If no clipboard
     tool is on PATH, returns ``(False, "")``; if one is, returns ``(True,
     "<label>")``. Either way the shape is the contract.
     """
     out = asyncio.run(copy_to_clipboard_async(""))
-    assert isinstance(out, tuple) and len(out) == 2
+    # Unpack directly — this pins the (bool, str) contract without a len() pin.
     ok, label = out
     assert isinstance(ok, bool)
     assert isinstance(label, str)
