@@ -55,7 +55,7 @@ def test_invoke_action_description_signals_os_owned_spawn_ack() -> None:
 
 
 def test_invoke_action_description_no_dead_priority_block() -> None:
-    """Tier 2 regression guard: the description must NOT carry the obsolete
+    """Tier 2: regression guard: the description must NOT carry the obsolete
     'Priority 1/2/3/4' spawn-ack block. That block was dead code (the router
     exits before the LLM sees it) and reintroducing it would re-confuse the
     LLM about whether it's responsible for the spawn-ack reply.

@@ -120,7 +120,8 @@ def test_handler_resolves_chain_and_emits_audit_event(tmp_path: Path):
         e for e in events
         if e["kind"] == "chain_resolve" and e.get("chain_id") == "X-001"
     ]
-    assert len(resolve_events) == 1
+    (only_resolve,) = resolve_events
+    assert only_resolve["chain_id"] == "X-001"
 
 
 def test_handler_is_idempotent_when_chain_already_resolved(tmp_path: Path):
@@ -268,14 +269,16 @@ def test_slash_discard_notifies_upstream_chain_waiter(tmp_path: Path, monkeypatc
         e for e in events
         if e["kind"] == "chain_resolve" and e.get("chain_id") == "X-D14"
     ]
-    assert len(resolves) == 1
+    (only_resolve,) = resolves
+    assert only_resolve["chain_id"] == "X-D14"
     # 3. WAL also has skill_discarded for B's run
     discarded = [
         e for e in events
         if e["kind"] == "skill_discarded"
         and e.get("run_id") == "run_b_d14"
     ]
-    assert len(discarded) == 1
+    (only_discarded,) = discarded
+    assert only_discarded["run_id"] == "run_b_d14"
     # 4. B's running_skills_chain is cleaned up
     assert "run_b_d14" not in sess_b.running_skills_chain
 

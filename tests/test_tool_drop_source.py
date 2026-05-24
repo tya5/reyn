@@ -138,8 +138,7 @@ async def test_drop_source_handler_builds_index_drop_ir_op(monkeypatch):
     args = {"source": "my_source"}
     result = await DROP_SOURCE.handler(args, ctx)
 
-    assert len(captured_ops) == 1
-    op = captured_ops[0]
+    (op,) = captured_ops
     assert isinstance(op, IndexDropIROp)
     assert op.kind == "index_drop"
     assert op.source == "my_source"
