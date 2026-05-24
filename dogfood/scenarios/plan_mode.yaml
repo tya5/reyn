@@ -6,10 +6,14 @@ description: >
   queries that should trigger the `plan` tool. Verifiers assert that plan
   lifecycle events fire (plan_emitted → plan_step_started ×N →
   plan_step_completed ×N → plan_aggregated) and that the final reply
-  reports concrete evidence rather than a hand-wave summary. 3 scenarios
-  spanning the canonical patterns named in `_PLAN_DESCRIPTION`:
-  "explain X with code references", "compare A vs B from multiple docs",
-  "build a summary across these N files".
+  reports concrete evidence rather than a hand-wave summary. 5 scenarios
+  spanning natural human-facing query shapes:
+  "compare A vs B" (S1), "feature deep-dive across 3 facets" (S2),
+  "build a summary across these N files" (S3), "onboarding question
+  spanning 3 docs" (S4), "task-driven decision across 3 reference
+  docs" (S5). S2 redesigned post-B53 (= old "explain X with code
+  references" prompt was structurally ambiguous, see B53 retro
+  carry-over deep-dive 2026-05-24).
 covers:
   - cli/reyn-chat
   - config/plan
@@ -54,40 +58,50 @@ scenarios:
       refuted: 0.0
       blocked: 0.0
 
-  # ── 2. Explain X with code references ─────────────────────────────────────
-  - id: plan_explain_with_code_references
+  # ── 2. Feature deep-dive — permission 機構 (3 facets) ─────────────────────
+  # Redesigned 2026-05-24 (B53 carry-over): old prompt asked to explain
+  # the plan tool itself from 2 related files (= unified single-concept
+  # explanation), giving rational alternative paths via sequential
+  # source__read. B53 retro deep-dive (= dimension 4 audit) ruled the
+  # prompt structurally plan-unnatural — rubric forced plan_emitted but
+  # prompt was 2-file unified explanation, not multi-source synthesis.
+  - id: plan_deep_dive_permission
     covers:
       - cli/reyn-chat
       - config/plan
     input: >
-      Reyn の plan ツール (= src/reyn/tools/plan.py と
-      src/reyn/chat/planner.py) について、 (1) どのような場合に LLM が
-      これを発火させるべきか、 (2) plan に渡された step がどう実行されるか、
-      の 2 点を、 該当する関数名や行番号を引きながら説明してください。
+      Reyn の permission 機構について理解したい。
+      docs/concepts/permission-model.md、
+      docs/guide/for-users/manage-permissions.md、
+      docs/reference/config/permissions.md の 3 つを読んで、
+      (1) どんな種類の permission があるか、 (2) どう設定するか、
+      (3) よくある落とし穴 (= 設定ミスや誤解しやすい点)、 を整理してください。
     expected:
       reply:
         kind: judge
         rubric:
-          - reply references plan.py AND planner.py (or content from each)
-          - reply names at least one specific function or class (e.g. parse_and_validate_plan, execute_plan, _PLAN_DESCRIPTION)
-          - reply explains BOTH (1) when to invoke plan and (2) how steps are executed
-          - reply does NOT fabricate code that does not exist in the repo
+          - reply references content from all three docs (permission-model, manage-permissions, permissions config reference)
+          - reply organizes output by the 3 facets requested (kinds / setup / pitfalls)
+          - each facet cites specific doc evidence (header / section name / concrete config key)
+          - reply does NOT fabricate config keys or permission types not in the docs
       events:
         must_emit:
           - { type: plan_emitted, count: ">=1" }
-          - { type: plan_step_started, count: ">=2" }
-          - { type: plan_step_completed, count: ">=2" }
+          - { type: plan_step_started, count: ">=3" }
+          - { type: plan_step_completed, count: ">=3" }
+          - { type: plan_aggregated, count: ">=1" }
         must_not_emit:
+          - { type: plan_run_interrupted }
           - { type: plan_step_failed }
         sequence: []
       artifacts:
         - { present: true }
-    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # outcome_prediction: post-redesign baseline (= no prior batch data, conservative)
     outcome_prediction:
-      verified: 0.0
-      inconclusive: 0.25
-      refuted: 0.5
-      blocked: 0.25
+      verified: 0.25
+      inconclusive: 0.50
+      refuted: 0.25
+      blocked: 0.0
 
   # ── 3. Build a summary across N files ─────────────────────────────────────
   - id: plan_summary_across_n_files
@@ -125,3 +139,85 @@ scenarios:
       inconclusive: 0.5
       refuted: 0.25
       blocked: 0.25
+
+  # ── 4. Onboarding — skill / MCP / 自作 skill (3 questions) ────────────────
+  # Added 2026-05-24 (W6 scenario set expansion 3→5): natural new-user
+  # onboarding query spanning 3 independent docs. Plan-natural via
+  # decomposition into 3 sub-questions.
+  - id: plan_onboarding_skill_mcp
+    covers:
+      - cli/reyn-chat
+      - config/plan
+    input: >
+      Reyn を使い始めたばかりです。
+      docs/concepts/phase-vs-skill-vs-os.md、
+      docs/concepts/mcp.md、
+      docs/guide/getting-started/03-your-first-skill.md の 3 つを読んで、
+      (1) Reyn の skill とは何か、 (2) MCP とどう関係するか、
+      (3) 自作 skill を書く流れ、 の 3 点を順に教えてください。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply references content from all three docs (phase-vs-skill-vs-os, mcp, your-first-skill)
+          - reply organizes output by the 3 questions (skill / MCP / 自作 skill)
+          - each section cites specific doc evidence (header / concrete concept / step name)
+          - reply does NOT fabricate concepts that contradict the actual docs
+      events:
+        must_emit:
+          - { type: plan_emitted, count: ">=1" }
+          - { type: plan_step_started, count: ">=3" }
+          - { type: plan_step_completed, count: ">=3" }
+          - { type: plan_aggregated, count: ">=1" }
+        must_not_emit:
+          - { type: plan_run_interrupted }
+          - { type: plan_step_failed }
+        sequence: []
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.25
+      inconclusive: 0.50
+      refuted: 0.25
+      blocked: 0.0
+
+  # ── 5. Task-driven decision — build a multi-doc report agent (3 facets) ──
+  # Added 2026-05-24 (W6 scenario set expansion 3→5): natural
+  # task-decomposition query, "I want to build X — what do I need?"
+  # spans agent design + permission + MCP knowledge.
+  - id: plan_build_multi_doc_agent
+    covers:
+      - cli/reyn-chat
+      - config/plan
+    input: >
+      Reyn で複数 doc から情報を集めて report を作る agent を組みたい。
+      docs/guide/for-skill-authors/build-an-agent-team.md、
+      docs/guide/for-users/manage-permissions.md、
+      docs/concepts/mcp.md の 3 つを参考に、 (1) 必要な skill / tool の
+      組み合わせ、 (2) 必要な permission 設定、 (3) MCP server を使う場合
+      の考慮点、 を整理してください。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply references content from all three docs (build-an-agent-team, manage-permissions, mcp)
+          - reply organizes output by the 3 facets requested (skill/tool combo / permission / MCP)
+          - each facet cites specific concrete guidance (skill name / config key / MCP concept)
+          - reply does NOT fabricate concepts that contradict the actual docs
+      events:
+        must_emit:
+          - { type: plan_emitted, count: ">=1" }
+          - { type: plan_step_started, count: ">=3" }
+          - { type: plan_step_completed, count: ">=3" }
+          - { type: plan_aggregated, count: ">=1" }
+        must_not_emit:
+          - { type: plan_run_interrupted }
+          - { type: plan_step_failed }
+        sequence: []
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.25
+      inconclusive: 0.50
+      refuted: 0.25
+      blocked: 0.0
