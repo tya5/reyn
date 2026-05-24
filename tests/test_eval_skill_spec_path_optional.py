@@ -51,7 +51,7 @@ def _parse_skill_md_frontmatter(skill_md_path: Path) -> dict:
 
 
 def test_eval_result_raw_does_not_require_spec_path():
-    """Tier 2 (B46-fix): the LLM-authored raw artifact schema must
+    """Tier 2: (B46-fix) the LLM-authored raw artifact schema must
     NOT require ``spec_path``. The field stays in ``properties`` (=
     LLM may still pass it through when known) but is no longer
     required for validation to pass."""
@@ -135,7 +135,7 @@ def test_skill_md_postprocessor_step_does_not_require_spec_path():
 
 
 def test_compiled_postprocessor_output_schema_is_envelope_shaped():
-    """Tier 2 (B48-NF-W2-S5 fix, 2026-05-22): the compiled
+    """Tier 2: (B48-NF-W2-S5 fix, 2026-05-22) the compiled
     ``postprocessor.output_schema`` must be the full
     ``{type, data}`` envelope so PostprocessorExecutor.run()'s final
     validation (which inspects the envelope-shaped result) succeeds.
