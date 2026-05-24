@@ -150,6 +150,13 @@ class ReynTUIApp(App):
         # win against any widget-level binding.
         Binding("ctrl+g", "find_next", "Find next match", priority=True, show=False),
         Binding("ctrl+shift+g", "find_prev", "Find prev match", priority=True, show=False),
+        # F5 / F6 — jump to the prev / next mounted ErrorBox. Useful in
+        # debugging-heavy sessions where multiple errors stack up and
+        # the user wants to scroll through them quickly without
+        # manual page-up / page-down. Cycles with wrap; first press
+        # always targets the newest error.
+        Binding("f5", "jump_prev_error", "Prev error", priority=True, show=False),
+        Binding("f6", "jump_next_error", "Next error", priority=True, show=False),
         # Keyboard companion to the mouse-click skill-row drill-down
         # (= toggle phase-history expand). F3 avoids the Ctrl+letter
         # collision with TextArea's default editing shortcuts (ctrl+e
@@ -1445,6 +1452,32 @@ class ReynTUIApp(App):
         except Exception:
             pass
         return True
+
+    def _jump_error(self, direction: int) -> None:
+        """Shared helper for F5 / F6 error-jump dispatch."""
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+        except Exception:
+            return
+        if not conv.jump_to_error(direction):
+            try:
+                conv.show_status("no errors to jump to", kind="general")
+                self.set_timer(2.0, conv.hide_status)
+            except Exception:
+                pass
+
+    def action_jump_prev_error(self) -> None:
+        """F5 — jump to the previous (older) mounted ErrorBox.
+
+        First press from a fresh state targets the newest error;
+        subsequent presses walk backwards through the list with
+        wrap. No-op-with-hint when no errors are mounted.
+        """
+        self._jump_error(-1)
+
+    def action_jump_next_error(self) -> None:
+        """F6 — jump to the next (newer) mounted ErrorBox (wraps)."""
+        self._jump_error(+1)
 
     def action_skill_expand_toggle(self) -> None:
         """F3 — toggle drill-down on every in-flight SkillActivityRow.
