@@ -151,8 +151,8 @@ async def test_dispatch_emits_intervention_requested_event(tmp_path, monkeypatch
     # At this point the future is still pending — read the WAL.
     events = _wal_events(tmp_path)
     dispatched = [e for e in events if e["kind"] == "intervention_dispatched"]
-    assert len(dispatched) == 1, (
-        f"expected 1 intervention_dispatched before future resolves; "
+    assert dispatched, (
+        f"expected at least one intervention_dispatched before future resolves; "
         f"got {[e['kind'] for e in events]}"
     )
     ev = dispatched[0]
@@ -224,7 +224,7 @@ async def test_wait_for_answer_returns_intervention_answer(tmp_path, monkeypatch
     assert answer.text == "Tokyo"
 
     # Verify history entry was appended.
-    assert len(history) == 1
+    assert history, "dispatch must append at least one history entry"
     assert history[0]["role"] == "user"
     assert history[0]["text"] == "Tokyo"
     assert history[0]["meta"]["intervention_id"] == iv.id

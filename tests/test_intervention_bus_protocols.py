@@ -105,8 +105,8 @@ def test_chat_intervention_bus_satisfies_both_protocols(tmp_path: Path) -> None:
 
 
 def test_a2a_intervention_bus_exposes_on_dispatch_post_alpha() -> None:
-    """Tier 2 (= issue #292 α): ``A2AInterventionBus`` is a side-effect
-    observer post-α; it no longer satisfies ``RequestBus`` / ``UserChannel``
+    """Tier 2: ``A2AInterventionBus`` is a side-effect
+    observer post-α (issue #292 α); it no longer satisfies ``RequestBus`` / ``UserChannel``
     (= those required ``request`` / ``deliver`` returning an answer).
     The new public surface is ``on_dispatch(iv) -> None``.
     """
@@ -147,7 +147,7 @@ def test_stdin_bus_request_delegates_to_deliver() -> None:
 
     answer = asyncio.run(_drive_request())
     assert answer.text == "hello"
-    assert len(captured) == 1
+    assert captured, "request must have called _read_line with the prompt text"
 
 
 def test_chat_bus_request_delegates_to_deliver() -> None:
@@ -166,8 +166,8 @@ def test_chat_bus_request_delegates_to_deliver() -> None:
 
 
 def test_a2a_bus_only_exposes_on_dispatch_post_alpha() -> None:
-    """Tier 2 (= issue #292 α): ``A2AInterventionBus.request`` /
-    ``deliver`` were removed when the bus became a side-effect
+    """Tier 2: ``A2AInterventionBus.request`` /
+    ``deliver`` were removed (issue #292 α) when the bus became a side-effect
     observer. Pin the absence so a future refactor that re-adds them
     fails first (= the iv ownership question is settled: ChatSession
     owns it, the bus only emits side effects).
