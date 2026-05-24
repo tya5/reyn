@@ -251,6 +251,16 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
         ).send()
         return
 
+    # Empty-answer fallback used on every "no response" path below.
+    # Without this, the agent stays awaiting ``iv.future`` forever and
+    # ChatSession.run_one_iteration never picks up the next inbox
+    # message — the entire chat appears frozen.
+    async def _resolve_empty() -> None:
+        await session.answer_pending_intervention(
+            prompt.run_id,
+            InterventionAnswer(text=""),
+        )
+
     if prompt.is_choice:
         try:
             actions = [
@@ -272,6 +282,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
         except Exception:
             response = None
         if response is None:
+            await _resolve_empty()
             return
         payload_dict = getattr(response, "payload", None) or response
         choice_id = (
@@ -283,6 +294,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
             if isinstance(payload_dict, dict) else None
         ) or choice_id or ""
         if not isinstance(choice_id, str):
+            await _resolve_empty()
             return
         await session.answer_pending_intervention(
             prompt.run_id,
@@ -299,6 +311,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
     except Exception:
         reply = None
     if reply is None:
+        await _resolve_empty()
         return
     # AskUserMessage returns a StepDict-like with ``output`` (or
     # ``content`` on older chainlit). Pull whichever is present.
