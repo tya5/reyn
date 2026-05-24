@@ -79,7 +79,8 @@ def test_write_creates_artifact_with_documented_schema(tmp_path: Path) -> None:
     assert payload["plan_id"] == "p001"
     assert payload["schema_version"] == DECOMPOSITION_SCHEMA_VERSION
     assert payload["goal"] == plan.goal
-    assert len(payload["steps"]) == 3
+    step_ids = {s["id"] for s in payload["steps"]}
+    assert step_ids == {"s1", "s2", "s3"}
     assert payload["steps"][0] == {
         "id": "s1",
         "description": "Read README.md",
@@ -105,7 +106,8 @@ def test_write_is_atomic_overwriting_prior_artifact(tmp_path: Path) -> None:
     assert path_v1 == path_v2
     payload = json.loads(path_v2.read_text(encoding="utf-8"))
     assert payload["goal"] == plan_v2.goal
-    assert len(payload["steps"]) == 3
+    step_ids = {s["id"] for s in payload["steps"]}
+    assert step_ids == {"s1", "s2", "s3"}
     # No .tmp residue
     assert not path_v2.with_suffix(path_v2.suffix + ".tmp").exists()
 

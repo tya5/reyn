@@ -240,7 +240,7 @@ async def test_watcher_buffers_answer_when_restored_iv_resolves(tmp_path, monkey
 
 @pytest.mark.asyncio
 async def test_e2e_skill_resume_picks_up_user_answer(tmp_path, monkeypatch):
-    """Tier 3 e2e: restore → user answer → resuming skill's bus.request gets it.
+    """Tier 2c: restore → user answer → resuming skill's bus.request gets it.
 
     The headline guarantee for PR-intervention-link.
     """
@@ -300,7 +300,7 @@ async def test_e2e_skill_resume_picks_up_user_answer(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_e2e_choice_intervention_round_trip(tmp_path, monkeypatch):
-    """Tier 3 e2e: choice-based intervention answer flows through buffer.
+    """Tier 2c: choice-based intervention answer flows through buffer.
 
     Verifies that the choice_id on the InterventionAnswer survives the
     restore → buffer → consume path.

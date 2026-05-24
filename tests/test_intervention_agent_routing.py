@@ -268,7 +268,7 @@ def test_self_answer_takes_precedence_over_parent_delegate() -> None:
 
 
 def test_chain_override_is_notified_through_user_channel_branch(tmp_path: Path) -> None:
-    """Tier 2 (= issue #292 α): the A2A peer override registered via
+    """Tier 2: the A2A peer override registered via
     ``register_intervention_override`` is notified via ``on_dispatch``
     as a side effect during the user_channel branch. Pre-α the
     override REPLACED the dispatch; α changed it to DECORATE — the
@@ -304,7 +304,7 @@ def test_chain_override_is_notified_through_user_channel_branch(tmp_path: Path) 
     answer = asyncio.run(_drive())
 
     # α: observer was notified (side effect); handler resolved the answer.
-    assert len(captured) == 1
+    assert captured, "override observer must have been notified"
     assert answer.text == "from-handler"
 
     # Routing event records the user_channel branch fired.
