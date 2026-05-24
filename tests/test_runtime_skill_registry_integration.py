@@ -289,7 +289,6 @@ def test_skill_registry_run_id_consistent() -> None:
     asyncio.run(rt.run({"type": "artifact", "data": {}}))
 
     run_ids = {c.kwargs["run_id"] for c in spy.calls}
-    assert len(run_ids) == 1, (
+    assert run_ids == {"test-run-001"}, (
         f"All lifecycle calls must share one run_id; got {run_ids}"
     )
-    assert "test-run-001" in run_ids

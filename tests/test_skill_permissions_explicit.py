@@ -113,9 +113,9 @@ def test_explicit_skill_permissions_file_write() -> None:
             "file.write": [{"path": "reyn/local", "scope": "recursive"}]
         },
     )
-    assert len(skill.permissions.file_write) == 1
-    assert skill.permissions.file_write[0]["path"] == "reyn/local"
-    assert skill.permissions.file_write[0]["scope"] == "recursive"
+    (only_entry,) = skill.permissions.file_write
+    assert only_entry["path"] == "reyn/local"
+    assert only_entry["scope"] == "recursive"
 
 
 def test_no_skill_permissions_yields_empty_decl() -> None:
