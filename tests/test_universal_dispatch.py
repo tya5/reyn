@@ -74,26 +74,26 @@ def test_resolve_invoke_action_agent_peer_routes_to_delegate() -> None:
     assert "message" not in result.target_args
 
 
-def test_resolve_invoke_action_mcp_server_routes_to_list_tools() -> None:
-    """Tier 2: mcp.server__<name> → list_mcp_tools(server=name).
-
-    §D19 resource invoke: invoking a server lists its tools.
+def test_resolve_invoke_action_mcp_list_tools_passes_server_arg() -> None:
+    """Tier 2: mcp__list_tools forwards the LLM-supplied {server} arg to
+    the list_mcp_tools handler verbatim (#879 collapsed surface).
     """
-    result = resolve_invoke_action("mcp.server__brave", {})
+    result = resolve_invoke_action(
+        "mcp__list_tools", {"server": "brave"},
+    )
     assert result.target_tool_name == "list_mcp_tools"
     assert result.target_args == {"server": "brave"}
 
 
-def test_resolve_invoke_action_mcp_tool_splits_server_dot_tool() -> None:
-    """Tier 2: mcp.tool__<server>.<tool> → call_mcp_tool(server, mcp_tool_name, args).
-
-    The output key MUST be ``mcp_tool_name`` (not ``tool``) to match the
-    ``call_mcp_tool`` handler's parameter schema. Returning ``tool`` here
-    raised ``KeyError: mcp_tool_name`` inside ``_handle_call_mcp_tool``
-    when invoke_action dispatched to it (= production-observed regression).
+def test_resolve_invoke_action_mcp_call_tool_passes_handler_keys() -> None:
+    """Tier 2: mcp__call_tool forwards {server, mcp_tool_name, args} to
+    call_mcp_tool verbatim. The LLM-facing argument shape mirrors the
+    handler's parameter schema (no rename pass) — describe_action shows
+    those keys directly.
     """
     result = resolve_invoke_action(
-        "mcp.tool__brave.search", {"q": "reyn"},
+        "mcp__call_tool",
+        {"server": "brave", "mcp_tool_name": "search", "args": {"q": "reyn"}},
     )
     assert result.target_tool_name == "call_mcp_tool"
     assert result.target_args == {
@@ -103,32 +103,22 @@ def test_resolve_invoke_action_mcp_tool_splits_server_dot_tool() -> None:
     }
 
 
-def test_resolve_invoke_action_mcp_tool_keys_match_call_mcp_tool_schema() -> None:
-    """Tier 2: resolved arg keys are a subset of call_mcp_tool's required schema.
-
-    Regression guard: this pins the contract that universal_dispatch's
-    output keys for ``mcp.tool__*`` match what ``call_mcp_tool``'s
-    parameter schema declares required. If either side drifts (= the
-    handler renames ``mcp_tool_name`` or the dispatcher reverts to
-    ``tool``), this test fails BEFORE the mismatch reaches production
-    as a KeyError stack trace.
+def test_resolve_invoke_action_mcp_call_tool_keys_match_handler_schema() -> None:
+    """Tier 2: the keys mcp__call_tool routes to call_mcp_tool are a
+    superset of the handler's required-fields list. Regression guard
+    against rename drift between dispatch and handler.
     """
     from reyn.tools.mcp import CALL_MCP_TOOL
 
     result = resolve_invoke_action(
-        "mcp.tool__brave.search", {"q": "reyn"},
+        "mcp__call_tool",
+        {"server": "brave", "mcp_tool_name": "search", "args": {"q": "reyn"}},
     )
     required = set(CALL_MCP_TOOL.parameters.get("required", []))
     assert required.issubset(result.target_args.keys()), (
         f"resolver produced keys {sorted(result.target_args.keys())} "
         f"but call_mcp_tool requires {sorted(required)}"
     )
-
-
-def test_resolve_invoke_action_mcp_tool_missing_dot_raises() -> None:
-    """Tier 2: mcp.tool__<name> without . separator raises UnknownActionError."""
-    with pytest.raises(UnknownActionError, match="server.*tool"):
-        resolve_invoke_action("mcp.tool__missing_dot", {})
 
 
 def test_resolve_invoke_action_memory_entry_routes_to_read_body() -> None:
@@ -324,8 +314,13 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
     [
         ("skill__code_review",       "invoke_skill"),
         ("agent.peer__alice",        "delegate_to_agent"),
-        ("mcp.server__brave",        "list_mcp_tools"),
-        ("mcp.tool__brave.search",   "call_mcp_tool"),
+        # Issue #879 collapsed surface — six mcp__* verb actions.
+        ("mcp__list_servers",        "list_mcp_servers"),
+        ("mcp__list_tools",          "list_mcp_tools"),
+        ("mcp__call_tool",           "call_mcp_tool"),
+        ("mcp__search_server",       "mcp_search_server"),
+        ("mcp__install_server",      "mcp_install_server"),
+        ("mcp__drop_server",         "mcp_drop_server"),
         ("memory.entry__pref_dates", "read_memory_body"),
         ("rag.corpus__meetings",     "recall"),
         ("file__read",               "read_file"),
@@ -399,13 +394,22 @@ def test_known_static_names_excludes_resource_categories() -> None:
         )
 
 
-def test_known_static_names_includes_mcp_operation_drop_server() -> None:
-    """Tier 2: PR-4 added mcp.operation__drop_server to the static catalogue.
-
-    Counter-op to mcp_install; declared with the per-name route so
-    describe / invoke flow through the mcp_drop_server op_runtime handler.
+def test_known_static_names_includes_collapsed_mcp_surface() -> None:
+    """Tier 2: #879 collapsed surface — the six mcp__* verb actions
+    are all in the static catalogue. Counter-op for drop is present,
+    and so are search / install / list / call verbs.
     """
-    assert "mcp.operation__drop_server" in KNOWN_STATIC_QUALIFIED_NAMES
+    for qn in (
+        "mcp__search_server",
+        "mcp__install_server",
+        "mcp__list_servers",
+        "mcp__list_tools",
+        "mcp__call_tool",
+        "mcp__drop_server",
+    ):
+        assert qn in KNOWN_STATIC_QUALIFIED_NAMES, (
+            f"expected {qn!r} in KNOWN_STATIC_QUALIFIED_NAMES"
+        )
 
 
 def test_known_static_names_includes_exec_sandboxed_exec() -> None:
@@ -428,12 +432,14 @@ def test_known_qualified_name_for_category() -> None:
     }
     # Resource category returns empty
     assert known_qualified_name_for_category("skill") == ()
-    # exec now has sandboxed_exec (FP-0034 Phase 2)
+    # exec has sandboxed_exec (FP-0034 Phase 2)
     assert known_qualified_name_for_category("exec") == ("exec__sandboxed_exec",)
-    # mcp.operation now has drop_server (PR-4)
-    assert known_qualified_name_for_category("mcp.operation") == (
-        "mcp.operation__drop_server",
-    )
+    # mcp (= issue #879 collapsed surface) has the six verb actions.
+    assert set(known_qualified_name_for_category("mcp")) == {
+        "mcp__search_server", "mcp__install_server",
+        "mcp__list_servers", "mcp__list_tools",
+        "mcp__call_tool", "mcp__drop_server",
+    }
 
 
 def test_known_qualified_name_for_unknown_category_raises() -> None:
@@ -552,12 +558,18 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     # Resource categories (= _RESOURCE_RULES)
     ("skill__code_review", {"input": {"type": "x", "data": {}}}),
     ("agent.peer__planner", {"message": "hi", "request": "hi"}),
-    ("mcp.server__brave", {}),
-    ("mcp.tool__brave.search", {"q": "reyn"}),
     ("memory.entry__pref_dates", {}),
     ("rag.corpus__notes", {"query": "what"}),
     # Operation categories (= _OPERATION_RULES) — passthrough transformers,
     # so the caller args must already include the target's required keys.
+    # Issue #879 collapsed mcp surface — six verb actions.
+    ("mcp__search_server",  {"text": "github related"}),
+    ("mcp__install_server", {"text": "pypi:mcp-server-time"}),
+    ("mcp__list_servers",   {}),
+    ("mcp__list_tools",     {"server": "brave"}),
+    ("mcp__call_tool",
+     {"server": "brave", "mcp_tool_name": "search", "args": {"q": "reyn"}}),
+    ("mcp__drop_server",    {"server": "brave"}),
     ("file__read",   {"path": "a.txt"}),
     ("file__write",  {"path": "a.txt", "content": "x"}),
     ("file__delete", {"path": "a.txt"}),
@@ -578,7 +590,6 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("reyn.source__grep", {"pattern": "x"}),
     ("rag.operation__recall",      {"query": "q", "sources": ["s"]}),
     ("rag.operation__drop_source", {"source": "s"}),
-    ("mcp.operation__drop_server", {"server": "x"}),
     ("validation__lint",           {"skill_path": "index_events"}),
     ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),
 ]
