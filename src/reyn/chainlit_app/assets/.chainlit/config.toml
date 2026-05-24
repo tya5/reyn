@@ -1,0 +1,22 @@
+# reyn-shipped Chainlit defaults — copied into cwd/.chainlit/config.toml on
+# first ``reyn chainlit`` launch when the file is absent. Operator edits
+# made after first launch are preserved (= idempotent copy mirroring
+# Chainlit's own ``init_config`` posture).
+#
+# Partial TOML is fine: ``chainlit/config.py::load_settings`` extracts
+# ``[project]`` / ``[features]`` / ``[UI]`` sections and feeds them
+# through the pydantic ``ProjectSettings`` / ``FeaturesSettings`` /
+# ``UISettings`` constructors, which fill in defaults for any missing
+# fields. ``[meta].generated_by`` is the only required field (= the loader
+# raises if absent or <= "0.3.0").
+
+[UI]
+# Skip the "Start a new chat?" confirmation popup when the operator
+# clicks the agent-switch / new-chat button. Operators dogfooding the
+# reyn picker (#888) want to flip between agents quickly; the extra
+# confirm step adds friction without preventing real mistakes
+# (= reyn keeps history per agent regardless).
+confirm_new_chat = false
+
+[meta]
+generated_by = "reyn-chainlit-app"
