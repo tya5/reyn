@@ -66,7 +66,7 @@ def _make_config() -> BatchConfig:
 
 
 def test_prompt_contains_verdict_scoping_guidance():
-    """Tier 2 (B48 W1 fix): the prompt MUST explicitly state that
+    """Tier 2: the prompt MUST explicitly state that (B48 W1 fix)
     ``covers:`` and scenario metadata are NOT verdict criteria."""
     cfg = _make_config()
     prompt = render_worker_prompt(cfg, cfg.workers[0])
