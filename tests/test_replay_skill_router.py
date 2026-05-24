@@ -789,19 +789,6 @@ async def test_list_actions_discovery_then_invoke():
     assert host.outbox[-1]["kind"] == "agent"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "LLM replay fixture hash mismatch from ARG SCHEMAS sparse "
-        "description rendering change (= F3 fix, PR adding "
-        "description= to invoke_action.description for keys with "
-        "ToolDefinition description metadata). LLM behavior unchanged; "
-        "only the tools[] JSON hash key shifts. Re-record blocked on "
-        "fixture infra provider-agnostic rework (= issue #647); this "
-        "test heals once #647 lands a re-record path that doesn't "
-        "require user-specific Vertex AI / direct Gemini SDK env."
-    ),
-    strict=False,
-)
 @pytest.mark.replay(
     "fixtures/llm/router/universal_wrappers/forced_invoke_action.jsonl"
 )
@@ -865,19 +852,6 @@ async def test_forced_invoke_action_dispatch_chain():
     assert host.outbox[-1]["kind"] == "agent"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "LLM replay fixture hash mismatch from ARG SCHEMAS sparse "
-        "description rendering change (= F3 fix, PR adding "
-        "description= to invoke_action.description for keys with "
-        "ToolDefinition description metadata). LLM behavior unchanged; "
-        "only the tools[] JSON hash key shifts. Re-record blocked on "
-        "fixture infra provider-agnostic rework (= issue #647); this "
-        "test heals once #647 lands a re-record path that doesn't "
-        "require user-specific Vertex AI / direct Gemini SDK env."
-    ),
-    strict=False,
-)
 @pytest.mark.replay(
     "fixtures/llm/router/universal_wrappers/invoke_skill_with_wrappers.jsonl"
 )
