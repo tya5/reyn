@@ -143,3 +143,83 @@ def test_mixed_visible_and_internal_roles_filters_correctly():
         _FakeMsg(role="assistant", content="a2"),
     ])
     assert [e.content for e in out] == ["q1", "a1", "a1b", "q2", "a2"]
+
+
+# ── cap behavior ──────────────────────────────────────────────────────────
+
+
+def _seq_history(n: int) -> list:
+    """Build ``n`` alternating user/assistant turns numbered 0..n-1."""
+    out = []
+    for i in range(n):
+        role = "user" if i % 2 == 0 else "assistant"
+        out.append(_FakeMsg(role=role, content=f"turn{i}"))
+    return out
+
+
+def test_cap_none_returns_full_history():
+    """Tier 1: cap=None (default) → no truncation, no marker, all entries."""
+    out = history_to_chainlit(_seq_history(10))
+    assert len(out) == 10
+    assert all(e.author != "system" for e in out)
+
+
+def test_cap_zero_treated_as_unlimited():
+    """Tier 1: cap=0 → unlimited (= the env-var "show all" sentinel)."""
+    out = history_to_chainlit(_seq_history(10), cap=0)
+    assert len(out) == 10
+    assert all(e.author != "system" for e in out)
+
+
+def test_cap_negative_treated_as_unlimited():
+    """Tier 1: cap=-1 → unlimited (= defensive, same as cap=0)."""
+    out = history_to_chainlit(_seq_history(10), cap=-1)
+    assert len(out) == 10
+
+
+def test_cap_larger_than_history_no_marker():
+    """Tier 1: cap=100 on 10-entry history → no truncation, no marker."""
+    out = history_to_chainlit(_seq_history(10), cap=100)
+    assert len(out) == 10
+    assert all(e.author != "system" for e in out)
+
+
+def test_cap_equal_to_history_no_marker():
+    """Tier 1: cap=10 on 10-entry history → exact fit, no marker."""
+    out = history_to_chainlit(_seq_history(10), cap=10)
+    assert len(out) == 10
+    assert all(e.author != "system" for e in out)
+
+
+def test_cap_slices_to_last_n_with_marker():
+    """Tier 1: cap=3 on 10-entry history → 1 system marker + last 3 entries."""
+    out = history_to_chainlit(_seq_history(10), cap=3)
+    assert len(out) == 4  # 1 marker + 3 kept
+    assert out[0].author == "system"
+    assert "7" in out[0].content  # 10 - 3 = 7 omitted
+    assert [e.content for e in out[1:]] == ["turn7", "turn8", "turn9"]
+
+
+def test_cap_marker_mentions_env_var_for_unbounded():
+    """Tier 1: marker text tells the operator how to opt back into full
+    replay (= avoids "where did my history go?" without a hint)."""
+    out = history_to_chainlit(_seq_history(100), cap=10)
+    assert out[0].author == "system"
+    assert "REYN_CHAINLIT_HISTORY_CAP" in out[0].content
+
+
+def test_cap_applied_after_filtering():
+    """Tier 1: cap counts *visible* entries, not raw history length.
+    A history of 100 internal entries + 5 visible should never trigger
+    the marker for cap=10 (= visible < cap)."""
+    msgs = []
+    for i in range(100):
+        msgs.append(_FakeMsg(role="tool", content=f"tool{i}"))
+    msgs.extend([
+        _FakeMsg(role="user", content="visible1"),
+        _FakeMsg(role="assistant", content="visible2"),
+    ])
+    out = history_to_chainlit(msgs, cap=10)
+    assert len(out) == 2
+    assert [e.content for e in out] == ["visible1", "visible2"]
+    assert all(e.author != "system" for e in out)

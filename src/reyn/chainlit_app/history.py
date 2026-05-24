@@ -100,14 +100,45 @@ def _flatten_content(content: "str | list[dict]") -> str:
     return "\n".join(chunks)
 
 
-def history_to_chainlit(history: Iterable[_MessageLike]) -> list[HistoryEntry]:
+DEFAULT_REPLAY_CAP = 50
+
+
+def _truncation_marker(omitted: int) -> HistoryEntry:
+    """One-line system entry rendered at the top of a capped replay."""
+    return HistoryEntry(
+        author="system",
+        content=(
+            f"_({omitted} earlier turns omitted to keep the chat snappy. "
+            "Set `REYN_CHAINLIT_HISTORY_CAP=0` to show all.)_"
+        ),
+    )
+
+
+def history_to_chainlit(
+    history: Iterable[_MessageLike], *, cap: int | None = None,
+) -> list[HistoryEntry]:
     """Convert ``ChatSession.history`` into a list of replay-ready entries.
 
     Order preserved (= chronological), drops applied per
     ``_DROPPED_ROLES``. Empty-text turns (= ``content`` flattens to ``""``)
     are also dropped so the replay doesn't emit blank cells.
+
+    ``cap``:
+        - ``None`` (default): no cap, full history rendered.
+        - positive int: keep at most this many *visible* entries; if the
+          full history would exceed the cap, slice to the last ``cap``
+          entries and prepend a single ``author="system"`` marker that
+          tells the operator how many entries were skipped + how to
+          opt back into full replay.
+        - ``0`` or negative: treated the same as ``None`` (= unlimited)
+          so the env-var path can use ``REYN_CHAINLIT_HISTORY_CAP=0``
+          as the "show all" sentinel without a separate flag.
+
+    Capping happens after filtering so that ``cap=50`` always shows the
+    last 50 *visible* turns regardless of how many internal entries
+    (tool / system / summary) sit between them on disk.
     """
-    out: list[HistoryEntry] = []
+    visible: list[HistoryEntry] = []
     for msg in history:
         role = getattr(msg, "role", "")
         if role in _DROPPED_ROLES:
@@ -118,11 +149,19 @@ def history_to_chainlit(history: Iterable[_MessageLike]) -> list[HistoryEntry]:
         text = _flatten_content(getattr(msg, "content", ""))
         if not text:
             continue
-        out.append(HistoryEntry(author=author, content=text))
-    return out
+        visible.append(HistoryEntry(author=author, content=text))
+
+    if cap is None or cap <= 0:
+        return visible
+    if len(visible) <= cap:
+        return visible
+
+    omitted = len(visible) - cap
+    return [_truncation_marker(omitted)] + visible[-cap:]
 
 
 __all__ = [
+    "DEFAULT_REPLAY_CAP",
     "HistoryEntry",
     "history_to_chainlit",
 ]
