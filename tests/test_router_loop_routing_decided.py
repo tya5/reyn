@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import patch
+
+import pytest
 
 from reyn.chat.router_loop import RouterLoop
 from reyn.llm.llm import LLMToolCallResult
@@ -180,6 +181,7 @@ class _FakeRouterHost:
 def _run_with_llm_sequence(
     host: _FakeRouterHost,
     llm_turns: list[LLMToolCallResult],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Drive RouterLoop.run() using a real coroutine sequence as call_llm_tools.
 
@@ -193,8 +195,8 @@ def _run_with_llm_sequence(
         return turns.pop(0)
 
     loop = RouterLoop(host=host, chain_id="chain-test", max_iterations=5)
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=_fake_call_llm_tools):
-        asyncio.run(loop.run("hello", []))
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _fake_call_llm_tools)
+    asyncio.run(loop.run("hello", []))
 
 
 def _routing_decided_events(host: _FakeRouterHost) -> list[dict]:
@@ -206,7 +208,7 @@ def _routing_decided_events(host: _FakeRouterHost) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def test_routing_decided_emitted_for_invoke_action():
+def test_routing_decided_emitted_for_invoke_action(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: invoke_action call emits routing_decided with source='invoke_action' and outcome='success'."""
     host = _FakeRouterHost(universal_wrappers_enabled=True)
     # Turn 1: LLM calls invoke_action(action_name="skill__foo")
@@ -217,6 +219,7 @@ def test_routing_decided_emitted_for_invoke_action():
             _tool_result([{"name": "invoke_action", "args": {"action_name": "skill__foo", "args": {}}}]),
             _text_result("ok"),
         ],
+        monkeypatch,
     )
 
     events = _routing_decided_events(host)
@@ -233,7 +236,7 @@ def test_routing_decided_emitted_for_invoke_action():
 # ---------------------------------------------------------------------------
 
 
-def test_routing_decided_emitted_for_hot_list_alias():
+def test_routing_decided_emitted_for_hot_list_alias(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: hot list alias call emits routing_decided with source='hot_list_alias' and outcome='success'.
 
     A real ActionUsageTracker pre-loaded with 'skill__bar' is passed so
@@ -262,6 +265,7 @@ def test_routing_decided_emitted_for_hot_list_alias():
             _tool_result([{"name": "skill__bar", "args": {}}]),
             _text_result("done"),
         ],
+        monkeypatch,
     )
 
     events = _routing_decided_events(host)
@@ -278,7 +282,7 @@ def test_routing_decided_emitted_for_hot_list_alias():
 # ---------------------------------------------------------------------------
 
 
-def test_routing_decided_outcome_error_on_tool_error():
+def test_routing_decided_outcome_error_on_tool_error(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: routing_decided outcome='error' when the tool result is an error.
 
     Issue #229 changed the resolvable-direct-call path (= ``skill__bad``)
@@ -301,6 +305,7 @@ def test_routing_decided_outcome_error_on_tool_error():
             _tool_result([{"name": "bogus_category__action", "args": {}}]),
             _text_result("done"),
         ],
+        monkeypatch,
     )
 
     events = _routing_decided_events(host)
@@ -317,7 +322,7 @@ def test_routing_decided_outcome_error_on_tool_error():
 # ---------------------------------------------------------------------------
 
 
-def test_routing_decided_not_emitted_for_non_catalog_tool():
+def test_routing_decided_not_emitted_for_non_catalog_tool(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: plain tool without '__' and not invoke_action emits no routing_decided."""
     host = _FakeRouterHost(universal_wrappers_enabled=True)
     # Turn 1: LLM calls list_skills (plain OS tool, no '__')
@@ -329,6 +334,7 @@ def test_routing_decided_not_emitted_for_non_catalog_tool():
             _tool_result([{"name": "list_skills", "args": {}}]),
             _text_result("ok"),
         ],
+        monkeypatch,
     )
 
     events = _routing_decided_events(host)
@@ -343,7 +349,7 @@ def test_routing_decided_not_emitted_for_non_catalog_tool():
 # ---------------------------------------------------------------------------
 
 
-def test_routing_decided_skipped_when_action_name_empty():
+def test_routing_decided_skipped_when_action_name_empty(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: invoke_action call with missing action_name does not emit routing_decided."""
     host = _FakeRouterHost(universal_wrappers_enabled=True)
     # invoke_action with empty args (no action_name key)
@@ -353,6 +359,7 @@ def test_routing_decided_skipped_when_action_name_empty():
             _tool_result([{"name": "invoke_action", "args": {}}]),
             _text_result("ok"),
         ],
+        monkeypatch,
     )
 
     events = _routing_decided_events(host)
@@ -367,7 +374,7 @@ def test_routing_decided_skipped_when_action_name_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_routing_decided_source_ars_direct_for_unsalvageable_qualified_name():
+def test_routing_decided_source_ars_direct_for_unsalvageable_qualified_name(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: a qualified name not in catalog tags ``source="ars_direct"``.
 
     Issue #241: distinguish "the alias was a real hot-list entry the LLM
@@ -389,6 +396,7 @@ def test_routing_decided_source_ars_direct_for_unsalvageable_qualified_name():
             _tool_result([{"name": "bogus_category__action", "args": {}}]),
             _text_result("done"),
         ],
+        monkeypatch,
     )
     events = _routing_decided_events(host)
     assert len(events) == 1
@@ -400,7 +408,7 @@ def test_routing_decided_source_ars_direct_for_unsalvageable_qualified_name():
     )
 
 
-def test_routing_decided_source_hot_list_alias_only_when_in_catalog():
+def test_routing_decided_source_hot_list_alias_only_when_in_catalog(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: ``source="hot_list_alias"`` requires name to be in tools[].
 
     Pin the discriminator: with a tracker pre-loaded for ``skill__bar``,
@@ -421,6 +429,7 @@ def test_routing_decided_source_hot_list_alias_only_when_in_catalog():
             _tool_result([{"name": "skill__bar", "args": {}}]),
             _text_result("done"),
         ],
+        monkeypatch,
     )
     events = _routing_decided_events(host)
     assert len(events) == 1
