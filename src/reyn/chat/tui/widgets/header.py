@@ -216,7 +216,120 @@ class ReynHeader(RenderableCacheMixin, Widget):
         except Exception:
             pass
 
-    def _maybe_truncate_agent_name(self) -> str:
+    # Minimum cells to reserve for the agent name before progressive
+    # field drop kicks in. 6 cells can show ~3 chars + ellipsis — enough
+    # to be a meaningful identity signal.
+    _MIN_AGENT_CELLS = 6
+
+    def _compute_field_widths(
+        self, *, include_model: bool = True, include_cost: bool = True, include_tokens: bool = True
+    ) -> tuple[int, int]:
+        """Return ``(other_cells, part_count)`` for the given field inclusion flags.
+
+        Used by both ``_choose_included_fields`` and
+        ``_maybe_truncate_agent_name`` so the budget arithmetic is in one
+        place. ``agent_name`` and ``clock`` are always included (they are
+        never dropped). Badges (pending / find / voice) are always included
+        — they are active-state cues with higher priority than fixed fields.
+        """
+        other_cells = 0
+        part_count = 0  # start at 0; agent_name slot counted by callers
+
+        if include_model and self._model:
+            other_cells += cell_len(_shorten_model_id(self._model))
+            part_count += 1
+
+        if include_tokens:
+            tok_str = f"{self._tokens_today:,}"
+            if self._tokens_cap is not None:
+                tok_str += f" / {self._tokens_cap:,}"
+            tok_str += " tok"
+            other_cells += cell_len(tok_str)
+            part_count += 1
+
+        if include_cost:
+            cost_str = f"${self._cost_usd:.4f}"
+            if self._cost_cap is not None:
+                cost_str += f" / ${self._cost_cap:.2f}"
+            other_cells += cell_len(cost_str)
+            part_count += 1
+
+        if self._stalled_count > 0:
+            other_cells += cell_len(f"[{self._stalled_count} pending]")
+            part_count += 1
+
+        if self._find_state is not None:
+            fs = self._find_state
+            find_badge = (
+                f"[find: '{fs.get('query', '')}' "
+                f"{fs.get('position', 0)}/{fs.get('total', 0)}]"
+            )
+            other_cells += cell_len(find_badge)
+            part_count += 1
+
+        if self._voice_state == "recording":
+            other_cells += cell_len("🔴 voice · Enter→send Esc→cancel")
+            part_count += 1
+        elif self._voice_state == "transcribing":
+            other_cells += cell_len("⏳ voice")
+            part_count += 1
+
+        # Clock is always present.
+        other_cells += cell_len(self._now_text())
+        part_count += 1
+
+        return other_cells, part_count
+
+    def _choose_included_fields(self, available: int) -> tuple[bool, bool, bool]:
+        """Return ``(include_model, include_cost, include_tokens)`` flags.
+
+        Drops optional fields in priority order (model first, then cost,
+        then tokens) until the agent name budget reaches
+        ``_MIN_AGENT_CELLS``. Clock and badges are never dropped — they
+        are higher-priority active-state / canary signals.
+
+        When ``available <= 0`` (= pre-mount or extreme width) all fields
+        are returned as-is; the budget guard in ``_maybe_truncate_agent_name``
+        handles the extreme case with the 3-cell minimum.
+        """
+        if available <= 0:
+            return True, True, True
+
+        name_cells = cell_len(self._agent_name) if self._agent_name else 0
+        sep_w = cell_len("  │  ")
+
+        include_model = True
+        include_cost = True
+        include_tokens = True
+
+        for drop in ("model", "cost", "tokens"):
+            other_cells, part_count = self._compute_field_widths(
+                include_model=include_model,
+                include_cost=include_cost,
+                include_tokens=include_tokens,
+            )
+            # +1 for agent_name slot; separator count = total_parts - 1
+            total_parts = 1 + part_count  # agent + everything else
+            separator_cells = max(0, total_parts - 1) * sep_w
+            budget = available - other_cells - separator_cells
+            if budget >= self._MIN_AGENT_CELLS:
+                break  # enough room — stop dropping
+            if drop == "model":
+                include_model = False
+            elif drop == "cost":
+                include_cost = False
+            elif drop == "tokens":
+                include_tokens = False
+
+        return include_model, include_cost, include_tokens
+
+    def _maybe_truncate_agent_name(
+        self,
+        *,
+        include_model: bool = True,
+        include_cost: bool = True,
+        include_tokens: bool = True,
+    ) -> str:
         """Truncate ``_agent_name`` so the assembled status fits the cell.
 
         Computes the cell-width of every other status field (model,
@@ -229,6 +342,9 @@ class ReynHeader(RenderableCacheMixin, Widget):
         will recompute once layout is known. A minimum of 3 cells is
         always reserved for the agent name so the field doesn't
         disappear entirely on extreme widths.
+
+        The ``include_*`` flags mirror the output of ``_choose_included_fields``
+        so that truncation budget matches the actual set of rendered parts.
         """
         name = self._agent_name
         if not name:
@@ -250,52 +366,14 @@ class ReynHeader(RenderableCacheMixin, Widget):
         available = total_width - title_cells - status_pad
         if available <= 0:
             return name
-        # Cell-width of everything else this _format_status emits.
-        other_cells = 0
-        if self._model:
-            other_cells += cell_len(_shorten_model_id(self._model))
-        tok_str = f"{self._tokens_today:,}"
-        if self._tokens_cap is not None:
-            tok_str += f" / {self._tokens_cap:,}"
-        tok_str += " tok"
-        other_cells += cell_len(tok_str)
-        cost_str = f"${self._cost_usd:.4f}"
-        if self._cost_cap is not None:
-            cost_str += f" / ${self._cost_cap:.2f}"
-        other_cells += cell_len(cost_str)
-        if self._stalled_count > 0:
-            other_cells += cell_len(f"[{self._stalled_count} pending]")
-        # ``/find`` active badge — exact same text as _format_status
-        # so the budget is accurate.  The badge text depends on the
-        # current query / position / total stored in ``_find_state``.
-        if self._find_state is not None:
-            fs = self._find_state
-            find_badge = (
-                f"[find: '{fs.get('query', '')}' "
-                f"{fs.get('position', 0)}/{fs.get('total', 0)}]"
-            )
-            other_cells += cell_len(find_badge)
-        # Voice mode badge — the recording hint is the widest variant;
-        # measure its exact cell width (emoji counts as 2 cells).
-        if self._voice_state == "recording":
-            other_cells += cell_len("🔴 voice · Enter→send Esc→cancel")
-        elif self._voice_state == "transcribing":
-            other_cells += cell_len("⏳ voice")
-        other_cells += cell_len(self._now_text())
-        # Separator count: number of joins between parts. With
-        # agent_name included, parts = 1 (agent) + (1 if model) + 2
-        # (tokens, cost) + (1 if stalled) + (1 if find) + (1 if voice)
-        # + 1 (clock).
-        part_count = (
-            1
-            + (1 if self._model else 0)
-            + 2
-            + (1 if self._stalled_count > 0 else 0)
-            + (1 if self._find_state is not None else 0)
-            + (1 if self._voice_state else 0)
-            + 1
+        other_cells, part_count = self._compute_field_widths(
+            include_model=include_model,
+            include_cost=include_cost,
+            include_tokens=include_tokens,
         )
-        separator_cells = max(0, part_count - 1) * cell_len("  │  ")
+        # +1 for agent_name slot itself.
+        total_parts = 1 + part_count
+        separator_cells = max(0, total_parts - 1) * cell_len("  │  ")
         budget = available - other_cells - separator_cells
         if budget >= cell_len(name):
             return name
@@ -331,44 +409,73 @@ class ReynHeader(RenderableCacheMixin, Widget):
         eye on the per-turn metrics that DO change — tokens, cost, and
         the clock canary at the right edge.
 
-        Narrow-terminal truncation: when the assembled status's total
-        cell-width would exceed the widget's available width (= title
-        cell already accounted for), ``_agent_name`` is the field
-        truncated first. Rationale: it is (a) the field most likely to
-        be long (full agent names can run 20+ cells), (b) the least
-        time-sensitive (= changes rarely, doesn't carry per-turn
-        information), and (c) the leftmost — keeping the clock canary,
-        cost, and pending badge at the right edge intact for
-        glance-reading.
+        Narrow-terminal layout: two-stage approach.
+
+        Stage 1 — progressive field drop (``_choose_included_fields``):
+        when the total of fixed fields would leave fewer than
+        ``_MIN_AGENT_CELLS`` for the agent name, optional fields are
+        dropped in priority order — model first (longest, least time-
+        sensitive), then cost, then tokens. Clock and active-state
+        badges (voice / find / pending) are never dropped.
+
+        Stage 2 — agent name truncation (``_maybe_truncate_agent_name``):
+        after optional fields are dropped, any remaining overflow is
+        absorbed by truncating the agent name with ``…``. A 3-cell
+        minimum is always reserved so the field doesn't disappear.
         """
+        # Progressive field drop at narrow widths: compute which optional
+        # fields (model / cost / tokens) survive given the available cell
+        # budget. Clock and badges are never dropped. When the widget is
+        # pre-mount (size.width == 0) _choose_included_fields returns all-
+        # True and _maybe_truncate_agent_name falls back to verbatim.
+        try:
+            total_width = self.size.width
+        except Exception:
+            total_width = 0
+        title_cells = 2 + cell_len("Reyn")
+        status_pad = 2
+        available = total_width - title_cells - status_pad
+        include_model, include_cost, include_tokens = self._choose_included_fields(available)
+
         # (text, style) tuples — style=None falls back to the widget's
         # default text color (#aaaaaa, see DEFAULT_CSS above).
         parts: list[tuple[str, str | None]] = []
         if self._agent_name:
-            parts.append((self._maybe_truncate_agent_name(), None))
-        if self._model:
+            parts.append((
+                self._maybe_truncate_agent_name(
+                    include_model=include_model,
+                    include_cost=include_cost,
+                    include_tokens=include_tokens,
+                ),
+                None,
+            ))
+        if include_model and self._model:
             parts.append((_shorten_model_id(self._model), "dim #888888"))
-        tok_str = f"{self._tokens_today:,}"
-        if self._tokens_cap is not None:
-            tok_str += f" / {self._tokens_cap:,}"
-        tok_str += " tok"
-        # Use 4 decimals so the cheap-model spend stays visible. With 2dp
-        # `gemini-flash-lite` rounds to `$0.00` even after dozens of calls;
-        # users see the token counter tick up but think the cost is free.
-        # The cap (when set) is at a larger scale, so 2dp there is fine.
-        cost_str = f"${self._cost_usd:.4f}"
-        if self._cost_cap is not None:
-            cost_str += f" / ${self._cost_cap:.2f}"
-        # B-F1 (wave-8): cap-proximity color escalation. When budget caps
-        # are configured, the token / cost segments shift to amber at
-        # ≥ 75 % utilisation and to red at ≥ 90 % so the user has a
-        # live gradient cue without waiting for the hard
-        # ``[↑ budget warn: …]`` lifecycle marker at 80 %. Thresholds
-        # match the cost-tab's ``_budget_bar`` for cross-surface
-        # consistency. When no cap is configured, the field stays at
-        # the default ``#aaaaaa`` (= style=None falls through).
-        parts.append((tok_str, _cap_proximity_color(self._tokens_today, self._tokens_cap)))
-        parts.append((cost_str, _cap_proximity_color(self._cost_usd, self._cost_cap)))
+
+        if include_tokens:
+            tok_str = f"{self._tokens_today:,}"
+            if self._tokens_cap is not None:
+                tok_str += f" / {self._tokens_cap:,}"
+            tok_str += " tok"
+            # B-F1 (wave-8): cap-proximity color escalation. When budget caps
+            # are configured, the token / cost segments shift to amber at
+            # ≥ 75 % utilisation and to red at ≥ 90 % so the user has a
+            # live gradient cue without waiting for the hard
+            # ``[↑ budget warn: …]`` lifecycle marker at 80 %. Thresholds
+            # match the cost-tab's ``_budget_bar`` for cross-surface
+            # consistency. When no cap is configured, the field stays at
+            # the default ``#aaaaaa`` (= style=None falls through).
+            parts.append((tok_str, _cap_proximity_color(self._tokens_today, self._tokens_cap)))
+
+        if include_cost:
+            # Use 4 decimals so the cheap-model spend stays visible. With 2dp
+            # `gemini-flash-lite` rounds to `$0.00` even after dozens of calls;
+            # users see the token counter tick up but think the cost is free.
+            # The cap (when set) is at a larger scale, so 2dp there is fine.
+            cost_str = f"${self._cost_usd:.4f}"
+            if self._cost_cap is not None:
+                cost_str += f" / ${self._cost_cap:.2f}"
+            parts.append((cost_str, _cap_proximity_color(self._cost_usd, self._cost_cap)))
         # Issue #277 — pending-ops badge. Inserted before the clock so
         # the canary stays in its expected (= rightmost) position.
         # Amber-style colour to signal "user attention soft-required".
