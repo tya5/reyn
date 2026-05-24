@@ -1,6 +1,6 @@
 """Tier 2: empty-state hint surfaces the side-panel tabs by name.
 
-The right panel (Keys / Events / Agents / Memory / Cost / Docs) is
+The right panel (Keys / Events / Agents / Memory / Cost / Docs / Pending) is
 ``display: none`` by default. Before this fix, the only on-screen cue
 was the footer's terse ``Ctrl+B panel`` — a new user with no prior
 context could not tell what the panel even contains, so the entire
@@ -57,8 +57,10 @@ async def test_empty_hint_names_side_panel_and_tabs() -> None:
         assert "side panel" in text.lower(), (
             f"hint must say 'side panel' for discoverability; got: {text!r}"
         )
-        # Tabs — assert on at least three to defend against accidental dropouts
-        for tab in ("keys", "events", "docs"):
+        # Tabs — assert on all seven to defend against accidental dropouts.
+        # ``pending`` was added in fix/tui-empty-hint-pending-tab after dogfood
+        # 2026-05-24 revealed it was the only tab not enumerated in the hint.
+        for tab in ("keys", "events", "agents", "memory", "cost", "docs", "pending"):
             assert tab in text.lower(), f"tab {tab!r} missing from hint: {text!r}"
 
 
