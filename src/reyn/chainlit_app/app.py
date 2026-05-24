@@ -31,6 +31,13 @@ import chainlit as cl
 from reyn.chainlit_app.adapter import outbox_to_chainlit
 from reyn.chainlit_app.history import DEFAULT_REPLAY_CAP, history_to_chainlit
 from reyn.chainlit_app.profiles import list_agent_profiles
+from reyn.chainlit_app.settings import (
+    LANGUAGE_ITEMS,
+    LANGUAGE_SETTING_ID,
+    language_label_for,
+    language_to_value,
+    value_to_language,
+)
 from reyn.chainlit_app.slash_route import (
     QUICK_ACTIONS,
     QuickAction,
@@ -296,6 +303,30 @@ async def _on_chat_start() -> None:
 
     task = asyncio.create_task(_drain_loop(registry))
     cl.user_session.set(_DRAIN_KEY, task)
+
+    # Settings panel: surface ``output_language`` as a per-cl-session
+    # knob so the operator can flip Auto / 日本語 / English / 中文 / 한국어
+    # without restarting `reyn chainlit`. ``cl.ChatSettings(...).send()``
+    # renders the gear icon next to the input box; selecting an item
+    # fires ``@cl.on_settings_update`` below.
+    try:
+        await cl.ChatSettings([
+            cl.input_widget.Select(
+                id=LANGUAGE_SETTING_ID,
+                label="Output language",
+                items=dict(LANGUAGE_ITEMS),
+                initial_value=language_to_value(
+                    getattr(session, "output_language", None),
+                ),
+                tooltip=(
+                    "LLM の応答言語の指定。 Auto で LLM が user 入力に"
+                    "合わせる。 変更は次の turn から有効。"
+                ),
+            ),
+        ]).send()
+    except Exception:
+        pass
+
     actions = [
         cl.Action(
             name=action_name_for(qa),
@@ -309,6 +340,30 @@ async def _on_chat_start() -> None:
         author="system",
         actions=actions,
     ).send()
+
+
+@cl.on_settings_update
+async def _on_settings_update(settings: dict) -> None:
+    """Apply the gear-icon settings panel updates to the attached session.
+
+    Currently only handles ``output_language``. Future per-session knobs
+    (= e.g. ``REYN_CHAINLIT_HISTORY_CAP`` mid-session change, allowed
+    skill filter) plug into this same dispatcher.
+    """
+    registry = await _get_or_build_registry()
+    session = registry.attached_session()
+    if session is None:
+        return
+    if LANGUAGE_SETTING_ID in settings:
+        value = settings.get(LANGUAGE_SETTING_ID)
+        new_lang = value_to_language(value)
+        session.output_language = new_lang
+        await cl.Message(
+            content=(
+                f"Output language → **{language_label_for(value or 'auto')}**."
+            ),
+            author="system",
+        ).send()
 
 
 @cl.on_message
