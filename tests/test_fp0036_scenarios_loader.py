@@ -58,8 +58,7 @@ def test_minimal_valid_set_loads(tmp_path: Path) -> None:
     ss = load_scenario_set(p)
     assert isinstance(ss, ScenarioSet)
     assert ss.name == "smoke_minimal"
-    assert len(ss.scenarios) == 1
-    scenario = ss.scenarios[0]
+    (scenario,) = ss.scenarios
     assert scenario.id == "s1"
     assert scenario.input == "Hello world"
     assert scenario.prompts == []
@@ -90,8 +89,7 @@ def test_multi_turn_set_loads(tmp_path: Path) -> None:
         """,
     )
     ss = load_scenario_set(p)
-    assert len(ss.scenarios) == 1
-    s = ss.scenarios[0]
+    (s,) = ss.scenarios
     assert s.id == "mt1"
     assert s.kind == "research_chain"
     assert s.prompts == [
@@ -141,7 +139,15 @@ def test_long_session_v1_loads(tmp_path: Path) -> None:
     ss = load_scenario_set(long_session_path)
     assert isinstance(ss, ScenarioSet)
     assert ss.name == "long_session_v1"
-    assert len(ss.scenarios) == 7
+    assert [s.id for s in ss.scenarios] == [
+        "scenario_1_reyn_research_chain",
+        "scenario_2_pronoun_followup",
+        "scenario_3_cross_reference_compare",
+        "scenario_4_repetitive_context_bloat",
+        "scenario_5_general_python_chain",
+        "scenario_6_file_and_doc_lookup_chain",
+        "scenario_7_concept_explanation_chain",
+    ]
     for s in ss.scenarios:
         # All scenarios are multi-turn (= prompts: [...])
         assert s.is_multi_turn is True
@@ -379,8 +385,8 @@ def test_event_assertion_count_valid(tmp_path: Path, count_str: str, expected_st
     ss = load_scenario_set(p)
     ee = ss.scenarios[0].expected_events
     assert ee is not None
-    assert len(ee.must_emit) == 1
-    assert ee.must_emit[0].count == expected_stored
+    (only_emit,) = ee.must_emit
+    assert only_emit.count == expected_stored
 
 
 # ── 12. EventAssertion malformed count raises ─────────────────────────────
@@ -549,22 +555,21 @@ def test_artifact_assertion_optional_fields_load(tmp_path: Path) -> None:
     ea = ss.scenarios[0].expected_artifacts
     assert ea is not None
     assert isinstance(ea, ExpectedArtifacts)
-    items = ea.items
-    assert len(items) == 3
+    item0, item1, item2 = ea.items
 
-    assert items[0].skill == "direct_llm"
-    assert items[0].type is None
-    assert items[0].present is True
-    assert items[0].fingerprint is None
+    assert item0.skill == "direct_llm"
+    assert item0.type is None
+    assert item0.present is True
+    assert item0.fingerprint is None
 
-    assert items[1].skill is None
-    assert items[1].type == "plan_artifact"
-    assert items[1].present is False
-    assert items[1].fingerprint == "abc123def456"
+    assert item1.skill is None
+    assert item1.type == "plan_artifact"
+    assert item1.present is False
+    assert item1.fingerprint == "abc123def456"
 
-    assert items[2].skill == "eval_skill"
-    assert items[2].type == "eval_result"
-    assert items[2].present is True
+    assert item2.skill == "eval_skill"
+    assert item2.type == "eval_result"
+    assert item2.present is True
 
 
 # ── full-featured scenario smoke ──────────────────────────────────────────
@@ -633,13 +638,13 @@ def test_full_featured_scenario_loads(tmp_path: Path) -> None:
 
     ee = s.expected_events
     assert ee is not None
-    assert len(ee.must_emit) == 2
-    assert ee.must_emit[0].type == "skill_run_spawned"
-    assert ee.must_emit[0].count == ">=1"
-    assert ee.must_emit[1].type == "skill_run_completed"
-    assert ee.must_emit[1].status == "success"
-    assert len(ee.must_not_emit) == 1
-    assert ee.must_not_emit[0].type == "permission_denied"
+    emit0, emit1 = ee.must_emit
+    assert emit0.type == "skill_run_spawned"
+    assert emit0.count == ">=1"
+    assert emit1.type == "skill_run_completed"
+    assert emit1.status == "success"
+    (must_not_emit0,) = ee.must_not_emit
+    assert must_not_emit0.type == "permission_denied"
     assert ee.sequence == ["skill_run_spawned", "skill_run_completed"]
 
     ea = s.expected_artifacts
