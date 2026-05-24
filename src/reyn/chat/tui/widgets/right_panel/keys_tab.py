@@ -27,6 +27,11 @@ _KEY_DETAILS: dict[str, str] = {
         "/expand or clicking the foldable's hint footer. Collapsed shows\n"
         "preview + ▶ hint; expanded shows full text + ▼ hint."
     ),
+    "f9": (
+        "Toggle the HH:MM timestamp prefix in conv-pane message headers.\n"
+        "With timestamps hidden, body indent shrinks col 8 → col 2, giving\n"
+        "more horizontal space for content. Persists via tui_prefs.json."
+    ),
     "f3": (
         "Drill-down expands the cursor's skill row to show phase history,\n"
         "tool calls, and per-phase events. Mouse-click on the row does\n"
@@ -118,7 +123,7 @@ _KEY_PRETTY: dict[str, str] = {
     "ctrl+shift+g": "⌃⇧G",
     "enter": "Enter", "tab": "Tab", "escape": "Esc", "space": "Space",
     "up": "↑", "down": "↓", "left": "←", "right": "→",
-    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f7": "F7", "f8": "F8",
+    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f7": "F7", "f8": "F8", "f9": "F9",
     # Quick-jump number keys for the right-panel tabs (Ctrl+1 .. Ctrl+7).
     "ctrl+1": "⌃1", "ctrl+2": "⌃2", "ctrl+3": "⌃3", "ctrl+4": "⌃4",
     "ctrl+5": "⌃5", "ctrl+6": "⌃6", "ctrl+7": "⌃7", "ctrl+8": "⌃8",
@@ -149,6 +154,8 @@ _CONVERSATION_KEYS = {
     # F8: FoldableMarkdown toggle. Same rationale as F3/F7 — toggles
     # expand state of a widget mounted in the conv pane.
     "f8",
+    # F9: timestamp toggle — affects conv-pane header rendering.
+    "f9",
 }
 # ``j`` / ``k`` / ``space`` / ``c`` are routed via ``RightPanel.on_key``
 # (not ``app.BINDINGS``) and dispatch per-tab inside the panel handler,

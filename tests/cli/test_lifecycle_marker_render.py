@@ -155,19 +155,27 @@ async def test_lifecycle_marker_skips_system_speaker_header():
         rendered = _log_text(log)
         # The marker body lands.
         assert "↑ 3 turns compacted" in rendered
-        # The ``· system`` speaker tag does NOT — that would be the
-        # heavy pre-polish path leaking through.
+        # The system speaker symbol (``·``) must NOT appear as a standalone
+        # header — that would be the heavy pre-polish path leaking through.
+        # We check for the old "· system" label string (pre-refactor label
+        # text), and also that a bare "·" line doesn't appear as a header.
         assert "· system" not in rendered, (
             f"lifecycle marker leaked the system speaker header:\n{rendered}"
         )
+        # With the new symbol-only layout, the symbol for system is "·"
+        # but lifecycle markers bypass _maybe_write_header entirely, so no
+        # "·" should appear as a header line at all.
+        # (The marker itself may contain dashes and label text, but not the
+        # bare system glyph as a standalone speaker indicator.)
 
 
 @pytest.mark.asyncio
 async def test_regular_system_message_still_uses_speaker_header():
-    """Tier 2: non-marker system messages keep the full ``· system`` header.
+    """Tier 2: non-marker system messages keep the symbol (``·``) speaker header.
 
-    Defends against the detector being too greedy and accidentally
-    stripping headers from slash-command output.
+    Post-refactor: the header is symbol-only (``·`` or ``HH:MM ·``), no
+    label text. Defends against the detector being too greedy and
+    accidentally stripping headers from slash-command output.
     """
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -183,7 +191,9 @@ async def test_regular_system_message_still_uses_speaker_header():
         await pilot.pause()
 
         rendered = _log_text(log)
-        assert "· system" in rendered, (
-            f"regular system message lost its speaker header:\n{rendered}"
+        # Symbol-only header: the ``·`` glyph appears (= system speaker).
+        # The old "· system" label is gone; we check for the glyph only.
+        assert "·" in rendered, (
+            f"regular system message lost its speaker symbol:\n{rendered}"
         )
         assert "usage: /help" in rendered

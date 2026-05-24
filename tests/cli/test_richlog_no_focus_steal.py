@@ -115,8 +115,8 @@ async def test_ctrl_p_turn_nav_still_scrolls_without_focus() -> None:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         # Lay down two turn headers so anchors exist
-        conv._maybe_write_header("user", "you ", "bold", "dim")
-        conv._maybe_write_header("reyn", "reyn", "bold", "dim")
+        conv._maybe_write_header("user", ">", "bold")
+        conv._maybe_write_header("reyn", "⏺", "bold")
         await pilot.pause()
         assert len(conv._turn_anchors) >= 1
 
