@@ -595,8 +595,7 @@ def test_all_servers_higher_scope_wins(tmp_path, monkeypatch, tmp_path_factory):
 
     entries = _all_servers_with_scope(tmp_path)
     github_entries = [(name, scope, cfg) for name, scope, cfg in entries if name == "github"]
-    assert len(github_entries) == 1
-    _name, scope, cfg = github_entries[0]
+    (_name, scope, cfg), = github_entries
     assert scope == "local"
     assert cfg.get("command") == "local-cmd"
 
