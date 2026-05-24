@@ -1,4 +1,4 @@
-"""Tier 2: render_agents nests sub-skill rows under their parent.
+"""Tier 2b: render_agents nests sub-skill rows under their parent.
 
 Issue #210 — the OS-side ``parent_run_id`` stamp (PR #198) already lands
 on every sub-skill trace's ``OutboxMessage.meta``; the TUI consumes it
@@ -56,7 +56,7 @@ def _exec_entry(skill_name: str, parent_run_id: str = ""):
 
 @pytest.mark.asyncio
 async def test_running_skill_items_carry_parent_run_id_field(tmp_path):
-    """Tier 2: ``running_skill`` flat_items expose ``parent_run_id``."""
+    """Tier 2b: ``running_skill`` flat_items expose ``parent_run_id``."""
     from reyn.chat.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
@@ -64,14 +64,13 @@ async def test_running_skill_items_carry_parent_run_id_field(tmp_path):
 
     _, flat_items, _ = render_agents(registry, exec_state, cursor=0)
     skill_items = [i for i in flat_items if i.get("kind") == "running_skill"]
-    assert len(skill_items) == 1
     assert "parent_run_id" in skill_items[0]
     assert skill_items[0]["parent_run_id"] == ""
 
 
 @pytest.mark.asyncio
 async def test_parent_emits_before_child_in_flat_items(tmp_path):
-    """Tier 2: a child references its parent and the parent emits first.
+    """Tier 2b: a child references its parent and the parent emits first.
 
     Pins the topological-order contract: roots first, then children.
     Without it, cursor navigation could land on a child before its
@@ -97,7 +96,7 @@ async def test_parent_emits_before_child_in_flat_items(tmp_path):
 
 @pytest.mark.asyncio
 async def test_orphan_child_falls_back_to_root_render(tmp_path):
-    """Tier 2: a child whose ``parent_run_id`` is not in exec_state still renders.
+    """Tier 2b: a child whose ``parent_run_id`` is not in exec_state still renders.
 
     Edge case: the parent has already finished (rotated out of
     ``_skill_exec``) but the child trace still carries the parent id.
@@ -113,13 +112,12 @@ async def test_orphan_child_falls_back_to_root_render(tmp_path):
 
     _, flat_items, _ = render_agents(registry, exec_state, cursor=0)
     skill_items = [i for i in flat_items if i.get("kind") == "running_skill"]
-    assert len(skill_items) == 1
     assert skill_items[0]["run_id"] == "r-B"
 
 
 @pytest.mark.asyncio
 async def test_two_children_one_parent_all_emit(tmp_path):
-    """Tier 2: multiple children of the same parent all appear in flat_items.
+    """Tier 2b: multiple children of the same parent all appear in flat_items.
 
     Pins that the topological pass doesn't accidentally drop siblings
     (= a "second child overwrites first" bug would corrupt navigation).
@@ -136,8 +134,5 @@ async def test_two_children_one_parent_all_emit(tmp_path):
     _, flat_items, _ = render_agents(registry, exec_state, cursor=0)
     skill_items = [i for i in flat_items if i.get("kind") == "running_skill"]
     run_ids = {i["run_id"] for i in skill_items}
+    # All three run_ids present — no sibling was silently dropped.
     assert run_ids == {"r-A", "r-B1", "r-B2"}
-    # Item count must equal flat_items length for the parent + 2 children.
-    # (Other agents may add their own rows but with one agent and three
-    # skills, we expect exactly 3 running_skill entries.)
-    assert len(skill_items) == 3

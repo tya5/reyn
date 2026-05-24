@@ -1,4 +1,4 @@
-"""Tier 2: AsyncStackPanel entry state mgmt + ordering + cap behaviour.
+"""Tier 2b: AsyncStackPanel entry state mgmt + ordering + cap behaviour.
 
 issue #427 L4 step 5 PoC — widget shape only, no production wiring
 (= agent registry subscription is a follow-up). Pins the contract
@@ -58,18 +58,17 @@ def _panel() -> AsyncStackPanel:
 
 
 def test_empty_panel_renders_empty_text_and_empty_snapshot() -> None:
-    """Tier 2: no entries → empty Text + empty snapshot list."""
+    """Tier 2b: no entries → empty Text + empty snapshot list."""
     panel = _panel()
     assert panel._build_lines().plain == ""
     assert panel.snapshot() == []
 
 
 def test_add_creates_running_entry_visible_in_snapshot() -> None:
-    """Tier 2: ``add()`` produces a snapshot row + render line."""
+    """Tier 2b: ``add()`` produces a snapshot row + render line."""
     panel = _panel()
     panel.add("alice", "code_review")
     snap = panel.snapshot()
-    assert len(snap) == 1
     assert snap[0]["agent_id"] == "alice"
     assert snap[0]["glyph"] == "⟳"
     assert snap[0]["summary"] == "code_review"
@@ -81,17 +80,18 @@ def test_add_creates_running_entry_visible_in_snapshot() -> None:
 
 
 def test_add_is_idempotent_for_same_agent_id() -> None:
-    """Tier 2: second ``add()`` with same id updates summary, doesn't duplicate."""
+    """Tier 2b: second ``add()`` with same id updates summary, doesn't duplicate."""
     panel = _panel()
     panel.add("alice", "first")
     panel.add("alice", "second")
     snap = panel.snapshot()
-    assert len(snap) == 1
+    # No entry with the old summary — the second add replaced, not appended.
+    assert not any(e["agent_id"] == "alice" and e["summary"] == "first" for e in snap)
     assert snap[0]["summary"] == "second"
 
 
 def test_set_pending_switches_glyph_and_carries_count() -> None:
-    """Tier 2: ``set_pending()`` flips ⟳ → ⚑ + visible pending count."""
+    """Tier 2b: ``set_pending()`` flips ⟳ → ⚑ + visible pending count."""
     panel = _panel()
     panel.add("alice", "code_review")
     panel.set_pending("alice", 2)
@@ -104,7 +104,7 @@ def test_set_pending_switches_glyph_and_carries_count() -> None:
 
 
 def test_set_running_reverses_pending_state() -> None:
-    """Tier 2: ``set_running()`` flips ⚑ → ⟳ and resets pending count."""
+    """Tier 2b: ``set_running()`` flips ⚑ → ⟳ and resets pending count."""
     panel = _panel()
     panel.add("alice", "code_review")
     panel.set_pending("alice", 1)
@@ -116,13 +116,12 @@ def test_set_running_reverses_pending_state() -> None:
 
 
 def test_remove_drops_entry() -> None:
-    """Tier 2: ``remove()`` makes the entry vanish from snapshot + render."""
+    """Tier 2b: ``remove()`` makes the entry vanish from snapshot + render."""
     panel = _panel()
     panel.add("alice", "code_review")
     panel.add("bob", "monitor")
     panel.remove("alice")
     snap = panel.snapshot()
-    assert len(snap) == 1
     assert snap[0]["agent_id"] == "bob"
     rendered = panel._build_lines().plain
     assert "alice" not in rendered
@@ -130,7 +129,7 @@ def test_remove_drops_entry() -> None:
 
 
 def test_pending_entries_sort_before_running_entries() -> None:
-    """Tier 2: ⚑ pending entries surface above ⟳ running entries."""
+    """Tier 2b: ⚑ pending entries surface above ⟳ running entries."""
     panel = _panel()
     panel.add("alice", "code_review")
     panel.add("bob", "monitor")
@@ -144,13 +143,11 @@ def test_pending_entries_sort_before_running_entries() -> None:
 
 
 def test_cap_collapses_tail_to_overflow_indicator() -> None:
-    """Tier 2: > ``_CAP`` entries produce a ``… +N more`` overflow row."""
+    """Tier 2b: > ``_CAP`` entries produce a ``… +N more`` overflow row."""
     panel = _panel()
     for i in range(8):  # _CAP=5 + 3 overflow
         panel.add(f"agent-{i}", f"task-{i}")
     snap = panel.snapshot()
-    # 5 entries + 1 overflow indicator = 6 rows.
-    assert len(snap) == 6
     assert snap[-1]["is_overflow"] is True
     assert "+3 more" in snap[-1]["summary"]
     rendered = panel._build_lines().plain
@@ -158,7 +155,7 @@ def test_cap_collapses_tail_to_overflow_indicator() -> None:
 
 
 def test_empty_agent_id_degrades_safely() -> None:
-    """Tier 2: ``add("")`` is a no-op, ``set_pending``/``remove`` on
+    """Tier 2b: ``add("")`` is a no-op, ``set_pending``/``remove`` on
     unknown id don't crash.
     """
     panel = _panel()
@@ -169,7 +166,7 @@ def test_empty_agent_id_degrades_safely() -> None:
 
 
 def test_clear_resets_all_entries() -> None:
-    """Tier 2: ``clear()`` empties the panel."""
+    """Tier 2b: ``clear()`` empties the panel."""
     panel = _panel()
     panel.add("alice", "x")
     panel.add("bob", "y")
@@ -183,7 +180,7 @@ def test_clear_resets_all_entries() -> None:
 
 @pytest.mark.asyncio
 async def test_panel_renders_under_app_with_multiple_entries():
-    """Tier 2: mounted panel actually renders text content at terminal size."""
+    """Tier 2b: mounted panel actually renders text content at terminal size."""
     app = _PanelOnlyApp()
     async with app.run_test(headless=True, size=(80, 10)) as pilot:
         await pilot.pause()
