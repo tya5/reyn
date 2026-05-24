@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -254,28 +253,28 @@ def test_is_empty_router_response_whitespace_content_counts_as_empty():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_empty_response_emits_audit_event():
+async def test_empty_response_emits_audit_event(monkeypatch):
     """Tier 2: empty-stop response causes router_empty_response_detected event to be emitted (P6)."""
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("do something", [])
+    await loop.run("do something", [])
 
     emitted_types = [e["type"] for e in host.events.emitted]
     assert "router_empty_response_detected" in emitted_types
 
 
 @pytest.mark.asyncio
-async def test_empty_response_event_payload_is_p7_clean():
+async def test_empty_response_event_payload_is_p7_clean(monkeypatch):
     """Tier 2: router_empty_response_detected event payload contains no skill/tool-specific strings (P7)."""
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("do something", [])
+    await loop.run("do something", [])
 
     event = next(
         (e for e in host.events.emitted if e["type"] == "router_empty_response_detected"),
@@ -304,14 +303,14 @@ async def test_empty_response_event_payload_is_p7_clean():
 
 
 @pytest.mark.asyncio
-async def test_empty_response_event_has_expected_fields():
+async def test_empty_response_event_has_expected_fields(monkeypatch):
     """Tier 2: router_empty_response_detected event carries finish_reason, completion_tokens, prompt_tokens, caller_hint."""
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("do something", [])
+    await loop.run("do something", [])
 
     event = next(
         (e for e in host.events.emitted if e["type"] == "router_empty_response_detected"),
@@ -325,34 +324,33 @@ async def test_empty_response_event_has_expected_fields():
 
 
 @pytest.mark.asyncio
-async def test_empty_response_puts_failure_message_in_outbox():
+async def test_empty_response_puts_failure_message_in_outbox(monkeypatch):
     """Tier 2: empty-stop response causes a user-visible failure message in outbox with kind=agent."""
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("do something", [])
+    await loop.run("do something", [])
 
-    assert len(host.outbox) == 1
-    msg = host.outbox[0]
+    (msg,) = host.outbox
     assert msg["kind"] == "agent"
     assert len(msg["text"]) > 0, "Failure text must be non-empty"
     assert msg["meta"].get("source") == "router_empty_response"
 
 
 @pytest.mark.asyncio
-async def test_empty_response_failure_message_is_p7_clean():
+async def test_empty_response_failure_message_is_p7_clean(monkeypatch):
     """Tier 2: failure message sent to user contains no skill/tool-specific names (P7)."""
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("do something", [])
+    await loop.run("do something", [])
 
-    assert len(host.outbox) == 1
-    failure_text = host.outbox[0]["text"]
+    (msg,) = host.outbox
+    failure_text = msg["text"]
 
     forbidden_tool_names = {
         "invoke_skill", "delegate_to_agent", "list_skills", "describe_skill",
@@ -368,14 +366,14 @@ async def test_empty_response_failure_message_is_p7_clean():
 
 
 @pytest.mark.asyncio
-async def test_empty_response_no_retry():
+async def test_empty_response_no_retry(monkeypatch):
     """Tier 2: call_llm_tools is invoked exactly once — no retry on empty response (Option F principle)."""
     host = FakeRouterHost()
     loop = make_loop(host, max_iterations=5)
     scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("do something", [])
+    await loop.run("do something", [])
 
     assert scripted.call_count == 1, (
         f"call_llm_tools must be called exactly once (got {scripted.call_count}); "
@@ -384,49 +382,49 @@ async def test_empty_response_no_retry():
 
 
 @pytest.mark.asyncio
-async def test_empty_response_ja_i18n():
+async def test_empty_response_ja_i18n(monkeypatch):
     """Tier 2: output_language=ja yields Japanese failure message."""
     host = FakeRouterHost(output_language="ja")
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("何かしてください", [])
+    await loop.run("何かしてください", [])
 
-    assert len(host.outbox) == 1
-    failure_text = host.outbox[0]["text"]
+    (msg,) = host.outbox
+    failure_text = msg["text"]
     assert failure_text == _EMPTY_RESPONSE_MSG["ja"], (
         f"Expected Japanese message, got: {failure_text!r}"
     )
 
 
 @pytest.mark.asyncio
-async def test_empty_response_en_i18n():
+async def test_empty_response_en_i18n(monkeypatch):
     """Tier 2: output_language=en yields English failure message."""
     host = FakeRouterHost(output_language="en")
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("do something", [])
+    await loop.run("do something", [])
 
-    assert len(host.outbox) == 1
-    failure_text = host.outbox[0]["text"]
+    (msg,) = host.outbox
+    failure_text = msg["text"]
     assert failure_text == _EMPTY_RESPONSE_MSG["en"]
 
 
 @pytest.mark.asyncio
-async def test_empty_response_unknown_language_falls_back_to_en():
+async def test_empty_response_unknown_language_falls_back_to_en(monkeypatch):
     """Tier 2: unknown output_language falls back to English failure message."""
     host = FakeRouterHost(output_language="zh")
     loop = make_loop(host)
     scripted = _ScriptedLLM([empty_stop_result()])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("do something", [])
+    await loop.run("do something", [])
 
-    assert len(host.outbox) == 1
-    failure_text = host.outbox[0]["text"]
+    (msg,) = host.outbox
+    failure_text = msg["text"]
     assert failure_text == _EMPTY_RESPONSE_MSG["en"]
 
 
@@ -435,28 +433,28 @@ async def test_empty_response_unknown_language_falls_back_to_en():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_normal_text_reply_does_not_emit_empty_response_event():
+async def test_normal_text_reply_does_not_emit_empty_response_event(monkeypatch):
     """Tier 2: normal (non-empty) text reply does NOT emit router_empty_response_detected event."""
     host = FakeRouterHost()
     loop = make_loop(host)
     scripted = _ScriptedLLM([text_result("Hello, I can help with that.")])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("hi", [])
+    await loop.run("hi", [])
 
     empty_events = [
         e for e in host.events.emitted
         if e["type"] == "router_empty_response_detected"
     ]
-    assert len(empty_events) == 0, (
+    assert not empty_events, (
         "No router_empty_response_detected event on normal text reply"
     )
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["text"] == "Hello, I can help with that."
+    (msg,) = host.outbox
+    assert msg["text"] == "Hello, I can help with that."
 
 
 @pytest.mark.asyncio
-async def test_tool_call_reply_does_not_emit_empty_response_event():
+async def test_tool_call_reply_does_not_emit_empty_response_event(monkeypatch):
     """Tier 2: tool_call response does NOT emit router_empty_response_detected event."""
     host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
     loop = make_loop(host)
@@ -466,15 +464,15 @@ async def test_tool_call_reply_does_not_emit_empty_response_event():
         }}]),
         text_result("Done."),
     ])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("run my skill", [])
+    await loop.run("run my skill", [])
 
     empty_events = [
         e for e in host.events.emitted
         if e["type"] == "router_empty_response_detected"
     ]
-    assert len(empty_events) == 0, (
+    assert not empty_events, (
         "No router_empty_response_detected event on normal tool-call path"
     )
     assert scripted.call_count == 2
