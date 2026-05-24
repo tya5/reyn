@@ -55,6 +55,7 @@ _SAMPLE_CATALOG = {
 
 
 def test_unknown_tool_returns_error_kind_and_emits_failed_event():
+    """Tier 2: unknown tool name returns error_kind=unknown_tool and emits tool_failed event."""
     async def main():
         ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG)
         result = await dispatch_tool(
@@ -73,6 +74,7 @@ def test_unknown_tool_returns_error_kind_and_emits_failed_event():
 
 
 def test_invalid_args_returns_error_kind():
+    """Tier 2: args failing schema validation return error_kind=invalid_args without calling invoker."""
     async def main():
         ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG)
         result = await dispatch_tool(
@@ -86,6 +88,7 @@ def test_invalid_args_returns_error_kind():
 
 
 def test_happy_path_emits_called_then_returned():
+    """Tier 2: successful dispatch emits tool_called then tool_returned events with correct fields."""
     async def main():
         async def invoker(args):
             return {"items": []}
@@ -114,6 +117,7 @@ def test_happy_path_emits_called_then_returned():
 
 
 def test_permission_error_inside_invoker_returns_permission_denied():
+    """Tier 2: PermissionError raised by invoker maps to error_kind=permission_denied."""
     async def main():
         async def invoker(args):
             raise PermissionError("nope")
@@ -204,6 +208,7 @@ def test_permission_denied_unmapped_tool_falls_back_to_generic_hint():
 
 
 def test_generic_exception_inside_invoker_returns_exception_kind():
+    """Tier 2: non-PermissionError raised by invoker maps to error_kind=exception with class and message."""
     async def main():
         async def invoker(args):
             raise ValueError("boom")
@@ -220,7 +225,7 @@ def test_generic_exception_inside_invoker_returns_exception_kind():
 
 
 def test_no_schema_skips_arg_validation():
-    """If the tool definition has no parameters schema, skip arg validation."""
+    """Tier 2: tool definition with no parameters schema skips arg validation and passes args through."""
     catalog = {
         "free_form": {"function": {"name": "free_form", "description": "no schema"}}
     }
@@ -238,6 +243,7 @@ def test_no_schema_skips_arg_validation():
 
 
 def test_caller_kind_and_id_propagated_in_events():
+    """Tier 2: caller_kind, caller_id, and chain_id from DispatchContext appear in all emitted events."""
     async def main():
         async def invoker(args):
             return None
