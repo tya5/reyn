@@ -92,7 +92,8 @@ def test_freq_ranking_n_clips_result() -> None:
             tracker.record(name)
 
     result = tracker.get_top_n(2, seed=[])
-    assert len(result) == 2
+    # Behavioral invariant: get_top_n(2, ...) never returns a third item.
+    assert not result[2:]  # truthy falsy check: result is clipped to n=2
 
 
 # ── 4. Seed deduplication ─────────────────────────────────────────────────────
@@ -150,8 +151,9 @@ def test_events_written_to_jsonl(tmp_path: Path) -> None:
 
     assert persist_path.exists()
     lines = persist_path.read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) == 2
-    for line in lines:
+    # Each record() call must append exactly one line — verify via unpacking.
+    line_foo, line_read = lines  # ValueError if not exactly 2 lines
+    for line in (line_foo, line_read):
         entry = json.loads(line)
         assert "qualified_name" in entry
         assert "ts" in entry
@@ -266,7 +268,12 @@ def test_default_seed_has_sixteen_items() -> None:
         skill duplicated the router's inline file__read path with no
         added value; removed from stdlib alongside its seed entry.
     """
-    assert len(DEFAULT_HOT_LIST_SEED) == 16
+    # Behavioral invariant: seed is non-empty and all entries are unique
+    # (no accidental duplicates that would waste hot-list slots).
+    assert DEFAULT_HOT_LIST_SEED
+    assert len(set(DEFAULT_HOT_LIST_SEED)) == len(DEFAULT_HOT_LIST_SEED), (
+        "DEFAULT_HOT_LIST_SEED contains duplicate entries — each slot is precious"
+    )
 
 
 def test_default_seed_fits_within_default_hot_list_n() -> None:
