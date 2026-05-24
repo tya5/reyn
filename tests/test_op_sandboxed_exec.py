@@ -221,4 +221,4 @@ async def test_noop_emits_warning_once(caplog):
         await backend.run(["echo", "2"], policy)
 
     warns = [r for r in caplog.records if "no isolation enforced" in r.message]
-    assert len(warns) == 1, f"expected exactly one warning, got {len(warns)}: {warns}"
+    (warn,) = warns  # exactly one warning: unpacking raises ValueError if not

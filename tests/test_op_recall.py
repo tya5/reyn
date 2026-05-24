@@ -192,7 +192,7 @@ async def test_recall_top_k_limits_merged_results(tmp_path: Path, monkeypatch: p
     result = await execute_op(op, ctx, caller="control_ir")
 
     assert result.get("status") != "error", result
-    assert len(result["chunks"]) <= 3
+    assert not result["chunks"][3:]  # top_k=3 caps result count
 
 
 @pytest.mark.asyncio
