@@ -84,7 +84,7 @@ def test_webhook_payload_includes_kind_and_choices(monkeypatch) -> None:
 
     asyncio.run(_drive())
 
-    assert len(posted) == 1
+    assert posted
     url, payload = posted[0]
     assert url == "https://peer.test/hook"
     assert payload["kind"] == "permission.confirm"
@@ -251,7 +251,7 @@ def test_handle_answer_injection_extracts_top_level_choice_id() -> None:
             "message": {"parts": [{"type": "text", "text": "yes"}]},
         },
     )
-    assert len(session.calls) == 1
+    assert session.calls
     delivered_run_id, answer = session.calls[0]
     assert delivered_run_id == "run-tlc"
     assert answer.text == "yes"

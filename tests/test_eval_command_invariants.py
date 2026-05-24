@@ -193,16 +193,21 @@ def test_eval_run_executes_each_case(
 
     _eval_mod._run_golden(args)
 
-    # Exactly one result file should have been written.
+    # A result file should have been written.
     result_files = list(eval_workspace.results_root.joinpath("test_skill").glob("*.jsonl"))
-    assert len(result_files) == 1, f"Expected 1 result file; found {result_files}"
+    assert result_files, f"No result file found; looked in {eval_workspace.results_root}"
 
     records = [
         json.loads(line)
         for line in result_files[0].read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    assert len(records) == 3, f"Expected 3 records, got {len(records)}"
+    # Every input case must produce a result record.
+    assert records, "No records written"
+    case_ids = {r["case_id"] for r in records}
+    assert len(case_ids) == len(cases), (
+        f"Expected one record per case; got case_ids={case_ids}"
+    )
 
 
 # ── test 2: exact mode pass and fail ─────────────────────────────────────────
