@@ -740,13 +740,13 @@ def render_events(
     del filter_name
     # Dim footer hint — always appended after the event rows so the user
     # can discover the [d] docs shortcut from the events tab itself.
-    lines.append("[#555555]  ? press [d] for events.md reference[/]")
+    lines.append("[#555555]  ? press \\[d] for events.md reference[/]")
     # Compaction-check suppression footer: when at least 1 event was
     # hidden, surface a dim hint so the user can discover the [v] toggle.
     if n_compaction_check_hidden > 0:
         lines.append(
             f"[#444444]  ↩ {n_compaction_check_hidden} compaction_check hidden"
-            " ([v] to show)[/]"
+            " (\\[v] to show)[/]"
         )
     return "\n".join(lines), windowed, event_ys
 
