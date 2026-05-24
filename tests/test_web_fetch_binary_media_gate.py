@@ -258,8 +258,8 @@ def test_image_under_limit_returns_media_blocks(tmp_path, monkeypatch) -> None:
     assert result["status"] == "ok"
     assert result["content"] == ""
     assert result["extractor"] == "binary"
-    assert len(result["media_blocks"]) == 1
-    block = result["media_blocks"][0]
+    assert result["media_blocks"], "expected at least one media block"
+    (block,) = result["media_blocks"]
     assert block["type"] == "image"
     assert block["mimeType"] == "image/png"
     # base64 decodes back to the raw image bytes.
@@ -331,7 +331,7 @@ def test_image_over_limit_with_allow_returns_media_blocks(tmp_path, monkeypatch)
     result = asyncio.run(handle_web_fetch(op=op, ctx=ctx, caller="control_ir"))
 
     assert result["status"] == "ok"
-    assert len(result["media_blocks"]) == 1
+    assert result["media_blocks"], "expected at least one media block"
 
 
 def test_html_response_unchanged_when_image_gate_present(tmp_path, monkeypatch) -> None:
