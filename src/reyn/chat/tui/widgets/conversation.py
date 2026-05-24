@@ -165,6 +165,27 @@ def _msg_header(symbol: str, name_style: str, show_ts: bool = True) -> Text:
     return t
 
 
+def _build_header_prefix(symbol: str, name_style: str, show_ts: bool = True) -> Text:
+    """Build the ``HH:MM <symbol> `` (trailing space) inline prefix Text.
+
+    Same glyph/timestamp logic as ``_msg_header`` but appends a trailing
+    space so the body can be concatenated directly to produce the Claude
+    Code-style ``HH:MM > body text`` inline layout.
+
+    Used by ``_write_inline_header_body`` to combine the header and first
+    body line into a single RichLog write, which puts the speaker symbol
+    and message content on the same visual line with col-8 hanging indent
+    for wrap continuations.
+    """
+    t = Text()
+    if show_ts:
+        t.append(time.strftime("%H:%M"), style="dim #666666")
+        t.append(" ")
+    t.append(symbol, style=name_style)
+    t.append(" ")  # trailing space so body starts immediately after symbol
+    return t
+
+
 def _is_lifecycle_marker(text: str) -> bool:
     """Heuristic: ``ChatLifecycleForwarder`` marker text starts with ``[↑``
     and ends with ``]``, and is single-line.
@@ -687,6 +708,36 @@ class ConversationView(Widget):
 
     # ── header grouping (B1) ──────────────────────────────────────────────────
 
+    def _check_new_turn(self, speaker: str, log: "RichLog") -> bool:
+        """Return True if this is a new turn (different speaker or window expired).
+
+        Side-effects when a new turn starts:
+          - Emits a date-separator when the calendar day has changed.
+          - Records the current absolute line position as a turn anchor.
+        Does NOT write any header line — the caller decides what to write.
+
+        ``_last_speaker`` / ``_last_speaker_at`` are updated by the caller
+        AFTER the header/body write (so anchors are recorded before the write
+        that advances the line counter).
+
+        Wave-10 follow-up G-F7: ``time.time()`` (wall clock) matches the
+        visible ``HH:MM`` timestamp and grouping decision — see
+        ``_maybe_write_header`` docstring for full rationale.
+        """
+        now = time.time()
+        same_speaker = (speaker == self._last_speaker)
+        within_window = (now - self._last_speaker_at) < _GROUP_WINDOW_S
+        if same_speaker and within_window:
+            return False
+        # Day boundary marker.
+        today = time.strftime("%Y-%m-%d")
+        if today != self._last_header_date:
+            log.write(_date_separator(today))
+            self._last_header_date = today
+        # Record a turn anchor.
+        self._turn_anchors.append(self._absolute_line_position(log))
+        return True
+
     def _maybe_write_header(self, speaker: str, symbol: str,
                              name_style: str) -> None:
         """Write a symbol-only header when the speaker changes or the gap exceeds _GROUP_WINDOW_S.
@@ -708,24 +759,8 @@ class ConversationView(Widget):
         user-visible timeline exactly.
         """
         now = time.time()
-        same_speaker = (speaker == self._last_speaker)
-        within_window = (now - self._last_speaker_at) < _GROUP_WINDOW_S
-        if not (same_speaker and within_window):
-            log = self._log()
-            # Day boundary marker: when this header lands on a different
-            # calendar day than the previous one (or the session's first
-            # header), emit a dim "── YYYY-MM-DD ─────" line so users in a
-            # multi-day session can tell which "21:55" they're looking at.
-            today = time.strftime("%Y-%m-%d")
-            if today != self._last_header_date:
-                log.write(_date_separator(today))
-                self._last_header_date = today
-            # Record a turn anchor whenever a new speaker header appears
-            # — agent replies, user inputs, and system / slash-command
-            # results. Ctrl+P / Ctrl+N then walk through every header in
-            # order, which matches the user's mental model of "jump to
-            # the previous turn" better than "jump only to agent replies".
-            self._turn_anchors.append(self._absolute_line_position(log))
+        log = self._log()
+        if self._check_new_turn(speaker, log):
             # No cap. The previous 200-entry cap silently dropped the
             # oldest anchors in long sessions, so Ctrl+P/N's "N / M"
             # readout showed an M smaller than the real turn count and
@@ -742,6 +777,86 @@ class ConversationView(Widget):
             log.write(_msg_header(symbol, name_style, show_ts=self._show_timestamps))
         self._last_speaker = speaker
         self._last_speaker_at = now
+
+    def _maybe_write_inline_header_body(
+        self,
+        speaker: str,
+        symbol: str,
+        name_style: str,
+        body_text: Text,
+    ) -> None:
+        """Write header + body inline (#646 Claude Code style) with col-8 hanging indent.
+
+        When a new turn starts (new speaker or _GROUP_WINDOW_S expired):
+          - Emits ``HH:MM <sym> <body_first_line>`` at column 0.
+          - Emits each body-wrap continuation at ``_current_body_indent()``
+            columns so the wrap visually nests under the body text, not the
+            symbol.
+
+        When within the same speaker's grouping window (= header suppressed):
+          - Emits body only via ``_write_body`` (= hanging-indent Padding),
+            same as the original 2-line path.  The symbol is intentionally
+            absent so successive messages from the same speaker don't pile up
+            repeated headers.
+
+        Body wrap is computed by splitting ``body_text`` at
+        ``pane_width - indent`` cell-width.  The pane width falls back to
+        ``_FOLD_WIDTH_FALLBACK + indent`` when ``self.size.width`` is 0
+        (= widget not yet laid-out or test harness with ``size=(0,0)``).
+
+        This is the load-bearing writer for ``render_user_message`` and
+        ``_render_agent_markdown`` (plain-text first-line path).
+        """
+        now = time.time()
+        log = self._log()
+        is_new_turn = self._check_new_turn(speaker, log)
+        self._last_speaker = speaker
+        self._last_speaker_at = now
+
+        indent = self._current_body_indent()
+
+        if not is_new_turn:
+            # Grouped turn: no header, just body at hanging-indent.
+            self._write_body(body_text)
+            return
+
+        # New turn: build inline header prefix.
+        prefix = _build_header_prefix(symbol, name_style, show_ts=self._show_timestamps)
+        prefix_cells = cell_len(prefix.plain)
+
+        # Compute body wrap width = pane_width minus the indent column.
+        # The first body line starts at col ``prefix_cells`` (= same as
+        # ``indent`` by design: both are 8 with ts-on, 2 with ts-off).
+        try:
+            pane_width = self.size.width
+            if pane_width <= 0:
+                pane_width = _FOLD_WIDTH_FALLBACK + indent
+        except Exception:
+            pane_width = _FOLD_WIDTH_FALLBACK + indent
+        # RichLog has 1-cell padding on each side (see CSS: padding: 0 1).
+        body_width = max(10, pane_width - indent - 2)
+
+        # Split body_text into wrap lines at body_width.
+        try:
+            from rich.console import Console as _Console
+            _buf_console = _Console(width=body_width, highlight=False)
+            wrapped_lines = list(body_text.wrap(_buf_console, body_width))
+        except Exception:
+            wrapped_lines = [body_text]
+
+        if not wrapped_lines:
+            # Empty body: emit just the header prefix as a standalone line.
+            log.write(prefix)
+            return
+
+        # First line: header prefix + first body-wrap line inline.
+        first_line = prefix + wrapped_lines[0]
+        log.write(first_line)
+
+        # Remaining wrap lines: indented to ``indent`` col via Padding.
+        for cont in wrapped_lines[1:]:
+            if cont.plain.strip():  # skip blank-only continuation lines
+                log.write(_indent_body(cont, indent))
 
     # ── non-streaming message rendering ───────────────────────────────────────
 
@@ -823,11 +938,16 @@ class ConversationView(Widget):
         user had previously scrolled up to read history, they now want to
         see the conversation continue. Snap back to the bottom and re-arm
         auto-scroll so subsequent agent reply chunks track the tail.
+
+        #646 Claude Code-style inline layout: ``HH:MM > message text`` on the
+        same logical line, with wrap continuations landing at col 8
+        (``_BODY_INDENT_WITH_TS``) so they nest visually under the body text.
         """
         self._snap_to_bottom()
         self._consume_empty_hint()
-        self._maybe_write_header("you", _GLYPH_USER, "bold #4abbb5")
-        self._write_body(Text(text))
+        self._maybe_write_inline_header_body(
+            "you", _GLYPH_USER, "bold #4abbb5", Text(text),
+        )
         self._write_log(Text(""))
 
     def _render_system_message(self, msg: OutboxMessage) -> None:
@@ -863,21 +983,63 @@ class ConversationView(Widget):
         agent replies appear under their header instead of being pushed to
         the bottom of the pane. Hides any sticky "thinking…" indicator that
         was active for this turn.
+
+        #646 Claude Code-style inline layout: ``HH:MM ⏺ [meta] first_line``
+        appears on the same logical line.  The first plain-text line of the
+        message body (or the meta prefix when present) is extracted and
+        inlined with the header via ``_maybe_write_inline_header_body``.
+        The remaining Markdown body (if any) is written at col-8 indent.
+
+        Implementation note (structural vs simple tradeoff):
+          - Markdown formatting on the first line is rendered as plain text
+            (e.g. ``**bold**`` shows as plain ``bold``). For the typical
+            agent reply, the first line is prose — this is an acceptable
+            trade-off that avoids reimplementing Rich's Markdown renderer.
+          - When no body text is present (= header-only turn signal), only
+            the header prefix is emitted.
         """
         self._consume_empty_hint()
         self.stop_thinking()  # turn finished — unmount inline spinner
         self.hide_status()    # also clear any sticky status
         meta_pfx = _meta_prefix(msg.meta)
-        # _AMBER for agent identity — distinct from _CORAL (interactive
-        # affordances). The meta prefix (= [skill#abcd]) is emitted on its
-        # own line after the header so the symbol-only header stays minimal.
-        self._maybe_write_header("reyn", _GLYPH_AGENT, "bold " + _AMBER)
+        body_text = msg.text or ""
+
+        # Build the inline first-line text: meta prefix (if any) + first body
+        # line stripped of Markdown markup.  For an agent reply that begins
+        # "**Plan**:" this reads "Plan:" in the inline header — acceptable.
         if meta_pfx:
-            # Emit the meta prefix as a dim sub-line so skill identity is still
-            # discoverable without cluttering the symbol header.
-            self._write_body(Text(meta_pfx.strip(), style="dim #888888"))
-        if msg.text:
-            self._write_agent_markdown_with_fold(msg.text)
+            first_line_plain = meta_pfx.rstrip()
+            if body_text:
+                # Append first source line (stripped of leading # / * / `) to
+                # keep the header line short and readable.
+                src_first = body_text.splitlines()[0].strip().lstrip("#* `_")
+                if src_first:
+                    first_line_plain = f"{first_line_plain} {src_first}"
+        elif body_text:
+            first_line_plain = body_text.splitlines()[0].strip().lstrip("#* `_")
+        else:
+            first_line_plain = ""
+
+        inline_body = Text(first_line_plain, style="dim #888888" if meta_pfx else "")
+
+        # _AMBER for agent identity — distinct from _CORAL (interactive
+        # affordances).
+        self._maybe_write_inline_header_body(
+            "reyn", _GLYPH_AGENT, "bold " + _AMBER, inline_body,
+        )
+
+        # Write the full Markdown body (all lines) at hanging-indent.
+        # This causes the first line to appear twice when body_text has one
+        # line, but for Markdown replies the full render at col 8 gives
+        # correct formatting (= bold, code, lists) for lines 2+.
+        # When body has only one line, suppress the duplicate body write.
+        if body_text:
+            body_lines = body_text.splitlines()
+            if len(body_lines) > 1:
+                # Remaining lines as Markdown (preserving formatting).
+                rest = "\n".join(body_lines[1:])
+                self._write_agent_markdown_with_fold(rest)
+            # Single-line body: already rendered inline; no extra write needed.
         self._write_log(Text(""))
 
     # ── B3 fold (long-reply truncation + /expand) ────────────────────────────
