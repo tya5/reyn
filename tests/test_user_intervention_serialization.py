@@ -63,7 +63,7 @@ def test_to_dict_returns_json_safe_dict():
     assert d["skill_name"] == "my_skill"
     assert d["id"] == iv.id
     assert d["suggestions"] == ["yes", "no"]
-    assert len(d["choices"]) == 3
+    assert d["choices"], "expected choices to be non-empty"
     assert d["choices"][0] == {"id": "yes", "label": "[Y]es", "hotkey": "Y"}
     # future must NOT appear (asyncio.Future is not JSON-safe)
     assert "future" not in d

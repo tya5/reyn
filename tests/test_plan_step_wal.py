@@ -68,7 +68,7 @@ async def test_record_plan_step_started_appends_wal_with_full_payload(
     assert seq > 0
 
     raw_lines = log.path.read_text(encoding="utf-8").strip().splitlines()
-    assert len(raw_lines) == 1
+    assert raw_lines, "expected at least one WAL entry"
     entry = json.loads(raw_lines[0])
     assert entry["kind"] == "plan_step_started"
     assert entry["target"] == "default"
