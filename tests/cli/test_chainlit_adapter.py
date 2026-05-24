@@ -75,3 +75,96 @@ def test_empty_text_is_preserved_as_empty_string():
     payload = outbox_to_chainlit(msg)
     assert payload is not None
     assert payload.content == ""
+
+
+# ── tool_call_* kinds ─────────────────────────────────────────────────────
+
+
+def test_tool_call_started_renders_arrow_prefix():
+    """Tier 1: ``tool_call_started`` → author "tool", text "→ <name>"
+    (= visual marker distinct from agent / system)."""
+    msg = OutboxMessage(
+        kind="tool_call_started",
+        text="file__read",
+        meta={"tool": "file__read", "op_id": "h1"},
+    )
+    payload = outbox_to_chainlit(msg)
+    assert payload is not None
+    assert payload.role == "message"
+    assert payload.author == "tool"
+    assert payload.content == "→ file__read"
+
+
+def test_tool_call_completed_renders_check_prefix():
+    """Tier 1: ``tool_call_completed`` → ``✓ <name>``."""
+    msg = OutboxMessage(
+        kind="tool_call_completed",
+        text="shell__run",
+        meta={"tool": "shell__run", "op_id": "h2", "result": "..."},
+    )
+    payload = outbox_to_chainlit(msg)
+    assert payload is not None
+    assert payload.author == "tool"
+    assert payload.content == "✓ shell__run"
+
+
+def test_tool_call_failed_renders_x_with_error_message():
+    """Tier 1: ``tool_call_failed`` → ``✗ <name>: <err>`` when error_message
+    present; falls back to plain ``✗ <name>`` when absent."""
+    failed_with_err = OutboxMessage(
+        kind="tool_call_failed",
+        text="net__fetch",
+        meta={
+            "tool": "net__fetch",
+            "op_id": "h3",
+            "error_kind": "TimeoutError",
+            "error_message": "request timed out",
+        },
+    )
+    payload = outbox_to_chainlit(failed_with_err)
+    assert payload is not None
+    assert payload.author == "tool"
+    assert payload.content == "✗ net__fetch: request timed out"
+
+    failed_no_err = OutboxMessage(
+        kind="tool_call_failed", text="t", meta={"tool": "t"},
+    )
+    payload = outbox_to_chainlit(failed_no_err)
+    assert payload is not None
+    assert payload.content == "✗ t"
+
+
+def test_tool_call_prefers_meta_tool_over_text_field():
+    """Tier 1: when meta.tool and text differ (= a future emitter packs
+    richer info into text), the meta-side name wins so the prefix marker
+    stays clean."""
+    msg = OutboxMessage(
+        kind="tool_call_started",
+        text="file__read(path=foo)",  # richer text
+        meta={"tool": "file__read"},
+    )
+    payload = outbox_to_chainlit(msg)
+    assert payload is not None
+    assert payload.content == "→ file__read"
+
+
+def test_tool_call_falls_back_to_text_when_meta_missing():
+    """Tier 1: defensively, when meta.tool is absent the text field is
+    used so the row still shows something meaningful instead of
+    ``→ (unnamed)``."""
+    msg = OutboxMessage(
+        kind="tool_call_started", text="my_tool", meta={},
+    )
+    payload = outbox_to_chainlit(msg)
+    assert payload is not None
+    assert payload.content == "→ my_tool"
+
+
+def test_tool_call_uses_unnamed_placeholder_when_both_absent():
+    """Tier 1: edge case — neither meta nor text carries a name → use a
+    visible placeholder rather than rendering ``→ `` (= operator sees
+    something went wrong-ish but the row doesn't disappear)."""
+    msg = OutboxMessage(kind="tool_call_started", text="", meta={})
+    payload = outbox_to_chainlit(msg)
+    assert payload is not None
+    assert payload.content == "→ (unnamed)"
