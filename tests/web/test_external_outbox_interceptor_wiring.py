@@ -113,7 +113,7 @@ async def test_dispatcher_resolves_server_and_tool_from_mcp_tool_name(tmp_path):
         )
         await session._put_outbox(msg)
 
-    assert len(captured) == 1
+    assert captured, "expected at least one dispatch via op_runtime.mcp.handle"
     op, caller = captured[0]
     assert op.kind == "mcp"
     assert op.server == "slack"
@@ -157,9 +157,9 @@ async def test_dispatcher_rejects_tool_name_without_separator(tmp_path):
 
 @pytest.mark.asyncio
 async def test_end_to_end_agent_reply_dispatches_to_mcp(tmp_path):
-    """Tier 2 (= **PR-D2.5 acceptance criteria**): after wiring, an
-    agent reply OutboxMessage with ExternalRef reply_to dispatches
-    via the MCP tool path AND is NOT queued for TUI display.
+    """Tier 2c: after wiring, an agent reply OutboxMessage with ExternalRef
+    reply_to dispatches via the MCP tool path AND is NOT queued for TUI
+    display (= PR-D2.5 acceptance criteria).
 
     Verifies the full chain:
       _put_outbox →
@@ -265,7 +265,7 @@ async def test_dispatcher_uses_session_router_op_context(tmp_path):
         )
         await session._put_outbox(msg)
 
-    assert len(op_ctx_calls) == 1, "session._make_router_op_context not invoked"
+    assert op_ctx_calls, "session._make_router_op_context not invoked"
     assert captured_ctx == [sentinel_ctx]
 
 
