@@ -33,6 +33,24 @@ Edge cases:
 """
 
 
+def _ensure_required_strings(data: dict) -> None:
+    """Fill in fallback strings for output_schema-required string fields.
+
+    The python step's ``output_schema`` requires ``weakest_phase`` and
+    ``summary`` as strings. The LLM may set them to ``None`` (or omit
+    them when ``run_status != "finished"``); without a fallback the
+    schema validation fails with ``"None is not of type 'string'"``
+    and the entire eval run is marked failed.
+
+    Discovered B54 NF-W2-S5 (2026-05-24) — eval skill 5 runs all
+    failed at postprocessor validation because the LLM set
+    ``weakest_phase: None`` on failed-target runs.
+    """
+    for field, fallback in (("weakest_phase", "(none)"), ("summary", "(no summary)")):
+        if not isinstance(data.get(field), str):
+            data[field] = fallback
+
+
 def compute_eval_score(artifact: dict) -> dict:
     """Return a new ``data`` dict with deterministic scoring fields merged in.
 
@@ -50,6 +68,7 @@ def compute_eval_score(artifact: dict) -> dict:
         data["overall_score"] = 0.0
         data["passed_criteria"] = 0
         data["total_criteria"] = 0
+        _ensure_required_strings(data)
         return data
 
     # Required iff `required` is True or absent.
@@ -68,6 +87,7 @@ def compute_eval_score(artifact: dict) -> dict:
         data["overall_score"] = 1.0
         data["passed_criteria"] = 0
         data["total_criteria"] = 0
+        _ensure_required_strings(data)
         return data
 
     overall = round(passed_count / total, 2)
@@ -81,4 +101,5 @@ def compute_eval_score(artifact: dict) -> dict:
     # subsumed here (all_required_met implies overall_score == 1.0), but we
     # keep both clauses to make the intent explicit.
     data["passed"] = all_required_met and overall >= 0.6
+    _ensure_required_strings(data)
     return data

@@ -192,3 +192,51 @@ def test_preserves_llm_authored_fields() -> None:
     # remain visible (no whitelist filtering in the function).
     assert out["run_status"] == "finished"
     assert "criteria_results" in out
+
+
+# ── Required-string fallbacks (B54 NF-W2-S5 regression) ──────────────────────
+
+
+def test_failed_target_provides_required_string_fallbacks() -> None:
+    """Tier 2: when run_status != "finished" AND LLM omitted the required
+    string fields, the function fills in fallbacks so output_schema
+    validation (= weakest_phase / summary required as type=string) does
+    not fail downstream with "None is not of type 'string'".
+
+    B54 NF-W2-S5 regression — dogfood observed 5/5 eval runs failing at
+    postprocessor schema validation because the LLM set weakest_phase=None
+    on failed-target runs.
+    """
+    art = {"data": {"run_status": "failed"}}  # no weakest_phase / summary
+    out = compute_eval_score(art)
+    assert isinstance(out["weakest_phase"], str) and out["weakest_phase"]
+    assert isinstance(out["summary"], str) and out["summary"]
+
+
+def test_explicit_none_strings_replaced_with_fallback() -> None:
+    """Tier 2: LLM explicitly sets weakest_phase=None / summary=None →
+    fallback string applied. Otherwise the python step's output_schema
+    (required: [..., weakest_phase, summary], both type=string) rejects
+    the dict and the eval run is marked failed at the postprocessor
+    boundary.
+    """
+    art = _wrap(
+        [_crit(met=True, required=True)],
+        weakest_phase=None,
+        summary=None,
+    )
+    out = compute_eval_score(art)
+    assert isinstance(out["weakest_phase"], str) and out["weakest_phase"]
+    assert isinstance(out["summary"], str) and out["summary"]
+
+
+def test_vacuous_pass_provides_required_string_fallbacks() -> None:
+    """Tier 2: vacuous-pass branch (no required criteria) also provides
+    string fallbacks — without the fix, LLMs that omitted these fields
+    when the spec had no required criteria would also hit the schema
+    failure.
+    """
+    art = {"data": {"run_status": "finished", "criteria_results": []}}
+    out = compute_eval_score(art)
+    assert isinstance(out["weakest_phase"], str) and out["weakest_phase"]
+    assert isinstance(out["summary"], str) and out["summary"]
