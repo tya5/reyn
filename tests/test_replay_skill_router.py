@@ -21,7 +21,6 @@ Old ``tests/fixtures/llm/skill_router/`` is preserved until Wave H.
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -280,7 +279,7 @@ def _make_loop(host: FakeRouterHost, max_iterations: int = 5) -> RouterLoop:
 @pytest.mark.replay("fixtures/llm/router/chitchat.jsonl")
 @pytest.mark.asyncio
 async def test_chitchat_text_reply():
-    """LLM returns text directly with no tool_calls; outbox has kind='agent'."""
+    """Tier 3a: LLM returns text directly with no tool_calls; outbox has kind='agent'."""
     host = FakeRouterHost(
         skills=[
             {"name": "text_summariser", "description": "Summarises text.", "category": "general"},
@@ -290,13 +289,12 @@ async def test_chitchat_text_reply():
 
     await loop.run("Hi! How are you?", [])
 
-    assert len(host.outbox) == 1, f"Expected 1 outbox entry, got: {host.outbox}"
-    msg = host.outbox[0]
+    (msg,) = host.outbox
     assert msg["kind"] == "agent", f"Expected kind='agent', got: {msg['kind']}"
     assert isinstance(msg["text"], str) and len(msg["text"]) > 0, (
         "Expected non-empty text reply for chitchat"
     )
-    assert len(host.skill_calls) == 0, (
+    assert not host.skill_calls, (
         f"Chitchat should not invoke any skill; got: {host.skill_calls}"
     )
 
@@ -304,7 +302,7 @@ async def test_chitchat_text_reply():
 @pytest.mark.replay("fixtures/llm/router/invoke_skill_single_round.jsonl")
 @pytest.mark.asyncio
 async def test_invoke_skill_single_round():
-    """LLM calls invoke_skill then returns text; host.run_skill_awaitable called once."""
+    """Tier 3a: LLM calls invoke_skill then returns text; host.run_skill_awaitable called once."""
     host = FakeRouterHost(
         skills=[
             {"name": "text_summariser", "description": "Summarises text.", "category": "general"},
@@ -326,19 +324,19 @@ async def test_invoke_skill_single_round():
     assert host.skill_calls[0]["chain_id"] == "chain-test"
 
     # Final outbox entry is text
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["kind"] == "agent"
-    assert len(host.outbox[0]["text"]) > 0
+    (msg,) = host.outbox
+    assert msg["kind"] == "agent"
+    assert len(msg["text"]) > 0
 
 
 @pytest.mark.asyncio
-async def test_delegate_to_agent():
-    """RouterLoop dispatches LLM-emitted delegate_to_agent to host.send_to_agent.
+async def test_delegate_to_agent(monkeypatch):
+    """Tier 3a: RouterLoop dispatches LLM-emitted delegate_to_agent to host.send_to_agent.
 
     Uses direct monkeypatch (not LLMReplay) because PR37 wave 2D removed the
     enum attractor on `delegate_to_agent.to`, so the LLM no longer reliably
     picks the agent name from a recorded prompt — we'd be testing LLM behavior
-    rather than dispatch correctness. Direct mock pins the dispatch path.
+    rather than dispatch correctness. Direct fake pins the dispatch path.
     """
     host = FakeRouterHost(
         agents=[{"name": "researcher", "role": "research agent", "cluster": "default"}],
@@ -353,12 +351,18 @@ async def test_delegate_to_agent():
         }]),
         _text_result("Delegated to researcher."),
     ]
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
-        await loop.run(
-            "Delegate to the researcher: find info on climate change.",
-            [],
-        )
+    call_count = {"n": 0}
+
+    async def fake_llm(*args, **kwargs):
+        result = rounds[call_count["n"]]
+        call_count["n"] += 1
+        return result
+
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    await loop.run(
+        "Delegate to the researcher: find info on climate change.",
+        [],
+    )
 
     assert len(host.agent_sends) >= 1, (
         f"Expected at least 1 delegate call; got: {host.agent_sends}"
@@ -370,15 +374,15 @@ async def test_delegate_to_agent():
     # After delegate dispatch, RouterLoop exits with an "awaiting peer
     # reply" status note; the peer's actual response comes back later via
     # pending_chain (PR14) which re-invokes the router.
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["kind"] == "status"
-    assert "awaiting peer reply" in host.outbox[0]["text"]
+    (msg,) = host.outbox
+    assert msg["kind"] == "status"
+    assert "awaiting peer reply" in msg["text"]
 
 
 @pytest.mark.replay("fixtures/llm/router/memory_recall.jsonl")
 @pytest.mark.asyncio
 async def test_memory_recall_via_list_then_read():
-    """LLM lists memory then reads a body; sequence produces final text reply."""
+    """Tier 3a: LLM lists memory then reads a body; sequence produces final text reply."""
     memory_content = (
         "# Memory Index (shared)\n\n"
         "- [User Role](user_role.md) — The user is a senior developer.\n"
@@ -399,9 +403,9 @@ async def test_memory_recall_via_list_then_read():
     # At least one list_memory or read_memory_body call should have happened
     # (we track these via file_reads since read_memory_body calls host.file_read)
     # The final outbox must have a text reply
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["kind"] == "agent"
-    assert len(host.outbox[0]["text"]) > 0
+    (msg,) = host.outbox
+    assert msg["kind"] == "agent"
+    assert len(msg["text"]) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -410,28 +414,32 @@ async def test_memory_recall_via_list_then_read():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_max_iterations_aborts_with_error():
-    """Every LLM round returns tool_calls; error outbox emitted after max_iterations."""
+async def test_max_iterations_aborts_with_error(monkeypatch):
+    """Tier 3a: Every LLM round returns tool_calls; error outbox emitted after max_iterations."""
     host = FakeRouterHost()
     loop = _make_loop(host, max_iterations=3)
 
     always_tool = _tool_result([{"name": "bogus_tool", "args": {}}])
+    call_count = {"n": 0}
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = always_tool
-        await loop.run("do stuff forever", [])
+    async def fake_llm(*args, **kwargs):
+        call_count["n"] += 1
+        return always_tool
 
-    assert mock_llm.await_count == 3, (
-        f"Expected exactly 3 LLM calls (max_iterations), got {mock_llm.await_count}"
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    await loop.run("do stuff forever", [])
+
+    assert call_count["n"] == 3, (
+        f"Expected exactly 3 LLM calls (max_iterations), got {call_count['n']}"
     )
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["kind"] == "error"
-    assert "max iterations" in host.outbox[0]["text"].lower() or "3" in host.outbox[0]["text"]
+    (msg,) = host.outbox
+    assert msg["kind"] == "error"
+    assert "max iterations" in msg["text"].lower() or "3" in msg["text"]
 
 
 @pytest.mark.asyncio
-async def test_parallel_tool_calls_in_one_round():
-    """One LLM round with 2 tool_calls; both executed before next round."""
+async def test_parallel_tool_calls_in_one_round(monkeypatch):
+    """Tier 3a: One LLM round with 2 tool_calls; both executed before next round."""
     host = FakeRouterHost(
         skills=[
             {"name": "skill_a", "category": "general"},
@@ -449,22 +457,28 @@ async def test_parallel_tool_calls_in_one_round():
         ]),
         _text_result("Both skills ran successfully."),
     ]
+    call_count = {"n": 0}
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
-        await loop.run("run both skills", [])
+    async def fake_llm(*args, **kwargs):
+        result = rounds[call_count["n"]]
+        call_count["n"] += 1
+        return result
 
-    assert len(host.skill_calls) == 2, (
-        f"Both skills must be called; got: {[c['skill'] for c in host.skill_calls]}"
-    )
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    await loop.run("run both skills", [])
+
+    assert host.skill_calls == [
+        {"skill": "skill_a", "input": {"type": "X", "data": {}}, "chain_id": "chain-test"},
+        {"skill": "skill_b", "input": {"type": "Y", "data": {}}, "chain_id": "chain-test"},
+    ], f"Both skills must be called; got: {[c['skill'] for c in host.skill_calls]}"
     called_skills = {c["skill"] for c in host.skill_calls}
     assert called_skills == {"skill_a", "skill_b"}
     assert host.outbox[0]["text"] == "Both skills ran successfully."
 
 
 @pytest.mark.asyncio
-async def test_tools_param_includes_only_allowed_skills():
-    """The tools= sent to call_llm_tools are built from host.list_available_skills() only.
+async def test_tools_param_includes_only_allowed_skills(monkeypatch):
+    """Tier 3a: The tools= sent to call_llm_tools are built from host.list_available_skills() only.
 
     Sets up a host with 2 skills. Captures the tools= argument on the first LLM
     call and verifies the tool catalog reflects the host's skill list.
@@ -488,8 +502,8 @@ async def test_tools_param_includes_only_allowed_skills():
             captured_system.append(messages[0]["content"])
         return _text_result("Done.")
 
-    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=capturing_llm):
-        await loop.run("hello", [])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", capturing_llm)
+    await loop.run("hello", [])
 
     # The tool catalog must have been passed (non-empty)
     assert len(captured_tools) > 0, "tools= must be non-empty"
@@ -518,7 +532,7 @@ async def test_tools_param_includes_only_allowed_skills():
 
 @pytest.mark.asyncio
 async def test_validator_anchor_unchanged():
-    """System prompt lists only the host's allowed skill categories; absent skills are absent.
+    """Tier 3a: System prompt lists only the host's allowed skill categories; absent skills are absent.
 
     Build a host with skills=[A, B]; render system prompt; assert both categories
     appear and a phantom category 'phantom' is absent.
@@ -567,8 +581,8 @@ async def test_validator_anchor_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_invoke_skill_then_remember():
-    """Round 1: invoke_skill; round 2: remember_shared; round 3: text reply.
+async def test_invoke_skill_then_remember(monkeypatch):
+    """Tier 3a: Round 1: invoke_skill; round 2: remember_shared; round 3: text reply.
 
     Verifies the multi-step sequence: skill run + memory write + final outbox.
     Uses direct monkeypatch (no fixture needed — fully scripted behavior).
@@ -596,28 +610,34 @@ async def test_invoke_skill_then_remember():
         }]),
         _text_result("I ran the summariser and saved the project goal."),
     ]
+    call_count = {"n": 0}
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
-        await loop.run(
-            "Summarise this and remember the project goal.", []
-        )
+    async def fake_llm(*args, **kwargs):
+        result = rounds[call_count["n"]]
+        call_count["n"] += 1
+        return result
+
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    await loop.run(
+        "Summarise this and remember the project goal.", []
+    )
 
     # Skill ran
-    assert len(host.skill_calls) == 1
-    assert host.skill_calls[0]["skill"] == "text_summariser"
+    (skill_call,) = host.skill_calls
+    assert skill_call["skill"] == "text_summariser"
 
     # Memory written
     written_paths = [p for p, _ in host.file_writes]
     assert "/memory/shared/project_goal.md" in written_paths
 
     # Index regenerated
-    assert len(host.index_regenerations) == 1
+    (regen,) = host.index_regenerations
+    assert regen  # non-empty
 
     # Final text outbox
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["kind"] == "agent"
-    assert "summariser" in host.outbox[0]["text"].lower() or len(host.outbox[0]["text"]) > 0
+    (msg,) = host.outbox
+    assert msg["kind"] == "agent"
+    assert "summariser" in msg["text"].lower() or len(msg["text"]) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -910,7 +930,7 @@ async def test_invoke_skill_with_wrappers_enabled():
 # ---------------------------------------------------------------------------
 
 def test_no_monkeypatch_leak():
-    """LLMReplay monkeypatch is confined to @replay-marked tests.
+    """Tier 2: LLMReplay monkeypatch is confined to @replay-marked tests.
 
     Protects the conftest install/restore contract. If LLMReplay leaks into
     non-replay tests, calls to litellm.acompletion would use the fake,
