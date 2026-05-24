@@ -207,15 +207,11 @@ async def test_skip_rest_cancels_queued_ivs_not_head() -> None:
         await pilot.click("#chip__skip_rest")
         await pilot.pause()
 
-        # Head IV must still be active.
-        active = registry.list_active()
-        assert len(active) == 1, (
+        # Head IV must still be active; all queued IVs must be gone.
+        active_ids = {iv.id for iv in registry.list_active()}
+        assert active_ids == {iv_head.id}, (
             f"Only head IV should remain after skip_rest; "
-            f"found {len(active)} active: {[iv.id for iv in active]!r}"
-        )
-        assert active[0].id == iv_head.id, (
-            f"Remaining active IV should be the head ({iv_head.id!r}); "
-            f"got {active[0].id!r}"
+            f"active set={active_ids!r}, expected={{{iv_head.id!r}}}"
         )
         # Queued IVs' futures should be cancelled.
         for iv in (iv2, iv3, iv4):
