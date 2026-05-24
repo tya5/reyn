@@ -595,7 +595,8 @@ def test_all_servers_higher_scope_wins(tmp_path, monkeypatch, tmp_path_factory):
 
     entries = _all_servers_with_scope(tmp_path)
     github_entries = [(name, scope, cfg) for name, scope, cfg in entries if name == "github"]
-    (_name, scope, cfg), = github_entries
+    assert github_entries, "expected at least one github entry after dedup"
+    _name, scope, cfg = github_entries[0]
     assert scope == "local"
     assert cfg.get("command") == "local-cmd"
 

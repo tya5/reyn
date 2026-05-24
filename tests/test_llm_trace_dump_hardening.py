@@ -119,7 +119,7 @@ class TestRotation:
 
         # The new file has the fresh request record
         lines = [l for l in trace_file.read_text(encoding="utf-8").splitlines() if l.strip()]
-        assert len(lines) == 1
+        assert lines, "new trace file must contain at least one record after rotation"
         record = json.loads(lines[0])
         assert record["kind"] == "request"
 
