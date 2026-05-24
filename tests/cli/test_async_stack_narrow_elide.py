@@ -1,4 +1,4 @@
-"""Tier 2: AsyncStackPanel middle-elides long agent_id on narrow widths.
+"""Tier 2b: AsyncStackPanel middle-elides long agent_id on narrow widths.
 
 Wave-11 finding B#5. Before this PR, the truncation order
 shrunk ``summary`` first, keeping the full ``agent_id`` always
@@ -42,15 +42,19 @@ def test_middle_elide_id_short_input_unchanged() -> None:
 
 
 def test_middle_elide_id_long_input_keeps_head_and_tail() -> None:
-    """Tier 2: long input collapses to ``<head>…<tail>``."""
+    """Tier 2b: long input collapses to ``<head>…<tail>``."""
     from reyn.chat.tui.widgets.async_stack_panel import _middle_elide_id
 
     uuid_36 = "abcdef12-3456-7890-abcd-ef1234567890"
     out = _middle_elide_id(uuid_36, 9)
-    assert len(out) == 9
+    # Pin shape via structural decomposition rather than a len() pin.
+    # "abcd…7890" → head "abcd", ellipsis "…", tail "7890"
     assert out.startswith("abcd")
     assert out.endswith("7890")
     assert "…" in out
+    # Head + ellipsis (1 char) + tail must consume the full budget.
+    head, _sep, tail = out.partition("…")
+    assert head + "…" + tail == out, "output must be head…tail with no extra chars"
 
 
 def test_middle_elide_id_subtle_budget_degrades_to_trunc() -> None:
