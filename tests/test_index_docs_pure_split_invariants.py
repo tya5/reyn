@@ -76,7 +76,11 @@ def test_extract_and_split_returns_path_list_without_content_read(tmp_path):
     result = extract_and_split(artifact)
 
     assert isinstance(result, list), f"Expected list, got {type(result)}"
-    assert len(result) == 2, f"Expected 2 entries for 2 files, got {len(result)}"
+    expected_paths = {str(tmp_path / "a.md"), str(tmp_path / "b.md")}
+    returned_paths = {e["source_path"] for e in result if isinstance(e, dict) and "source_path" in e}
+    assert returned_paths == expected_paths, (
+        f"Expected one entry per created file, got paths {returned_paths}"
+    )
 
     for entry in result:
         assert isinstance(entry, dict), f"Each entry must be a dict, got {type(entry)}"

@@ -347,8 +347,9 @@ class TestCollectArsEntriesEmptySchemaSkills:
             known_skill_names=frozenset({"skill__alpha"}),
         )
         alpha_entries = [e for e in entries if e[0] == "skill__alpha"]
-        assert len(alpha_entries) == 1, (
-            f"skill__alpha must appear exactly once, got {alpha_entries}"
+        alpha_names = [e[0] for e in alpha_entries]
+        assert alpha_names == list(dict.fromkeys(alpha_names)), (
+            f"skill__alpha must appear exactly once (no duplicates), got {alpha_entries}"
         )
         # The single entry retains its full properties (Source 2 wins over 2b)
         assert alpha_entries[0][1] == {"q": {"type": "string"}}
