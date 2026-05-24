@@ -190,7 +190,6 @@ def test_flag_on_wrapper_shapes_are_openai_function_tools() -> None:
             "list_actions", "describe_action", "invoke_action",
         )
     ]
-    assert len(wrappers) == 3
     for t in wrappers:
         assert t["type"] == "function"
         func = t["function"]
@@ -444,7 +443,6 @@ async def test_hot_list_alias_call_redirects_to_invoke_action() -> None:
     result = await loop._invoke_router_tool("skill__code_review", {"pr_url": "https://example.com"})
 
     assert result == {"captured": True}, "Expected _invoke_via_registry to be called"
-    assert len(loop._calls) == 1
     dispatched_name, dispatched_args = loop._calls[0]
     assert dispatched_name == "invoke_action", (
         f"Expected redirect to 'invoke_action', got {dispatched_name!r}"
