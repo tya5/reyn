@@ -402,6 +402,20 @@ async def _on_chat_start() -> None:
     await registry.restore_all()
     session = await registry.attach(name)
 
+    # Register chainlit as an intervention listener so the session's
+    # ``InterventionRegistry`` (= built with
+    # ``enforce_listener_presence=True`` at session.py:1529) actually
+    # dispatches IVs through the bus → outbox. Without this, every
+    # ``bus.request(iv)`` short-circuits at registry.py:230 with an
+    # empty ``InterventionAnswer(text="")``, which the permission
+    # gate treats as a refusal → user sees silent "permission
+    # denied" instead of the AskActionMessage wired in PR #907.
+    try:
+        session.register_intervention_listener("chainlit")
+    except AttributeError:
+        # Stripped / mocked session in tests — degrade gracefully.
+        pass
+
     # Replay prior chat turns from ``ChatSession.history`` (= what
     # ``load_history`` read from ``history.jsonl``) so the operator
     # sees the conversation they had previously with this agent
@@ -622,3 +636,14 @@ async def _on_chat_end() -> None:
     task = cl.user_session.get(_DRAIN_KEY)
     if task is not None:
         task.cancel()
+    # Drop the chainlit listener registration so a subsequent
+    # ``_on_chat_start`` re-adds cleanly and idle-state IVs aren't
+    # mis-classified as listener-present. Best-effort: registry
+    # missing / session detached is a no-op.
+    try:
+        registry = await _get_or_build_registry()
+        session = registry.attached_session()
+        if session is not None:
+            session.unregister_intervention_listener("chainlit")
+    except Exception:
+        pass
