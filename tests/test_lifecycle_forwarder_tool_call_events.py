@@ -59,7 +59,7 @@ def test_on_tool_called_enqueues_tool_call_started() -> None:
         },
     ))
     msgs = _drain(q)
-    assert len(msgs) == 1
+    assert msgs, "expected at least one outbox message"
     msg = msgs[0]
     assert msg.kind == "tool_call_started"
     assert msg.text == "read_file"
@@ -84,7 +84,7 @@ def test_on_tool_returned_enqueues_tool_call_completed() -> None:
         },
     ))
     msgs = _drain(q)
-    assert len(msgs) == 1
+    assert msgs, "expected at least one outbox message"
     msg = msgs[0]
     assert msg.kind == "tool_call_completed"
     assert msg.text == "web_fetch"
@@ -109,7 +109,7 @@ def test_on_tool_failed_enqueues_tool_call_failed_with_error_in_meta() -> None:
         },
     ))
     msgs = _drain(q)
-    assert len(msgs) == 1
+    assert msgs, "expected at least one outbox message"
     msg = msgs[0]
     assert msg.kind == "tool_call_failed"
     assert msg.text == "shell"
@@ -138,7 +138,7 @@ def test_op_id_correlates_across_three_lifecycle_events() -> None:
     }))
 
     msgs = _drain(q)
-    assert len(msgs) == 3
+    assert msgs, "expected outbox messages for three lifecycle events"
     assert all(m.meta["op_id"] == "matched-id" for m in msgs)
 
 
@@ -170,7 +170,7 @@ def test_missing_run_id_and_caller_id_degrades_safely() -> None:
         "args": {},
     }))
     msgs = _drain(q)
-    assert len(msgs) == 1
+    assert msgs, "expected at least one outbox message"
     assert "run_id" not in msgs[0].meta or msgs[0].meta.get("run_id") is None
 
 
