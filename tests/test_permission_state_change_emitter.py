@@ -153,7 +153,7 @@ def test_persist_callback_exception_does_not_crash_persist(tmp_path):
 
 
 def test_session_mints_state_change_on_permission_grant(tmp_path):
-    """Tier 2 (#398 v4 + #352): a permission grant via
+    """Tier 2: (#398 v4 + #352) a permission grant via
     ``PermissionResolver._persist`` triggers a state_change history
     entry in the subscribed session — the LLM-visible mitigation
     for the #352 in-context-learning refusal trap.
@@ -168,9 +168,9 @@ def test_session_mints_state_change_on_permission_grant(tmp_path):
     resolver._persist("mcp.sqlite", True)
 
     entries = _state_changes(session)
-    assert len(entries) == 1
-    assert entries[0].content == "Permission for 'mcp.sqlite' was granted."
-    assert entries[0].meta.get("source") == "permission_manager"
+    (only,) = entries
+    assert only.content == "Permission for 'mcp.sqlite' was granted."
+    assert only.meta.get("source") == "permission_manager"
 
 
 def test_session_mints_state_change_on_permission_revoke(tmp_path):
@@ -183,9 +183,9 @@ def test_session_mints_state_change_on_permission_revoke(tmp_path):
     resolver._persist("mcp.sqlite", False)
 
     entries = _state_changes(session)
-    assert len(entries) == 1
-    assert entries[0].content == "Permission for 'mcp.sqlite' was revoked."
-    assert entries[0].meta.get("source") == "permission_manager"
+    (only,) = entries
+    assert only.content == "Permission for 'mcp.sqlite' was revoked."
+    assert only.meta.get("source") == "permission_manager"
 
 
 def test_multiple_sessions_all_notified_on_shared_resolver(tmp_path):
