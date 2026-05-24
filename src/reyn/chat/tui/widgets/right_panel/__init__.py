@@ -924,6 +924,13 @@ class RightPanel(Widget):
         ``render_events`` records the exact y of each event's
         headline row in ``_events_event_ys``; we look it up here.
         Same idiom as the memory- and agents-tab fixes.
+
+        Note: ``_events_event_ys[i]`` already encodes the header offset
+        (= line 0 is the header, event 0 starts at line >= 1 when a
+        chain-isolation banner or other leading rows are present).
+        Adding +1 here would scroll PAST the cursor row and hide it
+        above the viewport — same off-by-one as the keys/pending fix
+        (dogfood 2026-05-24: 他のタブもカーソル一番上が隠れるよ).
         """
         try:
             vs = self.query_one("#panel-scroll", VerticalScroll)
@@ -933,8 +940,7 @@ class RightPanel(Widget):
                 return
             if not (0 <= self._events_cursor < len(self._events_event_ys)):
                 return
-            # +1 for content padding-top, matching the memory-tab fix.
-            y = 1 + self._events_event_ys[self._events_cursor]
+            y = self._events_event_ys[self._events_cursor]
             if y < current:
                 vs.scroll_to(y=y, animate=False)
             elif y >= current + visible:
@@ -1027,6 +1033,11 @@ class RightPanel(Widget):
         entry's name row in ``_memory_entry_ys``; we just look it up here.
 
         Same idiom as the events-tab fix in PR #97.
+
+        Note: ``_memory_entry_ys[i]`` already encodes the leading-header
+        offset (``render_memory`` records ``len(lines)`` after appending
+        section / scope headers).  Adding +1 here scrolls PAST the cursor
+        row — dogfood 2026-05-24: 他のタブもカーソル一番上が隠れるよ.
         """
         try:
             vs = self.query_one("#panel-scroll", VerticalScroll)
@@ -1036,8 +1047,7 @@ class RightPanel(Widget):
                 return
             if not (0 <= self._memory_cursor < len(self._memory_entry_ys)):
                 return
-            # +1 for content padding-top, matching the events-tab fix.
-            y = 1 + self._memory_entry_ys[self._memory_cursor]
+            y = self._memory_entry_ys[self._memory_cursor]
             if y < current:
                 vs.scroll_to(y=y, animate=False)
             elif y >= current + visible:
@@ -1256,6 +1266,11 @@ class RightPanel(Widget):
         selectable item in ``_agents_item_ys`` so we don't have to guess.
 
         Same idiom as the events- and memory-tab fixes (PR #97 + this PR).
+
+        Note: ``_agents_item_ys[i]`` is a 0-indexed line counter that
+        already accounts for the agent-label rows above each item.
+        Adding +1 here scrolls PAST the cursor row and hides it above
+        the viewport — dogfood 2026-05-24: 他のタブもカーソル一番上が隠れるよ.
         """
         try:
             vs = self.query_one("#panel-scroll", VerticalScroll)
@@ -1265,8 +1280,7 @@ class RightPanel(Widget):
                 return
             if not (0 <= self._agents_cursor < len(self._agents_item_ys)):
                 return
-            # +1 for content padding-top, matching the events-tab fix.
-            y = 1 + self._agents_item_ys[self._agents_cursor]
+            y = self._agents_item_ys[self._agents_cursor]
             if y < current:
                 vs.scroll_to(y=y, animate=False)
             elif y >= current + visible:
@@ -2192,7 +2206,12 @@ class RightPanel(Widget):
           0: header
           1: blank
           per section: [section_header, file0, file1, ..., blank]
-        #panel-content has padding-top:1, so add 1 for the scroll coordinate.
+
+        ``line`` tracks the 0-based render line position; the return value
+        is used directly as the ``scroll_to(y=...)`` target.  No +1 offset
+        for padding-top — adding it would scroll PAST the cursor row and hide
+        it above the viewport (same off-by-one as events/memory/agents tabs;
+        dogfood 2026-05-24: 他のタブもカーソル一番上が隠れるよ).
         """
         line = 2  # past header + blank
         file_idx = 0
@@ -2200,11 +2219,11 @@ class RightPanel(Widget):
             line += 1  # section header
             for _md in self._docs_groups[section]:
                 if file_idx == self._docs_cursor:
-                    return 1 + line  # 1 = padding-top
+                    return line
                 line += 1
                 file_idx += 1
             line += 1  # trailing blank per section
-        return 3  # fallback: near top
+        return 2  # fallback: near top
 
     def _scroll_docs_into_view(self) -> None:
         """Scroll #panel-scroll so the cursor line is visible."""
