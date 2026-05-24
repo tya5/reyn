@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from reyn.chat.session import ChatSession, _PendingChain
 from reyn.llm.llm import LLMToolCallResult
@@ -66,6 +65,49 @@ def _drain_outbox(session: ChatSession) -> list:
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+class _StubChatSession:
+    """Minimal peer ChatSession stub for delegate_to_agent tests.
+
+    Records submit_agent_request calls without invoking real session lifecycle.
+    Real ChatSession instantiation pulls in the full agent/event/loop stack;
+    a stub is sufficient because the test only verifies the chain registration.
+    """
+
+    def __init__(self) -> None:
+        self.submitted_requests: list[tuple] = []
+
+    async def submit_agent_request(self, *args, **kwargs) -> None:
+        self.submitted_requests.append((args, kwargs))
+
+
+class _StubAgentRegistry:
+    """Minimal AgentRegistry stub for delegate_to_agent tests.
+
+    Pre-loads a single reachable peer agent and returns the supplied
+    target session from get_or_load. Real AgentRegistry boots the on-disk
+    registry catalog + permission graph; a stub is sufficient because the
+    test only verifies the chain registration side-effect.
+    """
+
+    def __init__(self, target_session: _StubChatSession) -> None:
+        self._target = target_session
+
+    def iter_reachable_agents(self, self_name: str) -> list[dict]:
+        return [{"name": "peer_agent", "role": "data analyst"}]
+
+    def exists(self, name: str) -> bool:
+        return True
+
+    def permit(self, from_agent: str, to_agent: str) -> bool:
+        return True
+
+    def get_or_load(self, name: str) -> _StubChatSession:
+        return self._target
+
+    async def ensure_running(self, name: str) -> None:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -193,13 +235,15 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
         return result
 
     monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+    monkeypatch.setattr(session._router_host, "spawn_skill", fake_adapter_spawn_skill)
+    monkeypatch.setattr(
+        session._router_host,
+        "list_available_skills",
+        lambda: [{"name": "some_skill", "category": "general"}],
+    )
 
     async def run():
-        with patch.object(session._router_host, "spawn_skill",
-                          side_effect=fake_adapter_spawn_skill), \
-             patch.object(session._router_host, "list_available_skills",
-                          return_value=[{"name": "some_skill", "category": "general"}]):
-            await session._handle_user_message("run skill", chain_id="chain-003")
+        await session._handle_user_message("run skill", chain_id="chain-003")
 
     _run(run())
 
@@ -241,18 +285,9 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
-    # We need a registry with a fake peer
-    registry = MagicMock()
-    registry.iter_reachable_agents.return_value = [
-        {"name": "peer_agent", "role": "data analyst"},
-    ]
-    registry.exists.return_value = True
-    registry.permit.return_value = True
-
-    target_session = MagicMock()
-    target_session.submit_agent_request = AsyncMock()
-    registry.get_or_load.return_value = target_session
-    registry.ensure_running = AsyncMock()
+    # Stub a registry with a single reachable peer.
+    target_session = _StubChatSession()
+    registry = _StubAgentRegistry(target_session)
 
     session = ChatSession(
         agent_name="test_agent",
