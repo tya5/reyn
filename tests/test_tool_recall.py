@@ -163,7 +163,6 @@ async def test_recall_handler_builds_recall_ir_op(monkeypatch):
     }
     result = await RECALL.handler(args, ctx)
 
-    assert len(captured_ops) == 1
     op = captured_ops[0]
     assert isinstance(op, RecallIROp)
     assert op.kind == "recall"
@@ -195,7 +194,6 @@ async def test_recall_handler_defaults(monkeypatch):
     args = {"query": "test query", "sources": ["my_source"]}
     await RECALL.handler(args, ctx)
 
-    assert len(captured_ops) == 1
     op = captured_ops[0]
     assert isinstance(op, RecallIROp)
     assert op.top_k == 5

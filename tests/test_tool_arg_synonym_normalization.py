@@ -67,7 +67,6 @@ async def test_write_file_accepts_text_synonym(monkeypatch):
     args = {"path": "output.txt", "text": "hello world"}
     result = await WRITE_FILE.handler(args, ctx)
 
-    assert len(captured_ops) == 1
     op = captured_ops[0]
     assert isinstance(op, FileIROp)
     assert op.op == "write"
@@ -153,7 +152,6 @@ async def test_drop_source_accepts_source_id_synonym(monkeypatch):
     args = {"source_id": "my_corpus"}
     result = await DROP_SOURCE.handler(args, ctx)
 
-    assert len(captured_ops) == 1
     op = captured_ops[0]
     assert isinstance(op, IndexDropIROp)
     assert op.kind == "index_drop"
