@@ -45,6 +45,7 @@ from reyn.chainlit_app.slash_route import (
     QUICK_ACTIONS,
     QuickAction,
     action_name_for,
+    is_chainlit_history_wipe,
     is_slash,
 )
 from reyn.chainlit_app.uploads import collect_image_blocks
@@ -430,9 +431,43 @@ async def _on_message(message: cl.Message) -> None:
     text = message.content or ""
     if is_slash(text):
         await session._maybe_handle_slash(text)
+        # Chainlit-side cleanup: when reyn just wiped its own history,
+        # remove the corresponding rendered messages from the browser
+        # thread too. Without this, the operator sees a clean reyn
+        # state but a stale-looking chat UI until they reload.
+        if is_chainlit_history_wipe(text):
+            await _clear_chainlit_thread()
         return
 
     await session.submit_user_text(text)
+
+
+async def _clear_chainlit_thread() -> None:
+    """Remove every rendered ``cl.Message`` from the browser thread.
+
+    Iterates chainlit's per-session message list, calls ``.remove()``
+    on each (= emits ``delete_message`` to the browser), then empties
+    the server-side bookkeeping list. Best-effort: chainlit version
+    drift / context unavailability is swallowed so the original slash
+    response still surfaces.
+    """
+    try:
+        from chainlit import chat_context
+    except Exception:
+        return
+    try:
+        messages = list(chat_context.get())
+    except Exception:
+        messages = []
+    for msg in messages:
+        try:
+            await msg.remove()
+        except Exception:
+            continue
+    try:
+        chat_context.clear()
+    except Exception:
+        pass
 
 
 async def _run_quick_action(action_payload: dict) -> None:

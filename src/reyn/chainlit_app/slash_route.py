@@ -58,6 +58,23 @@ QUICK_ACTIONS: tuple[QuickAction, ...] = (
 )
 
 
+def is_chainlit_history_wipe(text: str) -> bool:
+    """Return True when ``text`` should also trigger the chainlit-side
+    chat-thread clear after the reyn slash dispatch.
+
+    Today the only entry that requires UI cleanup is
+    ``/clear-history confirm`` — the slash wipes ``session.history`` +
+    the per-agent ``history.jsonl`` reyn-side, but chainlit's
+    browser-rendered ``cl.Message`` widgets stay on screen unless we
+    explicitly remove them. The check tolerates extra whitespace +
+    case variations so ``"  /CLEAR-HISTORY CONFIRM "`` still triggers.
+    """
+    if not text:
+        return False
+    normalized = " ".join(text.lower().split())
+    return normalized == "/clear-history confirm"
+
+
 def action_name_for(action: QuickAction) -> str:
     """Return the ``cl.Action.name`` (= callback key) for a QuickAction.
 
@@ -71,5 +88,6 @@ __all__ = [
     "QUICK_ACTIONS",
     "QuickAction",
     "action_name_for",
+    "is_chainlit_history_wipe",
     "is_slash",
 ]
