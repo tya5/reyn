@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -249,7 +248,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_source_npm_skips_registry_and_installs(tmp_path):
+def test_source_npm_skips_registry_and_installs(tmp_path, monkeypatch):
     """Tier 2: --source npm: skips registry fetch and writes config via npx."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
     decl = _phase5_source_install_decl(resolver)
@@ -263,10 +262,10 @@ def test_source_npm_skips_registry_and_installs(tmp_path):
         source="npm:@modelcontextprotocol/server-filesystem",
     )
 
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        # RegistryClient._get must NOT be called; if it is, it would fail
-        # because we're not patching it.  The test passes only if it's skipped.
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
+    # RegistryClient._get must NOT be called; if it is, it would fail
+    # because we're not patching it.  The test passes only if it's skipped.
+    result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
     assert result["runtime"] == "npx"
@@ -287,7 +286,7 @@ def test_source_npm_skips_registry_and_installs(tmp_path):
     assert "@modelcontextprotocol/server-filesystem" in " ".join(str(a) for a in entry["args"])
 
 
-def test_source_pypi_skips_registry_and_installs(tmp_path):
+def test_source_pypi_skips_registry_and_installs(tmp_path, monkeypatch):
     """Tier 2: --source pypi: skips registry fetch and writes config via uvx."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
     decl = _phase5_source_install_decl(resolver)
@@ -301,8 +300,8 @@ def test_source_pypi_skips_registry_and_installs(tmp_path):
         source="pypi:my-mcp-server",
     )
 
-    with mock.patch("shutil.which", return_value="/usr/bin/uvx"):
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/uvx")
+    result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
     assert result["runtime"] == "uvx"
@@ -338,7 +337,7 @@ def test_source_invalid_specifier_returns_error(tmp_path):
     assert not config_path.exists()
 
 
-def test_source_event_includes_source_field(tmp_path):
+def test_source_event_includes_source_field(tmp_path, monkeypatch):
     """Tier 2: mcp_server_installed event carries source field when source install used (P6)."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
     decl = _phase5_source_install_decl(resolver)
@@ -353,8 +352,8 @@ def test_source_event_includes_source_field(tmp_path):
         source=source_spec,
     )
 
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
+    _run(mcp_install_handle(op, ctx, "control_ir"))
 
     events = ctx.events.all()
     install_events = [e for e in events if e.type == "mcp_server_installed"]
@@ -364,7 +363,7 @@ def test_source_event_includes_source_field(tmp_path):
     assert evt.data["source"] == source_spec
 
 
-def test_source_github_known_installs_npm(tmp_path):
+def test_source_github_known_installs_npm(tmp_path, monkeypatch):
     """Tier 2: GitHub URL for known modelcontextprotocol repo resolves to npm and installs."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
     decl = _phase5_source_install_decl(resolver)
@@ -379,8 +378,8 @@ def test_source_github_known_installs_npm(tmp_path):
         source=github_url,
     )
 
-    with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
+    result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
     assert result["runtime"] == "npx"
@@ -393,7 +392,7 @@ def test_source_github_known_installs_npm(tmp_path):
     assert "filesystem" in servers
 
 
-def test_source_missing_runtime_returns_error(tmp_path):
+def test_source_missing_runtime_returns_error(tmp_path, monkeypatch):
     """Tier 2: source install returns error when runtime binary is absent."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
     decl = _phase5_source_install_decl(resolver)
@@ -407,14 +406,14 @@ def test_source_missing_runtime_returns_error(tmp_path):
         source="npm:@example/server",
     )
 
-    with mock.patch("shutil.which", return_value=None):
-        result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "error"
     assert "npx" in result["error"].lower() or "node" in result["error"].lower()
 
 
-def test_registry_path_unaffected_by_source_field_being_none(tmp_path):
+def test_registry_path_unaffected_by_source_field_being_none(tmp_path, monkeypatch):
     """Tier 2: registry path still works when source=None (regression guard).
 
     The source=None path hits the registry fetch, so the decl must
@@ -454,9 +453,10 @@ def test_registry_path_unaffected_by_source_field_being_none(tmp_path):
     async def _fake_get(self, path: str, params=None, base_url=None):
         return {"server": _FILESYSTEM_RESPONSE}
 
-    with mock.patch("reyn.registry.client.RegistryClient._get", _fake_get):
-        with mock.patch("shutil.which", return_value="/usr/bin/npx"):
-            result = _run(mcp_install_handle(op, ctx, "control_ir"))
+    from reyn.registry.client import RegistryClient
+    monkeypatch.setattr(RegistryClient, "_get", _fake_get)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
+    result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
     assert result["source"] == ""  # no source in registry path
