@@ -120,9 +120,9 @@ def test_advance_phase_updates_snapshot_and_appends_event(tmp_path):
     assert snap.last_phase_applied_seq > 0
 
     advanced = _entries(log, "skill_phase_advanced")
-    assert len(advanced) == 2
-    assert advanced[0]["next_phase"] == "draft"
-    assert advanced[1]["next_phase"] == "review"
+    adv0, adv1 = advanced
+    assert adv0["next_phase"] == "draft"
+    assert adv1["next_phase"] == "review"
 
 
 def test_advance_phase_unknown_run_id_is_noop(tmp_path):

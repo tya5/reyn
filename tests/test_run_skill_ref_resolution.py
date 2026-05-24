@@ -53,7 +53,7 @@ def test_unknown_bare_skill_name_raises():
 
 
 def test_short_name_with_skill_md_resolves_via_stdlib():
-    """Tier 2 (B41-NF-S7-1): '<stdlib_name>/skill.md' resolves leading segment.
+    """Tier 2: '<stdlib_name>/skill.md' resolves leading segment (B41-NF-S7-1).
 
     The eval router LLM constructs paths like 'direct_llm/skill.md' when
     the target_skill_path field name implies a path is expected. Pre-B41,
