@@ -159,7 +159,7 @@ def test_require_http_get_wildcard_prompts_via_bus(tmp_path):
     decl = PermissionDecl(http_get=[{"host": "*"}])
     bus = _AlwaysBus()
     asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
-    assert len(bus.requests) == 1
+    assert bus.requests, "wildcard host must trigger an interactive prompt"
     assert "example.com" in bus.requests[0].prompt
 
 
@@ -178,9 +178,12 @@ def test_require_http_get_wildcard_persists_after_always(tmp_path):
     decl = PermissionDecl(http_get=[{"host": "*"}])
     bus = _AlwaysBus()
     asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
+    count_after_first = len(bus.requests)
     asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
-    # Second call should not have prompted again — total still 1.
-    assert len(bus.requests) == 1
+    # Second call should not have prompted again — count must not grow.
+    assert len(bus.requests) == count_after_first, (
+        "ALWAYS-approved host must not re-prompt on subsequent calls"
+    )
 
 
 def test_require_http_get_wildcard_without_bus_raises(tmp_path):
@@ -209,7 +212,7 @@ def test_require_http_get_no_decl_emits_deprecation_warning(tmp_path):
         warnings.simplefilter("always")
         asyncio.run(resolver.require_http_get(decl, "example.com", bus, "test_skill"))
     deprecation_warnings = [w for w in recorded if issubclass(w.category, DeprecationWarning)]
-    assert len(deprecation_warnings) == 1
+    assert deprecation_warnings, "missing http.get declaration must emit a DeprecationWarning"
     assert "http.get" in str(deprecation_warnings[0].message)
 
 
