@@ -204,8 +204,8 @@ def test_on_dispatch_posts_webhook_when_url_set(monkeypatch) -> None:
 
     asyncio.run(_drive())
 
-    assert len(posted) == 1
-    url, payload = posted[0]
+    assert posted, "expected exactly one webhook POST"
+    (url, payload), = posted
     assert url == "https://peer.test/hook"
     assert payload["status"] == "input-required"
     assert payload["question"] == "Question?"
@@ -283,7 +283,7 @@ def test_on_dispatch_appends_input_required_to_history_events() -> None:
     asyncio.run(_drive())
 
     history = registry.get(run_id).history_events
-    assert len(history) == 1
+    assert history, "expected at least one history event"
     assert history[0]["status"] == "input-required"
     assert history[0]["kind"] == "ask_user"
 

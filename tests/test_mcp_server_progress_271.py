@@ -117,8 +117,8 @@ async def test_bridge_forwards_phase_started_as_progress_notification() -> None:
         # Yield to let the spawned task run.
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        assert fake_mcp.calls, "expected at least one progress notification call"
-        call = fake_mcp.calls[0]
+        assert fake_mcp.calls, "expected at least one progress notification"
+        (call,) = fake_mcp.calls
         assert call["progress_token"] == "tok-1"
         assert call["progress"] == 1.0
         assert call["total"] is None
@@ -260,7 +260,7 @@ async def test_bridge_swallows_send_progress_notification_errors() -> None:
         await asyncio.sleep(0)
         # The second event was successfully forwarded.
         success_calls = [c for c in fake_mcp.calls if c["message"] == "phase: y"]
-        assert success_calls, "expected 'phase: y' notification to be forwarded after error recovery"
+        assert success_calls, "expected the second event to be forwarded"
     finally:
         bridge.detach()
 
