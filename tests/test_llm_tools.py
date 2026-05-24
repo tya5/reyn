@@ -68,7 +68,7 @@ def _minimal_context_frame() -> ContextFrame:
 
 @pytest.mark.asyncio
 async def test_stream_false_is_forced(monkeypatch):
-    """Tier 1 framework contract: stream=False must be passed to litellm regardless of caller input.
+    """Tier 1: framework contract: stream=False must be passed to litellm regardless of caller input.
 
     Uses a capturing async function (not AsyncMock) to inspect kwargs.
     Framework boundary — intentional monkeypatch.
@@ -100,7 +100,7 @@ async def test_stream_false_is_forced(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_response_format_not_passed(monkeypatch):
-    """Tier 1 framework contract: response_format must NOT be passed (incompatible with tools= on most providers).
+    """Tier 1: framework contract: response_format must NOT be passed (incompatible with tools= on most providers).
 
     Framework boundary — intentional monkeypatch.
     """
@@ -128,7 +128,7 @@ async def test_response_format_not_passed(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tools_and_tool_choice_passed_through(monkeypatch):
-    """Tier 1 framework contract: tools and tool_choice arrive at litellm verbatim.
+    """Tier 1: framework contract: tools and tool_choice arrive at litellm verbatim.
 
     Framework boundary — intentional monkeypatch.
     """
@@ -166,7 +166,7 @@ async def test_tools_and_tool_choice_passed_through(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_llm_tools_pre_check_blocks_when_over_quota(monkeypatch):
-    """Tier 1 error path: when per-agent token cap is exhausted, call raises BudgetExceeded
+    """Tier 1: error path: when per-agent token cap is exhausted, call raises BudgetExceeded
     before calling litellm.
 
     LLMReplay cannot cover this path (litellm is never reached). Framework boundary.
@@ -207,7 +207,7 @@ async def test_call_llm_tools_pre_check_blocks_when_over_quota(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_call_llm_pre_check_blocks_when_over_quota(monkeypatch):
-    """Tier 1 error path: call_llm raises BudgetExceeded before calling litellm when cap exceeded.
+    """Tier 1: error path: call_llm raises BudgetExceeded before calling litellm when cap exceeded.
 
     LLMReplay cannot cover this path (litellm is never reached). Framework boundary.
     """
@@ -353,7 +353,7 @@ async def test_call_llm_records_tokens_to_budget():
 @pytest.mark.replay("fixtures/llm/llm_tools/text_only.jsonl")
 @pytest.mark.asyncio
 async def test_llm_tools_drift_detection():
-    """Tier 3a drift detection: changes in messages/tools must invalidate the fixture key
+    """Tier 3a: drift detection: changes in messages/tools must invalidate the fixture key
     and raise MissingFixture. Ensures that replay test keys are tight enough to catch
     prompt drift."""
     from reyn.testing.replay import MissingFixture
