@@ -68,8 +68,9 @@ def _make_ctx_no_workspace() -> OpContext:
 
 
 def test_index_query_raises_clear_value_error_when_workspace_none():
-    """Tier 2 (B48-NF-W2-S7 fix): index_query handler must raise a clear
-    ``ValueError`` (not opaque ``AttributeError``) when workspace is None."""
+    """Tier 2: index_query handler must raise a clear ``ValueError``
+    (not opaque ``AttributeError``) when workspace is None.
+    (B48-NF-W2-S7 fix)"""
     op = IndexQueryIROp(
         kind="index_query",
         source="test_source",
@@ -114,8 +115,8 @@ def test_index_query_fallback_path_bypasses_workspace_check():
 
 
 def test_index_drop_raises_clear_value_error_when_workspace_none():
-    """Tier 2 (B48-NF-W2-S7 fix): index_drop handler raises a clear
-    ``ValueError`` when workspace is None."""
+    """Tier 2: index_drop handler raises a clear ``ValueError``
+    when workspace is None. (B48-NF-W2-S7 fix)"""
     op = IndexDropIROp(kind="index_drop", source="test_source")
     ctx = _make_ctx_no_workspace()
 
@@ -133,8 +134,8 @@ def test_index_drop_raises_clear_value_error_when_workspace_none():
 
 
 def test_index_write_raises_clear_value_error_when_workspace_none():
-    """Tier 2 (B48-NF-W2-S7 fix): index_write handler raises a clear
-    ``ValueError`` when workspace is None."""
+    """Tier 2: index_write handler raises a clear ``ValueError``
+    when workspace is None. (B48-NF-W2-S7 fix)"""
     op = IndexWriteIROp(
         kind="index_write",
         source="test_source",
