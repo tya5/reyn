@@ -46,7 +46,7 @@ def _line_text(log: RichLog, index: int) -> str:
 
 @pytest.mark.asyncio
 async def test_render_cost_suffix_is_right_aligned():
-    """Cost suffix renders at the right edge of the RichLog content region.
+    """Tier 2b: cost suffix renders at the right edge of the RichLog content region.
 
     Drives ``conv.render_cost_suffix`` directly with known values, then
     inspects the resulting RichLog Strip: the visible glyphs of the suffix
@@ -95,7 +95,7 @@ async def test_render_cost_suffix_is_right_aligned():
 
 @pytest.mark.asyncio
 async def test_render_cost_suffix_no_crash_on_zero_values():
-    """Cost suffix with zero deltas still renders without raising.
+    """Tier 2b: cost suffix with zero deltas still renders without raising.
 
     The caller (``app._maybe_render_cost_suffix``) skips the call when
     both deltas are zero, but this is a defence-in-depth check that the
