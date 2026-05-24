@@ -82,10 +82,13 @@ def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True  # enable status messages
 
+    async def fake_llm(*args, **kwargs):
+        return _text_result("hi")
+
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+
     async def run():
-        with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-            mock_llm.return_value = _text_result("hi")
-            await session._handle_user_message("hello", chain_id="chain-001")
+        await session._handle_user_message("hello", chain_id="chain-001")
 
     _run(run())
 
@@ -101,10 +104,13 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True
 
+    async def fake_llm(*args, **kwargs):
+        return _text_result("hello back")
+
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+
     async def run():
-        with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-            mock_llm.return_value = _text_result("hello back")
-            await session._handle_user_message("hello", chain_id="chain-002")
+        await session._handle_user_message("hello", chain_id="chain-002")
 
     _run(run())
 
@@ -169,23 +175,30 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
         # No round 2: H3 patch exits the loop on spawn-ack.
     ]
 
-    async def run():
-        async def fake_adapter_spawn_skill(*, skill, input, chain_id):
-            spawn_called["called"] = True
-            return {
-                "status": "spawned",
-                "run_id": "20260510T000000Z_some_skill_aaaa",
-                "chain_id": chain_id,
-                "skill": skill,
-                "note": "Running in the background. I will notify you when it completes. Use /tasks to check progress.",
-            }
+    async def fake_adapter_spawn_skill(*, skill, input, chain_id):
+        spawn_called["called"] = True
+        return {
+            "status": "spawned",
+            "run_id": "20260510T000000Z_some_skill_aaaa",
+            "chain_id": chain_id,
+            "skill": skill,
+            "note": "Running in the background. I will notify you when it completes. Use /tasks to check progress.",
+        }
 
-        with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm, \
-             patch.object(session._router_host, "spawn_skill",
+    call_count = {"n": 0}
+
+    async def fake_llm(*args, **kwargs):
+        result = rounds[call_count["n"]]
+        call_count["n"] += 1
+        return result
+
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+
+    async def run():
+        with patch.object(session._router_host, "spawn_skill",
                           side_effect=fake_adapter_spawn_skill), \
              patch.object(session._router_host, "list_available_skills",
                           return_value=[{"name": "some_skill", "category": "general"}]):
-            mock_llm.side_effect = rounds
             await session._handle_user_message("run skill", chain_id="chain-003")
 
     _run(run())
@@ -255,15 +268,22 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
         _text_result("Delegated."),
     ]
 
+    call_count = {"n": 0}
+
+    async def fake_llm(*args, **kwargs):
+        result = rounds[call_count["n"]]
+        call_count["n"] += 1
+        return result
+
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
+
     async def run():
-        with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-            mock_llm.side_effect = rounds
-            await session._handle_agent_request({
-                "from_agent": "origin_agent",
-                "request": "can you delegate this?",
-                "depth": 1,
-                "chain_id": "chain-del-001",
-            })
+        await session._handle_agent_request({
+            "from_agent": "origin_agent",
+            "request": "can you delegate this?",
+            "depth": 1,
+            "chain_id": "chain-del-001",
+        })
 
     _run(run())
 
