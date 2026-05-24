@@ -324,15 +324,16 @@ def build_system_prompt(
         # hot-list as the complete inventory and refuses capability requests
         # whose tool is not pre-loaded. Trace-replay verified pre-fix vs
         # post-fix on sqlite + everything MCP servers: pre-fix the LLM
-        # refused; post-fix it calls list_actions(filter="<server>") and
+        # refused; post-fix it calls list_actions to discover the rest and
         # follows up with invoke_action.
         parts.append(
             "The function list visible to you is a HOT-LIST (= a subset of "
             "the full catalog). Whenever the user requests a capability and "
-            "no listed tool obviously matches, ALWAYS call "
-            "`list_actions(filter=\"<keyword>\")` to discover the rest of "
-            "the catalog BEFORE refusing. Refusing without that check is a "
-            "failure mode — the action you assumed missing often exists."
+            "no listed tool obviously matches, ALWAYS call `list_actions` "
+            "(narrow by `category=[...]` when you know the category) to "
+            "discover the rest of the catalog BEFORE refusing. Refusing "
+            "without that check is a failure mode — the action you assumed "
+            "missing often exists."
         )
         parts.append("")
 
@@ -384,18 +385,16 @@ def build_system_prompt(
         parts.extend([
             "  - Never invent action names; only use those returned by",
             "    list_actions or search_actions.",
-            "  - For semantic / natural-language queries (= 「探したい」 「関連」 "
-            "「something for X」 「similar to」), USE search_actions(query=...).",
-            "    For exact category enumeration or substring lookup of a known",
-            "    keyword, USE list_actions(category=[...]) or"
-            " list_actions(filter='...').",
+            "  - For semantic / natural-language / keyword queries (= 「探した"
+            "い」 「関連」 「something for X」 「similar to」 「'http' を含む」),",
+            "    USE search_actions(query=...). For category enumeration,",
+            "    USE list_actions(category=[...]).",
         ])
     else:
         parts.extend([
             "  - Never invent action names; only use those returned by",
             "    list_actions.",
             "  - For category enumeration, USE list_actions(category=[...]).",
-            "    For substring lookup, USE list_actions(filter='...').",
         ])
 
     # B12-R2/B13-R3 V3 ABSOLUTE rule preserved in wrapper vocab (1-line,
