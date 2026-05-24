@@ -51,8 +51,9 @@ def test_fuzzy_match_returns_three_close_matches() -> None:
     assert "cost" in suggestions
     # ``help`` is always present.
     assert "help" in suggestions
-    # Cap at 4 = 3 fuzzy + always-on /help.
-    assert len(suggestions) <= 4
+    # Cap = 3 fuzzy + always-on /help (= behavior cap, not fixture artifact).
+    count = len(suggestions)
+    assert count <= 4, f"expected cap 4 (3 fuzzy + /help); got {count}: {suggestions}"
 
 
 def test_no_match_falls_back_to_alphabetical_head() -> None:
@@ -81,18 +82,19 @@ def test_help_not_duplicated_when_fuzzy_picks_it() -> None:
 def test_common_typo_message_fits_in_error_box_header() -> None:
     """Tier 2: rendered message stays under the 72-cell ErrorBox cap.
 
-    Pins the load-bearing UX guarantee — the previous full-catalog
-    dump truncated mid-suggestion at the 72-cell boundary. After this
-    fix common typo lengths stay safely below.
+    Pins the load-bearing UX guarantee — the previous full-catalog dump
+    truncated mid-suggestion at the 72-cell boundary.
     """
     common_typos = ["typo", "qit", "lis", "hel", "cope", "agen", "co"]
     for typo in common_typos:
         suggestions = suggest_for_unknown(typo, names=_FIXTURE_NAMES)
+        assert suggestions, f"suggest_for_unknown returned empty for {typo!r}"
         known = ", ".join(f"/{n}" for n in suggestions)
         msg = f"unknown command /{typo}; try: {known}"
-        assert len(msg) <= 72, (
-            f"common typo /{typo!s} would overflow ErrorBox header "
-            f"({len(msg)} cells): {msg!r}"
+        msg_cells = len(msg)
+        assert msg_cells <= 72, (
+            f"rendered message exceeds 72-cell ErrorBox cap for {typo!r}: "
+            f"{msg_cells} cells, msg={msg!r}"
         )
 
 
