@@ -202,18 +202,27 @@ scenarios:
       refuted: 0.75
       blocked: 0.0
 
-  # ── 8. chat_compactor — session-triggered after long multi-turn ──────────
+  # ── 8. chat_compactor — auto-trigger via lowered threshold (B54 R-3 redesign) ─
   #
-  # chat_compactor is internal infrastructure excluded from the router's
-  # available_skills. The only way to trigger it via reyn chat is to produce
-  # a session long enough to hit chat.compaction.trigger_total_tokens.
-  # This scenario uses 5 turns of verbose exchange to approach that threshold.
-  # The must_emit assertion on skill_run_spawned is intentionally weak
-  # (count: ">=1") since compaction fires at a token threshold we cannot
-  # control precisely in a scenario. The chat_compactor artifact assertion
-  # is marked present: true only if compaction triggered — we use
-  # inconclusive: 0.45 to reflect that the threshold may not be reached.
-  - id: chat_compactor_long_session
+  # chat_compactor is internal infrastructure excluded from list_skills /
+  # list_actions; it can only fire via CompactionController auto-detection
+  # when the conversation's uncovered middle exceeds trigger_total_tokens
+  # (default 30000, with head_size=12 + tail_size=12 + min_compact_batch=5).
+  # A 5-turn scenario cannot reach default thresholds in a realistic
+  # explanation chain.
+  #
+  # B54 R-3 redesign (2026-05-24): dogfood_batch_dispatch.py auto-injects a
+  # lowered compaction config into every worker's reyn.local.yaml
+  # (trigger_total_tokens=2000, head_size=1, tail_size=1, min_compact_batch=2)
+  # so the controller can fire deterministically within 5 turns. The rubric
+  # is now anchored on compaction-specific events + the chat_summary
+  # artifact, not on the LLM's reply content (which is incidental — the
+  # original rubric mistakenly judged the final routing answer, which is a
+  # different concern from compaction).
+  #
+  # Other W2 scenarios are unaffected because their rubrics neither require
+  # nor forbid compaction events; lowering the threshold is additive.
+  - id: chat_compactor_auto_trigger
     covers:
       - stdlib-skills/chat-compactor
       - memory-rag/chat-compaction
@@ -240,22 +249,28 @@ scenarios:
       reply:
         kind: judge
         rubric:
-          - final reply answers the routing / catalog question coherently
-          - reply mentions skill routing or the chat router mechanism
-          - reply does not produce a bare error
+          - the final turn produces a non-empty reply (compaction happens after the reply, so reply quality is secondary)
       events:
+        # Primary axis: compaction fired at least once with outcome=triggering,
+        # and at least one compacted_message_added event was emitted.
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
-          - { type: llm_called, count: ">=1" }
+          - { type: compaction_check, count: ">=1" }
+          - { type: compacted_message_added, count: ">=1" }
         must_not_emit:
-          - { type: permission_denied }
+          - { type: compaction_failed }
       artifacts:
-        - { skill: direct_llm, present: true }
-    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+        # chat_compactor's caller-facing output (= chat_summary) lands when
+        # compaction succeeds.
+        - { skill: chat_compactor, present: true }
+    # outcome_prediction: post-R-3-redesign baseline. With lowered threshold
+    # the auto-trigger path is deterministic across 5 turns; V is expected
+    # provided the worker's reyn.local.yaml includes the dispatcher's
+    # compaction override (= guaranteed when batch dispatched via
+    # scripts/dogfood_batch_dispatch.py --setup-worktrees).
     outcome_prediction:
-      verified: 0.0
-      inconclusive: 0.5
-      refuted: 0.5
+      verified: 0.7
+      inconclusive: 0.15
+      refuted: 0.15
       blocked: 0.0
 
   # ── 9. chained dispatch — find markdown files then index them ────────────
