@@ -68,10 +68,12 @@ def test_external_ref_is_transport_ref_union_member():
 
 
 def test_parse_returns_empty_routing_for_none():
+    """Tier 2b: None input produces an empty ExternalTransportRouting (safe default)."""
     assert parse_external_transports(None) == ExternalTransportRouting()
 
 
 def test_parse_returns_empty_routing_for_non_dict():
+    """Tier 2b: non-dict inputs produce an empty ExternalTransportRouting (safe default)."""
     assert parse_external_transports([1, 2, 3]) == ExternalTransportRouting()
     assert parse_external_transports("not a dict") == ExternalTransportRouting()
 
