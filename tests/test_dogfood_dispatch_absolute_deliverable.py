@@ -76,9 +76,9 @@ def _make_config(journal_dir: str) -> BatchConfig:
 
 
 def test_deliverable_path_is_absolute_against_repo_root(tmp_path):
-    """Tier 2 (B45-carry-over fix): rendered prompt emits the
-    deliverable path as an absolute filesystem path joined from the
-    supplied repo_root + journal_dir + worker filename."""
+    """Tier 2: rendered prompt emits the deliverable path as an absolute
+    filesystem path joined from the supplied repo_root + journal_dir +
+    worker filename (B45-carry-over fix)."""
     config = _make_config("docs/journal/test-batch")
     repo_root = tmp_path / "fake-repo"
     repo_root.mkdir()
