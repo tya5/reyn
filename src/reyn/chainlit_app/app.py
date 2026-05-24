@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 import chainlit as cl
 
 from reyn.chainlit_app.adapter import outbox_to_chainlit
+from reyn.chainlit_app.profiles import list_agent_profiles
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
@@ -165,6 +166,25 @@ async def _drain_loop(registry: "AgentRegistry") -> None:
             ).send()
 
 
+@cl.set_chat_profiles
+async def _chat_profiles() -> list[cl.ChatProfile]:
+    """Expose every agent on disk as a chainlit chat profile picker entry.
+
+    The browser's chat-profile dropdown lets the operator choose which
+    reyn agent to attach for the current chat session. With multiple
+    agents declared on disk, the picker appears at the top of the
+    welcome screen; with only one (= `default`) chainlit hides it.
+
+    Selection is stored on ``cl.user_session["chat_profile"]`` and read
+    in ``_on_chat_start`` to drive ``registry.attach(<picked>)``.
+    """
+    registry = await _get_or_build_registry()
+    return [
+        cl.ChatProfile(**dct.as_kwargs())
+        for dct in list_agent_profiles(registry)
+    ]
+
+
 @cl.set_starters
 async def _starters() -> list[cl.Starter]:
     """Welcome-screen quick prompts (= reyn-flavored examples).
@@ -202,10 +222,25 @@ async def _starters() -> list[cl.Starter]:
     ]
 
 
+def _picked_agent_name(default: str) -> str:
+    """Resolve which agent to attach for this cl session.
+
+    Priority: chat-profile picker selection > REYN_CHAINLIT_AGENT env > ``default``.
+    Picker selection lands on ``cl.user_session["chat_profile"]`` when
+    the operator picks one — chainlit only shows the picker when
+    ``set_chat_profiles`` returns >= 2 entries, so the env fallback
+    covers the single-agent case where no picker is rendered.
+    """
+    picked = cl.user_session.get("chat_profile")
+    if isinstance(picked, str) and picked.strip():
+        return picked.strip()
+    return default
+
+
 @cl.on_chat_start
 async def _on_chat_start() -> None:
     registry = await _get_or_build_registry()
-    name = _agent_name_from_env()
+    name = _picked_agent_name(_agent_name_from_env())
     if not registry.exists(name):
         await cl.ErrorMessage(
             content=(
