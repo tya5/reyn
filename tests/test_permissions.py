@@ -56,7 +56,7 @@ def _run(coro):
 
 
 def test_require_mcp_blocked_by_allowed_mcp(tmp_path):
-    """require_mcp raises when server is in decl.mcp but NOT in allowed_mcp.
+    """Tier 2b: require_mcp raises when server is in decl.mcp but NOT in allowed_mcp.
 
     Scenario: project config allows both "fs" and "web"; phase declares both;
     but the agent's allowed_mcp only permits "fs". Calling require_mcp("web")
@@ -81,7 +81,7 @@ def test_require_mcp_blocked_by_allowed_mcp(tmp_path):
 
 
 def test_require_mcp_allowed_mcp_none_no_filter(tmp_path):
-    """allowed_mcp=None means no per-agent filter — only decl.mcp + project config gate."""
+    """Tier 2b: allowed_mcp=None means no per-agent filter — only decl.mcp + project config gate."""
     resolver = _make_resolver(
         tmp_path,
         config={"mcp.filesystem": "allow"},
@@ -97,7 +97,7 @@ def test_require_mcp_allowed_mcp_none_no_filter(tmp_path):
 
 
 def test_require_mcp_still_requires_decl_mcp_even_with_allowed_mcp(tmp_path):
-    """allowed_mcp permitting a server doesn't bypass the decl.mcp requirement.
+    """Tier 2b: allowed_mcp permitting a server doesn't bypass the decl.mcp requirement.
 
     A server listed in allowed_mcp but NOT in decl.mcp must still fail.
     """
@@ -116,7 +116,7 @@ def test_require_mcp_still_requires_decl_mcp_even_with_allowed_mcp(tmp_path):
 
 
 def test_require_mcp_allowed_mcp_empty_list_blocks_all(tmp_path):
-    """allowed_mcp=[] (empty list) blocks every MCP server for the agent."""
+    """Tier 2b: allowed_mcp=[] (empty list) blocks every MCP server for the agent."""
     resolver = _make_resolver(
         tmp_path,
         config={"mcp.filesystem": "allow"},

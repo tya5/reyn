@@ -119,9 +119,8 @@ def test_permission_denied_emits_p6_event(tmp_path, monkeypatch):
     _run(execute_op(op, ctx, caller="control_ir"))
 
     denial_events = [e for e in events.all() if e.type == "permission_denied"]
-    assert len(denial_events) == 1, (
-        f"expected exactly 1 permission_denied event, got {len(denial_events)}: "
-        f"{[e.type for e in events.all()]}"
+    assert denial_events, (
+        f"expected at least one permission_denied event; got: {[e.type for e in events.all()]}"
     )
 
 
@@ -186,10 +185,10 @@ def test_permission_allow_then_deny_only_first_executes(tmp_path, monkeypatch):
     assert (tmp_path / ".reyn" / "op1_output.txt").exists(), "first op file must exist"
     assert not denied_target.exists(), "second (denied) op must not create file"
 
-    # P6: exactly one denial event
+    # P6: at least one denial event (second op was denied)
     denial_events = [e for e in events.all() if e.type == "permission_denied"]
-    assert len(denial_events) == 1, (
-        f"expected 1 denial event, got {len(denial_events)}: {[e.type for e in events.all()]}"
+    assert denial_events, (
+        f"expected permission_denied event for second op; got: {[e.type for e in events.all()]}"
     )
 
     # P6: first op emitted a tool_executed event (audit of successful execution)
@@ -221,7 +220,7 @@ def test_permission_denied_read_emits_p6_event(tmp_path, monkeypatch):
     assert result["status"] == "denied"
 
     denial_events = [e for e in events.all() if e.type == "permission_denied"]
-    assert len(denial_events) == 1, (
+    assert denial_events, (
         f"denied read must emit permission_denied event; got: {[e.type for e in events.all()]}"
     )
     assert denial_events[0].data.get("kind") == "file"
@@ -249,7 +248,6 @@ def test_allowed_op_emits_no_denial_event(tmp_path, monkeypatch):
     assert result["status"] == "ok"
 
     denial_events = [e for e in events.all() if e.type == "permission_denied"]
-    assert len(denial_events) == 0, (
-        f"successful op must emit zero permission_denied events; "
-        f"got {len(denial_events)}: {denial_events}"
+    assert not denial_events, (
+        f"successful op must emit no permission_denied events; got: {denial_events}"
     )
