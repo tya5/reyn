@@ -64,6 +64,19 @@ INVARIANT_FILE_COPY_RE = re.compile(
     re.DOTALL,
 )
 
+# LLM boundary patch detection per testing.ja.md "litellm への unittest.mock
+# パッチ" prohibition. Internal code patches (reyn.* paths) inside Tier 2c
+# integration tests are permitted. We flag a patch only when its target looks
+# like an LLM boundary: litellm, call_llm, acompletion, or a *.llm.* path.
+LLM_BOUNDARY_PATCH_RE = re.compile(
+    r"\b(litellm|acompletion|call_llm[\w_]*|\w+\.llm\.[\w.]+)\b"
+)
+
+
+def _is_llm_boundary_patch(patch_src: str) -> bool:
+    """Return True iff patch target string looks like an LLM boundary."""
+    return bool(LLM_BOUNDARY_PATCH_RE.search(patch_src))
+
 RULE_NAMES = {
     "tier-docstring",
     "format-pinning",
@@ -316,17 +329,25 @@ def _check_mock_in_func(
     source: str,
     result: TestResult,
 ) -> None:
-    """Detect @patch decorators and with-patch / MagicMock inside the function."""
+    """Detect @patch decorators and with-patch / MagicMock inside the function.
+
+    Narrow scope per testing.ja.md: prohibition is "litellm への unittest.mock パッチ"
+    (= LLM-boundary patches). Internal code patches (= reyn.* paths) inside
+    Tier 2c integration tests are permitted — they exercise real production code
+    paths through controlled fake dependencies, not LLM contract evasion.
+    """
     # Check decorators for @patch
     for dec in node.decorator_list:
         dec_src = ast.get_source_segment(source, dec) or ""
         if "patch" in dec_src and "unittest" in dec_src or dec_src.strip().startswith("patch"):
+            if not _is_llm_boundary_patch(dec_src):
+                continue
             result.findings.append(
                 Finding(
                     rule="mock",
                     level="ERROR",
                     line=dec.lineno,
-                    message=f"@patch decorator: {dec_src.strip()[:80]}",
+                    message=f"@patch decorator (LLM boundary): {dec_src.strip()[:80]}",
                     suggestion="Use LLMReplay Fake instead of unittest.mock.patch",
                     policy_ref="testing.ja.md Mock vs Fake: Mock は禁止 — LLMReplay を使う",
                 )
@@ -361,12 +382,14 @@ def _check_mock_in_func(
             for item in stmt.items:
                 item_src = ast.get_source_segment(source, item.context_expr) or ""
                 if re.search(r"\bpatch\s*\(", item_src):
+                    if not _is_llm_boundary_patch(item_src):
+                        continue
                     result.findings.append(
                         Finding(
                             rule="mock",
                             level="ERROR",
                             line=stmt.lineno,
-                            message=f"with patch(...): {item_src.strip()[:80]}",
+                            message=f"with patch(...) (LLM boundary): {item_src.strip()[:80]}",
                             suggestion="Use LLMReplay Fake instead of patch",
                             policy_ref="testing.ja.md Mock vs Fake",
                         )
