@@ -102,8 +102,8 @@ class TestDumpRequestUnit:
         assert trace_file.exists(), "Trace file must be created"
 
         lines = [l for l in trace_file.read_text(encoding="utf-8").splitlines() if l.strip()]
-        assert len(lines) == 1
-        record = json.loads(lines[0])
+        (only,) = lines
+        record = json.loads(only)
         assert record["kind"] == "request"
         assert record["request_id"] == request_id
         assert record["model"] == "test-model"
@@ -134,8 +134,8 @@ class TestDumpRequestUnit:
 
         assert rid1 != rid2, "Each call must produce a distinct request_id"
         lines = [l for l in trace_file.read_text(encoding="utf-8").splitlines() if l.strip()]
-        assert len(lines) == 2, "Each call appends one line"
-        ids = {json.loads(l)["request_id"] for l in lines}
+        (line1, line2) = lines  # each call appends one line
+        ids = {json.loads(l)["request_id"] for l in [line1, line2]}
         assert ids == {rid1, rid2}
 
 
@@ -153,10 +153,9 @@ class TestDumpResponseUnit:
         llm_mod._dump_llm_response(rid, {"content": "ok", "finish_reason": "stop", "usage": {}})
 
         lines = [l for l in trace_file.read_text(encoding="utf-8").splitlines() if l.strip()]
-        assert len(lines) == 2
-        kinds = [json.loads(l)["kind"] for l in lines]
-        assert "request" in kinds
-        assert "response" in kinds
+        (line1, line2) = lines
+        kinds = {json.loads(l)["kind"] for l in [line1, line2]}
+        assert kinds == {"request", "response"}
 
         req = next(json.loads(l) for l in lines if json.loads(l)["kind"] == "request")
         resp = next(json.loads(l) for l in lines if json.loads(l)["kind"] == "response")
@@ -277,10 +276,10 @@ class TestTraceDumpEnabled:
 
         assert trace_file.exists(), "Trace file must be created"
         records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        assert len(records) == 2, f"Expected 1 request + 1 response, got {len(records)}"
+        (rec1, rec2) = records  # exactly 1 request + 1 response
 
-        req = next((r for r in records if r.get("kind") == "request"), None)
-        resp = next((r for r in records if r.get("kind") == "response"), None)
+        req = next((r for r in [rec1, rec2] if r.get("kind") == "request"), None)
+        resp = next((r for r in [rec1, rec2] if r.get("kind") == "response"), None)
         assert req is not None, "Must have a 'request' record"
         assert resp is not None, "Must have a 'response' record"
 
@@ -323,9 +322,9 @@ class TestTraceDumpEnabled:
 
         assert trace_file.exists()
         records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        assert len(records) == 2
+        (rec1, rec2) = records  # exactly 1 request + 1 response
 
-        req = next(r for r in records if r.get("kind") == "request")
+        req = next(r for r in [rec1, rec2] if r.get("kind") == "request")
         assert req.get("tools") == tools, "Tools schema must be included verbatim in request"
         assert req.get("tool_choice") is not None
 
@@ -434,16 +433,16 @@ class TestMultipleCallsAccumulate:
         asyncio.run(_run_two())
 
         records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        assert len(records) == 4, f"Expected 4 records, got {len(records)}"
+        (r1, r2, r3, r4) = records  # exactly 2 request + 2 response records
 
-        requests = [r for r in records if r.get("kind") == "request"]
-        responses = [r for r in records if r.get("kind") == "response"]
-        assert len(requests) == 2
-        assert len(responses) == 2
+        requests = [r for r in [r1, r2, r3, r4] if r.get("kind") == "request"]
+        responses = [r for r in [r1, r2, r3, r4] if r.get("kind") == "response"]
+        (req_a, req_b) = requests  # exactly 2 requests
+        (resp_a, resp_b) = responses  # exactly 2 responses
 
         # request_ids must be distinct
-        req_ids = {r["request_id"] for r in requests}
-        assert len(req_ids) == 2, "Each call must produce a distinct request_id"
+        assert req_a["request_id"] != req_b["request_id"], "Each call must produce a distinct request_id"
+        req_ids = {req_a["request_id"], req_b["request_id"]}
 
         # Each response must be paired with a request
         resp_ids = {r["request_id"] for r in responses}
