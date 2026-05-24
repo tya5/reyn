@@ -130,7 +130,7 @@ def _run(coro):
 
 
 def test_http_transport_round_trip(patched_sdk):
-    """Tier 1 framework boundary: intentional SDK patch — verifies HTTP transport config
+    """Tier 1: framework boundary (intentional SDK patch) — verifies HTTP transport config
     is forwarded correctly to the mcp SDK and that call_tool returns a valid result."""
     cfg = {
         "type": "http",
@@ -154,7 +154,7 @@ def test_http_transport_round_trip(patched_sdk):
 
 
 def test_stdio_transport_round_trip(patched_sdk):
-    """Tier 1 framework boundary: intentional SDK patch — verifies stdio transport config
+    """Tier 1: framework boundary (intentional SDK patch) — verifies stdio transport config
     is forwarded correctly to the mcp SDK and that list_tools/call_tool return valid results."""
     cfg = {
         "type": "stdio",
@@ -209,7 +209,7 @@ def test_env_var_expansion(monkeypatch):
 
 
 def test_env_var_expansion_stdio_env(monkeypatch, patched_sdk):
-    """Tier 1 framework boundary: intentional SDK patch — expand_env in a stdio env dict
+    """Tier 1: framework boundary (intentional SDK patch) — expand_env in a stdio env dict
     propagates expanded values into the mcp SDK's transport parameters."""
     monkeypatch.setenv("MY_TOKEN", "t0k")
     cfg = expand_env(
@@ -257,7 +257,7 @@ def test_close_releases_resources(patched_sdk):
 
 
 def test_call_tool_propagates_errors_as_mcp_error(patched_sdk):
-    """Tier 1 framework boundary: intentional SDK patch — tool-level runtime errors are
+    """Tier 1: framework boundary (intentional SDK patch) — tool-level runtime errors are
     wrapped and surfaced as MCPError with a 'tools/call' message."""
     cfg = {"type": "http", "url": "http://x/mcp"}
 
@@ -358,10 +358,10 @@ def test_teardown_mcp_clients_empties_dict(patched_sdk):
 
         # The dict must be empty — no stale refs that could be GC-finalised
         # cross-task after this point.
-        assert len(executor._mcp_clients) == 0, "_mcp_clients must be empty after teardown"
+        assert not executor._mcp_clients, "_mcp_clients must be empty after teardown"
 
         # Second call is a no-op (nothing to close, no exception).
         await executor.teardown_mcp_clients()
-        assert len(executor._mcp_clients) == 0
+        assert not executor._mcp_clients
 
     asyncio.run(_run_it())
