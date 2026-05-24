@@ -98,8 +98,7 @@ def test_send_appends_payload_to_history_events() -> None:
     asyncio.run(bridge._send(3, "phase_started", "phase: planning"))
 
     refreshed = registry.get(entry.run_id)
-    assert len(refreshed.history_events) == 1
-    appended = refreshed.history_events[0]
+    (appended,) = refreshed.history_events
     assert appended == {
         "run_id": entry.run_id,
         "status": "in-progress",
@@ -177,8 +176,8 @@ def test_send_posts_webhook_when_webhook_url_set(monkeypatch) -> None:
     # SSE sink
     sse = registry.get(entry.run_id).history_events
     # Webhook sink
-    assert len(posted) == 1
-    posted_url, posted_payload = posted[0]
+    (posted_item,) = posted
+    posted_url, posted_payload = posted_item
     # Both sinks saw the SAME payload
     assert sse[0] == posted_payload
     assert posted_url == "https://peer.test/hook"
@@ -219,7 +218,7 @@ def test_sse_sink_failure_does_not_block_webhook(monkeypatch) -> None:
 
     asyncio.run(bridge._send(1, "phase_started", "phase: planning"))
     # webhook still ran despite SSE failure
-    assert len(posted) == 1
+    (only,) = posted
 
 
 def test_webhook_sink_failure_does_not_block_sse(monkeypatch) -> None:
@@ -282,8 +281,7 @@ def test_a2a_intervention_bus_on_dispatch_appends_input_required_to_history() ->
     asyncio.run(_drive())
 
     refreshed = registry.get(entry.run_id)
-    assert len(refreshed.history_events) == 1
-    appended = refreshed.history_events[0]
+    (appended,) = refreshed.history_events
     assert appended["status"] == "input-required"
     assert appended["kind"] == "permission.confirm"
     assert appended["question"] == "Allow read?"
