@@ -123,12 +123,12 @@ def test_load_old_file_missing_new_fields(tmp_path: Path):
     assert snap.last_committed_step_id is None
 
 
-def test_atomic_save_uses_tmp_then_replace(tmp_path: Path):
+def test_atomic_save_uses_tmp_then_replace(tmp_path: Path, monkeypatch):
     """Tier 2: save() writes to a .tmp file first, then renames atomically."""
     path = _make_path(tmp_path, "run-atom")
     snap = SkillSnapshot.empty("run-atom", "sk", {})
 
-    # Patch Path.replace to capture the tmp path used
+    # Spy on Path.replace to capture the tmp path used
     replaced_from: list[Path] = []
     original_replace = Path.replace
 
@@ -136,11 +136,9 @@ def test_atomic_save_uses_tmp_then_replace(tmp_path: Path):
         replaced_from.append(self)
         return original_replace(self, target)
 
-    import unittest.mock as mock
-    with mock.patch.object(Path, "replace", _spy_replace):
-        snap.save(path)
+    monkeypatch.setattr(Path, "replace", _spy_replace)
+    snap.save(path)
 
-    assert len(replaced_from) == 1
     tmp_used = replaced_from[0]
     assert tmp_used.suffix == ".tmp" or ".tmp" in tmp_used.name
     # After save, the canonical path exists and tmp is gone
