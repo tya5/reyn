@@ -90,8 +90,8 @@ def test_rollback_emits_skill_rolled_back_event(tmp_path, monkeypatch):
     reyn_dir = tmp_path / ".reyn"
     events = _read_all_cli_events(reyn_dir)
 
-    assert len(events) == 1, f"Expected 1 event, got: {events}"
-    ev = events[0]
+    (ev,) = events
+
     assert ev["type"] == "skill_rolled_back"
     data = ev["data"]
     assert data["skill"] == "my_skill"
@@ -157,12 +157,12 @@ def test_emit_cli_event_creates_dir_idempotently(tmp_path, monkeypatch):
     assert cli_dir.is_dir(), "dir should be created after first emit"
 
     events_after_first = _read_all_cli_events(tmp_path / ".reyn")
-    assert len(events_after_first) == 1
+    (first_only,) = events_after_first
 
     # Second call — no exception, second event appended.
     emit_cli_event("test_event_b", baz=42)
     events_after_second = _read_all_cli_events(tmp_path / ".reyn")
-    assert len(events_after_second) == 2
+    first_ev, second_ev = events_after_second
 
     types = {e["type"] for e in events_after_second}
     assert "test_event_a" in types
