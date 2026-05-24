@@ -21,9 +21,12 @@ import pytest
 from reyn.chainlit_app.settings import (
     LANGUAGE_ITEMS,
     LANGUAGE_SETTING_ID,
+    MODEL_SETTING_ID,
     language_label_for,
     language_to_value,
+    list_model_names,
     value_to_language,
+    value_to_model,
 )
 
 
@@ -105,3 +108,61 @@ def test_language_label_for_unknown_falls_back_to_value():
     """Tier 1: yaml-set custom code without a curated label still gets
     a readable acknowledgement (= the raw code itself)."""
     assert language_label_for("de") == "de"
+
+
+# ── model select ──────────────────────────────────────────────────────────
+
+
+class _FakeResolver:
+    """Minimal stand-in for ``ModelResolver`` — only ``_resolved`` matters
+    to ``list_model_names``. Holds an arbitrary value dict; the helper
+    never inspects the values, only the keys."""
+
+    def __init__(self, names: list[str]) -> None:
+        self._resolved = {n: object() for n in names}
+
+
+def test_model_setting_id_is_stable():
+    """Tier 1: dispatcher key matches what the widget emits + the
+    settings_update handler reads."""
+    assert MODEL_SETTING_ID == "model"
+
+
+def test_list_model_names_returns_sorted_keys():
+    """Tier 1: namespace keys sorted for stable popup ordering across
+    reloads — input order is irrelevant."""
+    resolver = _FakeResolver(["zebra", "alpha", "claude-sonnet", "standard"])
+    assert list_model_names(resolver) == [
+        "alpha", "claude-sonnet", "standard", "zebra",
+    ]
+
+
+def test_list_model_names_empty_when_resolver_lacks_resolved():
+    """Tier 1: stripped resolver / None → ``[]`` so the chainlit-side
+    fallback hides the Select instead of crashing."""
+    class _NoResolved:
+        pass
+    assert list_model_names(_NoResolved()) == []
+    assert list_model_names(None) == []
+
+
+def test_list_model_names_handles_resolver_with_non_dict_resolved():
+    """Tier 1: defensive — if ``_resolved`` somehow isn't a dict,
+    treat as empty rather than blow up."""
+    class _Broken:
+        _resolved = "not a dict"
+    assert list_model_names(_Broken()) == []
+
+
+def test_value_to_model_known_passes_through():
+    """Tier 1: any non-empty value reaches reyn verbatim (= reyn's
+    resolver re-validates the name)."""
+    assert value_to_model("claude-sonnet", default="standard") == "claude-sonnet"
+
+
+def test_value_to_model_empty_falls_back_to_default():
+    """Tier 1: empty / whitespace / None → default (= preserves the
+    operator's current model rather than silently switching)."""
+    assert value_to_model("", default="standard") == "standard"
+    assert value_to_model("   ", default="standard") == "standard"
+    assert value_to_model(None, default="standard") == "standard"
