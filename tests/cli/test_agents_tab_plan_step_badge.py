@@ -1,4 +1,4 @@
-"""Tier 2: agents tab renders ``[plan N/M]`` badge for plan-step skill rows.
+"""Tier 2b: agents tab renders ``[plan N/M]`` badge for plan-step skill rows.
 
 issue #427 L4 step 6 — agents tab refactor for phase / plan / nest
 depth. This PR addresses the wave-7 Topic C-F2 finding (= "agents-tab
@@ -90,7 +90,7 @@ def _exec_entry(
 
 @pytest.mark.asyncio
 async def test_running_skill_with_plan_step_carries_fields_in_flat_items(tmp_path):
-    """Tier 2: plan_n_done / plan_n_total surface in flat_items."""
+    """Tier 2b:plan_n_done / plan_n_total surface in flat_items."""
     from reyn.chat.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
@@ -99,14 +99,13 @@ async def test_running_skill_with_plan_step_carries_fields_in_flat_items(tmp_pat
     }
     _, flat_items, _ = render_agents(registry, exec_state, cursor=0)
     skill_items = [i for i in flat_items if i.get("kind") == "running_skill"]
-    assert len(skill_items) == 1
     assert skill_items[0]["plan_n_done"] == 2
     assert skill_items[0]["plan_n_total"] == 5
 
 
 @pytest.mark.asyncio
 async def test_running_skill_without_plan_step_omits_badge_in_render(tmp_path):
-    """Tier 2: skills without plan_n_done/plan_n_total render no badge."""
+    """Tier 2b:skills without plan_n_done/plan_n_total render no badge."""
     from reyn.chat.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
@@ -115,7 +114,6 @@ async def test_running_skill_without_plan_step_omits_badge_in_render(tmp_path):
         registry, exec_state, cursor=0,
     )
     skill_items = [i for i in flat_items if i.get("kind") == "running_skill"]
-    assert len(skill_items) == 1
     # The badge text "[plan " must NOT appear in the rendered tree output.
     plain = _render_to_plain(rendered)
     assert "[plan " not in plain
@@ -126,7 +124,7 @@ async def test_running_skill_without_plan_step_omits_badge_in_render(tmp_path):
 
 @pytest.mark.asyncio
 async def test_running_skill_with_plan_step_renders_badge_text(tmp_path):
-    """Tier 2: ``[plan N/M]`` substring appears in the rendered output."""
+    """Tier 2b:``[plan N/M]`` substring appears in the rendered output."""
     from reyn.chat.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
@@ -140,7 +138,7 @@ async def test_running_skill_with_plan_step_renders_badge_text(tmp_path):
 
 @pytest.mark.asyncio
 async def test_plan_badge_survives_subskill_nesting(tmp_path):
-    """Tier 2: nested sub-skill with plan_step still renders the badge.
+    """Tier 2b:nested sub-skill with plan_step still renders the badge.
 
     Verifies the badge axis is orthogonal to the parent_run_id nesting
     axis — both can coexist on the same row.

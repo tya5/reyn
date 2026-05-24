@@ -1,4 +1,4 @@
-"""Tier 2: SkillActivityRow surfaces in-phase detail signals.
+"""Tier 2b: SkillActivityRow surfaces in-phase detail signals.
 
 Skill-execution UX audit (MED severity Finding F4): all tool ops inside
 a skill were silent. ``ChatEventForwarder`` only forwarded
@@ -58,7 +58,7 @@ def _drain(queue: asyncio.Queue) -> list[OutboxMessage]:
 
 
 def test_forwarder_emits_llm_called_detail() -> None:
-    """Tier 1: ``on_llm_called`` enqueues ``"detail: llm: <model>"``."""
+    """Tier 2b: ``on_llm_called`` enqueues ``"detail: llm: <model>"``."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatEventForwarder("test_skill", q, run_id="r1")
     fwd.on_llm_called({"model": "opus-4-5", "phase": "p"})
@@ -69,7 +69,7 @@ def test_forwarder_emits_llm_called_detail() -> None:
 
 
 def test_forwarder_emits_clear_on_llm_response() -> None:
-    """Tier 1: ``on_llm_response_received`` enqueues a blank detail.
+    """Tier 2b: ``on_llm_response_received`` enqueues a blank detail.
 
     Empty payload after the prefix signals the TUI to clear the
     ``⤷ llm: …`` segment so the row doesn't lie about an in-flight
@@ -83,7 +83,7 @@ def test_forwarder_emits_clear_on_llm_response() -> None:
 
 
 def test_forwarder_emits_act_executed_count() -> None:
-    """Tier 1: ``on_act_executed`` enqueues an op-count summary."""
+    """Tier 2b: ``on_act_executed`` enqueues an op-count summary."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatEventForwarder("test_skill", q, run_id="r1")
     fwd.on_act_executed({"op_count": 3, "phase": "p"})
@@ -92,7 +92,7 @@ def test_forwarder_emits_act_executed_count() -> None:
 
 
 def test_forwarder_act_executed_singular_one_op() -> None:
-    """Tier 1: ``on_act_executed`` with op_count=1 uses singular ``op`` not ``ops``."""
+    """Tier 2b: ``on_act_executed`` with op_count=1 uses singular ``op`` not ``ops``."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatEventForwarder("test_skill", q, run_id="r1")
     fwd.on_act_executed({"op_count": 1, "phase": "p"})
@@ -101,7 +101,7 @@ def test_forwarder_act_executed_singular_one_op() -> None:
 
 
 def test_forwarder_act_executed_drops_zero_op_count() -> None:
-    """Tier 1: ``op_count`` 0 or missing → no detail emitted (= noise filter)."""
+    """Tier 2b: ``op_count`` 0 or missing → no detail emitted (= noise filter)."""
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatEventForwarder("test_skill", q, run_id="r1")
     fwd.on_act_executed({"op_count": 0, "phase": "p"})
@@ -114,7 +114,7 @@ def test_forwarder_act_executed_drops_zero_op_count() -> None:
 
 @pytest.mark.asyncio
 async def test_set_detail_appears_in_rendered_row() -> None:
-    """Tier 2: ``set_detail(text)`` puts ``⤷ <text>`` into the rendered row."""
+    """Tier 2b:``set_detail(text)`` puts ``⤷ <text>`` into the rendered row."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -132,7 +132,7 @@ async def test_set_detail_appears_in_rendered_row() -> None:
 
 @pytest.mark.asyncio
 async def test_set_phase_clears_detail() -> None:
-    """Tier 2: advancing to a new phase clears any prior detail.
+    """Tier 2b:advancing to a new phase clears any prior detail.
 
     The previous phase's ``llm: <model>`` / ``act: N op`` context is
     irrelevant once we transition. Without this, the row would carry a
@@ -158,7 +158,7 @@ async def test_set_phase_clears_detail() -> None:
 
 @pytest.mark.asyncio
 async def test_set_detail_empty_string_hides_segment() -> None:
-    """Tier 2: ``set_detail('')`` (the clear-detail signal) hides the segment."""
+    """Tier 2b:``set_detail('')`` (the clear-detail signal) hides the segment."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -178,7 +178,7 @@ async def test_set_detail_empty_string_hides_segment() -> None:
 
 @pytest.mark.asyncio
 async def test_trace_handler_routes_detail_prefix() -> None:
-    """Tier 2: ``"detail: <text>"`` trace calls ``update_skill_detail``.
+    """Tier 2b:``"detail: <text>"`` trace calls ``update_skill_detail``.
 
     Captures the call via direct attribute substitution (no
     ``unittest.mock`` per the testing policy) so the test pins the
@@ -208,7 +208,7 @@ async def test_trace_handler_routes_detail_prefix() -> None:
 
 @pytest.mark.asyncio
 async def test_trace_handler_routes_empty_detail_clear() -> None:
-    """Tier 2: ``"detail: "`` (empty payload) routes the clear signal through."""
+    """Tier 2b:``"detail: "`` (empty payload) routes the clear signal through."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
