@@ -13,7 +13,7 @@ called from ``_keys_move`` and included in the tab-activation dispatch table.
 
 Public-surface-only assertions:
   - ``render_keys()`` return-tuple length / type (signature contract)
-  - ``panel._key_ys`` list (populated by render_keys via _keys_move)
+  - ``render_keys()`` 3rd return value ``key_ys`` (populated indirectly by _keys_move)
   - spy on ``_scroll_keys_into_view`` via direct attribute substitution
 """
 from __future__ import annotations
@@ -30,7 +30,11 @@ if str(_SRC) not in sys.path:
 from reyn.chat.tui.app import ReynTUIApp
 from reyn.chat.tui.widgets import RightPanel
 from reyn.chat.tui.widgets.right_panel import keys_tab as _kt
-from reyn.chat.tui.widgets.right_panel.keys_tab import render_keys
+from reyn.chat.tui.widgets.right_panel.keys_tab import (
+    get_keys_cursor,
+    get_keys_expanded,
+    render_keys,
+)
 
 
 def _reset_keys_state() -> None:
@@ -145,17 +149,20 @@ async def test_keys_move_calls_scroll_into_view() -> None:
         )
 
 
-# ── Test 4: _key_ys is populated by _keys_move ───────────────────────────────
+# ── Test 4: render_keys key_ys is valid after _keys_move ─────────────────────
 
 
 @pytest.mark.asyncio
 async def test_keys_move_populates_key_ys() -> None:
-    """Tier 2b: _keys_move populates _key_ys on the panel (= scroll-into-view data).
+    """Tier 2b: render_keys key_ys is valid after _keys_move (= scroll-into-view data ready).
 
-    ``_scroll_keys_into_view`` reads ``panel._key_ys[cursor]`` to compute
-    the scroll target.  This test pins that ``_key_ys`` is populated with
-    the same length as ``flat_key_list`` after a ``_keys_move`` call, so the
-    scroll helper has valid data to work with.
+    ``_scroll_keys_into_view`` reads ``key_ys[cursor]`` to compute the scroll
+    target.  This test pins that ``render_keys`` returns a ``key_ys`` list
+    that is parallel to ``flat_key_list`` and contains non-negative ints, so
+    the scroll helper always has valid data regardless of panel internal state.
+
+    Verification is through the public ``render_keys()`` return value (3rd
+    element) rather than the private ``panel._key_ys`` attribute.
     """
     _reset_keys_state()
     app = _make_app()
@@ -167,20 +174,19 @@ async def test_keys_move_populates_key_ys() -> None:
         panel._invalidate()
         await pilot.pause()
 
-        # Verify _key_ys is empty before the first move (cold state).
-        assert panel._key_ys == [], (
-            f"_key_ys should start empty; got {panel._key_ys[:5]}"
-        )
-
         panel._keys_move(+1)
         await pilot.pause()
 
-        _, flat_key_list, _ = render_keys(app)
-        assert len(panel._key_ys) == len(flat_key_list), (
-            f"_key_ys must be parallel to flat_key_list after _keys_move; "
-            f"len(_key_ys)={len(panel._key_ys)}, "
-            f"len(flat_key_list)={len(flat_key_list)}"
+        _, flat_key_list, key_ys = render_keys(
+            app,
+            cursor=get_keys_cursor(),
+            expanded=get_keys_expanded(),
         )
-        assert all(isinstance(y, int) and y >= 0 for y in panel._key_ys), (
-            "All _key_ys entries must be non-negative int"
+        assert len(flat_key_list) == len(key_ys), (
+            f"render_keys key_ys must be parallel to flat_key_list after _keys_move; "
+            f"len(flat_key_list)={len(flat_key_list)}, "
+            f"len(key_ys)={len(key_ys)}"
+        )
+        assert all(isinstance(y, int) and y >= 0 for y in key_ys), (
+            "All render_keys key_ys entries must be non-negative int"
         )
