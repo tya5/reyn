@@ -33,8 +33,18 @@ class _FakeSession:
     def __init__(self, registry, *, agent_name: str = "default", agent_role: str = "") -> None:
         self._registry = registry
         self.agent_name = agent_name
+        # Mirror the real ChatSession's surface: ``_agent_role`` is the
+        # mutable backing field (production code writes here), and
+        # ``agent_role`` is the public read-only accessor (tests assert
+        # through this). Keep the two-attribute shape so the slash
+        # handler's ``session._agent_role = ...`` works against the fake
+        # exactly as it does against ChatSession.
         self._agent_role = agent_role
         self.outbox_calls: list[OutboxMessage] = []
+
+    @property
+    def agent_role(self) -> str:
+        return self._agent_role
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
         self.outbox_calls.append(msg)
@@ -137,7 +147,7 @@ async def test_agent_new_rejects_invalid_name(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_edit_role_persists_to_profile_and_session(tmp_path):
     """Tier 2: ``/agent edit role <text>`` writes the new role to disk
-    and updates ``session._agent_role`` so the next turn sees it."""
+    and updates ``session.agent_role`` so the next turn sees it."""
     from reyn.chat.profile import AgentProfile
     from reyn.chat.slash.agent import _edit_role
 
@@ -151,7 +161,7 @@ async def test_agent_edit_role_persists_to_profile_and_session(tmp_path):
     reloaded = AgentProfile.load(tmp_path / ".reyn" / "agents" / "gamma")
     assert reloaded.role == "new persona text"
     # In-memory: session attribute mutated for next-turn pickup.
-    assert session._agent_role == "new persona text"
+    assert session.agent_role == "new persona text"
     # Confirmation message landed on outbox (system kind, not error).
     successes = [m for m in session.outbox_calls if m.kind == "system"]
     assert successes, f"expected system reply; got {session.outbox_calls}"
@@ -207,7 +217,7 @@ async def test_agent_edit_role_empty_value_errors(tmp_path):
     # On-disk role unchanged.
     assert AgentProfile.load(tmp_path / ".reyn" / "agents" / "eps").role == "keep me"
     # In-memory role unchanged.
-    assert session._agent_role == "keep me"
+    assert session.agent_role == "keep me"
 
 
 @pytest.mark.asyncio
@@ -259,4 +269,4 @@ async def test_agent_dispatcher_routes_edit_to_handler(tmp_path):
         AgentProfile.load(tmp_path / ".reyn" / "agents" / "zeta").role
         == "after"
     )
-    assert session._agent_role == "after"
+    assert session.agent_role == "after"

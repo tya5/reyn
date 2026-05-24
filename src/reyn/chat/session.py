@@ -1339,6 +1339,12 @@ class ChatSession:
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
         self._agent_role = agent_role
+        # ``agent_role`` (public read-only via @property below) gives callers a
+        # stable accessor without exposing the private backing field; mutation
+        # still goes through ``self._agent_role = ...`` (= same convention as
+        # other per-session knobs flipped at runtime, e.g. ``output_language``
+        # / ``model``). The property exists so tests and external read-only
+        # consumers don't reach into the underscore attribute directly.
         # Optional back-reference for slash commands like /agents / /attach
         # and for agent-to-agent message routing (PR11). The factory in
         # cli/commands/chat.py wires this; tests can leave it None.
@@ -1753,6 +1759,18 @@ class ChatSession:
     @property
     def total_cost_usd(self) -> float:
         return self._budget.total_cost_usd
+
+    @property
+    def agent_role(self) -> str:
+        """Read-only public accessor for the attached agent's role text.
+
+        Mutation still goes through ``self._agent_role = ...`` so the
+        intent of "this is a runtime knob, not a constructor-time
+        immutable" stays visible at the call site. Reads via the
+        property are the encapsulation-respecting surface for slash
+        commands and tests that need to verify the role.
+        """
+        return self._agent_role
 
     # ── SkillRunner forwarding (FP-0019 Wave 1b) ────────────────────────────────
     # slash/skill.py and slash/tasks.py access these dicts directly via session.
