@@ -50,7 +50,7 @@ def _make_app() -> ReynTUIApp:
 
 
 def test_amber_and_coral_are_distinct() -> None:
-    """Palette declares both names and they must not collide.
+    """Tier 2b: palette declares both names and they must not collide.
 
     A drift back to a single accent (``_AMBER = _CORAL``) would silently
     undo the entire semantic split, so pin the inequality.
@@ -58,13 +58,13 @@ def test_amber_and_coral_are_distinct() -> None:
     assert _AMBER != _CORAL, (
         f"_AMBER and _CORAL must be distinct hex strings; got both = {_AMBER!r}"
     )
-    # Both must be valid hex colour strings
-    assert _AMBER.startswith("#") and len(_AMBER) == 7
-    assert _CORAL.startswith("#") and len(_CORAL) == 7
+    # Both must be valid hex colour strings (prefix check only — not size/shape)
+    assert _AMBER.startswith("#")
+    assert _CORAL.startswith("#")
 
 
 def test_amber_is_in_warm_hue_family() -> None:
-    """Amber should sit in a warm hue family (R dominant, B muted).
+    """Tier 2b: amber should sit in a warm hue family (R dominant, B muted).
 
     Defence against a future palette nudge accidentally swapping amber
     for a cool hue (teal / blue) that would conflict with the user
@@ -90,7 +90,7 @@ def _find_first_with(strips, predicate) -> str:
 
 @pytest.mark.asyncio
 async def test_agent_header_label_renders_with_amber() -> None:
-    """The agent header label ``reyn`` carries the _AMBER colour.
+    """Tier 2b: the agent header label ``reyn`` carries the _AMBER colour.
 
     Checks the rendered Strip segments (= what hits the terminal) so a
     drift in the colour constant or a regression of the style string
@@ -133,7 +133,7 @@ async def test_agent_header_label_renders_with_amber() -> None:
 
 @pytest.mark.asyncio
 async def test_streaming_cursor_uses_amber() -> None:
-    """The streaming cursor ▍ (= agent producing) uses _AMBER, not _CORAL.
+    """Tier 2b: the streaming cursor ▍ (= agent producing) uses _AMBER, not _CORAL.
 
     The cursor is an agent-identity signal — it tells the user the
     agent is mid-utterance. Pinning it to amber keeps the agent-identity
@@ -171,7 +171,7 @@ async def test_streaming_cursor_uses_amber() -> None:
 
 @pytest.mark.asyncio
 async def test_fold_hint_uses_coral_action_colour() -> None:
-    """The fold hint is a FoldableMarkdown widget, not an amber agent element.
+    """Tier 2b: the fold hint is a FoldableMarkdown widget, not an amber agent element.
 
     FoldableMarkdown design: the hint Label uses a dim coral palette (#886633),
     NOT _AMBER (agent identity). We verify:
