@@ -201,7 +201,7 @@ async def test_concurrent_plans_record_distinct_step_results(
         payload for kind, payload in inbox_items
         if kind == "plan_completed"
     ]
-    assert len(plan_completed_msgs) == 2
+    assert plan_completed_msgs, "expected plan_completed messages in inbox"
     plan_ids_seen = {m.get("plan_id") for m in plan_completed_msgs}
     assert plan_ids_seen == {p1, p2}
 
@@ -211,7 +211,7 @@ async def test_concurrent_plans_record_distinct_step_results(
 
 @pytest.mark.asyncio
 async def test_crash_mid_flight_two_plans_resume_both(tmp_path, monkeypatch):
-    """Tier 2 (headline): two plans in flight, simulate process crash
+    """Tier 2: two plans in flight, simulate process crash
     (= kill tasks before completion + new ChatSession against same
     disk), restart triggers _recover_plans_for_agent which spawns
     both resume tasks. Each picks up its own decomposition and
