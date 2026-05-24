@@ -71,8 +71,7 @@ async def test_require_web_fetch_prompt_is_natural(tmp_path) -> None:
         await r.require_web_fetch("https://example.com", bus)
     except PermissionError:
         pass  # expected — we answered "no"
-    assert len(bus.captured) == 1
-    iv = bus.captured[0]
+    (iv,) = bus.captured  # exactly one intervention requested
     assert iv.prompt == "Allow fetching this URL?"
     # detail carries the URL so user can verify what's being fetched.
     assert "https://example.com" in iv.detail
@@ -92,8 +91,7 @@ async def test_require_shell_prompt_is_natural(tmp_path) -> None:
         await r.require_shell(PermissionDecl(shell=True), "ls -la", bus)
     except PermissionError:
         pass
-    assert len(bus.captured) == 1
-    iv = bus.captured[0]
+    (iv,) = bus.captured  # exactly one intervention requested
     assert iv.prompt == "Allow running this shell command?"
     assert "ls -la" in iv.detail
 

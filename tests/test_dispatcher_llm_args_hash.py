@@ -99,13 +99,14 @@ def test_hash_is_deterministic():
 
 
 def test_hash_format_matches_op_args_hash():
-    """Tier 2: 16 hex chars (matches dispatcher's `_compute_args_hash` format).
+    """Tier 2: hex-string output (matches dispatcher's `_compute_args_hash` format).
 
-    Pinned so the WAL ``args_hash`` field length is uniform whether the
-    step is op-kind or llm-kind. Audit tooling can rely on the format.
+    Pinned so the WAL ``args_hash`` field is a non-empty lowercase hex string
+    whether the step is op-kind or llm-kind. Audit tooling can rely on the format.
     """
     frame = {"phase": "draft"}
     h = _compute_llm_args_hash(model="m", frame=frame)
+    assert h  # non-empty
     assert all(c in "0123456789abcdef" for c in h)
 
 
@@ -115,3 +116,4 @@ def test_unhashable_frame_falls_back_safely():
     frame = {"phase": "draft", "callback": lambda x: x}
     h = _compute_llm_args_hash(model="m", frame=frame)
     assert isinstance(h, str)
+    assert h  # non-empty hex string produced without raising
