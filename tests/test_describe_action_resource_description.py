@@ -74,9 +74,10 @@ def _describe(qualified_name: str, ctx: ToolContext) -> dict:
 
 
 def test_skill_describe_returns_skill_description():
-    """Tier 2: describe_action(skill__X) returns the SKILL's description
-    (= skill.md frontmatter, B42-NF-W7-1), NOT invoke_skill's dispatcher
-    instructions.
+    """Tier 2b: describe_action(skill__X) returns the SKILL's description.
+
+    B42-NF-W7-1: description comes from skill.md frontmatter, NOT
+    invoke_skill's dispatcher instructions.
     """
     actual_desc = (
         "Catalogue-gap fallback: hand a single-shot natural-language task "
@@ -126,8 +127,10 @@ def test_skill_describe_unknown_skill_falls_back_to_dispatcher():
 
 
 def test_agent_peer_describe_returns_agent_description():
-    """Tier 2: describe_action(agent.peer__X) returns the AGENT's
-    description / role (B42-NF-W7-1), not delegate_to_agent's dispatcher text.
+    """Tier 2b: describe_action(agent.peer__X) returns the AGENT's description.
+
+    B42-NF-W7-1: returns description / role field, not delegate_to_agent's
+    dispatcher text.
     """
     actual_desc = "Researches topics by querying multiple sources."
     ctx = _make_ctx(agents=[
@@ -164,8 +167,10 @@ def test_agent_peer_describe_missing_both_falls_back_to_dispatcher():
 
 
 def test_mcp_tool_describe_returns_tool_description():
-    """Tier 2: describe_action(mcp.tool__server.tool) returns the MCP tool's
-    declared description (B42-NF-W7-1), not call_mcp_tool's dispatcher text.
+    """Tier 2b: describe_action(mcp.tool__server.tool) returns the tool's description.
+
+    B42-NF-W7-1: uses the MCP tool's declared description, not
+    call_mcp_tool's dispatcher text.
     """
     actual_desc = "Search GitHub pull requests matching a query."
     ctx = _make_ctx(mcp_servers=[
@@ -199,8 +204,10 @@ def test_mcp_tool_describe_missing_description_falls_back():
 
 
 def test_mcp_server_describe_returns_server_description():
-    """Tier 2: describe_action(mcp.server__X) returns the server's
-    description (B42-NF-W7-1), not list_mcp_tools' dispatcher text.
+    """Tier 2b: describe_action(mcp.server__X) returns the server's description.
+
+    B42-NF-W7-1: uses the server's own description, not list_mcp_tools'
+    dispatcher text.
     """
     actual_desc = "GitHub MCP server — search/comment/PR ops."
     ctx = _make_ctx(mcp_servers=[
@@ -214,9 +221,11 @@ def test_mcp_server_describe_returns_server_description():
 
 
 def test_operation_describe_unchanged_by_resource_description_fix():
-    """Tier 2: operation-category actions (file__read, web__fetch, etc.)
-    continue to use ``target.description`` (regression guard) — the fix
-    must not change their resolution path.
+    """Tier 2b: operation-category actions continue to use target.description.
+
+    Regression guard: file__read, web__fetch, etc. must not be affected by
+    the B42-NF-W7-1 resource-description fix — their resolution path is
+    unchanged.
     """
     ctx = _make_ctx()
     out = _describe("file__read", ctx)
