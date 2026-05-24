@@ -78,10 +78,10 @@ def test_mcp_server_installed_is_in_dispatch_table():
 
 
 def test_mcp_server_installed_event_mints_state_change(tmp_path):
-    """Tier 2 (#398 v4 emitter #2): emitting
-    ``mcp_server_installed`` on the session's chat_events log triggers
-    a state_change history entry. The LLM's next turn reads "MCP server
-    'X' was installed." and breaks out of the "I can't access X" trap.
+    """Tier 2: emitting ``mcp_server_installed`` on the session's chat_events
+    log triggers a state_change history entry (#398 v4 emitter #2). The LLM's
+    next turn reads "MCP server 'X' was installed." and breaks out of the
+    "I can't access X" trap.
     """
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
@@ -190,11 +190,10 @@ def test_multiple_installs_each_mint_separate_state_change(tmp_path):
 
 
 def test_mcp_server_removed_event_mints_state_change(tmp_path):
-    """Tier 2 (#398 v4 emitter #3): emitting ``mcp_server_removed`` on
-    the session's chat_events log triggers a state_change history
-    entry. Symmetric to ``mcp_server_installed`` — surfaces the
-    "no longer available" state-change to the LLM so it doesn't keep
-    trying to call a server that was just removed.
+    """Tier 2: emitting ``mcp_server_removed`` on the session's chat_events log
+    triggers a state_change history entry (#398 v4 emitter #3). Symmetric to
+    ``mcp_server_installed`` — surfaces the "no longer available" state-change
+    to the LLM so it doesn't keep trying to call a server that was just removed.
     """
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
@@ -233,11 +232,10 @@ def test_mcp_server_removed_uses_server_field(tmp_path):
 
 
 def test_index_dropped_event_mints_state_change(tmp_path):
-    """Tier 2 (#398 v4 emitter #4): emitting ``index_dropped`` on the
-    session's chat_events log triggers a state_change history entry.
-    Recall against the dropped source will now miss; the LLM seeing
-    this entry understands "the source I was citing yesterday doesn't
-    exist today".
+    """Tier 2: emitting ``index_dropped`` on the session's chat_events log
+    triggers a state_change history entry (#398 v4 emitter #4). Recall against
+    the dropped source will now miss; the LLM seeing this entry understands
+    "the source I was citing yesterday doesn't exist today".
     """
     session = _make_session(tmp_path)
     pre_count = len(_state_changes(session))
@@ -272,7 +270,6 @@ def test_install_remove_dropindex_all_minted_separately(tmp_path):
     session._chat_events.emit("index_dropped", source="z")
 
     entries = _state_changes(session)[pre_count:]
-    assert len(entries) == 3
     sources = [e.meta.get("source") for e in entries]
     assert sources == ["mcp_install", "mcp_drop_server", "index_drop"]
     contents = [e.content for e in entries]
