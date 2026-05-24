@@ -126,7 +126,7 @@ async def test_await_skill_completion_returns_true_immediately_when_no_such_run_
 
 @pytest.mark.asyncio
 async def test_await_skill_completion_returns_false_on_deadline():
-    """Tier 2 (Note 2 reliability fix): deadline fires before task.done()
+    """Tier 2: deadline fires before task.done()
     → return False so the caller can mark the run_registry entry
     ``status="timeout"`` rather than ``"completed"``.
 
@@ -270,7 +270,7 @@ class _StubSendImpl:
 
 @pytest.mark.asyncio
 async def test_escalation_skipped_when_reply_text_nonempty(monkeypatch):
-    """Tier 2 (B48-NF-W2-S2 fix): when ``send_to_agent_impl`` returns a
+    """Tier 2: when ``send_to_agent_impl`` returns a
     non-empty ``reply`` AND ``partial=True`` AND a still-running skill,
     the handler must return a **Message envelope carrying that reply**
     — not escalate to a Task envelope that drops the text.
