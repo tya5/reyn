@@ -46,8 +46,8 @@ def test_on_workflow_aborted_with_reason_encodes_in_text() -> None:
         data={"run_id": "child-run", "reason": "budget_exceeded"},
     ))
     msgs = _drain(q)
-    assert len(msgs) == 1
-    assert msgs[0].text == "skill done: aborted: budget_exceeded"
+    (only,) = msgs
+    assert only.text == "skill done: aborted: budget_exceeded"
 
 
 def test_on_workflow_aborted_without_reason_emits_bare_text() -> None:

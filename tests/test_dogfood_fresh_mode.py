@@ -246,8 +246,8 @@ class TestStateModeField:
         _write_json(run_dir / "summary.json", summary)
 
         loaded = load_run_result_from_storage(run_dir)
-        assert len(loaded.scenario_results) == 1
-        assert loaded.scenario_results[0].state_mode == "fresh"
+        (only,) = loaded.scenario_results
+        assert only.state_mode == "fresh"
 
     def test_state_mode_default_on_legacy_output_json(self, tmp_path: Path) -> None:
         """Tier 2: loading a legacy output.json without state_mode defaults to 'fresh'."""
