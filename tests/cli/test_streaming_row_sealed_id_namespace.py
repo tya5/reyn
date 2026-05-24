@@ -127,5 +127,5 @@ async def test_two_concurrent_sealed_rows_have_distinct_child_ids() -> None:
         assert "sealed_prefix" not in combined
         assert "sealed_markdown" not in combined
         # Each row should have contributed one prefix + one markdown.
-        assert len(sealed_prefix_ids) == 2, sealed_prefix_ids
-        assert len(sealed_md_ids) == 2, sealed_md_ids
+        row_a_prefix, row_b_prefix = sealed_prefix_ids
+        row_a_md, row_b_md = sealed_md_ids

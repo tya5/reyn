@@ -155,7 +155,7 @@ def test_render_memory_unknown_filter_is_ignored(tmp_path: Path) -> None:
     )
     # Unknown filter → no banner + full entry list.
     assert "⌕ filter:" not in rendered
-    assert len(entries) == 1
+    (only_entry,) = entries
 
 
 @pytest.mark.asyncio

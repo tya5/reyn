@@ -50,7 +50,9 @@ def test_event_hint_handles_each_route_branch() -> None:
         )
         seen.add(hint)
     # All 3 produce distinct hints (= same iv_id / kind, route differs).
-    assert len(seen) == 3
+    assert len(seen) == len({"self_answer", "parent_delegate", "user_channel"}), (
+        f"each route must produce a distinct hint; got duplicates in {seen!r}"
+    )
 
 
 def test_event_hint_handles_missing_fields_safely() -> None:

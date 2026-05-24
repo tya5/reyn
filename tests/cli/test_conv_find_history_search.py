@@ -45,12 +45,9 @@ async def test_find_in_buffer_returns_substring_matches() -> None:
 
         matches = conv.find_in_buffer("apple")
         # Two lines contain "apple" (case-insensitive: "Apples" + "apple pie").
-        assert len(matches) == 2, (
-            f"expected 2 matches for 'apple', got {len(matches)}: "
-            f"{[m[1] for m in matches]}"
-        )
+        match_apples, match_pie = matches  # exactly 2 case-insensitive matches expected
         # Tuple shape: (line_idx, line_text).
-        for line_idx, line_text in matches:
+        for line_idx, line_text in (match_apples, match_pie):
             assert isinstance(line_idx, int)
             assert "apple" in line_text.lower()
 

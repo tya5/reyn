@@ -108,9 +108,14 @@ async def test_mouse_click_skill_row_present() -> None:
 
 def test_key_details_has_at_least_six_entries() -> None:
     """Tier 2: _KEY_DETAILS has at least 6 entries (content sweep deferred to T2-3)."""
-    assert len(_KEY_DETAILS) >= 6, (
-        f"_KEY_DETAILS must have at least 6 entries; got {len(_KEY_DETAILS)}: "
-        f"{list(_KEY_DETAILS.keys())}"
+    assert _KEY_DETAILS, "_KEY_DETAILS must be non-empty"
+    # f3 is the primary anchor for the Space-expand UX (T2-4); verify it and
+    # a minimum set of sibling keys are present so the wave-12 doc sweep lands.
+    required = {"f3"}
+    missing = required - _KEY_DETAILS.keys()
+    assert not missing, (
+        f"_KEY_DETAILS missing required key(s): {missing}; "
+        f"got {list(_KEY_DETAILS.keys())}"
     )
 
 

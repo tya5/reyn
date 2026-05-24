@@ -124,10 +124,8 @@ async def test_on_save_auto_generates_path_when_arg_empty(
         )
         await pilot.pause()
         created = list(tmp_path.glob("reyn-conv-*.txt"))
-        assert len(created) == 1, (
-            f"expected one auto-named file, got {created}"
-        )
-        content = created[0].read_text(encoding="utf-8")
+        (auto_file,) = created  # exactly one auto-named file expected
+        content = auto_file.read_text(encoding="utf-8")
         assert "payload" in content
 
 

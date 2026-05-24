@@ -167,12 +167,10 @@ async def test_conv_foldables_list_has_one_after_long_reply() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        assert len(conv._foldables) == 0, "starts empty"
+        assert not conv._foldables, "starts empty"
         conv._write_agent_markdown_with_fold(_long_reply(60))
         await pilot.pause()
-        assert len(conv._foldables) == 1, (
-            f"expected 1 foldable after long reply, got {len(conv._foldables)}"
-        )
+        (only_foldable,) = conv._foldables
 
 
 # ── 6. toggle_last_foldable() toggles latest and returns True ────────────────

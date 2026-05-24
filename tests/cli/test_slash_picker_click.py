@@ -130,7 +130,7 @@ async def test_picker_clicked_message_routes_to_confirm_picker() -> None:
         picker = app.query_one("#slash-picker", SlashPicker)
         assert picker.has_matches
         # Move selection to second match so we test the "selected != 0" case
-        if len(picker._matches) > 1:
+        if picker._matches[1:]:
             picker.move_selection(+1)
             expected = picker._matches[1].name
         else:

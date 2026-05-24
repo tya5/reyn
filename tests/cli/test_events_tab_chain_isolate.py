@@ -149,15 +149,15 @@ def test_render_events_filters_by_chain_isolate(tmp_path: Path) -> None:
         tmp_path, event_filter_idx=0, event_tail_idx=2,  # tail=200
         cursor=0,
     )
-    # All 4 events visible without isolation.
-    assert len(visible) == 4
+    # All 4 events visible without isolation — one per seeded log line.
+    ev1, ev2, ev3, ev4 = visible
 
     # With chain_isolate="A" → only chain A's 2 events visible.
     rendered_iso, visible_iso, _ys2 = render_events(
         tmp_path, event_filter_idx=0, event_tail_idx=2,
         cursor=0, chain_isolate="A",
     )
-    assert len(visible_iso) == 2
+    ev_a1, ev_a2 = visible_iso
     assert all(
         (ev.get("data") or {}).get("chain_id") == "A" for ev in visible_iso
     )
