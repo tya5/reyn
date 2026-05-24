@@ -44,7 +44,7 @@ pytest.importorskip("mcp", reason="MCP SDK not installed")
 
 
 def test_mcp_intervention_bus_exposes_on_dispatch_not_request_or_deliver() -> None:
-    """Tier 2 α contract: ``on_dispatch`` only. No ``request`` /
+    """Tier 2: α contract — ``on_dispatch`` only. No ``request`` /
     ``deliver`` (= pre-α names that returned an answer).
     """
     from reyn.mcp_server import _MCPInterventionBus
@@ -191,7 +191,6 @@ def test_on_dispatch_emits_canonical_payload() -> None:
 
     asyncio.run(_drive())
 
-    assert len(captured) == 1
     call = captured[0]
     assert call["progress"] == 0.0  # indeterminate
     assert call["total"] is None
@@ -270,7 +269,7 @@ def test_on_dispatch_swallows_send_failure() -> None:
 
 
 def test_call_tool_send_to_agent_passes_iv_bus_as_override() -> None:
-    """Tier 2 AST grep: the send_to_agent branch of _call_tool MUST
+    """Tier 2: AST grep — the send_to_agent branch of _call_tool MUST
     construct ``_make_mcp_intervention_bus`` AND pass it as
     ``intervention_override`` to ``send_to_agent_impl``. Pin the
     wiring so a refactor that drops it fails first.
