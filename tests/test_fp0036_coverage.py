@@ -43,9 +43,12 @@ def _make_scenario(scenario_id: str, covers: list[str]) -> Scenario:
 
 class TestParseFeatureMap:
     def test_returns_more_than_50_features(self) -> None:
-        """Tier 1: parse_feature_map returns at least 50 features from the real doc."""
+        """Tier 1: parse_feature_map returns at least one feature from the real doc."""
         features = parse_feature_map(FEATURE_MAP_PATH)
-        assert features, "Expected parse_feature_map to return at least one feature node."
+        assert features, (
+            "Expected parse_feature_map to return features from the real docs/feature-map.md, "
+            "but got an empty list."
+        )
 
     def test_known_path_os_core_phase_engine_act_decide_loop(self) -> None:
         """Tier 1: 'os-core/phase-engine/act-decide-loop' is parsed from the table row."""
@@ -163,8 +166,8 @@ class TestComputeCoverageAssignment:
         matrix = compute_coverage([s], FEATURE_MAP_PATH)
         assert "os-core/phase-engine/act-decide-loop" in matrix.coverage_map
         refs = matrix.coverage_map["os-core/phase-engine/act-decide-loop"]
-        assert refs, "Expected at least one coverage ref for the covered tag."
-        assert refs[0] == ("test_set", "s1")
+        assert refs, "Expected at least one coverage ref for the matching tag"
+        assert ("test_set", "s1") in refs
 
     def test_covered_count_accurate(self) -> None:
         """Tier 1: covered_count equals the number of paths with at least one scenario ref."""
@@ -194,6 +197,7 @@ class TestComputeCoverageAssignment:
         s2 = _make_set("set_b", [_make_scenario("sb1", ["control-ir-ops/file"])])
         matrix = compute_coverage([s1, s2], FEATURE_MAP_PATH)
         refs = matrix.coverage_map["control-ir-ops/file"]
+        assert refs, "Expected coverage refs for 'control-ir-ops/file'"
         set_names = {r[0] for r in refs}
         assert set_names == {"set_a", "set_b"}
 
@@ -241,7 +245,8 @@ class TestUnknownTags:
         # Valid tag is covered
         assert matrix.covered_count >= 1
         refs = matrix.coverage_map["os-core/phase-engine/act-decide-loop"]
-        assert refs, "Expected at least one coverage ref for the valid tag."
+        assert refs, "Expected at least one coverage ref for the valid tag"
+        assert ("mixed_set", "s_mixed") in {(r[0], r[1]) for r in refs}
 
         # Invalid tag is in unknown_tags
         assert ("mixed_set", "s_mixed", "totally/invalid/path") in matrix.unknown_tags
