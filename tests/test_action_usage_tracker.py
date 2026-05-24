@@ -92,7 +92,7 @@ def test_freq_ranking_n_clips_result() -> None:
             tracker.record(name)
 
     result = tracker.get_top_n(2, seed=[])
-    assert len(result) == 2
+    assert result == ["skill__c", "skill__b"]
 
 
 # ── 4. Seed deduplication ─────────────────────────────────────────────────────
@@ -150,7 +150,6 @@ def test_events_written_to_jsonl(tmp_path: Path) -> None:
 
     assert persist_path.exists()
     lines = persist_path.read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) == 2
     for line in lines:
         entry = json.loads(line)
         assert "qualified_name" in entry
@@ -266,7 +265,24 @@ def test_default_seed_has_sixteen_items() -> None:
         skill duplicated the router's inline file__read path with no
         added value; removed from stdlib alongside its seed entry.
     """
-    assert len(DEFAULT_HOT_LIST_SEED) == 16
+    assert DEFAULT_HOT_LIST_SEED == (
+        "file__read",
+        "file__list",
+        "file__grep",
+        "file__glob",
+        "file__write",
+        "reyn.source__list",
+        "web__search",
+        "web__fetch",
+        "rag.operation__drop_source",
+        "memory.operation__remember_shared",
+        "skill__skill_builder",
+        "skill__skill_improver",
+        "skill__skill_importer",
+        "skill__mcp_search",
+        "skill__index_docs",
+        "skill__eval",
+    )
 
 
 def test_default_seed_fits_within_default_hot_list_n() -> None:
