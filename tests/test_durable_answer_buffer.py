@@ -133,10 +133,10 @@ def test_journal_records_buffered_event(tmp_path: Path):
     # WAL event present
     events = list(log.iter_from(0))
     buffered = [e for e in events if e["kind"] == "intervention_answer_buffered"]
-    assert len(buffered) == 1
-    assert buffered[0]["run_id"] == "run_x"
-    assert buffered[0]["text"] == "hello"
-    assert buffered[0]["choice_id"] is None
+    (only,) = buffered
+    assert only["run_id"] == "run_x"
+    assert only["text"] == "hello"
+    assert only["choice_id"] is None
     # Snapshot updated
     assert journal.snapshot.buffered_intervention_answers == {
         "run_x": {"text": "hello", "choice_id": None},
@@ -163,7 +163,7 @@ def test_journal_records_consumed_event(tmp_path: Path):
     assert journal.snapshot.buffered_intervention_answers == {}
     events = list(log.iter_from(0))
     consumed = [e for e in events if e["kind"] == "intervention_answer_consumed"]
-    assert len(consumed) == 1
+    (only,) = consumed
 
 
 def test_journal_consume_is_idempotent(tmp_path: Path):

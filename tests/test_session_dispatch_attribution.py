@@ -80,9 +80,9 @@ def test_first_sender_triggers_first_attributed_turn_entry(tmp_path):
     session._handle_sender_attribution({"sender": "slack:U456:bob"})
 
     entries = _attribution_entries(session)
-    assert len(entries) == 1
-    assert "bob (Slack)" in entries[0].content
-    assert "first attributed turn" in entries[0].content
+    (only,) = entries
+    assert "bob (Slack)" in only.content
+    assert "first attributed turn" in only.content
     assert session._last_sender == "slack:U456:bob"
 
 
@@ -193,13 +193,13 @@ def test_three_way_transition_each_fires(tmp_path):
     session._handle_sender_attribution({"sender": "a2a:peer_one"})
 
     entries = _attribution_entries(session)
-    assert len(entries) == 3
+    (e0, e1, e2) = entries
     # Final state reflects the latest sender.
     assert session._last_sender == "a2a:peer_one"
     # Each entry mentions the current sender's label.
-    assert "user (TUI)" in entries[0].content
-    assert "nightly" in entries[1].content
-    assert "peer_one" in entries[2].content
+    assert "user (TUI)" in e0.content
+    assert "nightly" in e1.content
+    assert "peer_one" in e2.content
 
 
 # ── _format_sender_label coverage ──────────────────────────────────────
