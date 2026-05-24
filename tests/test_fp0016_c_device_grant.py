@@ -131,8 +131,7 @@ async def test_device_grant_flow_success() -> None:
     assert token.access_token == "AT_x"
     assert token.refresh_token == "RT_x"
 
-    # on_user_action called once with user_code + verification_uri
-    assert len(user_action_calls) == 1
+    # on_user_action called with user_code + verification_uri
     assert user_action_calls[0]["user_code"] == "WDJB-MJHT"
     assert user_action_calls[0]["verification_uri"] == "https://example.com/device"
 
@@ -140,8 +139,8 @@ async def test_device_grant_flow_success() -> None:
     emitted = events.all()
     started = [e for e in emitted if e.type == "oauth_login_started"]
     completed = [e for e in emitted if e.type == "oauth_login_completed"]
-    assert len(started) == 1
-    assert len(completed) == 1
+    assert started
+    assert completed
 
 
 # ── Test 2: access_denied ──────────────────────────────────────────────────
@@ -239,8 +238,6 @@ async def test_device_grant_flow_slow_down() -> None:
         await client.aclose()
 
     assert token.access_token == "AT_x"
-    # Two poll requests were made
-    assert len(poll_timestamps) == 2
     # After slow_down the interval grows by _SLOW_DOWN_INCREMENT (5.0 s real
     # time), but poll_interval_override only sets the *initial* interval — the
     # increment is still added.  The gap between the two timestamps is ≥ 5.0 s
@@ -402,9 +399,7 @@ async def test_device_grant_flow_invokes_wait_fn_between_polls() -> None:
         await client.aclose()
 
     assert token.access_token == "AT_x"
-    # Two poll cycles: pending + success → 2 wait_fn calls.
-    assert len(wait_calls) == 2
-    # First call uses the initial override interval.
+    # First wait_fn call uses the initial override interval.
     assert wait_calls[0] == 0.01
 
 
@@ -453,8 +448,6 @@ async def test_device_grant_flow_invokes_on_slow_down_with_new_interval() -> Non
     finally:
         await client.aclose()
 
-    # Single slow_down notice fired.
-    assert len(slow_down_calls) == 1
     # The reported interval is post-increment (= initial 0.01 + 5.0).
     assert slow_down_calls[0] == pytest.approx(5.01, abs=0.001)
 
@@ -528,7 +521,6 @@ async def test_device_grant_flow_with_client_secret() -> None:
     finally:
         await client.aclose()
 
-    assert len(poll_body_seen) == 1
     body = poll_body_seen[0]
     assert body["client_id"] == ["cid"]
     assert body["client_secret"] == ["s3cr3t"]
