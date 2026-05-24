@@ -106,8 +106,7 @@ def test_image_cmd_queues_png(tmp_path, monkeypatch):
     handler = _get_image_handler()
     _run(handler(session, "shot.png"))
 
-    assert len(session._pending_user_images) == 1
-    block = session._pending_user_images[0]
+    (block,) = session._pending_user_images
     # Issue #383 PR-C: /image now stores a path-ref to the user's file
     # instead of inlining base64. Storage stays out of history.jsonl.
     assert block["type"] == "image"
@@ -128,8 +127,7 @@ def test_image_cmd_supports_jpeg_and_alias(tmp_path, monkeypatch):
     session = _FakeSession()
     _run(cmd.handler(session, "pic.jpg"))
 
-    assert len(session._pending_user_images) == 1
-    block = session._pending_user_images[0]
+    (block,) = session._pending_user_images
     assert block["mime_type"] == "image/jpeg"
     assert "pic.jpg" in block["path"]
 
@@ -147,13 +145,14 @@ def test_multiple_image_calls_stack(tmp_path, monkeypatch):
     _run(handler(session, "a.png"))
     _run(handler(session, "b.png"))
 
-    assert len(session._pending_user_images) == 2
+    a, b = session._pending_user_images
 
 
 # ── error paths ────────────────────────────────────────────────────────
 
 
 def test_image_cmd_empty_path_errors(tmp_path):
+    """Tier 2: /image with empty path → usage error in outbox, queue stays empty."""
     session = _FakeSession()
     handler = _get_image_handler()
     _run(handler(session, ""))
@@ -163,6 +162,7 @@ def test_image_cmd_empty_path_errors(tmp_path):
 
 
 def test_image_cmd_missing_file_errors(tmp_path, monkeypatch):
+    """Tier 2: /image with non-existent file → not-found error in outbox, queue stays empty."""
     monkeypatch.chdir(tmp_path)
     session = _FakeSession()
     handler = _get_image_handler()
@@ -173,6 +173,7 @@ def test_image_cmd_missing_file_errors(tmp_path, monkeypatch):
 
 
 def test_image_cmd_unsupported_extension_errors(tmp_path, monkeypatch):
+    """Tier 2: /image with non-image extension → unsupported error in outbox, queue stays empty."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "notes.txt").write_bytes(b"text")
     session = _FakeSession()
@@ -232,7 +233,7 @@ def test_image_cmd_no_multimodal_config_skips_gate(tmp_path, monkeypatch):
     handler = _get_image_handler()
     _run(handler(session, "any.png"))
 
-    assert len(session._pending_user_images) == 1
+    (only,) = session._pending_user_images
 
 
 # ── ChatMessage content shape (issue #383 update) ──────────────────────
