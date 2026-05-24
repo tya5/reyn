@@ -172,12 +172,12 @@ def test_query_returns_top_k_items() -> None:
     _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
     results = _run(idx.query("query for item 0", _FakeEmbeddingProvider(),
                               "standard", top_k=3))
-    assert len(results) == 3
+    (r0, r1, r2) = results
     # Scores must be monotonically non-increasing.
-    scores = [r["score"] for r in results]
+    scores = [r["score"] for r in (r0, r1, r2)]
     assert scores == sorted(scores, reverse=True)
     # Each result has the original fields + score.
-    for r in results:
+    for r in (r0, r1, r2):
         assert "qualified_name" in r
         assert "short_description" in r
         assert "score" in r
@@ -193,7 +193,7 @@ def test_query_top_k_larger_than_catalog_returns_all() -> None:
     _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
     results = _run(idx.query("anything", _FakeEmbeddingProvider(),
                               "standard", top_k=10))
-    assert len(results) == 1
+    (only,) = results
 
 
 # ── 4. Graceful degradation ───────────────────────────────────────────────
@@ -302,8 +302,8 @@ def test_persist_dir_build_creates_db_file(tmp_path: "Path") -> None:
         assert row[0] == idx.catalog_hash()
 
         rows = con.execute("SELECT qualified_name FROM vectors").fetchall()
-        assert len(rows) == 1
-        assert rows[0][0] == "skill__a"
+        (only_row,) = rows
+        assert only_row[0] == "skill__a"
     finally:
         con.close()
 
@@ -325,14 +325,14 @@ def test_persist_dir_loads_from_disk_skips_embed(tmp_path: "Path") -> None:
     idx1 = ActionEmbeddingIndex(persist_dir=persist_dir)
     provider1 = _FakeEmbeddingProvider()
     _run(idx1.build(items, provider1, "standard"))
-    assert len(provider1.calls) == 1
+    (only_call,) = provider1.calls
 
     # Second process (simulated) — fresh index, same catalog
     idx2 = ActionEmbeddingIndex(persist_dir=persist_dir)
     provider2 = _FakeEmbeddingProvider()
     _run(idx2.build(items, provider2, "standard"))
 
-    assert len(provider2.calls) == 0, (
+    assert not provider2.calls, (
         "build() must load from disk and skip the embed call on cache hit"
     )
     assert idx2.is_ready() is True
@@ -358,7 +358,7 @@ def test_persist_dir_rebuilds_on_stale_disk_hash(tmp_path: "Path") -> None:
     provider2 = _FakeEmbeddingProvider()
     _run(idx2.build(items_v2, provider2, "standard"))
 
-    assert len(provider2.calls) == 1, "stale disk hash must trigger re-embed"
+    (only_call,) = provider2.calls  # stale disk hash must trigger re-embed
     assert idx2.size() == 2
     assert idx2.catalog_hash() != hash_v1
 
