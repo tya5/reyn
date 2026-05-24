@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from reyn.agent import Agent
     from reyn.budget.budget import BudgetGateway
     from reyn.events.state_log import StateLog
+    from reyn.schemas.models import Skill
     from reyn.skill.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -428,7 +429,11 @@ class SkillRunner:
         ))
 
         task = asyncio.create_task(
-            self._run_one_skill(run_id, skill_name, input_artifact, chain_id=chain_id)
+            self._run_one_skill(
+                run_id, skill_name, input_artifact,
+                chain_id=chain_id,
+                pre_loaded_skill=_skill_for_validation,
+            )
         )
         self.running_skills[run_id] = task
 
@@ -761,44 +766,55 @@ class SkillRunner:
         input_artifact: dict,
         *,
         chain_id: str | None = None,
+        pre_loaded_skill: "Skill | None" = None,
     ) -> None:
         """Core skill execution coroutine.
 
         Extracted from ``ChatSession._run_one_skill``.  Loads the skill,
         builds the agent with a ChatEventForwarder subscriber, runs it,
         and emits lifecycle events (P6).
+
+        ``pre_loaded_skill`` lets ``spawn()`` hand off the Skill it
+        already parsed for pre-spawn input_schema validation, eliminating
+        the duplicate resolve_skill_path + load_dsl_skill on the success
+        path (= 2x disk read + 2x YAML parse per spawn pre-fix). When
+        absent (= callers other than spawn(), or future code paths) the
+        load fallback below preserves original behaviour.
         """
         meta = _run_meta(run_id, skill_name)
-        try:
-            skill_dir, skill_root = resolve_skill_path(skill_name)
-        except SkillNotFoundError:
-            self._events.emit(
-                "skill_run_failed", run_id=run_id, skill=skill_name,
-                error=f"skill not found: {skill_name}",
-            )
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"skill not found: {skill_name}", meta=meta,
-            ))
-            await self._enqueue_skill_completed(
-                run_id=run_id, skill=skill_name, chain_id=chain_id,
-                status="error", data={"error": f"skill not found: {skill_name}"},
-            )
-            return
-        try:
-            skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
-        except Exception as exc:
-            self._events.emit(
-                "skill_run_failed", run_id=run_id, skill=skill_name,
-                error=f"failed to load: {exc}",
-            )
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"failed to load {skill_name}: {exc}", meta=meta,
-            ))
-            await self._enqueue_skill_completed(
-                run_id=run_id, skill=skill_name, chain_id=chain_id,
-                status="error", data={"error": f"failed to load {skill_name}: {exc}"},
-            )
-            return
+        if pre_loaded_skill is not None:
+            skill = pre_loaded_skill
+        else:
+            try:
+                skill_dir, skill_root = resolve_skill_path(skill_name)
+            except SkillNotFoundError:
+                self._events.emit(
+                    "skill_run_failed", run_id=run_id, skill=skill_name,
+                    error=f"skill not found: {skill_name}",
+                )
+                await self._put_outbox(OutboxMessage(
+                    kind="error", text=f"skill not found: {skill_name}", meta=meta,
+                ))
+                await self._enqueue_skill_completed(
+                    run_id=run_id, skill=skill_name, chain_id=chain_id,
+                    status="error", data={"error": f"skill not found: {skill_name}"},
+                )
+                return
+            try:
+                skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
+            except Exception as exc:
+                self._events.emit(
+                    "skill_run_failed", run_id=run_id, skill=skill_name,
+                    error=f"failed to load: {exc}",
+                )
+                await self._put_outbox(OutboxMessage(
+                    kind="error", text=f"failed to load {skill_name}: {exc}", meta=meta,
+                ))
+                await self._enqueue_skill_completed(
+                    run_id=run_id, skill=skill_name, chain_id=chain_id,
+                    status="error", data={"error": f"failed to load {skill_name}: {exc}"},
+                )
+                return
 
         from reyn.chat.forwarder import ChatEventForwarder
         agent = self._build_agent_fn(

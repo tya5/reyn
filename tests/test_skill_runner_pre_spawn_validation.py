@@ -231,3 +231,95 @@ def test_spawn_for_router_propagates_pre_spawn_error(tmp_path, monkeypatch):
         assert "could not be spawned" not in str(out)
 
     asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# Issue #644: pre-spawn skill load is reused by _run_one_skill (no 2x I/O)
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_passes_pre_loaded_skill_no_second_load(tmp_path, monkeypatch):
+    """Tier 2: spawn() hands its validated Skill to _run_one_skill via
+    ``pre_loaded_skill``, so the async task body skips the duplicate
+    resolve_skill_path + load_dsl_skill that happened pre-issue-#644.
+    """
+    import reyn.chat.services.skill_runner as sr_mod
+
+    dummy_dir = tmp_path / "skill_reuse"
+    dummy_dir.mkdir()
+
+    resolve_calls = {"n": 0}
+    load_calls = {"n": 0}
+
+    def _counting_resolve(name):
+        resolve_calls["n"] += 1
+        return dummy_dir, tmp_path
+
+    def _counting_load(path, *, skill_root):
+        load_calls["n"] += 1
+        return _make_stub_skill(input_schema=None)
+
+    monkeypatch.setattr(sr_mod, "resolve_skill_path", _counting_resolve)
+    monkeypatch.setattr(sr_mod, "load_dsl_skill", _counting_load)
+
+    runner, _events, _outbox, _completed = _make_runner()
+
+    async def _run():
+        result = await runner.spawn({"skill": "reuse", "input": {}})
+        assert result is None, f"expected None on success, got {result!r}"
+        # Allow the asyncio task to step through _run_one_skill's load gate.
+        for _ in range(10):
+            await asyncio.sleep(0)
+        # Pre-issue-#644 both calls fired twice. Post-fix, _run_one_skill
+        # receives the already-loaded Skill so the second load is skipped.
+        assert load_calls["n"] == 1, (
+            f"expected 1 load_dsl_skill call (pre-spawn only), got {load_calls['n']}"
+        )
+        assert resolve_calls["n"] == 1, (
+            f"expected 1 resolve_skill_path call (pre-spawn only), got {resolve_calls['n']}"
+        )
+
+    asyncio.run(_run())
+
+
+def test_run_one_skill_falls_back_to_load_when_pre_loaded_skill_absent(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: when ``_run_one_skill`` is invoked directly without a
+    ``pre_loaded_skill`` (= future callers, defensive default),
+    it still performs the resolve + load itself. Preserves backward
+    compatibility for any non-spawn() entry path.
+    """
+    import reyn.chat.services.skill_runner as sr_mod
+
+    dummy_dir = tmp_path / "skill_fallback"
+    dummy_dir.mkdir()
+
+    resolve_calls = {"n": 0}
+    load_calls = {"n": 0}
+
+    def _counting_resolve(name):
+        resolve_calls["n"] += 1
+        return dummy_dir, tmp_path
+
+    def _counting_load(path, *, skill_root):
+        load_calls["n"] += 1
+        return _make_stub_skill(input_schema=None)
+
+    monkeypatch.setattr(sr_mod, "resolve_skill_path", _counting_resolve)
+    monkeypatch.setattr(sr_mod, "load_dsl_skill", _counting_load)
+
+    runner, _events, _outbox, _completed = _make_runner()
+
+    async def _run():
+        # Call _run_one_skill directly with pre_loaded_skill=None.
+        await runner._run_one_skill(
+            run_id="run-x", skill_name="fallback", input_artifact={},
+            chain_id=None, pre_loaded_skill=None,
+        )
+        assert load_calls["n"] == 1, (
+            f"expected 1 load_dsl_skill call (direct invocation fallback), got {load_calls['n']}"
+        )
+        assert resolve_calls["n"] == 1
+
+    asyncio.run(_run())
