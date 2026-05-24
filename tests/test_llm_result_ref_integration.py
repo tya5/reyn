@@ -85,11 +85,10 @@ def test_runtime_offloads_large_llm_result_and_writes_ref_in_wal(tmp_path: Path)
     asyncio.run(go())
 
     # WAL: result is a {"_ref": ...} placeholder
-    completed = [
+    (only,) = [
         e for e in log.iter_from(0) if e["kind"] == "step_completed"
     ]
-    assert len(completed) == 1
-    wal_result = completed[0]["result"]
+    wal_result = only["result"]
     assert isinstance(wal_result, dict)
     assert list(wal_result.keys()) == ["_ref"]
     assert wal_result["_ref"] == "hash_int.json"

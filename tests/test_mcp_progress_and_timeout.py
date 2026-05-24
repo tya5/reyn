@@ -205,18 +205,15 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
 
     # Two mcp_progress events should have been emitted with the
     # structured fields the forwarder consumes.
-    progress_events = [
+    first, last = [
         e.model_dump(mode="json") for e in events.all()
         if e.type == "mcp_progress"
     ]
-    assert len(progress_events) == 2
-    first = progress_events[0]
     assert first["data"]["server"] == "demo"
     assert first["data"]["tool"] == "thing"
     assert first["data"]["progress"] == 0.25
     assert first["data"]["total"] == 1.0
     assert first["data"]["message"] == "starting"
-    last = progress_events[-1]
     assert last["data"]["progress"] == 1.0
     assert last["data"]["message"] == "done"
 

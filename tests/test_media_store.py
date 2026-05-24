@@ -469,7 +469,7 @@ def test_multiple_saved_tool_results_all_retained(tmp_path):
         assert body == f"entry {i}\n"
     # Directory listing has all 10 files (= no auto-cleanup).
     files = list(store.tool_results_dir.iterdir())
-    assert len(files) == 10
+    assert len(files) == len(blocks)
 
 
 # ── url field (#385 β core impl sub-task 3b) ──────────────────────────
