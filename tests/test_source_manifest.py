@@ -87,7 +87,7 @@ async def test_upsert_overwrites_existing_entry(tmp_path: Path):
     all_entries = await m.get_all()
     assert all_entries["beta"].chunk_count == 999
     assert all_entries["beta"].description == "Updated"
-    assert len(all_entries) == 1
+    assert list(all_entries) == ["beta"]
 
 
 # ── remove ────────────────────────────────────────────────────────────────────

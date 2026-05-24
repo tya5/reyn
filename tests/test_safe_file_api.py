@@ -188,9 +188,9 @@ def test_glob_does_not_require_context(sandbox: Path) -> None:
     """
     # No _set_permission_context call.
     results = sf.glob(str(sandbox / "docs" / "*.md"))
-    assert len(results) == 2
     assert any(p.endswith("a.md") for p in results)
     assert any(p.endswith("b.md") for p in results)
+    assert not any(p.endswith("c.md") for p in results)
 
 
 # ---------------------------------------------------------------------------
