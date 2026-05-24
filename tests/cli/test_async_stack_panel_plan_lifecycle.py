@@ -110,7 +110,7 @@ async def test_plan_complete_removes_async_stack_row() -> None:
 
 @pytest.mark.asyncio
 async def test_non_plan_system_message_does_not_touch_async_stack() -> None:
-    """Tier 2 (regression): generic system message → no panel side-effect.
+    """Tier 2b: generic system message → no AsyncStackPanel side-effect.
 
     Lifecycle markers (= ``[↑ N turns compacted]``), slash-command
     output, attach/detach notices are all ``kind="system"`` but
@@ -144,7 +144,7 @@ async def test_non_plan_system_message_does_not_touch_async_stack() -> None:
 
 @pytest.mark.asyncio
 async def test_missing_plan_id_is_silent_noop() -> None:
-    """Tier 2 (defensive): plan_summary without plan_id meta → silent.
+    """Tier 2b: plan_summary without plan_id meta → silent no-op.
 
     Guard against producer-side shape drift — if the outbox emitter
     drops the plan_id for some reason, the handler should silently
