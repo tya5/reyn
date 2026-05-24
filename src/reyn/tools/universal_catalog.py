@@ -213,8 +213,8 @@ _LIST_ACTIONS_DESCRIPTION = (
     "WHAT: Discover actions in the FULL catalog (= a superset of the hot-list "
     "function entries you can see directly). The hot-list shown in your "
     "function list is a curated subset; this tool reveals the rest. "
-    "Two independent filters: `category=[...]` array (enum-restricted, "
-    "exact category match) and `filter='...'` string (free-text substring). "
+    "Filter by category: `category=[...]` array (enum-restricted, exact "
+    "category match). Omit or pass [] to enumerate all categories. "
     "Returns {items: [{qualified_name, short_description}, ...], total: int}. "
     "An empty items array means no actions match — report this honestly. "
     "WHEN: Use this FIRST whenever the user requests a capability and you do "
@@ -223,12 +223,11 @@ _LIST_ACTIONS_DESCRIPTION = (
     "capability request. Refusing without a list_actions check is a failure "
     "mode (= the action you assumed missing may exist behind the hot-list). "
     "Also use this when you do not know the exact action name. "
-    "For known-category filtering (e.g. 'exec', 'skill', 'memory.entry'), "
-    "ALWAYS pass `category=['exec']` array, NEVER `filter='exec'` string. "
-    "For server-name lookups (e.g. 'sqlite', 'git'), pass `filter='sqlite'`. "
+    "For known-category enumeration (e.g. 'exec', 'skill', 'memory.entry'), "
+    "pass `category=['exec']` to narrow the result. "
     "WHEN NOT: If you already know the action name, skip this and call "
-    "invoke_action directly. For semantic/natural-language search, use "
-    "search_actions (when available) instead. "
+    "invoke_action directly. For semantic / natural-language / keyword "
+    "search, use search_actions (when available) instead. "
     "PREFERRED OVER: Guessing action names + refusing capability requests — "
     "list_actions returns the canonical qualified names (e.g. "
     "skill__code_review, mcp.tool__sqlite.list_tables) that invoke_action "
@@ -247,23 +246,10 @@ _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
             "type": "array",
             "items": {"type": "string", "enum": list(CATEGORIES)},
             "description": (
-                "PREFERRED for category-based filtering. Pass an array of "
-                "category names (e.g. category=['exec'], category=['skill', "
-                "'file']). Do NOT pass a category name to the `filter` param "
-                "— use this array. Omit or pass [] to include all categories. "
+                "Filter by category. Pass an array of category names "
+                "(e.g. category=['exec'], category=['skill', 'file']). "
+                "Omit or pass [] to include all categories. "
                 "Categories: " + ", ".join(CATEGORIES) + "."
-            ),
-        },
-        "filter": {
-            "type": "string",
-            "description": (
-                "Free-text substring match (case-insensitive) against "
-                "qualified_name and short_description. ONLY for EXACT "
-                "keyword / substring lookup — pass a literal token to "
-                "match against names. Do NOT pass category names here "
-                "(use `category=['name']` array instead). Do NOT pass "
-                "semantic / natural-language descriptions (use "
-                "search_actions(query=...) for those)."
             ),
         },
         "offset": {
@@ -293,14 +279,14 @@ _SEARCH_ACTIONS_DESCRIPTION = (
     "Multilingual — works in any language (Japanese, English, etc.). "
     "WHEN NOT: If the action name is already known, call invoke_action "
     "directly. For exact category enumeration (e.g. 「skill カテゴリの一覧」), "
-    "use list_actions(category=[...]). For exact substring lookup of a "
-    "known keyword (e.g. 「'http' を含む action」), use list_actions(filter=...). "
-    "Available only when an embedding class is configured (reyn.yaml "
-    "action_retrieval.embedding_class). "
+    "use list_actions(category=[...]). For keyword / substring lookup "
+    "(e.g. 「'http' を含む action」), use this tool — search_actions handles "
+    "both semantic and keyword queries. Available only when an embedding "
+    "class is configured (reyn.yaml action_retrieval.embedding_class). "
     "PREFERRED OVER: list_actions — when query is a semantic description "
-    "rather than a category or exact substring. The keywords 探したい / "
+    "or a free-text keyword rather than a category. The keywords 探したい / "
     "関連 / similar / find ... about / find ... related are STRONG signals "
-    "to use this tool, NOT list_actions(filter=...). "
+    "to use this tool. "
     "POST_CALL: After search_actions reveals at least one matching action, "
     "you MUST follow with describe_action or invoke_action. Do NOT reply "
     "directly — silent stop after semantic search is a failure mode."
@@ -684,15 +670,14 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
 async def _handle_list_actions(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """list_actions handler — alphabetical browse with filter + pagination.
+    """list_actions handler — alphabetical browse with category +
+    pagination.
 
     Per FP-0034 §D11, returns:
       ``{items: [{qualified_name, short_description}, ...], total: int}``
 
     Sort is alphabetical by qualified_name (= pagination stability).
-    The ``filter`` substring matches case-insensitively against
-    qualified_name AND short_description. Pagination uses offset+limit
-    REST conventions.
+    Pagination uses offset+limit REST conventions.
     """
     # Resolve category filter — empty / unset = all visible categories
     category_filter = args.get("category") or []
@@ -703,20 +688,12 @@ async def _handle_list_actions(
     else:
         categories = list(CATEGORIES)
 
-    text_filter = (args.get("filter") or "").lower()
     offset = max(0, int(args.get("offset", 0) or 0))
     limit = max(1, int(args.get("limit", 20) or 20))
 
     items: list[dict[str, str]] = []
     for cat in categories:
         items.extend(_enumerate_category(cat, ctx))
-
-    if text_filter:
-        items = [
-            it for it in items
-            if text_filter in it["qualified_name"].lower()
-            or text_filter in it["short_description"].lower()
-        ]
 
     # Alphabetical sort for pagination stability (§D11)
     items.sort(key=lambda it: it["qualified_name"])
