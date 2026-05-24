@@ -1,35 +1,78 @@
-"""ActionUsageTracker — freq+recency persistence for FP-0034 hot list.
+"""ActionUsageTracker — compacted freq+recency table for FP-0034 hot list.
 
 FP-0034 §D2 / §D16 spec.
 
-Lifecycle:
-  1. Construction: pass persist_path (.reyn/state/action_usage.jsonl)
-     or None for in-memory only (= tests).
-  2. record(qualified_name) — append event to JSONL; bump in-memory freq + recency.
-  3. get_top_n(n, seed) — returns up to n qualified_names, freq+recency ranked,
-     with seed items filling remaining slots.
+Storage model
+-------------
 
-Storage format (per line):
-  {"qualified_name": "skill__code_review", "ts": 1716000000.0}
+This module persists per-agent action usage as a **compacted table** of
+qualified-name → ``{count, last_ts}``. The table is overwritten in
+place (atomic via tmp+rename) and never grows beyond the number of
+distinct qualified names ever observed.
 
-Scoring: score = freq * (1 + 1/(1+age_days))
-  - freq: number of recorded events for this name
-  - recency: 1/(1+age_days) where age_days = days since last event
-  - Combined: freq * (1 + 1/(1+age_days)) — rewards both popular and recent
-  Simple deterministic formula; no ML needed.
+The compacted table is fed exclusively by the chat-history compactor:
+when the compactor folds N old conversation turns into a single summary
+message, the tool calls contained in those folded turns are merged
+into this table (one increment per call, last_ts = max).
+
+For tool calls that have NOT yet been compacted (= still raw in
+``history.jsonl``), the tracker is asked at hot-list-build time to
+scan the current message list and combine them with the compacted
+table. This avoids duplicating tool-call records across the conversation
+history (source of truth) and the hot-list cache.
+
+Lifecycle
+---------
+
+  1. Construction: pass ``persist_path``
+     (``.reyn/agents/<name>/action_usage.json``) or ``None`` for
+     memory-only operation.
+  2. ``merge_compacted(records)`` — called by the compactor sink with
+     the list of ``(qualified_name, ts)`` tuples extracted from
+     compaction candidates. Updates the table and persists.
+  3. ``get_top_n(n, seed, live_records=None)`` — returns up to *n*
+     qualified names, freq+recency ranked. ``live_records`` is the
+     optional list of ``(qualified_name, ts)`` extracted from the
+     current uncompacted history; counts there are merged on the fly.
+
+Storage format
+--------------
+
+JSON object::
+
+    {
+      "file__read": {"count": 12, "last_ts": 1716000000.0},
+      "skill__code_review": {"count": 4, "last_ts": 1716000100.0}
+    }
+
+Scoring
+-------
+
+``score = freq * (1 + 1/(1+age_days))``
+
+  - ``freq``: combined compacted + live count for this name.
+  - ``recency``: ``1/(1+age_days)`` where ``age_days`` is days since
+    the most recent observed ``last_ts``.
+  - Simple deterministic formula; no ML.
 
 Seed semantics (§D16):
   - Seed items appear only when result count < n.
   - Seed items are always de-duplicated against freq-ranked items.
   - Order within seed items is preserved (= config order).
 
-Not yet implemented:
-  - Pruning / compaction of old JSONL entries (future PR)
+Invalid-name filter
+-------------------
+
+Both ``merge_compacted`` and the live-scan path validate each
+qualified name through :func:`_is_valid_qualified_name` (= category
+prefix + ``__`` separator + non-empty entry). Wrapper invocations
+(``list_actions`` / ``describe_action`` / …) and stale rename
+artifacts (= bare ``read`` from before the ``file__`` prefix) are
+silently dropped — they are not legitimate hot-list candidates.
 """
 from __future__ import annotations
 
 import json
-import sys
 import time
 from pathlib import Path
 from typing import Callable
@@ -68,8 +111,29 @@ DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
 _SECONDS_PER_DAY = 86400.0
 
 
+def _is_valid_qualified_name(name: str) -> bool:
+    """Return True when *name* is a structurally valid qualified action name.
+
+    Validates that the name parses through
+    :func:`universal_catalog.split_qualified_name` — i.e. contains the
+    ``__`` separator, has a category portion matching the known
+    category registry, and a non-empty entry-name portion.
+
+    Wrapper invocations (``list_actions``, ``describe_action``,
+    ``search_actions``, ``invoke_action``) fail this check because they
+    are not category-prefixed. Stale rename artifacts (``read`` before
+    the ``file__`` prefix landed) also fail.
+    """
+    try:
+        from reyn.tools.universal_catalog import split_qualified_name
+        split_qualified_name(name)
+        return True
+    except (ValueError, ImportError):
+        return False
+
+
 class ActionUsageTracker:
-    """Freq+recency tracker for the FP-0034 hot list.
+    """Freq+recency tracker backed by a compacted on-disk table.
 
     Thread-safety: single-process / single-thread only (= router context).
     No locking is applied; callers must not share instances across threads.
@@ -81,215 +145,197 @@ class ActionUsageTracker:
         *,
         on_ranking_changed: Callable[[list[dict]], None] | None = None,
     ) -> None:
-        # in-memory state
-        self._freq: dict[str, int] = {}       # qualified_name → event count
-        self._last_ts: dict[str, float] = {}  # qualified_name → latest event timestamp
+        # Compacted-table state: qn → {"count": int, "last_ts": float}
+        self._compacted: dict[str, dict] = {}
         self._persist_path = persist_path
-        # Issue #192: optional callback fired when the full sorted ranking
-        # order changes after a record(). Caller wires this to emit a
-        # ``hot_list_updated`` event so the TUI can refresh its Memory
-        # tab augmentation without periodic polling. None = no callback.
-        # Diff granularity is the QUALIFIED-NAME ORDER — score-only
-        # changes within a stable order (e.g. the top item's freq bumps
-        # but everything stays in place) do NOT fire, so the consumer
-        # only sees re-rendering signals.
+        # Issue #192: optional callback fired when the compacted ranking
+        # order changes after a merge_compacted(). Caller wires this to
+        # emit a ``hot_list_updated`` event so the TUI can refresh its
+        # Memory-tab augmentation without periodic polling. None = no
+        # callback. Diff granularity is the QUALIFIED-NAME ORDER — score-
+        # only changes within a stable order do NOT fire.
         self._on_ranking_changed = on_ranking_changed
         self._prior_ranking_order: list[str] | None = None
         if persist_path is not None:
             self._load_from_disk()
 
-    # ── Disk persistence helpers ──────────────────────────────────────────
-
-    @staticmethod
-    def _is_valid_qualified_name(name: str) -> bool:
-        """Return True when *name* is a structurally valid qualified action name.
-
-        Validates that the name:
-          - Contains the ``__`` separator.
-          - Has a non-empty category portion that matches one of the known
-            categories (= ``universal_catalog.CATEGORIES``).
-          - Has a non-empty entry-name portion.
-
-        This is a structural / parse-level check — it does not require the
-        referenced skill or agent to exist at call time. The check is
-        data-driven from the category registry (P7: no hardcoded ghost lists).
-
-        Names that fail here are stale artifacts: qualified-name corruption
-        (e.g. ``default_api.web__search``), unknown categories
-        (e.g. ``bogus__nonexistent``), or empty entry-names.
-        """
-        try:
-            from reyn.tools.universal_catalog import split_qualified_name
-            split_qualified_name(name)
-            return True
-        except (ValueError, ImportError):
-            return False
+    # ── Disk persistence ──────────────────────────────────────────────────
 
     def _load_from_disk(self) -> None:
-        """Load JSONL history into in-memory state.
+        """Load the compacted table from JSON.
 
-        Swallows all errors and falls back to empty state — persistence
-        failure is non-fatal; the tracker functions correctly in memory-only
-        mode after a failed load.
-
-        Ghost alias rejection (B37 F1): each loaded qualified_name is
-        validated via _is_valid_qualified_name. Names that fail structural
-        parse (= unknown category, missing separator, qualified-name
-        corruption) are silently skipped; a single warning per unique invalid
-        name is printed to stderr so operators can identify stale ledger
-        entries without crashing startup.
+        Swallows all errors and falls back to an empty table —
+        persistence failure is non-fatal; the tracker functions
+        correctly in memory-only mode after a failed load.
         """
         if self._persist_path is None or not self._persist_path.exists():
             return
-        _warned: set[str] = set()
         try:
-            with self._persist_path.open("r", encoding="utf-8") as fh:
-                for raw_line in fh:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-                    qn = entry.get("qualified_name")
-                    ts = entry.get("ts")
-                    if not isinstance(qn, str) or not qn:
-                        continue
-                    if not isinstance(ts, (int, float)):
-                        continue
-                    # Ghost alias rejection: skip names that don't parse as
-                    # valid qualified names (= renamed/deleted/corrupted).
-                    if not self._is_valid_qualified_name(qn):
-                        if qn not in _warned:
-                            print(
-                                f"[reyn] action_usage: skipping invalid alias "
-                                f"{qn!r} — not in current action registry",
-                                file=sys.stderr,
-                            )
-                            _warned.add(qn)
-                        continue
-                    self._freq[qn] = self._freq.get(qn, 0) + 1
-                    prev = self._last_ts.get(qn)
-                    if prev is None or ts > prev:
-                        self._last_ts[qn] = float(ts)
+            raw = self._persist_path.read_text(encoding="utf-8")
+            obj = json.loads(raw)
+            if not isinstance(obj, dict):
+                return
+            for qn, entry in obj.items():
+                if not isinstance(qn, str) or not isinstance(entry, dict):
+                    continue
+                count = entry.get("count")
+                last_ts = entry.get("last_ts")
+                if not isinstance(count, int) or count <= 0:
+                    continue
+                if not isinstance(last_ts, (int, float)):
+                    continue
+                if not _is_valid_qualified_name(qn):
+                    continue
+                self._compacted[qn] = {
+                    "count": int(count),
+                    "last_ts": float(last_ts),
+                }
         except Exception:
-            # Any I/O or decoding error → reset to empty state.
-            self._freq = {}
-            self._last_ts = {}
+            self._compacted = {}
 
-    def _append_to_disk(self, qualified_name: str, ts: float) -> None:
-        """Append a single event line to the JSONL file.
-
-        No-op when persist_path is None.  Swallows all errors.
-        """
+    def _persist_table(self) -> None:
+        """Atomically rewrite ``persist_path`` with the current table."""
         if self._persist_path is None:
             return
         try:
             self._persist_path.parent.mkdir(parents=True, exist_ok=True)
-            entry = json.dumps(
-                {"qualified_name": qualified_name, "ts": ts},
-                ensure_ascii=False,
+            tmp_path = self._persist_path.with_suffix(
+                self._persist_path.suffix + ".tmp"
             )
-            with self._persist_path.open("a", encoding="utf-8") as fh:
-                fh.write(entry + "\n")
+            tmp_path.write_text(
+                json.dumps(self._compacted, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            tmp_path.replace(self._persist_path)
         except Exception:
-            pass  # disk failure must not crash the caller
+            # Persistence failure is non-fatal; in-memory state is correct.
+            pass
 
-    # ── Public API ────────────────────────────────────────────────────────
+    # ── Public surface ────────────────────────────────────────────────────
 
-    def record(self, qualified_name: str) -> None:
-        """Record one usage event for *qualified_name*.
+    def merge_compacted(self, records: list[tuple[str, float]]) -> None:
+        """Merge a batch of ``(qualified_name, ts)`` records into the
+        compacted table.
 
-        Updates in-memory freq + recency, then appends to JSONL if
-        persist_path is configured.
+        Called by the chat-compactor sink with the tool-call records
+        extracted from the conversation turns being folded into a
+        summary. Invalid qualified names (= wrapper invocations, stale
+        rename artifacts) are silently dropped.
 
-        Issue #192: when ``on_ranking_changed`` is set and the new full
-        sorted ranking order differs from the cached prior order, the
-        callback is fired with the full ranking ``[{qualified_name,
-        freq, last_ts}, ...]``. Score-only changes (= same order) do
-        not fire — the UI only re-renders on visible reorderings.
-        Callback failures are swallowed; record() must never crash
-        because the observer raised.
+        Persists on every successful call; fires ``on_ranking_changed``
+        when the qualified-name order of the resulting ranking
+        differs from the previous one.
         """
-        ts = time.time()
-        self._freq[qualified_name] = self._freq.get(qualified_name, 0) + 1
-        prev = self._last_ts.get(qualified_name)
-        if prev is None or ts > prev:
-            self._last_ts[qualified_name] = ts
-        self._append_to_disk(qualified_name, ts)
+        if not records:
+            return
+        changed = False
+        for qn, ts in records:
+            if not isinstance(qn, str) or not qn:
+                continue
+            if not isinstance(ts, (int, float)):
+                continue
+            if not _is_valid_qualified_name(qn):
+                continue
+            entry = self._compacted.get(qn)
+            if entry is None:
+                self._compacted[qn] = {"count": 1, "last_ts": float(ts)}
+            else:
+                entry["count"] += 1
+                if ts > entry["last_ts"]:
+                    entry["last_ts"] = float(ts)
+            changed = True
+        if not changed:
+            return
+        self._persist_table()
         if self._on_ranking_changed is not None:
             ranking = self.full_ranking()
-            new_order = [r["qualified_name"] for r in ranking]
-            if new_order != self._prior_ranking_order:
-                self._prior_ranking_order = new_order
+            current_order = [r["qualified_name"] for r in ranking]
+            if current_order != self._prior_ranking_order:
+                self._prior_ranking_order = current_order
                 try:
                     self._on_ranking_changed(ranking)
                 except Exception:
-                    pass  # advisory only; never crash record()
+                    pass
 
-    def full_ranking(self) -> list[dict]:
-        """Return the full sorted ranking with freq + last_ts per entry.
+    def full_ranking(
+        self,
+        live_records: list[tuple[str, float]] | None = None,
+        now: float | None = None,
+    ) -> list[dict]:
+        """Return the full freq+recency-ranked list of
+        ``{qualified_name, freq, last_ts}`` entries.
 
-        Sorted by the same score formula ``get_top_n`` uses (= freq *
-        (1 + 1/(1+age_days))) descending, with qualified_name ascending
-        as the tie-breaker. Caller consumes this for full-ranking
-        rendering (= Memory tab augmentation per issue #192).
+        ``live_records`` is the optional list of ``(qualified_name, ts)``
+        tuples extracted from the current uncompacted history. They are
+        merged with the compacted table to produce the combined ranking.
         """
-        now = time.time()
+        combined: dict[str, dict] = {}
+        for qn, entry in self._compacted.items():
+            combined[qn] = {
+                "count": entry["count"],
+                "last_ts": entry["last_ts"],
+            }
+        if live_records:
+            for qn, ts in live_records:
+                if not isinstance(qn, str) or not qn:
+                    continue
+                if not isinstance(ts, (int, float)):
+                    continue
+                if not _is_valid_qualified_name(qn):
+                    continue
+                e = combined.get(qn)
+                if e is None:
+                    combined[qn] = {"count": 1, "last_ts": float(ts)}
+                else:
+                    e["count"] += 1
+                    if ts > e["last_ts"]:
+                        e["last_ts"] = float(ts)
+
+        ref = time.time() if now is None else now
         scored: list[tuple[float, str, int, float]] = []
-        for qn, freq in self._freq.items():
-            last = self._last_ts.get(qn, now)
-            age_days = max(0.0, (now - last) / _SECONDS_PER_DAY)
-            score = freq * (1.0 + 1.0 / (1.0 + age_days))
-            scored.append((score, qn, freq, last))
-        scored.sort(key=lambda pair: (-pair[0], pair[1]))
+        for qn, e in combined.items():
+            age_days = max(0.0, (ref - e["last_ts"]) / _SECONDS_PER_DAY)
+            score = e["count"] * (1.0 + 1.0 / (1.0 + age_days))
+            scored.append((score, qn, e["count"], e["last_ts"]))
+        # Sort by score desc; break ties by qualified_name asc for
+        # determinism.
+        scored.sort(key=lambda t: (-t[0], t[1]))
         return [
-            {"qualified_name": qn, "freq": freq, "last_ts": last_ts}
-            for _, qn, freq, last_ts in scored
+            {"qualified_name": qn, "freq": count, "last_ts": last_ts}
+            for _, qn, count, last_ts in scored
         ]
 
-    def get_top_n(self, n: int, seed: list[str]) -> list[str]:
-        """Return up to *n* qualified_names, freq+recency ranked, with seed fill.
-
-        Algorithm:
-          1. Score all recorded names: score = freq * (1 + 1/(1+age_days))
-          2. Sort descending by score (ties broken by name for determinism).
-          3. If result count < n, fill remaining slots from *seed* in order,
-             skipping names already included (dedup).
-
-        Returns at most *n* items.  When n <= 0, returns [].
+    def get_top_n(
+        self,
+        n: int,
+        seed: list[str],
+        live_records: list[tuple[str, float]] | None = None,
+    ) -> list[str]:
+        """Return up to *n* qualified names: freq-ranked first, then
+        seed items filling remaining slots (in seed order, deduped).
         """
         if n <= 0:
             return []
-
-        now = time.time()
-
-        scored: list[tuple[float, str]] = []
-        for qn, freq in self._freq.items():
-            last = self._last_ts.get(qn, now)
-            age_days = max(0.0, (now - last) / _SECONDS_PER_DAY)
-            score = freq * (1.0 + 1.0 / (1.0 + age_days))
-            scored.append((score, qn))
-
-        # Descending score, ascending name for tie-breaking determinism.
-        scored.sort(key=lambda pair: (-pair[0], pair[1]))
-
-        result: list[str] = [qn for _, qn in scored[:n]]
-        result_set: set[str] = set(result)
-
-        if len(result) < n:
-            for seed_name in seed:
-                if len(result) >= n:
-                    break
-                if seed_name not in result_set:
-                    result.append(seed_name)
-                    result_set.add(seed_name)
-
+        ranked = [
+            r["qualified_name"]
+            for r in self.full_ranking(live_records=live_records)
+        ]
+        result: list[str] = ranked[:n]
+        if len(result) >= n:
+            return result
+        existing = set(result)
+        for s in seed:
+            if len(result) >= n:
+                break
+            if s in existing:
+                continue
+            result.append(s)
+            existing.add(s)
         return result
 
 
 __all__ = [
-    "ActionUsageTracker",
     "DEFAULT_HOT_LIST_SEED",
+    "ActionUsageTracker",
+    "_is_valid_qualified_name",
 ]

@@ -667,6 +667,76 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _ts_iso_to_epoch(ts: str | None) -> float | None:
+    """Best-effort ISO-8601 → epoch-seconds conversion.
+
+    Returns None if *ts* is empty or unparseable. Used by the
+    action-usage extractor to source the recency timestamp from each
+    ChatMessage's stored ``ts`` field; failure yields a record skipped
+    rather than a crash.
+    """
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_tool_call_records(
+    messages: "list[ChatMessage]",
+) -> list[tuple[str, float]]:
+    """Extract ``(qualified_name, ts_epoch)`` tuples from a list of
+    ``ChatMessage`` instances.
+
+    Recognises two emission shapes (mirrors ``router_loop`` recording
+    semantics pre-refactor):
+
+      - ``invoke_action`` tool call → ``args["action_name"]`` is the
+        qualified name; the ``args`` payload may be a JSON string per
+        the OpenAI wire shape.
+      - Any other tool call → ``function.name`` itself (a hot-list
+        alias or a universal wrapper). Wrapper names like
+        ``list_actions`` are caught by the tracker's
+        ``_is_valid_qualified_name`` filter and dropped.
+
+    Returns an empty list when no candidate tool_calls are present.
+    """
+    out: list[tuple[str, float]] = []
+    for m in messages:
+        if getattr(m, "role", None) != "assistant":
+            continue
+        tcs = getattr(m, "tool_calls", None) or []
+        if not tcs:
+            continue
+        ts_epoch = _ts_iso_to_epoch(getattr(m, "ts", None))
+        if ts_epoch is None:
+            continue
+        for tc in tcs:
+            fn = (tc or {}).get("function") or {}
+            name = fn.get("name", "")
+            if not isinstance(name, str) or not name:
+                continue
+            if name == "invoke_action":
+                raw_args = fn.get("arguments")
+                if isinstance(raw_args, str):
+                    try:
+                        args = json.loads(raw_args)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                else:
+                    args = raw_args
+                target = (
+                    args.get("action_name")
+                    if isinstance(args, dict) else None
+                )
+                if isinstance(target, str) and target:
+                    out.append((target, ts_epoch))
+            else:
+                out.append((name, ts_epoch))
+    return out
+
+
 # FP-0041 (#489) PR-A: humanic dispatch attribution helper.
 #
 # Sender envelope strings follow ``<transport>:<id>[:<display>]``. This
@@ -1233,6 +1303,10 @@ class ChatSession:
                 self._embedding_model_class = None
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
         # Created when universal_wrappers_enabled=True and hot_list_n > 0.
+        # Per-agent compacted table at
+        # ``.reyn/agents/<agent_name>/action_usage.json``. The table is fed
+        # by the chat-compactor sink (see ``CompactionController`` wiring
+        # below); uncompacted turns are scanned at hot-list-build time.
         self._action_usage_tracker: Any = None
         if (
             self._action_retrieval.universal_wrappers_enabled
@@ -1241,10 +1315,9 @@ class ChatSession:
             try:
                 from reyn.tools.action_usage_tracker import ActionUsageTracker
                 # Issue #192: wire a callback that emits ``hot_list_updated``
-                # on every reorder of the ranking. Lambda defers
+                # on every reorder of the compacted ranking. Lambda defers
                 # ``self._chat_events`` resolution to call time (it's
-                # constructed below at the EventLog init); record() runs
-                # only during user turns, well after construction completes.
+                # constructed below at the EventLog init).
                 def _on_hot_list_changed(ranking: list[dict]) -> None:
                     try:
                         self._chat_events.emit(
@@ -1253,7 +1326,10 @@ class ChatSession:
                     except Exception:
                         pass
                 self._action_usage_tracker = ActionUsageTracker(
-                    persist_path=Path(".reyn") / "state" / "action_usage.jsonl",
+                    persist_path=(
+                        Path(".reyn") / "agents" / agent_name
+                        / "action_usage.json"
+                    ),
                     on_ranking_changed=_on_hot_list_changed,
                 )
             except Exception:
@@ -1551,6 +1627,9 @@ class ChatSession:
             embedding_model_class=self._embedding_model_class,
             # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list.
             action_usage_tracker=self._action_usage_tracker,
+            uncompacted_tool_call_records_fn=(
+                self._uncompacted_tool_call_records
+            ),
             action_retrieval_config=self._action_retrieval,
             # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
             # None when sandbox_config is None (= noop assumed).
@@ -1580,6 +1659,18 @@ class ChatSession:
         # FP-0019 Wave 1: background head/body/tail compaction service.
         # Owns the asyncio.Task lifecycle; session delegates via spawn_maybe()
         # and cancel().  All callbacks resolve against self at call time.
+        def _merge_action_usage_from_candidates(
+            candidates: "list[ChatMessage]",
+        ) -> None:
+            if self._action_usage_tracker is None:
+                return
+            try:
+                records = _extract_tool_call_records(candidates)
+                if records:
+                    self._action_usage_tracker.merge_compacted(records)
+            except Exception:
+                pass
+
         self._compaction_controller = CompactionController(
             event_log=self._chat_events,
             config=self._compaction,
@@ -1594,6 +1685,9 @@ class ChatSession:
                 meta={"structured": structured, "covers_through_seq": covers},
             ),
             render_summary=_render_summary_for_storage,
+            # Feed compacted candidates' tool calls into the per-agent
+            # action_usage table so the hot-list survives summarisation.
+            merge_action_usage=_merge_action_usage_from_candidates,
         )
 
         # FP-0019 Wave 3: crash recovery service.
@@ -2650,6 +2744,26 @@ class ChatSession:
             if m.role == "summary":
                 return m
         return None
+
+    def _uncompacted_tool_call_records(self) -> list[tuple[str, float]]:
+        """Return ``(qualified_name, ts_epoch)`` records from the
+        portion of history that has NOT yet been folded into a
+        compactor summary.
+
+        Used by RouterLoop to build the hot-list each turn without
+        relying on a parallel per-call write log; the compacted table
+        in :class:`~reyn.tools.action_usage_tracker.ActionUsageTracker`
+        already covers the older portion. The watermark is the latest
+        summary's ``covers_through_seq`` (= seqs at or below it are
+        considered compacted out).
+        """
+        latest = self._latest_summary()
+        watermark = (
+            int((latest.meta or {}).get("covers_through_seq", 0))
+            if latest is not None else 0
+        )
+        live = [m for m in self.history if m.seq > watermark]
+        return _extract_tool_call_records(live)
 
     # ── router ──────────────────────────────────────────────────────────────────
 

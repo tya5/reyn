@@ -1486,7 +1486,23 @@ class RouterLoop:
                     # qualified-name → metadata lookup; see
                     # _resource_alias_metadata's memory.entry branch.
                     _skill_meta_map.setdefault(_qn, _meta)
-                _top_names = _tracker.get_top_n(_n, _seed)
+                # FP-0034 refactor: live (= uncompacted) tool-call records
+                # are scanned on demand so the hot-list reflects in-session
+                # invocations without needing per-call disk writes. Hosts
+                # without the accessor (= older mocks, plan-mode sub-host)
+                # degrade to compacted-table-only ranking.
+                _live_records: list = []
+                _live_getter = getattr(
+                    host, "get_uncompacted_tool_call_records", None,
+                )
+                if _live_getter is not None:
+                    try:
+                        _live_records = list(_live_getter() or [])
+                    except Exception:
+                        _live_records = []
+                _top_names = _tracker.get_top_n(
+                    _n, _seed, live_records=_live_records,
+                )
                 # B38 W2: registry-existence check — filter names that pass
                 # structural validation but no longer resolve to a real action
                 # in the current session registry. Runs after get_top_n so
@@ -1868,33 +1884,6 @@ class RouterLoop:
                         )
                         return self._total_usage
 
-                # FP-0034 Phase 2 step 5: record tool calls for hot list freq+recency.
-                # Done before message accumulation so recording happens even on
-                # subsequent iterations. invoke_action calls record the target
-                # action_name; hot list alias calls record the alias name directly.
-                if _tracker is not None:
-                    for tc in tool_calls:
-                        _tc_name = tc.get("function", {}).get("name", "")
-                        if not _tc_name:
-                            continue
-                        if _tc_name == "invoke_action":
-                            _tc_args = tc.get("function", {}).get("arguments", {})
-                            if isinstance(_tc_args, str):
-                                try:
-                                    import json as _json_inner
-                                    _tc_args = _json_inner.loads(_tc_args)
-                                except Exception:
-                                    _tc_args = {}
-                            _target = (
-                                _tc_args.get("action_name", "")
-                                if isinstance(_tc_args, dict)
-                                else ""
-                            )
-                            if _target:
-                                _tracker.record(_target)
-                        else:
-                            # hot list direct alias or other tool
-                            _tracker.record(_tc_name)
                 # FP-0034 Phase 3: routing_decided P6 event for catalog dispatch audit.
                 # Emitted independently of tracker (tracker=None is valid when
                 # hot_list_n=0, but P6 audit must fire whenever catalog routing

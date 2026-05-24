@@ -165,6 +165,15 @@ class RouterHostAdapter:
         # ChatSession passes the session-scoped tracker; None when wrappers are
         # off or hot_list_n == 0.
         action_usage_tracker: Any = None,
+        # FP-0034 refactor: zero-arg callable returning the live (=
+        # uncompacted) tool-call ``(qualified_name, ts_epoch)`` records
+        # extracted from the current chat history. Combined with the
+        # tracker's compacted table to produce the hot-list ranking.
+        # None → router degrades to compacted-table-only ranking
+        # (= older test hosts / plan-mode sub-host).
+        uncompacted_tool_call_records_fn: (
+            Callable[[], list[tuple[str, float]]] | None
+        ) = None,
         # FP-0034 Phase 2 step 5: ActionRetrievalConfig for hot_list_n /
         # hot_list_seed.  ChatSession passes its config; None → default.
         action_retrieval_config: Any = None,
@@ -242,6 +251,7 @@ class RouterHostAdapter:
         self._sandbox_backend = sandbox_backend
         # FP-0034 Phase 2 step 5
         self._action_usage_tracker = action_usage_tracker
+        self._uncompacted_tool_call_records_fn = uncompacted_tool_call_records_fn
         self._action_retrieval_config = action_retrieval_config
         # FP-0022 fix (#53): intervention-bus factory used by
         # make_router_op_context to populate ``ctx.intervention_bus`` so
@@ -433,11 +443,28 @@ class RouterHostAdapter:
     def get_action_usage_tracker(self) -> Any:
         """Return the ActionUsageTracker for hot list freq+recency, or None.
 
-        FP-0034 Phase 2 step 5.  RouterLoop reads this to record successful
-        tool calls and to build hot_list_aliases for build_tools.  None when
-        universal wrappers are off or hot_list_n == 0.
+        FP-0034 Phase 2 step 5.  RouterLoop reads this to build
+        hot_list_aliases for build_tools.  None when universal wrappers
+        are off or hot_list_n == 0.
         """
         return self._action_usage_tracker
+
+    def get_uncompacted_tool_call_records(self) -> list[tuple[str, float]]:
+        """Return live ``(qualified_name, ts_epoch)`` records from the
+        current uncompacted chat history.
+
+        FP-0034 refactor companion to ``get_action_usage_tracker``.
+        RouterLoop combines these with the tracker's compacted table to
+        build the hot-list each turn. Empty list when no live records
+        are available (= host did not inject the accessor, or extractor
+        returned nothing).
+        """
+        if self._uncompacted_tool_call_records_fn is None:
+            return []
+        try:
+            return list(self._uncompacted_tool_call_records_fn() or [])
+        except Exception:
+            return []
 
     def get_action_retrieval_config(self) -> Any:
         """Return the ActionRetrievalConfig for hot_list_n / hot_list_seed.
