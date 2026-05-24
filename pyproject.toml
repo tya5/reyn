@@ -78,6 +78,9 @@ web = [
     "uvicorn[standard]>=0.27",
     "websockets>=12",
 ]
+# `reyn chainlit` PoC: Chainlit を別 surface として共存させる薄い CLI 起動口。
+# Web UI (= `reyn web` + openui) と TUI (= `reyn chat`) と並列に動かす。
+chainlit = ["chainlit>=2.0"]
 mcp = ["mcp>=1.0"]
 release = [
     "build>=1.0",
