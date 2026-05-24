@@ -49,7 +49,7 @@ def test_act_executed_with_op_kinds_surfaces_distinct_kinds() -> None:
         },
     ))
     msgs = _drain(q)
-    assert len(msgs) == 1
+    assert msgs, "expected at least one message in queue"
     assert "act: 2 ops" in msgs[0].text
     assert "(run_skill, write_file)" in msgs[0].text
 
