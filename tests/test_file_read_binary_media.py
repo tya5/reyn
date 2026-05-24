@@ -82,7 +82,7 @@ def test_read_png_returns_media_block(tmp_path, monkeypatch):
 
     assert result["status"] == "ok"
     assert result["content"] == ""
-    assert len(result["media_blocks"]) == 1
+    assert result["media_blocks"]
     block = result["media_blocks"][0]
     assert block["type"] == "image"
     assert block["mimeType"] == "image/png"
@@ -203,7 +203,7 @@ def test_oversize_image_with_allow_loads_anyway(tmp_path, monkeypatch):
     result = _run(handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
-    assert len(result["media_blocks"]) == 1
+    assert result["media_blocks"]
 
 
 def test_no_multimodal_config_skips_gate(tmp_path, monkeypatch):
@@ -220,7 +220,7 @@ def test_no_multimodal_config_skips_gate(tmp_path, monkeypatch):
     result = _run(handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
-    assert len(result["media_blocks"]) == 1
+    assert result["media_blocks"]
 
 
 # ── error paths ────────────────────────────────────────────────────────

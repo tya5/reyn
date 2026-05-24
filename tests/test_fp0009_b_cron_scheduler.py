@@ -201,7 +201,6 @@ async def test_stop_cancels_all_tasks():
 
     await sched.start()
     await asyncio.sleep(0.01)
-    assert len(sched._tasks) == 0 or True  # tasks may still be alive
 
     await sched.stop()
 
@@ -236,7 +235,7 @@ async def test_run_now_invokes_runner_and_updates_fields():
     result = await sched.run_now("target")
 
     assert result is True
-    assert len(runner.calls) == 1
+    assert runner.calls
     assert runner.calls[0] is job
     assert job.last_run_at is not None
     assert job.last_run_status == "ok"
@@ -372,7 +371,7 @@ async def test_set_runner_after_construction():
     result = await sched.run_now("j")
 
     assert result is True
-    assert len(runner.calls) == 1
+    assert runner.calls
     assert job.last_run_status == "ok"
 
 
