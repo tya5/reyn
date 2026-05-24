@@ -52,7 +52,7 @@ async def _sticky(pilot):
 
 @pytest.mark.asyncio
 async def test_general_show_suppressed_when_error_active() -> None:
-    """Tier 2 (I-F8): a general flash cannot overwrite an active error."""
+    """Tier 2b: a general flash cannot overwrite an active error (I-F8)."""
     from reyn.chat.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
@@ -128,7 +128,7 @@ async def test_general_overwrites_general() -> None:
 
 @pytest.mark.asyncio
 async def test_trim_warning_writes_permanent_log_line() -> None:
-    """Tier 2 (G-F8): trim warning survives subsequent sticky overwrite.
+    """Tier 2b: trim warning survives subsequent sticky overwrite (G-F8).
 
     Pre-fix the warning was sticky-only and ``_flash_turn_position`` in
     the same call frame replaced it. Post-fix the warning is also

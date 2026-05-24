@@ -41,7 +41,7 @@ def _make_app() -> ReynTUIApp:
 
 @pytest.mark.asyncio
 async def test_empty_hint_names_side_panel_and_tabs() -> None:
-    """Empty-state hint enumerates the panel tabs by name."""
+    """Tier 2b: empty-state hint enumerates the panel tabs by name."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -64,7 +64,7 @@ async def test_empty_hint_names_side_panel_and_tabs() -> None:
 
 @pytest.mark.asyncio
 async def test_empty_hint_hides_after_first_message() -> None:
-    """Existing contract: hint hides after first message (not a regression)."""
+    """Tier 2b: hint hides after first message — empty-conv-pane subsystem contract."""
     from reyn.chat.outbox import OutboxMessage
     from reyn.chat.tui.widgets import ConversationView
 

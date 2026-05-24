@@ -104,13 +104,13 @@ def test_plan_badge_renders_when_done_is_zero() -> None:
 
 
 def test_plan_badge_renders_normally_for_in_flight_step() -> None:
-    """Tier 2 (regression): mid-plan badge still renders (= original case)."""
+    """Tier 2b: mid-plan badge still renders (= original case)."""
     out = _render_for_skill(plan_n_done=2, plan_n_total=5)
     assert "[plan 2/5]" in out
 
 
 def test_no_badge_when_plan_n_done_is_none() -> None:
-    """Tier 2 (regression): no plan attached → no badge.
+    """Tier 2b: no plan attached → no badge.
 
     ``None`` means the skill isn't part of a plan at all. The fix
     swap from ``and`` to ``is not None`` must still suppress the
@@ -123,7 +123,7 @@ def test_no_badge_when_plan_n_done_is_none() -> None:
 
 
 def test_no_badge_when_plan_n_total_is_zero() -> None:
-    """Tier 2 (regression): degenerate zero-total plan → no badge.
+    """Tier 2b: degenerate zero-total plan → no badge.
 
     A plan with 0 total steps is producer-side noise; the badge
     would read ``[plan 0/0]`` which conveys nothing.
