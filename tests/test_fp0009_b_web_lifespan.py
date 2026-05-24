@@ -166,10 +166,10 @@ async def test_enabled_job_scheduler_is_cron_scheduler_instance(tmp_path, monkey
 
         # Verify the job is registered
         jobs = app.state.cron_scheduler.jobs()
-        assert len(jobs) == 1
-        assert jobs[0].name == "far_future_job"
-        assert jobs[0].skill == "some_skill"
-        assert jobs[0].enabled is True
+        (job,) = jobs  # exactly one job was configured
+        assert job.name == "far_future_job"
+        assert job.skill == "some_skill"
+        assert job.enabled is True
 
     # After the context exits, stop() has been called
     assert app.state.cron_scheduler is not None  # reference persists on state
