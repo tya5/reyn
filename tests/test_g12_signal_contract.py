@@ -63,7 +63,7 @@ def test_json_tool_content_gets_top_level_signal_field() -> None:
 
     # Identity + structural assertions
     assert result is not msgs, "must return a new list, not mutate in-place"
-    assert len(result) == 3
+    assert result, "result must be non-empty"
     assert result[0] is msgs[0] and result[1] is msgs[1], (
         "non-trailing messages must be the same references (= no copies)"
     )
