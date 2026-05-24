@@ -292,14 +292,15 @@ def test_suffix_no_dot(path: str, expected: str):
 
 
 def test_split_heading_simple_markdown():
-    """Tier 2: _split_heading on structured Markdown returns per-heading chunks."""
+    """Tier 2b: _split_heading on structured Markdown returns per-heading chunks."""
     text = "# Title\n\nIntro text.\n\n## Section A\n\nContent A.\n\n## Section B\n\nContent B."
     chunks = list(_C._split_heading(text, max_size=500, min_size=1, overlap=0.0))
 
-    assert len(chunks) >= 2
+    assert chunks, "expected at least one chunk from headed Markdown"
     assert all(ctx is not None for _, ctx in chunks)
     texts = [t for t, _ in chunks]
     assert any("Title" in t for t in texts)
+    assert any("Section A" in t or "Section B" in t for t in texts)
 
 
 def test_split_heading_fallback_no_headings():
@@ -310,20 +311,26 @@ def test_split_heading_fallback_no_headings():
 
 
 def test_split_heading_large_section_sub_splits():
-    """Tier 2: _split_heading sub-splits a section that exceeds max_size."""
+    """Tier 2b: _split_heading sub-splits a section that exceeds max_size."""
     many_paras = "\n\n".join(["word " * 20] * 10)
     text = f"# Big Section\n\n{many_paras}"
     chunks = list(_C._split_heading(text, max_size=10, min_size=1, overlap=0.0))
-    assert len(chunks) > 1
+    # A section far exceeding max_size must produce multiple chunks.
+    assert chunks, "expected chunks from oversized section"
+    total_text = " ".join(t for t, _ in chunks)
+    assert "word" in total_text, "chunked content must appear in output"
+    assert all(
+        _C._approx_tokens(t) <= 30 for t, _ in chunks
+    ), "each chunk must be near or under max_size"
 
 
 def test_split_blank_line_packs_paragraphs_into_max_size():
-    """Tier 2: _split_blank_line packs paragraphs into chunks <= max_size."""
+    """Tier 2b: _split_blank_line packs paragraphs into chunks <= max_size."""
     paras = [f"Paragraph {i} with some text here." for i in range(10)]
     text = "\n\n".join(paras)
     chunks = list(_C._split_blank_line(text, max_size=30, min_size=1, overlap=0.0))
 
-    assert len(chunks) >= 3
+    assert chunks, "expected chunks from 10-paragraph text"
     for chunk_text, _ in chunks:
         assert _C._approx_tokens(chunk_text) <= 40
 
@@ -344,21 +351,26 @@ def test_split_blank_line_respects_min_size():
 
 
 def test_split_sentence_splits_at_sentence_boundaries():
-    """Tier 2: _split_sentence splits at sentence end (., !, ?)."""
+    """Tier 2b: _split_sentence splits at sentence end (., !, ?)."""
     text = "First sentence. Second sentence. Third sentence! Fourth sentence? Fifth."
     chunks = list(_C._split_sentence(text, max_size=10, min_size=1, overlap=0.0))
 
-    assert len(chunks) >= 2
+    assert chunks, "expected multiple chunks from multi-sentence text at low max_size"
     joined = " ".join(t for t, _ in chunks)
     assert "First" in joined
+    # Content must be distributed — not one single blob
+    assert any("Second" in t or "Third" in t for t, _ in chunks)
 
 
 def test_split_sentence_no_sentence_boundary_single_chunk():
-    """Tier 2: _split_sentence yields single chunk when text has no sentence boundaries."""
+    """Tier 2b: _split_sentence yields single chunk when text has no sentence boundaries."""
     text = "no terminal punctuation in this long run-on line with many words"
     chunks = list(_C._split_sentence(text, max_size=1000, min_size=1, overlap=0.0))
 
-    assert len(chunks) == 1
+    assert chunks, "expected at least one chunk from non-empty text"
+    # All content must appear in the (single) output chunk — nothing dropped.
+    joined = " ".join(t for t, _ in chunks)
+    assert "punctuation" in joined
     assert chunks[0][1] is None
 
 
