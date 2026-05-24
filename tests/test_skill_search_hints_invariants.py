@@ -160,8 +160,8 @@ def test_search_hints_retained_in_skill_registry() -> None:
     step silently drops search_hints, this test catches it.
     """
     skill = load_dsl_skill(_FIXTURE_SKILL_WITH_HINTS)
-    assert skill.search_hints is not None
-    assert len(skill.search_hints) == 3
-    assert "review this code and suggest improvements" in skill.search_hints
-    assert "check my pull request for issues" in skill.search_hints
-    assert "audit the security of this file" in skill.search_hints
+    assert skill.search_hints == [
+        "review this code and suggest improvements",
+        "check my pull request for issues",
+        "audit the security of this file",
+    ]

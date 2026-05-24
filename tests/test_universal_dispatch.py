@@ -301,7 +301,7 @@ def test_suggest_similar_names_returns_empty_when_no_match() -> None:
 def test_suggest_similar_names_respects_top_k() -> None:
     """Tier 2: top_k caps the suggestion count."""
     suggestions = suggest_similar_names("file__read", top_k=1)
-    assert len(suggestions) <= 1
+    assert suggestions == ["file__read"]
 
 
 def test_suggest_similar_names_custom_candidates() -> None:
