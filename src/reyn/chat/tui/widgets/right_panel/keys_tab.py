@@ -123,7 +123,9 @@ _KEY_PRETTY: dict[str, str] = {
     "ctrl+shift+g": "⌃⇧G",
     "enter": "Enter", "tab": "Tab", "escape": "Esc", "space": "Space",
     "up": "↑", "down": "↓", "left": "←", "right": "→",
-    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4", "f7": "F7", "f8": "F8", "f9": "F9",
+    "f1": "F1", "f2": "F2", "f3": "F3", "f4": "F4",
+    "f5": "F5", "f6": "F6", "f7": "F7", "f8": "F8",
+    "f9": "F9", "f10": "F10", "f11": "F11", "f12": "F12",
     # Quick-jump number keys for the right-panel tabs (Ctrl+1 .. Ctrl+7).
     "ctrl+1": "⌃1", "ctrl+2": "⌃2", "ctrl+3": "⌃3", "ctrl+4": "⌃4",
     "ctrl+5": "⌃5", "ctrl+6": "⌃6", "ctrl+7": "⌃7", "ctrl+8": "⌃8",
@@ -148,6 +150,9 @@ _CONVERSATION_KEYS = {
     # tasks), so CONVERSATION is the right home for discovery
     # alongside Ctrl+P / Ctrl+N turn jump.
     "f4",
+    # F5 / F6 — error block jump (= prev / next mounted ErrorBox).
+    # Conv-pane scoped: targets widgets inside the conv pane.
+    "f5", "f6",
     # W13 T2-1: ToolCallRow failure drill-down. Same rationale as F3 --
     # toggles inline expand on a widget that lives in the conv pane.
     "f7",

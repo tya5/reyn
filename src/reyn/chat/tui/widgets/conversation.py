@@ -362,6 +362,12 @@ class ConversationView(Widget):
         self._user_scrolled = False
         # Issue 5 — track mounted ErrorBoxes for Escape-to-dismiss
         self._error_boxes: list[ErrorBox] = []
+        # Cursor into ``_error_boxes`` for the F5 / F6 jump-to-error
+        # navigation. ``-1`` means "no cursor yet" (= first jump
+        # targets the newest error). Invalidated whenever a dismiss
+        # or auto-eviction mutates ``_error_boxes`` so the next jump
+        # re-seeds from the (now-different) newest error.
+        self._error_jump_cursor: int = -1
         # F9 timestamp toggle — default on. Loaded from tui_prefs.json in
         # on_mount; callers use toggle_timestamps() / show_timestamps property.
         # New messages rendered after a toggle use the new indent; past
@@ -1501,6 +1507,11 @@ class ConversationView(Widget):
         # auto-evicted by stack pressure.
         from rich.text import Text as _RichText
         while len(self._error_boxes) >= _MAX_VISIBLE_ERROR_BOXES:
+            # Auto-eviction shifts every remaining error's index down
+            # by 1; the jump cursor would silently point at the wrong
+            # box. Reset to -1 so the next F5 / F6 re-seeds from the
+            # post-eviction newest error.
+            self._error_jump_cursor = -1
             oldest = self._error_boxes.pop(0)
             old_first, _sep, _rest = (
                 getattr(oldest, "_message", "") or ""
@@ -1588,6 +1599,50 @@ class ConversationView(Widget):
         """Return True if any undismissed ErrorBox remains."""
         return bool(self._error_boxes)
 
+    def jump_to_error(self, direction: int) -> bool:
+        """Scroll the conv pane to the next / previous mounted ErrorBox.
+
+        ``direction``: ``+1`` for newer (forward through the list),
+        ``-1`` for older (backward). The list ordering is chronological
+        (= newest at end), so "forward" walks toward the most recent
+        error.
+
+        First call (= cursor unset) targets the NEWEST error (=
+        ``_error_boxes[-1]``) regardless of direction — that's almost
+        always the one the user wants to investigate first. Subsequent
+        calls cycle with wrap.
+
+        Returns True when a jump happened, False when no errors are
+        mounted. The caller surfaces a status hint in the False case;
+        the cursor advance + scroll happen inside this method.
+        """
+        if not self._error_boxes:
+            return False
+        if self._error_jump_cursor < 0 or self._error_jump_cursor >= len(self._error_boxes):
+            self._error_jump_cursor = len(self._error_boxes) - 1
+        else:
+            self._error_jump_cursor = (
+                self._error_jump_cursor + direction
+            ) % len(self._error_boxes)
+        target = self._error_boxes[self._error_jump_cursor]
+        try:
+            target.scroll_visible()
+        except Exception:
+            pass
+        # Suppress auto-scroll so the next outbox tick doesn't yank
+        # the view back to the tail.
+        self._user_scrolled = True
+        return True
+
+    def error_jump_cursor(self) -> int:
+        """Public read of the current error-jump cursor index (= test hook).
+
+        Returns -1 when the cursor is unset (= no jump fired yet) or
+        when the last dismissal invalidated it. Otherwise the
+        0-based index into ``_error_boxes`` of the last jump target.
+        """
+        return self._error_jump_cursor
+
     def dismiss_last_error(self) -> None:
         """Remove the most recently mounted ErrorBox + leave a breadcrumb.
 
@@ -1616,6 +1671,10 @@ class ConversationView(Widget):
         """
         if not self._error_boxes:
             return
+        # Reset the jump cursor — the list just changed shape; the next
+        # F5 / F6 should re-seed from the (now newest-remaining) error
+        # rather than land on a stale index.
+        self._error_jump_cursor = -1
         box = self._error_boxes.pop()
         first_line, _sep, _rest = (getattr(box, "_message", "") or "").partition("\n")
         if len(first_line) > 72:
