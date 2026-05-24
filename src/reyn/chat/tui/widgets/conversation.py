@@ -474,7 +474,7 @@ class ConversationView(Widget):
             # clean lines per stanza on any terminal we expect.
             "  Type [bold]/[/] for commands  ·  [bold]/help[/] for a guide\n"
             "  [bold]Ctrl+B[/] side panel ·  [bold]Ctrl+L[/] clear  ·  [bold]Ctrl+P/N[/] turn\n"
-            "  [dim]panel tabs: keys · events · agents · memory · cost · docs[/]",
+            "  [dim]panel tabs: keys · events · agents · memory · cost · docs · pending[/]",
             id="empty-hint",
             markup=True,
         )
