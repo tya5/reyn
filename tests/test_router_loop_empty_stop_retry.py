@@ -84,7 +84,7 @@ def _make_loop(
 
 @pytest.mark.asyncio
 async def test_retry_path_injects_user_msg_when_env_var_set(monkeypatch):
-    """Tier 2 (B42-NF-W6-1): when env var set AND directive set AND empty
+    """Tier 2: B42-NF-W6-1 — when env var set AND directive set AND empty
     stop occurs, the loop appends a synthetic user message and retries.
     """
     monkeypatch.setenv("REYN_EMPTY_STOP_RETRY", "1")
@@ -97,8 +97,8 @@ async def test_retry_path_injects_user_msg_when_env_var_set(monkeypatch):
     # Two LLM calls (= 1 initial + 1 retry)
     assert scripted.call_count == 2
     # Outbox carries the recovered text — NOT the empty-response fallback.
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["text"] == "recovered"
+    (only,) = host.outbox
+    assert only["text"] == "recovered"
     # Audit event was emitted for the retry.
     emitted = [e["type"] for e in host._events.emitted]
     assert "router_empty_response_detected" in emitted
@@ -112,7 +112,7 @@ async def test_retry_path_injects_user_msg_when_env_var_set(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_retry_when_env_var_unset(monkeypatch):
-    """Tier 2 (regression guard): without ``REYN_EMPTY_STOP_RETRY=1``, the
+    """Tier 2: regression guard — without ``REYN_EMPTY_STOP_RETRY=1``, the
     directive is ignored and the loop falls through to the existing
     "observe + surface" path (= empty-response fallback message in
     outbox, no second LLM call).
@@ -127,8 +127,8 @@ async def test_no_retry_when_env_var_unset(monkeypatch):
     # Only 1 LLM call (= no retry).
     assert scripted.call_count == 1
     # Outbox has the empty-response fallback message.
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["meta"]["source"] == "router_empty_response"
+    (only,) = host.outbox
+    assert only["meta"]["source"] == "router_empty_response"
     # No retry injection event.
     emitted = [e["type"] for e in host._events.emitted]
     assert "router_empty_response_retry_injected" not in emitted
@@ -177,8 +177,8 @@ async def test_retry_bounded_to_one_per_turn(monkeypatch):
     # Exactly 2 LLM calls (= 1 initial + 1 retry, then surface).
     assert scripted.call_count == 2
     # Outbox has the empty-response fallback (= surfaced after retry failed).
-    assert len(host.outbox) == 1
-    assert host.outbox[0]["meta"]["source"] == "router_empty_response"
+    (only,) = host.outbox
+    assert only["meta"]["source"] == "router_empty_response"
     # Exactly ONE retry injection event recorded (= bound enforced).
     emitted = [e["type"] for e in host._events.emitted]
     retry_count = emitted.count("router_empty_response_retry_injected")
@@ -231,10 +231,11 @@ async def test_retry_injects_directive_verbatim(monkeypatch):
         m for m in retry_msgs
         if m.get("role") == "user" and m.get("content") == _DIRECTIVE
     ]
-    assert len(directive_msgs) == 1, (
-        f"expected 1 directive user msg in retry, got {len(directive_msgs)}; "
+    assert directive_msgs, (
+        f"expected directive user msg in retry, got none; "
         f"roles in retry: {[m.get('role') for m in retry_msgs]}"
     )
+    (only_directive,) = directive_msgs
 
 
 # ---------------------------------------------------------------------------
