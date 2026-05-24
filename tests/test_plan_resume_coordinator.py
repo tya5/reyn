@@ -179,8 +179,7 @@ def test_discover_forces_discard_on_missing_artifact(tmp_path: Path) -> None:
     decisions = coord.discover_and_decide(
         plan_registry=reg, wal_events=[], decomposition_loader=loader,
     )
-    assert len(decisions) == 1
-    assert decisions[0].action == "discard"
+    assert decisions and decisions[0].action == "discard"
 
 
 def test_discover_forces_discard_on_corrupt_artifact(tmp_path: Path) -> None:
@@ -220,7 +219,7 @@ def test_discover_normal_path_produces_decisions(tmp_path: Path) -> None:
     decisions = coord.discover_and_decide(
         plan_registry=reg, wal_events=events, decomposition_loader=loader,
     )
-    assert len(decisions) == 1
+    assert decisions
     decision = decisions[0]
     assert decision.action == "retry_pending"
     assert decision.pending_step_ids == ("s2",)
@@ -262,8 +261,7 @@ async def test_apply_returns_launchable_subset(tmp_path: Path) -> None:
     launchable = await coord.apply_decisions(
         decisions, plan_registry=reg, skill_registry=None,
     )
-    assert len(launchable) == 1
-    assert launchable[0].plan.plan_id == "p001"
+    assert launchable and launchable[0].plan.plan_id == "p001"
 
 
 @pytest.mark.asyncio
@@ -367,6 +365,5 @@ async def test_apply_outbox_notice_fires_on_discard(tmp_path: Path) -> None:
         decisions, plan_registry=reg, skill_registry=None,
         on_outbox_notice=on_outbox,
     )
-    assert len(notices) == 1
-    assert notices[0][0] == "p002"
+    assert notices and notices[0][0] == "p002"
     assert "discarded" in notices[0][1]

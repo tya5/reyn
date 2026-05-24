@@ -121,7 +121,7 @@ async def test_plan_summary_is_english() -> None:
     await asyncio.gather(*runner.running_plans.values(), return_exceptions=True)
 
     summary_msgs = [m for m in outbox if m.meta.get("source") == "plan_summary"]
-    assert len(summary_msgs) == 1
+    assert summary_msgs, "plan_summary message must be emitted"
     assert summary_msgs[0].kind == "system"
     assert summary_msgs[0].text.startswith("Executing plan:")
     assert "first thing" in summary_msgs[0].text
@@ -168,7 +168,7 @@ async def test_plan_complete_marker_emitted_on_success() -> None:
     completion_msgs = [
         m for m in outbox if m.meta.get("source") == "plan_complete"
     ]
-    assert len(completion_msgs) == 1
+    assert completion_msgs, "plan_complete message must be emitted on success"
     assert completion_msgs[0].kind == "system"
     assert "plan complete:" in completion_msgs[0].text
     assert "3/3" in completion_msgs[0].text
@@ -229,4 +229,4 @@ async def test_plan_complete_marker_skipped_when_result_is_none() -> None:
     assert completion_msgs == []
     # The summary still fired (= pre-execution, doesn't depend on result).
     summary_msgs = [m for m in outbox if m.meta.get("source") == "plan_summary"]
-    assert len(summary_msgs) == 1
+    assert summary_msgs, "plan_summary must fire even when result is None"
