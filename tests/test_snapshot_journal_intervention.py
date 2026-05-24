@@ -68,8 +68,7 @@ def test_record_intervention_dispatched_appends_wal_and_snapshot(tmp_path):
 
     # WAL has the event
     events = [e for e in sl.iter_from(0) if e["kind"] == "intervention_dispatched"]
-    assert len(events) == 1
-    ev = events[0]
+    (ev,) = events
     assert ev["target"] == "alpha"
     assert ev["intervention_id"] == iid
     assert ev["iv_dict"] == iv
@@ -92,9 +91,9 @@ def test_record_intervention_resolved_removes_from_snapshot(tmp_path):
 
     # WAL has the resolve event
     events = [e for e in sl.iter_from(0) if e["kind"] == "intervention_resolved"]
-    assert len(events) == 1
-    assert events[0]["intervention_id"] == iid
-    assert events[0]["target"] == "alpha"
+    (ev_resolved,) = events
+    assert ev_resolved["intervention_id"] == iid
+    assert ev_resolved["target"] == "alpha"
 
     # Entry gone from snapshot
     assert iid not in j.snapshot.outstanding_interventions

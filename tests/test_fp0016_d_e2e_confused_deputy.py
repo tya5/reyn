@@ -301,8 +301,7 @@ def test_sub_skill_credential_scope_event_emitted(tmp_path: Path) -> None:
         e for e in events.all()
         if e.type == "sub_skill_credential_scope"
     ]
-    assert len(found) == 1, f"Expected 1 sub_skill_credential_scope event, got {len(found)}"
-    evt = found[0]
+    (evt,) = found
     assert evt.data["skill"] == "github_pr_reviewer"
     assert evt.data["allowed_keys"] == ["github_token"]
 
@@ -324,5 +323,5 @@ def test_sub_skill_credential_scope_event_wildcard(tmp_path: Path) -> None:
         e for e in events.all()
         if e.type == "sub_skill_credential_scope"
     ]
-    assert len(found) == 1
-    assert found[0].data["allowed_keys"] == ["*"]
+    (evt_wildcard,) = found
+    assert evt_wildcard.data["allowed_keys"] == ["*"]
