@@ -1,11 +1,19 @@
 """InterventionRegistry — owns active-intervention queue (extracted from ChatSession wave 1C).
 
-Not WAL-persisted: active interventions are volatile. PR21 crash-recovery for
-in-flight interventions is tracked in residuals as future work.
+Crash-recovery persistence (PR-intervention-link L2/L5/L6 + R-D12):
+in-flight interventions ARE durably tracked. ``SnapshotJournal`` records
+``intervention_dispatched`` / ``intervention_resolved`` /
+``intervention_answer_buffered`` / ``intervention_answer_consumed`` events
+to the WAL and maintains ``outstanding_interventions`` +
+``buffered_intervention_answers`` in the per-agent snapshot. After a
+restart, ``ChatSession.restore_state`` calls :meth:`restore` to re-enqueue
+the saved interventions with a watcher coroutine that fires
+``intervention_resolved`` once the user answers — see
+``test_intervention_restore`` + ``test_session_intervention_persistence``
+for the e2e pins.
 
 Announce callback is injected at construction so the registry has no direct
-dependency on ChatSession. Wave 2 will wire:
-    registry = InterventionRegistry(on_announce=self._announce_intervention)
+dependency on ChatSession.
 """
 from __future__ import annotations
 
@@ -23,7 +31,11 @@ from reyn.user_intervention import (
 class InterventionRegistry:
     """Owns active_interventions dict + announce/deliver/dispatch flows.
 
-    Not WAL-persisted (PR21 out of scope; future work in residuals).
+    Crash-recovery persistence is handled outside this class — the
+    ``SnapshotJournal`` records dispatch/resolve/buffer events to the WAL
+    and ``ChatSession.restore_state`` calls :meth:`restore` to re-enqueue
+    saved interventions after a restart. See module docstring for the full
+    flow.
 
     Parameters
     ----------
