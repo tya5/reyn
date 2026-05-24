@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -237,24 +236,24 @@ def test_message_send_returns_a2a_message(tmp_path, monkeypatch):
     async def fake_llm_tools(**kw):
         return _text_result("Hi from Reyn via A2A!")
 
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm_tools)
     client, _ = _client_with_registry(tmp_path, [("default", "")])
     try:
-        with patch("reyn.chat.router_loop.call_llm_tools", side_effect=fake_llm_tools):
-            r = client.post(
-                "/a2a/agents/default",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": "req-1",
-                    "method": "message/send",
-                    "params": {
-                        "message": {
-                            "role": "user",
-                            "parts": [{"kind": "text", "text": "Hello"}],
-                            "messageId": "msg-1",
-                        },
+        r = client.post(
+            "/a2a/agents/default",
+            json={
+                "jsonrpc": "2.0",
+                "id": "req-1",
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "parts": [{"kind": "text", "text": "Hello"}],
+                        "messageId": "msg-1",
                     },
                 },
-            )
+            },
+        )
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["jsonrpc"] == "2.0"
