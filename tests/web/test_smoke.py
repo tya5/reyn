@@ -36,14 +36,14 @@ httpx = pytest.importorskip("httpx", reason="httpx not installed (needed by Test
 # ---------------------------------------------------------------------------
 
 def test_app_import() -> None:
-    """The FastAPI app can be imported from reyn.web.server."""
+    """Tier 2b: the FastAPI app can be imported from reyn.web.server."""
     from reyn.web.server import app
     assert app is not None
     assert app.title == "Reyn Web Gateway"
 
 
 def test_routers_mounted() -> None:
-    """All expected routers are included in the app."""
+    """Tier 2b: all expected routers are included in the app."""
     from reyn.web.server import app
     routes = {r.path for r in app.routes}
     # Basic sanity: key prefixes exist
@@ -59,7 +59,7 @@ def test_routers_mounted() -> None:
 # ---------------------------------------------------------------------------
 
 def test_reyn_web_help() -> None:
-    """`reyn web --help` exits cleanly (exit code 0, stdout contains usage).
+    """Tier 2b: `reyn web --help` exits cleanly (exit code 0, stdout contains usage).
 
     Uses the reyn._cli:main entry point directly so we don't depend on the
     installed `reyn` shim, which may point to the wrong editable install.
@@ -108,7 +108,7 @@ def tmp_project(tmp_path: Path) -> Path:
 
 
 def test_get_agents_200(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """GET /api/agents returns 200 and a list containing 'default'."""
+    """Tier 2c: GET /api/agents returns 200 and a list containing 'default'."""
     from fastapi.testclient import TestClient
 
     # Patch _find_project_root and the lru_cache-based singletons so the test
@@ -150,7 +150,7 @@ def test_get_agents_200(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_health_endpoint() -> None:
-    """GET /health returns {status: ok}."""
+    """Tier 2c: GET /health returns {status: ok}."""
     from fastapi.testclient import TestClient
 
     from reyn.web.server import app

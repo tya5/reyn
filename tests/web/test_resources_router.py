@@ -207,10 +207,10 @@ def test_resources_route_is_mounted_on_app():
 
 
 def test_cors_allow_origin_header_present_on_get(tmp_project: Path):
-    """Tier 2 (#442): a successful GET carries
-    ``Access-Control-Allow-Origin: *`` so cross-origin Browser
-    frontends can ``fetch(url)`` without preflight failure. This is
-    the core fix for the "implicit close was premature" retraction.
+    """Tier 2c: a successful GET carries ``Access-Control-Allow-Origin: *``
+    so cross-origin Browser frontends can ``fetch(url)`` without preflight
+    failure (#442 — the core fix for the "implicit close was premature"
+    retraction).
     """
     block = _mint_path_ref(tmp_project, content="x\n")
     artifact = Path(block["path"]).name
@@ -222,8 +222,8 @@ def test_cors_allow_origin_header_present_on_get(tmp_project: Path):
 
 
 def test_content_disposition_inline_by_default(tmp_project: Path):
-    """Tier 2 (#442): default Content-Disposition is ``inline; filename="..."``
-    so Browsers render the body in-tab rather than triggering download.
+    """Tier 2c: default Content-Disposition is ``inline; filename="..."``
+    so Browsers render the body in-tab rather than triggering download (#442).
     Matches the "preview / read" UX path that the LLM-side dispatcher
     uses too — opening the URL just shows the content.
     """
@@ -238,10 +238,9 @@ def test_content_disposition_inline_by_default(tmp_project: Path):
 
 
 def test_content_disposition_attachment_when_download_query(tmp_project: Path):
-    """Tier 2 (#442): ``?download=1`` switches Content-Disposition to
-    ``attachment`` so Browsers trigger the download dialog. The
-    filename remains the artifact name (= mirrors the same-host fs
-    convention).
+    """Tier 2c: ``?download=1`` switches Content-Disposition to ``attachment``
+    so Browsers trigger the download dialog (#442). The filename remains the
+    artifact name (= mirrors the same-host fs convention).
     """
     block = _mint_path_ref(tmp_project, content="save me\n")
     artifact = Path(block["path"]).name
@@ -256,11 +255,11 @@ def test_content_disposition_attachment_when_download_query(tmp_project: Path):
 
 
 def test_options_preflight_returns_cors_headers(tmp_project: Path):
-    """Tier 2 (#442): OPTIONS preflight returns 204 + the CORS headers
-    a Browser needs to permit a subsequent cross-origin GET. Future-
-    proofing: most simple GETs don't need preflight today, but HTTP
-    libraries vary on when they send it, and a missing preflight
-    handler silently 405s on those clients.
+    """Tier 2c: OPTIONS preflight returns 204 + the CORS headers a Browser
+    needs to permit a subsequent cross-origin GET (#442). Future-proofing:
+    most simple GETs don't need preflight today, but HTTP libraries vary on
+    when they send it, and a missing preflight handler silently 405s on those
+    clients.
     """
     response = _client().options(
         "/agents/researcher/tool-results/anything.txt",
@@ -272,11 +271,10 @@ def test_options_preflight_returns_cors_headers(tmp_project: Path):
 
 
 def test_options_preflight_does_not_leak_agent_existence(tmp_project: Path):
-    """Tier 2 (#442): OPTIONS preflight returns 204 even for an
-    unregistered agent (= the preflight is "can I do this method+
-    origin combination", not "does this resource exist"). Prevents
-    using preflight as an enumeration channel — GET still 404s
-    properly on unknown agents.
+    """Tier 2c: OPTIONS preflight returns 204 even for an unregistered agent
+    (#442 — preflight is "can I do this method+origin combination", not "does
+    this resource exist"). Prevents using preflight as an enumeration channel
+    — GET still 404s properly on unknown agents.
 
     The risk this defends against: a malicious page probing
     ``/agents/<guess>/tool-results/x`` via preflight to enumerate
