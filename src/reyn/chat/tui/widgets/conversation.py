@@ -1299,6 +1299,20 @@ class ConversationView(Widget):
             if not row._finished
         ]
 
+    def in_flight_tool_call_rows(self) -> list[ToolCallRow]:
+        """Return ToolCallRow widgets whose tool call is still running.
+
+        Sibling to ``in_flight_skill_rows`` — the F3 keyboard expand
+        action targets both. Finished tool call rows (= success /
+        failure / abort terminal state) are excluded for the same
+        reason: F3 should only touch what's currently executing,
+        not old completed rows that may have scrolled far up.
+        """
+        return [
+            row for row in self._tool_call_rows.values()
+            if not row._finished
+        ]
+
     # ── Tool-call rows (issue #427 step 4) ───────────────────────────────────
 
     def start_tool_call_row(

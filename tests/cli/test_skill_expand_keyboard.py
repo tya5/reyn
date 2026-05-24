@@ -146,7 +146,11 @@ async def test_f3_with_no_in_flight_shows_status_hint(
         await pilot.pause()
         snap = conv._sticky().snapshot()  # type: ignore[union-attr]
         assert snap["active"] is True
-        assert "no active skill" in snap["body"]
+        # Body wording shifted from "skill row" to "rows" after F3
+        # was extended to cover tool call rows too — substring match
+        # on "no active" + "rows" survives the rename.
+        assert "no active" in snap["body"]
+        assert "rows" in snap["body"]
 
 
 @pytest.mark.asyncio
@@ -206,4 +210,5 @@ async def test_keys_tab_render_includes_f3_with_description() -> None:
         await pilot.pause()
         markup, _ = render_keys(app)
         assert "F3" in markup
+        # Description uses "skill row drill-down" (main UI wording).
         assert "skill row drill-down" in markup.lower()
