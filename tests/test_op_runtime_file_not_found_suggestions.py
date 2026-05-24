@@ -93,7 +93,12 @@ def test_read_not_found_capped_at_limit(tmp_path, monkeypatch):
     result = _run(handle(_read("missing.md"), ctx, "control_ir"))
 
     assert result["status"] == "not_found"
-    assert len(result["suggestions"]) <= 8
+    assert result["suggestions"], "suggestions must be non-empty when siblings exist"
+    # Cap is enforced — the full set of 20 files is not returned.
+    # _NOT_FOUND_SUGGESTIONS_LIMIT == 8, so suggestions[8:] must be empty.
+    assert result["suggestions"][8:] == [], (
+        f"suggestions must be capped at the limit; got {result['suggestions']}"
+    )
 
 
 def test_read_ok_still_returns_ok_shape(tmp_path, monkeypatch):
@@ -178,9 +183,12 @@ def test_read_not_found_in_nested_existing_dir(tmp_path, monkeypatch):
 
 
 def test_suggestions_not_starved_by_dirs(tmp_path, monkeypatch):
-    """Tier 2 regression guard: ``Workspace.glob_files`` pre-fix sliced the
-    result list before filtering for files, so a parent dir whose first
-    ``max_results`` entries were directories produced almost no suggestions.
+    """Tier 2: ``Workspace.glob_files`` must not starve file suggestions when
+    a parent dir's first entries are directories.
+
+    Regression guard: pre-fix sliced the result list before filtering for
+    files, so a parent dir whose first ``max_results`` entries were directories
+    produced almost no suggestions.
 
     With ~10 hidden dirs (matching the project-root case .claude/.git/.github/
     .reyn/.venv/...) and 5 real files, the suggestions must still surface

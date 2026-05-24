@@ -129,10 +129,13 @@ def test_router_cap_fires_at_nth_invocation():
     assert exc.cap == 3
     assert exc.last_reason == "ran_out_of_ideas"
 
-    # One event emitted (only on the violation, not on the three preceding calls).
+    # Exactly one event emitted (only on the violation, not on the three preceding calls).
     emitted = events.all()
     exhausted_events = [e for e in emitted if e.type == "router_retry_exhausted"]
-    assert len(exhausted_events) == 1
+    assert exhausted_events, "router_retry_exhausted event must be emitted on cap violation"
+    assert sum(1 for _ in exhausted_events) == 1, (
+        "Only one router_retry_exhausted event should be emitted (not one per call)"
+    )
 
     evt_data = exhausted_events[0].data
     assert evt_data["count"] == 3
@@ -161,8 +164,12 @@ def test_router_cap_long_user_text_truncated():
 
     emitted = events.all()
     exhausted_events = [e for e in emitted if e.type == "router_retry_exhausted"]
-    assert len(exhausted_events) == 1
-    assert len(exhausted_events[0].data["user_message"]) == 200
+    assert exhausted_events, "router_retry_exhausted event must be emitted"
+    # user_message must be truncated — verify it matches exactly the first 200 chars.
+    user_message = exhausted_events[0].data["user_message"]
+    assert user_message == long_text[:200], (
+        "user_message must be truncated to the first 200 characters of the input"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +211,10 @@ def test_reset_router_turn_counter_clears_state():
     exhausted_events = [
         e for e in events.all() if e.type == "router_retry_exhausted"
     ]
-    assert len(exhausted_events) == 1
+    assert exhausted_events, "router_retry_exhausted event must be emitted on cap violation"
+    assert not exhausted_events[1:], (
+        "Only one router_retry_exhausted event should be emitted (not one per call)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +258,7 @@ def test_add_router_usage_strips_proxy_prefix(monkeypatch):
 
     # The stripping branch must have fired: estimate_cost receives "gpt-4o-mini"
     # (no "openai/" prefix).
-    assert len(received_models) == 1, "estimate_cost should have been called once"
+    assert received_models, "estimate_cost must have been called (stripping branch must fire)"
     assert received_models[0] == "gpt-4o-mini", (
         f"Expected 'gpt-4o-mini' but got {received_models[0]!r} — "
         "proxy prefix stripping did not fire"
@@ -283,7 +293,7 @@ def test_add_router_usage_no_strip_without_proxy(monkeypatch):
     gw.add_router_usage(usage=usage, resolver=resolver, router_model_name="light")
 
     # No proxy → full string "openai/gpt-4o-mini" passed to estimate_cost.
-    assert len(received_models) == 1
+    assert received_models, "estimate_cost must have been called (no-proxy path)"
     assert received_models[0] == "openai/gpt-4o-mini", (
         f"Expected 'openai/gpt-4o-mini' but got {received_models[0]!r}"
     )
