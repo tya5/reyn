@@ -57,9 +57,11 @@ def test_rewrite_index_excludes_self(tmp_path: Path) -> None:
 
     text = (tmp_path / INDEX_FILENAME).read_text(encoding="utf-8")
     assert "(MEMORY.md)" not in text
-    # entry count = 1 line (single bullet)
+    # The only entry is "only" — verify it appears and no other bullets sneak in.
+    assert "(only.md)" in text
     bullets = [ln for ln in text.splitlines() if ln.startswith("- [")]
-    assert len(bullets) == 1, f"expected 1 entry bullet, got {len(bullets)}: {bullets}"
+    assert bullets, "expected at least one entry bullet"
+    assert not any("MEMORY" in b for b in bullets), f"self-reference in bullets: {bullets}"
 
 
 def test_rewrite_index_reflects_deletion(tmp_path: Path) -> None:

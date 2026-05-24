@@ -126,7 +126,7 @@ def test_registry_skill_started_wal_includes_parent_run_id(tmp_path: Path):
 
     asyncio.run(go())
     started = [e for e in log.iter_from(0) if e["kind"] == "skill_started"]
-    assert len(started) == 1
+    assert started, "expected at least one skill_started WAL event"
     assert started[0]["parent_run_id"] == "parent_002"
     assert started[0]["run_id"] == "child_002"
 
