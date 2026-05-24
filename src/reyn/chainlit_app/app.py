@@ -34,9 +34,12 @@ from reyn.chainlit_app.profiles import list_agent_profiles
 from reyn.chainlit_app.settings import (
     LANGUAGE_ITEMS,
     LANGUAGE_SETTING_ID,
+    MODEL_SETTING_ID,
     language_label_for,
     language_to_value,
+    list_model_names,
     value_to_language,
+    value_to_model,
 )
 from reyn.chainlit_app.slash_route import (
     QUICK_ACTIONS,
@@ -310,7 +313,7 @@ async def _on_chat_start() -> None:
     # renders the gear icon next to the input box; selecting an item
     # fires ``@cl.on_settings_update`` below.
     try:
-        await cl.ChatSettings([
+        widgets = [
             cl.input_widget.Select(
                 id=LANGUAGE_SETTING_ID,
                 label="Output language",
@@ -323,7 +326,29 @@ async def _on_chat_start() -> None:
                     "合わせる。 変更は次の turn から有効。"
                 ),
             ),
-        ]).send()
+        ]
+        # Model select: list tier names from the resolver (= builtins +
+        # reyn.yaml::models). Only render when the resolver actually
+        # exposes its resolved namespace, so a stripped-down test
+        # session degrades to a single-widget panel.
+        model_names = list_model_names(getattr(session, "_resolver", None))
+        if model_names:
+            current_model = getattr(session, "model", "") or ""
+            widgets.append(
+                cl.input_widget.Select(
+                    id=MODEL_SETTING_ID,
+                    label="Model",
+                    values=model_names,
+                    initial_value=current_model if current_model in model_names else model_names[0],
+                    tooltip=(
+                        "LLM モデル tier (= reyn.yaml::models / builtin)。 "
+                        "変更は次の turn から有効。 temperature / max_tokens 等"
+                        "は tier ごとの kwargs に bundle されるため、 tier 切替で"
+                        "まとめて入れ替わる。"
+                    ),
+                )
+            )
+        await cl.ChatSettings(widgets).send()
     except Exception:
         pass
 
@@ -364,6 +389,15 @@ async def _on_settings_update(settings: dict) -> None:
             ),
             author="system",
         ).send()
+    if MODEL_SETTING_ID in settings:
+        value = settings.get(MODEL_SETTING_ID)
+        new_model = value_to_model(value, default=getattr(session, "model", "") or "")
+        if new_model and new_model != getattr(session, "model", None):
+            session.model = new_model
+            await cl.Message(
+                content=f"Model → **{new_model}**.",
+                author="system",
+            ).send()
 
 
 @cl.on_message

@@ -73,10 +73,53 @@ def language_label_for(value: str) -> str:
     return value
 
 
+# ── model select ──────────────────────────────────────────────────────────
+
+
+MODEL_SETTING_ID = "model"
+
+
+def list_model_names(resolver: object) -> list[str]:
+    """Return sorted tier names ("standard" / "claude-sonnet" / ...) the
+    operator can switch between via the chainlit settings panel.
+
+    Source of truth: ``ModelResolver._resolved`` (= built-ins +
+    operator-declared from ``reyn.yaml::models``). Accessed via
+    ``getattr`` so this helper stays decoupled from the resolver class
+    — passing in any object with ``_resolved: dict`` works, including
+    test fakes. Returns ``[]`` when the attribute is missing so the
+    chainlit-side fallback can render an empty / hidden Select instead
+    of crashing.
+    """
+    resolved = getattr(resolver, "_resolved", None)
+    if not isinstance(resolved, dict):
+        return []
+    return sorted(resolved.keys())
+
+
+def value_to_model(value: str | None, *, default: str) -> str:
+    """Map widget select value → ``ChatSession.model`` tier name.
+
+    Empty / None → ``default`` (= preserves current model rather than
+    silently flipping to an arbitrary fallback). Any other value
+    passes through verbatim so an operator-declared tier in reyn.yaml
+    reaches reyn unchanged.
+    """
+    if value is None:
+        return default
+    v = value.strip()
+    if not v:
+        return default
+    return v
+
+
 __all__ = [
     "LANGUAGE_ITEMS",
     "LANGUAGE_SETTING_ID",
+    "MODEL_SETTING_ID",
     "language_label_for",
     "language_to_value",
+    "list_model_names",
     "value_to_language",
+    "value_to_model",
 ]
