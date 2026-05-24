@@ -59,3 +59,10 @@ spike_results/
 # between Desktop / CLI / different sessions).  Git-ignored so private
 # session context does not leak into repo history.
 .handoff/
+
+# Chainlit auto-created artifacts (= first `reyn chainlit` run drops
+# chainlit.md welcome page + .chainlit/{config.toml,translations/} in
+# cwd). User-editable but not part of reyn's source — per-project
+# customization belongs in operator's workspace, not the repo.
+chainlit.md
+.chainlit/
