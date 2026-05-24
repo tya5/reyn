@@ -142,7 +142,7 @@ def test_agent_a_produces_delegation_with_chain_id():
 
 @pytest.mark.replay("fixtures/llm/multi_hop/agent_delegation.jsonl")
 def test_chain_id_in_input_affects_fixture_key():
-    """Tier 3a drift detection: changing chain_id changes the prompt hash → MissingFixture.
+    """Tier 3a: drift detection — changing chain_id changes the prompt hash → MissingFixture.
 
     Protects: chain_id must be part of the ContextFrame hash so that a
     different chain_id produces a different fixture key. If the hash did not
@@ -180,7 +180,7 @@ def test_chain_id_in_input_affects_fixture_key():
 )
 @pytest.mark.replay("fixtures/llm/multi_hop/cycle_a_b_a.jsonl")
 def test_agent_a_refuses_self_loop_in_chain():
-    """Tier 3a corner: Agent A sees a chain that already includes itself → must not delegate again.
+    """Tier 3a: corner — Agent A sees a chain that already includes itself → must not delegate again.
 
     Single-LLM-call exercise: the chain history shown to Agent A indicates
     it already participated upstream. A correct multi-hop policy should not
@@ -264,7 +264,7 @@ def test_agent_a_refuses_self_loop_in_chain():
 
 @pytest.mark.replay("fixtures/llm/multi_hop/chain_timeout_mid_relay.jsonl")
 def test_agent_acknowledges_imminent_chain_timeout():
-    """Tier 3a corner: chain metadata flags timeout imminent → agent must not start a new relay.
+    """Tier 3a: corner — chain metadata flags timeout imminent → agent must not start a new relay.
 
     Multi-call timeout firing during a real LLM call belongs to Tier 3b
     (cannot be reproduced in a single call). We pin the simpler invariant:
@@ -327,6 +327,6 @@ def test_agent_acknowledges_imminent_chain_timeout():
     art_data = data["artifact"]["data"]
     # When chain budget is exhausted, the agent must not start a new delegation.
     msgs = art_data.get("messages_to_agents", [])
-    assert len(msgs) == 0, (
+    assert not msgs, (
         f"Agent should not delegate when chain_status=exhausted; got {msgs}"
     )
