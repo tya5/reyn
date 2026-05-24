@@ -44,7 +44,7 @@ def _last_rendered_text(conv: ConversationView) -> str:
 
 @pytest.mark.asyncio
 async def test_cost_suffix_partial_prefixes_numbers_with_tilde():
-    """``partial=True`` → all three numeric segments carry the ``~`` prefix."""
+    """Tier 2b: ``partial=True`` → all three numeric segments carry the ``~`` prefix."""
     app = _ConvOnlyApp()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -62,7 +62,7 @@ async def test_cost_suffix_partial_prefixes_numbers_with_tilde():
 
 @pytest.mark.asyncio
 async def test_cost_suffix_default_has_no_tilde():
-    """Default (``partial=False``) emits the unchanged shape."""
+    """Tier 2b: Default (``partial=False``) emits the unchanged shape."""
     app = _ConvOnlyApp()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
