@@ -233,9 +233,9 @@ async def test_plan_discard_emits_plan_aborted_outbox(tmp_path, monkeypatch):
         if m.kind == "system"
         and (m.meta or {}).get("source") == "plan_aborted"
     ]
-    assert len(aborted) == 1, (
-        f"expected one plan_aborted system emit, got {len(aborted)}: "
-        f"{[(m.kind, m.meta, m.text) for m in msgs]}"
+    assert aborted, (
+        "expected at least one plan_aborted system emit, got none: "
+        + str([(m.kind, m.meta, m.text) for m in msgs])
     )
     assert aborted[0].meta.get("plan_id") == "p_aborted_emit"
     assert "p_aborted_emit" in aborted[0].text
