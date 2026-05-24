@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 import chainlit as cl
 
 from reyn.chainlit_app.adapter import outbox_to_chainlit
-from reyn.chainlit_app.history import history_to_chainlit
+from reyn.chainlit_app.history import DEFAULT_REPLAY_CAP, history_to_chainlit
 from reyn.chainlit_app.profiles import list_agent_profiles
 from reyn.chainlit_app.slash_route import (
     QUICK_ACTIONS,
@@ -49,6 +49,29 @@ _REGISTRY: "AgentRegistry | None" = None
 
 def _agent_name_from_env() -> str:
     return os.environ.get("REYN_CHAINLIT_AGENT", "default")
+
+
+def _history_cap_from_env() -> int | None:
+    """Read the replay cap from ``REYN_CHAINLIT_HISTORY_CAP``.
+
+    Returns:
+      - ``DEFAULT_REPLAY_CAP`` when the env var is unset or unparseable
+        (= keep the chat snappy on agents with long history.jsonl).
+      - The parsed int when the env var holds a number. ``0`` or
+        negative becomes "unlimited" by passing ``None`` to the
+        helper, so the operator can opt back into the previous
+        full-replay behavior with ``REYN_CHAINLIT_HISTORY_CAP=0``.
+    """
+    raw = os.environ.get("REYN_CHAINLIT_HISTORY_CAP")
+    if raw is None:
+        return DEFAULT_REPLAY_CAP
+    try:
+        value = int(raw.strip())
+    except (ValueError, AttributeError):
+        return DEFAULT_REPLAY_CAP
+    if value <= 0:
+        return None
+    return value
 
 
 async def _get_or_build_registry() -> "AgentRegistry":
@@ -266,7 +289,7 @@ async def _on_chat_start() -> None:
     # sees the conversation they had previously with this agent
     # instead of an empty thread on every re-attach / browser open.
     history = getattr(session, "history", None) or []
-    for entry in history_to_chainlit(history):
+    for entry in history_to_chainlit(history, cap=_history_cap_from_env()):
         await cl.Message(
             content=entry.content, author=entry.author,
         ).send()
