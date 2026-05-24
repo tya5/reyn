@@ -66,7 +66,7 @@ def test_spawn_ack_each_locale_signals_background_run():
 
 
 def test_spawn_ack_p7_clean_no_skill_names():
-    """Tier 2 / P7: the template must NOT contain skill-specific
+    """Tier 2: P7 invariant — the template must NOT contain skill-specific
     qualified names (`skill__X`, `file__Y`, `web__Z`, etc.) or
     skill-name-shaped strings. OS-level message stays category-agnostic."""
     tmpl = _load_spawn_ack_template()
