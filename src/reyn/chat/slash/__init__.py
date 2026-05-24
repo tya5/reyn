@@ -191,6 +191,7 @@ from reyn.chat.slash import agent as _agent_mod  # noqa: E402, F401
 from reyn.chat.slash import agents as _agents_mod  # noqa: E402, F401
 from reyn.chat.slash import budget as _budget_mod  # noqa: E402, F401
 from reyn.chat.slash import chat as _chat_mod  # noqa: E402, F401
+from reyn.chat.slash import clear_history as _clear_history_mod  # noqa: E402, F401
 from reyn.chat.slash import concept as _concept_mod  # noqa: E402, F401
 from reyn.chat.slash import copy as _copy_mod  # noqa: E402, F401
 from reyn.chat.slash import cost_inline as _cost_inline_mod  # noqa: E402, F401

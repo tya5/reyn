@@ -218,6 +218,37 @@ class ActionUsageTracker:
 
     # ── Public surface ────────────────────────────────────────────────────
 
+    def __len__(self) -> int:
+        """Number of qualified action names currently tracked.
+
+        Public counter for callers that want to surface "how many tools
+        are in the ranking" without reaching into the internal
+        compacted table (= ``len(tracker)`` reads cleanly in slash
+        previews / confirmation messages).
+        """
+        return len(self._compacted)
+
+    def reset(self) -> None:
+        """Clear the in-memory compacted table + remove the persist file.
+
+        Intended for the ``/clear-history`` slash command and similar
+        explicit "start fresh" affordances. Preserves the tracker's
+        identity (= caller's reference stays valid) so the active
+        ChatSession's wiring keeps working immediately after the
+        reset — only the *data* is wiped.
+
+        Persist-file removal is best-effort (= matches the
+        ``_persist_table`` posture of treating disk failure as
+        non-fatal). The in-memory clear always happens.
+        """
+        self._compacted = {}
+        self._prior_ranking_order = None
+        if self._persist_path is not None:
+            try:
+                self._persist_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def merge_compacted(self, records: list[tuple[str, float]]) -> None:
         """Merge a batch of ``(qualified_name, ts)`` records into the
         compacted table.
