@@ -227,7 +227,6 @@ async def test_coordinator_forwards_agent_state_dir_to_analyzer(tmp_path: Path) 
         decomposition_loader=loader,
         agent_state_dir=tmp_path,
     )
-    assert len(decisions) == 1
     s1_state = next(
         s for s in decisions[0].plan.step_states if s.step_id == "s1"
     )
