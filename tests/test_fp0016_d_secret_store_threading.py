@@ -134,23 +134,23 @@ def test_osruntime_stores_secret_store(tmp_path: Path) -> None:
 
 
 def test_osruntime_propagates_store_to_control_ir_executor(tmp_path: Path) -> None:
-    """Tier 2: OSRuntime threads secret_store into ControlIRExecutor._secret_store."""
+    """Tier 2: OSRuntime threads secret_store into ControlIRExecutor.secret_store."""
     from reyn.kernel.runtime import OSRuntime
 
     skill = _make_minimal_skill()
     store = _make_store(["TOKEN"])
     runtime = OSRuntime(skill, "standard", secret_store=store)
-    assert runtime.control_ir_executor._secret_store is store
+    assert runtime.control_ir_executor.secret_store is store
 
 
 def test_osruntime_propagates_store_to_preprocessor_executor(tmp_path: Path) -> None:
-    """Tier 2: OSRuntime threads secret_store into PreprocessorExecutor._secret_store."""
+    """Tier 2: OSRuntime threads secret_store into PreprocessorExecutor.secret_store."""
     from reyn.kernel.runtime import OSRuntime
 
     skill = _make_minimal_skill()
     store = _make_store(["SECRET_TOKEN"])
     runtime = OSRuntime(skill, "standard", secret_store=store)
-    assert runtime._preprocessor._secret_store is store
+    assert runtime.preprocessor.secret_store is store
 
 
 def test_osruntime_none_store_propagates_as_none(tmp_path: Path) -> None:
@@ -159,9 +159,9 @@ def test_osruntime_none_store_propagates_as_none(tmp_path: Path) -> None:
 
     skill = _make_minimal_skill()
     runtime = OSRuntime(skill, "standard")
-    assert runtime._secret_store is None
-    assert runtime.control_ir_executor._secret_store is None
-    assert runtime._preprocessor._secret_store is None
+    assert runtime.secret_store is None
+    assert runtime.control_ir_executor.secret_store is None
+    assert runtime.preprocessor.secret_store is None
 
 
 # ---------------------------------------------------------------------------
@@ -255,9 +255,9 @@ def test_threading_preserves_identity_not_copy(tmp_path: Path) -> None:
     runtime = OSRuntime(skill, "standard", secret_store=store)
 
     # All three layers must hold the exact same object
-    assert runtime._secret_store is store
-    assert runtime.control_ir_executor._secret_store is store
-    assert runtime._preprocessor._secret_store is store
+    assert runtime.secret_store is store
+    assert runtime.control_ir_executor.secret_store is store
+    assert runtime.preprocessor.secret_store is store
 
     # OpContext built by ControlIRExecutor must also carry same object
     decl = PermissionDecl()
@@ -266,5 +266,5 @@ def test_threading_preserves_identity_not_copy(tmp_path: Path) -> None:
 
     # OpContext built by PreprocessorExecutor must also carry same object
     phase = skill.phases["phase_a"]
-    pre_ctx = runtime._preprocessor._build_op_ctx(phase, step_index=0)
+    pre_ctx = runtime.preprocessor._build_op_ctx(phase, step_index=0)
     assert pre_ctx.secret_store is store

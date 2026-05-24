@@ -262,6 +262,20 @@ class OSRuntime:
     def _history(self, value: list[str]) -> None:
         self._state.history = value
 
+    # ── Public read-only accessors (FP-0016 D wiring verification) ─────────
+    # Tests verify dependency-injection identity ("the store handed in is the
+    # exact object threaded down to executors"). Exposing read-only accessors
+    # lets tests assert that invariant through the public surface instead of
+    # reaching into ``_secret_store`` / ``_preprocessor``.
+
+    @property
+    def secret_store(self):
+        return self._secret_store
+
+    @property
+    def preprocessor(self):
+        return self._preprocessor
+
     # ── Phase setup ────────────────────────────────────────────────────────────
 
     def _build_candidates(self, current_phase: str) -> list[CandidateOutput]:

@@ -150,6 +150,11 @@ class ControlIRExecutor:
         """Return the ResumePlan this executor was constructed with, or None."""
         return self._resume_plan
 
+    @property
+    def secret_store(self):
+        """Read-only accessor for the injected ScopedSecretStore (or None)."""
+        return self._secret_store
+
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor advertises to the LLM.
 
