@@ -97,7 +97,7 @@ async def test_keys_tab_renders_ctrl_w_family() -> None:
     )
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
-        rendered, _ = render_keys(app)
+        rendered, _, _ = render_keys(app)
 
         # Pretty forms per _KEY_PRETTY: ⌃W / ⌃⇧W / ⌃⇧O
         assert "⌃W" in rendered, (
@@ -128,7 +128,7 @@ async def test_keys_tab_groups_panel_keys_under_panel_section() -> None:
     )
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
-        rendered, _ = render_keys(app)
+        rendered, _, _ = render_keys(app)
 
         # PANEL group header must appear, and ⌃W must come AFTER it.
         panel_idx = rendered.find("[PANEL]")
@@ -160,7 +160,7 @@ async def test_keys_tab_renders_h_l_resize_keys() -> None:
     )
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
-        rendered, _ = render_keys(app)
+        rendered, _, _ = render_keys(app)
 
         # Synthetic entries: bare ``h`` / ``l`` (single-letter keys keep
         # their literal form through ``_pretty_key``).
@@ -192,7 +192,7 @@ async def test_keys_tab_lists_pending_d_discard_action() -> None:
     )
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
-        rendered, _ = render_keys(app)
+        rendered, _, _ = render_keys(app)
         assert "Discard cursor (pending tab)" in rendered, (
             f"Keys tab must render the pending-tab d=discard hint; got:\n{rendered}"
         )
@@ -213,7 +213,7 @@ async def test_h_l_resize_keys_group_under_panel_section() -> None:
     )
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
-        rendered, _ = render_keys(app)
+        rendered, _, _ = render_keys(app)
 
         panel_idx = rendered.find("[PANEL]")
         widen_idx = rendered.find("Widen panel")

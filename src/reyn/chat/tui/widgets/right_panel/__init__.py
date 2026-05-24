@@ -213,6 +213,10 @@ class RightPanel(Widget):
         self._pending_cursor: int = 0
         self._pending_items: list[dict] = []
         self._pending_item_ys: list[int] = []
+        # y-coord (0-indexed line) of each key row in the rendered output.
+        # Populated by ``render_keys``; used by ``_scroll_keys_into_view``
+        # so j/k navigation keeps the cursor row visible within #panel-scroll.
+        self._key_ys: list[int] = []
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -572,7 +576,7 @@ class RightPanel(Widget):
                 # so the detail dict and cursor live close to the render logic.
                 # Other tabs' Space semantics (= preview pane toggle) are
                 # unchanged — gated by this branch.
-                markup, flat_key_list = render_keys(
+                markup, flat_key_list, _key_ys = render_keys(
                     self.app,
                     cursor=get_keys_cursor(),
                     expanded=get_keys_expanded(),
@@ -768,6 +772,7 @@ class RightPanel(Widget):
                 "memory":  self._scroll_memory_into_view,
                 "docs":    self._scroll_docs_into_view,
                 "pending": self._scroll_pending_into_view,
+                "keys":    self._scroll_keys_into_view,
             }.get(self._panel_type)
             if scroll_helper is not None:
                 scroll_helper()
@@ -1122,13 +1127,15 @@ class RightPanel(Widget):
         (= no IO, pure string construction) and keeps the cursor consistent
         with whatever rows ``render_keys`` would actually emit.
         """
-        _, flat_key_list = render_keys(
+        _, flat_key_list, key_ys = render_keys(
             self.app,
             cursor=get_keys_cursor(),
             expanded=get_keys_expanded(),
         )
         keys_move(delta, len(flat_key_list))
+        self._key_ys = key_ys
         self._invalidate()
+        self._scroll_keys_into_view()
 
     # ── pending tab cursor + actions (issue #277) ────────────────────────────
 
@@ -2241,6 +2248,33 @@ class RightPanel(Widget):
                 "right_panel scroll_pending_into_view failed: %s", exc,
             )
 
+    def _scroll_keys_into_view(self) -> None:
+        """Scroll #panel-scroll so the Keys tab cursor is visible.
+
+        Uses the same shape as ``_scroll_pending_into_view`` /
+        ``_scroll_events_into_view``.  ``_key_ys`` is populated by
+        ``render_keys`` (via ``_keys_move`` and ``_panel_markup``) and
+        records the 0-indexed rendered-output line of each key row.
+        """
+        try:
+            vs = self.query_one("#panel-scroll", VerticalScroll)
+            current = int(vs.scroll_y)
+            visible = vs.size.height
+            if visible <= 0:
+                return
+            cursor = get_keys_cursor()
+            if not (0 <= cursor < len(self._key_ys)):
+                return
+            y = 1 + self._key_ys[cursor]
+            if y < current:
+                vs.scroll_to(y=y, animate=False)
+            elif y >= current + visible:
+                vs.scroll_to(y=y - visible + 1, animate=False)
+        except Exception as exc:
+            logger.warning(
+                "right_panel scroll_keys_into_view failed: %s", exc,
+            )
+
     # ── render dispatch ───────────────────────────────────────────────────────
 
     def _panel_header_markup(self) -> str:
@@ -2311,11 +2345,12 @@ class RightPanel(Widget):
     def _panel_markup(self) -> Any:
         try:
             if self._panel_type == "keys":
-                markup, _ = render_keys(
+                markup, _, key_ys = render_keys(
                     self.app,
                     cursor=get_keys_cursor(),
                     expanded=get_keys_expanded(),
                 )
+                self._key_ys = key_ys
                 return markup
             if self._panel_type == "events":
                 rendered, windowed, event_ys = render_events(

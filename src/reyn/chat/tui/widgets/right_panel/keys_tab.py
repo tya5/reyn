@@ -235,13 +235,16 @@ def render_keys(
     *,
     cursor: int = 0,
     expanded: set[int] | None = None,
-) -> tuple[str, list[str]]:
-    """Return (Rich markup, flat_key_list) listing bindings grouped by context.
+) -> tuple[str, list[str], list[int]]:
+    """Return (Rich markup, flat_key_list, key_ys) listing bindings grouped by context.
 
     ``cursor`` selects the cursor row (0-indexed over the flat key list).
     ``expanded`` is the set of cursor indices whose detail block is visible.
     ``flat_key_list`` is a parallel list of lowercase key strings (or ``""``
     for MOUSE rows) so callers can look up ``_KEY_DETAILS`` by row index.
+    ``key_ys`` is a parallel list of 0-indexed line numbers in the rendered
+    output for each key row (= for scroll-into-view, same shape as other
+    tabs' ``*_item_ys``).
     """
     if expanded is None:
         expanded = set()
@@ -369,6 +372,7 @@ def render_keys(
     # Render.
     lines: list[str] = []
     flat_key_list: list[str] = []  # parallel to the rendered "key rows" only
+    key_ys: list[int] = []  # 0-indexed line number of each key row in output
     # Key column width: max key length within the group, capped at 6
     # (longest pretty key is ⇧Tab / Enter / Space = 5 chars + 1 pad).
     # Single-line "<key>  <desc>" fits the narrow panel; previously the
@@ -393,6 +397,9 @@ def render_keys(
         for (key_display, desc), raw_key in zip(entries, raw_keys):
             is_cursor = row_idx == cursor
             flat_key_list.append(raw_key)
+            # Record the y-position (0-indexed line in the rendered output)
+            # of this key row for scroll-into-view.
+            key_ys.append(len(lines))
 
             # Cursor indicator — subtle highlight so the row is identifiable.
             cursor_prefix = f"[bold {_CORAL}]▶[/] " if is_cursor else "  "
@@ -414,7 +421,7 @@ def render_keys(
         lines.append("")
     if not lines:
         lines.append("[#555555]  (no bindings)[/]")
-    return "\n".join(lines), flat_key_list
+    return "\n".join(lines), flat_key_list, key_ys
 
 
 # ---------------------------------------------------------------------------
