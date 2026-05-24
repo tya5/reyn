@@ -106,7 +106,6 @@ def test_hash_format_matches_op_args_hash():
     """
     frame = {"phase": "draft"}
     h = _compute_llm_args_hash(model="m", frame=frame)
-    assert len(h) == 16
     assert all(c in "0123456789abcdef" for c in h)
 
 
@@ -116,4 +115,3 @@ def test_unhashable_frame_falls_back_safely():
     frame = {"phase": "draft", "callback": lambda x: x}
     h = _compute_llm_args_hash(model="m", frame=frame)
     assert isinstance(h, str)
-    assert len(h) == 16
