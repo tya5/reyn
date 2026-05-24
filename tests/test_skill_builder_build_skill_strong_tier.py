@@ -58,8 +58,7 @@ def _parse_frontmatter(md_path: Path) -> dict:
 
 
 def test_build_skill_phase_declares_model_class_strong():
-    """Tier 2 (B46-fix): ``build_skill`` phase must have
-    ``model_class: strong`` in its frontmatter."""
+    """Tier 2: ``build_skill`` phase must have ``model_class: strong`` in its frontmatter (B46-fix)."""
     fm = _parse_frontmatter(_BUILD_SKILL_MD)
     assert fm["name"] == "build_skill", (
         f"Expected build_skill phase, got {fm.get('name')!r}"

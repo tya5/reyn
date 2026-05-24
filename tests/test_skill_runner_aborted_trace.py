@@ -168,5 +168,5 @@ def test_unexpected_exception_emits_skill_done_aborted_trace(tmp_path, monkeypat
 
     # 4. Completion still fires (existing invariant — defence against
     # accidentally dropping it while adding the trace)
-    assert len(completed) == 1
-    assert completed[0]["status"] == "error"
+    (only_completed,) = completed
+    assert only_completed["status"] == "error"
