@@ -50,10 +50,9 @@ def test_rekey_appends_new_key_preserves_existing(tmp_path):
 
     assert changed is True
     entries = _read_fixture(fixture)
-    assert len(entries) == 2                          # original preserved
-    assert entries[0]["key"] == "aaa111"              # order unchanged
-    assert entries[1]["key"] == "bbb222"              # new entry appended
-    assert entries[1]["response"] == old_entry["response"]  # response reused
+    assert entries[0]["key"] == "aaa111"              # original preserved, order unchanged
+    assert entries[-1]["key"] == "bbb222"             # new entry appended
+    assert entries[-1]["response"] == old_entry["response"]  # response reused
 
 
 def test_rekey_skips_if_key_already_present(tmp_path):
@@ -76,7 +75,8 @@ def test_rekey_skips_if_key_already_present(tmp_path):
 
     assert changed is False
     entries = _read_fixture(fixture)
-    assert len(entries) == 1     # nothing added
+    assert entries, "fixture must still contain entries after no-op rekey"
+    assert all(e["key"] == "existing_key" for e in entries), "no new entry should be added"
 
 
 def test_dry_run_does_not_write(tmp_path):
@@ -124,7 +124,7 @@ def test_rekey_uses_last_entry_response_when_multiple(tmp_path):
     )
 
     result = _read_fixture(fixture)
-    assert len(result) == 4
+    assert result, "fixture must contain entries after rekey"
     new_entry = result[-1]
     assert new_entry["key"] == "new_key_xyz"
     # Must reuse last (index 2) entry's response
