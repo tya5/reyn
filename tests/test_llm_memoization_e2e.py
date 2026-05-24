@@ -176,10 +176,7 @@ def test_e2e_resume_memos_all_completed_llm_calls(tmp_path, monkeypatch):
         e for e in wal_events
         if e["kind"] == "step_completed" and e.get("op_kind") == "llm"
     ]
-    assert len(llm_completes) == 3, (
-        f"expected 3 LLM step_completed in WAL; got {len(llm_completes)}\n"
-        f"WAL kinds: {[e['kind'] for e in wal_events]}"
-    )
+    (lc0, lc1, lc2) = llm_completes  # exactly 3 LLM step_completed in WAL
 
     # ── Simulate kill -9: re-create per-skill snapshot ────────────────
     # OSRuntime.complete() removed the snapshot. Manually re-create it as
@@ -212,16 +209,13 @@ def test_e2e_resume_memos_all_completed_llm_calls(tmp_path, monkeypatch):
         state_log=state_log2,
         policy=SkillResumeConfig(),
     )
-    assert len(decisions) == 1, f"expected 1 active run; got {decisions}"
-    decision = decisions[0]
+    (decision,) = decisions  # exactly 1 active run discovered
     assert decision.action == "resume"
     # Plan must contain the 3 LLM committed steps
     llm_committed = [
         s for s in decision.plan.committed_steps if s.op_kind == "llm"
     ]
-    assert len(llm_committed) == 3, (
-        f"expected 3 LLM CommittedSteps in plan; got {len(llm_committed)}"
-    )
+    (cs0, cs1, cs2) = llm_committed  # exactly 3 LLM CommittedSteps in plan
 
     llm2 = _ScriptedLLM(_SCRIPT)  # fresh counter for run 2
     monkeypatch.setattr(runtime_mod, "call_llm", llm2)
@@ -246,6 +240,4 @@ def test_e2e_resume_memos_all_completed_llm_calls(tmp_path, monkeypatch):
     # step_memoized fired 3 times in run 2's events
     step_memoized = [e for e in rt2.events.all() if e.type == "step_memoized"]
     llm_memoed = [e for e in step_memoized if e.data.get("op_kind") == "llm"]
-    assert len(llm_memoed) == 3, (
-        f"expected 3 step_memoized events with op_kind=llm; got {len(llm_memoed)}"
-    )
+    (m0, m1, m2) = llm_memoed  # exactly 3 step_memoized(op_kind=llm) in run 2

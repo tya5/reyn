@@ -149,9 +149,8 @@ def test_world_op_resume_skip_still_emits_step_completed(tmp_path: Path):
     completed = [
         e for e in log.iter_from(0) if e["kind"] == "step_completed"
     ]
-    assert len(completed) == 1
-    # The fresh result replaces the recorded stale value
-    assert completed[0]["result"] == {"results": ["fresh_after_resume"]}
+    (only,) = completed  # exactly 1 step_completed — fresh result replaces stale memo
+    assert only["result"] == {"results": ["fresh_after_resume"]}
 
 
 # ---------------------------------------------------------------------------

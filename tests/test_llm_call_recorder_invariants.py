@@ -197,10 +197,7 @@ async def test_wal_records_after_llm_call(tmp_path, monkeypatch):
         e for e in state_log.iter_from(0)
         if e["kind"] == "step_completed" and e.get("op_kind") == "llm"
     ]
-    assert len(completed) == 1, (
-        "exactly one step_completed(llm) must be written after a fresh LLM call"
-    )
-    ev = completed[0]
+    (ev,) = completed  # exactly one step_completed(llm) after a fresh LLM call
     assert ev["phase"] == "draft"
     assert ev["op_invocation_id"] == "draft.llm.0"
     usage = ev.get("usage")
