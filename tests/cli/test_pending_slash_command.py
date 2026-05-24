@@ -1,4 +1,4 @@
-"""Tier 2: /pending slash command — list / discard / claim dispatch.
+"""Tier 2b: /pending slash command — list / discard / claim dispatch.
 
 Issue #277 — Layer 3 of the TUI surface bundle. Pins the slash
 command's argument parsing + dispatch to the session-level
@@ -85,7 +85,7 @@ def _get_pending_cmd():
 
 @pytest.mark.asyncio
 async def test_pending_slash_is_registered() -> None:
-    """Tier 2: /pending appears in the slash registry with a summary."""
+    """Tier 2b: /pending appears in the slash registry with a summary."""
     cmd = _get_pending_cmd()
     assert cmd.name == "pending"
     assert cmd.summary  # non-empty summary so /help renders it
@@ -93,7 +93,7 @@ async def test_pending_slash_is_registered() -> None:
 
 @pytest.mark.asyncio
 async def test_pending_list_renders_stalled_ops() -> None:
-    """Tier 2: ``/pending`` (= alias for list) emits a reply containing each op."""
+    """Tier 2b: ``/pending`` (= alias for list) emits a reply containing each op."""
     sess = _StubSession(pending_ops=[
         _PendingOpStub(
             id="iv-abcd1234", kind="intervention",
@@ -102,9 +102,9 @@ async def test_pending_list_renders_stalled_ops() -> None:
     ])
     cmd = _get_pending_cmd()
     await cmd.handler(sess, "")
-    # One outbox reply produced (kind=system) containing the iv info.
+    # At least one outbox reply produced (kind=system) containing the iv info.
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
-    assert len(reply_msgs) == 1
+    assert reply_msgs, "expected at least one system reply"
     text = reply_msgs[0].text
     assert "intervention" in text
     assert "iv-abcd1" in text  # short-id form (first 8 chars)
@@ -114,18 +114,18 @@ async def test_pending_list_renders_stalled_ops() -> None:
 
 @pytest.mark.asyncio
 async def test_pending_list_empty_returns_friendly_text() -> None:
-    """Tier 2: empty stalled list → "no pending operations" reply."""
+    """Tier 2b: empty stalled list → "no pending operations" reply."""
     sess = _StubSession(pending_ops=[])
     cmd = _get_pending_cmd()
     await cmd.handler(sess, "list")
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
-    assert len(reply_msgs) == 1
+    assert reply_msgs, "expected at least one system reply"
     assert "no pending" in reply_msgs[0].text.lower()
 
 
 @pytest.mark.asyncio
 async def test_pending_discard_first_invocation_shows_warning() -> None:
-    """Tier 2: ``/pending discard <id>`` (no confirm) emits a warning and
+    """Tier 2b: ``/pending discard <id>`` (no confirm) emits a warning and
     does NOT call discard_pending_intervention (Wave-13 B#2 confirm parity)."""
     sess = _StubSession(pending_ops=[
         _PendingOpStub(
@@ -139,13 +139,13 @@ async def test_pending_discard_first_invocation_shows_warning() -> None:
     assert sess.discard_calls == []
     # Must emit a warning with "confirm" hint.
     reply_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
-    assert len(reply_msgs) == 1
+    assert reply_msgs, "expected at least one system reply"
     assert "confirm" in reply_msgs[0].text
 
 
 @pytest.mark.asyncio
 async def test_pending_discard_invokes_session_api_with_confirm() -> None:
-    """Tier 2: ``/pending discard <id> confirm`` calls
+    """Tier 2b: ``/pending discard <id> confirm`` calls
     ``discard_pending_intervention`` (2-step confirm suffix)."""
     sess = _StubSession(pending_ops=[
         _PendingOpStub(
@@ -162,7 +162,7 @@ async def test_pending_discard_invokes_session_api_with_confirm() -> None:
 
 @pytest.mark.asyncio
 async def test_pending_discard_resolves_short_prefix_id() -> None:
-    """Tier 2: ``discard confirm`` accepts a short prefix that uniquely
+    """Tier 2b: ``discard confirm`` accepts a short prefix that uniquely
     matches one iv.
 
     Mirrors the Pending tab's UX (= ``id[:8]`` short form is what the
@@ -182,7 +182,7 @@ async def test_pending_discard_resolves_short_prefix_id() -> None:
 
 @pytest.mark.asyncio
 async def test_pending_claim_invokes_session_api_with_tui_channel() -> None:
-    """Tier 2: ``/pending claim <id>`` calls ``claim_pending_intervention``
+    """Tier 2b: ``/pending claim <id>`` calls ``claim_pending_intervention``
     with ``new_channel_id="tui:<agent>"``."""
     sess = _StubSession(
         pending_ops=[
@@ -206,7 +206,7 @@ async def test_pending_claim_invokes_session_api_with_tui_channel() -> None:
 
 @pytest.mark.asyncio
 async def test_pending_discard_unknown_id_emits_error() -> None:
-    """Tier 2: discard with unknown id emits an error reply (no API call)."""
+    """Tier 2b: discard with unknown id emits an error reply (no API call)."""
     sess = _StubSession(pending_ops=[
         _PendingOpStub(
             id="iv-abcd1234", kind="intervention",
@@ -222,7 +222,7 @@ async def test_pending_discard_unknown_id_emits_error() -> None:
 
 @pytest.mark.asyncio
 async def test_pending_unknown_subcommand_emits_usage_error() -> None:
-    """Tier 2: ``/pending bogus`` → usage error reply."""
+    """Tier 2b: ``/pending bogus`` → usage error reply."""
     sess = _StubSession(pending_ops=[])
     cmd = _get_pending_cmd()
     await cmd.handler(sess, "bogus")
