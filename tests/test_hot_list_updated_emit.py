@@ -41,10 +41,10 @@ def test_tracker_fires_callback_on_first_record() -> None:
         on_ranking_changed=lambda r: seen.append(r),
     )
     tracker.record("file__read")
-    assert len(seen) == 1
-    assert seen[0][0]["qualified_name"] == "file__read"
-    assert seen[0][0]["freq"] == 1
-    assert isinstance(seen[0][0]["last_ts"], float)
+    (only,) = seen
+    assert only[0]["qualified_name"] == "file__read"
+    assert only[0]["freq"] == 1
+    assert isinstance(only[0]["last_ts"], float)
 
 
 def test_tracker_fires_callback_on_reorder() -> None:
@@ -122,10 +122,8 @@ def test_full_ranking_includes_freq_and_last_ts() -> None:
     tracker.record("b")
     tracker.record("a")  # a now has freq=2
     ranking = tracker.full_ranking()
-    assert len(ranking) == 2
-    assert ranking[0]["qualified_name"] == "a"  # freq=2 outranks freq=1
+    assert [r["qualified_name"] for r in ranking] == ["a", "b"]
     assert ranking[0]["freq"] == 2
-    assert ranking[1]["qualified_name"] == "b"
     assert ranking[1]["freq"] == 1
     for r in ranking:
         assert isinstance(r["last_ts"], float)
@@ -152,13 +150,11 @@ def test_lifecycle_forwarder_forwards_hot_list_updated() -> None:
             {"qualified_name": "web__search", "freq": 2, "last_ts": time.time()},
         ]},
     ))
-    msgs = _drain(q)
-    assert len(msgs) == 1
-    assert msgs[0].kind == "hot_list_updated"
-    assert msgs[0].text == ""  # data signal, not display
-    ranking = msgs[0].meta["ranking"]
-    assert len(ranking) == 2
-    assert ranking[0]["qualified_name"] == "file__read"
+    (msg,) = _drain(q)
+    assert msg.kind == "hot_list_updated"
+    assert msg.text == ""  # data signal, not display
+    ranking = msg.meta["ranking"]
+    assert [r["qualified_name"] for r in ranking] == ["file__read", "web__search"]
     assert ranking[0]["freq"] == 5
 
 
@@ -167,6 +163,5 @@ def test_lifecycle_forwarder_empty_ranking_ok() -> None:
     q: asyncio.Queue = asyncio.Queue()
     fwd = ChatLifecycleForwarder(q)
     fwd(Event(type="hot_list_updated", data={}))
-    msgs = _drain(q)
-    assert len(msgs) == 1
-    assert msgs[0].meta["ranking"] == []
+    (msg,) = _drain(q)
+    assert msg.meta["ranking"] == []
