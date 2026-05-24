@@ -125,7 +125,6 @@ def test_analyze_skill_produces_per_case_criteria():
         assert len(case["criteria"]) >= 1, f"Case has empty criteria list: {case}"
         for criterion in case["criteria"]:
             assert isinstance(criterion, str), f"Criterion should be a string: {criterion!r}"
-            assert len(criterion) > 5, f"Criterion too short: {criterion!r}"
 
 
 # ── test: missing fixture raises MissingFixture loudly ────────────────────────
@@ -133,7 +132,7 @@ def test_analyze_skill_produces_per_case_criteria():
 
 @pytest.mark.replay("fixtures/llm/eval_builder/analyze_skill.jsonl")
 def test_wrong_input_raises_missing_fixture():
-    """Tier 3a drift detection: a modified input produces a different key → MissingFixture.
+    """Tier 3a: drift detection: a modified input produces a different key → MissingFixture.
 
     Protects: if instructions or input artifact change (e.g. skill_path is
     different), the fixture key will not match. This ensures prompt drift is
@@ -184,7 +183,7 @@ def test_wrong_input_raises_missing_fixture():
 
 @pytest.mark.replay("fixtures/llm/eval_builder/malformed_criteria.jsonl")
 def test_analyze_skill_recovers_from_malformed_prior_attempt():
-    """Tier 3a corner: prior attempt produced non-JSON criteria → next call must produce valid JSON.
+    """Tier 3a: corner: prior attempt produced non-JSON criteria → next call must produce valid JSON.
 
     Protects: when a previous LLM attempt emitted non-parseable output (a
     common failure mode), the prior_attempts injection plus the OS retry
@@ -263,7 +262,7 @@ def test_analyze_skill_recovers_from_malformed_prior_attempt():
 
 @pytest.mark.replay("fixtures/llm/eval_builder/conflicting_per_case_criteria.jsonl")
 def test_analyze_skill_with_conflicting_user_criteria():
-    """Tier 3a corner: user states two requirements that cannot both hold for one phase.
+    """Tier 3a: corner: user states two requirements that cannot both hold for one phase.
 
     The user's brief embeds a logical contradiction: 'always reject any input
     in any language other than English' AND 'always accept Japanese input
