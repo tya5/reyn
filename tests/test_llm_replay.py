@@ -35,7 +35,7 @@ _TOOLS_B = [
 
 
 def test_cache_key_differs_when_tools_differ():
-    """Same model + messages + different tools must produce distinct keys."""
+    """Tier 3a: Same model + messages + different tools must produce distinct keys."""
     key_a = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A)
     key_b = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_B)
     assert key_a != key_b, (
@@ -44,7 +44,7 @@ def test_cache_key_differs_when_tools_differ():
 
 
 def test_cache_key_same_when_tools_identical():
-    """Same model + messages + same tools → identical key (idempotent)."""
+    """Tier 3a: Same model + messages + same tools → identical key (idempotent)."""
     key_1 = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A)
     key_2 = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A)
     assert key_1 == key_2, (
@@ -53,7 +53,7 @@ def test_cache_key_same_when_tools_identical():
 
 
 def test_cache_key_handles_no_tools():
-    """Messages without tools= use the legacy key format — stable across runs.
+    """Tier 3a: Messages without tools= use the legacy key format — stable across runs.
 
     Backward-compat (Option A): when tools is None/[] and tool_choice is
     None/'', the key must equal the pre-PR35 format
@@ -80,7 +80,7 @@ def test_cache_key_handles_no_tools():
 
 
 def test_cache_key_tool_choice_affects_key():
-    """Same messages + same tools but different tool_choice → distinct keys."""
+    """Tier 3a: Same messages + same tools but different tool_choice → distinct keys."""
     key_auto = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A, tool_choice="auto")
     key_required = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A, tool_choice="required")
     assert key_auto != key_required, (
