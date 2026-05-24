@@ -25,12 +25,15 @@ class _FakeSession:
     """Minimal session stub for the /agent flow.
 
     Exposes only what the slash handler reads (``_registry``,
-    ``_put_outbox``). Captures emitted outbox messages so the test can
-    assert on the ``__attach_request__`` sentinel.
+    ``_put_outbox``, ``agent_name``, ``_agent_role``). Captures
+    emitted outbox messages so the test can assert on the
+    ``__attach_request__`` sentinel.
     """
 
-    def __init__(self, registry) -> None:
+    def __init__(self, registry, *, agent_name: str = "default", agent_role: str = "") -> None:
         self._registry = registry
+        self.agent_name = agent_name
+        self._agent_role = agent_role
         self.outbox_calls: list[OutboxMessage] = []
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
@@ -126,3 +129,134 @@ async def test_agent_new_rejects_invalid_name(tmp_path):
     )
     error_msgs = [m for m in session.outbox_calls if m.kind == "error"]
     assert error_msgs
+
+
+# ── /agent edit role ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_agent_edit_role_persists_to_profile_and_session(tmp_path):
+    """Tier 2: ``/agent edit role <text>`` writes the new role to disk
+    and updates ``session._agent_role`` so the next turn sees it."""
+    from reyn.chat.profile import AgentProfile
+    from reyn.chat.slash.agent import _edit_role
+
+    registry = _build_real_registry(tmp_path)
+    registry.create("gamma", role="old role")
+    session = _FakeSession(registry, agent_name="gamma", agent_role="old role")
+
+    await _edit_role(session, "  new persona text  ")
+
+    # Disk side: profile.yaml carries the new role (stripped).
+    reloaded = AgentProfile.load(tmp_path / ".reyn" / "agents" / "gamma")
+    assert reloaded.role == "new persona text"
+    # In-memory: session attribute mutated for next-turn pickup.
+    assert session._agent_role == "new persona text"
+    # Confirmation message landed on outbox (system kind, not error).
+    successes = [m for m in session.outbox_calls if m.kind == "system"]
+    assert successes, f"expected system reply; got {session.outbox_calls}"
+
+
+@pytest.mark.asyncio
+async def test_agent_edit_role_preserves_other_profile_fields(tmp_path):
+    """Tier 2: role edit MUST NOT clobber name / created_at / allowed_skills /
+    allowed_mcp."""
+    from reyn.chat.profile import PROFILE_FILENAME, AgentProfile
+    from reyn.chat.slash.agent import _edit_role
+
+    registry = _build_real_registry(tmp_path)
+    registry.create("delta", role="initial")
+    # Hand-write an allowed_skills + allowed_mcp config the create() flow
+    # doesn't set, to verify the edit doesn't drop them.
+    agent_dir = tmp_path / ".reyn" / "agents" / "delta"
+    profile = AgentProfile.load(agent_dir)
+    from dataclasses import replace
+    enriched = replace(
+        profile,
+        allowed_skills=["skill_a", "skill_b"],
+        allowed_mcp=["mcp_x"],
+    )
+    enriched.save(agent_dir)
+    original_created_at = enriched.created_at
+
+    session = _FakeSession(registry, agent_name="delta", agent_role="initial")
+    await _edit_role(session, "edited persona")
+
+    reloaded = AgentProfile.load(agent_dir)
+    assert reloaded.role == "edited persona"
+    assert reloaded.name == "delta"
+    assert reloaded.created_at == original_created_at
+    assert reloaded.allowed_skills == ["skill_a", "skill_b"]
+    assert reloaded.allowed_mcp == ["mcp_x"]
+
+
+@pytest.mark.asyncio
+async def test_agent_edit_role_empty_value_errors(tmp_path):
+    """Tier 2: empty / whitespace role → error message, no disk change."""
+    from reyn.chat.profile import AgentProfile
+    from reyn.chat.slash.agent import _edit_role
+
+    registry = _build_real_registry(tmp_path)
+    registry.create("eps", role="keep me")
+    session = _FakeSession(registry, agent_name="eps", agent_role="keep me")
+
+    await _edit_role(session, "   ")
+
+    errors = [m for m in session.outbox_calls if m.kind == "error"]
+    assert errors
+    # On-disk role unchanged.
+    assert AgentProfile.load(tmp_path / ".reyn" / "agents" / "eps").role == "keep me"
+    # In-memory role unchanged.
+    assert session._agent_role == "keep me"
+
+
+@pytest.mark.asyncio
+async def test_agent_edit_unknown_field_errors(tmp_path):
+    """Tier 2: ``/agent edit <field> ...`` with field ≠ ``role`` errors.
+
+    Drives the dispatcher (= ``_edit_agent``) so the sub-routing
+    layer is covered, not only the leaf handler."""
+    from reyn.chat.slash.agent import _edit_agent
+
+    registry = _build_real_registry(tmp_path)
+    session = _FakeSession(registry, agent_name="default", agent_role="r")
+
+    await _edit_agent(session, "name newname")
+
+    errors = [m for m in session.outbox_calls if m.kind == "error"]
+    assert errors
+    assert any("role" in m.text for m in errors)
+
+
+@pytest.mark.asyncio
+async def test_agent_edit_no_args_errors(tmp_path):
+    """Tier 2: bare ``/agent edit`` (= no sub-field) errors."""
+    from reyn.chat.slash.agent import _edit_agent
+
+    registry = _build_real_registry(tmp_path)
+    session = _FakeSession(registry, agent_name="default", agent_role="r")
+
+    await _edit_agent(session, "")
+
+    errors = [m for m in session.outbox_calls if m.kind == "error"]
+    assert errors
+
+
+@pytest.mark.asyncio
+async def test_agent_dispatcher_routes_edit_to_handler(tmp_path):
+    """Tier 2: the top-level ``agent_cmd`` dispatches ``edit role <text>``
+    through to the leaf handler (= ``_edit_role``)."""
+    from reyn.chat.profile import AgentProfile
+    from reyn.chat.slash.agent import agent_cmd
+
+    registry = _build_real_registry(tmp_path)
+    registry.create("zeta", role="before")
+    session = _FakeSession(registry, agent_name="zeta", agent_role="before")
+
+    await agent_cmd(session, "edit role after")
+
+    assert (
+        AgentProfile.load(tmp_path / ".reyn" / "agents" / "zeta").role
+        == "after"
+    )
+    assert session._agent_role == "after"
