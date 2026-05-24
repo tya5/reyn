@@ -137,6 +137,11 @@ class RightPanel(Widget):
         self._docs_files: list[Path] = []
         self._docs_groups: dict[str, list[Path]] = {}
         self._docs_filter: str = ""
+        # Language preference for the Docs tab. Two valid values: "en"
+        # (default — English preferred, Japanese fallback when .md absent)
+        # and "ja" (Japanese preferred, English fallback). Toggled by the
+        # ``g`` key while the Docs tab is active.
+        self._docs_lang: str = "en"
         self._preview_visible: bool = False
         self._panel_width: int = 0  # 0 = use CSS default (33%); set on first resize
         # run_id → {skill_name, agent_name, start_time, phase, phase_visits}
@@ -731,6 +736,20 @@ class RightPanel(Widget):
             if self._panel_type == "docs":
                 event.prevent_default()
                 self._prefill_docs_filter()
+        elif event.key == "g":
+            # Docs tab only: toggle language preference between "ja"
+            # (Japanese preferred, English fallback) and "en" (English
+            # preferred, Japanese fallback). Each concept appears once
+            # in the list; ``g`` is free on all other tabs (``ctrl+g``
+            # is already used for find-next but bare ``g`` is unused).
+            if self._panel_type == "docs":
+                event.prevent_default()
+                self._docs_lang = "en" if self._docs_lang == "ja" else "ja"
+                other = "en" if self._docs_lang == "ja" else "ja"
+                self._flash_status(
+                    f"docs lang: {self._docs_lang} ({other} fallback)"
+                )
+                self._invalidate()
 
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
@@ -1896,7 +1915,9 @@ class RightPanel(Widget):
         Docs tab. Falls through silently when docs/ or the target file are
         absent — the user stays on the events tab.
         """
-        groups, ordered = build_docs_index(self._project_root, "")
+        groups, ordered = build_docs_index(
+            self._project_root, "", lang=self._docs_lang,
+        )
         if not ordered:
             self._flash_status("docs/: not found")
             return
@@ -2246,7 +2267,7 @@ class RightPanel(Widget):
         if self._panel_type == "docs":
             return (
                 f"[bold {_CORAL}]Docs[/]"
-                f"  [#555555]j↓ k↑ space=open /=filter[/]"
+                f"  [#555555]j↓ k↑ space=open /=filter g=lang[/]"
             )
         if self._panel_type == "pending":
             # Issue #277 — Pending tab keybinds: j/k cursor +
@@ -2341,6 +2362,7 @@ class RightPanel(Widget):
             if self._panel_type == "docs":
                 groups, ordered = build_docs_index(
                     self._project_root, self._docs_filter,
+                    lang=self._docs_lang,
                 )
                 self._docs_groups = groups
                 self._docs_files = ordered
@@ -2349,6 +2371,7 @@ class RightPanel(Widget):
                 return render_docs(
                     self._project_root, self._docs_cursor, groups,
                     docs_filter=self._docs_filter,
+                    lang=self._docs_lang,
                 )
             if self._panel_type == "pending":
                 # Issue #277 — surface stalled / cross-channel ops.

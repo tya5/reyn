@@ -95,6 +95,11 @@ _KEY_DETAILS: dict[str, str] = {
         "below_min_batch / below_threshold / already_running).\n"
         "When on, shows everything. Only active on the Events tab."
     ),
+    "g": (
+        "Docs tab only. Switches language preference: ja → en → ja.\n"
+        "Each concept appears once; (ja)/(en) suffix marks fallback\n"
+        "rows when the preferred variant is absent."
+    ),
 }
 
 
@@ -159,9 +164,9 @@ _PANEL_KEYS = {
     "ctrl+5", "ctrl+6", "ctrl+7",
 }
 _EVENTS_KEYS = {"f", "t", "i", "v"}
-# ``/`` stays DOCS-only — it opens the docs name filter, no other tab
-# consumes it.
-_DOCS_KEYS = {"/"}
+# ``/`` and ``g`` stay DOCS-only — ``/`` opens the docs name filter;
+# ``g`` toggles the language preference (ja preferred / en preferred).
+_DOCS_KEYS = {"/", "g"}
 _GROUP_ORDER = [
     "GLOBAL", "INPUT", "CONVERSATION", "PANEL",
     "EVENTS (gated)", "DOCS (gated)", "OTHER", "MOUSE",
@@ -305,6 +310,9 @@ def render_keys(
         # Events tab ``v`` = toggle verbose mode. Default-off hides
         # compaction_check noise; verbose-on shows everything.
         ("v", "Toggle verbose (events tab)"),
+        # Lang toggle: each doc concept appears once; ``g`` switches the
+        # preferred language (ja ↔ en). Only active on the Docs tab.
+        ("g", "Toggle docs language preference (ja ↔ en, docs tab only)"),
     ]
     # Note: memory tab's ``t`` (= cycle_memory_type_filter, wave-11
     # A#1) is intentionally NOT in this list because ``t`` is already
