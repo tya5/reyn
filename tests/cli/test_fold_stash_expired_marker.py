@@ -110,9 +110,7 @@ async def test_long_reply_after_fold_adds_second_foldable():
         assert conv._last_long_reply != first_stash
         # Two FoldableMarkdown widgets mounted
         foldables = list(conv.query(FoldableMarkdown))
-        assert len(foldables) == 2, (
-            f"expected 2 foldable widgets, got {len(foldables)}"
-        )
+        fm_first, fm_second = foldables  # exactly 2 foldable widgets expected
 
 
 @pytest.mark.asyncio

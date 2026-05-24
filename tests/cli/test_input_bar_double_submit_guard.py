@@ -100,8 +100,8 @@ async def test_submit_during_in_flight_swallows_text_unchanged() -> None:
         # First submit: text populated, _submit called → posts + locks.
         ta.load_text("hi")
         bar._submit(ta)
-        assert len(posted) == 1
-        assert posted[0].text == "hi"
+        (first_msg,) = posted
+        assert first_msg.text == "hi"
         assert bar._in_flight is True
         assert bar.has_class("in-flight")
         assert ta.text == "", "first submit should clear the TextArea"
@@ -109,7 +109,7 @@ async def test_submit_during_in_flight_swallows_text_unchanged() -> None:
         # Second submit while locked: text NOT cleared, NO new message.
         ta.load_text("yo")
         bar._submit(ta)
-        assert len(posted) == 1, (
+        assert posted == [first_msg], (
             f"second submit slipped through while in-flight: {posted!r}"
         )
         assert ta.text == "yo", (
@@ -119,8 +119,8 @@ async def test_submit_during_in_flight_swallows_text_unchanged() -> None:
         # Release the lock + submit again: posts normally.
         bar.set_in_flight(False)
         bar._submit(ta)
-        assert len(posted) == 2
-        assert posted[1].text == "yo"
+        first_msg2, second_msg = posted
+        assert second_msg.text == "yo"
         assert ta.text == ""
 
 

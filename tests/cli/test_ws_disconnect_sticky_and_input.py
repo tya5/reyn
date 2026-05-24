@@ -199,7 +199,7 @@ async def test_disconnect_submit_swallowed_no_user_submitted_posted() -> None:
         ta.load_text("hello after disconnect")
         bar._submit(ta)
 
-        assert len(posted) == 0, (
+        assert not posted, (
             f"UserSubmitted must not be posted when disconnected, got {posted!r}"
         )
 

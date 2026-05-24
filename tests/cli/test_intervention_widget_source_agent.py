@@ -71,10 +71,8 @@ async def test_widget_renders_source_agent_label_when_provided() -> None:
         await pilot.pause()
 
         labels = list(app.query("Label.iv-source-agent"))
-        assert len(labels) == 1, (
-            f"expected exactly 1 source-agent label; got {len(labels)}"
-        )
-        text = str(labels[0].render())
+        (source_label,) = labels  # exactly 1 source-agent label expected
+        text = str(source_label.render())
         assert "parent: planner" in text, (
             f"label must read '[parent: planner]'; got {text!r}"
         )

@@ -72,10 +72,7 @@ async def test_flush_render_calls_scroll_visible_once_per_append_cycle() -> None
         row.append("hello world")
         assert row._height_dirty is True
         row._flush_render()
-        assert len(calls) == 1, (
-            f"flush after append should call scroll_visible once, "
-            f"got {len(calls)}"
-        )
+        (only_call,) = calls  # exactly one scroll_visible per append+flush cycle
         # After flush, the flag is consumed.
         assert row._height_dirty is False
 

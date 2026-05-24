@@ -34,11 +34,10 @@ from reyn.cli.commands import auth as auth_mod
 def test_box_user_code_renders_three_line_unicode_box() -> None:
     """Tier 2: box has top border, code line, bottom border (= 3 lines)."""
     out = auth_mod._box_user_code("ABCD-EFGH")
-    lines = out.splitlines()
-    assert len(lines) == 3
-    assert "┌" in lines[0] and "┐" in lines[0]
-    assert "ABCD-EFGH" in lines[1]
-    assert "└" in lines[2] and "┘" in lines[2]
+    top, mid, bot = out.splitlines()  # exactly 3 lines: top border / code / bottom border
+    assert "┌" in top and "┐" in top
+    assert "ABCD-EFGH" in mid
+    assert "└" in bot and "┘" in bot
 
 
 def test_box_user_code_border_width_matches_inner_width() -> None:

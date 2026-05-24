@@ -65,7 +65,7 @@ async def test_initial_find_status_omits_hint_when_single_match() -> None:
 
     With only one match, Ctrl+G would just cycle back to itself
     (= len-1 wrap). Surfacing the hint would imply there's
-    "next" to go to. Suppress when ``len(matches) == 1``.
+    "next" to go to. Suppress when exactly one match is present.
     """
     from rich.text import Text
 

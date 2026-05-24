@@ -39,8 +39,8 @@ async def test_session_proxy_answer_intervention_sends_wire_frame() -> None:
     proxy = _WSSessionProxy(agent_name="planner", send_fn=_recorder)
     await proxy._maybe_answer_oldest_intervention("Yes")
 
-    assert len(sent) == 1
-    assert sent[0] == {"type": "answer_intervention", "text": "Yes"}
+    (only_frame,) = sent
+    assert only_frame == {"type": "answer_intervention", "text": "Yes"}
 
 
 @pytest.mark.asyncio

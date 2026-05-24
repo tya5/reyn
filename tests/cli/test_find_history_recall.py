@@ -190,9 +190,9 @@ async def test_find_cmd_records_history_on_invocation() -> None:
     snap = _find_history_snapshot()
     assert snap[0] == "needle in haystack"
     # And the outbox got the sentinel as well.
-    assert len(session.outbox) == 1
-    assert session.outbox[0].kind == "__find__"
-    assert session.outbox[0].text == "needle in haystack"
+    (outbox_msg,) = session.outbox
+    assert outbox_msg.kind == "__find__"
+    assert outbox_msg.text == "needle in haystack"
 
 
 @pytest.mark.asyncio

@@ -177,9 +177,9 @@ async def test_session_proxy_submit_sends_user_message_frame() -> None:
     proxy = _WSSessionProxy(agent_name="planner", send_fn=_recorder)
     await proxy.submit_user_text("hello world")
 
-    assert len(sent) == 1
-    assert sent[0]["type"] == "user_message"
-    assert sent[0]["text"] == "hello world"
+    (only_frame,) = sent
+    assert only_frame["type"] == "user_message"
+    assert only_frame["text"] == "hello world"
 
 
 def test_session_proxy_exposes_attrs_tui_reads_defensively() -> None:

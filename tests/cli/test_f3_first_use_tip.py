@@ -75,8 +75,8 @@ async def test_maybe_emit_f3_tip_emits_when_unseen(
         result = app._maybe_emit_f3_tip(emitted.append)
 
         assert result is True
-        assert len(emitted) == 1
-        assert "drill-down" in emitted[0]
+        (only_tip,) = emitted  # exactly one tip emitted on first call
+        assert "drill-down" in only_tip
 
         # Flag persisted to disk.
         prefs_path = tmp_path / ".reyn" / "tui_prefs.json"

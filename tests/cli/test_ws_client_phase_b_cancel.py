@@ -38,8 +38,8 @@ async def test_session_proxy_cancel_inflight_sends_wire_frame() -> None:
     proxy = _WSSessionProxy(agent_name="planner", send_fn=_recorder)
     await proxy.cancel_inflight()
 
-    assert len(sent) == 1
-    assert sent[0] == {"type": "cancel_inflight"}
+    (only_frame,) = sent
+    assert only_frame == {"type": "cancel_inflight"}
 
 
 @pytest.mark.asyncio
