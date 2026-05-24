@@ -8,7 +8,7 @@ Tests for the real handlers in
   2. list_actions enumerates dynamic categories (skill /
      agent.peer / mcp.{server,tool} / memory.entry) when
      RouterCallerState is populated.
-  3. list_actions offset / limit / category arguments.
+  3. list_actions filter / offset / limit / category arguments.
   4. describe_action returns the target's description / parameters
      from the registry.
   5. invoke_action delegates to the target handler with transformed
@@ -390,7 +390,16 @@ def test_list_actions_dynamic_category_empty_when_state_absent() -> None:
     assert result["total"] == 0
 
 
-# ── 3. pagination ─────────────────────────────────────────────────────────
+# ── 3. filter / pagination ────────────────────────────────────────────────
+
+
+def test_list_actions_text_filter_case_insensitive() -> None:
+    """Tier 2: filter substring match is case-insensitive."""
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["file"], "filter": "READ"}, _make_ctx(),
+    ))
+    qns = [it["qualified_name"] for it in result["items"]]
+    assert "file__read" in qns
 
 
 def test_list_actions_pagination_offset_limit() -> None:

@@ -3,7 +3,7 @@
 2026-05-21 dogfood smoke (8 popular MCP servers) revealed that
 Gemini-flash-lite (= Reyn default workhorse model) consistently
 refused capability requests for installed-but-non-hot-listed MCP
-tools instead of calling ``list_actions`` to discover them. Root
+tools instead of calling ``list_actions(filter='<server>')``. Root
 cause analysis (= per-trace replay across sqlite / everything /
 fetch):
 
@@ -22,8 +22,8 @@ coaching):
     section now ends with an explicit catalog-partial signal:
     "function list is a HOT-LIST (= a subset). Whenever the user
     requests a capability and no listed tool obviously matches,
-    ALWAYS call list_actions before refusing. Refusing without that
-    check is a failure mode."
+    ALWAYS call list_actions(filter='<keyword>') before refusing.
+    Refusing without that check is a failure mode."
 
   - (B) ``_LIST_ACTIONS_DESCRIPTION`` rewritten from "browse the
     catalog" to "discover the FULL catalog superset". The "WHEN"
@@ -184,18 +184,18 @@ def test_list_actions_description_keeps_post_call_directive() -> None:
 
 
 def test_list_actions_description_is_domain_agnostic() -> None:
-    """Tier 2: the description must not contain a coaching rule that
+    """Tier 2: the new description's examples mention server-name
+    filters in the abstract (e.g. "filter='sqlite'") but only as
+    syntactic illustration of how the `filter` param accepts a
+    string. The description must not contain a coaching rule that
     names specific MCP servers / tools as required discovery
-    targets. Project policy forbids SP overfit (= "specific server X
-    has a tool Y" rules). The rule is structural — "when catalog
-    seems incomplete, call list_actions" — applies uniformly to all
-    servers / tools. Verify by ensuring no imperative form coaches
-    a specific server lookup.
+    targets. Verify by ensuring no imperative form coaches a
+    specific server lookup.
     """
     desc = _LIST_ACTIONS_DESCRIPTION
-    # The description must NOT contain an imperative that names a
-    # specific server (= "always check sqlite", "must call for
-    # sqlite", "specifically for the sqlite server", etc.).
+    # The description IS allowed to mention "sqlite" as a syntactic
+    # example of what `filter` accepts. It must NOT contain an
+    # imperative ("always check sqlite", "must call for sqlite", etc.).
     forbidden_imperatives = [
         "always call for sqlite",
         "must check sqlite",
