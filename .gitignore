@@ -64,5 +64,7 @@ spike_results/
 # chainlit.md welcome page + .chainlit/{config.toml,translations/} in
 # cwd). User-editable but not part of reyn's source — per-project
 # customization belongs in operator's workspace, not the repo.
-chainlit.md
-.chainlit/
+# Anchored to repo root so the shipped asset under
+# src/reyn/chainlit_app/assets/chainlit.md is tracked.
+/chainlit.md
+/.chainlit/
