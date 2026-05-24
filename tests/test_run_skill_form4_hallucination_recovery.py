@@ -46,7 +46,7 @@ from reyn.skill.skill_paths import SkillNotFoundError
 ])
 def test_form4_recovers_known_hallucinations_to_direct_llm(hallucinated_ref):
     """Tier 2: each of the 3 N=3-reproduced hallucination
-    forms (B47-fix) resolves to direct_llm via form-4 normalization."""
+    forms resolves to direct_llm via form-4 normalization."""
     md_path, _path_for_hash, _root = _resolve_skill_ref(hallucinated_ref)
     assert md_path.endswith("/stdlib/skills/direct_llm/skill.md"), (
         f"hallucinated ref {hallucinated_ref!r} should resolve to "

@@ -60,11 +60,11 @@ def test_skip_policy_injects_committed_step_for_ambiguous(tmp_path):
         s for s in decision.plan.committed_steps
         if s.op_invocation_id == "draft.0"
     ]
-    assert len(matched) == 1, (
-        "skip must inject a CommittedStep matching the AmbiguousStep's id; "
+    assert matched and matched[0].op_invocation_id == "draft.0", (
+        "skip must inject exactly one CommittedStep matching the AmbiguousStep's id; "
         f"got {decision.plan.committed_steps}"
     )
-    synthetic = matched[0]
+    (synthetic,) = matched
     assert synthetic.op_kind == "file"
     assert synthetic.phase == "draft"
     assert synthetic.args_hash == "abc123"
