@@ -35,7 +35,7 @@ if str(_SRC) not in sys.path:
 
 @pytest.mark.asyncio
 async def test_normal_click_toggles_expanded_and_class() -> None:
-    """Tier 2 (regression): the happy path still works."""
+    """Tier 2b: the happy path still works (regression)."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
 

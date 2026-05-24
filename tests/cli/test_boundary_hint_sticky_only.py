@@ -80,7 +80,7 @@ async def test_end_boundary_hint_writes_sticky_only() -> None:
 
 @pytest.mark.asyncio
 async def test_repeated_direction_dedup_unchanged() -> None:
-    """Tier 2 (regression): rapid boundary repeats still deduped."""
+    """Tier 2b: rapid boundary repeats still deduped (regression)."""
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
 

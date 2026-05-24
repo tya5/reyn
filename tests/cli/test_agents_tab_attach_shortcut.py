@@ -101,7 +101,7 @@ async def test_a_key_on_non_agent_row_is_silent_noop() -> None:
 
 @pytest.mark.asyncio
 async def test_a_key_on_empty_agents_tab_is_safe() -> None:
-    """Tier 2 (regression): empty flat_items → safe no-op (no IndexError)."""
+    """Tier 2b: empty flat_items → safe no-op (no IndexError) (regression)."""
     from textual.widgets import TextArea
 
     from reyn.chat.tui.app import ReynTUIApp

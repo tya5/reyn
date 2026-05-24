@@ -115,7 +115,7 @@ def test_running_plan_bundle_uses_plan_id_full() -> None:
 
 
 def test_running_plan_bundle_falls_back_on_missing_full_id() -> None:
-    """Tier 2 (regression): older callers without plan_id_full still work.
+    """Tier 2b: older callers without plan_id_full still work (regression).
 
     A flat_item lacking ``plan_id_full`` (= constructed by an older
     code path) should still produce a bundle using the truncated

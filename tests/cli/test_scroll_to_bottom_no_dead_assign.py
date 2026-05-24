@@ -48,7 +48,7 @@ async def test_scroll_to_bottom_still_resets_user_scrolled_flag() -> None:
 
 
 def test_scroll_to_bottom_source_has_no_duplicate_flag_set() -> None:
-    """Tier 2 (source-level): the body has exactly one path to flag-reset.
+    """Tier 2b: the body has exactly one path to flag-reset (source-level).
 
     Pins the cleanup so a future refactor can't silently re-add the
     duplicate. The ``_user_scrolled = False`` line should appear at
