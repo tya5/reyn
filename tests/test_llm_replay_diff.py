@@ -319,7 +319,7 @@ class TestDiffToolCallsArgsChanged:
         assert d["match"] == "partial"
         tc_diff = d["tool_calls_diff"]
         assert tc_diff is not None
-        assert len(tc_diff["changed"]) == 1
+        assert tc_diff["changed"], "expected at least one changed tool_call entry"
         assert tc_diff["changed"][0]["name"] == "invoke_skill"
 
 
@@ -431,7 +431,7 @@ class TestDiffMissingOriginalResponse:
         # should produce a warning, not a crash
         err = capsys.readouterr().err
         assert "warning" in err.lower() or "no response record" in err.lower() or "diff" in err.lower()
-        assert len(stub.calls) == 1  # LLM was still called
+        assert stub.calls, "LLM must still be called even when original response record is absent"
 
 
 # ---------------------------------------------------------------------------

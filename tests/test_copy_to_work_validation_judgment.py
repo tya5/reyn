@@ -147,7 +147,7 @@ def _make_frame(skill, validation_ok: bool) -> ContextFrame:
 
 @pytest.mark.replay("fixtures/llm/copy_to_work_validation/validation_ok.jsonl")
 def test_copy_to_work_transitions_when_validation_ok():
-    """Tier 3a (LLM replay): copy_to_work phase transitions to run_and_eval when validation.ok=True.
+    """Tier 3a: copy_to_work phase transitions to run_and_eval when validation.ok=True.
 
     Pins the LLM judgment behavior for the positive case: the preprocessor
     reports a successful copy (validation.ok=True, files_written=files_expected),
@@ -215,7 +215,7 @@ def test_copy_to_work_transitions_when_validation_ok():
 )
 @pytest.mark.replay("fixtures/llm/copy_to_work_validation/validation_fail.jsonl")
 def test_copy_to_work_aborts_when_validation_fails():
-    """Tier 3a (LLM replay): copy_to_work phase aborts when validation.ok=False.
+    """Tier 3a: copy_to_work phase aborts when validation.ok=False.
 
     Pins the LLM judgment behavior for the failure case: the preprocessor
     reports a failed copy (validation.ok=False, files_written=0,

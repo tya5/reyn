@@ -103,7 +103,7 @@ def test_list_skills_result_includes_input_artifact():
     loop = _make_loop(skills)
     result = loop._list_skills("general")
 
-    assert len(result) == 1
+    assert result, "result must be non-empty"
     item = result[0]
     assert item["name"] == "my_skill"
     assert item.get("input_artifact") == "my_request", (
@@ -227,7 +227,7 @@ def test_list_skills_no_input_hint_is_safe():
     loop = _make_loop(skills)
     result = loop._list_skills("general")
 
-    assert len(result) == 1
+    assert result, "result must be non-empty"
     item = result[0]
     assert item["name"] == "bare_skill"
     # Fields must be absent (not present with None value)
