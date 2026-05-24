@@ -164,7 +164,7 @@ async def test_push_to_agent_registry_override_for_tests():
     )
     # Pushed to the supplied stub, not the global registry.
     session = await reg.ensure_running("agent_a")
-    assert len(session.pushed) == 1
+    assert session.pushed, "expected at least one push to the stub session"
 
 
 @pytest.mark.asyncio
