@@ -108,9 +108,10 @@ reyn chat
 > What time is it in Tokyo right now?
 ```
 
-The agent calls `mcp.tool__time.get_current_time` and replies in
-natural language. For multi-timezone queries ("Tokyo, NYC, London"),
-the agent chains 3 calls and synthesises one answer.
+The agent calls `mcp__call_tool({tool: "time__get_current_time", args:
+{timezone: "Asia/Tokyo"}})` and replies in natural language. For
+multi-timezone queries ("Tokyo, NYC, London"), the agent chains 3
+calls and synthesises one answer.
 
 ### Tools surfaced
 
@@ -146,8 +147,8 @@ reyn chat
 > Summarise the last 3 commits in this repo.
 ```
 
-The agent calls `mcp.tool__git.git_log` with `repo_path` set to the
-session's working directory and produces a short summary.
+The agent calls `mcp__call_tool({tool: "git__git_log", args: {repo_path:
+"<session cwd>", max_count: 3}})` and produces a short summary.
 
 ### Tools surfaced
 
@@ -190,8 +191,9 @@ reyn chat
 > Use sequential-thinking to plan how to organise a personal task list.
 ```
 
-The agent emits a series of `mcp.tool__sequential_thinking.sequentialthinking`
-calls (typically 5-7 thoughts) and synthesises the chain into a
+The agent emits a series of `mcp__call_tool({tool:
+"sequential_thinking__sequentialthinking", args: {...}})` calls
+(typically 5-7 thoughts) and synthesises the chain into a
 natural-language plan. The server tracks the thought history
 internally; multiple calls build up a chain inside one server
 lifetime.
@@ -246,8 +248,9 @@ reyn chat
 > insert a row with body "first note", and show me everything in the table.
 ```
 
-The agent chains three `mcp.tool__sqlite.*` calls (= `create_table` →
-`write_query` → `read_query`) within one turn. Post-PR #342 success
+The agent chains three `mcp__call_tool` calls (= `sqlite__create_table`
+→ `sqlite__write_query` → `sqlite__read_query`) within one turn.
+Post-PR #342 success
 rate ≈ 90% on clean history; if the agent says "I cannot list
 tables...", wipe the history (line above) and retry — see #352 for
 why.
@@ -291,9 +294,9 @@ reyn chat
 > Use the everything MCP server to compute 17 plus 25.
 ```
 
-The agent calls `mcp.tool__everything.get-sum` with `{a: 17, b: 25}`
-and reports the result. Post-PR #342 success rate ≈ 90% on clean
-history.
+The agent calls `mcp__call_tool({tool: "everything__get-sum", args:
+{a: 17, b: 25}})` and reports the result. Post-PR #342 success rate ≈
+90% on clean history.
 
 > Note: explicitly mentioning "the everything MCP server" in the
 > prompt helps the router disambiguate; with a generic "compute 17

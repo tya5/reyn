@@ -134,15 +134,16 @@ def test_mcp_servers_missing_method_falls_back_to_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_actions_mcp_server_surfaces_servers_e2e() -> None:
-    """Tier 2: end-to-end — list_actions(category=["mcp.server"]) returns
-    qualified names for every host-configured server.
+async def test_list_actions_mcp_returns_collapsed_verb_surface_e2e() -> None:
+    """Tier 2: end-to-end — list_actions(category=["mcp"]) returns the
+    six verb_object actions regardless of which servers are installed.
 
-    This is the user-observed symptom: ``reyn mcp list`` shows servers,
-    but ``list_actions(category="mcp.server")`` returned []. Pin the
-    fix at the enumerator boundary too.
+    Issue #879 collapsed the previous mcp.server / mcp.tool /
+    mcp.operation sub-categories; ``reyn mcp list`` still shows
+    installed servers, but ``list_actions(category="mcp")`` now returns
+    the verb actions the LLM uses to drive search / install / list /
+    call / drop. Per-server enumeration moves to mcp__list_servers.
     """
-    from reyn.chat.router_loop import RouterLoop
     from reyn.tools.types import ToolContext
     from reyn.tools.universal_catalog import LIST_ACTIONS
 
@@ -159,6 +160,10 @@ async def test_list_actions_mcp_server_surfaces_servers_e2e() -> None:
         caller_kind="router",
         router_state=rs,
     )
-    result = await LIST_ACTIONS.handler({"category": ["mcp.server"]}, ctx)
+    result = await LIST_ACTIONS.handler({"category": ["mcp"]}, ctx)
     qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {"mcp.server__brave", "mcp.server__github"}
+    assert qns == {
+        "mcp__search_server", "mcp__install_server",
+        "mcp__list_servers", "mcp__list_tools",
+        "mcp__call_tool", "mcp__drop_server",
+    }

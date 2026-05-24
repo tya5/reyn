@@ -78,6 +78,11 @@ def get_default_registry() -> ToolRegistry:
     )
     from reyn.tools.mcp_drop import MCP_DROP_SERVER_OP
     from reyn.tools.mcp_install import MCP_INSTALL_OP
+    from reyn.tools.mcp_verbs import (
+        MCP_CALL_TOOL,
+        MCP_INSTALL_SERVER,
+        MCP_SEARCH_SERVER,
+    )
     from reyn.tools.memory import (
         FORGET_MEMORY,
         LIST_MEMORY,
@@ -183,6 +188,11 @@ def get_default_registry() -> ToolRegistry:
     # Reachable via universal_action ``mcp.operation__drop_server`` AND
     # as a phase Control IR op kind="mcp_drop_server".
     registry.register(MCP_DROP_SERVER_OP)
+    # Issue #879: verb-object MCP wrappers — pure op-runtime handlers
+    # (no skill spawn) under the new ``mcp`` category in _OPERATION_RULES.
+    registry.register(MCP_SEARCH_SERVER)
+    registry.register(MCP_INSTALL_SERVER)
+    registry.register(MCP_CALL_TOOL)
     # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
     # PR-3a registers them in the registry; PR-3b will add them to
     # build_tools() output and refactor the SP. Handlers wire through

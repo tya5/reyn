@@ -106,22 +106,23 @@ def test_list_actions_memory_operation_static_category() -> None:
     }
 
 
-def test_list_actions_mcp_operation_static_category() -> None:
-    """Tier 2: list_actions(category=['mcp.operation']) returns drop_server.
+def test_list_actions_mcp_static_category_returns_collapsed_surface() -> None:
+    """Tier 2: list_actions(category=['mcp']) returns the six verb actions.
 
-    PR-4 landed ``mcp.operation__drop_server`` routing rules, and PR-3c
-    wired ``mcp.operation`` into the static-category enumeration list.
-    Without this fix the LLM cannot discover the drop_server op via the
-    universal catalog even though invoke_action would route it.
+    Issue #879 collapsed the previous mcp.server / mcp.tool / mcp.operation
+    sub-categories into a single ``mcp`` category whose static qns cover
+    the LLM-visible verb surface (search_server / install_server /
+    list_servers / list_tools / call_tool / drop_server).
     """
     result = _run(LIST_ACTIONS.handler(
-        {"category": ["mcp.operation"]}, _make_ctx(),
+        {"category": ["mcp"]}, _make_ctx(),
     ))
     qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {"mcp.operation__drop_server"}, (
-        f"mcp.operation enumeration drifted: got {qns}, "
-        f"expected {{'mcp.operation__drop_server'}}"
-    )
+    assert qns == {
+        "mcp__search_server", "mcp__install_server",
+        "mcp__list_servers", "mcp__list_tools",
+        "mcp__call_tool", "mcp__drop_server",
+    }, f"mcp enumeration drifted: got {qns}"
 
 
 def test_list_actions_short_description_present() -> None:
@@ -185,46 +186,6 @@ def test_list_actions_agent_peer_category_uses_router_state() -> None:
     ))
     qns = {it["qualified_name"] for it in result["items"]}
     assert qns == {"agent.peer__alice", "agent.peer__bob"}
-
-
-def test_list_actions_mcp_server_category_uses_router_state() -> None:
-    """Tier 2: mcp.server category enumerates from rs.mcp_servers."""
-    rs = RouterCallerState(
-        mcp_servers=[
-            {"name": "brave", "description": "Brave Search"},
-            {"name": "github", "description": "GitHub"},
-        ],
-    )
-    result = _run(LIST_ACTIONS.handler(
-        {"category": ["mcp.server"]}, _make_ctx(rs),
-    ))
-    qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {"mcp.server__brave", "mcp.server__github"}
-
-
-def test_list_actions_mcp_tool_category_enumerates_per_server() -> None:
-    """Tier 2: mcp.tool category enumerates server.tool tuples."""
-    rs = RouterCallerState(
-        mcp_servers=[
-            {
-                "name": "brave",
-                "tools": [
-                    {"name": "search", "description": "Web search"},
-                    {"name": "news", "description": "News"},
-                ],
-            },
-            {"name": "github", "tools": [{"name": "create_issue"}]},
-        ],
-    )
-    result = _run(LIST_ACTIONS.handler(
-        {"category": ["mcp.tool"]}, _make_ctx(rs),
-    ))
-    qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {
-        "mcp.tool__brave.search",
-        "mcp.tool__brave.news",
-        "mcp.tool__github.create_issue",
-    }
 
 
 def test_list_actions_rag_corpus_category_uses_router_state() -> None:
@@ -438,16 +399,17 @@ def test_describe_action_returns_target_description_and_schema() -> None:
     assert "purity" in meta
 
 
-def test_describe_action_for_resource_invoke_routes_to_canonical_target() -> None:
-    """Tier 2: describe of a resource (mcp.server) shows the canonical target.
+def test_describe_action_for_collapsed_mcp_verb_routes_to_handler() -> None:
+    """Tier 2: describe of a mcp__* verb returns the handler-tool as target.
 
-    §D19: mcp.server's canonical invoke is list_mcp_tools; describe
-    should surface that as the target_tool_name in metadata.
+    Issue #879 collapsed surface: mcp__list_servers' canonical target is
+    the existing list_mcp_servers handler; describe surfaces that as the
+    target_tool_name in metadata.
     """
     result = _run(DESCRIBE_ACTION.handler(
-        {"action_name": "mcp.server__brave"}, _make_ctx(),
+        {"action_name": "mcp__list_servers"}, _make_ctx(),
     ))
-    assert result["metadata"]["target_tool_name"] == "list_mcp_tools"
+    assert result["metadata"]["target_tool_name"] == "list_mcp_servers"
 
 
 def test_describe_action_missing_action_name_returns_error() -> None:

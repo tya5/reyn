@@ -1430,28 +1430,13 @@ class RouterLoop:
                         "input_schema": _s["input_schema"],
                         "input_wrapped": bool(_s.get("input_wrapped", True)),
                     }
-            # FP-0034 D2-full step 3: per-MCP-tool inputSchema lookup
-            # so ``mcp.tool__<server>.<tool>`` aliases expose the
-            # tool's declared args directly. host.get_mcp_servers()
-            # returns the FP-0032 expanded shape with nested tools.
-            for _srv in (host.get_mcp_servers() or []):
-                if not isinstance(_srv, dict):
-                    continue
-                _server_name = _srv.get("name")
-                if not _server_name:
-                    continue
-                for _t in (_srv.get("tools") or []):
-                    if not isinstance(_t, dict):
-                        continue
-                    _tool_name = _t.get("name")
-                    _input_schema = _t.get("inputSchema") or _t.get("input_schema")
-                    if not _tool_name or not _input_schema:
-                        continue
-                    _qn = f"mcp.tool__{_server_name}.{_tool_name}"
-                    _mcp_tool_map[_qn] = {
-                        "description": str(_t.get("description") or ""),
-                        "input_schema": _input_schema,
-                    }
+            # Issue #879: per-mcp-tool aliases (``mcp.tool__<srv>.<tool>``)
+            # were removed when the mcp surface collapsed to six verb
+            # actions. LLMs now dispatch tool calls through
+            # ``mcp__call_tool(server, mcp_tool_name, args)`` and learn
+            # the per-tool args via ``mcp__list_tools`` /
+            # ``describe_mcp_tool``. The previous per-tool input-schema
+            # lookup is no longer wired here.
         # FP-0034 Phase 2 step 5: hot list aliases for frequent actions.
         # Build only when universal wrappers are on and a tracker is present.
         _hot_list_aliases: list[dict] | None = None

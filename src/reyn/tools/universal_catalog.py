@@ -58,9 +58,12 @@ if TYPE_CHECKING:
 CATEGORIES: Final[tuple[str, ...]] = (
     "skill",
     "agent.peer",
-    "mcp.server",
-    "mcp.tool",
-    "mcp.operation",
+    # Issue #879: collapsed the previous mcp.server / mcp.tool /
+    # mcp.operation sub-categories + skill__mcp_search / skill__mcp_install
+    # into a single ``mcp`` category with six verb_object actions
+    # (mcp__search_server / install_server / list_servers / list_tools /
+    # call_tool / drop_server). See universal_dispatch._OPERATION_RULES.
+    "mcp",
     "file",
     "web",
     "memory.entry",
@@ -543,7 +546,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
 
     if category in (
         "file", "web", "memory.operation", "reyn.source", "rag.operation",
-        "mcp.operation", "validation",
+        "mcp", "validation",
     ):
         return _enumerate_static_category(category)
 
@@ -574,48 +577,6 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             for a in rs.available_agents
             if isinstance(a, Mapping) and "name" in a
         ]
-
-    if category == "mcp.server":
-        if rs is None or not rs.mcp_servers:
-            return []
-        return [
-            {
-                "qualified_name": build_qualified_name("mcp.server", s["name"]),
-                "short_description": _truncate_short_description(
-                    s.get("description", ""),
-                ),
-            }
-            for s in rs.mcp_servers
-            if isinstance(s, Mapping) and "name" in s
-        ]
-
-    if category == "mcp.tool":
-        if rs is None or not rs.mcp_servers:
-            return []
-        out: list[dict[str, str]] = []
-        for srv in rs.mcp_servers:
-            if not isinstance(srv, Mapping):
-                continue
-            srv_name = srv.get("name")
-            if not srv_name:
-                continue
-            tools = srv.get("tools") or []
-            for tool in tools:
-                if not isinstance(tool, Mapping):
-                    continue
-                tool_name = tool.get("name")
-                if not tool_name:
-                    continue
-                qn = build_qualified_name(
-                    "mcp.tool", f"{srv_name}.{tool_name}",
-                )
-                out.append({
-                    "qualified_name": qn,
-                    "short_description": _truncate_short_description(
-                        tool.get("description", ""),
-                    ),
-                })
-        return out
 
     if category == "rag.corpus":
         # FP-0034 Phase 2 prep: enumerate indexed RAG corpora from the
@@ -982,40 +943,11 @@ def _resource_input_schema(
             return None
         return _drop_field_from_schema(tool.parameters, "to")
 
-    if category == "mcp.server":
-        # list_mcp_tools is curried with ``server=<entry_name>``; user-
-        # facing args are empty.
-        return {"type": "object", "properties": {}, "required": []}
-
     if category == "rag.corpus":
         tool = registry.lookup("recall")
         if tool is None:
             return None
         return _drop_field_from_schema(tool.parameters, "sources")
-
-    if category == "mcp.tool":
-        # entry_name is ``<server>.<tool>``; split on first '.'.
-        mcp_servers = (
-            getattr(rs, "mcp_servers", None) if rs is not None else None
-        )
-        if not mcp_servers or "." not in entry_name:
-            return None
-        server_name, tool_name = entry_name.split(".", 1)
-        for srv in mcp_servers:
-            if not isinstance(srv, Mapping):
-                continue
-            if srv.get("name") != server_name:
-                continue
-            for t in (srv.get("tools") or []):
-                if not isinstance(t, Mapping):
-                    continue
-                if t.get("name") != tool_name:
-                    continue
-                schema = t.get("inputSchema") or t.get("input_schema")
-                if schema:
-                    return dict(schema)
-            return None
-        return None
 
     # memory.entry__X and any other category: pre-existing dispatch shape
     # mismatch (memory.entry's transform sends {name} but read_memory_body
@@ -1105,40 +1037,6 @@ def _resource_description(
                     return str(desc) if desc else None
         except Exception:
             return None
-        return None
-
-    if category == "mcp.tool":
-        mcp_servers = (
-            getattr(rs, "mcp_servers", None) if rs is not None else None
-        )
-        if not mcp_servers or "." not in entry_name:
-            return None
-        server_name, tool_name = entry_name.split(".", 1)
-        for srv in mcp_servers:
-            if not isinstance(srv, Mapping):
-                continue
-            if srv.get("name") != server_name:
-                continue
-            for t in (srv.get("tools") or []):
-                if not isinstance(t, Mapping):
-                    continue
-                if t.get("name") != tool_name:
-                    continue
-                desc = t.get("description")
-                return str(desc) if desc else None
-            return None
-        return None
-
-    if category == "mcp.server":
-        mcp_servers = (
-            getattr(rs, "mcp_servers", None) if rs is not None else None
-        )
-        if not mcp_servers:
-            return None
-        for srv in mcp_servers:
-            if isinstance(srv, Mapping) and srv.get("name") == entry_name:
-                desc = srv.get("description")
-                return str(desc) if desc else None
         return None
 
     # rag.corpus / memory.entry / unknown — fall through to target.description

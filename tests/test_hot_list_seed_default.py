@@ -15,8 +15,11 @@ from reyn.tools.universal_dispatch import UnknownActionError, resolve_invoke_act
 
 # ── Part A: B37 W4/W6 seed entries present ────────────────────────────────────
 
-# mcp_search — W6 R-WEB scenarios: mcp_search routing miss with fresh
-# workspace. Canonical qualified name is skill__mcp_search.
+# Issue #879 collapsed surface: skill__mcp_search → mcp__search_server;
+# mcp__install_server added so install requests don't require
+# list_actions discovery first.
+# W6 R-WEB scenarios: mcp routing miss with fresh workspace was the
+# motivating scenario for seeding the mcp verbs.
 # file__write — W4 S1: LLM used args key "text" instead of "content" because
 # the action was absent from the hot list and the D2-wrapper ARS block had no
 # entry for it.
@@ -26,7 +29,8 @@ from reyn.tools.universal_dispatch import UnknownActionError, resolve_invoke_act
 # web__fetch — W3 S4: present in seed since B34; this test asserts it remains.
 
 _B37_REQUIRED_ENTRIES: tuple[str, ...] = (
-    "skill__mcp_search",          # W6: mcp_search scenarios refuted on routing miss
+    "mcp__search_server",         # #879: mcp routing — search verb in hot list
+    "mcp__install_server",        # #879: mcp routing — install verb in hot list
     "file__write",                # W4 S1: arg-key hallucination (text vs content)
     "rag.operation__drop_source", # W2 S1 / W4 S6: hallucination drift source_id→source_name
     "web__fetch",                 # W3 S4: web fetch intent cold-start coverage

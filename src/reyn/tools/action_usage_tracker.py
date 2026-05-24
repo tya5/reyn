@@ -88,6 +88,10 @@ from typing import Callable
 #   B37 W4/W6: file__write + rag.operation__drop_source added (arg-canonical
 #              gap — D2-wrapper scope is hot-list-only; seeding ensures schema
 #              guidance is present at first use).
+#   #879: skill__mcp_search → mcp__search_server; mcp__install_server added
+#         as a sibling (= verb-collapse of the previous skill-space hidden
+#         install action, so installation requests don't require list_actions
+#         discovery first).
 DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "file__read",
     "file__list",
@@ -103,7 +107,8 @@ DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "skill__skill_builder",
     "skill__skill_improver",
     "skill__skill_importer",
-    "skill__mcp_search",
+    "mcp__search_server",
+    "mcp__install_server",
     "skill__index_docs",
     "skill__eval",
 )

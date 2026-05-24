@@ -133,36 +133,6 @@ def _delegate_to_agent_args(
     return out
 
 
-def _list_mcp_tools_args(
-    entry_name: str, args: Mapping[str, Any],
-) -> dict[str, Any]:
-    """``mcp.server__<name>`` → ``list_mcp_tools({server})``.
-
-    D19 resource invoke: invoking a server resource lists its tools.
-    """
-    return {"server": entry_name}
-
-
-def _call_mcp_tool_args(
-    entry_name: str, args: Mapping[str, Any],
-) -> dict[str, Any]:
-    """``mcp.tool__<server>.<tool>`` → ``call_mcp_tool({server, mcp_tool_name, args})``.
-
-    Entry name has the form ``<server>.<tool>``. First ``.`` separates
-    server from tool. The MCP tool's own args are passed under ``args``.
-    The output key is ``mcp_tool_name`` to match the ``call_mcp_tool``
-    handler's parameter schema (FP-0032). Returning ``tool`` raised
-    ``KeyError: mcp_tool_name`` in ``_handle_call_mcp_tool``.
-    """
-    if "." not in entry_name:
-        raise UnknownActionError(
-            f"mcp.tool__{entry_name}",
-            "mcp.tool entry name must have form <server>.<tool>",
-        )
-    server, tool = entry_name.split(".", 1)
-    return {"server": server, "mcp_tool_name": tool, "args": dict(args)}
-
-
 def _read_memory_body_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -232,11 +202,11 @@ def _passthrough_args(
 # resource id and so have a single rule per category.
 
 # Per-category default rule (= used when entry_name is the resource id)
+# Issue #879: mcp.server / mcp.tool resource rules removed; verb actions
+# in the new ``mcp`` category live in _OPERATION_RULES below.
 _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], dict[str, Any]]]]] = {
     "skill":         ("invoke_skill",        _invoke_skill_args),
     "agent.peer":    ("delegate_to_agent",   _delegate_to_agent_args),
-    "mcp.server":    ("list_mcp_tools",      _list_mcp_tools_args),
-    "mcp.tool":      ("call_mcp_tool",       _call_mcp_tool_args),
     "memory.entry":  ("read_memory_body",    _read_memory_body_args),
     "rag.corpus":    ("recall",              _recall_single_source_args),
 }
@@ -276,12 +246,19 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "rag.operation__recall":      ("recall",       _passthrough_args),
     "rag.operation__drop_source": ("drop_source",  _passthrough_args),
 
-    # mcp.operation category — drop_server (PR-4)
-    # Counter-op to mcp_install (which stays a skill due to multi-step
-    # registry/permission/secret flow). drop_server is mechanical:
-    # yaml edit + secrets cleanup + P6 event, dispatched via the
-    # mcp_drop_server op_runtime handler.
-    "mcp.operation__drop_server": ("mcp_drop_server", _passthrough_args),
+    # Issue #879 — single ``mcp`` category collapsing the old
+    # mcp.server / mcp.tool / mcp.operation sub-categories +
+    # skill__mcp_search / skill__mcp_install into six verb_object actions.
+    # The two ``*_server`` wrappers forward to the existing stdlib skills
+    # via dedicated ToolDefinitions (mcp_verbs.py) so describe_action and
+    # hot-list alias surfacing get clean ``{text}`` schemas; the remaining
+    # four reuse the existing list/call/drop handlers verbatim.
+    "mcp__search_server":  ("mcp_search_server",  _passthrough_args),
+    "mcp__install_server": ("mcp_install_server", _passthrough_args),
+    "mcp__list_servers":   ("list_mcp_servers",   _passthrough_args),
+    "mcp__list_tools":     ("list_mcp_tools",     _passthrough_args),
+    "mcp__call_tool":      ("mcp_call_tool",      _passthrough_args),
+    "mcp__drop_server":    ("mcp_drop_server",    _passthrough_args),
 
     # validation category — lint op exposed to the router so users can request
     # skill linting directly ("lint the foo skill").  skill_path accepts a
