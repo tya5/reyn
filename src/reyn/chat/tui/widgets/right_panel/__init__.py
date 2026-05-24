@@ -2229,6 +2229,13 @@ class RightPanel(Widget):
         as the events / agents / memory / docs helpers and integrates
         with the ``on_tabs_tab_activated`` dispatch table established
         in TUI Right Panel exploration wave (PR #231).
+
+        Note: ``render_pending`` starts ``lines`` with a header element,
+        so ``item_ys[0]`` is already 1 (not 0).  Adding +1 here would
+        compute ``scroll_to(y=2)`` for cursor=0, scrolling PAST item 0
+        and hiding it above the viewport — same off-by-one as the keys
+        tab.  Use ``item_ys[cursor]`` directly (same fix as
+        ``_scroll_keys_into_view``).
         """
         try:
             vs = self.query_one("#panel-scroll", VerticalScroll)
@@ -2238,7 +2245,7 @@ class RightPanel(Widget):
                 return
             if not (0 <= self._pending_cursor < len(self._pending_item_ys)):
                 return
-            y = 1 + self._pending_item_ys[self._pending_cursor]
+            y = self._pending_item_ys[self._pending_cursor]
             if y < current:
                 vs.scroll_to(y=y, animate=False)
             elif y >= current + visible:
@@ -2255,6 +2262,14 @@ class RightPanel(Widget):
         ``_scroll_events_into_view``.  ``_key_ys`` is populated by
         ``render_keys`` (via ``_keys_move`` and ``_panel_markup``) and
         records the 0-indexed rendered-output line of each key row.
+
+        Note: unlike ``_scroll_events_into_view`` / ``_scroll_memory_into_view``
+        (where the rendered output starts at line 0 so +1 accounts for
+        panel-content padding-top), ``_key_ys[i]`` already encodes the
+        rendered line index INCLUDING the group-header offset (= group header
+        at line 0, first key row at line 1).  No additional +1 is needed —
+        adding one would scroll past the cursor row, hiding it above the
+        viewport.  Dogfood 2026-05-24: cursor 0 復帰時 cursor が画面外.
         """
         try:
             vs = self.query_one("#panel-scroll", VerticalScroll)
@@ -2265,7 +2280,7 @@ class RightPanel(Widget):
             cursor = get_keys_cursor()
             if not (0 <= cursor < len(self._key_ys)):
                 return
-            y = 1 + self._key_ys[cursor]
+            y = self._key_ys[cursor]
             if y < current:
                 vs.scroll_to(y=y, animate=False)
             elif y >= current + visible:

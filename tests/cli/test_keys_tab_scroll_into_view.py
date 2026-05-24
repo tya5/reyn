@@ -190,3 +190,115 @@ async def test_keys_move_populates_key_ys() -> None:
         assert all(isinstance(y, int) and y >= 0 for y in key_ys), (
             "All render_keys key_ys entries must be non-negative int"
         )
+
+
+# ── Test 5: key_ys[0] >= 1 — group header precedes first key row ─────────────
+
+
+@pytest.mark.asyncio
+async def test_key_ys_cursor0_not_at_render_line0() -> None:
+    """Tier 2b: key_ys[0] >= 1 — a group header occupies line 0, so cursor 0
+    is at render line >=1.  The old formula ``y = 1 + key_ys[0]`` would
+    therefore produce a scroll target >= 2, scrolling PAST the cursor row and
+    hiding it above the viewport.  The fix drops the +1.
+
+    This is a pure contract test on ``render_keys``'s 3rd return — no
+    scroll geometry needed.  If this invariant breaks, the off-by-one fix
+    is invalidated.
+
+    Dogfood 2026-05-24: cursor 0 復帰時 cursor が画面外で隠れる.
+    """
+    _reset_keys_state()
+    app = _make_app()
+    async with app.run_test(headless=True, size=(120, 20)) as pilot:
+        await pilot.pause()
+        _, flat_key_list, key_ys = render_keys(app, cursor=0, expanded=set())
+        assert len(key_ys) > 0, "render_keys must return at least one key row"
+        assert key_ys[0] >= 1, (
+            f"key_ys[0]={key_ys[0]}: first key row must be at render line >= 1 "
+            f"because a group header occupies line 0.  If key_ys[0] == 0, the "
+            f"old '1 + key_ys[cursor]' formula and the fix formula would differ "
+            f"by a line but the geometry would need re-evaluation."
+        )
+
+
+# ── Test 6: old formula would be strictly greater than key_ys[0] ─────────────
+
+
+@pytest.mark.asyncio
+async def test_old_plus1_formula_exceeds_key_ys0() -> None:
+    """Tier 2b: ``1 + key_ys[0]`` exceeds ``key_ys[0]``, which is
+    the exact off-by-one: scroll_to(1 + key_ys[0]) puts render line
+    (1 + key_ys[0]) at viewport top, so the cursor at render line
+    key_ys[0] is above the viewport.
+
+    Regression pin: if this test fails it means key_ys[0] == 0, which
+    would change the geometry analysis and require a re-audit.
+
+    Pure contract — no scroll geometry needed.
+    """
+    _reset_keys_state()
+    app = _make_app()
+    async with app.run_test(headless=True, size=(120, 20)) as pilot:
+        await pilot.pause()
+        _, _, key_ys = render_keys(app, cursor=0, expanded=set())
+        assert len(key_ys) > 0, "render_keys must return at least one key row"
+        # The off-by-one: 1 + key_ys[0] > key_ys[0].  If scroll_to is
+        # called with (1 + key_ys[0]) when current > key_ys[0], the
+        # cursor row is scrolled past.
+        assert 1 + key_ys[0] > key_ys[0], "sanity: 1 + n > n always"
+        # Pin the exact expected value so any future change to group
+        # layout surfaces here first.
+        assert key_ys[0] == 1, (
+            f"key_ys[0]={key_ys[0]}: expected 1 (group header at line 0, "
+            f"first key at line 1).  Old formula gave 1+1=2 (off by one). "
+            f"If this value changed, re-verify _scroll_keys_into_view formula."
+        )
+
+
+# ── Test 7: scroll_to target for mid-list cursor is key_ys[cursor] ───────────
+
+
+@pytest.mark.asyncio
+async def test_scroll_target_for_mid_cursor_equals_key_ys() -> None:
+    """Tier 2b: for cursor N>=1, ``key_ys[N]`` is the correct scroll target
+    (not ``1 + key_ys[N]``).
+
+    Verifies that every key_ys entry equals the rendered line that contains
+    the cursor indicator (▶), so ``scroll_to(y=key_ys[N])`` puts that
+    exact row at viewport top.
+
+    Pure contract: iterate over a handful of cursor positions and verify
+    that the render line at key_ys[N] contains the cursor indicator text.
+    """
+    _reset_keys_state()
+    app = _make_app()
+    async with app.run_test(headless=True, size=(120, 20)) as pilot:
+        await pilot.pause()
+        for cursor in range(3):
+            markup, flat_key_list, key_ys = render_keys(
+                app, cursor=cursor, expanded=set()
+            )
+            if cursor >= len(key_ys):
+                break
+            lines = markup.split("\n")
+            y = key_ys[cursor]
+            assert 0 <= y < len(lines), (
+                f"cursor={cursor}: key_ys[cursor]={y} is out of range "
+                f"(rendered output has {len(lines)} lines)"
+            )
+            # The cursor row always contains "▶" (the cursor indicator).
+            assert "▶" in lines[y], (
+                f"cursor={cursor}: key_ys[cursor]={y} → render line "
+                f"{lines[y]!r} does not contain cursor indicator '▶'.  "
+                f"The scroll target should land exactly on the cursor row."
+            )
+            # Verify that 1 + key_ys[cursor] does NOT contain the cursor:
+            # this is the off-by-one line that was wrongly used as the target.
+            wrong_y = 1 + y
+            if wrong_y < len(lines):
+                assert "▶" not in lines[wrong_y], (
+                    f"cursor={cursor}: the off-by-one line {wrong_y} "
+                    f"({lines[wrong_y]!r}) unexpectedly contains '▶' — "
+                    f"re-audit the formula."
+                )
