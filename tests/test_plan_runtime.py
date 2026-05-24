@@ -96,8 +96,8 @@ async def test_plan_runtime_run_delegates_to_execute_plan() -> None:
     runtime = PlanRuntime(plan, host=host, chain_id="c0")
     result = await runtime.run()
 
-    assert len(host.plan_started_calls) == 1
-    assert len(host.plan_completed_calls) == 1
+    (started,) = host.plan_started_calls   # exactly one plan_started
+    (completed,) = host.plan_completed_calls  # exactly one plan_completed
     assert host.plan_aborted_calls == []
     assert result.text
 
