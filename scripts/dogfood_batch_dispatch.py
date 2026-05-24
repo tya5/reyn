@@ -257,6 +257,20 @@ def setup_worktree(worker: WorkerSpec, head: str, repo_root: Path) -> None:
         "  web.fetch: allow\n"
         "sandbox:\n"
         "  backend: noop\n"
+        "# B54 R-3 (2026-05-24): chat_compactor needs ~10s of turns to reach\n"
+        "# default trigger_total_tokens=30000 via head/tail=12 + min_batch=5.\n"
+        "# Lower thresholds so a 5-turn dogfood scenario can trigger the\n"
+        "# CompactionController auto-fire path. Override is additive (= other\n"
+        "# scenarios whose prompts don't grow context don't fire compaction)\n"
+        "# and compaction events are not in any current must_emit /\n"
+        "# must_not_emit rubric outside the chat_compactor_auto_trigger\n"
+        "# scenario, so the change is safe across the rest of the batch.\n"
+        "chat:\n"
+        "  compaction:\n"
+        "    trigger_total_tokens: 2000\n"
+        "    head_size: 1\n"
+        "    tail_size: 1\n"
+        "    min_compact_batch: 2\n"
     )
     if "Dogfood worker env grants" not in text:
         text = text.rstrip() + "\n" + runner_grants
