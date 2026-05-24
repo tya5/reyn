@@ -1258,9 +1258,27 @@ class OutboxRouter:
         The scope guard (= check for the sentinel before forking) keeps
         normal server-side error frames on the existing transient path —
         only the WS-disconnect source triggers the persistent lock.
+
+        W13 A#7: for terminal (high-severity) failures, raise sticky
+        priority above thinking so a budget-exceeded / auth-error that
+        arrives mid-streaming is not suppressed by the live ⟳ indicator.
         """
         conv.stop_thinking()
-        conv.hide_status()
+        # W13 A#7: classify severity before hide/show so we can decide
+        # whether to raise priority above thinking.
+        from .widgets.conversation import _classify_error_severity
+        severity = _classify_error_severity(msg.text or "", msg.meta or {})
+        if severity == "high":
+            # Don't unconditionally hide first — instead show with terminal
+            # priority so it beats any active thinking indicator. The
+            # render_message call below will mount the ErrorBox which
+            # triggers its own scroll-based hide_status logic.
+            try:
+                conv.show_status("✗ terminal error", kind="error", terminal=True)
+            except Exception:
+                conv.hide_status()
+        else:
+            conv.hide_status()
         conv.render_message(msg)
         self._app._last_focal_tab = "events"
         # Out-of-band: flag the terminal title and ring the bell so a

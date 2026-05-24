@@ -49,6 +49,17 @@ class ErrorBox(Widget):
            cue that survives quick scrolling and color-blind users. */
         border-left: solid #cc5555;
     }
+    /* W13 A#3: severity-tier border-left overrides (3 colors).
+       HIGH (default / ``.-sev-high``) keeps the existing #cc5555 red —
+       no change to existing rendering when severity is omitted.
+       MED  (``.-sev-med``) → amber to signal recoverable / transient.
+       LOW  (``.-sev-low``) → grey to signal user-input mistake. */
+    ErrorBox.-sev-med {
+        border-left: solid #cc9955;
+    }
+    ErrorBox.-sev-low {
+        border-left: solid #666666;
+    }
     /* Header line — always visible */
     ErrorBox Label.eb-header {
         color: #cc5555;
@@ -56,8 +67,20 @@ class ErrorBox(Widget):
         width: 1fr;
         padding: 0 1;
     }
+    ErrorBox.-sev-med Label.eb-header {
+        color: #cc9955;
+    }
+    ErrorBox.-sev-low Label.eb-header {
+        color: #888888;
+    }
     ErrorBox:hover Label.eb-header {
         color: #ff7777;
+    }
+    ErrorBox.-sev-med:hover Label.eb-header {
+        color: #ffbb77;
+    }
+    ErrorBox.-sev-low:hover Label.eb-header {
+        color: #aaaaaa;
     }
     /* Detail block — hidden until expanded */
     ErrorBox Static.eb-details {
@@ -112,6 +135,7 @@ class ErrorBox(Widget):
         id: str | None = None,
         index: int = 0,
         total: int = 0,
+        severity: str = "med",
     ) -> None:
         super().__init__(id=id)
         self._message = message
@@ -124,6 +148,12 @@ class ErrorBox(Widget):
         # instead of just the header message repeated verbatim.
         self._context_lines: list[str] = list(context_lines) if context_lines else []
         self._expanded = False
+        # W13 A#3: severity tier ("high" | "med" | "low"). The default is
+        # "med" so callers that predate severity classification keep
+        # rendering with the amber (recoverable) style rather than the
+        # red (terminal) style — safer default for unknown errors.
+        # "high" keeps the existing red border (backward-compat).
+        self._severity: str = severity if severity in ("high", "med", "low") else "med"
         # Wave-11 B#6 — per-box index badge for stacked errors. When
         # ``total > 1`` the header renders ``✗ [2/3] [skill#abcd]: …``
         # so a user landing on a focused box (= via F5/F6 jump) sees
@@ -246,6 +276,22 @@ class ErrorBox(Widget):
             self.query_one(".eb-header", Label).update(self._header_text())
         except Exception:
             pass
+
+    # ── severity CSS class ────────────────────────────────────────────────────
+
+    def on_mount(self) -> None:
+        """Apply the severity CSS class so border-left color reflects the tier.
+
+        W13 A#3: ``-sev-high`` / ``-sev-med`` / ``-sev-low`` map to the
+        three border-left colors in DEFAULT_CSS. ``-sev-high`` keeps the
+        existing red (= no visual change for pre-W13 callers that pass
+        ``severity="high"`` or the pre-severity default). ``-sev-med`` is
+        amber; ``-sev-low`` is grey.
+        """
+        # Remove all severity classes first (defensive idempotency).
+        for cls in ("-sev-high", "-sev-med", "-sev-low"):
+            self.remove_class(cls)
+        self.add_class(f"-sev-{self._severity}")
 
     # ── compose ───────────────────────────────────────────────────────────────
 

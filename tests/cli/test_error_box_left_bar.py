@@ -68,11 +68,23 @@ async def test_error_box_declares_left_border() -> None:
 
 @pytest.mark.asyncio
 async def test_error_box_border_color_matches_header_red() -> None:
-    """Tier 2b: The left bar uses the same hue family as the header text.
+    """Tier 2b: The left bar uses a warm error hue (red or amber family).
 
     Visual consistency check: the bar is the *non-color* channel, but
     when colour IS available it must agree with the header — otherwise
-    the eye reads two competing red signals.
+    the eye reads two competing signals.
+
+    W13 severity tiers:
+      HIGH  ``#cc5555`` (204,  85,  85) — terminal failure
+      MED   ``#cc9955`` (204, 153,  85) — recoverable / unclassified (default)
+      LOW   ``#666666`` (102, 102, 102) — user-input mistake
+
+    A bare ``message="boom"`` classifies as MED (amber) because it does not
+    match any HIGH or LOW text markers.  The invariant we pin is:
+      - red channel dominant (r >= 180 → warm; LOW grey has r ≈ 102)
+      - blue channel subdued (b <= 110 → catches both red and amber;
+        LOW grey has b ≈ 102 but r is also low, so the r-check catches it)
+      - red channel strictly greater than blue (r > b → warm hue, not grey/blue)
     """
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -83,13 +95,12 @@ async def test_error_box_border_color_matches_header_red() -> None:
 
         box = conv.query_one(ErrorBox)
         _style, color = box.styles.border_left
-        # ``#cc5555`` = (204, 85, 85). Allow ±20 per channel so a future
-        # palette nudge to a slightly different red doesn't break the test
-        # while still catching e.g. an accidental switch to coral or grey.
+        # Accept red (#cc5555) and amber (#cc9955) — both are warm error hues.
+        # Reject grey (#666666) via r >= 180.  Reject cool/blue via r > b.
         r, g, b = color.rgb
-        assert r >= 180, f"border red channel weak: {color.rgb}"
-        assert g <= 110, f"border green channel too high (not red?): {color.rgb}"
-        assert b <= 110, f"border blue channel too high (not red?): {color.rgb}"
+        assert r >= 180, f"border red channel weak (not a warm error hue?): {color.rgb}"
+        assert b <= 110, f"border blue channel too high (not a warm error hue?): {color.rgb}"
+        assert r > b, f"border not red-dominant (not a warm error hue?): {color.rgb}"
 
 
 @pytest.mark.asyncio
