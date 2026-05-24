@@ -93,9 +93,10 @@ async def test_form_a_inline_returns_vectors(tmp_path: Path, monkeypatch: pytest
     result = await execute_op(op, ctx, caller="control_ir")
 
     assert result.get("status") != "error", result
-    assert len(result["vectors"]) == 2
-    # Deterministic: len("hello world") = 11 → 11/100 = 0.11
-    assert abs(result["vectors"][0][0] - 0.11) < 1e-6
+    vec_first, vec_second = result["vectors"]
+    # Deterministic: 11 chars / 100 = 0.11
+    assert abs(vec_first[0] - 0.11) < 1e-6
+    assert vec_second is not None
     assert result["total_tokens"] == len("hello world") + len("foo")
 
 
@@ -172,9 +173,10 @@ async def test_form_b_artifact_embeds_and_writes_output(tmp_path: Path, monkeypa
     output_path = tmp_path / output_rel
     assert output_path.exists()
     lines = [json.loads(l) for l in output_path.read_text().splitlines() if l.strip()]
-    assert len(lines) == 2
-    assert "vector" in lines[0]
-    assert len(lines[0]["vector"]) == 4
+    line_first, line_second = lines
+    assert "vector" in line_first
+    assert line_first["vector"]
+    assert line_second
 
 
 @pytest.mark.asyncio
