@@ -180,7 +180,7 @@ def test_reyn_config_models_accepts_dict_form():
 
 
 def test_extends_builtin_preload_empty_user_mapping():
-    """Tier 2 [EXTENDS]: empty user mapping -> built-in claude-sonnet-thinking resolvable."""
+    """Tier 2: [EXTENDS] empty user mapping -> built-in claude-sonnet-thinking resolvable."""
     r = ModelResolver({})
     spec = r.resolve("claude-sonnet-thinking")
     assert isinstance(spec, ModelSpec)
@@ -189,14 +189,14 @@ def test_extends_builtin_preload_empty_user_mapping():
 
 
 def test_extends_user_override_wins_over_builtin():
-    """Tier 2 [EXTENDS]: user-declared entry with same name as built-in takes precedence."""
+    """Tier 2: [EXTENDS] user-declared entry with same name as built-in takes precedence."""
     r = ModelResolver({"claude-sonnet": {"model": "openai/gpt-4o"}})
     spec = r.resolve("claude-sonnet")
     assert spec.model == "openai/gpt-4o"
 
 
 def test_extends_backward_compat_slash_str_with_builtin_loaded():
-    """Tier 2 [EXTENDS]: existing '/' str form resolves as literal even with built-ins loaded."""
+    """Tier 2: [EXTENDS] existing '/' str form resolves as literal even with built-ins loaded."""
     r = ModelResolver({
         "light": "openai/gemini-2.5-flash-lite",
         "standard": "openai/gpt-4o",
