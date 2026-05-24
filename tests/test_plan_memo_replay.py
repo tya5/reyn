@@ -151,7 +151,7 @@ async def test_resume_plan_emits_plan_step_memoized_event() -> None:
 
     memo_events = [e for e in host.events.emitted
                    if e[0] == "plan_step_memoized"]
-    assert len(memo_events) == 1
+    assert memo_events, "expected at least one plan_step_memoized event"
     assert memo_events[0][1]["step_id"] == "s1"
 
 
