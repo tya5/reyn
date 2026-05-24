@@ -35,6 +35,7 @@ from reyn.chainlit_app.slash_route import (
     QUICK_ACTIONS,
     QuickAction,
     action_name_for,
+    build_command_dicts,
     is_slash,
 )
 from reyn.chainlit_app.uploads import collect_image_blocks
@@ -273,6 +274,25 @@ async def _on_chat_start() -> None:
 
     task = asyncio.create_task(_drain_loop(registry))
     cl.user_session.set(_DRAIN_KEY, task)
+
+    # Slash typing palette: when the operator types ``/`` in the
+    # input box, chainlit pops up a hint list of registered
+    # commands. We populate it from reyn's ``REGISTRY`` so adding a
+    # new slash command anywhere in the codebase appears here
+    # automatically — no manual sync needed.
+    try:
+        from chainlit.context import context as cl_context
+
+        from reyn.chat.slash import REGISTRY as _slash_registry
+        commands = build_command_dicts(_slash_registry.all_commands())
+        if commands:
+            await cl_context.emitter.set_commands(commands)
+    except Exception:
+        # Chainlit version drift or context unavailability is not
+        # fatal for the chat itself — degrade to "no typing palette"
+        # rather than crashing the attach.
+        pass
+
     actions = [
         cl.Action(
             name=action_name_for(qa),

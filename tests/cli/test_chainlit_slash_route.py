@@ -14,14 +14,28 @@ Pinned invariants:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from reyn.chainlit_app.slash_route import (
+    _FALLBACK_ICON,
     QUICK_ACTIONS,
     QuickAction,
     action_name_for,
+    build_command_dicts,
+    icon_for_slash_name,
     is_slash,
 )
+
+
+@dataclass
+class _FakeCommand:
+    """Minimal stand-in for ``reyn.chat.slash.SlashCommand`` — just the
+    fields ``build_command_dicts`` reads."""
+    name: str
+    summary: str
+    hidden: bool = False
 
 
 @pytest.mark.parametrize(
@@ -81,3 +95,72 @@ def test_action_name_for_uses_slash_prefix():
     the welcome button builder)."""
     qa = QuickAction(name="example", label="/example", slash_text="/example")
     assert action_name_for(qa) == "slash_example"
+
+
+# ── build_command_dicts (slash typing palette) ──────────────────────────
+
+
+def test_build_command_dicts_basic_shape():
+    """Tier 1: each visible SlashCommand → CommandDict with required
+    chainlit fields (id, description, icon)."""
+    out = build_command_dicts([
+        _FakeCommand(name="agents", summary="List all agents"),
+    ])
+    assert out == [{
+        "id": "/agents",
+        "description": "List all agents",
+        "icon": "users",  # known mapping
+    }]
+
+
+def test_build_command_dicts_drops_hidden():
+    """Tier 1: hidden commands (= matrix / donut / zen etc.) never
+    surface in the typing palette."""
+    out = build_command_dicts([
+        _FakeCommand(name="agents", summary="visible"),
+        _FakeCommand(name="matrix", summary="easter egg", hidden=True),
+        _FakeCommand(name="zen", summary="hidden", hidden=True),
+        _FakeCommand(name="skills", summary="visible too"),
+    ])
+    ids = [d["id"] for d in out]
+    assert ids == ["/agents", "/skills"]
+
+
+def test_build_command_dicts_sorts_by_id():
+    """Tier 1: output sorted by id so the popup palette is stable
+    across reloads (= input order doesn't matter)."""
+    out = build_command_dicts([
+        _FakeCommand(name="zebra", summary="z"),
+        _FakeCommand(name="apple", summary="a"),
+        _FakeCommand(name="mango", summary="m"),
+    ])
+    assert [d["id"] for d in out] == ["/apple", "/mango", "/zebra"]
+
+
+def test_build_command_dicts_empty_name_skipped():
+    """Tier 1: defensive — entries without a name don't crash, just drop."""
+    out = build_command_dicts([
+        _FakeCommand(name="", summary="no name"),
+        _FakeCommand(name="ok", summary="fine"),
+    ])
+    assert [d["id"] for d in out] == ["/ok"]
+
+
+def test_build_command_dicts_empty_input_returns_empty_list():
+    """Tier 1: no commands → no palette entries (= safe to call unconditionally
+    at chat-start time)."""
+    assert build_command_dicts([]) == []
+
+
+def test_icon_for_slash_name_known_mappings():
+    """Tier 1: the curated lucide-icon map applies for the commands
+    we picked it for."""
+    assert icon_for_slash_name("agents") == "users"
+    assert icon_for_slash_name("cost") == "dollar-sign"
+    assert icon_for_slash_name("help") == "help-circle"
+
+
+def test_icon_for_slash_name_falls_back_on_unknown():
+    """Tier 1: unknown command name → fallback icon (= no crash,
+    typing palette still gets an icon for every entry)."""
+    assert icon_for_slash_name("not_in_table_at_all") == _FALLBACK_ICON

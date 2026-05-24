@@ -9,7 +9,10 @@ route to the session's slash dispatcher; otherwise hand it to
 
 This module also catalogs a small set of "quick action" slash
 commands surfaced as ``cl.Action`` buttons on the welcome message so
-operators don't have to memorize the slash vocabulary.
+operators don't have to memorize the slash vocabulary, and builds the
+typing-time slash completion list consumed by chainlit's
+``emitter.set_commands`` API (= the ``/`` palette that pops up while
+the operator types).
 
 No chainlit import here — kept pure so tests run without the
 ``[chainlit]`` extra.
@@ -17,6 +20,7 @@ No chainlit import here — kept pure so tests run without the
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 
 def is_slash(text: str) -> bool:
@@ -67,9 +71,91 @@ def action_name_for(action: QuickAction) -> str:
     return f"slash_{action.name}"
 
 
+# ── slash typing palette (chainlit emitter.set_commands) ─────────────────
+
+
+class _SlashCommandLike(Protocol):
+    """Minimal surface ``build_command_dicts`` reads on each entry.
+
+    Defined as a Protocol so tests can pass a tiny fake without
+    constructing the real ``reyn.chat.slash.SlashCommand`` dataclass.
+    """
+    name: str
+    summary: str
+    hidden: bool
+
+
+# Per-command lucide icon picks. Lucide icon names — see
+# https://lucide.dev — chainlit forwards the string verbatim to the
+# frontend, which renders the matching SVG. Anything not in this
+# map falls back to ``_FALLBACK_ICON``.
+_ICON_BY_NAME: dict[str, str] = {
+    "agents":      "users",
+    "skills":      "wrench",
+    "list":        "list",
+    "cost":        "dollar-sign",
+    "tasks":       "list-checks",
+    "expand":      "maximize-2",
+    "help":        "help-circle",
+    "cost-inline": "badge-dollar-sign",
+    "image":       "image",
+    "img":         "image",
+    "find":        "search",
+    "plan":        "map",
+    "attach":      "link",
+    "save":        "save",
+    "copy":        "copy",
+    "reset":       "rotate-ccw",
+    "quit":        "log-out",
+    "exit":        "log-out",
+}
+
+_FALLBACK_ICON = "slash"
+
+
+def icon_for_slash_name(name: str) -> str:
+    """Return the lucide icon name for ``name`` (with sensible fallback)."""
+    return _ICON_BY_NAME.get(name, _FALLBACK_ICON)
+
+
+def build_command_dicts(commands: list[_SlashCommandLike]) -> list[dict]:
+    """Convert a list of reyn ``SlashCommand`` entries → chainlit CommandDicts.
+
+    The chainlit ``emitter.set_commands`` API consumes a
+    ``List[CommandDict]`` (= ``TypedDict`` with ``id`` / ``description``
+    / ``icon`` required). This helper:
+
+    - Drops ``hidden=True`` entries (= ``matrix`` / ``donut`` / ``zen``
+      etc., which already don't appear in /help or the TUI palette)
+    - Builds ``id = "/<name>"`` (= chainlit displays this verbatim in
+      the popup palette; matches what gets dispatched on submit)
+    - Carries the canonical ``summary`` through as ``description``
+    - Picks a lucide icon via ``icon_for_slash_name`` so each row has
+      a visual hint
+    - Sorts by name for stable ordering across reloads
+    """
+    out: list[dict] = []
+    for cmd in commands:
+        if getattr(cmd, "hidden", False):
+            continue
+        name = getattr(cmd, "name", "")
+        summary = getattr(cmd, "summary", "") or ""
+        if not name:
+            continue
+        out.append({
+            "id": f"/{name}",
+            "description": summary,
+            "icon": icon_for_slash_name(name),
+        })
+    out.sort(key=lambda d: d["id"])
+    return out
+
+
 __all__ = [
     "QUICK_ACTIONS",
     "QuickAction",
     "action_name_for",
+    "build_command_dicts",
+    "icon_for_slash_name",
     "is_slash",
 ]
