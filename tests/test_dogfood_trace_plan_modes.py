@@ -65,8 +65,8 @@ def test_plan_summary_no_events_message(tmp_path: Path) -> None:
 
 
 def test_plan_summary_aggregates_real_wal_shape(tmp_path: Path) -> None:
-    """Tier 2 (regression net): real WAL entries are flat (no `data`
-    nesting). plan-summary must read top-level plan_id correctly. This
+    """Tier 2: real WAL entries are flat (no `data` nesting).
+    plan-summary must read top-level plan_id correctly. This
     is the bug-pattern test that catches the data-nesting confusion
     between WAL and events log."""
     state_dir = tmp_path / ".reyn" / "state"
