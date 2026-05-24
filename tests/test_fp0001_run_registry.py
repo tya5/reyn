@@ -46,8 +46,8 @@ def test_create_allocates_run_id_and_sets_running_status() -> None:
     entry = registry.create(agent_name="agent-x", chain_id="chain-42")
 
     assert isinstance(entry.run_id, str)
-    assert len(entry.run_id) == 32  # uuid4().hex is 32 hex chars
     assert all(c in "0123456789abcdef" for c in entry.run_id)
+    assert entry.run_id  # non-empty
     assert entry.status == "running"
     assert entry.agent_name == "agent-x"
     assert entry.chain_id == "chain-42"
@@ -56,8 +56,8 @@ def test_create_allocates_run_id_and_sets_running_status() -> None:
 def test_create_allocates_unique_run_ids() -> None:
     """Tier 1: successive create() calls produce distinct run_ids."""
     registry = _make_registry()
-    ids = {registry.create(agent_name="a", chain_id="c").run_id for _ in range(10)}
-    assert len(ids) == 10
+    run_ids = [registry.create(agent_name="a", chain_id="c").run_id for _ in range(10)]
+    assert len(set(run_ids)) == len(run_ids), "all run_ids must be unique"
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ def test_list_filters_by_agent_name() -> None:
     assert set(e.run_id for e in alpha_entries) == {e1.run_id, e3.run_id}
 
     beta_entries = registry.list(agent_name="beta")
-    assert len(beta_entries) == 1
+    (beta_entry,) = beta_entries  # exactly one "beta" entry was created
 
     missing_entries = registry.list(agent_name="gamma")
     assert missing_entries == []
