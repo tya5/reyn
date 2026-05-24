@@ -61,7 +61,7 @@ def _instrument_invalidate(panel: RightPanel) -> list[None]:
 
 @pytest.mark.asyncio
 async def test_refresh_live_skips_when_panel_hidden() -> None:
-    """Tier 2: hidden panel never triggers an invalidation.
+    """Tier 2b: hidden panel never triggers an invalidation.
 
     The panel starts with ``display: none`` (per its CSS); the toggle in
     ``app.py`` only sets ``display = True`` on Ctrl+B. Until then,
@@ -91,7 +91,7 @@ async def test_refresh_live_skips_when_panel_hidden() -> None:
 
 @pytest.mark.asyncio
 async def test_refresh_live_invalidates_when_visible_and_live_tab() -> None:
-    """Tier 2: visible panel on a live tab DOES invalidate on tick.
+    """Tier 2b: visible panel on a live tab DOES invalidate on tick.
 
     Pins the positive case so the gate fix doesn't accidentally suppress
     ALL refreshes — only hidden ones.
@@ -109,14 +109,15 @@ async def test_refresh_live_invalidates_when_visible_and_live_tab() -> None:
         panel._refresh_live()
         panel._refresh_live()
 
-        assert len(calls) == 2, (
-            f"visible+live panel must invalidate; got {len(calls)} calls"
+        assert calls, "visible+live panel must invalidate; got zero calls"
+        assert calls == [None, None], (
+            f"visible+live panel must invalidate exactly twice; got {calls!r}"
         )
 
 
 @pytest.mark.asyncio
 async def test_refresh_live_skips_non_live_tabs_even_when_visible() -> None:
-    """Tier 2: the existing ``_LIVE_PANELS`` gate still applies when visible.
+    """Tier 2b: the existing ``_LIVE_PANELS`` gate still applies when visible.
 
     Tabs like ``keys`` / ``docs`` are content-static (only change on
     code or user interaction); periodic re-invalidation would waste
@@ -145,7 +146,7 @@ async def test_refresh_live_skips_non_live_tabs_even_when_visible() -> None:
 
 @pytest.mark.asyncio
 async def test_memory_panel_refreshes_live_when_visible() -> None:
-    """Tier 2: the Memory tab is in ``_LIVE_PANELS`` so it refreshes on tick.
+    """Tier 2b: the Memory tab is in ``_LIVE_PANELS`` so it refreshes on tick.
 
     Memory entries are saved / deleted mid-session (= the agent's
     ``remember`` tool or ``/memory`` slash commands). Without periodic
@@ -165,6 +166,7 @@ async def test_memory_panel_refreshes_live_when_visible() -> None:
         panel._refresh_live()
         panel._refresh_live()
 
-        assert len(calls) == 2, (
-            f"memory tab must invalidate on the live tick; got {len(calls)} calls"
+        assert calls, "memory tab must invalidate on the live tick; got zero calls"
+        assert calls == [None, None], (
+            f"memory tab must invalidate exactly twice; got {calls!r}"
         )
