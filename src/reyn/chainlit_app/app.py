@@ -165,6 +165,43 @@ async def _drain_loop(registry: "AgentRegistry") -> None:
             ).send()
 
 
+@cl.set_starters
+async def _starters() -> list[cl.Starter]:
+    """Welcome-screen quick prompts (= reyn-flavored examples).
+
+    Visible only on the very first message; replaced by the live chat
+    once the user sends anything. Keep these grounded in capabilities
+    that work today (= no streaming / IV round-trip dependency).
+    """
+    return [
+        cl.Starter(
+            label="自分の reyn agent を一覧する",
+            message="このプロジェクトに設定されている agent を一覧してください。",
+        ),
+        cl.Starter(
+            label="reyn の Skill を 1 つ動かしてみる",
+            message=(
+                "今このプロジェクトで使える stdlib skill を 1 つ選んで、"
+                "短い試走をしてください。 何が起きるか教えてください。"
+            ),
+        ),
+        cl.Starter(
+            label="MEMORY.md を読んで自己紹介",
+            message=(
+                "プロジェクト root の MEMORY.md と CLAUDE.md を読んで、"
+                "あなた (= attach されている agent) の役割を 3 行で説明してください。"
+            ),
+        ),
+        cl.Starter(
+            label="今の cost と events を要約",
+            message=(
+                "直近の events log と今セッションの token / cost を"
+                "簡潔に教えてください。"
+            ),
+        ),
+    ]
+
+
 @cl.on_chat_start
 async def _on_chat_start() -> None:
     registry = await _get_or_build_registry()

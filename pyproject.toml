@@ -146,7 +146,7 @@ where = ["src"]
 include = ["reyn*"]
 
 [tool.setuptools.package-data]
-"reyn" = ["py.typed", "stdlib/**/*"]
+"reyn" = ["py.typed", "stdlib/**/*", "chainlit_app/assets/**/*"]
 
 [tool.ruff]
 target-version = "py311"
