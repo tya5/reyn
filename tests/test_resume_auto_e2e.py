@@ -190,11 +190,11 @@ def test_e2e_chatsession_auto_resume_completes_crashed_skill(tmp_path: Path, mon
     decisions = asyncio.run(go())
 
     # Auto-resume found the active run, launched it with the right plan
-    assert len(decisions) == 1
-    assert decisions[0].plan.run_id == _RUN_ID
-    assert decisions[0].plan.skill_name == _SKILL_NAME
-    assert decisions[0].plan.current_phase == "review"
-    assert len(launched_decisions) == 1
+    (decision,) = decisions
+    assert decision.plan.run_id == _RUN_ID
+    assert decision.plan.skill_name == _SKILL_NAME
+    assert decision.plan.current_phase == "review"
+    (launched,) = launched_decisions
 
     # Skill completed → WAL has skill_completed, snapshot removed.
     log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
