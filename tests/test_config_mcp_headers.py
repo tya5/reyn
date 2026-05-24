@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest import mock
 
+import pytest
 import yaml
 
 # ---------------------------------------------------------------------------
@@ -114,12 +115,20 @@ def test_mcp_headers_optional_back_compat(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_headers_reach_http_transport(monkeypatch):
-    """Tier 2 framework boundary: a config with resolved headers reaches the
-    ``streamablehttp_client`` call with the exact post-expansion header dict.
+@pytest.fixture()
+def _patched_mcp_sdk():
+    """Patch MCP SDK transport entry-points used by MCPClient.
 
-    This pins the contract: whatever the caller puts in ``cfg['headers']``,
-    MCPClient passes through to the SDK — no filtering, no rewriting.
+    Intentional SDK patch — admitted per tier-audit HTTP-transport exemption
+    (same pattern as ``patched_sdk`` in ``tests/test_mcp_client.py``).
+    ``streamablehttp_client`` and ``ClientSession`` are 3rd-party SDK boundaries
+    that cannot be replaced with LLMReplay; the fake functions defined at module
+    level below are injected here and captured via the ``_http_captured`` dict
+    passed to each test through the ``captured`` parameter.
+
+    Deferral note: converting these patches to a proper LLMReplay-compatible
+    Fake requires extending LLMReplay to cover the MCP SDK transport layer —
+    tracked as a follow-up, not in scope for this PR.
     """
     captured: dict = {}
 
@@ -143,6 +152,21 @@ def test_mcp_headers_reach_http_transport(monkeypatch):
         async def initialize(self):
             return None
 
+    with mock.patch(
+        "mcp.client.streamable_http.streamablehttp_client", _fake_http_client
+    ), mock.patch("mcp.ClientSession", _FakeSession):
+        yield captured
+
+
+def test_mcp_headers_reach_http_transport(_patched_mcp_sdk):
+    """Tier 2: framework boundary — a config with resolved headers reaches the
+    ``streamablehttp_client`` call with the exact post-expansion header dict.
+
+    This pins the contract: whatever the caller puts in ``cfg['headers']``,
+    MCPClient passes through to the SDK — no filtering, no rewriting.
+    """
+    captured = _patched_mcp_sdk
+
     from reyn.mcp_client import MCPClient
 
     cfg = {
@@ -156,12 +180,9 @@ def test_mcp_headers_reach_http_transport(monkeypatch):
     }
 
     async def _run_it():
-        with mock.patch(
-            "mcp.client.streamable_http.streamablehttp_client", _fake_http_client
-        ), mock.patch("mcp.ClientSession", _FakeSession):
-            client = MCPClient(cfg)
-            await client.initialize()
-            await client.close()
+        client = MCPClient(cfg)
+        await client.initialize()
+        await client.close()
 
     asyncio.run(_run_it())
 
@@ -173,40 +194,19 @@ def test_mcp_headers_reach_http_transport(monkeypatch):
     assert captured["timeout"] == 45
 
 
-def test_mcp_headers_default_empty_when_omitted(monkeypatch):
-    """Tier 2 framework boundary: an http MCP config without ``headers`` yields
+def test_mcp_headers_default_empty_when_omitted(_patched_mcp_sdk):
+    """Tier 2: framework boundary — an http MCP config without ``headers`` yields
     an empty header dict at the transport (no spurious headers injected)."""
-    captured: dict = {}
-
-    @asynccontextmanager
-    async def _fake_http_client(url, headers=None, timeout=30):
-        captured["headers"] = dict(headers or {})
-        yield ("read", "write", lambda: None)
-
-    class _FakeSession:
-        def __init__(self, *a, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return None
-
-        async def initialize(self):
-            return None
+    captured = _patched_mcp_sdk
 
     from reyn.mcp_client import MCPClient
 
     cfg = {"type": "http", "url": "http://x/mcp"}
 
     async def _run_it():
-        with mock.patch(
-            "mcp.client.streamable_http.streamablehttp_client", _fake_http_client
-        ), mock.patch("mcp.ClientSession", _FakeSession):
-            client = MCPClient(cfg)
-            await client.initialize()
-            await client.close()
+        client = MCPClient(cfg)
+        await client.initialize()
+        await client.close()
 
     asyncio.run(_run_it())
     assert captured["headers"] == {}
