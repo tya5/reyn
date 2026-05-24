@@ -70,7 +70,7 @@ async def test_last_speaker_at_is_wall_clock_after_header_write() -> None:
 
 @pytest.mark.asyncio
 async def test_same_speaker_within_window_groups_under_one_header() -> None:
-    """Tier 2 (regression): same-speaker burst within 60s shares header."""
+    """Tier 2b: same-speaker burst within 60s shares header (regression guard)."""
     from reyn.chat.outbox import OutboxMessage
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
@@ -95,7 +95,7 @@ async def test_same_speaker_within_window_groups_under_one_header() -> None:
 
 @pytest.mark.asyncio
 async def test_same_speaker_past_window_emits_new_header() -> None:
-    """Tier 2 (regression): same-speaker past 60s emits a new header.
+    """Tier 2b: same-speaker past 60s emits a new header (regression guard).
 
     Simulated by back-dating ``_last_speaker_at``.
     """
