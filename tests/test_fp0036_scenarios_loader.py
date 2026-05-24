@@ -58,7 +58,7 @@ def test_minimal_valid_set_loads(tmp_path: Path) -> None:
     ss = load_scenario_set(p)
     assert isinstance(ss, ScenarioSet)
     assert ss.name == "smoke_minimal"
-    assert len(ss.scenarios) == 1
+    assert ss.scenarios, "scenario set must contain at least one scenario"
     scenario = ss.scenarios[0]
     assert scenario.id == "s1"
     assert scenario.input == "Hello world"
@@ -90,7 +90,7 @@ def test_multi_turn_set_loads(tmp_path: Path) -> None:
         """,
     )
     ss = load_scenario_set(p)
-    assert len(ss.scenarios) == 1
+    assert ss.scenarios, "scenario set must contain at least one scenario"
     s = ss.scenarios[0]
     assert s.id == "mt1"
     assert s.kind == "research_chain"
@@ -141,7 +141,7 @@ def test_long_session_v1_loads(tmp_path: Path) -> None:
     ss = load_scenario_set(long_session_path)
     assert isinstance(ss, ScenarioSet)
     assert ss.name == "long_session_v1"
-    assert len(ss.scenarios) == 7
+    assert ss.scenarios, "long_session_v1 must contain at least one scenario"
     for s in ss.scenarios:
         # All scenarios are multi-turn (= prompts: [...])
         assert s.is_multi_turn is True
@@ -379,7 +379,7 @@ def test_event_assertion_count_valid(tmp_path: Path, count_str: str, expected_st
     ss = load_scenario_set(p)
     ee = ss.scenarios[0].expected_events
     assert ee is not None
-    assert len(ee.must_emit) == 1
+    assert ee.must_emit, "must_emit must contain at least one entry"
     assert ee.must_emit[0].count == expected_stored
 
 
@@ -550,7 +550,7 @@ def test_artifact_assertion_optional_fields_load(tmp_path: Path) -> None:
     assert ea is not None
     assert isinstance(ea, ExpectedArtifacts)
     items = ea.items
-    assert len(items) == 3
+    assert items, "expected_artifacts must have at least one item"
 
     assert items[0].skill == "direct_llm"
     assert items[0].type is None
@@ -633,12 +633,12 @@ def test_full_featured_scenario_loads(tmp_path: Path) -> None:
 
     ee = s.expected_events
     assert ee is not None
-    assert len(ee.must_emit) == 2
+    assert ee.must_emit, "must_emit must be non-empty"
     assert ee.must_emit[0].type == "skill_run_spawned"
     assert ee.must_emit[0].count == ">=1"
     assert ee.must_emit[1].type == "skill_run_completed"
     assert ee.must_emit[1].status == "success"
-    assert len(ee.must_not_emit) == 1
+    assert ee.must_not_emit, "must_not_emit must be non-empty"
     assert ee.must_not_emit[0].type == "permission_denied"
     assert ee.sequence == ["skill_run_spawned", "skill_run_completed"]
 

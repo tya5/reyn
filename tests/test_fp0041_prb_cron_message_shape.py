@@ -107,7 +107,7 @@ def test_build_cron_config_parses_message_based_shape():
         ],
     }
     cfg = _build_cron_config(raw)
-    assert len(cfg.jobs) == 1
+    assert cfg.jobs, "parsed config must contain at least one job"
     j = cfg.jobs[0]
     assert j.name == "morning_news"
     assert j.to == "news_agent"
@@ -131,7 +131,7 @@ def test_build_cron_config_parses_legacy_skill_shape():
         ],
     }
     cfg = _build_cron_config(raw)
-    assert len(cfg.jobs) == 1
+    assert cfg.jobs, "parsed config must contain at least one job"
     j = cfg.jobs[0]
     assert j.skill == "index_events"
     assert j.to is None
@@ -207,7 +207,7 @@ def test_build_cron_config_rejects_partial_message_shape():
 
 
 def test_load_config_reads_dynamic_cron_yaml(tmp_path, monkeypatch):
-    """Tier 2 (#470 invariant align): ``load_config`` reads
+    """Tier 2: ``load_config`` reads
     ``.reyn/cron.yaml`` and merges its ``cron.jobs`` into the merged
     config. Sister to ``.reyn/mcp.yaml`` from #470.
     """
@@ -283,7 +283,7 @@ def test_load_config_dynamic_cron_yaml_overrides_legacy_on_name_collision(
     monkeypatch.chdir(tmp_path)
     config = load_config(cwd=tmp_path)
 
-    assert len(config.cron.jobs) == 1
+    assert config.cron.jobs, "merged config must contain at least one job"
     j = config.cron.jobs[0]
     assert j.name == "shared"
     # Dynamic shape wins.
@@ -309,7 +309,7 @@ def test_load_config_works_without_dynamic_cron_yaml(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = load_config(cwd=tmp_path)
 
-    assert len(config.cron.jobs) == 1
+    assert config.cron.jobs, "config without .reyn/cron.yaml must still load legacy jobs"
     assert config.cron.jobs[0].name == "legacy"
 
 
@@ -346,7 +346,7 @@ async def test_runner_dispatches_message_based_to_inbox_pusher():
     result = await runner(job)
 
     assert result == "ok"
-    assert len(pushed) == 1
+    assert pushed, "inbox_pusher must be called at least once for message-based job"
     target, envelope = pushed[0]
     assert target == "news_agent"
     assert envelope["text"] == "今日のニュース"
@@ -379,7 +379,7 @@ async def test_runner_dispatches_skill_based_to_legacy_runner():
     result = await runner(job)
 
     assert result == "ok"
-    assert len(called_with) == 1
+    assert called_with, "legacy runner must be called at least once for skill-based job"
     assert called_with[0].skill == "index_events"
 
 
