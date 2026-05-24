@@ -174,7 +174,7 @@ def test_dispatch_spawns_task_in_running_dict(tmp_path, monkeypatch):
 
         # Task is now registered.
         names = runner.running_names()
-        assert len(names) >= 1, f"Expected at least 1 running, got {names}"
+        (_, ) = names  # exactly one task registered
 
         # Release the block so the task can complete.
         block.set()
@@ -348,7 +348,7 @@ def test_wait_for_completion_emits_skill_run_completed(tmp_path, monkeypatch):
         f"Expected skill_run_completed, got event types: "
         f"{[e.type for e in emitted]}"
     )
-    assert not interrupted_evts, (
+    assert interrupted_evts == [], (
         f"skill_run_interrupted must NOT be emitted when the skill "
         f"completes naturally; got {interrupted_evts}"
     )

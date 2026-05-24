@@ -47,9 +47,7 @@ def test_complete_with_status_discarded_emits_skill_discarded(tmp_path):
     discarded = [e for e in events if e["kind"] == "skill_discarded"]
     completed = [e for e in events if e["kind"] == "skill_completed"]
 
-    assert len(discarded) == 1, (
-        f"expected 1 skill_discarded; got {[e['kind'] for e in events]}"
-    )
+    (first_discarded,) = discarded  # exactly one skill_discarded event
     assert completed == [], (
         "discarded path must NOT emit skill_completed"
     )
@@ -66,7 +64,7 @@ def test_complete_default_status_still_emits_skill_completed(tmp_path):
 
     events = list(sl.iter_from(0))
     completed = [e for e in events if e["kind"] == "skill_completed"]
-    assert len(completed) == 1
+    (_, ) = completed  # exactly one skill_completed event
 
 
 def test_complete_with_status_discarded_deletes_snapshot_file(tmp_path):
