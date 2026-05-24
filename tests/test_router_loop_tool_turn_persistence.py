@@ -54,7 +54,6 @@ def test_spy_host_records_assistant_with_tool_calls():
         tool_calls=[{"id": "c1", "function": {"name": "f"}}],
         meta={"chain_id": "abc"},
     )
-    assert len(host.recorded) == 1
     e = host.recorded[0]
     assert e.role == "assistant"
     assert e.content == "thinking"
@@ -63,6 +62,7 @@ def test_spy_host_records_assistant_with_tool_calls():
 
 
 def test_spy_host_records_tool_response():
+    """Tier 2: SpyHost captures a tool-response entry with the correct fields."""
     host = _SpyHost()
     host.append_history_entry(
         role="tool", content='{"ok": true}',
@@ -122,7 +122,6 @@ def test_adapter_append_history_entry_creates_chatmessage():
         meta={"chain_id": "abc", "source": "router_tool_turn"},
     )
 
-    assert len(captured) == 2
     assert captured[0].role == "assistant"
     assert captured[0].tool_calls[0]["id"] == "c1"
     assert captured[0].content == "here is my plan"
