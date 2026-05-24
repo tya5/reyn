@@ -264,6 +264,77 @@ def test_v_in_key_details() -> None:
     assert "verbose" in _KEY_DETAILS["v"].lower()
 
 
+# ---------------------------------------------------------------------------
+# Test 7 — footer [d] hint renders without MissingStyle (Tier 2b escape check)
+# ---------------------------------------------------------------------------
+
+def test_render_events_footer_d_hint_no_missing_style(tmp_path: Path) -> None:
+    """Tier 2b: render_events footer [d] hint is escaped (no MissingStyle).
+
+    Rich raises MissingStyle when [d] is interpreted as a style tag.
+    Escape must be present so Text.from_markup parses cleanly.
+    """
+    from rich.text import Text
+
+    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+
+    events_root = tmp_path / ".reyn" / "events" / "agents" / "test" / "events"
+    events_root.mkdir(parents=True, exist_ok=True)
+    (events_root / "log.jsonl").write_text(
+        '{"type": "phase_started", "timestamp": "2026-05-24T10:00:00", "data": {}}',
+        encoding="utf-8",
+    )
+
+    rendered, _, _ = render_events(
+        tmp_path, event_filter_idx=0, event_tail_idx=2, cursor=0, verbose=False,
+    )
+
+    # Must not raise MissingStyle — if [d] is unescaped this blows up
+    Text.from_markup(rendered)
+
+    # Sanity: the literal text "[d]" still appears in the rendered string
+    # (after unescaping by Rich) — but the markup itself must be valid.
+    assert "events.md reference" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Test 8 — footer [v] hint renders without MissingStyle (Tier 2b escape check)
+# ---------------------------------------------------------------------------
+
+def test_render_events_footer_v_hint_no_missing_style(tmp_path: Path) -> None:
+    """Tier 2b: render_events footer [v] hint is escaped (no MissingStyle).
+
+    When n_compaction_check_hidden > 0 and verbose=False the footer appends
+    '([v] to show)'. Rich raises MissingStyle if [v] is unescaped.
+    """
+    from rich.text import Text
+
+    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+
+    events_root = tmp_path / ".reyn" / "events" / "agents" / "test" / "events"
+    events_root.mkdir(parents=True, exist_ok=True)
+    # Mix: one visible event + three compaction_check → hidden count = 3
+    (events_root / "log.jsonl").write_text(
+        "\n".join([
+            '{"type": "compaction_check", "timestamp": "2026-05-24T10:00:00", "data": {"outcome": "too_few_turns"}}',
+            '{"type": "compaction_check", "timestamp": "2026-05-24T10:00:01", "data": {"outcome": "below_threshold"}}',
+            '{"type": "compaction_check", "timestamp": "2026-05-24T10:00:02", "data": {"outcome": "already_running"}}',
+            '{"type": "phase_started", "timestamp": "2026-05-24T10:00:03", "data": {}}',
+        ]),
+        encoding="utf-8",
+    )
+
+    rendered, _, _ = render_events(
+        tmp_path, event_filter_idx=0, event_tail_idx=2, cursor=0, verbose=False,
+    )
+
+    # Must not raise MissingStyle — if [v] is unescaped this blows up
+    Text.from_markup(rendered)
+
+    # Sanity: footer must mention the hidden count
+    assert "compaction_check hidden" in rendered
+
+
 @pytest.mark.asyncio
 async def test_keys_tab_render_includes_v_description() -> None:
     """Tier 2: rendered Keys tab markup surfaces the v verbose hint."""

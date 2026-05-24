@@ -50,7 +50,9 @@ def test_events_tab_footer_contains_d_hint(tmp_path: Path) -> None:
         event_tail_idx=2,    # tail=100
         cursor=0,
     )
-    assert "press [d] for events.md reference" in rendered
+    # After escaping `[d]` becomes `\[d]` in markup — assert on the escaped form
+    # (or just the surrounding text) to avoid MissingStyle regression.
+    assert "press \\[d] for events.md reference" in rendered
 
 
 # ── Test 2: [d] on events tab → Docs tab opens, cursor on events ─────────────
