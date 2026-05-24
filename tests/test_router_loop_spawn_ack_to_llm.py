@@ -117,9 +117,9 @@ def test_spawn_ack_tool_directive_is_non_empty_string():
 
 
 def test_spawn_ack_tool_directive_signals_spawn_context_and_h3_defense():
-    """Tier 2 (NF-W7-B43-2): the directive content must signal both the
-    spawn context (= "skill" / "spawned") AND the H3 hallucination
-    defense (= "do not include" + "skill output"). N=10 variant
+    """Tier 2: directive content must signal both the spawn context
+    (= "skill" / "spawned") AND the H3 hallucination defense
+    (= "do not include" + "skill output"). NF-W7-B43-2: N=10 variant
     ablation showed positive framing + skill-output exclusion is what
     flips ACK rate from 0-10% to 70% while keeping HALLUCINATE at 0%.
     """
@@ -148,10 +148,10 @@ def test_spawn_ack_tool_directive_distinct_from_outbox_message():
 
 @pytest.mark.asyncio
 async def test_spawn_ack_to_llm_env_on_continues_loop_with_directive(monkeypatch):
-    """Tier 2 (NF-W7-B43-2): when ``REYN_SPAWN_ACK_TO_LLM=1``, the
-    router does NOT push ``_SPAWN_ACK_MSG`` to outbox + does NOT
-    early-exit. Instead, the spawn-ack tool_result is annotated with
-    the directive and the loop continues to the next LLM call.
+    """Tier 2: when ``REYN_SPAWN_ACK_TO_LLM=1``, the router does NOT
+    push ``_SPAWN_ACK_MSG`` to outbox + does NOT early-exit. NF-W7-B43-2:
+    the spawn-ack tool_result is annotated with the directive and the
+    loop continues to the next LLM call.
 
     Pins:
       - LLM called exactly TWICE (= round 1 spawn-ack + round 2
@@ -192,18 +192,17 @@ async def test_spawn_ack_to_llm_env_on_continues_loop_with_directive(monkeypatch
         "tool_result content must include the directive via _post_text"
     )
     # Outbox: only the LLM-composed reply, no OS-synthetic spawn-ack.
-    assert len(host.outbox) == 1
-    out = host.outbox[0]
+    (out,) = host.outbox
     assert out["text"] == "Skill started; awaiting result."
     assert out["meta"].get("source") != "spawn_ack"
 
 
 @pytest.mark.asyncio
 async def test_spawn_ack_to_llm_env_off_keeps_default_outbox_path(monkeypatch):
-    """Tier 2 (regression guard): without
-    ``REYN_SPAWN_ACK_TO_LLM=1``, the default behaviour runs — OS pushes
-    ``_SPAWN_ACK_MSG`` to outbox + early-exits. The LLM is called only
-    once (= round 1), no directive injection happens.
+    """Tier 2: regression guard — without ``REYN_SPAWN_ACK_TO_LLM=1``,
+    the default behaviour runs — OS pushes ``_SPAWN_ACK_MSG`` to outbox
+    + early-exits. The LLM is called only once (= round 1), no
+    directive injection happens.
     """
     monkeypatch.delenv("REYN_SPAWN_ACK_TO_LLM", raising=False)
     host = _make_spawn_ack_host()
@@ -227,8 +226,7 @@ async def test_spawn_ack_to_llm_env_off_keeps_default_outbox_path(monkeypatch):
     # ``[task_spawned] kind=skill ...`` header so the LLM can correlate
     # with the later ``[task_completed]`` injection. The user-friendly
     # trailer (= _SPAWN_ACK_MSG) is preserved as the second paragraph.
-    assert len(host.outbox) == 1
-    out = host.outbox[0]
+    (out,) = host.outbox
     assert out["meta"].get("source") == "spawn_ack"
     assert "[task_spawned] kind=skill" in out["text"], (
         f"spawn-ack must carry the structured header for correlation; "
@@ -242,9 +240,9 @@ async def test_spawn_ack_to_llm_env_off_keeps_default_outbox_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_invoke_skill_spawn_ack_exit_event_fires_in_both_paths(monkeypatch):
-    """Tier 2 (P6 audit guard): the
-    ``invoke_skill_spawn_ack_exit`` event must fire regardless of
-    env var state. Audit trail is invariant across the path switch.
+    """Tier 2: P6 audit guard — ``invoke_skill_spawn_ack_exit`` event
+    must fire regardless of env var state. Audit trail is invariant
+    across the path switch.
     """
     # Path 1: opt-in
     monkeypatch.setenv("REYN_SPAWN_ACK_TO_LLM", "1")
@@ -259,7 +257,7 @@ async def test_invoke_skill_spawn_ack_exit_event_fires_in_both_paths(monkeypatch
     loop1 = _make_loop_with_llm_caller(host1, _ScriptedLLM(rounds1))
     await loop1.run("run skill", [])
     events1 = [e for e in host1._events.emitted if e["type"] == "invoke_skill_spawn_ack_exit"]
-    assert len(events1) == 1, "opt-in path must emit the audit event"
+    (only1,) = events1  # opt-in path must emit the audit event
 
     # Path 2: default
     monkeypatch.delenv("REYN_SPAWN_ACK_TO_LLM", raising=False)
@@ -273,12 +271,12 @@ async def test_invoke_skill_spawn_ack_exit_event_fires_in_both_paths(monkeypatch
     loop2 = _make_loop_with_llm_caller(host2, _ScriptedLLM(rounds2))
     await loop2.run("run skill", [])
     events2 = [e for e in host2._events.emitted if e["type"] == "invoke_skill_spawn_ack_exit"]
-    assert len(events2) == 1, "default path must also emit the audit event"
+    (only2,) = events2  # default path must also emit the audit event
 
 
 @pytest.mark.asyncio
 async def test_spawn_ack_directive_not_injected_in_default_path(monkeypatch):
-    """Tier 2 (regression guard): default path does NOT inject the
+    """Tier 2: regression guard — default path does NOT inject the
     directive into tool_result content. Without env opt-in, the
     spawn-ack tool message stays in the original shape that
     downstream OS / history persistence has always expected.
