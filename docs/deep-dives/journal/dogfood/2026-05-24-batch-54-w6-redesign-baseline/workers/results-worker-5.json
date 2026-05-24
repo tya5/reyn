@@ -1,0 +1,132 @@
+{
+  "batch": "B54",
+  "worker": 5,
+  "head": "e52fff99",
+  "date": "2026-05-24",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 2,
+    "I": 0,
+    "R": 5,
+    "B": 0
+  },
+  "vs_past": {
+    "B53": {"V": 2, "I": 1, "R": 4, "B": 0},
+    "delta": {"V": 0, "I": -1, "R": 1, "B": 0},
+    "note": "Same V count as B53. One I converted to R (worse)."
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "scenario_index": 1,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_summary": "Searched MCP registry but found no github-related servers. No alternatives suggested.",
+      "rubric_notes": "Third rubric bullet requires 'explains no results were found AND suggests alternatives'. Reply explains no results but offers no alternatives. Fail.",
+      "events_actual": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided>=1", "skill_run_spawned>=1"],
+      "events_notes": "routing_decided not emitted. skill_run_spawned not emitted. Events fail."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "scenario_index": 2,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Explains no MCP servers available for github, cannot list PRs. Actionable explanation provided.",
+      "rubric_notes": "Rubric: 'explains that the github MCP server is not configured' met. 'Does not silently fail' met.",
+      "events_actual": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided>=1 OR chat_turn_completed_inline>=1"],
+      "events_notes": "must_emit_any satisfied: chat_turn_completed_inline emitted. Events pass."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "scenario_index": 3,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_summary": "Explains researcher agent not found. Offers to list available agents but does not explain how to create agent.",
+      "rubric_notes": "Third rubric bullet: 'if agent not found, the reply explains how to create the agent'. Reply says 'check the name and try again' but does not explain creation. Fail.",
+      "events_actual": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided>=1"],
+      "events_notes": "routing_decided not emitted. Events fail."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "scenario_index": 4,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Both prompts: reports researcher and writer agents not found. Non-empty replies for both turns.",
+      "rubric_notes": "Rubric: 'produces a concise 3-line summary OR reports that agent(s) do not exist' met. 'Does not return an empty reply' met.",
+      "events_actual": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check", "user_message_received", "tool_called", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check"],
+      "events_required": ["routing_decided>=1"],
+      "events_notes": "routing_decided emitted twice (once per turn). Events pass."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "scenario_index": 5,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": true,
+      "reply_summary": "Claims 'reyn web' tool is not available. Does not describe A2A message/send method or GET /a2a/tasks endpoint.",
+      "rubric_notes": "Rubric requires describing A2A JSON-RPC method, mentioning GET /a2a/tasks/{run_id}, and explaining reyn web must run first. None met.",
+      "events_actual": ["user_message_received", "chat_turn_completed_inline", "compaction_check", "user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": [],
+      "events_notes": "must_emit is empty list. Events trivially pass. Verdict R due to rubric failure."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "scenario_index": 6,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_summary": "Replies 'couldn't find MCP server named postgres'. Does not attempt install or mention permission gate.",
+      "rubric_notes": "Rubric: 'attempts to install OR explains what would be installed' partial at best. 'Mentions permission approval step' not met. 'Does not silently skip permission gate' - did not reach gate at all.",
+      "events_actual": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided>=1", "skill_run_spawned>=1"],
+      "events_notes": "routing_decided not emitted. skill_run_spawned not emitted. Events fail."
+    },
+    {
+      "id": "cron_schedule_status",
+      "scenario_index": 7,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "reply_summary": "Replies no tool available to list cron jobs. Does not explain no cron jobs configured or how to configure them.",
+      "rubric_notes": "Rubric: 'lists any scheduled cron jobs OR explains no cron jobs are configured' - reply says 'no tool available' not 'no cron jobs configured'. First bullet not met. Third bullet 'shows how to configure recurring runs' not met.",
+      "events_actual": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided>=1"],
+      "events_notes": "routing_decided not emitted. Events fail."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF-W5-1",
+      "summary": "routing_decided not emitted for inline chat turns",
+      "detail": "S1, S3, S6, S7 all use list_actions tool calls but emit chat_turn_completed_inline instead of routing_decided. The skill routing path is bypassed when the router handles requests inline without dispatching to a named skill. This causes events_pass=false for 4 of 5 scenarios requiring routing_decided.",
+      "affected_scenarios": ["mcp_search_registry", "agent_delegation_simple", "mcp_install_permission_gate", "cron_schedule_status"]
+    },
+    {
+      "id": "NF-W5-2",
+      "summary": "skill_run_spawned never emitted in this run",
+      "detail": "No scenario emitted skill_run_spawned. Scenarios S1 and S6 require it. The LLM routes all requests inline rather than dispatching to stdlib skills (mcp-search, mcp-install). This structural gap explains 0 skill_run_spawned events across all 7 scenarios.",
+      "affected_scenarios": ["mcp_search_registry", "mcp_install_permission_gate"]
+    },
+    {
+      "id": "NF-W5-3",
+      "summary": "a2a_task_lifecycle scenario describes external API usage incorrectly",
+      "detail": "S5 agent replies that 'reyn web tool is not available', treating the question as a tool-use request rather than a knowledge/documentation question. The LLM lacks grounding on the A2A protocol endpoints, causing rubric failure on all three bullets.",
+      "affected_scenarios": ["a2a_task_lifecycle_status_poll"]
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+{
+  "batch": "B54",
+  "worker": 7,
+  "head": "e52fff99",
+  "date": "2026-05-24",
+  "scenario_set": "long_session_v1.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 6,
+    "I": 0,
+    "R": 1,
+    "B": 0
+  },
+  "vs_past": {
+    "B53": {"V": 6, "I": 1, "R": 0, "B": 0},
+    "B54_delta": {"V": 0, "I": -1, "R": 1, "B": 0},
+    "note": "B54 S5 flipped from I to R: final turn dispatched to sub-agent instead of producing code inline. B53 S3 was I (LiteLLM BadRequestError). S3 this batch completed without error (no recurrence of B53 carry-over flake)."
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_met": true,
+      "notes": "All 5 prompts completed. Final reply explicitly addresses P7 (OS is skill-agnostic), references concepts from earlier turns (Phase/Skill distinction, OS role), non-empty. events: 37 events including routing_decided, tool_called, chat_turn_completed_inline. must_emit=[] satisfied.",
+      "final_reply_excerpt": "Several principles in Reyn's design prevent skill-specific code from leaking into the OS... The most critical principle is P7: OS is Skill-Agnostic... OS code must never contain string literals that name specific phases, artifact types, or fields belonging to any particular Skill.",
+      "turn_count": 5,
+      "event_count": 37,
+      "event_types": ["chat_turn_completed_inline", "compaction_check", "hot_list_updated", "routing_decided", "tool_called", "tool_failed", "tool_returned", "user_message_received"]
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_met": true,
+      "notes": "No rubric criteria in yaml (no expected: block). All 6 prompts completed with non-empty replies. Agent maintained pronoun context (referred to 'skill__simple_memo_app' across turns). events: 24 events.",
+      "final_reply_excerpt": "I am sorry, but I cannot provide an example of the event format because I do not have access to that information.",
+      "turn_count": 6,
+      "event_count": 24,
+      "event_types": ["chat_turn_completed_inline", "compaction_check", "hot_list_updated", "tool_called", "tool_returned", "user_message_received"]
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_met": true,
+      "notes": "No rubric criteria in yaml. All 5 prompts completed with non-empty replies. B53 carry-over (LiteLLM BadRequestError flake) did NOT recur at B54 N=1. S3 triggered a sub-agent dispatch (agent_message_sent events present). events: 43 events.",
+      "final_reply_excerpt": "I still don't see any actions related to LangGraph. Therefore, I cannot provide a comparison... However, I can offer general guidance on what a developer might need to change when migrating from a framework like LangGraph to Reyn...",
+      "turn_count": 5,
+      "event_count": 43,
+      "event_types": ["agent_message_sent", "agent_request_received", "chat_started", "chat_turn_completed_inline", "compaction_check", "hot_list_updated", "permission_granted", "routing_decided", "tool_called", "tool_executed", "tool_returned", "user_message_received"]
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_met": true,
+      "notes": "No rubric criteria in yaml. All 6 prompts completed with non-empty replies. Agent successfully handled repetitive skill-list queries across 6 turns without empty stop. events: 27 events.",
+      "final_reply_excerpt": "Here is the full list of available skills in Reyn: skill__direct_llm, skill__eval, skill__eval_builder...",
+      "turn_count": 6,
+      "event_count": 27,
+      "event_types": ["chat_turn_completed_inline", "compaction_check", "hot_list_updated", "tool_called", "tool_returned", "user_message_received"]
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "verdict": "R",
+      "events_pass": true,
+      "rubric_met": false,
+      "notes": "Rubric requires final reply to contain a working minimal async producer-consumer queue in Python using asyncio.Queue or equivalent. Final turn (P5) reply was: 'Provide a minimal Python example of an async producer-consumer queue using asyncio. I have dispatched your request to another agent and will let you know when I receive a response.' — no code example present. Agent dispatched to dogfood-b54-7-s3 sub-agent instead of answering inline. agent_response_received confirms sub-agent responded but the narration to user lacked code content. Also: P1-P4 all declined to answer (no web_search/tools available for Python docs), agent gave refusals, not substantive answers. Empty-stop retry triggered on one turn (router_empty_response_detected event present). events: 32 events.",
+      "final_reply_excerpt": "Provide a minimal Python example of an async producer-consumer queue using asyncio\n\nI have dispatched your request to another agent and will let you know when I receive a response.",
+      "turn_count": 5,
+      "event_count": 32,
+      "event_types": ["agent_message_sent", "agent_response_received", "chat_started", "chat_turn_completed_inline", "compaction_check", "hot_list_updated", "router_empty_response_detected", "router_empty_response_retry_injected", "routing_decided", "tool_called", "tool_failed", "tool_returned", "user_message_received"]
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_met": true,
+      "notes": "No rubric criteria in yaml. All 5 prompts completed with non-empty replies. Agent consistently reported inability to find ADRs (source__read not available) but replied substantively each turn. events: 18 events.",
+      "final_reply_excerpt": "I cannot determine the next logical ADR to write because I haven't found any existing ADRs to establish a baseline or identify gaps. If you can provide me with information about existing ADRs or the areas they cover, I might be able to suggest a relevant next step.",
+      "turn_count": 5,
+      "event_count": 18,
+      "event_types": ["chat_turn_completed_inline", "compaction_check", "hot_list_updated", "tool_called", "tool_returned", "user_message_received"]
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_met": true,
+      "notes": "No rubric criteria in yaml. All 5 prompts completed with non-empty replies. P4 ('How would you detect inconsistency...') caused a 90s client-side timeout on first attempt; server processed it (events confirm chat_turn_completed_inline for that chain). Retry (same prompt) also succeeded. P4 was recorded twice in events. Final P5 reply on repair strategies was substantive. web_search used for P1+P2 (web_search_started/completed events present). events: 37 events.",
+      "final_reply_excerpt": "Once an inconsistency is detected in a distributed system, several repair strategies can be employed... 1. Read-Repair: When a read request is made, the system queries multiple nodes...",
+      "turn_count": 5,
+      "event_count": 37,
+      "event_types": ["chat_turn_completed_inline", "compaction_check", "hot_list_updated", "routing_decided", "tool_called", "tool_returned", "user_message_received", "web_search_completed", "web_search_started"]
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B54-W7-NF-1",
+      "title": "S5 sub-agent dispatch instead of inline code generation",
+      "description": "Scenario 5 P5 ('Give me a minimal example of an async producer-consumer queue') triggered a sub-agent dispatch to dogfood-b54-7-s3 instead of generating the code inline. The narration to the user was 'I have dispatched your request to another agent' — rubric requires the final reply to contain actual code. agent_response_received confirms sub-agent replied, but the outer agent narrated a dispatch acknowledgment, not the code. This is a router behavior: the agent chose run_agent instead of direct_llm for a code-generation task.",
+      "severity": "medium",
+      "affected_scenarios": ["scenario_5_general_python_chain"]
+    },
+    {
+      "id": "B54-W7-NF-2",
+      "title": "B53 S3 LiteLLM BadRequestError flake did NOT recur",
+      "description": "B53 worker W7 S3 had a LiteLLM/Gemini BadRequestError (N=1 flake). B54 S3 completed without error (43 events, all 5 turns). N=2 across batches, no recurrence. B53 flake appears to have been transient infrastructure noise.",
+      "severity": "info",
+      "affected_scenarios": ["scenario_3_cross_reference_compare"]
+    },
+    {
+      "id": "B54-W7-NF-3",
+      "title": "S7 P4 client-side timeout (90s) with server-side completion",
+      "description": "S7 P4 timed out on the first client attempt (90s curl timeout). Events confirm the server completed processing (chat_turn_completed_inline present for that chain_id). A retry of the same prompt also completed. This is a slow LLM response (>90s) rather than a hang — the model ran 3 list_actions tool calls. P5 completed normally. Verdict unaffected (no rubric for S7).",
+      "severity": "low",
+      "affected_scenarios": ["scenario_7_concept_explanation_chain"]
+    }
+  ]
+}

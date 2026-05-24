@@ -1,0 +1,169 @@
+{
+  "batch": "B54",
+  "worker": 1,
+  "head": "e52fff99",
+  "date": "2026-05-24",
+  "scenario_set": "chat_router_smoke.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 5,
+    "I": 0,
+    "R": 2,
+    "B": 0
+  },
+  "vs_past": {
+    "B53": { "V": 5, "I": 0, "R": 2, "B": 0 },
+    "delta": "0V vs B53 (5/7 → 5/7, same scenarios refuted: S5 catalog_routing_decided_emitted, S7 out_of_scope_graceful_decline)"
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "scenario_index": 1,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Reply mentions skills, agents, file tasks, and memory — covers Reyn capabilities at a high level, helpful.",
+      "events_emitted": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_check": {
+        "must_emit": { "user_message_received": "PASS (>=1 emitted)" },
+        "must_not_emit": { "permission_denied": "PASS (not emitted)" }
+      },
+      "artifacts_check": "n/a (no artifact requirement)",
+      "notes": "Router answered inline (chat_turn_completed_inline). No direct_llm artifact required per B48 W1-S1 fix."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "scenario_index": 2,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Explains idempotency: operation with same result regardless of repetition count, with database/API design context.",
+      "events_emitted": ["user_message_received", "tool_called", "web_search_started", "web_search_completed", "tool_returned", "hot_list_updated", "routing_decided", "compaction_check"],
+      "events_check": {
+        "must_emit": "PASS (none required)",
+        "must_not_emit": { "permission_denied": "PASS (not emitted)" }
+      },
+      "artifacts_check": "n/a (no artifact requirement per B49 W1-S2 fix)",
+      "notes": "Router used web_search to answer factual query, emitted routing_decided. Rubric met."
+    },
+    {
+      "id": "skill_discovery_request",
+      "scenario_index": 3,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Reply lists 16 skills by name with descriptions (direct_llm, eval, index_docs, word_stats_demo, etc.).",
+      "events_emitted": ["user_message_received", "tool_called", "tool_returned", "hot_list_updated", "chat_turn_completed_inline", "compaction_check"],
+      "events_check": {
+        "must_emit_any": { "chat_turn_completed_inline": "PASS (satisfies must_emit_any)" },
+        "must_not_emit": { "permission_denied": "PASS (not emitted)" }
+      },
+      "artifacts_check": "n/a (no artifact requirement)",
+      "notes": "Router answered inline with full skill catalogue. must_emit_any satisfied via chat_turn_completed_inline."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "scenario_index": 4,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Reply contains character count (44 chars), line count (1 line), and token estimate (~11 tokens) for the input text.",
+      "events_emitted": ["user_message_received", "tool_called", "skill_run_spawned", "tool_returned", "hot_list_updated", "routing_decided", "invoke_skill_spawn_ack_exit", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check", "skill_run_completed", "skill_completion_injected", "chat_turn_completed_inline", "workflow_started", "artifact_created", "phase_started", "preprocessor_step_started", "python_step_started", "python_step_completed", "preprocessor_step_completed", "context_built", "llm_called", "llm_response_received", "control_decided", "artifact_validated", "phase_completed", "workflow_finished"],
+      "events_check": {
+        "routing_decided": "PASS (>=1 emitted)",
+        "skill_run_spawned": "PASS (>=1 emitted)",
+        "skill_run_completed_status_finished": "PASS (status=finished confirmed)",
+        "must_not_emit": { "permission_denied": "PASS (not emitted)" }
+      },
+      "artifacts_check": {
+        "word_stats_demo": "PASS (artifact present at .reyn/artifacts/word_stats_demo/)"
+      },
+      "notes": "REYN_EMPTY_STOP_RETRY triggered (router_empty_response_detected + retry_injected). Skill completed with status=finished. Word stats artifact confirmed."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "scenario_index": 5,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": true,
+      "reply_summary": "Reply asks for clarification on poem theme: 'どのようなテーマの詩がよろしいでしょうか？' — does NOT contain a poem.",
+      "events_emitted": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_check": {
+        "must_emit_any": { "chat_turn_completed_inline": "PASS (satisfies must_emit_any)" },
+        "must_not_emit": { "permission_denied": "PASS (not emitted)" }
+      },
+      "artifacts_check": {
+        "direct_llm": "FAIL (required present=true, not produced — router answered inline with a question)"
+      },
+      "notes": "Router asked for clarification instead of writing a poem. Rubric: 'reply contains a poem or poem-like text' and 'at least two lines' both FAIL. Artifacts: direct_llm not dispatched. Double failure: rubric + artifact. Verdict R."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "scenario_index": 6,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Turn 1: explained list comprehension in one line. Turn 2: provided Python example `[x*x for x in range(10)]` with explanation, coherent with turn 1.",
+      "events_emitted_turn1": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_emitted_turn2": ["user_message_received", "tool_failed", "hot_list_updated", "routing_decided", "tool_called", "skill_run_spawned", "tool_returned", "routing_decided", "invoke_skill_spawn_ack_exit", "skill_run_completed", "skill_completion_injected", "compaction_check", "chat_turn_completed_inline", "workflow_started", "artifact_created", "phase_started", "context_built", "llm_called", "llm_response_received", "control_decided", "artifact_validated", "phase_completed", "workflow_finished"],
+      "events_check": {
+        "must_emit": "PASS (none required)",
+        "must_not_emit": { "permission_denied": "PASS (not emitted)" }
+      },
+      "artifacts_check": "n/a (no artifact requirement per B48 W1-S6 fix)",
+      "notes": "tool_failed on turn 2 first attempt (wrong arg format), then router retried and direct_llm skill completed successfully. Final reply contains Python code example coherent with turn 1. Rubric met."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "scenario_index": 7,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": true,
+      "reply_summary": "Reply asks 'どのような画像を生成しますか？' — implies capability exists, does NOT decline.",
+      "events_emitted": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_check": {
+        "must_emit": "PASS (none required)",
+        "must_not_emit": { "permission_denied": "PASS (not emitted)" }
+      },
+      "artifacts_check": "n/a (no artifact requirement per B48 W1-S7 fix)",
+      "notes": "Rubric requires polite decline or explanation that capability is unavailable + must not pretend to generate an image. Router replied with a clarification question implying it CAN generate images. Both rubric items FAIL. Verdict R."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "W1-F1",
+      "scenario": "explicit_skill_invocation_word_stats",
+      "observation": "REYN_EMPTY_STOP_RETRY triggered for word_stats_demo invocation (router_empty_response_detected + router_empty_response_retry_injected). Skill still completed successfully with status=finished after retry.",
+      "severity": "low",
+      "action": "monitor"
+    },
+    {
+      "id": "W1-F2",
+      "scenario": "multi_turn_pronoun_reference",
+      "observation": "tool_failed on turn 2 first attempt (wrong argument format for direct_llm). Router self-corrected and retried successfully. Reply met rubric.",
+      "severity": "low",
+      "action": "monitor — self-correction path works but tool_failed is noise in events"
+    },
+    {
+      "id": "W1-F3",
+      "scenario": "catalog_routing_decided_emitted",
+      "observation": "Router asked for poem theme clarification instead of writing a poem inline. This is the same R verdict as B53. Persistent attractor: router treats creative requests as ambiguous and asks for clarification.",
+      "severity": "medium",
+      "action": "carry-over from B53 — scenario S5 R is a known persistent failure"
+    },
+    {
+      "id": "W1-F4",
+      "scenario": "out_of_scope_graceful_decline",
+      "observation": "Router implied it could generate images by asking for clarification. Did not decline. Same R verdict as B53. Persistent attractor.",
+      "severity": "medium",
+      "action": "carry-over from B53 — scenario S7 R is a known persistent failure"
+    }
+  ]
+}
