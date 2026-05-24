@@ -265,13 +265,36 @@ class ReynHeader(RenderableCacheMixin, Widget):
         other_cells += cell_len(cost_str)
         if self._stalled_count > 0:
             other_cells += cell_len(f"[{self._stalled_count} pending]")
+        # ``/find`` active badge — exact same text as _format_status
+        # so the budget is accurate.  The badge text depends on the
+        # current query / position / total stored in ``_find_state``.
+        if self._find_state is not None:
+            fs = self._find_state
+            find_badge = (
+                f"[find: '{fs.get('query', '')}' "
+                f"{fs.get('position', 0)}/{fs.get('total', 0)}]"
+            )
+            other_cells += cell_len(find_badge)
+        # Voice mode badge — the recording hint is the widest variant;
+        # measure its exact cell width (emoji counts as 2 cells).
+        if self._voice_state == "recording":
+            other_cells += cell_len("🔴 voice · Enter→send Esc→cancel")
+        elif self._voice_state == "transcribing":
+            other_cells += cell_len("⏳ voice")
         other_cells += cell_len(self._now_text())
         # Separator count: number of joins between parts. With
         # agent_name included, parts = 1 (agent) + (1 if model) + 2
-        # (tokens, cost) + (1 if stalled) + 1 (clock).
-        part_count = 1 + (1 if self._model else 0) + 2 + (
-            1 if self._stalled_count > 0 else 0
-        ) + 1
+        # (tokens, cost) + (1 if stalled) + (1 if find) + (1 if voice)
+        # + 1 (clock).
+        part_count = (
+            1
+            + (1 if self._model else 0)
+            + 2
+            + (1 if self._stalled_count > 0 else 0)
+            + (1 if self._find_state is not None else 0)
+            + (1 if self._voice_state else 0)
+            + 1
+        )
         separator_cells = max(0, part_count - 1) * cell_len("  │  ")
         budget = available - other_cells - separator_cells
         if budget >= cell_len(name):

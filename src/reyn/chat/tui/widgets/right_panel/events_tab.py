@@ -256,7 +256,8 @@ def _event_hint(ev: dict) -> str:
     if t in ("tool_called", "tool_returned"):
         return d.get("tool", "")
     if t == "tool_failed":
-        return f"{d.get('tool', '')}: {str(d.get('message', ''))[:25]}"
+        msg, was_trunc = _truncate_to_cells(str(d.get("message", "")), 25)
+        return f"{d.get('tool', '')}: {msg}" + ("…" if was_trunc else "")
     if t in ("mcp_called", "mcp_completed"):
         suffix = " ✗" if d.get("is_error") else ""
         return f"{d.get('server', '')}.{d.get('tool', '')}{suffix}"
@@ -281,18 +282,22 @@ def _event_hint(ev: dict) -> str:
         run_id = str(d.get("run_id", ""))[:8]
         return f"{d.get('skill', '')} [{run_id}] status={d.get('status', '')}"
     if t == "workflow_aborted":
-        return str(d.get("reason", ""))[:40]
+        reason, was_trunc = _truncate_to_cells(str(d.get("reason", "")), 40)
+        return reason + ("…" if was_trunc else "")
     if t == "agent_message_sent":
         return f"{d.get('from_agent', '')} → {d.get('to_agent', '')}"
     if t in ("agent_request_received", "agent_response_received"):
         return d.get("from_agent", "")
     if t == "user_message_received":
         text = str(d.get("text", ""))
-        return text[:40] + ("…" if len(text) > 40 else "")
+        truncated, was_trunc = _truncate_to_cells(text, 40)
+        return truncated + ("…" if was_trunc else "")
     if t == "user_intervention_requested":
-        return str(d.get("question", ""))[:40]
+        question, was_trunc = _truncate_to_cells(str(d.get("question", "")), 40)
+        return question + ("…" if was_trunc else "")
     if t == "user_intervention_received":
-        return str(d.get("answer", ""))[:40]
+        answer, was_trunc = _truncate_to_cells(str(d.get("answer", "")), 40)
+        return answer + ("…" if was_trunc else "")
     if t == "intervention_routed":
         # Issue #261: surface the Phase 4 routing decision. Format
         # ``<route> <iv_kind> [<iv_id>]`` — short enough to fit the
@@ -316,7 +321,8 @@ def _event_hint(ev: dict) -> str:
     if t == "web_fetch_completed":
         return f"HTTP {d.get('status_code', '')} {d.get('content_length', '')}b"
     if t == "web_search_started":
-        return str(d.get("query", ""))[:40]
+        query, was_trunc = _truncate_to_cells(str(d.get("query", "")), 40)
+        return query + ("…" if was_trunc else "")
     if t == "web_search_completed":
         return f"{d.get('result_count', '')} results"
     # Plan-mode (ADR-0022 / 0023 / 0024 / 0025). plan_id is a stable suffix —
