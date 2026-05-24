@@ -222,6 +222,6 @@ def test_f3_binding_description_widened() -> None:
         key = getattr(b, "key", None) or (b[0] if isinstance(b, tuple) else None)
         if key == "f3":
             description = getattr(b, "description", "") or ""
-            assert "inline row" in description.lower()
+            assert "skill row" in description.lower()
             return
     raise AssertionError("F3 binding not found in ReynTUIApp.BINDINGS")

@@ -210,6 +210,5 @@ async def test_keys_tab_render_includes_f3_with_description() -> None:
         await pilot.pause()
         markup, _ = render_keys(app)
         assert "F3" in markup
-        # Description wording shifted from "skill row" to "inline row"
-        # after F3 was extended to cover tool call rows too.
-        assert "inline row drill-down" in markup.lower()
+        # Description uses "skill row drill-down" (main UI wording).
+        assert "skill row drill-down" in markup.lower()
