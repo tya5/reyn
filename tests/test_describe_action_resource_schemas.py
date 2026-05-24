@@ -141,16 +141,6 @@ def test_agent_peer_describe_drops_curried_to_field():
 # ── mcp.server__X ───────────────────────────────────────────────────────
 
 
-def test_mcp_server_describe_returns_empty_schema():
-    """Tier 1: ``mcp.server__X`` resolves to ``list_mcp_tools(server=X)`` — the
-    user-facing args are empty (the server name is curried)."""
-    ctx = _make_ctx()
-    out = _describe("mcp.server__gh", ctx)
-    schema = out["input_schema"]
-    assert schema.get("properties") == {}
-    assert schema.get("required") == []
-
-
 # ── rag.corpus__X ───────────────────────────────────────────────────────
 
 
@@ -166,77 +156,11 @@ def test_rag_corpus_describe_drops_curried_sources_field():
     assert "query" in schema["properties"]
 
 
-# ── mcp.tool__server.tool ───────────────────────────────────────────────
-
-
-def test_mcp_tool_describe_returns_target_input_schema():
-    """Tier 1: ``describe_action(mcp.tool__server.tool)`` returns the tool's
-    declared ``inputSchema`` (FP-0032 expanded shape), not
-    ``call_mcp_tool``'s ``{server, tool, args}`` envelope."""
-    mcp_servers = [
-        {
-            "name": "gh",
-            "description": "GitHub MCP server",
-            "tools": [
-                {
-                    "name": "create_issue",
-                    "description": "Create an issue",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "repo": {"type": "string"},
-                            "title": {"type": "string"},
-                            "body": {"type": "string"},
-                        },
-                        "required": ["repo", "title"],
-                    },
-                },
-            ],
-        },
-    ]
-    ctx = _make_ctx(mcp_servers=mcp_servers)
-    out = _describe("mcp.tool__gh.create_issue", ctx)
-    schema = out["input_schema"]
-    assert set(schema["properties"].keys()) == {"repo", "title", "body"}
-    assert set(schema["required"]) == {"repo", "title"}
-    # call_mcp_tool's dispatch fields must NOT be present.
-    assert "server" not in schema["properties"]
-    assert "tool" not in schema["properties"]
-    assert "args" not in schema["properties"]
-
-
-def test_mcp_tool_describe_accepts_snake_case_input_schema_alias():
-    """Tier 1: ``inputSchema`` is the FP-0032 canonical, but some sources emit
-    ``input_schema`` (snake_case) — both must resolve."""
-    mcp_servers = [
-        {
-            "name": "gh",
-            "tools": [
-                {
-                    "name": "do_thing",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {"x": {"type": "string"}},
-                    },
-                },
-            ],
-        },
-    ]
-    ctx = _make_ctx(mcp_servers=mcp_servers)
-    out = _describe("mcp.tool__gh.do_thing", ctx)
-    schema = out["input_schema"]
-    assert "x" in schema["properties"]
-
-
-def test_mcp_tool_describe_missing_server_falls_back_to_dispatcher():
-    """Tier 1: No matching server / tool → fall back to call_mcp_tool dispatcher
-    schema rather than crashing or returning nothing."""
-    ctx = _make_ctx(mcp_servers=[])
-    out = _describe("mcp.tool__nonexistent.thing", ctx)
-    schema = out["input_schema"]
-    # Dispatcher schema shape — at least one of {server, tool, args} present.
-    props = schema.get("properties") or {}
-    assert any(k in props for k in ("server", "tool", "args"))
+# Issue #879: mcp.server__X / mcp.tool__X.Y resource-invoke describe
+# paths were removed when the MCP surface collapsed to verb actions.
+# Per-tool input schemas now travel through mcp__list_tools (= entries
+# carry the tool description) + the existing describe_mcp_tool surface
+# for richer per-tool detail.
 
 
 # ── operation categories pass through unchanged ─────────────────────────
@@ -278,7 +202,6 @@ def test_no_router_state_falls_back_for_resource_categories():
 @pytest.mark.parametrize("qn", [
     "skill__index_docs",
     "agent.peer__alice",
-    "mcp.server__gh",
     "rag.corpus__my_docs",
 ])
 def test_metadata_envelope_preserved(qn: str):

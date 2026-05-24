@@ -189,20 +189,10 @@ def test_r6_valid_agent_peer_passes_registry_check() -> None:
 # ── R7. mcp.tool ghost filtered ──────────────────────────────────────────────
 
 
-def test_r7_mcp_tool_ghost_filtered_when_absent_from_mcp_tool_map() -> None:
-    """Tier 2: mcp.tool ghost absent from mcp_tool_map is filtered."""
-    mcp_tool_map = {
-        "mcp.tool__brave.search": {"description": "Brave search", "input_schema": {}},
-    }
-    result = _call_filter(
-        ["mcp.tool__brave.search", "mcp.tool__ghost_server.ghost_tool"],
-        mcp_tool_map=mcp_tool_map,
-    )
-
-    assert "mcp.tool__brave.search" in result
-    assert "mcp.tool__ghost_server.ghost_tool" not in result, (
-        "Ghost mcp.tool not in mcp_tool_map must be filtered."
-    )
+# Issue #879: the ``mcp.tool__<srv>.<tool>`` per-tool hot-list alias path
+# was removed when the MCP surface collapsed to verb actions. Tools are
+# now dispatched generically via ``mcp__call_tool``; per-tool ghost
+# filtering at the hot-list-build boundary is no longer applicable.
 
 
 # ── R8. valid mcp.tool passes ────────────────────────────────────────────────

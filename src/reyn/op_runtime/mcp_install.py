@@ -258,14 +258,16 @@ async def handle(
             )
 
     # ── 4. Credentials: resolve isSecret env vars from env_overrides or
-    # the pre-existing secret store. #879 removed the mid-flight ask_user
-    # prompt path; missing secrets short-circuit with a structured
-    # ``needs_secrets`` result so the LLM can guide the operator to
-    # ``reyn secret set <KEY>`` and retry.
+    # the pre-existing secret store. Two flows depending on caller:
+    # (a) ``ctx.intervention_bus is not None`` (= CLI / operator-trusted
+    #     entry, StdinInterventionBus or similar): interactively prompt
+    #     for each missing secret, persist, continue install.
+    # (b) ``ctx.intervention_bus is None`` (= router chat path, #879):
+    #     short-circuit with a structured ``needs_secrets`` result so
+    #     the LLM guides the operator to ``reyn secret set <KEY>`` and
+    #     retries. No mid-flight ask_user from the chat router.
     # #571 Phase 6: every save_secret call routes through
-    # require_secret_write against the calling decl. The env-var key set
-    # is server-specific (= determined by the registry response), so
-    # callers must declare the wildcard form ``secret.write: ['*']``.
+    # require_secret_write against the calling decl.
     from reyn.secrets.store import list_secret_keys
 
     env_overrides = dict(op.env_overrides or {})
@@ -281,6 +283,8 @@ async def handle(
         from reyn.secrets.store import save_secret
         save_secret(key, value)
 
+    interactive = ctx.intervention_bus is not None
+
     for pkg_raw in packages_raw:
         env_vars = pkg_raw.get("environmentVariables", [])
         for ev in env_vars:
@@ -292,20 +296,35 @@ async def handle(
             is_secret = ev.get("isSecret", False)
             if not is_secret:
                 continue
-            # Already supplied via env_overrides — persist + continue.
             if key in env_overrides:
                 _save_with_gate(key, env_overrides[key])
                 secret_keys_set.append(key)
                 continue
-            # Already stored via ``reyn secret set`` previously — nothing
-            # to do; the server's runtime reads the env-var from the
-            # store at launch time.
             if key in already_set:
                 continue
-            missing_secret_keys.append({
-                "name": key,
-                "description": ev.get("description", "") or "",
-            })
+            if interactive:
+                from reyn.user_intervention import UserIntervention
+                description = ev.get("description", "") or ""
+                iv = UserIntervention(
+                    kind="mcp_install.secret",
+                    prompt=f"環境変数 {key} の値を入力してください",
+                    detail=description or (
+                        f"{op.server_id} が必要とするシークレット: {key}"
+                    ),
+                    choices=[],
+                )
+                answer = await ctx.intervention_bus.request(iv)
+                value = getattr(answer, "text", None) or getattr(
+                    answer, "choice_id", "",
+                )
+                if value:
+                    _save_with_gate(key, value)
+                    secret_keys_set.append(key)
+            else:
+                missing_secret_keys.append({
+                    "name": key,
+                    "description": ev.get("description", "") or "",
+                })
 
     if missing_secret_keys:
         missing_names = [k["name"] for k in missing_secret_keys]

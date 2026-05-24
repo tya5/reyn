@@ -163,58 +163,12 @@ def test_agent_peer_describe_missing_both_falls_back_to_dispatcher():
     assert out.get("description")
 
 
-# ── mcp.tool__server.tool ───────────────────────────────────────────────
-
-
-def test_mcp_tool_describe_returns_tool_description():
-    """Tier 2b: describe_action(mcp.tool__server.tool) returns the tool's description.
-
-    B42-NF-W7-1: uses the MCP tool's declared description, not
-    call_mcp_tool's dispatcher text.
-    """
-    actual_desc = "Search GitHub pull requests matching a query."
-    ctx = _make_ctx(mcp_servers=[
-        {
-            "name": "github",
-            "tools": [
-                {"name": "search_pull_requests", "description": actual_desc},
-            ],
-        },
-    ])
-    out = _describe("mcp.tool__github.search_pull_requests", ctx)
-    assert out["description"] == actual_desc
-
-
-def test_mcp_tool_describe_missing_description_falls_back():
-    """Tier 2: MCP tool without ``description`` field falls back to
-    call_mcp_tool's dispatcher description.
-    """
-    ctx = _make_ctx(mcp_servers=[
-        {
-            "name": "github",
-            "tools": [{"name": "ping"}],
-        },
-    ])
-    out = _describe("mcp.tool__github.ping", ctx)
-    # Some non-empty fallback expected
-    assert out.get("description")
-
-
-# ── mcp.server__X ───────────────────────────────────────────────────────
-
-
-def test_mcp_server_describe_returns_server_description():
-    """Tier 2b: describe_action(mcp.server__X) returns the server's description.
-
-    B42-NF-W7-1: uses the server's own description, not list_mcp_tools'
-    dispatcher text.
-    """
-    actual_desc = "GitHub MCP server — search/comment/PR ops."
-    ctx = _make_ctx(mcp_servers=[
-        {"name": "github", "description": actual_desc, "tools": []},
-    ])
-    out = _describe("mcp.server__github", ctx)
-    assert out["description"] == actual_desc
+# Issue #879: mcp.tool / mcp.server resource-invoke describe paths were
+# removed when the MCP surface collapsed to verb actions. The per-tool /
+# per-server description metadata is now surfaced through
+# mcp__list_tools / mcp__list_servers results directly instead of
+# describe_action; that flow's coverage lives in test_universal_handlers
+# (= LIST_MCP_TOOLS / LIST_MCP_SERVERS handler tests).
 
 
 # ── operation categories (regression guard) ─────────────────────────────

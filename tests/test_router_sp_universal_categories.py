@@ -74,14 +74,18 @@ def test_flag_on_adds_action_categories_section() -> None:
     assert "## Action categories" in prompt
 
 
-def test_flag_on_lists_all_thirteen_categories() -> None:
-    """Tier 2: section names every category from FP-0034 §D18 master table."""
+def test_flag_on_lists_all_categories() -> None:
+    """Tier 2: section names every category from FP-0034 §D18 master table.
+
+    Issue #879 collapsed mcp.server / mcp.tool / mcp.operation into a
+    single ``mcp`` category; the SP bullet count drops accordingly.
+    """
     prompt = build_system_prompt(
         **_BASE_KWARGS, universal_wrappers_enabled=True,
     )
     for cat in (
         "skill", "agent.peer",
-        "mcp.server", "mcp.tool", "mcp.operation",
+        "mcp",
         "file", "web",
         "memory.entry", "memory.operation",
         "reyn.source",

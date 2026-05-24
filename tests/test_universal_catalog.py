@@ -52,9 +52,10 @@ def test_categories_master_table_order() -> None:
     assert CATEGORIES == (
         "skill",
         "agent.peer",
-        "mcp.server",
-        "mcp.tool",
-        "mcp.operation",
+        # Issue #879: mcp.server / mcp.tool / mcp.operation collapsed
+        # into a single ``mcp`` category whose six verb_object actions
+        # cover the previous surface.
+        "mcp",
         "file",
         "web",
         "memory.entry",
@@ -85,16 +86,17 @@ def test_categories_no_duplicates() -> None:
         ("exec__sandboxed_exec", "exec", "sandboxed_exec"),
         # Dotted category, simple entry
         ("agent.peer__alice", "agent.peer", "alice"),
-        ("mcp.server__brave", "mcp.server", "brave"),
-        ("mcp.operation__drop_server", "mcp.operation", "drop_server"),
         ("memory.entry__pref_dates", "memory.entry", "pref_dates"),
         ("memory.operation__remember_shared", "memory.operation", "remember_shared"),
         ("rag.corpus__meetings", "rag.corpus", "meetings"),
         ("rag.operation__recall", "rag.operation", "recall"),
         ("reyn.source__read", "reyn.source", "read"),
-        # Dotted category WITH dotted entry name (MCP tools)
-        ("mcp.tool__brave.search", "mcp.tool", "brave.search"),
-        ("mcp.tool__github.create_issue", "mcp.tool", "github.create_issue"),
+        # Issue #879 collapsed mcp surface — verb_object actions.
+        ("mcp__search_server", "mcp", "search_server"),
+        ("mcp__install_server", "mcp", "install_server"),
+        ("mcp__list_tools", "mcp", "list_tools"),
+        ("mcp__call_tool", "mcp", "call_tool"),
+        ("mcp__drop_server", "mcp", "drop_server"),
         # Entry name containing further underscores (must not re-split)
         ("skill__multi__word__name", "skill", "multi__word__name"),
     ],
@@ -114,9 +116,10 @@ def test_split_qualified_name_parses_correctly(
     "category, entry_name, expected",
     [
         ("skill", "code_review", "skill__code_review"),
-        ("mcp.tool", "brave.search", "mcp.tool__brave.search"),
         ("rag.corpus", "meetings", "rag.corpus__meetings"),
-        ("mcp.operation", "drop_server", "mcp.operation__drop_server"),
+        # Issue #879 collapsed mcp surface.
+        ("mcp", "search_server", "mcp__search_server"),
+        ("mcp", "call_tool", "mcp__call_tool"),
     ],
 )
 def test_build_qualified_name_round_trips(
@@ -175,7 +178,7 @@ def test_is_valid_qualified_name_predicate() -> None:
     pipelines and schema validators.
     """
     assert is_valid_qualified_name("skill__code_review") is True
-    assert is_valid_qualified_name("mcp.tool__brave.search") is True
+    assert is_valid_qualified_name("mcp__call_tool") is True
     assert is_valid_qualified_name("missing_separator") is False
     assert is_valid_qualified_name("unknown__entry") is False
     assert is_valid_qualified_name("skill__") is False
@@ -267,8 +270,8 @@ def test_describe_action_requires_action_name() -> None:
 def test_invoke_action_requires_action_name_only() -> None:
     """Tier 2: invoke_action.action_name required; args optional (D19).
 
-    Per §D19, resource invoke for memory.entry / mcp.server takes no
-    args, so args MUST be optional. action_name is always required.
+    Per §D19, resource invoke for memory.entry / mcp__list_servers takes
+    no args, so args MUST be optional. action_name is always required.
     """
     required = INVOKE_ACTION.parameters.get("required", [])
     assert "action_name" in required

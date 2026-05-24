@@ -409,11 +409,11 @@ def test_mcp_drop_server_preserves_secrets_when_requested(
 
 
 def test_universal_dispatch_routes_drop_server() -> None:
-    """Tier 2: mcp.operation__drop_server resolves to mcp_drop_server target."""
+    """Tier 2: mcp__drop_server resolves to mcp_drop_server target (#879)."""
     from reyn.tools.universal_dispatch import resolve_invoke_action
 
     resolved = resolve_invoke_action(
-        "mcp.operation__drop_server",
+        "mcp__drop_server",
         {"server": "filesystem", "scope": "local"},
     )
     assert resolved.target_tool_name == "mcp_drop_server"
@@ -423,10 +423,10 @@ def test_universal_dispatch_routes_drop_server() -> None:
 
 
 def test_universal_dispatch_describe_drop_server() -> None:
-    """Tier 2: describe_action for mcp.operation__drop_server resolves cleanly."""
+    """Tier 2: describe_action for mcp__drop_server resolves cleanly (#879)."""
     from reyn.tools.universal_dispatch import resolve_describe_action
 
-    resolved = resolve_describe_action("mcp.operation__drop_server")
+    resolved = resolve_describe_action("mcp__drop_server")
     assert resolved.target_tool_name == "mcp_drop_server"
 
 
