@@ -281,10 +281,7 @@ def build_system_prompt(
             "- **agent.peer** — peer agents in this network (e.g. agent.peer__alice)."
         )
         parts.append(
-            "- **mcp** — MCP server management + tool dispatch. Verbs: "
-            "the actions `mcp__search_server`, `mcp__install_server`, "
-            "`mcp__list_servers`, `mcp__list_tools`, `mcp__call_tool`, "
-            "`mcp__drop_server`."
+            "- **mcp** — MCP server management + tool dispatch."
         )
         parts.append(
             "- **file** — workspace file ops (read/write/delete/list)."
