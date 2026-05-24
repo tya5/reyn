@@ -159,16 +159,14 @@ async def test_search_returns_server_info_list(tmp_path):
         results = await client.search("slack", limit=20)
 
     assert isinstance(results, list)
-    assert len(results) == 2
+    first, second = results
 
-    first = results[0]
     assert isinstance(first, ServerInfo)
     assert first.name == "ai.smithery/smithery-ai-slack"
     assert "Slack" in first.description
     assert first.repository_url == "https://github.com/smithery-ai/mcp-servers"
     assert first.runtime_hint == ""  # first server has no packages → no hint
 
-    second = results[1]
     assert second.name == "io.example/slack-mcp"
     assert second.runtime_hint == "npx"  # npm package → npx hint
 
@@ -243,9 +241,9 @@ async def test_get_server_returns_server_json(tmp_path):
     assert result.version == "0.1.0"
     assert result.repository_url.startswith("https://github.com")
     assert result.website_url == "https://hove.capital"
-    assert len(result.packages) == 1
-    assert result.packages[0].registry_type == "npm"
-    assert result.packages[0].transport_type == "stdio"
+    (pkg,) = result.packages
+    assert pkg.registry_type == "npm"
+    assert pkg.transport_type == "stdio"
     assert result.runtime_hint == "npx"
 
 
@@ -421,7 +419,10 @@ async def test_search_deduplicates_same_name_keeps_latest(tmp_path):
     # Each distinct server name appears exactly once.
     assert names.count("io.github.j0hanz/filesystem-mcp") == 1
     assert names.count("io.github.Digital-Defiance/mcp-filesystem") == 1
-    assert len(results) == 2
+    assert names == [
+        "io.github.j0hanz/filesystem-mcp",
+        "io.github.Digital-Defiance/mcp-filesystem",
+    ]
 
     # The kept entry must be the latest version (0.3.0 with isLatest=True).
     j0hanz = next(r for r in results if r.name == "io.github.j0hanz/filesystem-mcp")
@@ -465,9 +466,10 @@ async def test_search_deduplicates_fallback_to_semver_when_no_is_latest(tmp_path
         client = _client_with_transport(transport)
         results = await client.search("test", limit=20)
 
-    assert len(results) == 1
+    (only,) = results
     # Cannot assert on internal version field (ServerInfo has no version attr),
     # but we verify exactly one result is returned (dedup occurred).
+    assert only.name == "io.example/test-mcp"
 
 
 @pytest.mark.asyncio
@@ -480,8 +482,8 @@ async def test_search_missing_repository_url_returns_none(tmp_path):
         client = _client_with_transport(transport)
         results = await client.search("filesystem", limit=20)
 
-    assert len(results) == 1
-    assert results[0].repository_url is None
+    (only,) = results
+    assert only.repository_url is None
 
 
 def test_display_none_repo_url_renders_placeholder():
