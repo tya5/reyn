@@ -121,6 +121,12 @@ class ReynTUIApp(App):
         # non-voice user "Voice cancel" for a key they use daily for
         # dismissing errors. Wave-2 K3.
         Binding("escape", "voice_cancel", "Dismiss / cancel", priority=True, show=False),
+        # Wave-13 B#1: bulk-dismiss all stacked ErrorBoxes at once.
+        # Complements Esc (= dismiss one) for the "3 errors stacked,
+        # clear all immediately" recovery pattern. Shift+Esc is chosen
+        # because it mirrors the Esc semantic (= dismiss errors) and
+        # is not bound by any OS or terminal convention at this modifier.
+        Binding("shift+escape", "dismiss_all_errors", "Dismiss all errors", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
         # Wave-4 AR5: keyboard scroll for the conv log. RichLog has
         # ``can_focus=False`` (intentional — prevents inadvertent
@@ -2216,6 +2222,19 @@ class ReynTUIApp(App):
             pass
         if self._panel_visible:
             self.action_toggle_panel()
+
+    def action_dismiss_all_errors(self) -> None:
+        """Shift+Esc — dismiss all stacked ErrorBoxes at once (Wave-13 B#1).
+
+        Delegates to ``ConversationView.dismiss_all_errors`` which
+        unmounts every live ErrorBox and emits one summary breadcrumb
+        "✗ N errors dismissed (see events)" to the conv log.
+        """
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.dismiss_all_errors()
+        except Exception:
+            pass
 
     def _voice_config(self):
         """Best-effort fetch of the user's voice config block."""
