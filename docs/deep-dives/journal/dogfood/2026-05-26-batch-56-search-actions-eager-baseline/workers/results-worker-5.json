@@ -1,0 +1,213 @@
+{
+  "batch": "B56",
+  "worker": 5,
+  "head": "89bacbdf",
+  "date": "2026-05-26",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 2,
+    "I": 1,
+    "R": 4,
+    "B": 0
+  },
+  "vs_past": {
+    "B55": { "V": 2, "I": 0, "R": 5, "B": 0 },
+    "B56": { "V": 2, "I": 1, "R": 4, "B": 0 },
+    "delta_V": "0 (B56=2/7 vs B55=2/7)"
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "idx": 1,
+      "verdict": "V",
+      "reply_summary": "LLM found two GitHub-related MCP servers (ai.smithery/smithery-ai-github and com.mcparmory/github) and asked user which they are interested in.",
+      "rubric_eval": {
+        "reply addresses the github MCP search query (= lists matches OR honestly reports no matches found)": true,
+        "reply does NOT fabricate non-existent server names (= weak-tier hallucination guard)": true
+      },
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 2,
+        "tool_called": 2,
+        "tool_returned": 2,
+        "direct_alias_call_salvaged": 2,
+        "user_message_received": 1
+      },
+      "events_path": ".reyn/events/agents/dogfood-b56-5-s1/chat/2026-05/2026-05-26T000226.jsonl",
+      "primary_axis_search_actions": {
+        "was_offered": true,
+        "was_called": false,
+        "called_instead": "mcp__search_registry (via invoke_action, direct alias salvage)",
+        "note": "LLM did NOT call search_actions. Router resolved mcp__search_registry directly via ars_direct alias (direct_alias_call_salvaged x2). First call with args={text:'github 関連'} returned no candidates; second call with args={text:'github'} returned 11 candidates including the two GitHub servers cited."
+      }
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "idx": 2,
+      "verdict": "V",
+      "reply_summary": "LLM explained GitHub MCP server is not configured and offered to list available tools or asked for more information. No silent failure — actionable response provided.",
+      "rubric_eval": {
+        "lists recent pull requests OR explains that the github MCP server is not configured": true,
+        "does not silently fail — replies with actionable information either way": true
+      },
+      "events_pass": true,
+      "events_observed": {
+        "chat_turn_completed_inline": 1,
+        "user_message_received": 1
+      },
+      "events_path": ".reyn/events/agents/dogfood-b56-5-s2/chat/2026-05/2026-05-26T000245.jsonl",
+      "note": "Event must_emit_any rule: either routing_decided or chat_turn_completed_inline — chat_turn_completed_inline fired, satisfying the any-rule."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "idx": 3,
+      "verdict": "R",
+      "reply_summary": "LLM called list_actions(category=[multi_agent]) to discover delegation tools, got back multi_agent__delegate. After empty-stop retry, LLM replied with a description of how to use the tool but did NOT actually invoke multi_agent__delegate. No delegation was attempted. Reply did not deliver FP-0001 summary nor honestly report researcher agent missing.",
+      "rubric_eval": {
+        "reply addresses the delegation request (= delivers FP-0001 summary if delegation succeeded, OR honestly reports researcher agent is missing)": false,
+        "reply does NOT fabricate that delegation completed when no agent_delegated event fired": true
+      },
+      "events_pass": false,
+      "events_observed": {
+        "routing_decided": 0,
+        "tool_called": 1,
+        "tool_returned": 1,
+        "router_empty_response_detected": 1,
+        "router_empty_response_retry_injected": 1,
+        "chat_turn_completed_inline": 1
+      },
+      "events_path": ".reyn/events/agents/dogfood-b56-5-s3/chat/2026-05/2026-05-26T000251.jsonl",
+      "primary_axis_search_actions": {
+        "was_offered": true,
+        "was_called": false,
+        "called_instead": "list_actions(category=['multi_agent']) — then stopped without invoking multi_agent__delegate",
+        "note": "search_actions was in LLM tool list but LLM chose list_actions for browsing. After getting multi_agent__delegate in results, LLM empty-stopped, retry injected, then replied inline explaining the tool without calling it. Rubric item 1 not met (no honest 'researcher not found' report either)."
+      },
+      "primary_axis_pr920": {
+        "note": "S3 is the agent_delegation_simple scenario relevant to PR #920. LLM did NOT attempt to delegate — it stopped after list_actions. No agent_delegated event. Reply did not contain [task_completed] kind=agent structural header because delegation was never attempted. Cannot measure PR #920 header improvement at this verdict."
+      }
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "idx": 4,
+      "verdict": "I",
+      "reply_summary": "Turn 1: LLM invoked multi_agent__delegate(to='researcher') — got agent_not_found error, replied honestly. Turn 2: LLM spawned a plan (2 steps), step 1 tried recall (no results) + web_search (Rankine cycle Wikipedia — unrelated), step 2 invoked delegate_to_agent(to='writer') — got agent_not_found. Final reply contained partial research result (\"more information needed\") plus plan_completion_injected.",
+      "rubric_eval": {
+        "produces a concise 3-line summary OR reports that agent(s) do not exist": true,
+        "if both agents existed, the reply reflects synthesis from two delegation hops": "N/A — agents not found",
+        "does not return an empty reply": true
+      },
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "tool_called": 6,
+        "tool_returned": 6,
+        "plan_emitted": 1,
+        "plan_step_started": 2,
+        "plan_step_completed": 2,
+        "plan_aggregated": 1,
+        "plan_completion_injected": 1,
+        "web_search_started": 1,
+        "web_search_completed": 1,
+        "permission_granted": 3
+      },
+      "events_path": ".reyn/events/agents/dogfood-b56-5-s4/chat/2026-05/2026-05-26T000259.jsonl",
+      "note": "Verdict I — rubric 1 is met (both agents absent, reported honestly). Rubric 2 is N/A. Rubric 3 met. However the reply quality is incomplete (no actual Reyn Phase Engine info returned), so marking I rather than V because the turn 2 plan failed to deliver synthesis. The structural events (routing_decided >=1) do fire."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "idx": 5,
+      "verdict": "R",
+      "reply_summary": "LLM tried source__read('docs/concepts/a2a.md') but tool_failed (unknown action). routing_decided fired with outcome=error. LLM then replied asking user for more information rather than addressing A2A endpoint usage. Rubric requires addressing A2A concepts; reply did not.",
+      "rubric_eval": {
+        "reply addresses A2A endpoint usage (= mentions reyn web + at least one of {message/send, GET /a2a/tasks, A2A protocol concepts})": false,
+        "reply does NOT fabricate endpoint shapes not documented in a2a.md": true
+      },
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "tool_failed": 1,
+        "user_message_received": 1
+      },
+      "events_path": ".reyn/events/agents/dogfood-b56-5-s5/chat/2026-05/2026-05-26T000322.jsonl",
+      "note": "routing_decided fired (>=1) so events_pass=true for that requirement (events.must_emit has empty list []). However rubric item 1 not met. source__read action unknown/failed, LLM could not read a2a.md and fell back to asking user."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "idx": 6,
+      "verdict": "R",
+      "reply_summary": "LLM replied inline asking 'which registry to install from?' without dispatching any skill or routing to mcp_install. No routing_decided event, no skill_run_spawned event. Events must_emit requirements not met.",
+      "rubric_eval": {
+        "reply addresses the postgres MCP install request (= reports install outcome OR honestly reports server not found / install not attempted)": false,
+        "reply does NOT fabricate that install succeeded when no install events fired": true
+      },
+      "events_pass": false,
+      "events_observed": {
+        "chat_turn_completed_inline": 1,
+        "user_message_received": 1
+      },
+      "events_path": ".reyn/events/agents/dogfood-b56-5-s6/chat/2026-05/2026-05-26T000331.jsonl",
+      "primary_axis_pr918": {
+        "note": "PR #918 splits mcp_install into 3-way: mcp__install_registry / mcp__install_package / mcp__install_local. LLM did NOT call any of these — it replied inline asking for registry clarification. No routing at all. Cannot measure 3-way split correctness. The LLM needed to dispatch to one of the three install actions for the PR #918 measurement to be relevant."
+      }
+    },
+    {
+      "id": "cron_schedule_status",
+      "idx": 7,
+      "verdict": "R",
+      "reply_summary": "LLM called list_actions(category=['mcp']) then list_actions(category=['exec']), found no exec tools. Replied honestly: 'I cannot directly list scheduled cron jobs' and offered alternatives. No fabricated cron entries. However events.must_emit routing_decided >=1 was NOT met (0 fired).",
+      "rubric_eval": {
+        "reply addresses the cron jobs query (= lists configured jobs OR honestly reports no cron jobs are configured / scheduled)": true,
+        "reply does NOT fabricate cron job entries that do not exist in reyn.yaml": true
+      },
+      "events_pass": false,
+      "events_observed": {
+        "routing_decided": 0,
+        "tool_called": 2,
+        "tool_returned": 2,
+        "chat_turn_completed_inline": 1,
+        "user_message_received": 1
+      },
+      "events_path": ".reyn/events/agents/dogfood-b56-5-s7/chat/2026-05/2026-05-26T000340.jsonl",
+      "note": "events.must_emit requires routing_decided >=1. Event was not emitted — LLM used list_actions directly (not invoke_action, which triggers routing_decided). Rubric content is fully met but events requirement fails. Verdict R per combined rubric+events evaluation."
+    }
+  ],
+  "verdict_notes": {
+    "s7": "events.must_emit routing_decided >=1 not met (list_actions calls do not emit routing_decided; only invoke_action does). Rubric content met but events fail.",
+    "s4": "Verdict I — rubric 1 met (agents not found, reported honestly), rubric 2 N/A, rubric 3 met. routing_decided >=1 fired. Marking I because reply contained only partial/failed synthesis, not a clean outcome."
+  },
+  "new_findings": [
+    {
+      "id": "B56-W5-F1",
+      "axis": "search_actions baseline (PR #924)",
+      "finding": "search_actions was offered to LLM in 18/22 request traces across all 7 scenarios, but was called 0 times. LLM consistently chose domain-specific tools directly (mcp__search_registry via invoke_action, list_actions, multi_agent__delegate) rather than using search_actions for discovery. This establishes the baseline: search_actions call rate = 0/7 scenarios in B56 with current eager-embedding-build. The LLM's routing_decided direct-alias salvage path (ars_direct) intercepts mcp__search_registry before search_actions would be needed.",
+      "evidence": "llm_trace.jsonl: 18 request traces include search_actions in tool list; 0 response traces show search_actions in tool_calls field. S1 used mcp__search_registry directly via ars_direct (direct_alias_call_salvaged x2). S3 used list_actions for multi_agent category browse."
+    },
+    {
+      "id": "B56-W5-F2",
+      "axis": "agent_delegation_simple (PR #920)",
+      "finding": "PR #920 [task_completed] kind=agent structural header improvement cannot be measured in S3: LLM never attempted delegation (no invoke_action call to multi_agent__delegate). LLM discovered the tool via list_actions, then empty-stopped, received retry injection, and replied inline describing the tool rather than using it. The structural header improvement only matters when peer reply is returned — which requires delegation to actually fire.",
+      "evidence": "S3 events: 0 routing_decided, 1 tool_called (list_actions), router_empty_response_detected + retry injected, chat_turn_completed_inline. LLM trace response trace 13: content='Researcher エージェントに... multi_agent__delegate ツールを使用できます' — explanation rather than invocation."
+    },
+    {
+      "id": "B56-W5-F3",
+      "axis": "mcp__install 3-way split (PR #918)",
+      "finding": "S6 (mcp_install_permission_gate) shows LLM did NOT route to any of the 3 mcp__install variants (mcp__install_registry / mcp__install_package / mcp__install_local). LLM replied inline asking 'which registry?' without dispatching. Verdict R. PR #918 3-way split correctness cannot be measured from this run — the precondition (LLM routes to any install action) was not met.",
+      "evidence": "S6 events: chat_turn_completed_inline only, no routing_decided, no skill_run_spawned. LLM trace response trace 37: content='どのレジストリからインストールしますか？', tool_calls=[]."
+    },
+    {
+      "id": "B56-W5-F4",
+      "axis": "source__read action failure (S5)",
+      "finding": "source__read action failed with unknown action error in S5. LLM correctly attempted to read the referenced doc (docs/concepts/a2a.md) but the action is not registered or the tool alias was wrong. This is likely a pre-existing infra gap (source__read vs reyn_src_read alias). Blocks S5 from being V.",
+      "evidence": "S5 events: tool_failed {tool: source__read, error_kind: unknown...}, routing_decided {action_name: source__read, outcome: error}."
+    }
+  ]
+}

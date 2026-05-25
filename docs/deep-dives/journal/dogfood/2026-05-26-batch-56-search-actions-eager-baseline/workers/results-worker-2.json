@@ -1,0 +1,209 @@
+{
+  "batch": "B56",
+  "worker": 2,
+  "head": "89bacbdf",
+  "date": "2026-05-26",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 4,
+    "I": 0,
+    "R": 3,
+    "B": 0
+  },
+  "vs_past": {
+    "B55": {
+      "V": 4,
+      "I": 0,
+      "R": 3,
+      "B": 0,
+      "delta_V": 0,
+      "note": "S2 skill_builder_web_summariser recovered V (was R in B55 due to router crash). S7 chained_find_then_index regressed R (was V in B55; index_docs aborting with zero-chunks error). Net delta_V=0. S5 eval_run_direct_llm and S6 chat_compactor_auto_trigger remain R (same as B55)."
+    },
+    "B54": {
+      "V": 5,
+      "I": 0,
+      "R": 2,
+      "B": 0,
+      "delta_V": -1,
+      "note": "B54 baseline: V=5. B56 V=4 (-1 vs B54). S5 eval and S6 compactor were R in B54 also; S7 was V in B54/B55 but R in B56."
+    }
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "scenario_index": 1,
+      "agent": "dogfood-b56-2-s1",
+      "verdict": "V",
+      "reply_excerpt": "Hello World! The `index_docs` skill has finished. It processed 0 chunks and skipped 0 chunks. The index has been updated.",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_completed_status": "finished",
+        "phase_started": 1,
+        "phase_completed": 1,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "index_docs",
+      "notes": "Indexing completed with 0 chunks (concepts_index path had no indexable content). Reply confirms completion and reports chunk count. Rubric items all met. status=finished treated as satisfying status=success per B54/B55 precedent."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "scenario_index": 2,
+      "agent": "dogfood-b56-2-s2",
+      "verdict": "V",
+      "reply_excerpt": "skill `web_article_summarizer` が作成されました。このスキルはウェブ記事の URL を受け取り、内容を 3 文で要約します。",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_completed_status": "finished",
+        "phase_started": 6,
+        "phase_completed": 6,
+        "permission_denied": 0,
+        "lint_completed": 1
+      },
+      "artifact_present": true,
+      "artifact_skill": "skill_builder",
+      "notes": "Recovery from B55 R (router crash 'list index out of range'). Skill scaffold generated and lint passed. Reply mentions skill name and reports completion. Rubric fully met."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "scenario_index": 3,
+      "agent": "dogfood-b56-2-s3",
+      "verdict": "V",
+      "reply_excerpt": "44文字（1行）、最長行44文字。約11トークンと推定されます。",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_completed_status": "finished",
+        "phase_started": 1,
+        "llm_called": 1,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "word_stats_demo",
+      "notes": "44-char stat correct. Text reference present. Consistent with B55 V."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "scenario_index": 4,
+      "agent": "dogfood-b56-2-s4",
+      "verdict": "V",
+      "reply_excerpt": "Characters: 128 / Lines: 4 / Longest Line: 40 characters / Estimated Tokens: 32",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 3,
+        "skill_run_spawned": 3,
+        "skill_run_completed": 3,
+        "skill_run_completed_status": "finished",
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "word_stats_demo",
+      "notes": "3 parallel skill invocations all completed. Reply contains 128 chars, 4 lines stats — precomputed values, not estimates. Rubric met. Consistent with B55 V."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "scenario_index": 5,
+      "agent": "dogfood-b56-2-s5",
+      "verdict": "R",
+      "reply_excerpt": "`direct_llm` スキルを評価した結果、エラーが発生しました。`__post__` フェーズの `compute_eval_score` 関数が文字列型の出力を期待しているのに対し、`None` を返したことが原因のようです。",
+      "rubric_pass": false,
+      "events_pass": false,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_failed": 1,
+        "skill_run_completed": 0,
+        "phase_started": 6,
+        "postprocessor_step_failed": 1,
+        "python_step_failed": 1,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "eval",
+      "notes": "Same failure as B55: compute_eval_score returns None instead of string in postprocessor. skill_run_failed emitted; skill_run_completed never fires. Reply reports the error rather than pass/fail result. Rubric item 1 (eval result including pass/fail or score) not met. The artifact eval/__post__/v01_eval_result_raw.json IS present (the eval partial completion produced it). Carry-over bug from B55 R-2 partial fix still not resolved."
+    },
+    {
+      "id": "chat_compactor_auto_trigger",
+      "scenario_index": 6,
+      "agent": "dogfood-b56-2-s6",
+      "verdict": "R",
+      "reply_excerpt": "Reyn Agent OS のアーキテクチャについてですね。README.md の内容に基づいて、ご質問いただいた点について解説します。",
+      "rubric_pass": true,
+      "events_pass": false,
+      "events_observed": {
+        "compaction_check": 5,
+        "compaction_check_outcomes": [
+          "below_min_batch",
+          "below_min_batch",
+          "below_min_batch",
+          "below_threshold",
+          "below_threshold"
+        ],
+        "compaction_check_total_tokens_max": 71,
+        "compaction_threshold": 2000,
+        "compacted_message_added": 0,
+        "compaction_failed": 0
+      },
+      "artifact_present": false,
+      "artifact_skill": "chat_compactor",
+      "notes": "Same result as B55 R-3: reyn.local.yaml has trigger_total_tokens=2000, head_size=1, tail_size=1, min_compact_batch=2. 5-turn flash-lite conversation only reaches 71 tokens in compactable middle — well below 2000 threshold. compacted_message_added never fired. must_emit compacted_message_added not satisfied. Carry-over from B55 R-3: threshold needs to be further lowered (e.g. <=100) to trigger with flash-lite's brief inline replies."
+    },
+    {
+      "id": "chained_find_then_index",
+      "scenario_index": 7,
+      "agent": "dogfood-b56-2-s7",
+      "verdict": "R",
+      "reply_excerpt": "arch_events_index というソース名でセマンティックインデックスに登録しました。... skill: index_docs status: error — LLM aborted workflow at phase 'strategy': The cost preflight indicated zero chunks, which is unexpected and likely an error.",
+      "rubric_pass": false,
+      "events_pass": false,
+      "events_observed": {
+        "routing_decided": 4,
+        "skill_run_spawned": 1,
+        "skill_run_failed": 1,
+        "skill_run_completed": 0,
+        "phase_started": 1,
+        "workflow_aborted": 1,
+        "permission_denied": 0
+      },
+      "artifact_present": false,
+      "artifact_skill": "index_docs",
+      "notes": "REGRESSION from B55 V. Turn 1 error: source__glob tool not available. Turn 2: agent listed files then attempted to index architecture.md and events.md as arch_events_index. index_docs skill aborted at 'strategy' phase — LLM aborted because cost preflight showed zero chunks. skill_run_completed not emitted (only skill_run_failed). arch_events_index not created in .reyn/index/. Rubric items 1 (indexing confirmed) partially met (started but errored), item 2 (arch_events_index referenced) met, item 3 (error with reason) technically met but actual outcome is failure. events_pass=false (skill_run_completed absent). artifact_present=false (no arch_events_index artifact for S7). New finding: NF-1."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B56-W2-NF-1",
+      "severity": "HIGH",
+      "scenario": "chained_find_then_index",
+      "summary": "index_docs aborts with zero-chunks error when targeting specific files (architecture.md, events.md) — regression from B55 V",
+      "detail": "B55 S7 was V: arch_events_index successfully created. B56: LLM aborted at strategy phase with 'The cost preflight indicated zero chunks, which is unexpected and likely an error. Aborting to prevent further issues.' The specific files architecture.md and events.md exist in docs/concepts/ (verified). Turn 1 also showed source__glob tool not available. The zero-chunk abort suggests the cost preflight step fails for single-file or small-scope indexing requests, or a path-resolution issue. This was working in B55 (HEAD 97d762a4); B56 HEAD 89bacbdf may have introduced a regression in index_docs strategy phase or the path resolution for the cost preflight."
+    },
+    {
+      "id": "B56-W2-NF-2",
+      "severity": "MED",
+      "scenario": "chat_compactor_auto_trigger",
+      "summary": "trigger_total_tokens=2000 insufficient for 5-turn flash-lite scenario — same as B55 NF-3",
+      "detail": "After 5 turns of detailed Reyn architecture explanation, the compactable message token mass reached only 71 tokens. Flash-lite produces short inline replies; the majority of response content is in tool_call result sequences that may not count toward compactable token mass. Recommended: lower trigger_total_tokens to <=100 in the worker's reyn.local.yaml override, or redesign the scenario with a model tier that produces longer replies."
+    }
+  ]
+}
