@@ -1,0 +1,32 @@
+/*
+ * reyn × Chainlit — UI tweaks shipped on first `reyn chainlit` launch.
+ *
+ * To re-enable the upstream Chainlit UI, either edit this file in
+ * `<cwd>/public/reyn.css` or remove the `custom_css` line from
+ * `<cwd>/.chainlit/config.toml`. The file is gitignored at the repo
+ * root via the `/public/` rule alongside `chainlit.md` and
+ * `.chainlit/` so operator edits survive subsequent `reyn chainlit`
+ * launches (= idempotent first-run copy posture, mirroring
+ * `ensure_chainlit_md` / `ensure_chainlit_config`).
+ */
+
+/* Hide the chainlit "New Chat" button. In a reyn context it triggers
+ * a bare session reset (= clean_session socket event → on_chat_end →
+ * on_chat_start cycle): the attached agent, history.jsonl replay,
+ * and settings panel all rebuild identically, making it functionally
+ * a page reload. Operators mistook it for a "create new agent"
+ * affordance during dogfood — the chat-profile picker, the
+ * `/agent new <name>` slash, and the settings-panel TextInput are
+ * the actual agent management entry points.
+ *
+ * Selectors are intentionally broad to survive chainlit version
+ * drift — aria-label / data-tooltip on the button + the localised
+ * variants in en-US / ja-JP. Add more locale strings if you ship
+ * additional `.chainlit/translations/` overrides.
+ */
+button[aria-label="New Chat"],
+button[aria-label="新規チャット"],
+[data-tooltip-id*="newChat" i],
+[data-testid*="new-chat" i] {
+    display: none !important;
+}

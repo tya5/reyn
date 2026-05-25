@@ -61,12 +61,30 @@ def ensure_chainlit_config(target_dir: Path) -> Path | None:
     )
 
 
+def ensure_public_css(target_dir: Path) -> Path | None:
+    """Copy ``public/reyn.css`` from assets if absent.
+
+    Chainlit's ``[UI].custom_css`` flag in the shipped config.toml
+    points at ``/public/reyn.css`` (= APP_ROOT-relative path), so the
+    file MUST sit at ``target_dir/public/reyn.css`` for the rule to
+    apply. The default ships hides the upstream "New Chat" button
+    because in a reyn context it triggers a bare session reset (=
+    confusing as a UX affordance — see header comment in
+    ``assets/public/reyn.css``). Operator can edit the file or drop
+    the ``custom_css`` line to put the button back.
+    """
+    return _copy_if_absent(
+        assets_dir() / "public" / "reyn.css",
+        target_dir / "public" / "reyn.css",
+    )
+
+
 def ensure_all_assets(target_dir: Path) -> list[Path]:
     """Run every ``ensure_*`` helper, returning the list of paths that
     were actually written (= empty list when all destinations already
     existed and the call was a pure no-op)."""
     written: list[Path] = []
-    for helper in (ensure_chainlit_md, ensure_chainlit_config):
+    for helper in (ensure_chainlit_md, ensure_chainlit_config, ensure_public_css):
         result = helper(target_dir)
         if result is not None:
             written.append(result)
@@ -78,4 +96,5 @@ __all__ = [
     "ensure_all_assets",
     "ensure_chainlit_config",
     "ensure_chainlit_md",
+    "ensure_public_css",
 ]

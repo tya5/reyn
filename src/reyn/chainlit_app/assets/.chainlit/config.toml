@@ -11,12 +11,28 @@
 # raises if absent or <= "0.3.0").
 
 [UI]
+# Required by chainlit's pydantic ``UISettings`` (= no default; the
+# loader raises ``ValidationError`` when missing). Shows in the
+# browser tab title + ``[UI]`` panel header.
+name = "reyn"
+
 # Skip the "Start a new chat?" confirmation popup when the operator
 # clicks the agent-switch / new-chat button. Operators dogfooding the
 # reyn picker (#888) want to flip between agents quickly; the extra
 # confirm step adds friction without preventing real mistakes
 # (= reyn keeps history per agent regardless).
 confirm_new_chat = false
+
+# Hide chainlit's "New Chat" button. In a reyn context it triggers a
+# bare session reset (= clean_session socket event → on_chat_end →
+# on_chat_start cycle); the attached agent, history, and panel state
+# all rebuild identically, so the button is functionally a page
+# reload. Operators dogfooding mistook it for a "create new agent"
+# affordance — see the chat-profile picker / `/agent new <name>`
+# slash / settings panel for the actual agent management entry
+# points. Remove this line and the public/reyn.css ship to put the
+# upstream button back.
+custom_css = "/public/reyn.css"
 
 [meta]
 generated_by = "reyn-chainlit-app"
