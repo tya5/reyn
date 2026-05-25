@@ -155,35 +155,11 @@ def test_r4_structurally_valid_nonexistent_op_filtered() -> None:
     )
 
 
-# ── R5. agent.peer ghost filtered ────────────────────────────────────────────
-
-
-def test_r5_agent_peer_ghost_filtered_when_absent_from_agents() -> None:
-    """Tier 2: agent.peer ghost absent from available_agents is filtered."""
-    available_agents = [{"name": "researcher", "role": "Research specialist"}]
-    result = _call_filter(
-        ["agent.peer__researcher", "agent.peer__nonexistent_agent_xyz"],
-        available_agents=available_agents,
-    )
-
-    assert "agent.peer__researcher" in result
-    assert "agent.peer__nonexistent_agent_xyz" not in result, (
-        "Ghost peer agent not in available_agents must be filtered."
-    )
-
-
-# ── R6. valid agent.peer passes ──────────────────────────────────────────────
-
-
-def test_r6_valid_agent_peer_passes_registry_check() -> None:
-    """Tier 2: agent.peer alias present in available_agents passes registry check."""
-    available_agents = [{"name": "dogfood-runner", "role": "Dogfood execution"}]
-    result = _call_filter(
-        ["agent.peer__dogfood-runner"],
-        available_agents=available_agents,
-    )
-
-    assert "agent.peer__dogfood-runner" in result
+# Phase 1 multi_agent collapse (2026-05-25): agent.peer__<name> per-peer
+# hot-list alias removed.  Peers are now dispatched generically via
+# multi_agent__delegate (operation alias); the dynamic ``to`` enum is
+# enriched per-call from available_agents at LLM-call time, so per-peer
+# ghost filtering at hot-list-build time is no longer applicable.
 
 
 # ── R7. mcp.tool ghost filtered ──────────────────────────────────────────────

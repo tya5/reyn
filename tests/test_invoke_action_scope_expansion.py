@@ -219,37 +219,37 @@ def test_session_mcp_tool_with_schema_appears_in_ars() -> None:
     assert "count" in entry_map["mcp.tool__brave.search"]
 
 
-# ── A6. Session peer agents appear with canonical schema ─────────────────────
+# ── A6. multi_agent operation appears with canonical delegate schema ────────
 
 
-def test_session_peer_agent_appears_in_ars_with_canonical_schema() -> None:
-    """Tier 2: peer agents appear in ARS with the canonical delegate_to_agent schema.
+def test_multi_agent_delegate_appears_in_ars_with_canonical_schema() -> None:
+    """Tier 2: multi_agent__delegate appears in ARS with delegate_to_agent's schema.
 
-    B37 W5 S3: agent.peer__researcher not in hot list → ARS block lacked
-    entry → LLM followed hardcoded 'message' example → hallucinated non-canonical
-    key. After B38, the peer appears in ARS with the canonical schema from
-    delegate_to_agent (= {request, ...} minus the curried 'to' field).
+    Phase 1 collapse (2026-05-25): the prior agent.peer__<name> per-peer
+    resource shape was replaced with a single operation-shape entry
+    (multi_agent__delegate) whose schema carries both ``to`` and ``request``.
+    The dynamic ``to`` enum is enriched per-call from available_agents at
+    LLM-call time via _enrich_router_schema; ARS only needs the static
+    structural keys. The B37/B38 invariant (= LLM sees ``request`` not
+    ``message`` for peer delegation) is preserved through Source 1
+    (KNOWN_STATIC_QUALIFIED_NAMES → delegate_to_agent.parameters).
     """
-    available_agents = [
-        {"name": "researcher", "role": "Research specialist"},
-    ]
-    entries = _collect_all_session_ars_entries(available_agents=available_agents)
+    entries = _collect_all_session_ars_entries()
     entry_map = {name: props for name, props in entries}
 
-    # agent.peer__researcher must appear
-    assert "agent.peer__researcher" in entry_map, (
-        "agent.peer__researcher must appear in ARS regardless of hot-list"
+    assert "multi_agent__delegate" in entry_map, (
+        "multi_agent__delegate must appear in ARS via the static op registry"
     )
 
-    # The canonical schema for peer delegation has 'request' (not 'message')
-    # derived from delegate_to_agent minus the curried 'to' field.
-    peer_props = entry_map["agent.peer__researcher"]
-    assert "request" in peer_props, (
-        "peer agent ARS must expose canonical 'request' key (not 'message')"
+    delegate_props = entry_map["multi_agent__delegate"]
+    # B37/B38 invariant: canonical 'request' key surfaced for peer delegation.
+    assert "request" in delegate_props, (
+        "multi_agent__delegate ARS must expose canonical 'request' key "
+        "(not 'message')"
     )
-    # The curried 'to' field must NOT appear in the ARS (it's injected by router)
-    assert "to" not in peer_props, (
-        "'to' is curried by the router and must not appear in the peer ARS schema"
+    # ``to`` is part of the static schema (enum enriched per-call).
+    assert "to" in delegate_props, (
+        "multi_agent__delegate ARS must expose 'to' as the target-peer key"
     )
 
 

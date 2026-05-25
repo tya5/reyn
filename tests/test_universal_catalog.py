@@ -51,7 +51,7 @@ def test_categories_master_table_order() -> None:
     """
     assert CATEGORIES == (
         "skill",
-        "agent.peer",
+        "multi_agent",
         # Issue #879: mcp.server / mcp.tool / mcp.operation collapsed
         # into a single ``mcp`` category whose six verb_object actions
         # cover the previous surface.
@@ -85,7 +85,7 @@ def test_categories_no_duplicates() -> None:
         ("web__search", "web", "search"),
         ("exec__sandboxed_exec", "exec", "sandboxed_exec"),
         # Dotted category, simple entry
-        ("agent.peer__alice", "agent.peer", "alice"),
+        ("multi_agent__delegate", "multi_agent", "delegate"),
         ("memory.entry__pref_dates", "memory.entry", "pref_dates"),
         ("memory.operation__remember_shared", "memory.operation", "remember_shared"),
         ("rag.corpus__meetings", "rag.corpus", "meetings"),

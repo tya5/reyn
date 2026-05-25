@@ -58,18 +58,19 @@ def test_resolve_invoke_action_skill_wraps_args_when_input_missing() -> None:
     assert result.target_args["input"] == {"x": 1, "y": 2}
 
 
-def test_resolve_invoke_action_agent_peer_routes_to_delegate() -> None:
-    """Tier 2: agent.peer__<name> → delegate_to_agent(to=name, request=...).
+def test_resolve_invoke_action_multi_agent_delegate_routes_to_handler() -> None:
+    """Tier 2: multi_agent__delegate → delegate_to_agent({to, request}).
 
-    Universal-catalog callers pass ``message``; the translator must remap it
-    to ``request`` so the delegate_to_agent handler never raises KeyError.
+    Phase 1 follow-up (2026-05-25) collapsed ``agent.peer`` resource into
+    the ``multi_agent`` verb category. The transform layer still remaps
+    legacy ``message`` → ``request`` for forward compatibility with LLMs
+    that emit the pre-collapse arg name.
     """
     result = resolve_invoke_action(
-        "agent.peer__alice", {"message": "hi"},
+        "multi_agent__delegate", {"to": "alice", "message": "hi"},
     )
     assert result.target_tool_name == "delegate_to_agent"
     assert result.target_args["to"] == "alice"
-    # "message" must be remapped → "request" by _delegate_to_agent_args (B27-H3)
     assert result.target_args["request"] == "hi"
     assert "message" not in result.target_args
 
@@ -312,7 +313,9 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
     "qualified_name, expected_target",
     [
         ("skill__code_review",       "invoke_skill"),
-        ("agent.peer__alice",        "delegate_to_agent"),
+        ("multi_agent__delegate",    "delegate_to_agent"),
+        ("multi_agent__list_peers",  "list_agents"),
+        ("multi_agent__describe_peer", "describe_agent"),
         # Issue #879 collapsed surface — six mcp__* verb actions.
         ("mcp__list_servers",        "list_mcp_servers"),
         ("mcp__list_tools",          "list_mcp_tools"),
@@ -386,8 +389,7 @@ def test_known_static_names_excludes_resource_categories() -> None:
     """
     names = set(KNOWN_STATIC_QUALIFIED_NAMES)
     # Resource categories should have no static qualified names.
-    for prefix in ("skill__", "agent.peer__", "mcp.server__", "mcp.tool__",
-                   "memory.entry__", "rag.corpus__"):
+    for prefix in ("skill__", "memory.entry__", "rag.corpus__"):
         matches = [n for n in names if n.startswith(prefix)]
         assert matches == [], (
             f"resource prefix {prefix!r} should have no static entries; "
@@ -472,48 +474,36 @@ def test_resolved_action_default_args_empty() -> None:
     assert dict(result.target_args) == {}
 
 
-# ── B27-H3 regression: agent.peer__ KeyError fix ─────────────────────────
+# ── B27-H3 regression: multi_agent__delegate message → request remap ─────
 
 
-def test_agent_peer_translator_remaps_message_to_request() -> None:
-    """Tier 2: _delegate_to_agent_args remaps 'message' → 'request' (B27-H3).
+def test_multi_agent_delegate_translator_remaps_message_to_request() -> None:
+    """Tier 2: ``_multi_agent_delegate_args`` remaps 'message' → 'request'
+    (B27-H3 regression guard, post-Phase-1 ``multi_agent`` collapse).
 
-    Regression guard: before the fix, _delegate_to_agent_args passed
-    'message' through unchanged, causing KeyError: 'request' in the
-    delegate_to_agent handler which always reads args["request"].
-
-    This test exercises the full resolve_invoke_action route and then
-    simulates the handler receiving the translated args — no KeyError must
-    occur.
+    Before the historical fix the translator passed ``message`` through
+    unchanged, causing ``KeyError: 'request'`` in the delegate_to_agent
+    handler. The collapsed ``multi_agent__delegate`` surface preserves
+    the remap so LLMs using either ``message`` (= universal-catalog
+    convention) or ``request`` (= handler's legacy key) both work.
     """
-    # Simulate the LLM call shape as instructed by universal_catalog (FP-0034 §D).
     resolved = resolve_invoke_action(
-        "agent.peer__researcher",
-        {"message": "Summarise the quarterly report."},
+        "multi_agent__delegate",
+        {"to": "researcher", "message": "Summarise the quarterly report."},
     )
 
     assert resolved.target_tool_name == "delegate_to_agent"
-
-    # Handler reads args["to"] and args["request"]. Verify both keys are
-    # present and correct — no KeyError when accessed directly.
     translated = resolved.target_args
     assert translated["to"] == "researcher"
-    request_value = translated["request"]  # would raise KeyError before fix
-    assert request_value == "Summarise the quarterly report."
-    assert "message" not in translated, (
-        "'message' must not survive the translation — handler has no 'message' key"
-    )
+    assert translated["request"] == "Summarise the quarterly report."
+    assert "message" not in translated
 
 
-def test_agent_peer_translator_preserves_extra_args() -> None:
-    """Tier 2: _delegate_to_agent_args passes unknown extra args through unchanged.
-
-    Extra keys beyond 'message' (e.g. 'priority') are not remapped; only
-    the 'message' → 'request' rename is applied (B27-H3).
-    """
+def test_multi_agent_delegate_translator_preserves_extra_args() -> None:
+    """Tier 2: extra args beyond message/request pass through unchanged."""
     resolved = resolve_invoke_action(
-        "agent.peer__planner",
-        {"message": "Plan the sprint.", "priority": "high"},
+        "multi_agent__delegate",
+        {"to": "planner", "message": "Plan the sprint.", "priority": "high"},
     )
     translated = resolved.target_args
     assert translated["to"] == "planner"
@@ -522,15 +512,11 @@ def test_agent_peer_translator_preserves_extra_args() -> None:
     assert "message" not in translated
 
 
-def test_agent_peer_translator_caller_supplies_request_directly() -> None:
-    """Tier 2: callers that already use 'request' are not double-remapped.
-
-    If a caller passes 'request' directly (= non-catalog path), the
-    translator should not corrupt it.
-    """
+def test_multi_agent_delegate_translator_request_passes_through() -> None:
+    """Tier 2: callers that already use 'request' are not double-remapped."""
     resolved = resolve_invoke_action(
-        "agent.peer__analyst",
-        {"request": "Run the numbers."},
+        "multi_agent__delegate",
+        {"to": "analyst", "request": "Run the numbers."},
     )
     translated = resolved.target_args
     assert translated["to"] == "analyst"
@@ -564,7 +550,9 @@ def test_agent_peer_translator_caller_supplies_request_directly() -> None:
 _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     # Resource categories (= _RESOURCE_RULES)
     ("skill__code_review", {"input": {"type": "x", "data": {}}}),
-    ("agent.peer__planner", {"message": "hi", "request": "hi"}),
+    ("multi_agent__list_peers", {}),
+    ("multi_agent__describe_peer", {"name": "planner"}),
+    ("multi_agent__delegate", {"to": "planner", "message": "hi", "request": "hi"}),
     ("memory.entry__pref_dates", {}),
     ("rag.corpus__notes", {"query": "what"}),
     # Operation categories (= _OPERATION_RULES) — passthrough transformers,

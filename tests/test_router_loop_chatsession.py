@@ -297,8 +297,8 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
 
     rounds = [
         _tool_result([{"name": "invoke_action", "args": {
-            "action_name": "agent.peer__peer_agent",
-            "args": {"request": "process the data please"},
+            "action_name": "multi_agent__delegate",
+            "args": {"to": "peer_agent", "request": "process the data please"},
         }}]),
         _text_result("Delegated."),
     ]

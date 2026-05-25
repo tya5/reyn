@@ -177,19 +177,24 @@ def test_list_actions_skill_category_uses_router_state() -> None:
     assert qns == {"skill__code_review", "skill__summarize"}
 
 
-def test_list_actions_agent_peer_category_uses_router_state() -> None:
-    """Tier 2: agent.peer category enumerates from rs.available_agents."""
-    rs = RouterCallerState(
-        available_agents=[
-            {"name": "alice", "role": "researcher"},
-            {"name": "bob", "role": "writer"},
-        ],
-    )
+def test_list_actions_multi_agent_static_category_returns_verbs() -> None:
+    """Tier 2: list_actions(category=['multi_agent']) returns the three
+    verb actions (= list_peers / describe_peer / delegate) regardless of
+    which peers are reachable.
+
+    Phase 1 follow-up (2026-05-25) collapsed the per-peer agent.peer__X
+    resource shape into verb actions; per-peer enumeration moves to the
+    list_peers handler return value.
+    """
     result = _run(LIST_ACTIONS.handler(
-        {"category": ["agent.peer"]}, _make_ctx(rs),
+        {"category": ["multi_agent"]}, _make_ctx(),
     ))
     qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {"agent.peer__alice", "agent.peer__bob"}
+    assert qns == {
+        "multi_agent__list_peers",
+        "multi_agent__describe_peer",
+        "multi_agent__delegate",
+    }, f"multi_agent enumeration drifted: got {qns}"
 
 
 def test_list_actions_rag_corpus_category_uses_router_state() -> None:

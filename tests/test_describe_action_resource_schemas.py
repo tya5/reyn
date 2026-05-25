@@ -123,19 +123,10 @@ def test_skill_without_input_schema_falls_back_to_dispatcher():
     )
 
 
-# ── agent.peer__X ───────────────────────────────────────────────────────
-
-
-def test_agent_peer_describe_drops_curried_to_field():
-    """Tier 1: ``describe_action(agent.peer__X)`` exposes delegate_to_agent's
-    parameters MINUS ``to`` (the routing rule curries ``to=<name>``)."""
-    ctx = _make_ctx()
-    out = _describe("agent.peer__alice", ctx)
-    schema = out["input_schema"]
-    assert "to" not in schema.get("properties", {})
-    assert "to" not in (schema.get("required") or [])
-    # delegate_to_agent always takes ``request`` from the caller.
-    assert "request" in schema["properties"]
+# Phase 1 multi_agent collapse (2026-05-25): agent.peer__X resource shape
+# removed.  multi_agent__delegate is the operation-shape replacement and
+# exposes the full delegate_to_agent schema (= ``to`` + ``request``) via
+# the standard operation-category describe path; no curried-field surface.
 
 
 # ── mcp.server__X ───────────────────────────────────────────────────────
@@ -201,7 +192,6 @@ def test_no_router_state_falls_back_for_resource_categories():
 
 @pytest.mark.parametrize("qn", [
     "skill__index_docs",
-    "agent.peer__alice",
     "rag.corpus__my_docs",
 ])
 def test_metadata_envelope_preserved(qn: str):

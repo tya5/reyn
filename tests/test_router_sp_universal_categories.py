@@ -84,7 +84,8 @@ def test_flag_on_lists_all_categories() -> None:
         **_BASE_KWARGS, universal_wrappers_enabled=True,
     )
     for cat in (
-        "skill", "agent.peer",
+        "skill",
+        "multi_agent",
         "mcp",
         "file", "web",
         "memory.entry", "memory.operation",
@@ -117,7 +118,7 @@ def test_sp_bullets_match_categories_tuple_exactly() -> None:
     section_end = prompt.index("## Behaviour", section_start)
     section = prompt[section_start:section_end]
 
-    bullet_re = re.compile(r"^- \*\*([a-z.]+)\*\*", re.MULTILINE)
+    bullet_re = re.compile(r"^- \*\*([a-z._]+)\*\*", re.MULTILINE)
     sp_bullets = tuple(bullet_re.findall(section))
 
     assert sp_bullets == tuple(CATEGORIES), (

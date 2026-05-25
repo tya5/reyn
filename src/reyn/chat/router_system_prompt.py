@@ -278,7 +278,7 @@ def build_system_prompt(
             "- **skill** — project-defined workflows (e.g. skill__code_review)."
         )
         parts.append(
-            "- **agent.peer** — peer agents in this network (e.g. agent.peer__alice)."
+            "- **multi_agent** — delegate / list / describe peer agents in this network."
         )
         parts.append(
             "- **mcp** — MCP server management + tool dispatch."
