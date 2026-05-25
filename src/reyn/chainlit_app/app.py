@@ -33,12 +33,14 @@ from reyn.chainlit_app.history import DEFAULT_REPLAY_CAP, history_to_chainlit
 from reyn.chainlit_app.intervention import build_intervention_prompt
 from reyn.chainlit_app.profiles import list_agent_profiles
 from reyn.chainlit_app.settings import (
+    AGENT_ROLE_SETTING_ID,
     LANGUAGE_ITEMS,
     LANGUAGE_SETTING_ID,
     MODEL_SETTING_ID,
     language_label_for,
     language_to_value,
     list_model_names,
+    normalise_role,
     value_to_language,
     value_to_model,
 )
@@ -612,6 +614,29 @@ async def _on_chat_start() -> None:
                     ),
                 )
             )
+        # Agent role TextInput — surface the attached agent's persona
+        # so the operator can edit it without typing
+        # ``/agent edit role <text>`` slash. Same 2-side update as the
+        # slash command (= profile.yaml on disk + ``session._agent_role``
+        # in-memory for next turn).
+        current_role = getattr(session, "agent_role", "") or ""
+        widgets.append(
+            cl.input_widget.TextInput(
+                id=AGENT_ROLE_SETTING_ID,
+                label="Agent role",
+                initial=current_role,
+                multiline=True,
+                placeholder=(
+                    "Persona text injected into the LLM system prompt. "
+                    "Blank to leave as-is."
+                ),
+                tooltip=(
+                    "Edits both ``profile.yaml`` on disk and "
+                    "``session._agent_role`` in memory; the next user "
+                    "turn picks up the new role."
+                ),
+            )
+        )
         await cl.ChatSettings(widgets).send()
     except Exception:
         pass
@@ -662,6 +687,60 @@ async def _on_settings_update(settings: dict) -> None:
                 content=f"Model → **{new_model}**.",
                 author="system",
             ).send()
+    if AGENT_ROLE_SETTING_ID in settings:
+        new_role = normalise_role(settings.get(AGENT_ROLE_SETTING_ID))
+        current = getattr(session, "agent_role", "") or ""
+        # Skip when blank (= operator left field empty; preserve current)
+        # OR unchanged (= avoid spurious confirm message when the
+        # operator toggles a different widget without touching role).
+        if new_role is not None and new_role != current:
+            await _persist_agent_role(registry, session, new_role)
+
+
+async def _persist_agent_role(registry, session, new_role: str) -> None:
+    """Mirror ``/agent edit role <text>`` from chainlit's settings panel.
+
+    Two-side update: rewrite ``profile.yaml`` via
+    ``AgentProfile.save`` so the change survives restart, and assign
+    ``session._agent_role`` so the next router turn picks up the new
+    role without restart. Both sides wrapped in try/except so a disk
+    glitch surfaces in the chat as an error message rather than
+    crashing the settings handler.
+    """
+    from dataclasses import replace
+
+    from reyn.chat.profile import AgentProfile
+
+    agent_name = getattr(session, "agent_name", None)
+    if not agent_name:
+        return
+    project_dir = getattr(registry, "_dir", None)
+    if project_dir is None:
+        return
+    agent_dir = project_dir / agent_name
+    try:
+        profile = AgentProfile.load(agent_dir)
+    except FileNotFoundError:
+        await cl.ErrorMessage(
+            content=f"agent profile not found at {agent_dir}/profile.yaml",
+        ).send()
+        return
+    updated = replace(profile, role=new_role)
+    try:
+        updated.save(agent_dir)
+    except OSError as exc:
+        await cl.ErrorMessage(
+            content=f"failed to save agent role: {exc}",
+        ).send()
+        return
+    session._agent_role = new_role
+    await cl.Message(
+        content=(
+            f"Agent **{agent_name}** role updated.\n"
+            "Next user turn will use the new role."
+        ),
+        author="system",
+    ).send()
 
 
 @cl.on_message
