@@ -31,6 +31,8 @@ reyn mcp install io.github.modelcontextprotocol/server-filesystem
 
 インストール後、`mcp.servers.filesystem` エントリはすでに設定に追加されています（デフォルトでは `reyn.local.yaml`、または `--scope project` を渡した場合は `reyn.yaml`）。手順 3 に進んでください。
 
+`reyn chat` セッション内で同じフローを LLM 経由で実行したい場合は `mcp__search_registry` / `mcp__install_registry` verb を使います — 詳細は [`reyn mcp` CLI リファレンス § Chat 側の対応 verb](../../reference/cli/mcp.md#chat-side-equivalents) を参照。
+
 ### 高度な使い方: 手動設定
 
 サーバーがパブリックレジストリにない場合や、設定を完全に制御したい場合は手動で追加します。まずサーバーをスタンドアロンで動作確認してください — サーバーと integration の両方を同時にデバッグしたくないはずです：

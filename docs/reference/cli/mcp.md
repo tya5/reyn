@@ -30,6 +30,21 @@ reyn mcp clear-secret <SERVER> [<KEY>]
 
 For the conceptual model and the Two roles framing, see [Concepts: MCP](../../concepts/mcp.md).
 
+### Chat-side equivalents
+
+The chat router exposes the same install surface as four `mcp` verbs split along the source axis (= `list_actions(['mcp'])` to see them all). Use these from inside a `reyn chat` session when you want the LLM to drive the install rather than running CLI yourself:
+
+| CLI | Chat verb | Notes |
+|---|---|---|
+| `reyn mcp search <QUERY>` | `mcp__search_registry({text})` | Identical registry-API call |
+| `reyn mcp install <SERVER_ID>` | `mcp__install_registry({server_id})` | Identical registry-driven install |
+| `reyn mcp install --source npm:<pkg>[@v]` / `pypi:<pkg>[==v]` / `docker:<img>[:tag]` / GitHub URL | `mcp__install_package({kind, identifier, version?})` | LLM passes structured fields; the handler composes the source specifier |
+| _(no CLI; hand-edit `.reyn/mcp.yaml`)_ | `mcp__install_local({name, command, args})` | New chat-only surface: register a local executable (e.g. an LLM-authored MCP script) directly as a stdio server |
+| `reyn mcp list` | `mcp__list_servers()` | |
+| `reyn mcp remove <NAME>` | `mcp__drop_server({server})` | |
+
+The CLI and chat paths converge at `op_runtime/mcp_install.py`, so permission gates, secret detection, and audit events are identical.
+
 ---
 
 ## Subcommand: `search`

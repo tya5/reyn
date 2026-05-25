@@ -71,7 +71,15 @@ The smoke runner `scripts/mcp_smoke.py` goes straight to
 `reyn.mcp_client.MCPClient`, bypassing the chat router. Useful for
 connectivity sanity. For agent-driven usage (= the typical end-user
 shape), the chat router calls the server via the universal
-`call_mcp_tool` / `invoke_action` dispatch.
+`mcp__call_tool` / `invoke_action` dispatch.
+
+> Each section's `reyn mcp install --source ...` shell command has an
+> equivalent chat-side verb: `mcp__install_package({kind, identifier,
+> version?})` (= same package channels: `npm` / `pypi` / `docker` /
+> `github`). Use whichever surface fits your workflow — both converge
+> on the same `.reyn/mcp.yaml` write. See
+> [`reyn mcp` CLI § Chat-side equivalents](../../reference/cli/mcp.md#chat-side-equivalents)
+> for the full mapping.
 
 ---
 

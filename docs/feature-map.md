@@ -55,7 +55,6 @@ mindmap
       web_search
       web_fetch
       mcp
-      mcp_install
       lint
       embed
       index_write
@@ -75,8 +74,6 @@ mindmap
       index_docs
       index_events
       judge_phase
-      mcp_install
-      mcp_search
       ops_report
       read_local_files
       skill_builder
@@ -227,7 +224,6 @@ All ops are documented in the single reference page: **[Control IR](reference/ru
 | `web_search` | DuckDuckGo search — Tier 1, default-allow |
 | `web_fetch` | URL fetch + text extract — Tier 1, default-allow |
 | `mcp` | Call a configured MCP server tool by name |
-| `mcp_install` | Install MCP server from registry with permission gate |
 | `lint` | Run DSL linter on a skill directory |
 | `embed` | Chunk text via LiteLLM embedding model |
 | `index_write` | Write embedded chunks to SQLite backend |
@@ -264,8 +260,6 @@ All ops are documented in the single reference page: **[Control IR](reference/ru
 | `index_docs` | Chunk / embed / index pipeline over file globs | [Reference](reference/stdlib/index_docs.md) |
 | `index_events` | Index P6 event log with incremental cursor tracking | [Reference](reference/stdlib/index_events.md) |
 | `judge_phase` | Score one phase artifact against quality criteria | [Reference](reference/stdlib/judge_phase.md) |
-| `mcp_install` | Guided MCP server install from registry | [Reference](reference/stdlib/mcp_install.md) |
-| `mcp_search` | Natural-language search over MCP registry | [Reference](reference/stdlib/mcp_search.md) |
 | `ops_report` | Execution summary from indexed events for a period | [Reference](reference/stdlib/ops_report.md) |
 | `read_local_files` | Read project files via MCP and synthesise answers | [Reference](reference/stdlib/read_local_files.md) |
 | `skill_builder` | Scaffold a new skill from a natural-language description | [Reference](reference/stdlib/skill_builder.md) |
@@ -376,7 +370,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | HTTP transport | Streamable HTTP with request headers — implemented | [Concepts: MCP](concepts/mcp.md) |
 | SSE transport | Reserved — raises `NotImplementedError` | [Concepts: MCP](concepts/mcp.md) |
 | `mcp serve` | Expose Reyn agents as an MCP server over stdio JSON-RPC 2.0 | [reyn mcp CLI](reference/cli/mcp.md) |
-| `mcp install` | Fetch from registry, gate permissions, write config, store secrets | [mcp_install stdlib](reference/stdlib/mcp_install.md) · [reyn mcp CLI](reference/cli/mcp.md) |
+| `mcp install` | Fetch from registry, gate permissions, write config, store secrets. Three chat verbs: `mcp__install_registry` (official registry), `mcp__install_package` (npm/pypi/docker/github URL), `mcp__install_local` (direct command). CLI: `reyn mcp install <SERVER_ID>` or `--source <SPEC>`. | [Concepts: MCP](concepts/mcp.md) · [reyn mcp CLI](reference/cli/mcp.md) |
 | Secret management | Per-server env vars in `~/.reyn/secrets.env` | [reyn secret CLI](reference/cli/secret.md) |
 | Tool dispatch | Lazy-load and cache `MCPClient` per server connection | [Concepts: MCP](concepts/mcp.md) |
 
