@@ -92,8 +92,8 @@ def test_categories_no_duplicates() -> None:
         ("rag.operation__recall", "rag.operation", "recall"),
         ("reyn.source__read", "reyn.source", "read"),
         # Issue #879 collapsed mcp surface — verb_object actions.
-        ("mcp__search_server", "mcp", "search_server"),
-        ("mcp__install_server", "mcp", "install_server"),
+        ("mcp__search_registry", "mcp", "search_registry"),
+        ("mcp__install_registry", "mcp", "install_registry"),
         ("mcp__list_tools", "mcp", "list_tools"),
         ("mcp__call_tool", "mcp", "call_tool"),
         ("mcp__drop_server", "mcp", "drop_server"),
@@ -118,7 +118,7 @@ def test_split_qualified_name_parses_correctly(
         ("skill", "code_review", "skill__code_review"),
         ("rag.corpus", "meetings", "rag.corpus__meetings"),
         # Issue #879 collapsed mcp surface.
-        ("mcp", "search_server", "mcp__search_server"),
+        ("mcp", "search_registry", "mcp__search_registry"),
         ("mcp", "call_tool", "mcp__call_tool"),
     ],
 )

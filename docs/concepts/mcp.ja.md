@@ -56,16 +56,18 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 
 ## クイックスタート: `reyn chat` から MCP を試す（手動設定パス）
 
-手動でサーバーを設定したい場合や、公開レジストリにないサーバーを追加する場合は、`reyn.yaml` に直接追加します。 サーバーを設定すると、 `reyn chat` は自動的に 6 個の MCP verb actions を使えます (issue #879 で旧 `mcp.server` / `mcp.tool` / `mcp.operation` の 3 sub-category を collapse):
+手動でサーバーを設定したい場合や、公開レジストリにないサーバーを追加する場合は、`reyn.yaml` に直接追加します。 サーバーを設定すると、 `reyn chat` は `mcp` category の verb actions を自動的に使えます (issue #879 で旧 `mcp.server` / `mcp.tool` / `mcp.operation` 3 sub-category を collapse、 2026-05-25 で install を source 軸で 3 verb に分割):
 
 | Action | 何をするか |
 |------|-----------|
-| `mcp__search_server({text})`        | 公開 registry で新規サーバーを検索 |
-| `mcp__install_server({server_id})`  | サーバーを現 scope の config に install |
-| `mcp__list_servers()`               | `reyn.yaml` に設定された全サーバー名を返す |
-| `mcp__list_tools({server})`         | 1 サーバーが露出する tool 一覧を `{name: "<server>__<tool>", description, inputSchema}` 形式で返す |
-| `mcp__call_tool({tool, args})`      | `<server>__<tool>` ID + tool の declared args で tool を call |
-| `mcp__drop_server({server})`        | install 済サーバーを config から削除 |
+| `mcp__search_registry({text})`                              | 公式 MCP registry で新規サーバーを検索 |
+| `mcp__install_registry({server_id})`                        | 公式 MCP registry の server を install |
+| `mcp__install_package({kind, identifier, version?})`        | npm / pypi / docker / GitHub URL から install |
+| `mcp__install_local({name, command, args})`                 | local command (LLM 生成 script 等) を直接 MCP server として登録 |
+| `mcp__list_servers()`                                       | `.reyn/mcp.yaml` に設定された全サーバー名を返す |
+| `mcp__list_tools({server})`                                 | 1 サーバーが露出する tool 一覧を `{name: "<server>__<tool>", description, inputSchema}` 形式で返す |
+| `mcp__call_tool({tool, args})`                              | `<server>__<tool>` ID + tool の declared args で tool を call |
+| `mcp__drop_server({server})`                                | install 済サーバーを config から削除 |
 
 LLM router がチャット turn 内で直接これらを呼べます。 初回利用の典型 flow:
 

@@ -67,9 +67,11 @@ verb_object actions cover the LLM-visible surface:
 
 | Action | Purpose |
 |---|---|
-| `mcp__search_server`  | Search the MCP registry for new servers |
-| `mcp__install_server` | Install a server into the current scope's config |
-| `mcp__list_servers`   | Enumerate installed servers |
+| `mcp__search_registry`  | Search the official MCP registry for new servers |
+| `mcp__install_registry` | Install a server from the official MCP registry |
+| `mcp__install_package`  | Install via a third-party package (npm/pypi/docker) or a GitHub repo URL |
+| `mcp__install_local`    | Register a local command (e.g. LLM-authored script) as an MCP server |
+| `mcp__list_servers`     | Enumerate installed servers |
 | `mcp__list_tools`     | Enumerate one server's tools as `<server>__<tool>` ids |
 | `mcp__call_tool`      | Call a tool by `<server>__<tool>` id with `args` |
 | `mcp__drop_server`    | Remove an installed server |
@@ -97,7 +99,7 @@ Examples:
 | `skill__index_docs` | (`skill`, `index_docs`) |
 | `agent.peer__alice` | (`agent.peer`, `alice`) |
 | `mcp__call_tool` | (`mcp`, `call_tool`) |
-| `mcp__install_server` | (`mcp`, `install_server`) |
+| `mcp__install_registry` | (`mcp`, `install_registry`) |
 | `rag.corpus__meetings` | (`rag.corpus`, `meetings`) |
 | `file__read` | (`file`, `read`) |
 

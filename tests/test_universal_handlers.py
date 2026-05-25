@@ -107,19 +107,23 @@ def test_list_actions_memory_operation_static_category() -> None:
 
 
 def test_list_actions_mcp_static_category_returns_collapsed_surface() -> None:
-    """Tier 2: list_actions(category=['mcp']) returns the six verb actions.
+    """Tier 2: list_actions(category=['mcp']) returns the verb actions.
 
     Issue #879 collapsed the previous mcp.server / mcp.tool / mcp.operation
-    sub-categories into a single ``mcp`` category whose static qns cover
-    the LLM-visible verb surface (search_server / install_server /
-    list_servers / list_tools / call_tool / drop_server).
+    sub-categories into a single ``mcp`` category. 2026-05-25 install
+    surface split: the install verb is split along the source axis into
+    install_registry / install_package / install_local; search_server
+    renamed to search_registry to pair with install_registry.
     """
     result = _run(LIST_ACTIONS.handler(
         {"category": ["mcp"]}, _make_ctx(),
     ))
     qns = {it["qualified_name"] for it in result["items"]}
     assert qns == {
-        "mcp__search_server", "mcp__install_server",
+        "mcp__search_registry",
+        "mcp__install_registry",
+        "mcp__install_package",
+        "mcp__install_local",
         "mcp__list_servers", "mcp__list_tools",
         "mcp__call_tool", "mcp__drop_server",
     }, f"mcp enumeration drifted: got {qns}"

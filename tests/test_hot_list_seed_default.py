@@ -15,9 +15,12 @@ from reyn.tools.universal_dispatch import UnknownActionError, resolve_invoke_act
 
 # ── Part A: B37 W4/W6 seed entries present ────────────────────────────────────
 
-# Issue #879 collapsed surface: skill__mcp_search → mcp__search_server;
-# mcp__install_server added so install requests don't require
-# list_actions discovery first.
+# Issue #879 collapsed surface: skill__mcp_search → mcp__search_registry;
+# mcp__install_registry seeded so install requests don't require
+# list_actions discovery first.  The 2026-05-25 install 3-verb split
+# kept the registry verb as the seeded primary path; install_package /
+# install_local are intentionally NOT seeded (= niche flows, list_actions
+# discovery is acceptable cost).
 # W6 R-WEB scenarios: mcp routing miss with fresh workspace was the
 # motivating scenario for seeding the mcp verbs.
 # file__write — W4 S1: LLM used args key "text" instead of "content" because
@@ -37,8 +40,8 @@ from reyn.tools.universal_dispatch import UnknownActionError, resolve_invoke_act
 # web__fetch — W3 S4: present in seed since B34; this test asserts it remains.
 
 _B37_REQUIRED_ENTRIES: tuple[str, ...] = (
-    "mcp__search_server",         # #879: mcp routing — search verb in hot list
-    "mcp__install_server",        # #879: mcp routing — install verb in hot list
+    "mcp__search_registry",       # #879/2026-05-25: registry search seed
+    "mcp__install_registry",      # #879/2026-05-25: registry install seed
     "mcp__list_tools",            # post-#898: cold-start "use server" verb
     "mcp__call_tool",             # post-#898: cold-start "use server" verb
     "file__write",                # W4 S1: arg-key hallucination (text vs content)
