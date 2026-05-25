@@ -49,6 +49,14 @@ from reyn.chainlit_app.slash_route import (
     is_chainlit_history_wipe,
     is_slash,
 )
+from reyn.chainlit_app.tool_step import build_tool_step_update
+
+_TOOL_CALL_KINDS = frozenset({
+    "tool_call_started",
+    "tool_call_completed",
+    "tool_call_failed",
+})
+_TOOL_STEP_SESSION_PREFIX = "reyn_tool_step_"
 from reyn.chainlit_app.uploads import collect_image_blocks
 
 if TYPE_CHECKING:
@@ -216,6 +224,21 @@ async def _drain_loop(registry: "AgentRegistry") -> None:
             await _handle_intervention(registry, msg)
             continue
 
+        if msg.kind in _TOOL_CALL_KINDS:
+            # Render the tool invocation as a collapsible ``cl.Step``
+            # (= operator can expand to see args / result / error).
+            # The step lifecycle spans three messages
+            # (started / completed / failed), keyed by ``op_id`` so
+            # the right step is updated. Falls through to the adapter
+            # path on any failure so the row at least renders as a
+            # plain "🔧 tool" message.
+            try:
+                handled = await _handle_tool_call(msg)
+            except Exception:
+                handled = False
+            if handled:
+                continue
+
         payload = outbox_to_chainlit(msg)
         if payload is None:
             continue
@@ -229,6 +252,69 @@ async def _drain_loop(registry: "AgentRegistry") -> None:
                 author=payload.author,
                 type=payload.message_type,
             ).send()
+
+
+async def _handle_tool_call(msg) -> bool:
+    """Render a ``tool_call_*`` outbox message as a collapsible
+    ``cl.Step`` so the operator can expand the row to see args /
+    result / error inline with the rest of the chat thread.
+
+    The lifecycle spans three events keyed by ``op_id`` (= the
+    deterministic ``args_hash`` the lifecycle forwarder packs into
+    ``meta``):
+
+      - ``tool_call_started``    → create the step + show args
+      - ``tool_call_completed``  → update the same step with result
+      - ``tool_call_failed``     → update the same step with error
+
+    Returns True when the row was rendered as a step (= adapter
+    bypass), False when meta is malformed / chainlit raises so the
+    caller falls back to the adapter's plain-text branch. Each
+    interaction with chainlit is wrapped in try/except so a transient
+    glitch never breaks the drain loop.
+    """
+    update = build_tool_step_update(msg.meta, msg.kind)
+    if update is None:
+        return False
+
+    session_key = _TOOL_STEP_SESSION_PREFIX + update.op_id
+
+    try:
+        if update.phase == "started":
+            step = cl.Step(
+                name=update.tool_name,
+                type="tool",
+                show_input="json",
+                default_open=False,
+                auto_collapse=True,
+            )
+            if update.input_text:
+                step.input = update.input_text
+            await step.send()
+            cl.user_session.set(session_key, step)
+            return True
+
+        # completed / failed — look up the started step.
+        step = cl.user_session.get(session_key)
+        if step is None:
+            # Step pairing was lost (= drain restart / shadow event) →
+            # fall back to adapter's plain-text branch so the row at
+            # least shows the completion / failure.
+            return False
+        step.output = update.output_text
+        if update.is_error:
+            # Surface the failure visually on the step. ``is_error``
+            # may not be on every chainlit version, so wrap setattr
+            # in try/except.
+            try:
+                step.is_error = True
+            except Exception:
+                pass
+        await step.update()
+        cl.user_session.set(session_key, None)
+        return True
+    except Exception:
+        return False
 
 
 async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
