@@ -23,9 +23,11 @@ from reyn.chainlit_app.settings import (
     LANGUAGE_ITEMS,
     LANGUAGE_SETTING_ID,
     MODEL_SETTING_ID,
+    NEW_AGENT_NAME_SETTING_ID,
     language_label_for,
     language_to_value,
     list_model_names,
+    normalise_new_agent_name,
     normalise_role,
     value_to_language,
     value_to_model,
@@ -203,3 +205,44 @@ def test_normalise_role_pass_through_multiline():
     outer whitespace, not internal newlines / formatting)."""
     multiline = "line one\nline two\n  indented line"
     assert normalise_role("\n" + multiline + "\n") == multiline
+
+
+# ── new agent name normaliser ─────────────────────────────────────────────
+
+
+def test_new_agent_name_setting_id_is_stable():
+    """Tier 1: the widget id + on_settings_update dispatch key agree."""
+    assert NEW_AGENT_NAME_SETTING_ID == "new_agent_name"
+
+
+def test_normalise_new_agent_name_trims_whitespace():
+    """Tier 1: leading / trailing whitespace stripped before the
+    registry's name regex enforcement."""
+    assert normalise_new_agent_name("  research  ") == "research"
+
+
+def test_normalise_new_agent_name_blank_returns_none():
+    """Tier 1: empty / whitespace-only → None (= operator left the
+    TextInput unchanged; skip the create round-trip)."""
+    assert normalise_new_agent_name("") is None
+    assert normalise_new_agent_name("   ") is None
+
+
+def test_normalise_new_agent_name_non_string_returns_none():
+    """Tier 1: defensive — None / non-string → None."""
+    assert normalise_new_agent_name(None) is None
+    assert normalise_new_agent_name(42) is None  # type: ignore[arg-type]
+
+
+def test_normalise_new_agent_name_pass_through_valid_format():
+    """Tier 1: valid name shapes pass through verbatim — the registry's
+    ``_validate_agent_name`` is the authoritative regex check, so this
+    helper deliberately doesn't pre-filter (= invalid names hit
+    ``ValueError`` at create time + the chainlit handler surfaces the
+    reyn error verbatim)."""
+    assert normalise_new_agent_name("agent_with_underscore") == "agent_with_underscore"
+    assert normalise_new_agent_name("agent-with-dash") == "agent-with-dash"
+    assert normalise_new_agent_name("a") == "a"
+    # Invalid names also pass through this helper (= registry rejects):
+    assert normalise_new_agent_name("UPPER") == "UPPER"
+    assert normalise_new_agent_name("-leading-dash") == "-leading-dash"

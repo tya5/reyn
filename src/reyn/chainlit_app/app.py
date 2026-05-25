@@ -37,9 +37,11 @@ from reyn.chainlit_app.settings import (
     LANGUAGE_ITEMS,
     LANGUAGE_SETTING_ID,
     MODEL_SETTING_ID,
+    NEW_AGENT_NAME_SETTING_ID,
     language_label_for,
     language_to_value,
     list_model_names,
+    normalise_new_agent_name,
     normalise_role,
     value_to_language,
     value_to_model,
@@ -637,6 +639,26 @@ async def _on_chat_start() -> None:
                 ),
             )
         )
+        # Create-new-agent TextInput — mirrors ``/agent new <name>``
+        # slash so the operator can spin up a new agent from the
+        # panel. Name rule: 1-32 chars of ``[a-z0-9_-]`` starting
+        # with ``[a-z0-9]`` (enforced by ``registry.create``).
+        widgets.append(
+            cl.input_widget.TextInput(
+                id=NEW_AGENT_NAME_SETTING_ID,
+                label="Create new agent",
+                initial="",
+                placeholder=(
+                    "Type a name to create a new agent (e.g. "
+                    "\"research\"). Blank to skip."
+                ),
+                tooltip=(
+                    "Creates a new agent profile under "
+                    "``.reyn/agents/<name>/`` and attaches to it. "
+                    "1-32 chars of [a-z0-9_-] starting with [a-z0-9]."
+                ),
+            )
+        )
         await cl.ChatSettings(widgets).send()
     except Exception:
         pass
@@ -695,6 +717,65 @@ async def _on_settings_update(settings: dict) -> None:
         # operator toggles a different widget without touching role).
         if new_role is not None and new_role != current:
             await _persist_agent_role(registry, session, new_role)
+    if NEW_AGENT_NAME_SETTING_ID in settings:
+        new_name = normalise_new_agent_name(
+            settings.get(NEW_AGENT_NAME_SETTING_ID),
+        )
+        if new_name is not None:
+            await _create_new_agent(registry, new_name)
+
+
+async def _create_new_agent(registry, name: str) -> None:
+    """Mirror ``/agent new <name>`` from chainlit's settings panel.
+
+    Creates the agent on disk via the registry (= same path as the
+    slash command + ``reyn agent new`` CLI), then emits an
+    ``__attach_request__`` outbox sentinel so the drain forwarder
+    flips the attached session to the new agent — chainlit drain
+    will see the next ``agent_attached`` notification flow through.
+
+    The registry's ``_validate_agent_name`` enforces the 1-32
+    ``[a-z0-9_-]`` regex; we surface its ``ValueError`` verbatim so
+    the operator sees exactly why an invalid name was rejected.
+    ``FileExistsError`` (= duplicate) renders a hint to use the
+    chat-profile picker for an attach instead.
+    """
+    from reyn.chat.outbox import OutboxMessage
+
+    try:
+        registry.create(name)
+    except FileExistsError:
+        await cl.ErrorMessage(
+            content=(
+                f"agent {name!r} already exists. Use the chat-profile "
+                f"picker (top of the welcome screen) to attach instead."
+            ),
+        ).send()
+        return
+    except ValueError as exc:
+        await cl.ErrorMessage(content=str(exc)).send()
+        return
+
+    # Notify the operator + trigger the same attach path the
+    # ``/agent new`` slash uses.
+    await cl.Message(
+        content=(
+            f"Created agent **{name}**; attaching…\n"
+            "Use the chat-profile picker (top of the welcome screen) "
+            "to switch agents on subsequent chats."
+        ),
+        author="system",
+    ).send()
+    try:
+        session = registry.attached_session()
+        if session is not None:
+            await session._put_outbox(OutboxMessage(
+                kind="__attach_request__", text=name,
+            ))
+    except Exception:
+        # Attach signal best-effort — the agent profile is already on
+        # disk and the picker will pick it up on next reload.
+        pass
 
 
 async def _persist_agent_role(registry, session, new_role: str) -> None:

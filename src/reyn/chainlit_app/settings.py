@@ -77,6 +77,26 @@ def language_label_for(value: str) -> str:
 
 
 AGENT_ROLE_SETTING_ID = "agent_role"
+NEW_AGENT_NAME_SETTING_ID = "new_agent_name"
+
+
+def normalise_new_agent_name(value: object) -> str | None:
+    """Strip a candidate "create new agent" name into ``registry.create``
+    input shape.
+
+    Returns ``None`` for non-string / blank inputs so the caller can
+    skip the create roundtrip when the operator left the TextInput
+    empty. Whitespace trimmed; further validation (= name regex /
+    duplicate check) is the registry's job — it raises ``ValueError``
+    or ``FileExistsError`` for invalid / clashing names which the
+    chainlit handler surfaces verbatim via ``cl.ErrorMessage``.
+    """
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    return v
 
 
 def normalise_role(value: object) -> str | None:
@@ -141,9 +161,11 @@ __all__ = [
     "LANGUAGE_ITEMS",
     "LANGUAGE_SETTING_ID",
     "MODEL_SETTING_ID",
+    "NEW_AGENT_NAME_SETTING_ID",
     "language_label_for",
     "language_to_value",
     "list_model_names",
+    "normalise_new_agent_name",
     "normalise_role",
     "value_to_language",
     "value_to_model",
