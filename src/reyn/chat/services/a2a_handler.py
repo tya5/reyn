@@ -447,8 +447,20 @@ class A2AHandler:
         depth = int(payload.get("depth", 1))
         chain_id = payload.get("chain_id") or _new_chain_id()
 
+        # B55 R-7 (2026-05-25): structural symmetry with skill / plan
+        # completion injections. Wrap the peer's reply in a
+        # `[task_completed] kind=agent ...` header (role=user) so the
+        # SP TASK_COMPLETED rule covers agent-delegation lifecycles
+        # too. Prior behaviour appended the raw reply text alone,
+        # which the LLM read as a plain user message — no task
+        # lifecycle anchor + no parity with skill / plan paths.
+        injected_text = (
+            f"[task_completed] kind=agent "
+            f"from={from_agent or '<unknown>'} chain_id={chain_id}\n"
+            f"reply: {response}"
+        )
         self._append_history(
-            "user", response, _now_iso(),
+            "user", injected_text, _now_iso(),
             {
                 "source": "agent_response",
                 "from_agent": from_agent, "depth": depth,
@@ -496,7 +508,11 @@ class A2AHandler:
             return
 
         try:
-            await self._run_router_loop(response, chain_id)
+            # B55 R-7: pass the structured `[task_completed] kind=agent`
+            # injection (= history's last entry, also user-role) so the
+            # router sees the same lifecycle marker the SP rule covers
+            # — parity with skill / plan completion paths.
+            await self._run_router_loop(injected_text, chain_id)
         except RouterCapExceeded as exc:
             await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
             return

@@ -469,3 +469,66 @@ async def test_pending_chain_resolved_on_all_responses(
     assert upstream_final, "final reply must be sent upstream after chain resolves"
     assert upstream_final[0]["response"] != ""
     assert "synthesized answer" in upstream_final[0]["response"]
+
+
+# ---------------------------------------------------------------------------
+# Test 5: agent_response history injection carries `[task_completed] kind=agent`
+# structural header (B55 R-7 — symmetry with skill / plan completion paths)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_agent_response_history_carries_task_completed_kind_agent_header(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: handle_agent_response must wrap the peer's reply in a
+    ``[task_completed] kind=agent from=<peer> chain_id=<Y>\\nreply: ...``
+    structured header before appending to history (= role=user). Pairs
+    with the ``[task_spawned] kind=agent ...`` spawn_ack in router_loop;
+    together they bring the agent-delegation path into structural
+    parity with skill / plan completion injections so the SP
+    TASK_COMPLETED rule covers all three lifecycles uniformly.
+
+    Prior behaviour appended the raw peer text alone, leaving the LLM
+    without a task lifecycle anchor for agent delegations (= W5
+    agent_delegation rubric content failures observed in B54+ retros).
+    """
+    monkeypatch.chdir(tmp_path)
+    responses: list[dict] = []
+    outbox: list[OutboxMessage] = []
+    history: list[dict] = []
+
+    handler, _chain_manager, _trackers = _build_handler(
+        tmp_path,
+        responses_sent=responses,
+        outbox_items=outbox,
+        history_items=history,
+    )
+
+    await handler.handle_agent_response({
+        "from_agent": "researcher",
+        "response": "FP-0001 is the async task lifecycle proposal.",
+        "depth": 2,
+        "chain_id": "chain-task-completed-001",
+    })
+
+    matching = [
+        h for h in history
+        if h["meta"].get("source") == "agent_response"
+        and h["meta"].get("chain_id") == "chain-task-completed-001"
+    ]
+    assert matching, "agent_response history entry must be appended"
+    entry = matching[0]
+    assert entry["role"] == "user", (
+        "task_completed injections are role=user (= matches skill / plan "
+        "completion path; role=tool would violate provider tool_call_id "
+        "constraints since the spawn happened in a prior turn)"
+    )
+    assert "[task_completed] kind=agent" in entry["text"], (
+        f"structured header missing from history; got: {entry['text']!r}"
+    )
+    assert "from=researcher" in entry["text"]
+    assert "chain_id=chain-task-completed-001" in entry["text"]
+    assert "FP-0001 is the async task lifecycle proposal." in entry["text"], (
+        "peer's raw reply must be preserved in the `reply:` body"
+    )
