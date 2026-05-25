@@ -140,7 +140,7 @@ rm -rf .reyn/agents .reyn/state .reyn/events .reyn/action_index .reyn/llm_trace.
 {env_block} \\
   REYN_LLM_TRACE_DUMP=$(pwd)/.reyn/llm_trace.jsonl \\
   nohup /Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2/venv/bin/reyn web \\
-    --port {worker.port} --log-level warning > /tmp/b{config.batch.name.lstrip('B')}-{worker.name.lstrip('W')}-server.log 2>&1 &
+    --port {worker.port} --log-level warning --eager-embedding-build > /tmp/b{config.batch.name.lstrip('B')}-{worker.name.lstrip('W')}-server.log 2>&1 &
 sleep 4
 curl -s -o /dev/null -w "%{{http_code}}\\n" http://localhost:{worker.port}/health  # must be 200
 ```
