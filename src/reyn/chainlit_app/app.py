@@ -238,14 +238,36 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
     the agent's await intact (= reyn-side timeout / fallback still
     fires) and the drain loop keeps pumping subsequent messages.
     """
-    from reyn.user_intervention import InterventionAnswer
-
     prompt = build_intervention_prompt(msg.meta, text=msg.text or "")
     session = registry.attached_session()
-    if session is None or prompt.run_id is None:
-        # Can't answer (= no attached session or legacy IV without
-        # run_id) — fall back to plain text render so the operator at
-        # least sees what was asked.
+    if session is None or prompt.intervention_id is None:
+        # Can't dispatch the answer (= no attached session or malformed
+        # meta lacking intervention_id) — fall back to plain-text render
+        # so the operator at least sees what was asked.
+        await cl.Message(
+            content=prompt.content, author="intervention",
+        ).send()
+        return
+
+    # Look up the live UserIntervention by id. ``_interventions.list_active``
+    # is the public-shape (= used by slash commands), and the iv carries
+    # its own future + choices, so we route through
+    # ``session._deliver_answer_to(iv, text, choice_id_override=...)``
+    # which works regardless of whether ``iv.run_id`` is set (permission
+    # gate IVs from ``_prompt`` have no run_id; ``ask_user`` IVs do).
+    def _find_iv():
+        try:
+            for iv in session._interventions.list_active():
+                if getattr(iv, "id", None) == prompt.intervention_id:
+                    return iv
+        except AttributeError:
+            return None
+        return None
+
+    iv_obj = _find_iv()
+    if iv_obj is None:
+        # IV already answered or vanished between announce and our
+        # handler picking it up — render plain text, nothing to answer.
         await cl.Message(
             content=prompt.content, author="intervention",
         ).send()
@@ -256,10 +278,10 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
     # ChatSession.run_one_iteration never picks up the next inbox
     # message — the entire chat appears frozen.
     async def _resolve_empty() -> None:
-        await session.answer_pending_intervention(
-            prompt.run_id,
-            InterventionAnswer(text=""),
-        )
+        try:
+            await session._deliver_answer_to(iv_obj, "")
+        except Exception:
+            pass
 
     if prompt.is_choice:
         try:
@@ -268,7 +290,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
                     name=f"iv_{spec.choice_id}",
                     label=spec.label,
                     payload={
-                        "intervention_run_id": prompt.run_id,
+                        "intervention_id": prompt.intervention_id,
                         "choice_id": spec.choice_id,
                     },
                 )
@@ -284,22 +306,35 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
         if response is None:
             await _resolve_empty()
             return
-        payload_dict = getattr(response, "payload", None) or response
-        choice_id = (
-            payload_dict.get("choice_id")
-            if isinstance(payload_dict, dict) else None
-        )
+        # ``cl.AskActionMessage`` returns an ``AskActionResponse``
+        # TypedDict with shape ``{name, payload, label, tooltip,
+        # forId, id}``. The dict ``payload`` field is what carries
+        # the per-Action dict we passed at construction time — that's
+        # where ``choice_id`` actually lives. A prior version read
+        # ``getattr(response, "payload", None) or response`` which
+        # falls through to the OUTER dict and ends up reading
+        # ``choice_id`` from the wrong layer → always None → reyn-side
+        # validation classifies as "unknown choice".
+        outer: dict = response if isinstance(response, dict) else {}
+        nested_payload = outer.get("payload")
+        if not isinstance(nested_payload, dict):
+            nested_payload = {}
+        choice_id = nested_payload.get("choice_id")
         label = (
-            payload_dict.get("label")
-            if isinstance(payload_dict, dict) else None
-        ) or choice_id or ""
+            nested_payload.get("label")
+            or outer.get("label")
+            or choice_id
+            or ""
+        )
         if not isinstance(choice_id, str):
             await _resolve_empty()
             return
-        await session.answer_pending_intervention(
-            prompt.run_id,
-            InterventionAnswer(text=str(label), choice_id=choice_id),
-        )
+        try:
+            await session._deliver_answer_to(
+                iv_obj, str(label), choice_id_override=choice_id,
+            )
+        except Exception:
+            await _resolve_empty()
         return
 
     # Free-text branch.
@@ -322,10 +357,10 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
         )
     else:
         text = str(getattr(reply, "output", None) or getattr(reply, "content", "") or "")
-    await session.answer_pending_intervention(
-        prompt.run_id,
-        InterventionAnswer(text=text),
-    )
+    try:
+        await session._deliver_answer_to(iv_obj, text)
+    except Exception:
+        await _resolve_empty()
 
 
 @cl.set_chat_profiles
@@ -415,16 +450,23 @@ async def _on_chat_start() -> None:
     await registry.restore_all()
     session = await registry.attach(name)
 
-    # Register chainlit as an intervention listener so the session's
-    # ``InterventionRegistry`` (= built with
-    # ``enforce_listener_presence=True`` at session.py:1529) actually
-    # dispatches IVs through the bus → outbox. Without this, every
-    # ``bus.request(iv)`` short-circuits at registry.py:230 with an
-    # empty ``InterventionAnswer(text="")``, which the permission
-    # gate treats as a refusal → user sees silent "permission
-    # denied" instead of the AskActionMessage wired in PR #907.
+    # Register the chainlit surface as the canonical chat-channel
+    # intervention listener. The id MUST match ``DEFAULT_CHAT_CHANNEL_ID``
+    # (= "tui") because ``ChatInterventionBus`` stamps every iv with
+    # that channel id (session.py:1661 / 1891 / 4388), and the agent
+    # layer's origin-pin routing then expects a listener registered
+    # under the SAME id. Registering as "chainlit" instead leaves the
+    # iv as ``route="user_channel_stalled"`` — surfaced in the event
+    # log but never dispatched → silent "permission denied" for
+    # web_fetch et al. (Discovered after #908 by inspecting
+    # ``events/agents/*/chat/*.jsonl`` ``intervention_routed`` rows.)
+    #
+    # This is the same id the TUI surface registers under
+    # (``chat/tui/app.py``); only one of TUI / chainlit is attached
+    # to a given process so there's no collision.
+    from reyn.chat.session import DEFAULT_CHAT_CHANNEL_ID
     try:
-        session.register_intervention_listener("chainlit")
+        session.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
     except AttributeError:
         # Stripped / mocked session in tests — degrade gracefully.
         pass
@@ -657,6 +699,7 @@ async def _on_chat_end() -> None:
         registry = await _get_or_build_registry()
         session = registry.attached_session()
         if session is not None:
-            session.unregister_intervention_listener("chainlit")
+            from reyn.chat.session import DEFAULT_CHAT_CHANNEL_ID
+            session.unregister_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
     except Exception:
         pass

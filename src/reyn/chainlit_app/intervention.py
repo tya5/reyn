@@ -33,14 +33,22 @@ class _ChoiceSpec:
 class InterventionPrompt:
     """Pre-assembled view of an IV ready for chainlit rendering.
 
-    - ``run_id`` is what ``session.answer_pending_intervention`` keys
-      on; ``None`` for legacy / orphaned IVs that the caller should
-      skip (= can't be answered).
+    - ``intervention_id`` is the UUID set on every ``UserIntervention``;
+      the caller looks it up via
+      ``session._interventions.list_active()`` to get the iv instance,
+      then answers via ``session._deliver_answer_to(iv, text,
+      choice_id_override=...)``. ``None`` only for malformed meta —
+      caller falls back to a plain-text render.
+    - ``run_id`` is the skill's run id when the IV originated from a
+      running skill (= ``ask_user``); ``None`` for permission gates
+      (= ``_prompt`` constructs IVs without a skill context). Not
+      used for answer dispatch — keep for diagnostic / future use.
     - ``content`` is the rendered text body (prompt + detail +
       suggestions hint, in that order).
     - ``choices`` is non-empty for closed-set IVs → AskActionMessage;
       empty for free-text IVs → AskUserMessage.
     """
+    intervention_id: str | None
     run_id: str | None
     content: str
     choices: tuple[_ChoiceSpec, ...]
@@ -56,11 +64,18 @@ def build_intervention_prompt(meta: dict | None, text: str = "") -> Intervention
     Falls back gracefully on missing meta fields:
     - missing / empty ``prompt`` → use the OutboxMessage ``text`` body
       (= the announce-time multiline string is a reasonable backup)
-    - missing ``run_id`` → returned as None (caller skips answer)
+    - missing ``intervention_id`` → returned as None (caller falls back
+      to plain-text render; can't dispatch answer back)
+    - missing ``run_id`` → returned as None (informational only;
+      permission gates legitimately have no run_id)
     - missing ``choices`` → empty tuple → free-text prompt
     - malformed individual choice (no ``id``) → dropped silently
     """
     meta = meta or {}
+    intervention_id = (
+        meta.get("intervention_id")
+        if isinstance(meta.get("intervention_id"), str) else None
+    )
     run_id = meta.get("run_id") if isinstance(meta.get("run_id"), str) else None
 
     body_parts: list[str] = []
@@ -97,6 +112,7 @@ def build_intervention_prompt(meta: dict | None, text: str = "") -> Intervention
 
     content = "\n".join(body_parts) if body_parts else "(empty prompt)"
     return InterventionPrompt(
+        intervention_id=intervention_id,
         run_id=run_id,
         content=content,
         choices=tuple(choice_specs),
