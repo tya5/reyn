@@ -57,7 +57,12 @@ if TYPE_CHECKING:
 # it is the only category with hard sandbox-backend gating (= D14 / D14-ext).
 CATEGORIES: Final[tuple[str, ...]] = (
     "skill",
-    "agent.peer",
+    # Phase 1 follow-up (2026-05-25): collapsed ``agent.peer`` resource
+    # category into ``multi_agent`` verb category (= list_peers /
+    # describe_peer / delegate). Same shape rationale as #879 mcp
+    # collapse — resource entries (agent names) → verb actions whose
+    # args carry the agent name explicitly.
+    "multi_agent",
     # Issue #879: collapsed the previous mcp.server / mcp.tool /
     # mcp.operation sub-categories + skill__mcp_search / skill__mcp_install
     # into a single ``mcp`` category. 2026-05-25: install surface
@@ -536,7 +541,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
 
     if category in (
         "file", "web", "memory.operation", "reyn.source", "rag.operation",
-        "mcp", "validation",
+        "mcp", "multi_agent", "validation",
     ):
         return _enumerate_static_category(category)
 
@@ -552,20 +557,6 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             }
             for s in rs.available_skills
             if isinstance(s, Mapping) and "name" in s
-        ]
-
-    if category == "agent.peer":
-        if rs is None or not rs.available_agents:
-            return []
-        return [
-            {
-                "qualified_name": build_qualified_name("agent.peer", a["name"]),
-                "short_description": _truncate_short_description(
-                    a.get("role") or a.get("description", ""),
-                ),
-            }
-            for a in rs.available_agents
-            if isinstance(a, Mapping) and "name" in a
         ]
 
     if category == "rag.corpus":
@@ -918,12 +909,6 @@ def _resource_input_schema(
             return None
         return None
 
-    if category == "agent.peer":
-        tool = registry.lookup("delegate_to_agent")
-        if tool is None:
-            return None
-        return _drop_field_from_schema(tool.parameters, "to")
-
     if category == "rag.corpus":
         tool = registry.lookup("recall")
         if tool is None:
@@ -1000,21 +985,6 @@ def _resource_description(
                     continue
                 if skill.get("name") == entry_name:
                     desc = skill.get("description")
-                    return str(desc) if desc else None
-        except Exception:
-            return None
-        return None
-
-    if category == "agent.peer":
-        host = getattr(rs, "host", None) if rs is not None else None
-        if host is None or not hasattr(host, "list_available_agents"):
-            return None
-        try:
-            for agent in host.list_available_agents():
-                if not isinstance(agent, Mapping):
-                    continue
-                if agent.get("name") == entry_name:
-                    desc = agent.get("description") or agent.get("role")
                     return str(desc) if desc else None
         except Exception:
             return None

@@ -123,52 +123,17 @@ def test_skill_describe_unknown_skill_falls_back_to_dispatcher():
         assert out["description"]
 
 
-# ── agent.peer__X ───────────────────────────────────────────────────────
-
-
-def test_agent_peer_describe_returns_agent_description():
-    """Tier 2b: describe_action(agent.peer__X) returns the AGENT's description.
-
-    B42-NF-W7-1: returns description / role field, not delegate_to_agent's
-    dispatcher text.
-    """
-    actual_desc = "Researches topics by querying multiple sources."
-    ctx = _make_ctx(agents=[
-        {"name": "researcher", "description": actual_desc},
-    ])
-    out = _describe("agent.peer__researcher", ctx)
-    assert out["description"] == actual_desc
-
-
-def test_agent_peer_describe_falls_back_to_role_when_no_description():
-    """Tier 2: agent entry without ``description`` uses ``role`` as fallback
-    (= the role field is the agent profile's human-readable summary).
-    """
-    ctx = _make_ctx(agents=[
-        {"name": "writer", "role": "Drafts and revises article copy."},
-    ])
-    out = _describe("agent.peer__writer", ctx)
-    assert out["description"] == "Drafts and revises article copy."
-
-
-def test_agent_peer_describe_missing_both_falls_back_to_dispatcher():
-    """Tier 2: agent with neither ``description`` nor ``role`` falls back to
-    delegate_to_agent's dispatcher description.
-    """
-    ctx = _make_ctx(agents=[
-        {"name": "ghost"},
-    ])
-    out = _describe("agent.peer__ghost", ctx)
-    # Some non-empty fallback (= dispatcher's description, whatever its wording)
-    assert out.get("description")
-
-
 # Issue #879: mcp.tool / mcp.server resource-invoke describe paths were
 # removed when the MCP surface collapsed to verb actions. The per-tool /
 # per-server description metadata is now surfaced through
 # mcp__list_tools / mcp__list_servers results directly instead of
 # describe_action; that flow's coverage lives in test_universal_handlers
 # (= LIST_MCP_TOOLS / LIST_MCP_SERVERS handler tests).
+#
+# Phase 1 multi_agent collapse (2026-05-25): same pattern applied to the
+# agent.peer__X resource shape. Per-peer description surfaces through
+# multi_agent__describe_peer / multi_agent__list_peers results; coverage
+# lives in test_universal_handlers (= DESCRIBE_AGENT / LIST_AGENTS).
 
 
 # ── operation categories (regression guard) ─────────────────────────────

@@ -114,21 +114,33 @@ def _invoke_skill_args(entry_name: str, args: Mapping[str, Any]) -> dict[str, An
     return {"name": entry_name, "input": dict(args)}
 
 
-def _delegate_to_agent_args(
+def _multi_agent_list_peers_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """``agent.peer__<name>`` → ``delegate_to_agent({to, request, ...})``.
+    """``multi_agent__list_peers`` → ``list_agents({path})``.
 
-    The universal catalog instructs the LLM to pass the peer's message as
-    ``message`` (FP-0034 §D style), but the ``delegate_to_agent`` handler
-    reads the legacy ``request`` key.  Remap ``message`` → ``request`` here
-    so the handler never sees a KeyError.
+    The underlying ``list_agents`` ToolDefinition requires a ``path``
+    argument (empty for top-level clusters, cluster name for agents in
+    that cluster). For the verb-action surface, the LLM passes an
+    optional ``cluster`` arg or nothing at all; default to ``""`` so
+    the common "list all peers" path is a zero-arg call.
     """
-    out = {"to": entry_name}
+    return {"path": args.get("cluster", args.get("path", ""))}
+
+
+def _multi_agent_delegate_args(
+    entry_name: str, args: Mapping[str, Any],
+) -> dict[str, Any]:
+    """``multi_agent__delegate`` → ``delegate_to_agent({to, request, ...})``.
+
+    Accepts ``message`` (= universal-catalog convention) and remaps it
+    to the underlying ``delegate_to_agent`` handler's legacy ``request``
+    key. The verb's user-facing schema is ``{to, request}``; the alias
+    here is for forward compatibility with LLMs that still emit
+    ``message`` from the pre-#882 era.
+    """
+    out: dict[str, Any] = {}
     for k, v in args.items():
-        if k == "to":
-            continue
-        # Universal-catalog callers use "message"; handler expects "request".
         out["request" if k == "message" else k] = v
     return out
 
@@ -204,9 +216,10 @@ def _passthrough_args(
 # Per-category default rule (= used when entry_name is the resource id)
 # Issue #879: mcp.server / mcp.tool resource rules removed; verb actions
 # in the new ``mcp`` category live in _OPERATION_RULES below.
+# Phase 1 follow-up (2026-05-25): ``agent.peer`` collapsed into the
+# ``multi_agent`` verb category; resource rule removed.
 _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], dict[str, Any]]]]] = {
     "skill":         ("invoke_skill",        _invoke_skill_args),
-    "agent.peer":    ("delegate_to_agent",   _delegate_to_agent_args),
     "memory.entry":  ("read_memory_body",    _read_memory_body_args),
     "rag.corpus":    ("recall",              _recall_single_source_args),
 }
@@ -260,6 +273,16 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "mcp__list_tools":       ("list_mcp_tools",       _passthrough_args),
     "mcp__call_tool":        ("mcp_call_tool",        _passthrough_args),
     "mcp__drop_server":      ("mcp_drop_server",      _passthrough_args),
+
+    # Phase 1 follow-up (2026-05-25) — single ``multi_agent`` category
+    # collapsing the old ``agent.peer`` resource shape into three verb
+    # actions. All three reuse the existing handlers from catalog.py /
+    # delegate_to_agent.py verbatim; the dispatch transforms below cover
+    # the small arg-shape differences (= optional ``cluster`` →
+    # required ``path``; legacy ``message`` → ``request`` remap).
+    "multi_agent__list_peers":    ("list_agents",       _multi_agent_list_peers_args),
+    "multi_agent__describe_peer": ("describe_agent",    _passthrough_args),
+    "multi_agent__delegate":      ("delegate_to_agent", _multi_agent_delegate_args),
 
     # validation category — lint op exposed to the router so users can request
     # skill linting directly ("lint the foo skill").  skill_path accepts a

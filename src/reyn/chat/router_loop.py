@@ -620,10 +620,10 @@ def _filter_ghost_names_by_registry(
             continue
         if "." in entry:
             known_mcp_servers.add(entry.split(".", 1)[0])
-    known_agents: frozenset[str] = frozenset(
-        a["name"] for a in (available_agents or [])
-        if isinstance(a, dict) and a.get("name")
-    )
+    # Phase 1 collapse (2026-05-25): the prior ``known_agents`` set
+    # supported the ``agent.peer__<name>`` ghost-filter branch which is
+    # now removed — multi_agent__* aliases pass through the static-ops
+    # check below since they live in KNOWN_STATIC_QUALIFIED_NAMES.
     static_ops: frozenset[str] = frozenset(KNOWN_STATIC_QUALIFIED_NAMES)
 
     result: list[str] = []
@@ -638,8 +638,6 @@ def _filter_ghost_names_by_registry(
         exists = True
         if category == "skill":
             exists = name in known_skills
-        elif category == "agent.peer":
-            exists = entry_name in known_agents
         elif category == "mcp.tool":
             exists = name in known_mcp_tools
         elif category == "mcp.server":
@@ -840,16 +838,10 @@ def _resource_alias_metadata(
 
     registry = get_default_registry()
 
-    if category == "agent.peer":
-        tool = registry.lookup("delegate_to_agent")
-        if tool is None:
-            return None
-        params = _drop_required_field(dict(tool.parameters), "to")
-        description = (
-            f"Delegate a request to peer agent {entry_name!r}. "
-            f"{tool.description}"
-        )
-        return description, params
+    # Phase 1 collapse (2026-05-25): ``agent.peer__<name>`` resource alias
+    # removed — multi_agent__delegate (operation alias) carries the schema
+    # via _operation_alias_metadata and the dynamic ``to`` enum via
+    # _enrich_router_schema. No per-peer alias is built anymore.
 
     if category == "mcp.server":
         params = {"type": "object", "properties": {}, "required": []}
@@ -1107,25 +1099,15 @@ def _collect_all_session_ars_entries(
         entries.append((qn, dict(props)))
         seen.add(qn)
 
-    # Source 4: session peer agents from available_agents.
-    # Derive schema from ``delegate_to_agent`` minus the curried ``to`` field,
-    # same as ``_resource_alias_metadata`` does for hot-list aliases.
-    if available_agents:
-        delegate_tool = registry.lookup("delegate_to_agent")
-        if delegate_tool is not None:
-            base_props = dict(
-                _drop_required_field(dict(delegate_tool.parameters), "to")
-                .get("properties") or {}
-            )
-            if base_props:
-                for agent in available_agents:
-                    if not isinstance(agent, dict) or not agent.get("name"):
-                        continue
-                    qn = build_qualified_name("agent.peer", agent["name"])
-                    if qn in seen:
-                        continue
-                    entries.append((qn, base_props))
-                    seen.add(qn)
+    # Phase 1 collapse (2026-05-25): peer agents previously surfaced as
+    # ``agent.peer__<name>`` resource-shape entries with the ``to`` field
+    # curried by the alias. That category is now collapsed into the
+    # ``multi_agent`` operation category — ``multi_agent__delegate`` /
+    # ``multi_agent__list_peers`` / ``multi_agent__describe_peer`` — whose
+    # schemas are already provided via Source 1 from the static op
+    # registry. The dynamic part (= which peer names are valid) is
+    # delivered separately as the ``to`` enum on ``multi_agent__delegate``
+    # via ``_enrich_router_schema`` at LLM-call time.
 
     return entries
 
