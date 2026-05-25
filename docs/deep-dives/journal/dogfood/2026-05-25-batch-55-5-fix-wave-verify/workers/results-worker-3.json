@@ -1,0 +1,159 @@
+{
+  "batch": "B55",
+  "worker": 3,
+  "head": "97d762a4",
+  "date": "2026-05-25",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 7,
+    "I": 1,
+    "R": 1,
+    "B": 0
+  },
+  "vs_past": {
+    "B54": { "V": 6, "I": 1, "R": 2, "B": 0 },
+    "B55_delta": { "V": "+1", "I": "0", "R": "-1", "B": "0" },
+    "note": "S6 R→V (primary axis: lint_a_skill prompt hint fixed). S7 remains I (env: rag.operation__recall called correctly but missing required sources arg; no indexed sources). S9 remains R (skill_run_spawned never emitted; LLM handled inline but didn't route to skill_builder)."
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "scenario_index": 1,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "tool_executed", "permission_granted", "tool_returned"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "Reyn's architecture is guided by eight core design principles, detailed in `docs/concepts/principles.md`. These principles emphasize: Stateless and Reusable Phases (P1)...",
+      "notes": "routing_decided ✓, tool_executed ✓, no permission_denied ✓, artifact present ✓. Reply cites principles doc and P1-P8."
+    },
+    {
+      "id": "file_glob_grep",
+      "scenario_index": 2,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "tool_executed", "permission_granted", "tool_returned"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I found the following `skill.md` files under `src/` that mention 'preprocessor': `src/reyn/stdlib/skills/direct_llm/skill.md`, ...",
+      "notes": "routing_decided x3 ✓, tool_executed x3 ✓, no permission_denied ✓. Lists skill.md paths mentioning preprocessor."
+    },
+    {
+      "id": "web_search_query",
+      "scenario_index": 3,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "web_search_started", "web_search_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I found some search results for 'OpenAI Python SDK changelog 2026'... GitHub Releases for openai/openai-python... OpenAI API Changelog...",
+      "notes": "web_search_started ✓, web_search_completed ✓, routing_decided ✓. No web_search_failed. Reply references OpenAI SDK results."
+    },
+    {
+      "id": "web_fetch_url",
+      "scenario_index": 4,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "web_fetch_started", "web_fetch_completed", "tool_result_read"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "Python 3.12 introduces several key new features: PEP 695 Type Parameter Syntax, PEP 701 f-strings formalization, PEP 684 Per-Interpreter GIL...",
+      "notes": "web_fetch_started ✓, routing_decided ✓, no permission_denied ✓. Reply mentions Python 3.12 features as summary (not raw HTML)."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "scenario_index": 5,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "sandboxed_exec_started", "sandboxed_exec_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The output of the command `python -c 'print(2 + 2)'` is: 4",
+      "notes": "sandboxed_exec_started ✓, sandboxed_exec_completed ✓, routing_decided ✓. Output is 4, no error."
+    },
+    {
+      "id": "lint_a_skill",
+      "scenario_index": 6,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "lint_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The `index_events` skill has one error: `preprocessor[0] python ./chunkers.py:resolve_scan_context is not declared in permissions.python`.",
+      "notes": "PRIMARY AXIS R→V. PR #914 hint 'validation__lint__skill_path' worked. LLM called correct action, lint_completed ✓. Reports error count and whether passed/failed ✓.",
+      "primary_axis": "R-6",
+      "prior_verdict": "R",
+      "fix_pr": "#914"
+    },
+    {
+      "id": "recall_indexed_source",
+      "scenario_index": 7,
+      "verdict": "I",
+      "rubric_pass": false,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "tool_called", "tool_returned"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I need a bit more information to use the `rag.operation__recall` tool. It requires a `sources` argument to specify which documentation to search.",
+      "notes": "PRIMARY AXIS. PR #914 hint 'rag.operation__recall' worked — LLM called correct action name (previously called wrong 'operation__recall'). But tool returned missing_required_arg: 'recall requires [sources]. if none are listed, no sources have been indexed yet for this agent.' LLM asked user for sources rather than reporting 'no indexed sources found'. Env limitation (no indexed sources); rubric partially met (action called correctly, response incomplete). I (env).",
+      "primary_axis": "R-7",
+      "prior_verdict": "R",
+      "fix_pr": "#914"
+    },
+    {
+      "id": "judge_output_direct",
+      "scenario_index": 8,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_completed", "tool_executed", "artifact_created", "workflow_started", "workflow_finished"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The artifact passed with a score of 1.0. The skill has a non-empty description field and declares at least one phase.",
+      "notes": "skill_run_spawned ✓, tool_executed ✓, artifact_created x3 ✓. No permission_denied, no validation_error. Reply mentions 'passed', score '1.0', and both criteria."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "scenario_index": 9,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "events_observed": ["chat_turn_completed_inline", "user_message_received"],
+      "events_missing": ["routing_decided", "skill_run_spawned"],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I can help with that. What would you like the new skill to be named?",
+      "notes": "PRIMARY AXIS. must_emit routing_decided ≥1 NOT emitted. must_emit skill_run_spawned ≥1 NOT emitted. must_emit_any chat_turn_completed_inline ✓ (present in turn 1). Turn 2 LLM again asked for skill name instead of routing to skill_builder — skill never spawned. Final reply does not reference my_demo_skill. Rubric NOT met. R (behavioral failure: LLM asked inline twice without routing to skill_builder).",
+      "primary_axis": "R-9",
+      "prior_verdict": "R",
+      "fix_pr": "#914"
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "W3-F1",
+      "scenario": "recall_indexed_source",
+      "finding": "PR #914 rag.operation__recall hint successfully fixed the wrong-action-name attractor (LLM now calls rag.operation__recall not operation__recall). However the scenario still lands I because: (1) no indexed sources exist for the agent at run time, (2) the tool returns missing_required_arg for 'sources', (3) LLM asks user for sources rather than reporting 'no indexed sources found'. Scenario design may need a pre-indexed source fixture or rubric clarification to reach V.",
+      "severity": "observation"
+    },
+    {
+      "id": "W3-F2",
+      "scenario": "ask_user_round_trip",
+      "finding": "S9 remains R despite PR #914 must_emit_any relaxation. The LLM handles the first turn via inline chat reply (asks for name) correctly, but on receiving the name in turn 2 it asks again rather than routing to skill_builder. routing_decided and skill_run_spawned never emit across either turn. The inline-clarification path is being taken but the skill_builder is not triggered. This may be a router instruction issue — skill_builder needs to be triggered after the user provides the name.",
+      "severity": "observation"
+    }
+  ]
+}

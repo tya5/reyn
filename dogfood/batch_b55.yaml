@@ -1,0 +1,120 @@
+batch:
+  name: B55
+  date: "2026-05-25"
+  head: 97d762a4  # post 5 fix wave (R-2 #875 / R-3 #880 / W6-S3 #883 / R-5a #912 / R-6 #914)
+  env_vars:
+    REYN_EMPTY_STOP_RETRY: "1"      # held on (apples-to-apples vs B49-B54)
+    REYN_SPAWN_ACK_TO_LLM: "1"      # held on
+  user_params:
+    hot_list_n: 10                  # held constant vs B43-B54
+    models_tier: flash-lite         # weak only per dogfood policy
+  hard_caps:
+    tool_uses: 50
+    wall_clock_min: 15
+
+# B55 = post-B54 carry-over fix wave verify (5 fixes landed since B54).
+#
+# Landed since B54 (= HEAD e52fff99 → 97d762a4):
+#
+#   sandbox_2 axis (= dogfood-coder):
+#   - PR #875 R-2: eval postprocessor required-string fallback
+#     (= W2-S5 weakest_phase / summary fallback string, closes NF-W2-S5)
+#   - PR #880 R-3: chat_compactor scenario redesign + compaction config
+#     auto-inject in runner_grants (= W2-S6 redesign as plan-tested,
+#     trigger_total_tokens / head_size / tail_size / min_compact_batch
+#     lowered for dogfood worker deterministic auto-fire)
+#   - PR #883 W6-S3: prompt full-path fix (= "docs/concepts/" prefix
+#     stripping attractor solved by putting full paths in parens)
+#   - PR #912 R-5a: W5 5 scenarios rubric refocus (= content-over-strict
+#     drop, structural correctness keep)
+#   - PR #914 R-6: W3 S6/S7/S9 carry-over fixes (= S6 lint hint, S7
+#     recall namespace hint, S9 events must_emit_any inline path)
+#
+# Primary B55 axes:
+#   1. R-2 verify — W2-S5 R→V (eval runs no longer fail at postprocessor schema)
+#   2. R-3 verify — W2-S6 R→V (chat_compactor auto-fires deterministically)
+#   3. W6-S3 verify — W6-S3 R→V (plan step LLM reads correct files)
+#   4. R-5a verify — W5 5 scenarios shift toward V (rubric reachable for weak-tier)
+#   5. R-6 verify — W3 S6/S7/S9 shift toward V (prompt hints + must_emit_any)
+#
+# Expected ΔV vs B54 (= 36/50 = 72.0%):
+#   - R-2 (W2-S5): +1V HIGH conf
+#   - R-3 (W2-S6): +1V MED-HIGH conf
+#   - W6-S3: +1V HIGH conf
+#   - R-5a: +2-3V MED-HIGH conf (5 scenarios, conservative)
+#   - R-6: +1-2V MED-HIGH conf (3 scenarios)
+#   - Total: +6-8V median, predicted 42-44/50 = 84-88%
+#   - LLM noise band ±2V (unrelated scenarios)
+#
+# Carry-over re-measurement:
+#   - NF-W7-S5 sub-agent dispatch attractor: N=1 in B54 → check recurrence
+#   - W1-S5 poem clarification / W1-S7 false-capability: 8+ batch ceiling
+#   - W3-S6/S7/S9 post-R-6 hint effect verify
+#
+# Discipline:
+#   - User params fixed vs B54 ([[feedback_user_params_fixed_in_comparison]])
+#   - V umbrella 7-component decomposition for delta attribution
+#     ([[feedback_v_metric_decomposition]])
+
+workers:
+  - name: W1
+    scenario_set: chat_router_smoke.yaml
+    scenario_set_path: dogfood/scenarios/chat_router_smoke.yaml
+    port: 8481
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b55-1
+    agent_prefix: dogfood-b55-1-s
+
+  - name: W2
+    scenario_set: stdlib_skills_core.yaml
+    scenario_set_path: dogfood/scenarios/stdlib_skills_core.yaml
+    port: 8482
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b55-2
+    agent_prefix: dogfood-b55-2-s
+
+  - name: W3
+    scenario_set: control_ir_ops.yaml
+    scenario_set_path: dogfood/scenarios/control_ir_ops.yaml
+    port: 8483
+    n_scenarios: 9
+    worktree: /tmp/reyn-worktrees/b55-3
+    agent_prefix: dogfood-b55-3-s
+
+  - name: W4
+    scenario_set: permissions_and_safety.yaml
+    scenario_set_path: dogfood/scenarios/permissions_and_safety.yaml
+    port: 8484
+    n_scenarios: 8
+    worktree: /tmp/reyn-worktrees/b55-4
+    agent_prefix: dogfood-b55-4-s
+
+  - name: W5
+    scenario_set: multi_agent_and_mcp.yaml
+    scenario_set_path: dogfood/scenarios/multi_agent_and_mcp.yaml
+    port: 8485
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b55-5
+    agent_prefix: dogfood-b55-5-s
+
+  - name: W6
+    scenario_set: plan_mode_redesigned
+    scenario_set_path: dogfood/scenarios/plan_mode.yaml
+    port: 8486
+    n_scenarios: 5
+    worktree: /tmp/reyn-worktrees/b55-6
+    agent_prefix: dogfood-b55-6-s
+
+  - name: W7
+    scenario_set: long_session_v1.yaml
+    scenario_set_path: dogfood/scenarios/long_session_v1.yaml
+    port: 8487
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b55-7
+    agent_prefix: dogfood-b55-7-s
+
+past_batches:
+  - name: B54
+    aggregate_path: docs/deep-dives/journal/dogfood/2026-05-24-batch-54-w6-redesign-baseline/aggregate.json
+
+journal_dir: docs/deep-dives/journal/dogfood/2026-05-25-batch-55-5-fix-wave-verify

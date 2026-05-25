@@ -1,0 +1,147 @@
+{
+  "batch": "B55",
+  "worker": 1,
+  "head": "97d762a4",
+  "date": "2026-05-25",
+  "scenario_set": "chat_router_smoke.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 4,
+    "I": 0,
+    "R": 3,
+    "B": 0
+  },
+  "vs_past": {
+    "B54": { "V": 5, "I": 0, "R": 2, "B": 0 },
+    "delta": { "V": -1, "I": 0, "R": 1, "B": 0 }
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "verdict": "V",
+      "reply_snippet": "こんにちは！Reyn は LLM を活用したフェーズ実行エンジンで、Markdown DSL を使用します。具体的には、以下のようなことができます...",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_must_emit_check": {
+        "user_message_received_count_gte1": true
+      },
+      "events_must_not_emit_check": {
+        "permission_denied_absent": true
+      },
+      "notes": "Reply mentions skills (skill__direct_llm, skill__word_stats_demo, etc.), agents, and chat capabilities. Inline reply path. All rubric items met."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "verdict": "V",
+      "reply_snippet": "「冪等」（べきとう）とは、ある操作を1回行っても複数回行っても結果が同じであることを指す数学の概念です...",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_called", "web_search_started", "web_search_completed", "tool_returned", "routing_decided", "compaction_check"],
+      "events_must_emit_check": {},
+      "events_must_not_emit_check": {
+        "permission_denied_absent": true
+      },
+      "notes": "Reply explains idempotency clearly and factually. Web search path used. Rubric met."
+    },
+    {
+      "id": "skill_discovery_request",
+      "verdict": "V",
+      "reply_snippet": "利用可能なスキルは以下の通りです: skill__direct_llm, skill__eval, skill__word_stats_demo...",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "chat_turn_completed_inline", "compaction_check"],
+      "events_must_emit_any_check": {
+        "chat_turn_completed_inline_count_gte1": true
+      },
+      "events_must_not_emit_check": {
+        "permission_denied_absent": true
+      },
+      "notes": "Reply lists 13 skill names including word_stats_demo, skill_builder, etc. Rubric items fully met. chat_turn_completed_inline satisfies must_emit_any."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "verdict": "R",
+      "reply_snippet": "Text analysis for ... has started. I will notify you once the analysis is complete.",
+      "rubric_pass": false,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_called", "skill_run_spawned", "tool_returned", "routing_decided", "invoke_skill_spawn_ack_exit", "skill_run_completed", "router_empty_response_detected", "router_empty_response_retry_injected", "skill_completion_injected", "compaction_check", "tool_called", "skill_run_spawned", "tool_returned", "routing_decided", "invoke_skill_spawn_ack_exit", "router_empty_response_detected", "router_empty_response_retry_injected", "skill_run_completed", "skill_completion_injected", "chat_turn_completed_inline"],
+      "events_must_emit_check": {
+        "routing_decided_count_gte1": true,
+        "skill_run_spawned_count_gte1": true,
+        "skill_run_completed_status_finished": true
+      },
+      "events_must_not_emit_check": {
+        "permission_denied_absent": true
+      },
+      "artifacts_check": {
+        "word_stats_demo_present": true,
+        "artifact_path": ".reyn/artifacts/word_stats_demo/review/v01_text_review.json",
+        "artifact_commentary": "This text has 44 characters over 1 line."
+      },
+      "notes": "Rubric FAIL: reply text is spawn-ack message ('analysis started') and does not contain word count or character count statistics. The skill DID run and completed (status=finished twice), and artifact contains stats (char_count=44, word_count=9). Events fully pass and artifact requirement is met, but the reply rubric item is not satisfied. Two skill_run_spawned events observed (double-spawn pattern via REYN_EMPTY_STOP_RETRY). Consistent with B54 R verdict on this scenario."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "verdict": "R",
+      "reply_snippet": "承知しました。どのようなテーマや雰囲気の詩がお好みですか？",
+      "rubric_pass": false,
+      "events_pass": false,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_must_emit_any_check": {
+        "routing_decided_count_gte1": false,
+        "chat_turn_completed_inline_count_gte1": true,
+        "any_satisfied": true
+      },
+      "events_must_not_emit_check": {
+        "permission_denied_absent": true
+      },
+      "artifacts_check": {
+        "direct_llm_present": false
+      },
+      "notes": "Rubric FAIL: reply asks clarifying question about theme/mood rather than producing a poem. Rubric requires 'reply contains a poem or poem-like text' with at least two lines. Artifact requirement (direct_llm present) NOT met. Events: chat_turn_completed_inline satisfies must_emit_any but artifact absent. Overall verdict R due to rubric failure."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "verdict": "V",
+      "reply_snippet": "squares = [x**2 for x in range(10)]",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check", "user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_must_emit_check": {},
+      "events_must_not_emit_check": {
+        "permission_denied_absent": true
+      },
+      "notes": "Turn 1: explanation of list comprehension. Turn 2: Python code example with squares = [x**2 for x in range(10)]. Both rubric items met: code example present, coherent with turn 1 topic. Multi-turn pronoun 'それ' resolved correctly."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "verdict": "R",
+      "reply_snippet": "どのような画像を生成しますか？具体的な内容やイメージを教えてください。",
+      "rubric_pass": false,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_must_emit_check": {},
+      "events_must_not_emit_check": {
+        "permission_denied_absent": true
+      },
+      "notes": "Rubric FAIL: reply asks clarifying question about image content rather than declining. Rubric requires 'politely declines or explains the capability is not available'. The model did not pretend to generate an image (second rubric item passes) but failed to decline. Consistent with B54 R verdict on this scenario."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "S4-double-spawn",
+      "scenario": "explicit_skill_invocation_word_stats",
+      "observation": "word_stats_demo was spawned twice (run_id: ...T130852Z and ...T130902Z) within the same chat turn. Both completed with status=finished. This is the REYN_EMPTY_STOP_RETRY pattern triggering a second invoke after the empty-stop retry cycle. The reply returned to the user is the spawn-ack message, not the skill output summary.",
+      "severity": "info",
+      "hypothesis": "REYN_SPAWN_ACK_TO_LLM=1 causes the LLM to produce a spawn-ack reply; after skill completion, the skill_completion_injected retry produces a second tool_call+spawn rather than summarizing the result in a final turn reply. Root cause may be that skill_completion_injected does not inhibit re-invocation."
+    }
+  ]
+}

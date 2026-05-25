@@ -1,0 +1,196 @@
+{
+  "batch": "B55",
+  "worker": 2,
+  "head": "97d762a4",
+  "date": "2026-05-25",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 4,
+    "I": 0,
+    "R": 3,
+    "B": 0
+  },
+  "vs_past": {
+    "B54": {
+      "V": 5,
+      "I": 0,
+      "R": 2,
+      "B": 0,
+      "delta_V": -1,
+      "note": "S2 skill_builder_web_summariser regressed R (router failed: list index out of range). S5 and S6 still R."
+    }
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "scenario_index": 1,
+      "agent": "dogfood-b55-2-s1",
+      "verdict": "V",
+      "reply_excerpt": "OK. Concepts documentation is being indexed as `concepts_index` and I'll notify you when it's complete. Concepts documentation has been indexed successfully.",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_completed_status": "finished",
+        "phase_started": 1,
+        "phase_completed": 1,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "index_docs",
+      "notes": "concepts_index created in .reyn/index/concepts_index/. status field is 'finished' (not 'success') consistent with B54 treatment."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "scenario_index": 2,
+      "agent": "dogfood-b55-2-s2",
+      "verdict": "R",
+      "reply_excerpt": "router failed: list index out of range",
+      "rubric_pass": false,
+      "events_pass": false,
+      "events_observed": {
+        "routing_decided": 0,
+        "skill_run_spawned": 0,
+        "skill_run_completed": 0,
+        "phase_started": 0,
+        "permission_denied": 0
+      },
+      "artifact_present": false,
+      "artifact_skill": "skill_builder",
+      "notes": "REGRESSION from B54 V. Router crashed with 'list index out of range' before routing could proceed. Only user_message_received event emitted. No skill artifact produced."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "scenario_index": 3,
+      "agent": "dogfood-b55-2-s3",
+      "verdict": "V",
+      "reply_excerpt": "このテキストの文字数は44文字、行数は1行です。最も長い行は44文字で、約11トークンと推定されます。",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "skill_run_completed": 1,
+        "skill_run_completed_status": "finished",
+        "phase_started": 1,
+        "llm_called": 1,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "word_stats_demo",
+      "notes": "Stats returned: 44 chars, 1 line. Rubric fully met."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "scenario_index": 4,
+      "agent": "dogfood-b55-2-s4",
+      "verdict": "V",
+      "reply_excerpt": "The text has 128 characters across 4 lines, with the longest line being 40 characters. This is estimated to be around 32 tokens.",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 8,
+        "skill_run_spawned": 8,
+        "skill_run_completed": 8,
+        "skill_run_completed_status": "finished",
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "word_stats_demo",
+      "notes": "Multiple parallel skill invocations (8x), all completed. Reply contains multiline stats (128 chars, 4 lines, 26 words). Rubric met."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "scenario_index": 5,
+      "agent": "dogfood-b55-2-s5",
+      "verdict": "R",
+      "reply_excerpt": "I have started the evaluation of the `direct_llm` skill with your specified test case. I will let you know once the evaluation is complete.",
+      "rubric_pass": false,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 3,
+        "skill_run_spawned": 3,
+        "skill_run_completed": 1,
+        "skill_run_failed": 2,
+        "phase_started": 18,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "eval",
+      "notes": "PR #875 R-2 partial fix: first 2 eval attempts still fail with PostprocessorError (postprocessor_step_failed, python_step_failed: None is not of type 'string'). Third attempt (spec_path=eval.md) succeeds — artifact shows met=true, criterion matched. But A2A reply returned after 3rd spawn (async), before completion. Reply reports only 'started', not the eval result. Rubric item 1 ('reply reports an eval result including pass/fail or a score') NOT met. Primary axis fix R-2 not fully effective: postprocessor fallback still fails on first 2 invocations; result delivery relies on async completion notification which doesn't reach single-turn A2A caller."
+    },
+    {
+      "id": "chat_compactor_auto_trigger",
+      "scenario_index": 6,
+      "agent": "dogfood-b55-2-s6",
+      "verdict": "R",
+      "reply_excerpt": "Reyn Agent OS は、LLM のワークフローを管理するためのオペレーティングシステムです。そのアーキテクチャと動作の仕組みについて...",
+      "rubric_pass": true,
+      "events_pass": false,
+      "events_observed": {
+        "compaction_check": 5,
+        "compaction_check_outcomes": ["too_few_turns", "below_min_batch", "below_min_batch", "below_threshold", "below_threshold"],
+        "compaction_check_total_tokens_max": 71,
+        "compaction_threshold": 2000,
+        "compacted_message_added": 0,
+        "compaction_failed": 0
+      },
+      "artifact_present": false,
+      "artifact_skill": "chat_compactor",
+      "notes": "PR #880 R-3 redesign: reyn.local.yaml has trigger_total_tokens=2000, head_size=1, tail_size=1, min_compact_batch=2. But 5-turn conversation never exceeded threshold — compaction_check events show total_tokens of 47 and 71 for candidate messages (well below 2000 threshold). The compactable middle (messages excluding head_size=1 and tail_size=1) has very few tokens because flash-lite inline replies are brief and tool-call sequences don't add to compactable token mass. compacted_message_added never fired. Rubric item 1 (non-empty reply) met, but must_emit compacted_message_added NOT met."
+    },
+    {
+      "id": "chained_find_then_index",
+      "scenario_index": 7,
+      "agent": "dogfood-b55-2-s7",
+      "verdict": "V",
+      "reply_excerpt": "I've indexed 'architecture.md' and 'events.md' from the 'docs/concepts/' directory into the 'arch_events_index' source.",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": {
+        "routing_decided": 5,
+        "skill_run_spawned": 2,
+        "skill_run_completed": 2,
+        "skill_run_completed_status": "finished",
+        "phase_started": 2,
+        "permission_denied": 0
+      },
+      "artifact_present": true,
+      "artifact_skill": "index_docs",
+      "notes": "arch_events_index created in .reyn/index/. Turn 1: listed docs/concepts/ files. Turn 2: indexed architecture.md and events.md as arch_events_index. Final reply confirms indexing and references source name. Rubric fully met."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B55-W2-NF-1",
+      "severity": "HIGH",
+      "scenario": "skill_builder_web_summariser",
+      "summary": "Router crashes with 'list index out of range' for skill_builder prompt (regression from B54 V)",
+      "detail": "In B54, skill_builder_web_summariser was V. In B55, the exact same prompt triggers a router crash before routing_decided is emitted. Only user_message_received event is logged. Error text in reply: 'router failed: list index out of range'. This is a regression introduced between B54 and B55 HEAD (97d762a4)."
+    },
+    {
+      "id": "B55-W2-NF-2",
+      "severity": "MED",
+      "scenario": "eval_run_direct_llm",
+      "summary": "PR #875 partial: postprocessor still fails on first 2 invocations; 3rd attempt (spec_path=eval.md) succeeds but result not delivered to single-turn A2A caller",
+      "detail": "Two postprocessor failures still observed: python_step_failed 'None is not of type string'. The LLM self-recovers on 3rd attempt by passing spec_path=eval.md which produces a valid result. Artifact is present and correct (met=true, criterion matched). The single-turn A2A response is returned after 3rd spawn but before completion, so the reply never includes the eval result. To get V, either the postprocessor fallback must be fixed for all invocations, or the scenario needs to account for async completion."
+    },
+    {
+      "id": "B55-W2-NF-3",
+      "severity": "MED",
+      "scenario": "chat_compactor_auto_trigger",
+      "summary": "PR #880 R-3 compaction override injected but threshold not reached in 5-turn scenario with flash-lite",
+      "detail": "threshold=2000 is in reyn.local.yaml. compaction_check fires 5 times. The compactable token mass (candidate messages) only reaches 47-71 tokens across all 5 turns. Flash-lite produces very short inline replies and the router uses tool_call sequences which contribute minimal compactable context. The 5-turn scenario's content is insufficient to reach 2000 tokens in the compactable middle. Consider further lowering trigger_total_tokens (e.g. 100) or using a richer reply scenario."
+    }
+  ]
+}
