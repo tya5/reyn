@@ -227,6 +227,7 @@ async def _drain_loop(registry: "AgentRegistry") -> None:
             await cl.Message(
                 content=payload.content,
                 author=payload.author,
+                type=payload.message_type,
             ).send()
 
 
