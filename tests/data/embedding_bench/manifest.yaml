@@ -1,0 +1,222 @@
+# FP-0043 N=20 retrieval benchmark — manifest v1.
+#
+# Bootstrap source: dogfood/scenarios/*.yaml (= reality-grounded query set).
+# Persisted here as the bench's source-of-truth (= tui-coder + lead-coder
+# stance: isolated bench fixture) while declaratively referencing the
+# scenario it was derived from (= sandbox_2 stance: co-evolution check via
+# last_synced_commit_sha drift detection).
+#
+# Each fixture entry is consumed by scripts/embedding_bench.py for two
+# orthogonal axes (see FP-0043 §Measurement axes):
+#
+#   - Axis 1 (precision): does the LLM's resulting invoke_action carry
+#     `expected_action` as its action_name? Measured as recall@1/3/5
+#     against the embedding index ranking AND as hit rate when invoke
+#     is reached via search_actions.
+#
+#   - Axis 2 (call-rate): does the LLM's tool_call sequence prefix-match
+#     any entry of `expected_reach_path`? Measured independent of which
+#     embedding backend is in use; pre-#925 trace showed 0/N on this axis.
+#
+# `axis: [precision, call_rate]` per-entry enum disambiguates which axes
+# a fixture is ground truth for (= some entries are precision-only when
+# the query is unambiguous category enumeration; some are call-rate-only
+# when invoke matters less than the discovery path taken).
+#
+# Drift handling: `last_synced_commit_sha` is the dogfood/scenarios/
+# state at bootstrap. When the underlying scenario yaml drifts, this
+# manifest's expected_* fields may need re-curation; the field surfaces
+# the drift so a periodic check can flag stale entries.
+
+last_synced_commit_sha: 6b58abca23fd29b76e9f6a4d2c3c82a549290bfc
+schema_version: 1
+
+fixtures:
+
+  # ── file ops (4 entries) ──────────────────────────────────────────────────
+
+  - id: file_read_via_chat
+    source: dogfood/scenarios/control_ir_ops.yaml
+    prompt: "Show me the contents of `docs/concepts/principles.md`."
+    expected_action: file__read
+    expected_reach_path:
+      - 'file__read({path: "docs/concepts/principles.md"})'
+      - 'invoke_action({action_name: "file__read", args: {path: "docs/concepts/principles.md"}})'
+    axis: [precision, call_rate]
+
+  - id: file_glob_grep_search
+    source: dogfood/scenarios/control_ir_ops.yaml
+    prompt: "Find all skill.md files under src/ that mention 'preprocessor'."
+    expected_action: file__grep
+    expected_reach_path:
+      - 'file__glob({pattern: "src/**/skill.md"})'
+      - 'file__grep({pattern: "preprocessor", path: "src/"})'
+      - 'search_actions({query: "find files matching pattern"})'
+    axis: [precision, call_rate]
+
+  - id: file_list_directory
+    source: dogfood/scenarios/control_ir_ops.yaml
+    prompt: "src/reyn/tools/ ディレクトリの中身を教えて。"
+    expected_action: file__list
+    expected_reach_path:
+      - 'file__list({path: "src/reyn/tools/"})'
+    axis: [precision]
+
+  - id: file_write_capability
+    source: dogfood/scenarios/permissions_and_safety.yaml
+    prompt: "Write the text 'hello' to /tmp/test.txt."
+    expected_action: file__write
+    expected_reach_path:
+      - 'file__write({path: "/tmp/test.txt", content: "hello"})'
+    axis: [precision]
+
+  # ── web (2 entries) ───────────────────────────────────────────────────────
+
+  - id: web_search_query
+    source: dogfood/scenarios/control_ir_ops.yaml
+    prompt: "Search the web for 'OpenAI Python SDK changelog 2026'."
+    expected_action: web__search
+    expected_reach_path:
+      - 'web__search({query: "OpenAI Python SDK changelog 2026"})'
+    axis: [precision]
+
+  - id: web_fetch_url
+    source: dogfood/scenarios/control_ir_ops.yaml
+    prompt: "Fetch and summarise https://docs.python.org/3/whatsnew/3.12.html — what are the highlights?"
+    expected_action: web__fetch
+    expected_reach_path:
+      - 'web__fetch({url: "https://docs.python.org/3/whatsnew/3.12.html"})'
+    axis: [precision]
+
+  # ── mcp (3 entries) ───────────────────────────────────────────────────────
+
+  - id: mcp_search_registry_jp
+    source: dogfood/scenarios/multi_agent_and_mcp.yaml
+    prompt: "MCP レジストリで github 関連のサーバーを探して。"
+    expected_action: mcp__search_registry
+    expected_reach_path:
+      - 'search_actions({query: "mcp github"})'
+      - 'mcp__search_registry({text: "github"})'
+    axis: [precision, call_rate]
+
+  - id: mcp_call_tool_jp
+    source: dogfood/scenarios/multi_agent_and_mcp.yaml
+    prompt: "github MCP サーバーを使って最近の PR を一覧して。"
+    expected_action: mcp__call_tool
+    expected_reach_path:
+      - 'mcp__list_tools({server: "github"})'
+      - 'mcp__call_tool({tool: "github__list_pulls"})'
+    axis: [precision, call_rate]
+
+  - id: mcp_search_pdf_capability
+    source: synthesized
+    prompt: "PDF を扱える MCP server があるか調べて。"
+    expected_action: mcp__search_registry
+    expected_reach_path:
+      - 'search_actions({query: "PDF"})'
+      - 'mcp__search_registry({text: "PDF"})'
+    axis: [precision, call_rate]
+
+  # ── multi_agent (1 entry) ─────────────────────────────────────────────────
+
+  - id: agent_delegation_simple
+    source: dogfood/scenarios/multi_agent_and_mcp.yaml
+    prompt: "researcher エージェントに FP-0001 の概要を要約してもらって。"
+    expected_action: multi_agent__delegate
+    expected_reach_path:
+      - 'multi_agent__delegate({to: "researcher", request: "FP-0001 の概要を要約"})'
+    axis: [precision]
+
+  # ── multi_agent (additional 2 entries) ────────────────────────────────────
+
+  - id: multi_agent_list_peers
+    source: synthesized
+    prompt: "他にどんなエージェントが居るか教えて。"
+    expected_action: multi_agent__list_peers
+    expected_reach_path:
+      - 'multi_agent__list_peers({})'
+    axis: [precision]
+
+  - id: multi_agent_describe_peer
+    source: synthesized
+    prompt: "researcher エージェントは何をする人なのか説明して。"
+    expected_action: multi_agent__describe_peer
+    expected_reach_path:
+      - 'multi_agent__describe_peer({name: "researcher"})'
+    axis: [precision]
+
+  # ── mcp install variants (additional 2 entries) ───────────────────────────
+
+  - id: mcp_install_package_pypi
+    source: synthesized
+    prompt: "pypi:mcp-server-time をインストールして。"
+    expected_action: mcp__install_package
+    expected_reach_path:
+      - 'mcp__install_package({kind: "pypi", identifier: "mcp-server-time"})'
+    axis: [precision]
+
+  - id: mcp_install_local_script
+    source: synthesized
+    prompt: "/tmp/weather_mcp.py を MCP server として登録して。"
+    expected_action: mcp__install_local
+    expected_reach_path:
+      - 'mcp__install_local({name: "weather", command: "python", args: ["/tmp/weather_mcp.py"]})'
+    axis: [precision]
+
+  # ── rag (2 entries) ───────────────────────────────────────────────────────
+
+  - id: rag_recall_semantic
+    source: dogfood/scenarios/control_ir_ops.yaml
+    prompt: "Use the rag.operation__recall action to find documentation about 'phase rollback'."
+    expected_action: rag.operation__recall
+    expected_reach_path:
+      - 'rag.operation__recall({query: "phase rollback"})'
+    axis: [precision]
+
+  - id: rag_drop_source_destructive
+    source: dogfood/scenarios/permissions_and_safety.yaml
+    prompt: "Drop the events index to free up disk space."
+    expected_action: rag.operation__drop_source
+    expected_reach_path:
+      - 'rag.operation__drop_source({source_name: "events"})'
+    axis: [precision]
+
+  # ── memory (1 entry) ──────────────────────────────────────────────────────
+
+  - id: memory_remember_shared
+    source: synthesized
+    prompt: "「私の好きな色は青」 という事実を覚えておいて。"
+    expected_action: memory.operation__remember_shared
+    expected_reach_path:
+      - 'memory.operation__remember_shared({content: "私の好きな色は青"})'
+    axis: [precision]
+
+  # ── validation (1 entry) ──────────────────────────────────────────────────
+
+  - id: validation_lint_skill
+    source: dogfood/scenarios/control_ir_ops.yaml
+    prompt: "Use the validation__lint action to lint the index_events skill."
+    expected_action: validation__lint
+    expected_reach_path:
+      - 'validation__lint({skill_path: "index_events"})'
+    axis: [precision]
+
+  # ── reyn.source (1 entry) ─────────────────────────────────────────────────
+
+  - id: reyn_source_grep
+    source: synthesized
+    prompt: "reyn のソースで 'class Skill' を検索して。"
+    expected_action: reyn.source__grep
+    expected_reach_path:
+      - 'reyn.source__grep({pattern: "class Skill"})'
+    axis: [precision]
+
+  # ── discovery (call_rate-focused, 1 entry) ────────────────────────────────
+
+  - id: capability_discovery_semantic
+    source: synthesized
+    prompt: "PDF を扱えるツールを教えて。"
+    expected_action: mcp__search_registry
+    expected_reach_path:
+      - 'search_actions({query: "PDF"})'
+    axis: [call_rate]
