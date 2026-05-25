@@ -1,0 +1,126 @@
+{
+  "batch": "B55",
+  "worker": 5,
+  "head": "2d23a818777a331135bb538272cb764d2da068c7",
+  "date": "2026-05-25",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 2,
+    "I": 0,
+    "R": 5,
+    "B": 0
+  },
+  "vs_past": {
+    "B54": { "V": 2, "I": 0, "R": 5, "B": 0 },
+    "delta_V": 0
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "index": 1,
+      "verdict": "R",
+      "reply_excerpt": "GitHub 関連の MCP サーバーを検索しましたが、該当するものはありませんでした。",
+      "rubric_pass": true,
+      "events_pass": false,
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "direct_alias_call_salvaged", "tool_called", "tool_returned", "routing_decided", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check"],
+      "events_fail_reason": "skill_run_spawned required >=1 but count=0; routing_decided ✓ (1)",
+      "notes": "mcp__search_server invoked via invoke_action (routing_decided fired) but no skill_run_spawned event. Reply addresses query and does not fabricate. R due to events failure on skill_run_spawned."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "index": 2,
+      "verdict": "V",
+      "reply_excerpt": "\"mcp.server\" は無効なカテゴリです...GitHub MCP サーバーを使って最近のプルリクエストを一覧するには、まず mcp.servers を使って利用可能なサーバーを一覧し...",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_failed", "router_empty_response_detected", "router_empty_response_retry_injected", "chat_turn_completed_inline", "compaction_check"],
+      "events_fail_reason": null,
+      "notes": "must_emit_any satisfied by chat_turn_completed_inline. Reply explains github MCP server not configured/invalid and provides actionable guidance. Does not silently fail. Both rubric items met."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "index": 3,
+      "verdict": "R",
+      "reply_excerpt": "Sorry, but I encountered an error when trying to fulfill your request. The `agent.peer__researcher` tool requires its arguments to be in a specific JSON object format, but it received a string.",
+      "rubric_pass": false,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_failed", "routing_decided", "compaction_check"],
+      "events_fail_reason": null,
+      "notes": "routing_decided ✓. Events pass. Rubric item 1 fails: reply reports a tool argument format error — does not deliver FP-0001 summary NOR honestly report researcher agent is missing. R due to rubric failure."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "index": 4,
+      "verdict": "V",
+      "reply_excerpt": "Turn1: Researcher エージェントが見つかりませんでした。利用可能なエージェントは以下の通りです: default, dogfood-b55-5-s1... Turn2: Reyn Phase Engine に直接関連する情報は検索結果には見つかりませんでした...",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "routing_decided", "plan_emitted", "plan_step_started", "plan_step_completed", "web_search_started", "web_search_completed", "plan_aggregated", "plan_completion_injected", "chat_turn_completed_inline"],
+      "events_fail_reason": null,
+      "notes": "routing_decided ✓. Turn 1 honestly reports researcher agent missing. Turn 2 delivers non-empty reply about search results. Rubric 1 met (agents reported missing), conditional rubric 2 N/A (agents didn't exist), rubric 3 met (non-empty reply)."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "index": 5,
+      "verdict": "R",
+      "reply_excerpt": "I am sorry, I cannot fulfill this request. The `source__read` tool is not available.",
+      "rubric_pass": false,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_failed", "routing_decided", "compaction_check"],
+      "events_fail_reason": null,
+      "notes": "must_emit is empty so events_pass=true. Rubric item 1 fails: reply does not address A2A endpoint usage — no mention of reyn web, message/send, GET /a2a/tasks, or A2A protocol concepts. source__read tool not in catalog caused error. R due to rubric failure. R-5a redesign (added doc reference) did not help because source__read is unavailable in this env."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "index": 6,
+      "verdict": "R",
+      "reply_excerpt": "どのスコープにインストールしますか？ (例: 'local', 'project', 'user')",
+      "rubric_pass": true,
+      "events_pass": false,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_fail_reason": "routing_decided required >=1 but count=0; skill_run_spawned required >=1 but count=0. Reply given inline without routing.",
+      "notes": "Reply addresses postgres MCP install request by asking for scope (inline clarification). Rubric items met. Events fail: both routing_decided and skill_run_spawned are absent — LLM replied inline without dispatching mcp_install skill."
+    },
+    {
+      "id": "cron_schedule_status",
+      "index": 7,
+      "verdict": "R",
+      "reply_excerpt": "現在スケジュールされている cron ジョブを直接一覧表示する機能はありません。...cron ジョブの管理は、これらのツールではサポートされていないようです。",
+      "rubric_pass": true,
+      "events_pass": false,
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "tool_called", "tool_returned", "tool_called", "tool_returned", "router_empty_response_detected", "router_empty_response_retry_injected", "chat_turn_completed_inline", "compaction_check"],
+      "events_fail_reason": "routing_decided required >=1 but count=0. LLM called list_actions 3 times but no routing_decided fired.",
+      "notes": "Reply honestly reports no cron jobs configured and does not fabricate entries. Rubric met. Events fail: routing_decided absent despite list_actions tool calls. R due to events failure."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "W5-F1",
+      "scenario": "a2a_task_lifecycle_status_poll",
+      "finding": "source__read tool not in catalog in this environment, causing S5 to immediately fail. R-5a redesign (added docs/concepts/a2a.md reference) cannot help if the read tool is unavailable. Env gap blocks the scenario from benefiting from the redesign."
+    },
+    {
+      "id": "W5-F2",
+      "scenario": "mcp_search_registry",
+      "finding": "mcp__search_server invoked via invoke_action (routing_decided fires) but skill_run_spawned does not fire. The mcp search appears to go through ars_direct path rather than spawning a skill run. Structural gap: skill_run_spawned may be the wrong event to require for direct MCP action invocations."
+    },
+    {
+      "id": "W5-F3",
+      "scenario": "cron_schedule_status",
+      "finding": "LLM calls list_actions 3 times (skill, mcp, exec categories) but routing_decided never fires. list_actions is a catalog-browse tool call, not a routing action, so routing_decided is expected to be absent. The must_emit requirement for routing_decided may be mis-specified for this scenario."
+    },
+    {
+      "id": "W5-F4",
+      "scenario": "mcp_install_permission_gate",
+      "finding": "LLM answered inline (chat_turn_completed_inline) asking for scope clarification without routing to mcp_install skill. Both routing_decided and skill_run_spawned absent. The R-5a rubric fix helped content quality but structural dispatch still not triggered."
+    }
+  ]
+}
