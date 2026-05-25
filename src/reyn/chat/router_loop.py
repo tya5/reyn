@@ -90,6 +90,27 @@ _PLAN_SPAWN_ACK_MSG: dict[str, str] = {
 }
 
 
+# B55 R-7 (2026-05-25): agent-side spawn alignment — symmetric with
+# skill/plan spawn_ack so the LLM sees a structured task lifecycle
+# event for delegate_to_agent / other peer-async tools too. Prior
+# behaviour pushed a generic `dispatched N async requests; awaiting
+# peer reply` status row with no `[task_spawned]` header, leaving
+# the SP TASK_SPAWNED rule un-anchored for the agent path. Now mirrors
+# the skill / plan format: `[task_spawned] kind=agent ...` header +
+# user-facing trailer. Pairs with the `[task_completed] kind=agent
+# ...` injection on peer reply receipt (see a2a_handler).
+_AGENT_SPAWN_ACK_MSG: dict[str, str] = {
+    "ja": (
+        "ピアエージェントにリクエストを送信しました。"
+        " 返答を待っています — `/tasks` で進行状況を確認できます。"
+    ),
+    "en": (
+        "Request dispatched to the peer agent."
+        " Awaiting reply — use `/tasks` to monitor progress."
+    ),
+}
+
+
 # NF-W7-B43-2: positive directive injected into the spawn-ack tool_result
 # content. Replaces the previous OS-synthetic spawn-ack outbox push +
 # early-exit pattern with the standard tool_call → tool_result → LLM
@@ -1799,17 +1820,64 @@ class RouterLoop:
                             },
                         )
                         return self._total_usage
-                    # Non-plan async dispatch (= delegate_to_agent or
-                    # other async tools) falls back to the generic
-                    # status message.
-                    plural = "s" if async_count > 1 else ""
+                    # B55 R-7 (2026-05-25): non-plan async dispatch (=
+                    # delegate_to_agent or other peer-async tools). Mirror
+                    # skill / plan spawn_ack format: `[task_spawned]
+                    # kind=agent ...` header + user-facing trailer so the
+                    # SP TASK_SPAWNED rule covers this path too. Prior
+                    # behaviour pushed a generic `status` row with no
+                    # structured header, leaving the LLM without a task
+                    # lifecycle anchor when the corresponding
+                    # `[task_completed] kind=agent ...` injection arrives.
+                    #
+                    # Extract peer / request hint from the first async
+                    # tool call (= delegate_to_agent's `to` + `request`
+                    # arguments). Fallback to a generic "peer agent"
+                    # header when arguments aren't parseable (= defensive
+                    # for non-delegate async tools or malformed args).
+                    tc_first_async = None
+                    for tc_a, r_a in zip(tool_calls, tool_results):
+                        if (
+                            isinstance(r_a, dict)
+                            and r_a.get("status") == "spawned"
+                        ):
+                            tc_first_async = tc_a
+                            break
+                    peer = ""
+                    request_preview = ""
+                    if tc_first_async is not None:
+                        try:
+                            async_args = json.loads(
+                                tc_first_async["function"].get("arguments")
+                                or "{}",
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            async_args = {}
+                        peer = str(async_args.get("to", "") or "")
+                        request_preview = str(
+                            async_args.get("request", "") or "",
+                        )[:200]
+                    header_lines = [
+                        f"[task_spawned] kind=agent "
+                        f"chain_id={self.chain_id} count={async_count}",
+                    ]
+                    if peer:
+                        header_lines.append(f"peer: {peer}")
+                    if request_preview:
+                        header_lines.append(f"request: {request_preview}")
+                    header = "\n".join(header_lines)
+                    lang = getattr(host, "output_language", None)
+                    trailer = _AGENT_SPAWN_ACK_MSG.get(
+                        lang, _AGENT_SPAWN_ACK_MSG["en"],
+                    )
+                    ack_text = f"{header}\n\n{trailer}"
                     await self.host.put_outbox(
-                        kind="status",
-                        text=(
-                            f"dispatched {async_count} async request{plural}; "
-                            f"awaiting peer reply"
-                        ),
-                        meta={"chain_id": self.chain_id},
+                        kind="agent",
+                        text=ack_text,
+                        meta={
+                            "chain_id": self.chain_id,
+                            "source": "agent_spawn_ack",
+                        },
                     )
                     return self._total_usage
 

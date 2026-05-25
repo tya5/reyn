@@ -541,11 +541,15 @@ async def test_delegate_to_agent(monkeypatch):
     assert agent_send["chain_id"] == "chain-test"
     # Only the first LLM call ran; the second round was never consumed.
     assert scripted.call_count == 1
-    # Outbox shows the "awaiting peer reply" status, not a text reply.
+    # B55 R-7: outbox shows a `[task_spawned] kind=agent ...`
+    # structured spawn_ack (= parity with skill / plan spawn_ack),
+    # not a generic "awaiting peer reply" status row.
     assert any(
-        m["kind"] == "status" and "awaiting peer reply" in m["text"]
+        m["kind"] == "agent"
+        and m.get("meta", {}).get("source") == "agent_spawn_ack"
+        and "[task_spawned] kind=agent" in m["text"]
         for m in host.outbox
-    ), f"Expected awaiting-peer-reply status; got: {host.outbox}"
+    ), f"Expected agent_spawn_ack; got: {host.outbox}"
 
 
 @pytest.mark.asyncio

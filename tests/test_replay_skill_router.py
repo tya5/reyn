@@ -371,12 +371,16 @@ async def test_delegate_to_agent(monkeypatch):
     assert host.agent_sends[0]["chain_id"] == "chain-test"
     assert isinstance(host.agent_sends[0]["request"], str)
 
-    # After delegate dispatch, RouterLoop exits with an "awaiting peer
-    # reply" status note; the peer's actual response comes back later via
-    # pending_chain (PR14) which re-invokes the router.
+    # B55 R-7: after delegate dispatch, RouterLoop exits with a
+    # `[task_spawned] kind=agent ...` structured spawn_ack (= parity
+    # with skill / plan spawn_ack format); peer's actual response
+    # arrives later via pending_chain (PR14) which re-invokes router
+    # with a `[task_completed] kind=agent ...` history injection.
     (msg,) = host.outbox
-    assert msg["kind"] == "status"
-    assert "awaiting peer reply" in msg["text"]
+    assert msg["kind"] == "agent"
+    assert msg["meta"].get("source") == "agent_spawn_ack"
+    assert "[task_spawned] kind=agent" in msg["text"]
+    assert "Awaiting reply" in msg["text"] or "返答を待っています" in msg["text"]
 
 
 @pytest.mark.replay("fixtures/llm/router/memory_recall.jsonl")
