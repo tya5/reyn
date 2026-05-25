@@ -68,6 +68,13 @@ dev = [
 fetch = [
     "trafilatura>=1.8",       # higher-quality HTML extraction for web__fetch (issue #355)
 ]
+# FP-0043 local embedding backend — credential-free semantic action search +
+# RAG via sentence-transformers (HF ecosystem). Pulls torch as a transitive
+# dep (~700MB); kept extras-only so the base install size is unaffected.
+local-embed = [
+    "sentence-transformers>=2.7",
+    "torch>=2.0",
+]
 docs = [
     "mkdocs>=1.5",
     "mkdocs-material>=9.5",

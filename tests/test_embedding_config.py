@@ -53,7 +53,9 @@ class TestDefaultEmbeddingConfig:
         cfg = _build_embedding_config(None)
         assert isinstance(cfg, EmbeddingConfig)
         assert cfg.default_class == "standard"
-        assert set(cfg.classes) == {"light", "standard", "strong"}
+        assert set(cfg.classes) == {
+            "light", "standard", "strong", "local-mini", "local-e5",
+        }
         assert cfg.batch_size == 100
         assert cfg.max_concurrent_batches == 1
         assert cfg.max_retries == 3
@@ -326,10 +328,17 @@ class TestEmbeddingConfigValidation:
         assert set(cfg.classes) == {"my_class"}
 
     def test_empty_classes_falls_back_to_defaults(self):
-        """Tier 2: classes: {} or absent causes default 3 classes to be used."""
+        """Tier 2: classes: {} or absent causes default classes to be used.
+
+        FP-0043: defaults grew to include ``local-mini`` and ``local-e5``
+        (= sentence-transformers backed, extras-gated). Pinned here so a
+        future addition doesn't silently drop one.
+        """
         raw = {"classes": {}}
         cfg = _build_embedding_config(raw)
-        assert set(cfg.classes) == {"light", "standard", "strong"}
+        assert set(cfg.classes) == {
+            "light", "standard", "strong", "local-mini", "local-e5",
+        }
 
 
 # ---------------------------------------------------------------------------
