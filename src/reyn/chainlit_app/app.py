@@ -306,15 +306,26 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
         if response is None:
             await _resolve_empty()
             return
-        payload_dict = getattr(response, "payload", None) or response
-        choice_id = (
-            payload_dict.get("choice_id")
-            if isinstance(payload_dict, dict) else None
-        )
+        # ``cl.AskActionMessage`` returns an ``AskActionResponse``
+        # TypedDict with shape ``{name, payload, label, tooltip,
+        # forId, id}``. The dict ``payload`` field is what carries
+        # the per-Action dict we passed at construction time — that's
+        # where ``choice_id`` actually lives. A prior version read
+        # ``getattr(response, "payload", None) or response`` which
+        # falls through to the OUTER dict and ends up reading
+        # ``choice_id`` from the wrong layer → always None → reyn-side
+        # validation classifies as "unknown choice".
+        outer: dict = response if isinstance(response, dict) else {}
+        nested_payload = outer.get("payload")
+        if not isinstance(nested_payload, dict):
+            nested_payload = {}
+        choice_id = nested_payload.get("choice_id")
         label = (
-            payload_dict.get("label")
-            if isinstance(payload_dict, dict) else None
-        ) or choice_id or ""
+            nested_payload.get("label")
+            or outer.get("label")
+            or choice_id
+            or ""
+        )
         if not isinstance(choice_id, str):
             await _resolve_empty()
             return
