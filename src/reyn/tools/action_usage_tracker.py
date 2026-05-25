@@ -103,6 +103,13 @@ from typing import Callable
 #         ARS regardless of hot-list per the B38 contract; see
 #         ``_collect_all_session_ars_entries``), so seed presence is no
 #         longer load-bearing for that invariant.
+#   2026-05-25 (mcp install 3-verb split): mcp__search_server →
+#         mcp__search_registry; mcp__install_server → mcp__install_registry.
+#         mcp__install_package + mcp__install_local are NOT seeded (= the
+#         registry path is the default surface most chat users will hit;
+#         package / local installs are niche enough that list_actions
+#         discovery is acceptable, and seeding all three would dilute the
+#         "primary path" signal the hot-list seed conveys).
 DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "file__read",
     "file__list",
@@ -116,8 +123,8 @@ DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "memory.operation__remember_shared",
     "skill__skill_builder",
     "skill__skill_improver",
-    "mcp__search_server",
-    "mcp__install_server",
+    "mcp__search_registry",
+    "mcp__install_registry",
     "mcp__list_tools",
     "mcp__call_tool",
     "skill__index_docs",

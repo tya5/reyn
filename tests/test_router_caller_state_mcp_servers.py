@@ -163,7 +163,10 @@ async def test_list_actions_mcp_returns_collapsed_verb_surface_e2e() -> None:
     result = await LIST_ACTIONS.handler({"category": ["mcp"]}, ctx)
     qns = {it["qualified_name"] for it in result["items"]}
     assert qns == {
-        "mcp__search_server", "mcp__install_server",
+        "mcp__search_registry",
+        "mcp__install_registry",
+        "mcp__install_package",
+        "mcp__install_local",
         "mcp__list_servers", "mcp__list_tools",
         "mcp__call_tool", "mcp__drop_server",
     }

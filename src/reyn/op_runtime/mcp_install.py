@@ -340,8 +340,9 @@ async def handle(
                 "Server requires secret env-vars not yet set: "
                 + ", ".join(missing_names)
                 + ". Set them via `reyn secret set <KEY>` "
-                "(or pass `env_overrides` arg) and retry "
-                "mcp__install_server. Example: " + sample_cmd
+                "(or pass `env_overrides` arg) and retry the install "
+                "(mcp__install_registry / mcp__install_package). "
+                "Example: " + sample_cmd
             ),
         }
 

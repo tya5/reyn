@@ -60,9 +60,12 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "agent.peer",
     # Issue #879: collapsed the previous mcp.server / mcp.tool /
     # mcp.operation sub-categories + skill__mcp_search / skill__mcp_install
-    # into a single ``mcp`` category with six verb_object actions
-    # (mcp__search_server / install_server / list_servers / list_tools /
-    # call_tool / drop_server). See universal_dispatch._OPERATION_RULES.
+    # into a single ``mcp`` category. 2026-05-25: install surface
+    # further split along the source axis into 3 verbs (registry /
+    # package / local). Full verb set: mcp__search_registry,
+    # mcp__install_registry, mcp__install_package, mcp__install_local,
+    # mcp__list_servers, mcp__list_tools, mcp__call_tool,
+    # mcp__drop_server. See universal_dispatch._OPERATION_RULES.
     "mcp",
     "file",
     "web",

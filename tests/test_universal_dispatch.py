@@ -317,8 +317,10 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
         ("mcp__list_servers",        "list_mcp_servers"),
         ("mcp__list_tools",          "list_mcp_tools"),
         ("mcp__call_tool",           "mcp_call_tool"),
-        ("mcp__search_server",       "mcp_search_server"),
-        ("mcp__install_server",      "mcp_install_server"),
+        ("mcp__search_registry",     "mcp_search_registry"),
+        ("mcp__install_registry",    "mcp_install_registry"),
+        ("mcp__install_package",     "mcp_install_package"),
+        ("mcp__install_local",       "mcp_install_local"),
         ("mcp__drop_server",         "mcp_drop_server"),
         ("memory.entry__pref_dates", "read_memory_body"),
         ("rag.corpus__meetings",     "recall"),
@@ -394,13 +396,16 @@ def test_known_static_names_excludes_resource_categories() -> None:
 
 
 def test_known_static_names_includes_collapsed_mcp_surface() -> None:
-    """Tier 2: #879 collapsed surface — the six mcp__* verb actions
-    are all in the static catalogue. Counter-op for drop is present,
-    and so are search / install / list / call verbs.
+    """Tier 2: #879 collapsed surface — the mcp__* verb actions are all
+    in the static catalogue. 2026-05-25 install 3-verb split: install
+    is now install_registry / install_package / install_local;
+    search_server renamed to search_registry.
     """
     for qn in (
-        "mcp__search_server",
-        "mcp__install_server",
+        "mcp__search_registry",
+        "mcp__install_registry",
+        "mcp__install_package",
+        "mcp__install_local",
         "mcp__list_servers",
         "mcp__list_tools",
         "mcp__call_tool",
@@ -433,9 +438,12 @@ def test_known_qualified_name_for_category() -> None:
     assert known_qualified_name_for_category("skill") == ()
     # exec has sandboxed_exec (FP-0034 Phase 2)
     assert known_qualified_name_for_category("exec") == ("exec__sandboxed_exec",)
-    # mcp (= issue #879 collapsed surface) has the six verb actions.
+    # mcp (= issue #879 + 2026-05-25 install 3-verb split) verb set.
     assert set(known_qualified_name_for_category("mcp")) == {
-        "mcp__search_server", "mcp__install_server",
+        "mcp__search_registry",
+        "mcp__install_registry",
+        "mcp__install_package",
+        "mcp__install_local",
         "mcp__list_servers", "mcp__list_tools",
         "mcp__call_tool", "mcp__drop_server",
     }
@@ -561,13 +569,16 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("rag.corpus__notes", {"query": "what"}),
     # Operation categories (= _OPERATION_RULES) — passthrough transformers,
     # so the caller args must already include the target's required keys.
-    # Issue #879 collapsed mcp surface — six verb actions.
-    ("mcp__search_server",  {"text": "github related"}),
-    ("mcp__install_server", {"text": "pypi:mcp-server-time"}),
-    ("mcp__list_servers",   {}),
-    ("mcp__list_tools",     {"server": "brave"}),
-    ("mcp__call_tool",      {"tool": "brave__search", "args": {"q": "reyn"}}),
-    ("mcp__drop_server",    {"server": "brave"}),
+    # Issue #879 collapsed mcp surface + 2026-05-25 install 3-verb split.
+    ("mcp__search_registry",  {"text": "github related"}),
+    ("mcp__install_registry", {"server_id": "io.github.org/mcp-foo"}),
+    ("mcp__install_package",  {"kind": "pypi", "identifier": "mcp-server-time"}),
+    ("mcp__install_local",    {"name": "weather", "command": "python",
+                                "args": ["/tmp/weather_mcp.py"]}),
+    ("mcp__list_servers",     {}),
+    ("mcp__list_tools",       {"server": "brave"}),
+    ("mcp__call_tool",        {"tool": "brave__search", "args": {"q": "reyn"}}),
+    ("mcp__drop_server",      {"server": "brave"}),
     ("file__read",   {"path": "a.txt"}),
     ("file__write",  {"path": "a.txt", "content": "x"}),
     ("file__delete", {"path": "a.txt"}),

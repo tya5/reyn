@@ -80,8 +80,10 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.mcp_install import MCP_INSTALL_OP
     from reyn.tools.mcp_verbs import (
         MCP_CALL_TOOL,
-        MCP_INSTALL_SERVER,
-        MCP_SEARCH_SERVER,
+        MCP_INSTALL_LOCAL,
+        MCP_INSTALL_PACKAGE,
+        MCP_INSTALL_REGISTRY,
+        MCP_SEARCH_REGISTRY,
     )
     from reyn.tools.memory import (
         FORGET_MEMORY,
@@ -190,8 +192,10 @@ def get_default_registry() -> ToolRegistry:
     registry.register(MCP_DROP_SERVER_OP)
     # Issue #879: verb-object MCP wrappers — pure op-runtime handlers
     # (no skill spawn) under the new ``mcp`` category in _OPERATION_RULES.
-    registry.register(MCP_SEARCH_SERVER)
-    registry.register(MCP_INSTALL_SERVER)
+    registry.register(MCP_SEARCH_REGISTRY)
+    registry.register(MCP_INSTALL_REGISTRY)
+    registry.register(MCP_INSTALL_PACKAGE)
+    registry.register(MCP_INSTALL_LOCAL)
     registry.register(MCP_CALL_TOOL)
     # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
     # PR-3a registers them in the registry; PR-3b will add them to

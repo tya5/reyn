@@ -31,6 +31,8 @@ reyn mcp install io.github.modelcontextprotocol/server-filesystem
 
 After install, the `mcp.servers.filesystem` entry is already in your config (in `reyn.local.yaml` by default, or `reyn.yaml` if you pass `--scope project`). Skip to step 3.
 
+The same flow is also driveable from a `reyn chat` session via the `mcp__search_registry` / `mcp__install_registry` verbs — see [`reyn mcp` CLI reference § Chat-side equivalents](../../reference/cli/mcp.md#chat-side-equivalents).
+
 ### Advanced: manual config
 
 If a server is not in the public registry, or you want full control over the config, add it manually. Smoke-test the server standalone first — you don't want to debug both the server and the integration at once:

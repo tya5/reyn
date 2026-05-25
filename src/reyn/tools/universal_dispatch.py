@@ -246,19 +246,20 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "rag.operation__recall":      ("recall",       _passthrough_args),
     "rag.operation__drop_source": ("drop_source",  _passthrough_args),
 
-    # Issue #879 — single ``mcp`` category collapsing the old
-    # mcp.server / mcp.tool / mcp.operation sub-categories +
-    # skill__mcp_search / skill__mcp_install into six verb_object actions.
-    # The two ``*_server`` wrappers forward to the existing stdlib skills
-    # via dedicated ToolDefinitions (mcp_verbs.py) so describe_action and
-    # hot-list alias surfacing get clean ``{text}`` schemas; the remaining
-    # four reuse the existing list/call/drop handlers verbatim.
-    "mcp__search_server":  ("mcp_search_server",  _passthrough_args),
-    "mcp__install_server": ("mcp_install_server", _passthrough_args),
-    "mcp__list_servers":   ("list_mcp_servers",   _passthrough_args),
-    "mcp__list_tools":     ("list_mcp_tools",     _passthrough_args),
-    "mcp__call_tool":      ("mcp_call_tool",      _passthrough_args),
-    "mcp__drop_server":    ("mcp_drop_server",    _passthrough_args),
+    # Issue #879 — single ``mcp`` category. 2026-05-25 install-surface
+    # refactor: split ``mcp__install_server`` into 3 verbs along the
+    # **source axis** (registry / public package channel / local script);
+    # also renamed ``search_server`` → ``search_registry`` so the pair
+    # (search_registry, install_registry) is self-evident at list_actions
+    # time. The non-install verbs are unchanged.
+    "mcp__search_registry":  ("mcp_search_registry",  _passthrough_args),
+    "mcp__install_registry": ("mcp_install_registry", _passthrough_args),
+    "mcp__install_package":  ("mcp_install_package",  _passthrough_args),
+    "mcp__install_local":    ("mcp_install_local",    _passthrough_args),
+    "mcp__list_servers":     ("list_mcp_servers",     _passthrough_args),
+    "mcp__list_tools":       ("list_mcp_tools",       _passthrough_args),
+    "mcp__call_tool":        ("mcp_call_tool",        _passthrough_args),
+    "mcp__drop_server":      ("mcp_drop_server",      _passthrough_args),
 
     # validation category — lint op exposed to the router so users can request
     # skill linting directly ("lint the foo skill").  skill_path accepts a

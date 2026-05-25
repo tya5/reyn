@@ -1,33 +1,39 @@
-"""MCP verb-object handlers — collapsed surface (#879).
+"""MCP verb-object handlers — three-axis install split.
 
-This module implements the six router-callable MCP verbs the LLM sees
-under the single ``mcp`` category:
+Router-callable MCP verbs under the single ``mcp`` category. The install
+surface is split along the **source axis** (= where the server comes from)
+so each verb has a structurally narrow input and no XOR ambiguity:
 
-  - ``mcp__search_server``  — registry search (pure op-runtime, no skill)
-  - ``mcp__install_server`` — install a server (pure op-runtime; secrets
-    via ``reyn secret set``, no mid-flight ask_user)
-  - ``mcp__list_servers``   — list installed servers (existing
-    ``LIST_MCP_SERVERS``)
-  - ``mcp__list_tools``     — list a server's tools as
-    ``<server>__<tool>`` identifiers (existing ``LIST_MCP_TOOLS``,
-    return shape updated for the new identifier convention)
-  - ``mcp__call_tool``      — call a tool by ``<server>__<tool>``
-    identifier (this module)
-  - ``mcp__drop_server``    — remove an installed server (existing
-    ``MCP_DROP_SERVER``)
+  - ``mcp__search_registry``  — search the official MCP registry
+  - ``mcp__install_registry`` — install from the official MCP registry
+                                (paired with ``mcp__search_registry``)
+  - ``mcp__install_package``  — install from a third-party package channel
+                                (npm / pypi / docker / github URL)
+  - ``mcp__install_local``    — install a local command (LLM-authored
+                                script, dev server) by writing a
+                                ``{command, args}`` entry directly
+  - ``mcp__list_servers``     — list installed servers
+                                (existing ``LIST_MCP_SERVERS``)
+  - ``mcp__list_tools``       — list a server's tools as
+                                ``<server>__<tool>`` identifiers
+                                (existing ``LIST_MCP_TOOLS``)
+  - ``mcp__call_tool``        — call a tool by ``<server>__<tool>``
+                                identifier (this module)
+  - ``mcp__drop_server``      — remove an installed server
+                                (existing ``MCP_DROP_SERVER``)
 
-No skills are spawned. The previous stdlib ``mcp_search`` / ``mcp_install``
-skills are removed in this PR; both flows live in op-runtime handlers
-called directly from the verb ToolDefinitions below.
+No skills are spawned. All install paths converge on the same
+``.reyn/mcp.yaml`` entry shape via op_runtime helpers; the verbs differ
+only in how they obtain the package metadata before that write.
 
-Secret handling for ``mcp__install_server`` is **strict args + guide**:
-when the registry's package metadata declares ``isSecret: true``
-env-vars and the operator has not pre-supplied them (via
-``env_overrides`` or ``reyn secret set``), the install short-circuits
-with a ``status: "needs_secrets"`` result whose ``guide`` field tells
-the operator which keys to set. The LLM forwards that guide; the
-operator sets the secrets through ``reyn secret set <KEY>``; the LLM
-retries ``mcp__install_server``.
+Secret handling for the two registry-aware verbs
+(``mcp__install_registry``, ``mcp__install_package``) is **strict args
++ guide**: when package metadata declares ``isSecret: true`` env-vars
+and the operator has not pre-supplied them (via ``env_overrides`` or
+``reyn secret set``), the install short-circuits with
+``status="needs_secrets"`` + a guide. ``mcp__install_local`` cannot
+auto-detect secrets (= operator supplies ``env_overrides`` inline if
+needed).
 """
 from __future__ import annotations
 
@@ -36,17 +42,17 @@ from typing import Any, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-# ── mcp__search_server ────────────────────────────────────────────────────────
+# ── mcp__search_registry ──────────────────────────────────────────────────────
 
 
-_MCP_SEARCH_SERVER_DESCRIPTION = (
-    "Search the MCP registry for servers relevant to a natural-language "
-    "capability request. Returns candidates with id / name / description / "
-    "runtime_hint; pick one and follow up with mcp__install_server passing "
-    "the chosen server_id. Multilingual — accepts queries in any language."
+_MCP_SEARCH_REGISTRY_DESCRIPTION = (
+    "Search the official MCP registry for servers matching a "
+    "natural-language capability request. Returns candidates whose "
+    "'name' field feeds mcp__install_registry. Multilingual — accepts "
+    "queries in any language."
 )
 
-_MCP_SEARCH_SERVER_PARAMETERS: dict[str, Any] = {
+_MCP_SEARCH_REGISTRY_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "text": {
@@ -61,7 +67,7 @@ _MCP_SEARCH_SERVER_PARAMETERS: dict[str, Any] = {
 }
 
 
-async def _handle_mcp_search_server(
+async def _handle_mcp_search_registry(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
     """Registry search — uses the same RegistryClient backend as the CLI
@@ -104,67 +110,52 @@ async def _handle_mcp_search_server(
     }
 
 
-# ── mcp__install_server ───────────────────────────────────────────────────────
+# ── mcp__install_registry ─────────────────────────────────────────────────────
 
 
-_MCP_INSTALL_SERVER_DESCRIPTION = (
-    "Install an MCP server from the registry into the current project "
-    "configuration. Strict args — pass the server_id obtained from "
-    "mcp__search_server (or a --source specifier). When the server "
-    "requires secret environment variables that the operator has not "
-    "yet set, the call returns status='needs_secrets' with a guide "
-    "explaining the `reyn secret set <KEY>` command; relay that to the "
-    "user and retry after they confirm secrets are set."
+_MCP_INSTALL_REGISTRY_DESCRIPTION = (
+    "Install an MCP server from the official MCP registry by its "
+    "registry name (server_id from mcp__search_registry candidates[].name). "
+    "When the server requires secret environment variables that the "
+    "operator has not yet set, the call returns status='needs_secrets' "
+    "with a guide explaining the `reyn secret set <KEY>` command; relay "
+    "that to the user and retry after they confirm secrets are set."
 )
 
-_MCP_INSTALL_SERVER_PARAMETERS: dict[str, Any] = {
+_MCP_INSTALL_REGISTRY_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "server_id": {
             "type": "string",
             "description": (
-                "Registry identifier, e.g. "
-                "'io.github.modelcontextprotocol/server-time'. Empty when "
-                "using 'source' instead."
-            ),
-        },
-        "source": {
-            "type": "string",
-            "description": (
-                "Optional --source specifier when not using the registry "
-                "(e.g. 'pypi:mcp-server-time', 'npm:@org/pkg', GitHub URL). "
-                "Mutually exclusive with server_id-only registry lookup."
-            ),
-        },
-        "scope": {
-            "type": "string",
-            "enum": ["local", "project", "user"],
-            "description": (
-                "Config tier to write the server entry to. Default 'local'."
+                "Registry identifier from mcp__search_registry "
+                "(= candidates[].name, "
+                "e.g. 'io.github.modelcontextprotocol/server-time')."
             ),
         },
         "env_overrides": {
             "type": "object",
             "description": (
-                "Pre-supplied env values for the server's secret env-vars. "
-                "Skip when secrets are already stored via `reyn secret set`."
+                "Inline env values. Usually NOT needed — the first call "
+                "returns status='needs_secrets' listing which keys to "
+                "set via `reyn secret set <KEY>`; only pass this dict "
+                "when the operator supplied values inline."
             ),
             "additionalProperties": {"type": "string"},
         },
     },
-    "required": [],
+    "required": ["server_id"],
 }
 
 
-async def _handle_mcp_install_server(
+async def _handle_mcp_install_registry(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """Pure op-runtime install — delegates to mcp_install op handler.
+    """Install from the official MCP registry by server_id only.
 
-    Secret handling: the op handler now returns a structured
-    ``needs_secrets`` result when isSecret env-vars are not present,
-    instead of prompting via ask_user. The LLM is expected to surface
-    the guide to the operator and retry after secrets are set.
+    Strict input: server_id is required, non-registry installs go through
+    mcp__install_package or mcp__install_local instead. Secret handling
+    matches the registry-aware contract — see module docstring.
     """
     from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.mcp_install import handle as mcp_install_handle
@@ -172,14 +163,15 @@ async def _handle_mcp_install_server(
     from reyn.schemas.models import MCPInstallIROp
 
     server_id = str(args.get("server_id") or "")
-    source = args.get("source")
-    if not server_id and not source:
+    if not server_id:
         return {
             "status": "error",
             "data": {
                 "error": (
-                    "server_id or source is required. Call "
-                    "mcp__search_server first to find candidates."
+                    "server_id is required. Call mcp__search_registry "
+                    "first to find a candidate, or use "
+                    "mcp__install_package / mcp__install_local for "
+                    "non-registry installs."
                 ),
             },
         }
@@ -188,9 +180,9 @@ async def _handle_mcp_install_server(
         op = MCPInstallIROp(
             kind="mcp_install",
             server_id=server_id,
-            scope=args.get("scope", "local"),
+            scope="local",
             env_overrides=args.get("env_overrides"),
-            source=source if isinstance(source, str) else None,
+            source=None,
             extra_args=None,
         )
     except Exception as exc:
@@ -205,7 +197,7 @@ async def _handle_mcp_install_server(
     decl.secret_write = ["*"]
 
     op_ctx = OpContext(
-        skill_name="mcp__install_server",
+        skill_name="mcp__install_registry",
         run_id=None,
         permission_decl=decl,
         permission_resolver=getattr(
@@ -218,6 +210,264 @@ async def _handle_mcp_install_server(
 
     result = await mcp_install_handle(op, op_ctx, caller="control_ir")
     return {"status": "ok", "data": result}
+
+
+# ── mcp__install_package ──────────────────────────────────────────────────────
+
+
+_MCP_INSTALL_PACKAGE_DESCRIPTION = (
+    "Install an MCP server from a third-party package channel "
+    "(npm / pypi / docker) or a GitHub repo URL. Use when the server "
+    "isn't in the official registry (= mcp__search_registry returned "
+    "no match). Secret detection works the same as install_registry "
+    "for npm/pypi/docker; github URLs cannot pre-declare secrets."
+)
+
+_MCP_INSTALL_PACKAGE_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "kind": {
+            "type": "string",
+            "enum": ["npm", "pypi", "docker", "github"],
+            "description": "Package channel.",
+        },
+        "identifier": {
+            "type": "string",
+            "description": (
+                "npm: package name (e.g. '@scope/server-foo')\n"
+                "pypi: distribution name (e.g. 'my-mcp-server')\n"
+                "docker: image with optional tag "
+                "(e.g. 'org/img:v1')\n"
+                "github: full URL "
+                "(e.g. 'https://github.com/owner/repo' or "
+                "'https://github.com/owner/repo/tree/<ref>/src/<sub>')"
+            ),
+        },
+        "version": {
+            "type": "string",
+            "description": (
+                "Version constraint. npm/pypi/docker only — "
+                "ignored for github."
+            ),
+        },
+        "env_overrides": {
+            "type": "object",
+            "description": (
+                "Inline env values when the operator provides them; "
+                "otherwise expect status='needs_secrets' on the "
+                "first call (npm/pypi/docker only)."
+            ),
+            "additionalProperties": {"type": "string"},
+        },
+    },
+    "required": ["kind", "identifier"],
+}
+
+
+def _build_source_string(kind: str, identifier: str, version: str) -> str:
+    """Compose the source_resolver inline string from structured fields."""
+    if kind == "github":
+        return identifier  # URL is the specifier itself
+    if kind == "npm":
+        return f"npm:{identifier}@{version}" if version else f"npm:{identifier}"
+    if kind == "pypi":
+        return f"pypi:{identifier}=={version}" if version else f"pypi:{identifier}"
+    if kind == "docker":
+        return f"docker:{identifier}:{version}" if version else f"docker:{identifier}"
+    return identifier  # pragma: no cover — enum constrains this
+
+
+async def _handle_mcp_install_package(
+    args: Mapping[str, Any], ctx: ToolContext,
+) -> ToolResult:
+    """Install via a structured package specifier.
+
+    Composes an inline ``source`` string the source_resolver understands,
+    then delegates to op_runtime/mcp_install with ``server_id=""`` so the
+    registry HTTP path is skipped.
+    """
+    from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.mcp_install import handle as mcp_install_handle
+    from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import MCPInstallIROp
+
+    kind = str(args.get("kind") or "")
+    identifier = str(args.get("identifier") or "")
+    version = str(args.get("version") or "")
+    if kind not in {"npm", "pypi", "docker", "github"}:
+        return {
+            "status": "error",
+            "data": {
+                "error": (
+                    f"kind must be one of npm/pypi/docker/github; "
+                    f"got {kind!r}"
+                ),
+            },
+        }
+    if not identifier:
+        return {
+            "status": "error",
+            "data": {"error": "identifier is required"},
+        }
+
+    source = _build_source_string(kind, identifier, version)
+
+    try:
+        op = MCPInstallIROp(
+            kind="mcp_install",
+            server_id="",
+            scope="local",
+            env_overrides=args.get("env_overrides"),
+            source=source,
+            extra_args=None,
+        )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "data": {"error": f"invalid args: {exc}"},
+        }
+
+    decl = PermissionDecl()
+    decl.file_write = [{"path": ".reyn/mcp.yaml"}]
+    decl.secret_write = ["*"]
+
+    op_ctx = OpContext(
+        skill_name="mcp__install_package",
+        run_id=None,
+        permission_decl=decl,
+        permission_resolver=getattr(
+            getattr(ctx, "router_state", None), "permission_resolver", None,
+        ),
+        events=getattr(ctx, "events", None),
+        intervention_bus=None,
+        media_store=None,
+    )
+
+    result = await mcp_install_handle(op, op_ctx, caller="control_ir")
+    return {"status": "ok", "data": result}
+
+
+# ── mcp__install_local ────────────────────────────────────────────────────────
+
+
+_MCP_INSTALL_LOCAL_DESCRIPTION = (
+    "Install a local MCP server by registering a {command, args} pair "
+    "directly. Use for LLM-authored scripts or local development "
+    "servers. Bypasses package registries — cannot auto-detect required "
+    "secrets, so pass env_overrides inline when the server needs env-vars."
+)
+
+_MCP_INSTALL_LOCAL_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": (
+                "Short config key written under mcp.servers.<name> "
+                "(e.g. 'weather'). Used as the server prefix in "
+                "mcp__call_tool's '<server>__<tool>' identifier."
+            ),
+        },
+        "command": {
+            "type": "string",
+            "description": (
+                "Executable to spawn (e.g. 'python', 'node', 'uvx', "
+                "or an absolute path)."
+            ),
+        },
+        "args": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Command-line arguments. Typically the script path "
+                "(e.g. ['/tmp/weather_mcp.py']) plus flags the server "
+                "expects."
+            ),
+        },
+        "env_overrides": {
+            "type": "object",
+            "description": "Inline env values for the spawned process.",
+            "additionalProperties": {"type": "string"},
+        },
+    },
+    "required": ["name", "command", "args"],
+}
+
+
+async def _handle_mcp_install_local(
+    args: Mapping[str, Any], ctx: ToolContext,
+) -> ToolResult:
+    """Register a local MCP server entry by writing .reyn/mcp.yaml directly.
+
+    Bypasses registry + source_resolver. The verb's input maps 1:1 to
+    the loader's stdio-server config shape (``{type, command, args, env}``)
+    so the MCPClient launcher can spawn the process without further
+    metadata.
+    """
+    from pathlib import Path
+
+    from reyn.op_runtime.mcp_install import (
+        _read_yaml_config,
+        _scope_to_path,
+        _write_yaml_config,
+    )
+    from reyn.permissions.permissions import PermissionDecl
+
+    name = str(args.get("name") or "").strip()
+    command = str(args.get("command") or "").strip()
+    raw_args = args.get("args")
+    if not name:
+        return {"status": "error", "data": {"error": "name is required"}}
+    if not command:
+        return {"status": "error", "data": {"error": "command is required"}}
+    if not isinstance(raw_args, list):
+        return {
+            "status": "error",
+            "data": {"error": "args must be a list of strings"},
+        }
+    cmd_args = [str(a) for a in raw_args]
+    env_overrides = args.get("env_overrides") or {}
+    if not isinstance(env_overrides, Mapping):
+        return {
+            "status": "error",
+            "data": {"error": "env_overrides must be an object"},
+        }
+
+    project_root = Path.cwd()
+    rs = getattr(ctx, "router_state", None)
+    workspace = getattr(ctx, "workspace", None)
+    if workspace is not None and hasattr(workspace, "root"):
+        project_root = Path(workspace.root)
+    config_path = _scope_to_path("local", project_root)
+
+    decl = PermissionDecl()
+    decl.file_write = [{"path": ".reyn/mcp.yaml"}]
+    resolver = getattr(rs, "permission_resolver", None) if rs is not None else None
+    if resolver is not None:
+        resolver.require_file_write(decl, str(config_path), "mcp__install_local")
+
+    entry: dict[str, Any] = {
+        "type": "stdio",
+        "command": command,
+        "args": cmd_args,
+    }
+    if env_overrides:
+        entry["env"] = {str(k): str(v) for k, v in env_overrides.items()}
+
+    data = _read_yaml_config(config_path)
+    servers = data.setdefault("mcp", {}).setdefault("servers", {})
+    servers[name] = entry
+    _write_yaml_config(config_path, data)
+
+    return {
+        "status": "ok",
+        "data": {
+            "kind": "mcp_install_local",
+            "name": name,
+            "config_path": str(config_path),
+            "entry": entry,
+        },
+    }
 
 
 # ── mcp__call_tool ────────────────────────────────────────────────────────────
@@ -290,23 +540,45 @@ async def _handle_mcp_call_tool(
 # ── ToolDefinitions ──────────────────────────────────────────────────────────
 
 
-MCP_SEARCH_SERVER = ToolDefinition(
-    name="mcp_search_server",
-    description=_MCP_SEARCH_SERVER_DESCRIPTION,
-    parameters=_MCP_SEARCH_SERVER_PARAMETERS,
+MCP_SEARCH_REGISTRY = ToolDefinition(
+    name="mcp_search_registry",
+    description=_MCP_SEARCH_REGISTRY_DESCRIPTION,
+    parameters=_MCP_SEARCH_REGISTRY_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
-    handler=_handle_mcp_search_server,
+    handler=_handle_mcp_search_registry,
     category="discovery",
     purity="read_only",
 )
 
 
-MCP_INSTALL_SERVER = ToolDefinition(
-    name="mcp_install_server",
-    description=_MCP_INSTALL_SERVER_DESCRIPTION,
-    parameters=_MCP_INSTALL_SERVER_PARAMETERS,
+MCP_INSTALL_REGISTRY = ToolDefinition(
+    name="mcp_install_registry",
+    description=_MCP_INSTALL_REGISTRY_DESCRIPTION,
+    parameters=_MCP_INSTALL_REGISTRY_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
-    handler=_handle_mcp_install_server,
+    handler=_handle_mcp_install_registry,
+    category="io",
+    purity="side_effect",
+)
+
+
+MCP_INSTALL_PACKAGE = ToolDefinition(
+    name="mcp_install_package",
+    description=_MCP_INSTALL_PACKAGE_DESCRIPTION,
+    parameters=_MCP_INSTALL_PACKAGE_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_mcp_install_package,
+    category="io",
+    purity="side_effect",
+)
+
+
+MCP_INSTALL_LOCAL = ToolDefinition(
+    name="mcp_install_local",
+    description=_MCP_INSTALL_LOCAL_DESCRIPTION,
+    parameters=_MCP_INSTALL_LOCAL_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_mcp_install_local,
     category="io",
     purity="side_effect",
 )
@@ -323,4 +595,10 @@ MCP_CALL_TOOL = ToolDefinition(
 )
 
 
-__all__ = ["MCP_SEARCH_SERVER", "MCP_INSTALL_SERVER", "MCP_CALL_TOOL"]
+__all__ = [
+    "MCP_SEARCH_REGISTRY",
+    "MCP_INSTALL_REGISTRY",
+    "MCP_INSTALL_PACKAGE",
+    "MCP_INSTALL_LOCAL",
+    "MCP_CALL_TOOL",
+]

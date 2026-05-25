@@ -56,16 +56,18 @@ For the full `reyn mcp` CLI reference, see [Reference: `reyn mcp`](../reference/
 
 ## Quick start: try MCP from `reyn chat` (manual config path)
 
-If you prefer to configure a server manually (or are adding a server not in the public registry), add it directly to `reyn.yaml`. `reyn chat` exposes six MCP verb actions (issue #879 collapsed the previous `mcp.server` / `mcp.tool` / `mcp.operation` sub-categories) that work automatically once the server is configured:
+If you prefer to configure a server manually (or are adding a server not in the public registry), add it directly to `reyn.yaml`. `reyn chat` exposes verb actions under the `mcp` category (issue #879 collapsed the previous `mcp.server` / `mcp.tool` / `mcp.operation` sub-categories; the 2026-05-25 install 3-verb split further separates install paths along the source axis):
 
 | Action | What it does |
 |------|--------------|
-| `mcp__search_server({text})`        | Search the public registry for new servers |
-| `mcp__install_server({server_id})`  | Install a server into the current scope's config |
-| `mcp__list_servers()`               | Returns the names of all servers configured in `reyn.yaml` |
-| `mcp__list_tools({server})`         | Returns the tools exposed by one server (each entry has `name="<server>__<tool>"`, `description`, `inputSchema`) |
-| `mcp__call_tool({tool, args})`      | Call a tool by `<server>__<tool>` identifier (from `mcp__list_tools`) with its declared args |
-| `mcp__drop_server({server})`        | Remove an installed server from the config |
+| `mcp__search_registry({text})`                              | Search the official MCP registry for matching servers |
+| `mcp__install_registry({server_id})`                        | Install a server from the official MCP registry |
+| `mcp__install_package({kind, identifier, version?})`        | Install via a third-party package channel (npm / pypi / docker / GitHub URL) |
+| `mcp__install_local({name, command, args})`                 | Register a local command (e.g. LLM-authored script) as an MCP server |
+| `mcp__list_servers()`                                       | Returns the names of all servers configured in `.reyn/mcp.yaml` |
+| `mcp__list_tools({server})`                                 | Returns the tools exposed by one server (each entry has `name="<server>__<tool>"`, `description`, `inputSchema`) |
+| `mcp__call_tool({tool, args})`                              | Call a tool by `<server>__<tool>` identifier (from `mcp__list_tools`) with its declared args |
+| `mcp__drop_server({server})`                                | Remove an installed server from the config |
 
 The LLM router can call these directly during a chat turn. Typical first-time flow:
 
