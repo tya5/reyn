@@ -375,17 +375,36 @@ class TestEstimateIndexingCost:
 # ---------------------------------------------------------------------------
 
 class TestProviderRegistry:
-    def test_get_provider_returns_litellm_by_default(self):
-        """Tier 2: get_provider() returns LiteLLMEmbeddingProvider by default."""
+    def test_get_provider_returns_routing_wrapper_by_default(self):
+        """Tier 2: get_provider() returns the routing wrapper by default.
+
+        FP-0043: the historical ``"litellm"`` name now maps to
+        ``RoutingEmbeddingProvider`` which dispatches by model prefix
+        between the LiteLLM backend and the sentence-transformers
+        backend. The wrapper preserves byte-identical LiteLLM-backed
+        behaviour for openai/* and other LiteLLM-routable models.
+        """
+        from reyn.embedding.router_provider import RoutingEmbeddingProvider
         provider = get_provider()
+        assert isinstance(provider, RoutingEmbeddingProvider)
+
+    def test_get_litellm_only_returns_bare_litellm_provider(self):
+        """Tier 2: ``"litellm-only"`` opts out of routing for tests / direct use."""
+        provider = get_provider("litellm-only")
         assert isinstance(provider, LiteLLMEmbeddingProvider)
 
-    def test_get_provider_with_config(self):
-        """Tier 2: get_provider() passes config to provider constructor."""
+    def test_get_provider_with_config_constructs_routing_wrapper(self):
+        """Tier 2: get_provider("litellm", config=...) constructs the wrapper.
+
+        Config forwarding to the underlying backends is verified
+        indirectly by the provider-specific tests (estimate_tokens
+        honours tokenizer, batch processing honours batch_size) so we
+        don't assert on private state here.
+        """
+        from reyn.embedding.router_provider import RoutingEmbeddingProvider
         config = {"batch_size": 50}
         provider = get_provider("litellm", config=config)
-        assert isinstance(provider, LiteLLMEmbeddingProvider)
-        assert provider._batch_size == 50
+        assert isinstance(provider, RoutingEmbeddingProvider)
 
     def test_register_and_get_custom_provider(self):
         """Tier 2: register_provider + get_provider roundtrip with custom impl."""

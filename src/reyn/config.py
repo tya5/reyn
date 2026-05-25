@@ -460,10 +460,22 @@ class EmbeddingClassSpec:
 #: Built-in defaults for ``embedding.classes``.
 #: Applied when the section is absent or ``classes:`` is empty.
 #: Satisfies the "pip install + OPENAI_API_KEY = works" requirement.
+#:
+#: FP-0043: ``local-mini`` and ``local-e5`` ship in the registry but only
+#: function when ``pip install 'reyn[local-embed]'`` (= sentence-transformers
+#: + torch extras) has been performed. Without the extras, instantiating
+#: those classes raises ImportError at first ``embed()`` call; the
+#: ``search_actions`` visibility gate falls back to "hidden" gracefully.
 _DEFAULT_EMBEDDING_CLASSES: dict[str, EmbeddingClassSpec] = {
-    "light":    EmbeddingClassSpec(model="openai/text-embedding-3-small"),
-    "standard": EmbeddingClassSpec(model="openai/text-embedding-3-small"),
-    "strong":   EmbeddingClassSpec(model="openai/text-embedding-3-large"),
+    "light":     EmbeddingClassSpec(model="openai/text-embedding-3-small"),
+    "standard":  EmbeddingClassSpec(model="openai/text-embedding-3-small"),
+    "strong":    EmbeddingClassSpec(model="openai/text-embedding-3-large"),
+    "local-mini": EmbeddingClassSpec(
+        model="sentence-transformers/all-MiniLM-L6-v2",
+    ),
+    "local-e5":  EmbeddingClassSpec(
+        model="sentence-transformers/intfloat/multilingual-e5-small",
+    ),
 }
 
 
