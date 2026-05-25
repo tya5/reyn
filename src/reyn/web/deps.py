@@ -227,6 +227,17 @@ def _get_registry():
         # registry is referenced inside the factory closure — defined below.
         registry_ref: list = []
 
+        # `reyn web --eager-embedding-build` flag (parity with `reyn chat`).
+        # When set, ChatSession waits for the action_embedding_index build
+        # synchronously on the first router turn so ``search_actions`` is
+        # visible in tools[] from Turn 1 instead of only after the
+        # background build completes. Default False keeps existing
+        # behaviour (background build, ``search_actions`` initially
+        # hidden until the index is ready).
+        _eager_embedding_build = (
+            os.environ.get("REYN_WEB_EAGER_EMBEDDING_BUILD", "").strip() == "1"
+        )
+
         def _session_factory(profile: AgentProfile) -> ChatSession:
             registry = registry_ref[0]
             s = ChatSession(
@@ -258,6 +269,7 @@ def _get_registry():
                 multimodal_config=config.multimodal,
                 action_retrieval_config=config.action_retrieval,
                 embedding_config=config.embedding,
+                eager_embedding_build=_eager_embedding_build,
             )
             s.load_history()
             # FP-0041 #489 PR-D2.5: external transport outbox interceptor.
