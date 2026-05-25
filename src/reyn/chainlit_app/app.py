@@ -238,14 +238,36 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
     the agent's await intact (= reyn-side timeout / fallback still
     fires) and the drain loop keeps pumping subsequent messages.
     """
-    from reyn.user_intervention import InterventionAnswer
-
     prompt = build_intervention_prompt(msg.meta, text=msg.text or "")
     session = registry.attached_session()
-    if session is None or prompt.run_id is None:
-        # Can't answer (= no attached session or legacy IV without
-        # run_id) — fall back to plain text render so the operator at
-        # least sees what was asked.
+    if session is None or prompt.intervention_id is None:
+        # Can't dispatch the answer (= no attached session or malformed
+        # meta lacking intervention_id) — fall back to plain-text render
+        # so the operator at least sees what was asked.
+        await cl.Message(
+            content=prompt.content, author="intervention",
+        ).send()
+        return
+
+    # Look up the live UserIntervention by id. ``_interventions.list_active``
+    # is the public-shape (= used by slash commands), and the iv carries
+    # its own future + choices, so we route through
+    # ``session._deliver_answer_to(iv, text, choice_id_override=...)``
+    # which works regardless of whether ``iv.run_id`` is set (permission
+    # gate IVs from ``_prompt`` have no run_id; ``ask_user`` IVs do).
+    def _find_iv():
+        try:
+            for iv in session._interventions.list_active():
+                if getattr(iv, "id", None) == prompt.intervention_id:
+                    return iv
+        except AttributeError:
+            return None
+        return None
+
+    iv_obj = _find_iv()
+    if iv_obj is None:
+        # IV already answered or vanished between announce and our
+        # handler picking it up — render plain text, nothing to answer.
         await cl.Message(
             content=prompt.content, author="intervention",
         ).send()
@@ -256,10 +278,10 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
     # ChatSession.run_one_iteration never picks up the next inbox
     # message — the entire chat appears frozen.
     async def _resolve_empty() -> None:
-        await session.answer_pending_intervention(
-            prompt.run_id,
-            InterventionAnswer(text=""),
-        )
+        try:
+            await session._deliver_answer_to(iv_obj, "")
+        except Exception:
+            pass
 
     if prompt.is_choice:
         try:
@@ -268,7 +290,7 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
                     name=f"iv_{spec.choice_id}",
                     label=spec.label,
                     payload={
-                        "intervention_run_id": prompt.run_id,
+                        "intervention_id": prompt.intervention_id,
                         "choice_id": spec.choice_id,
                     },
                 )
@@ -296,10 +318,12 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
         if not isinstance(choice_id, str):
             await _resolve_empty()
             return
-        await session.answer_pending_intervention(
-            prompt.run_id,
-            InterventionAnswer(text=str(label), choice_id=choice_id),
-        )
+        try:
+            await session._deliver_answer_to(
+                iv_obj, str(label), choice_id_override=choice_id,
+            )
+        except Exception:
+            await _resolve_empty()
         return
 
     # Free-text branch.
@@ -322,10 +346,10 @@ async def _handle_intervention(registry: "AgentRegistry", msg) -> None:
         )
     else:
         text = str(getattr(reply, "output", None) or getattr(reply, "content", "") or "")
-    await session.answer_pending_intervention(
-        prompt.run_id,
-        InterventionAnswer(text=text),
-    )
+    try:
+        await session._deliver_answer_to(iv_obj, text)
+    except Exception:
+        await _resolve_empty()
 
 
 @cl.set_chat_profiles

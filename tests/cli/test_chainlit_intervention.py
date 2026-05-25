@@ -157,3 +157,47 @@ def test_returns_intervention_prompt_dataclass():
     .run_id / .content / .choices / .is_choice without dict gymnastics)."""
     out = build_intervention_prompt({"run_id": "r", "prompt": "x"})
     assert isinstance(out, InterventionPrompt)
+
+
+def test_intervention_id_round_trips_when_present():
+    """Tier 1: meta carries the UUID set by ``_iv_meta`` on every IV —
+    chainlit uses it to find the live UserIntervention via
+    ``session._interventions.list_active()`` and answer via the
+    intervention-direct path (= works even when run_id is None, which
+    is the permission-gate IV shape)."""
+    out = build_intervention_prompt(
+        {"intervention_id": "abc-uuid-123", "prompt": "x"},
+    )
+    assert out.intervention_id == "abc-uuid-123"
+
+
+def test_intervention_id_independent_of_run_id():
+    """Tier 1: permission-gate IVs (= ``_prompt``) have no run_id but
+    DO have an intervention_id — handler must not short-circuit on a
+    missing run_id."""
+    out = build_intervention_prompt(
+        {
+            "intervention_id": "iv-1",
+            "prompt": "Allow fetching?",
+            "choices": [{"id": "yes", "label": "Yes"}],
+        },
+    )
+    assert out.intervention_id == "iv-1"
+    assert out.run_id is None
+    assert out.is_choice is True
+
+
+def test_intervention_id_non_string_dropped():
+    """Tier 1: defensive — non-string intervention_id → None (caller
+    falls back to plain-text render)."""
+    out = build_intervention_prompt(
+        {"intervention_id": 12345, "prompt": "x"},
+    )
+    assert out.intervention_id is None
+
+
+def test_intervention_id_absent_returns_none():
+    """Tier 1: missing intervention_id → None (= legacy / malformed IV
+    meta; caller can't dispatch answer back)."""
+    out = build_intervention_prompt({"run_id": "r", "prompt": "x"})
+    assert out.intervention_id is None
