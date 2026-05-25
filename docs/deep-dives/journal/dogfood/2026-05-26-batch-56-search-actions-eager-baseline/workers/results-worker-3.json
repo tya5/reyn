@@ -1,0 +1,150 @@
+{
+  "batch": "B56",
+  "worker": 3,
+  "head": "89bacbdf",
+  "date": "2026-05-26",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 7,
+    "I": 1,
+    "R": 1,
+    "B": 0
+  },
+  "vs_past": {
+    "B55": { "V": 7, "I": 1, "R": 1, "B": 0 },
+    "B56_delta": { "V": "0", "I": "0", "R": "0", "B": "0" },
+    "note": "No change vs B55. S1-S6, S8 all V. S7 remains I (env: recall tool returns missing_required_arg for sources; no indexed sources for agent). S9 remains R (routing_decided + skill_run_spawned never emitted; LLM asked for skill name again in turn 2 instead of routing to skill_builder)."
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "scenario_index": 1,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "tool_executed", "permission_granted", "tool_returned"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The file `docs/concepts/principles.md` contains information about Reyn's eight design principles. These principles guide the architecture and development of Reyn, focusing on stateless phases, skill-defined structure, OS control, constrained LLM decision-making, workspace as the single source of truth, event logging for audit, OS skill-agnosticism, and domain logic in phase instructions.",
+      "notes": "routing_decided ✓, tool_executed ✓, no permission_denied ✓, artifact context present ✓. Reply summarises principles doc and lists all P1-P8 descriptions."
+    },
+    {
+      "id": "file_glob_grep",
+      "scenario_index": 2,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "tool_executed", "permission_granted", "tool_returned"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I found the following files that mention 'preprocessor': src/reyn/stdlib/skills/direct_llm/skill.md, src/reyn/stdlib/skills/eval/phases/evaluate.md, src/reyn/stdlib/skills/eval/skill.md, ...",
+      "notes": "routing_decided ✓ x2, tool_executed ✓ x2, no permission_denied ✓. Lists multiple skill.md paths under src/, mentions preprocessor in relation to found files."
+    },
+    {
+      "id": "web_search_query",
+      "scenario_index": 3,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "web_search_started", "web_search_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I searched the web for 'OpenAI Python SDK changelog 2026' but could not find a changelog specifically for 2026. The most relevant result was about logging LLM calls using various SDKs, including OpenAI, but it did not contain changelog information.",
+      "notes": "web_search_started ✓, web_search_completed ✓, routing_decided ✓. No web_search_failed, no permission_denied. Reply reports search result summary and references OpenAI/Python SDK."
+    },
+    {
+      "id": "web_fetch_url",
+      "scenario_index": 4,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "web_fetch_started", "web_fetch_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "Python 3.12 introduces several key features and improvements. PEP 695: Type Parameter Syntax — introduces a more concise and flexible syntax for defining generic types. PEP 701: Syntactic Formalization of f-strings — allows for more flexibility within f-strings, removing previous limitations.",
+      "notes": "web_fetch_started ✓, web_fetch_completed ✓, routing_decided ✓, no permission_denied ✓. Reply mentions PEP 695 (type parameter syntax) and PEP 701 (f-string improvements) as Python 3.12 features. Summary format, not raw HTML."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "scenario_index": 5,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "sandboxed_exec_started", "sandboxed_exec_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The output of the command `python -c 'print(2 + 2)'` is: 4",
+      "notes": "sandboxed_exec_started ✓, sandboxed_exec_completed ✓, routing_decided ✓, no permission_denied ✓. Output reported as 4. No error."
+    },
+    {
+      "id": "lint_a_skill",
+      "scenario_index": 6,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "lint_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The `index_events` skill has one error. The `preprocessor[0] python ./chunkers.py:resolve_scan_context` is not declared in permissions.python and will be rejected by the runtime.",
+      "notes": "lint_completed ✓, routing_decided ✓, no permission_denied ✓. LLM used validation__lint__skill_path hint correctly. Reports 'one error' (error count) and whether passed/failed. Same result as B55."
+    },
+    {
+      "id": "recall_indexed_source",
+      "scenario_index": 7,
+      "verdict": "I",
+      "rubric_pass": false,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "tool_called", "tool_returned"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I need to know which sources are available for recall. Could you please list them?",
+      "notes": "routing_decided ✓, no permission_denied ✓. LLM called rag.operation__recall correctly (hint working from B55/PR #914). Tool returned missing_required_arg: 'recall requires [sources]'. LLM asked user for sources rather than clearly reporting no indexed sources. Rubric 1 partial: does not clearly report 'no indexed sources found'. I (env: no indexed sources for this agent, same as B55)."
+    },
+    {
+      "id": "judge_output_direct",
+      "scenario_index": 8,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_completed", "tool_executed", "artifact_created", "workflow_started", "workflow_finished"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I have started the `judge_phase` skill to evaluate the artifact. The artifact passed all criteria with a score of 1.0. The skill has a non-empty description and declares at least one phase.",
+      "notes": "routing_decided ✓, skill_run_spawned ✓, tool_executed ✓, artifact_created ✓, no permission_denied ✓, no validation_error ✓. Reply mentions 'passed', score '1.0', references both evaluation criteria."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "scenario_index": 9,
+      "verdict": "R",
+      "rubric_pass": false,
+      "events_pass": false,
+      "events_observed": ["chat_turn_completed_inline"],
+      "events_missing": ["routing_decided", "skill_run_spawned"],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I can help you scaffold a new skill using the `skill_builder` skill. What would you like to name this new skill? (Please provide a snake_case name)...",
+      "notes": "must_emit routing_decided ≥1 NOT emitted. must_emit skill_run_spawned ≥1 NOT emitted. must_emit_any chat_turn_completed_inline ✓ present. Turn 1: LLM called describe_action(skill__skill_builder) then replied inline asking for skill name. Turn 2: user provided 'my_demo_skill'; LLM replied inline again asking for name (+ goal + description + iterations + threshold) — skill_builder never spawned. Final reply does NOT reference my_demo_skill. Rubric NOT met. R (behavioral: LLM again asked for skill name inline in turn 2 instead of routing to skill_builder; identical failure pattern to B55)."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "W3-F1",
+      "scenario": "ask_user_round_trip",
+      "finding": "S9 persistent R across B55 and B56 with identical failure pattern: turn 1 LLM calls describe_action(skill__skill_builder) then replies inline asking for skill name; turn 2 user provides name but LLM again asks inline (full set of skill_builder params) without routing. routing_decided and skill_run_spawned never emit. The describe_action result shows LLM is aware of skill_builder but defaults to collecting all params inline rather than invoking. N=2 batches same symptom — hypothesis: router needs explicit instruction to route after param-gathering, not just gather params.",
+      "severity": "observation"
+    },
+    {
+      "id": "W3-F2",
+      "scenario": "recall_indexed_source",
+      "finding": "S7 stable I across B55 and B56: rag.operation__recall called correctly (hint working), but tool returns missing_required_arg for 'sources' and LLM asks user to list sources rather than reporting no indexed sources found. Env limitation: no indexed sources indexed for agent at runtime. Consistent with B55 I verdict. No regression.",
+      "severity": "observation"
+    }
+  ]
+}

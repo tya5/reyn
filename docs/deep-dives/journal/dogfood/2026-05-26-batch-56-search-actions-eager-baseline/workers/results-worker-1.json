@@ -1,0 +1,144 @@
+{
+  "batch": "B56",
+  "worker": 1,
+  "head": "89bacbdf",
+  "date": "2026-05-26",
+  "scenario_set": "chat_router_smoke.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 5,
+    "I": 0,
+    "R": 2,
+    "B": 0
+  },
+  "vs_past": {
+    "B55": { "V": 4, "I": 0, "R": 3, "B": 0 },
+    "B56": { "V": 5, "I": 0, "R": 2, "B": 0 },
+    "delta_V": "+1"
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "scenario_index": 1,
+      "verdict": "V",
+      "reply_summary": "Reply mentions skills, agents, chat capabilities, web search, file operations — helpful, no error.",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_must_not_violated": false,
+      "artifacts_pass": true,
+      "notes": "Router answered inline (chat_turn_completed_inline). No artifact requirement. search_actions not called."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "scenario_index": 2,
+      "verdict": "V",
+      "reply_summary": "Reply explains idempotency: same operation multiple times yields same result, cites HTTP GET/PUT/DELETE/HEAD.",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_called(web__search)", "web_search_started", "web_search_completed", "tool_returned", "routing_decided(web__search, hot_list_alias)", "router_empty_response_detected", "router_empty_response_retry_injected", "compaction_check"],
+      "events_must_not_violated": false,
+      "artifacts_pass": true,
+      "notes": "Router called web__search (hot_list_alias). Empty stop after tool_returned; REYN_EMPTY_STOP_RETRY retry fired and produced valid reply. search_actions not called. No artifact requirement — rubric met."
+    },
+    {
+      "id": "skill_discovery_request",
+      "scenario_index": 3,
+      "verdict": "V",
+      "reply_summary": "Lists 14 skill names with descriptions (direct_llm, eval, eval_builder, index_docs, index_events, judge_phase, ops_report, simple_memo_app, skill_builder, skill_importer, skill_improver, skill_search, word_stats_demo, writing_review_app).",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_called", "tool_returned", "chat_turn_completed_inline", "compaction_check"],
+      "events_must_not_violated": false,
+      "artifacts_pass": true,
+      "notes": "must_emit_any satisfied via chat_turn_completed_inline. Router used search_actions tool to list skills (tool_called observed), then answered inline. search_actions was called here to enumerate skills."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "scenario_index": 4,
+      "verdict": "V",
+      "reply_summary": "Reply states text contains 44 characters, 1 line, longest line 44 chars, ~11 tokens — word/char stats present.",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "tool_called", "skill_run_spawned", "tool_returned", "routing_decided(word_stats_demo)", "invoke_skill_spawn_ack_exit", "skill_run_completed(finished)", "router_empty_response_detected", "router_empty_response_retry_injected", "skill_completion_injected(finished)", "compaction_check", "chat_turn_completed_inline"],
+      "events_must_not_violated": false,
+      "artifacts_pass": true,
+      "notes": "skill_run_completed with status=finished emitted. word_stats_demo workflow_finished with artifact text_review confirmed. Empty stop after spawn ack; retry + skill_completion_inject resolved. search_actions not called."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "scenario_index": 5,
+      "verdict": "R",
+      "reply_summary": "Reply asked for user preference instead of writing a poem: 'はい、どのような詩がお好みですか？' — no poem content.",
+      "rubric_pass": false,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_must_not_violated": false,
+      "artifacts_pass": false,
+      "notes": "Rubric requires poem text with >=2 lines — not met. Artifacts require direct_llm skill present — not met (inline only). Router deflected with clarification question instead of writing poem. Same failure pattern as B55."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "scenario_index": 6,
+      "verdict": "V",
+      "reply_summary": "Turn 2 reply provides Python list comprehension code examples (squares, even_numbers_doubled) coherent with turn 1.",
+      "rubric_pass": true,
+      "events_pass": true,
+      "events_observed": ["user_message_received(x2)", "chat_turn_completed_inline(x2)", "compaction_check(x2)"],
+      "events_must_not_violated": false,
+      "artifacts_pass": true,
+      "notes": "Multi-turn pronoun reference ('それを') resolved correctly to list comprehension. Both turns answered inline. No artifact requirement. search_actions not called."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "scenario_index": 7,
+      "verdict": "R",
+      "reply_summary": "Reply offered to generate an image: 'どのような画像を生成しますか？' — did not decline, pretended capability exists.",
+      "rubric_pass": false,
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_must_not_violated": false,
+      "artifacts_pass": true,
+      "notes": "Rubric requires polite decline and not pretending to generate an image — both items violated. Router answered inline offering to proceed with image generation. Same failure pattern as B55."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B56-W1-F1",
+      "title": "search_actions not called in any W1 scenario despite --eager-embedding-build",
+      "description": "All 7 scenarios ran with --eager-embedding-build enabled (search_actions should be in tools[] from Turn 1). No scenario triggered a search_actions tool call. S3 (skill_discovery_request) used a tool_called event but it resolved via a different path (inline tool, not search_actions by name). Conclusion: search_actions embedding was built but the router did not invoke it in any W1 scenario. W3/W5/W6 are more likely candidates per the batch note.",
+      "severity": "observation",
+      "affects_verdict": false
+    },
+    {
+      "id": "B56-W1-F2",
+      "title": "S5 poem-refusal attractor persists (B55 carry-over)",
+      "description": "S5 catalog_routing_decided_emitted: router deflected with 'どのような詩がお好みですか？' instead of writing a poem. This is the same R verdict observed in B55. The attractor (router asks for clarification rather than directly answering creative requests) persists across batches.",
+      "severity": "regression_carry_over",
+      "affects_verdict": true,
+      "scenario_id": "catalog_routing_decided_emitted"
+    },
+    {
+      "id": "B56-W1-F3",
+      "title": "S7 image-generation hallucination persists (B55 carry-over)",
+      "description": "S7 out_of_scope_graceful_decline: router offered to generate an image rather than declining. Reply: 'どのような画像を生成しますか？'. This violates both rubric items (polite decline + not pretending capability). Same R verdict as B55.",
+      "severity": "regression_carry_over",
+      "affects_verdict": true,
+      "scenario_id": "out_of_scope_graceful_decline"
+    },
+    {
+      "id": "B56-W1-F4",
+      "title": "S2 empty-stop after web__search tool return — REYN_EMPTY_STOP_RETRY resolved",
+      "description": "S2 factual_query_direct_llm: router called web__search (hot_list_alias routing), then produced an empty stop (finish_reason=stop, completion_tokens=0). REYN_EMPTY_STOP_RETRY=1 retry injected directive (176 chars) and the subsequent LLM call produced a valid factual answer. Final verdict V. This is expected behavior for the retry mechanism.",
+      "severity": "observation",
+      "affects_verdict": false
+    }
+  ]
+}

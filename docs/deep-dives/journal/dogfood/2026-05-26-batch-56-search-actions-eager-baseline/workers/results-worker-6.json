@@ -1,0 +1,116 @@
+{
+  "batch": "B56",
+  "worker": 6,
+  "head": "89bacbdf",
+  "date": "2026-05-26",
+  "scenario_set": "plan_mode_redesigned",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 5,
+    "I": 0,
+    "R": 0,
+    "B": 0
+  },
+  "vs_past": {
+    "B55": { "V": 4, "I": 0, "R": 1, "B": 0 },
+    "B56": { "V": 5, "I": 0, "R": 0, "B": 0 },
+    "delta_V": "+1"
+  },
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_pass": true,
+      "events": {
+        "plan_emitted": 1,
+        "plan_step_started": 3,
+        "plan_step_completed": 3,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_notes": "Reply cites workspace.md (P5 section header, 'phases communicate exclusively through the workspace') and permission-model.md (file.write, shell, MCP permissions). Lists 3 numbered concrete points. Specific evidence: 'P5 (Workspace is the single source of truth)', 'Control IR ops executed by the OS'. No fabrication detected.",
+      "note": "B55 regressed V->R on aggregation-not-3-points. B56: 3 numbered points present — noise, not persistent regression."
+    },
+    {
+      "id": "plan_deep_dive_permission",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_pass": true,
+      "events": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_notes": "Reply organized by 3 facets (種類/設定方法/よくある落とし穴). Cites file.read/write/edit/delete, shell, mcp, python safe/unsafe, http.get, web_search from permission-model; reyn permissions list/revoke/clear from manage-permissions; skill.md permissions: and reyn.yaml config from permissions config reference. No fabricated config keys."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_pass": true,
+      "events": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_notes": "6 pillars listed. Cites principles.md (P1-P8), architecture.md (layered execution), workspace.md (P5, event log). All 3 source docs cited by name. Each pillar has source doc attribution. No fabrication. B54 prompt fix (full paths in parentheses) confirmed effective — step LLM used correct paths."
+    },
+    {
+      "id": "plan_onboarding_skill_mcp",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_pass": true,
+      "events": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_notes": "Reply organized by 3 questions. (1) Skill: cites phase-vs-skill-vs-os.md Phase/Skill/OS layered design, postprocessor block. (2) MCP: cites mcp.md client (MCPClient, permissions.mcp), server (reyn mcp serve, list_agents/send_to_agent). (3) 自作Skill: cites your-first-skill (skill_builder, reyn run, --events, skill_improver). No fabrication."
+    },
+    {
+      "id": "plan_build_multi_doc_agent",
+      "verdict": "V",
+      "events_pass": true,
+      "rubric_pass": true,
+      "events": {
+        "plan_emitted": 1,
+        "plan_step_started": 4,
+        "plan_step_completed": 4,
+        "plan_aggregated": 1,
+        "plan_run_interrupted": 0,
+        "plan_step_failed": 0
+      },
+      "rubric_notes": "Reply organized by 3 facets. (1) Skill/tool: cites build-an-agent-team (reyn agent new, reyn topology new launch --kind team, safety.loop.max_agent_hops). (2) Permission: cites manage-permissions (.reyn/approvals.yaml, reyn permissions list). (3) MCP: cites mcp.md (mcp.servers:, reyn mcp serve, mcp_called/completed/failed events). No fabrication."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B56-W6-F1",
+      "severity": "info",
+      "description": "B55 S1 regression (V->R, aggregation not 3+ points) was noise, not persistent. B56 S1 produced 3 clearly numbered and distinct points with specific evidence from both docs. Hypothesis: single-batch LLM variance, no structural fix needed."
+    },
+    {
+      "id": "B56-W6-F2",
+      "severity": "info",
+      "description": "All 5 plan_mode scenarios reached V (5/5). This is the first 5/5 V run for this scenario set. B54 S3 full-path prompt fix continues to hold — plan steps preserve docs/concepts/ prefix in path generation."
+    }
+  ]
+}
