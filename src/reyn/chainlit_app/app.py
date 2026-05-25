@@ -415,16 +415,23 @@ async def _on_chat_start() -> None:
     await registry.restore_all()
     session = await registry.attach(name)
 
-    # Register chainlit as an intervention listener so the session's
-    # ``InterventionRegistry`` (= built with
-    # ``enforce_listener_presence=True`` at session.py:1529) actually
-    # dispatches IVs through the bus → outbox. Without this, every
-    # ``bus.request(iv)`` short-circuits at registry.py:230 with an
-    # empty ``InterventionAnswer(text="")``, which the permission
-    # gate treats as a refusal → user sees silent "permission
-    # denied" instead of the AskActionMessage wired in PR #907.
+    # Register the chainlit surface as the canonical chat-channel
+    # intervention listener. The id MUST match ``DEFAULT_CHAT_CHANNEL_ID``
+    # (= "tui") because ``ChatInterventionBus`` stamps every iv with
+    # that channel id (session.py:1661 / 1891 / 4388), and the agent
+    # layer's origin-pin routing then expects a listener registered
+    # under the SAME id. Registering as "chainlit" instead leaves the
+    # iv as ``route="user_channel_stalled"`` — surfaced in the event
+    # log but never dispatched → silent "permission denied" for
+    # web_fetch et al. (Discovered after #908 by inspecting
+    # ``events/agents/*/chat/*.jsonl`` ``intervention_routed`` rows.)
+    #
+    # This is the same id the TUI surface registers under
+    # (``chat/tui/app.py``); only one of TUI / chainlit is attached
+    # to a given process so there's no collision.
+    from reyn.chat.session import DEFAULT_CHAT_CHANNEL_ID
     try:
-        session.register_intervention_listener("chainlit")
+        session.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
     except AttributeError:
         # Stripped / mocked session in tests — degrade gracefully.
         pass
@@ -657,6 +664,7 @@ async def _on_chat_end() -> None:
         registry = await _get_or_build_registry()
         session = registry.attached_session()
         if session is not None:
-            session.unregister_intervention_listener("chainlit")
+            from reyn.chat.session import DEFAULT_CHAT_CHANNEL_ID
+            session.unregister_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
     except Exception:
         pass
