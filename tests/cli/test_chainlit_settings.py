@@ -19,12 +19,14 @@ from __future__ import annotations
 import pytest
 
 from reyn.chainlit_app.settings import (
+    AGENT_ROLE_SETTING_ID,
     LANGUAGE_ITEMS,
     LANGUAGE_SETTING_ID,
     MODEL_SETTING_ID,
     language_label_for,
     language_to_value,
     list_model_names,
+    normalise_role,
     value_to_language,
     value_to_model,
 )
@@ -166,3 +168,38 @@ def test_value_to_model_empty_falls_back_to_default():
     assert value_to_model("", default="standard") == "standard"
     assert value_to_model("   ", default="standard") == "standard"
     assert value_to_model(None, default="standard") == "standard"
+
+
+# ── agent role normaliser ─────────────────────────────────────────────────
+
+
+def test_agent_role_setting_id_is_stable():
+    """Tier 1: the widget id + on_settings_update dispatch key agree."""
+    assert AGENT_ROLE_SETTING_ID == "agent_role"
+
+
+def test_normalise_role_trims_whitespace():
+    """Tier 1: leading / trailing whitespace stripped before save —
+    matches the ``/agent edit role`` slash path's ``.strip()``."""
+    assert normalise_role("  you are a pirate  ") == "you are a pirate"
+
+
+def test_normalise_role_empty_returns_none():
+    """Tier 1: blank input → None (= caller skips persistence, preserves
+    current role) instead of writing a stale blank over the agent's
+    persona."""
+    assert normalise_role("") is None
+    assert normalise_role("   ") is None
+
+
+def test_normalise_role_none_input_returns_none():
+    """Tier 1: defensive — None or non-string → None."""
+    assert normalise_role(None) is None
+    assert normalise_role(12345) is None  # type: ignore[arg-type]
+
+
+def test_normalise_role_pass_through_multiline():
+    """Tier 1: multi-line role text preserved verbatim (= just trim
+    outer whitespace, not internal newlines / formatting)."""
+    multiline = "line one\nline two\n  indented line"
+    assert normalise_role("\n" + multiline + "\n") == multiline

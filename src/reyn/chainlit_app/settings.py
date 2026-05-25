@@ -73,6 +73,29 @@ def language_label_for(value: str) -> str:
     return value
 
 
+# ── agent role text ───────────────────────────────────────────────────────
+
+
+AGENT_ROLE_SETTING_ID = "agent_role"
+
+
+def normalise_role(value: object) -> str | None:
+    """Strip a candidate role value into the form ``AgentProfile.save``
+    expects.
+
+    Returns ``None`` for empty / whitespace-only / non-string inputs so
+    the caller can skip the round-trip without writing a stale blank
+    over the agent's current persona. Pass-through for everything else,
+    trailing whitespace trimmed.
+    """
+    if not isinstance(value, str):
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    return v
+
+
 # ── model select ──────────────────────────────────────────────────────────
 
 
@@ -114,12 +137,14 @@ def value_to_model(value: str | None, *, default: str) -> str:
 
 
 __all__ = [
+    "AGENT_ROLE_SETTING_ID",
     "LANGUAGE_ITEMS",
     "LANGUAGE_SETTING_ID",
     "MODEL_SETTING_ID",
     "language_label_for",
     "language_to_value",
     "list_model_names",
+    "normalise_role",
     "value_to_language",
     "value_to_model",
 ]
