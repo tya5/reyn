@@ -57,6 +57,13 @@ class LandlockBackend:
         self._import_error: str | None = None
         self._available: bool | None = None  # cached result
 
+    @property
+    def import_error(self) -> str | None:
+        """Read-only accessor for the cached ImportError message, or None
+        if the landlock dependency was importable. Set on first
+        ``available()`` call when the import fails."""
+        return self._import_error
+
     def available(self) -> bool:
         """Return True iff Landlock is usable on this platform.
 

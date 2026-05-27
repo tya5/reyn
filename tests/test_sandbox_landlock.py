@@ -50,8 +50,8 @@ def test_landlock_unavailable_when_landlock_pkg_missing(
     result = backend.available()
 
     assert result is False
-    assert backend._import_error is not None
-    assert len(backend._import_error) > 0
+    assert backend.import_error is not None
+    assert len(backend.import_error) > 0
 
 
 def test_landlock_abi_probe_caches(monkeypatch: pytest.MonkeyPatch) -> None:
