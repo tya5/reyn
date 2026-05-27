@@ -118,11 +118,11 @@ async def test_inline_thinking_row_shows_braille_frame() -> None:
         await pilot.pause()
         row = conv.query_one(InlineThinkingRow)
         # frame_idx must point to a valid Braille frame.
-        assert 0 <= row._frame_idx < len(_FRAMES), (
-            f"expected frame_idx in [0, {len(_FRAMES)}), got {row._frame_idx}"
+        assert 0 <= row.frame_idx < len(_FRAMES), (
+            f"expected frame_idx in [0, {len(_FRAMES)}), got {row.frame_idx}"
         )
-        assert _FRAMES[row._frame_idx] in _FRAMES, (
-            f"frame at index {row._frame_idx} is not a valid Braille char"
+        assert _FRAMES[row.frame_idx] in _FRAMES, (
+            f"frame at index {row.frame_idx} is not a valid Braille char"
         )
 
 
@@ -133,18 +133,18 @@ async def test_tick_advances_frame() -> None:
 
     # Exercise _tick() directly without a full app mount.
     row = InlineThinkingRow()
-    initial_idx = row._frame_idx
+    initial_idx = row.frame_idx
     row._tick()
-    assert row._frame_idx == (initial_idx + 1) % len(_FRAMES), (
+    assert row.frame_idx == (initial_idx + 1) % len(_FRAMES), (
         f"expected frame_idx to advance from {initial_idx} to "
-        f"{(initial_idx + 1) % len(_FRAMES)}, got {row._frame_idx}"
+        f"{(initial_idx + 1) % len(_FRAMES)}, got {row.frame_idx}"
     )
     # Cycle wraps: advance through all frames and confirm wrap-around.
     for _ in range(len(_FRAMES) - 1):
         row._tick()
-    assert row._frame_idx == initial_idx, (
+    assert row.frame_idx == initial_idx, (
         f"after full cycle, frame_idx should return to {initial_idx}, "
-        f"got {row._frame_idx}"
+        f"got {row.frame_idx}"
     )
 
 

@@ -189,6 +189,36 @@ class ToolCallRow(RenderableCacheMixin, Widget):
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
+    @property
+    def finished(self) -> bool:
+        """True once any ``finish_*`` method has been called (= terminal state)."""
+        return self._finished
+
+    @property
+    def success(self) -> bool:
+        """True when the terminal state is success (= ``finish_success`` was called).
+
+        Only meaningful after ``finished`` is True; undefined while still running.
+        """
+        return self._success
+
+    def render_line1(self) -> Text:
+        """Return the current line-1 Rich Text for the tool-call row.
+
+        Delegates to ``_build_line1()``. Provided as a public accessor so
+        tests can assert on the rendered content via the public surface
+        (= CLAUDE.md "NEVER assert on private state").
+        """
+        return self._build_line1()
+
+    def render_line2(self) -> Text:
+        """Return the current line-2 Rich Text for the result / reason row.
+
+        Delegates to ``_build_line2()``. Provided as a public accessor so
+        tests can assert on the rendered content via the public surface.
+        """
+        return self._build_line2()
+
     def toggle_expand(self) -> None:
         """Flip the collapsed / expanded render shape.
 

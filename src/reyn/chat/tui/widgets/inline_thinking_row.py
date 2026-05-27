@@ -61,6 +61,16 @@ class InlineThinkingRow(Widget):
         if self._label is not None:
             self._label.update(_FRAMES[self._frame_idx])
 
+    @property
+    def frame_idx(self) -> int:
+        """Current Braille spinner frame index (0 … len(_FRAMES)-1).
+
+        Provided as a public accessor so tests can assert on the animation
+        state via the public surface (= CLAUDE.md "NEVER assert on private
+        state").
+        """
+        return self._frame_idx
+
     def on_unmount(self) -> None:
         """Stop the animation timer when the widget is removed."""
         if self._timer is not None:

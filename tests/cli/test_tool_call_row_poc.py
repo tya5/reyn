@@ -40,7 +40,7 @@ def _row(tool_name: str = "web_fetch", args_repr: str = "url=https://example.com
 def test_running_line1_contains_glyph_tool_args_and_elapsed() -> None:
     """Tier 2: initial running render carries all four primary segments."""
     row = _row(tool_name="web_fetch", args_repr="url=https://example.com")
-    line1 = row._build_line1().plain
+    line1 = row.render_line1().plain
     assert "●" in line1, "running state-glyph"
     assert "web_fetch" in line1, "tool name"
     assert "url=https://example.com" in line1, "args"
@@ -50,9 +50,9 @@ def test_running_line1_contains_glyph_tool_args_and_elapsed() -> None:
 def test_line2_empty_until_set_result_called() -> None:
     """Tier 2: line 2 is empty when no result snippet has arrived yet."""
     row = _row()
-    assert row._build_line2().plain == ""
+    assert row.render_line2().plain == ""
     row.set_result("body length 1.2 KB")
-    line2 = row._build_line2().plain
+    line2 = row.render_line2().plain
     assert "⎿" in line2, "result indent marker"
     assert "body length 1.2 KB" in line2, "snippet present"
 
@@ -61,10 +61,10 @@ def test_finish_success_transitions_to_check_glyph() -> None:
     """Tier 2: success terminal renders ``✓`` instead of ``●``."""
     row = _row()
     row.finish_success(result_snippet="200 OK")
-    line1 = row._build_line1().plain
+    line1 = row.render_line1().plain
     assert "✓" in line1
     assert "●" not in line1
-    line2 = row._build_line2().plain
+    line2 = row.render_line2().plain
     assert "200 OK" in line2
 
 
@@ -72,7 +72,7 @@ def test_finish_failure_transitions_to_cross_glyph() -> None:
     """Tier 2: failure terminal renders ``✗``."""
     row = _row()
     row.finish_failure(reason="timeout")
-    line1 = row._build_line1().plain
+    line1 = row.render_line1().plain
     assert "✗" in line1
     assert "●" not in line1
 
@@ -81,7 +81,7 @@ def test_finish_aborted_transitions_to_circle_slash_glyph() -> None:
     """Tier 2: aborted terminal renders ``⊘`` (= distinct from ✗)."""
     row = _row()
     row.finish_aborted()
-    line1 = row._build_line1().plain
+    line1 = row.render_line1().plain
     assert "⊘" in line1
     assert "✗" not in line1
     assert "●" not in line1
@@ -91,18 +91,18 @@ def test_post_terminal_set_result_and_finish_are_ignored() -> None:
     """Tier 2: once terminal, further state mutations don't change render."""
     row = _row()
     row.finish_success(result_snippet="first")
-    line1_after_first = row._build_line1().plain
-    line2_after_first = row._build_line2().plain
+    line1_after_first = row.render_line1().plain
+    line2_after_first = row.render_line2().plain
     row.set_result("second-result-should-be-ignored")
     row.finish_failure(reason="this-should-also-be-ignored")
-    assert row._build_line1().plain == line1_after_first, (
+    assert row.render_line1().plain == line1_after_first, (
         "line 1 (= state glyph + elapsed) must be frozen"
     )
-    assert row._build_line2().plain == line2_after_first, (
+    assert row.render_line2().plain == line2_after_first, (
         "line 2 (= result snippet) must be frozen"
     )
-    assert "second-result-should-be-ignored" not in row._build_line2().plain
-    assert "✗" not in row._build_line1().plain
+    assert "second-result-should-be-ignored" not in row.render_line2().plain
+    assert "✗" not in row.render_line1().plain
 
 
 def test_long_args_truncated_with_ellipsis_within_terminal_width() -> None:
@@ -115,7 +115,7 @@ def test_long_args_truncated_with_ellipsis_within_terminal_width() -> None:
     """
     long_args = "url=" + ("a" * 200)
     row = _row(tool_name="web_fetch", args_repr=long_args)
-    line1 = row._build_line1().plain
+    line1 = row.render_line1().plain
     assert "…" in line1, "ellipsis appears when args overflow line width"
     # The tool name + elapsed still survive truncation (= args is the
     # disposable segment, never the framing).
@@ -140,7 +140,7 @@ def test_terminal_state_with_sub_100ms_elapsed_hides_segment() -> None:
     # Re-pin frozen elapsed because finish_success captures current
     # monotonic (= may have advanced past threshold during test setup).
     row._frozen_elapsed = 0.0
-    line1 = row._build_line1().plain
+    line1 = row.render_line1().plain
     assert "0.0s" not in line1, "sub-100ms elapsed should be hidden in terminal state"
     # Tool name + glyph still visible.
     assert "cached_op" in line1
@@ -153,7 +153,7 @@ def test_running_state_always_shows_elapsed_even_at_zero() -> None:
     row = ToolCallRow(tool_name="slow_op", args_repr="key=x")
     # Force frozen elapsed visible by NOT finishing — still running.
     # Render and check elapsed appears regardless of value.
-    line1 = row._build_line1().plain
+    line1 = row.render_line1().plain
     assert "s" in line1, "running row carries elapsed (= alive signal)"
 
 
@@ -165,7 +165,7 @@ def test_terminal_state_above_threshold_shows_elapsed() -> None:
     row.finish_success(result_snippet="ok")
     # Frozen elapsed has whatever monotonic captured; force above threshold.
     row._frozen_elapsed = 0.5
-    line1 = row._build_line1().plain
+    line1 = row.render_line1().plain
     assert "0.5s" in line1
 
 
@@ -207,7 +207,7 @@ def test_long_qualified_tool_name_middle_elides_for_args_budget() -> None:
     row = ToolCallRow(
         tool_name=name, args_repr="param1=value1",
     )
-    line1 = row._build_line1().plain
+    line1 = row.render_line1().plain
     assert "mcp" in line1, "prefix segment of qualified name survives"
     assert "do_the_thing_now" in line1, "tail segment of qualified name survives"
 
@@ -217,7 +217,7 @@ def test_result_snippet_truncated_when_long() -> None:
     row = _row()
     long_result = "x" * 200
     row.set_result(long_result)
-    line2 = row._build_line2().plain
+    line2 = row.render_line2().plain
     assert "…" in line2
     assert "⎿" in line2  # indent marker preserved
 
@@ -233,7 +233,7 @@ def test_failed_terminal_surfaces_reason_on_line2() -> None:
     """
     row = _row()
     row.finish_failure(reason="timeout")
-    line2 = row._build_line2().plain
+    line2 = row.render_line2().plain
     assert "⎿" in line2, "indent marker preserved"
     assert "✗" in line2, "failure glyph mirrors line 1"
     assert "timeout" in line2, "reason text visible"
@@ -243,7 +243,7 @@ def test_aborted_terminal_surfaces_reason_with_circle_slash_on_line2() -> None:
     """Tier 2: aborted state uses ``⊘`` glyph on line 2 (matching line 1)."""
     row = _row()
     row.finish_aborted(reason="user cancelled")
-    line2 = row._build_line2().plain
+    line2 = row.render_line2().plain
     assert "⎿" in line2
     assert "⊘" in line2, "aborted glyph mirrors line 1"
     assert "user cancelled" in line2
@@ -257,7 +257,7 @@ def test_failed_with_explicit_result_snippet_prefers_result() -> None:
     """
     row = _row()
     row.finish_failure(reason="non-zero exit", result_snippet="status=err, exit_code=1")
-    line2 = row._build_line2().plain
+    line2 = row.render_line2().plain
     assert "status=err" in line2
     # The reason text is NOT shown in this case — result snippet wins.
     assert "non-zero exit" not in line2
@@ -267,5 +267,5 @@ def test_failed_with_empty_reason_omits_line2() -> None:
     """Tier 2: failure with no reason text → still empty line 2 (no orphan ✗)."""
     row = _row()
     row.finish_failure(reason="")
-    line2 = row._build_line2().plain
+    line2 = row.render_line2().plain
     assert line2 == ""
