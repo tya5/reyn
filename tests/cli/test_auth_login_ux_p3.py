@@ -5,7 +5,7 @@ Pins:
   1. ``_print_scope_advertisement`` prints the configured scopes before
      the device_authorization POST (= user sees what permissions reyn
      is about to ask for, can abort before any network round-trip).
-  2. ``_classify_token_status`` returns ``expired`` / ``near-expiry``
+  2. ``classify_token_status`` returns ``expired`` / ``near-expiry``
      / ``valid`` matching the OAuth refresh buffer threshold (60 s).
   3. ``run_list`` surfaces the 3-state classification end-to-end with
      fixture tokens written to a tmp_path OAuth store.
@@ -78,13 +78,13 @@ def test_scope_advertisement_handles_missing_scopes_attr(
     assert capsys.readouterr().err == ""
 
 
-# ── _classify_token_status ──────────────────────────────────────────────────
+# ── classify_token_status ──────────────────────────────────────────────────
 
 
 def test_classify_token_status_expired() -> None:
     """Tier 2: negative delta → ``expired`` (= past expires_at)."""
-    assert auth_mod._classify_token_status(-1.0) == "expired"
-    assert auth_mod._classify_token_status(-3600.0) == "expired"
+    assert auth_mod.classify_token_status(-1.0) == "expired"
+    assert auth_mod.classify_token_status(-3600.0) == "expired"
 
 
 def test_classify_token_status_near_expiry() -> None:
@@ -94,16 +94,16 @@ def test_classify_token_status_near_expiry() -> None:
     token within 60 s of expiry will refresh on next ``get_valid_token``
     call, so flagging it explicitly helps users predict behavior.
     """
-    assert auth_mod._classify_token_status(0.0) == "near-expiry"
-    assert auth_mod._classify_token_status(30.0) == "near-expiry"
-    assert auth_mod._classify_token_status(59.999) == "near-expiry"
+    assert auth_mod.classify_token_status(0.0) == "near-expiry"
+    assert auth_mod.classify_token_status(30.0) == "near-expiry"
+    assert auth_mod.classify_token_status(59.999) == "near-expiry"
 
 
 def test_classify_token_status_valid() -> None:
     """Tier 2: delta >= 60 → ``valid`` (= no refresh needed)."""
-    assert auth_mod._classify_token_status(60.0) == "valid"
-    assert auth_mod._classify_token_status(3600.0) == "valid"
-    assert auth_mod._classify_token_status(86400.0) == "valid"
+    assert auth_mod.classify_token_status(60.0) == "valid"
+    assert auth_mod.classify_token_status(3600.0) == "valid"
+    assert auth_mod.classify_token_status(86400.0) == "valid"
 
 
 # ── run_list end-to-end with 3-state fixtures ───────────────────────────────
