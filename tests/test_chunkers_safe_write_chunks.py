@@ -280,7 +280,7 @@ def test_write_chunks_skips_unreadable_files(tmp_path: Path, monkeypatch: pytest
 def test_suffix_no_dot(path: str, expected: str):
     """Tier 2: _suffix_no_dot strips the leading dot; mirrors
     pathlib.PurePath.suffix.lstrip(".") for the production paths."""
-    assert _C._suffix_no_dot(path) == expected
+    assert _C.suffix_no_dot(path) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +320,7 @@ def test_split_heading_large_section_sub_splits():
     total_text = " ".join(t for t, _ in chunks)
     assert "word" in total_text, "chunked content must appear in output"
     assert all(
-        _C._approx_tokens(t) <= 30 for t, _ in chunks
+        _C.approx_tokens(t) <= 30 for t, _ in chunks
     ), "each chunk must be near or under max_size"
 
 
@@ -332,7 +332,7 @@ def test_split_blank_line_packs_paragraphs_into_max_size():
 
     assert chunks, "expected chunks from 10-paragraph text"
     for chunk_text, _ in chunks:
-        assert _C._approx_tokens(chunk_text) <= 40
+        assert _C.approx_tokens(chunk_text) <= 40
 
 
 def test_split_blank_line_parent_context_is_none():
@@ -347,7 +347,7 @@ def test_split_blank_line_respects_min_size():
     text = "Tiny.\n\nA longer paragraph with sufficient content to pass min size check."
     chunks = list(_C._split_blank_line(text, max_size=1000, min_size=20, overlap=0.0))
     for chunk_text, _ in chunks:
-        assert _C._approx_tokens(chunk_text) >= 5
+        assert _C.approx_tokens(chunk_text) >= 5
 
 
 def test_split_sentence_splits_at_sentence_boundaries():

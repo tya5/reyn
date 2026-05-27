@@ -193,11 +193,11 @@ def _write_chunks_jsonl_from_paths(file_paths: list[str], strategy: dict) -> int
             content_hash = hashlib.sha256(chunk_text.encode("utf-8")).hexdigest()
             metadata = {
                 "source_path": file_path,
-                "source_type": _suffix_no_dot(file_path) or "unknown",
+                "source_type": suffix_no_dot(file_path) or "unknown",
                 "content_hash": content_hash,
                 "embedding_model": "",   # filled in by embed op
                 "chunk_index": chunk_idx,
-                "size_tokens": _approx_tokens(chunk_text),
+                "size_tokens": approx_tokens(chunk_text),
                 "parent_context": parent_ctx if preserve else None,
                 "extra": {},
             }
@@ -211,7 +211,7 @@ def _write_chunks_jsonl_from_paths(file_paths: list[str], strategy: dict) -> int
     return chunk_idx
 
 
-def _suffix_no_dot(path: str) -> str:
+def suffix_no_dot(path: str) -> str:
     """Return the file extension without the leading dot (e.g. ``foo.md`` → ``md``).
 
     Replaces ``pathlib.PurePath(path).suffix.lstrip(".")`` which the
@@ -224,7 +224,7 @@ def _suffix_no_dot(path: str) -> str:
     return name[idx + 1:]
 
 
-def _approx_tokens(text: str) -> int:
+def approx_tokens(text: str) -> int:
     """Rough token count: ~4 chars per token (GPT-style BPE approximation)."""
     return max(1, len(text) // 4)
 
@@ -258,8 +258,8 @@ def _split_heading(text, max_size, min_size, overlap):
         section_end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
         section_text = text[section_start:section_end]
         heading_label = h.group(2).strip()
-        if _approx_tokens(section_text) <= max_size:
-            if _approx_tokens(section_text) >= min_size:
+        if approx_tokens(section_text) <= max_size:
+            if approx_tokens(section_text) >= min_size:
                 yield section_text, heading_label
         else:
             for sub, _ in _split_blank_line(section_text, max_size, min_size, overlap):
@@ -275,10 +275,10 @@ def _split_blank_line(text, max_size, min_size, overlap):
         para = para.strip()
         if not para:
             continue
-        para_size = _approx_tokens(para)
+        para_size = approx_tokens(para)
         if current_size + para_size > max_size and current:
             chunk = "\n\n".join(current)
-            if _approx_tokens(chunk) >= min_size:
+            if approx_tokens(chunk) >= min_size:
                 yield chunk, None
             current = [para]
             current_size = para_size
@@ -287,7 +287,7 @@ def _split_blank_line(text, max_size, min_size, overlap):
             current_size += para_size
     if current:
         chunk = "\n\n".join(current)
-        if _approx_tokens(chunk) >= min_size:
+        if approx_tokens(chunk) >= min_size:
             yield chunk, None
 
 
@@ -297,10 +297,10 @@ def _split_sentence(text, max_size, min_size, overlap):
     current: list[str] = []
     current_size = 0
     for sent in sentences:
-        s_size = _approx_tokens(sent)
+        s_size = approx_tokens(sent)
         if current_size + s_size > max_size and current:
             chunk = " ".join(current)
-            if _approx_tokens(chunk) >= min_size:
+            if approx_tokens(chunk) >= min_size:
                 yield chunk, None
             current = [sent]
             current_size = s_size
@@ -309,5 +309,5 @@ def _split_sentence(text, max_size, min_size, overlap):
             current_size += s_size
     if current:
         chunk = " ".join(current)
-        if _approx_tokens(chunk) >= min_size:
+        if approx_tokens(chunk) >= min_size:
             yield chunk, None
