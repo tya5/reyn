@@ -154,12 +154,12 @@ async def test_render_message_derives_skill_and_run_id_short() -> None:
         assert "[foo#abcd]" in header, (
             f"Expected '[foo#abcd]' prefix in header, got: {header!r}"
         )
-        # Internal derivation values (set in __init__) confirm correctness.
-        assert box._skill_name == "foo", (
-            f"Expected _skill_name='foo', got: {box._skill_name!r}"
+        # Public accessors confirm the derived values.
+        assert box.skill_name == "foo", (
+            f"Expected skill_name='foo', got: {box.skill_name!r}"
         )
-        assert box._run_id_short == "abcd", (
-            f"Expected _run_id_short='abcd', got: {box._run_id_short!r}"
+        assert box.run_id_short == "abcd", (
+            f"Expected run_id_short='abcd', got: {box.run_id_short!r}"
         )
 
 
@@ -193,9 +193,9 @@ async def test_render_message_does_not_double_derive_when_short_keys_present() -
         boxes = list(conv.query(ErrorBox))
         assert boxes, "ErrorBox should have been mounted"
         box = boxes[-1]
-        assert box._skill_name == "code_review", (
-            f"skill_name should come from meta.skill_name, got: {box._skill_name!r}"
+        assert box.skill_name == "code_review", (
+            f"skill_name should come from meta.skill_name, got: {box.skill_name!r}"
         )
-        assert box._run_id_short == "ef01", (
-            f"run_id_short should come from meta.run_id_short, got: {box._run_id_short!r}"
+        assert box.run_id_short == "ef01", (
+            f"run_id_short should come from meta.run_id_short, got: {box.run_id_short!r}"
         )

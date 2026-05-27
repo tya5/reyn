@@ -517,6 +517,19 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         """
         return self._build_lines()
 
+    @property
+    def static_widget(self):
+        """The inner Static (or stub) that ``_refresh`` pushes rendered text into.
+
+        ``None`` before ``compose()`` runs. Exposed so tests can inspect
+        accumulated ``update()`` calls without reaching into the private
+        ``_static`` attribute (per feedback_test_public_surface_not_private_state
+        policy). Tests that inject a stub (e.g. ``_StubStatic``) assign it
+        directly to ``_static``; this accessor makes that visible via the
+        public surface.
+        """
+        return self._static
+
     # ── Internal rendering ───────────────────────────────────────────────────
 
     def _tick(self) -> None:

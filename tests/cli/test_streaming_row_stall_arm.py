@@ -38,7 +38,7 @@ def test_freshly_constructed_row_renders_cursor_not_stall() -> None:
     from reyn.chat.tui.widgets.streaming_row import StreamingRow
 
     row = StreamingRow(prefix="")
-    rendered = row._build_renderable().plain
+    rendered = row.build_renderable().plain
     # Cursor glyph present; stall ellipsis absent.
     assert "▍" in rendered, (
         f"new row should render cursor, got plain={rendered!r}"
@@ -60,7 +60,7 @@ def test_open_with_no_tokens_after_six_seconds_renders_stall_cue() -> None:
     row = StreamingRow(prefix="")
     # Simulate 6s elapsed since open with NO append() ever called.
     row._last_chunk_at = monotonic() - 6.0
-    rendered = row._build_renderable().plain
+    rendered = row.build_renderable().plain
     assert "…" in rendered, (
         f"6s without first token should fire stall cue, got: {rendered!r}"
     )
@@ -80,10 +80,10 @@ def test_chunk_arrival_resets_idle_timer() -> None:
 
     row = StreamingRow(prefix="")
     row._last_chunk_at = monotonic() - 6.0  # stall would fire here
-    assert "…" in row._build_renderable().plain
+    assert "…" in row.build_renderable().plain
 
     row.append("hello")  # fresh chunk — _last_chunk_at = monotonic()
-    rendered = row._build_renderable().plain
+    rendered = row.build_renderable().plain
     assert "▍" in rendered, (
         f"after chunk arrival, cursor should return, got: {rendered!r}"
     )

@@ -84,6 +84,23 @@ class _WSSessionProxy:
         self.running_skills: dict = {}
         self.running_plans: dict = {}
 
+    @property
+    def interventions(self):
+        """Intervention registry — ``None`` in Phase A proxy (no local state).
+
+        Local ``ChatSession`` stores intervention data in ``_interventions``.
+        The Phase A proxy has no round-trip to the server for this, so
+        ``None`` is the correct placeholder: TUI paths that read it already
+        use ``getattr(session, "_interventions", None)`` / ``getattr(session,
+        "interventions", None)`` so this keeps the API shape compatible.
+        Phase B may grow a server-side intervention sync path.
+
+        Exposed via the public name so tests can assert the Phase A default
+        without accessing the private ``_interventions`` attribute directly
+        (per feedback_test_public_surface_not_private_state policy).
+        """
+        return self._interventions
+
     async def submit_user_text(self, text: str) -> None:
         """Send a ``user_message`` WS frame.
 
