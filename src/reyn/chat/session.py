@@ -1897,6 +1897,17 @@ class ChatSession:
         """
         return self._chains
 
+    @property
+    def buffered_intervention_answers(self) -> dict:
+        """Read-only accessor for the per-session buffered intervention
+        answers map. Used by the crash-recovery / restart path to
+        re-deliver answers to runs that finished their ask_user wait
+        while the session was offline. Write side stays on
+        ``self._buffered_intervention_answers`` so the buffering call
+        sites are visible.
+        """
+        return self._buffered_intervention_answers
+
     # ── SkillRunner forwarding (FP-0019 Wave 1b) ────────────────────────────────
     # slash/skill.py and slash/tasks.py access these dicts directly via session.
     # Forward to SkillRunner so external callers see the same live dict.
@@ -3393,7 +3404,7 @@ class ChatSession:
         Phase 4 implements the 3-way routing decision the Agent makes
         on every incoming request:
 
-          1. **self_answer** (= ``_try_self_answer`` hook): the agent
+          1. **self_answer** (= ``try_self_answer`` hook): the agent
              has a policy that answers without consulting the user
              (e.g. "I've already extended this limit 5 times, refuse").
              Default policy is None — no self-answer — so the request
@@ -3401,7 +3412,7 @@ class ChatSession:
              policies (e.g. "max_phase_visits hit + N prior extensions
              → refuse silently") via subclassing or config-driven
              policy injection.
-          2. **parent_agent.delegate** (= ``_resolve_parent_agent`` hook):
+          2. **parent_agent.delegate** (= ``resolve_parent_agent`` hook):
              forward to a chain-upstream agent so the originating
              user-facing agent owns the decision. Default returns None
              — no parent resolution — so the request falls through.
@@ -3424,7 +3435,7 @@ class ChatSession:
         ``AgentRequestBus`` adapter forwarding ``request(iv)`` here).
         """
         # Branch 1: self_answer policy.
-        self_ans = await self._try_self_answer(iv)
+        self_ans = await self.try_self_answer(iv)
         if self_ans is not None:
             self._chat_events.emit(
                 "intervention_routed",
@@ -3435,7 +3446,7 @@ class ChatSession:
             return self_ans
 
         # Branch 2: parent-agent delegation.
-        parent = self._resolve_parent_agent(iv)
+        parent = self.resolve_parent_agent(iv)
         if parent is not None:
             self._chat_events.emit(
                 "intervention_routed",
@@ -3475,7 +3486,7 @@ class ChatSession:
         )
         return await self._dispatch_intervention(iv)
 
-    async def _try_self_answer(
+    async def try_self_answer(
         self, iv: UserIntervention,
     ) -> InterventionAnswer | None:
         """Hook for self-answer routing policies (issue #254 Phase 4).
@@ -3497,7 +3508,7 @@ class ChatSession:
         """
         return None
 
-    def _resolve_parent_agent(
+    def resolve_parent_agent(
         self, iv: UserIntervention,
     ) -> "ChatSession | None":
         """Hook for parent-agent delegation routing (issue #254 Phase 4).

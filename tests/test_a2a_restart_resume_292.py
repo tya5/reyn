@@ -152,8 +152,8 @@ def test_a2a_restart_resume_round_trip_ask_user(tmp_path: Path) -> None:
             await asyncio.sleep(0)
 
         # The answer is now in the buffer.
-        assert run_id in session._buffered_intervention_answers
-        buffered = session._buffered_intervention_answers[run_id]
+        assert run_id in session.buffered_intervention_answers
+        buffered = session.buffered_intervention_answers[run_id]
         assert buffered.text == "Alice"
 
         # ── Phase 4: skill resume picks up the buffered answer ─────
@@ -174,7 +174,7 @@ def test_a2a_restart_resume_round_trip_ask_user(tmp_path: Path) -> None:
         assert answer.text == "Alice"
 
         # Buffer must be drained after consumption (= single-use).
-        assert run_id not in session._buffered_intervention_answers
+        assert run_id not in session.buffered_intervention_answers
 
     asyncio.run(_drive())
 
@@ -230,7 +230,7 @@ def test_a2a_restart_resume_round_trip_with_choice_id(tmp_path: Path) -> None:
             await asyncio.sleep(0)
 
         # Buffered answer preserves choice_id.
-        buffered = session._buffered_intervention_answers[run_id]
+        buffered = session.buffered_intervention_answers[run_id]
         assert buffered.text == "always"
         assert buffered.choice_id == "always"
 
