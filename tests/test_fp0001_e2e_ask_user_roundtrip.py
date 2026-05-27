@@ -215,18 +215,12 @@ def test_chat_session_intervention_override_is_used():
         stub_bus = _ScriptedBus()
         session.register_intervention_override(chain_id, stub_bus)
 
-        # Directly probe the override map via the routing logic:
-        # _intervention_overrides is internal but the test uses the
-        # _route_intervention public-equivalent path by calling it through
-        # the session's own method if available.  If the session exposes
-        # a `_route_intervention` method we use it; otherwise we check the
-        # internal dict is non-empty (acceptable — we're testing the
-        # register/unregister contract, not an internal field value).
+        # Probe the override via the session's public accessor.
         iv = UserIntervention(kind="ask_user", prompt="hello?", run_id="r1")
 
         async def _exercise():
             # Simulate what the OS does: look up the override for this chain.
-            override = session._intervention_overrides.get(chain_id)
+            override = session.get_intervention_override(chain_id)
             assert override is stub_bus, (
                 "register_intervention_override must store the bus at the chain_id key"
             )
@@ -243,7 +237,7 @@ def test_chat_session_intervention_override_is_used():
 
         # After unregister, the chain_id should no longer be present.
         session.unregister_intervention_override(chain_id)
-        assert chain_id not in session._intervention_overrides
+        assert not session.has_intervention_override(chain_id)
 
 
 # ---------------------------------------------------------------------------

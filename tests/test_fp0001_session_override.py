@@ -155,18 +155,18 @@ async def test_register_and_unregister_intervention_override(tmp_path):
     chain_id = "chain-abc"
 
     # Before registration — not present.
-    assert chain_id not in session._intervention_overrides
+    assert not session.has_intervention_override(chain_id)
 
     session.register_intervention_override(chain_id, bus)
-    assert session._intervention_overrides.get(chain_id) is bus
+    assert session.get_intervention_override(chain_id) is bus
 
     # Unregister removes it.
     session.unregister_intervention_override(chain_id)
-    assert chain_id not in session._intervention_overrides
+    assert not session.has_intervention_override(chain_id)
 
     # Idempotent: second unregister does not raise.
     session.unregister_intervention_override(chain_id)
-    assert chain_id not in session._intervention_overrides
+    assert not session.has_intervention_override(chain_id)
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +205,7 @@ async def test_dispatch_falls_through_when_no_override(tmp_path):
     answer = await asyncio.wait_for(task, timeout=2.0)
     assert answer.text == "default-answer"
     # Override bus was never called (no override registered).
-    assert "_intervention_overrides" in dir(session)
+    assert session.intervention_override_count() == 0
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +434,7 @@ def test_send_to_agent_impl_override_registered_and_cleaned_up(tmp_path, monkeyp
     # The same chain_id was registered and unregistered.
     assert registered_chain_ids[0] == unregistered_chain_ids[0]
     # After the call, the session has no lingering overrides.
-    assert session._intervention_overrides == {}
+    assert session.intervention_override_count() == 0
 
 
 def test_send_to_agent_impl_override_cleaned_up_on_exception(tmp_path, monkeypatch):
@@ -469,9 +469,8 @@ def test_send_to_agent_impl_override_cleaned_up_on_exception(tmp_path, monkeypat
         asyncio.run(go())
 
     # After the exception, the session must have no lingering overrides.
-    assert session._intervention_overrides == {}, (
-        f"Override leak detected: {session._intervention_overrides!r}"
-    )
+    leak_count = session.intervention_override_count()
+    assert leak_count == 0, f"Override leak detected: {leak_count} stale entries"
 
 
 # ---------------------------------------------------------------------------
@@ -568,4 +567,4 @@ def test_concurrent_send_to_agent_impl_no_override_leak(tmp_path, monkeypatch):
     )
 
     # No lingering overrides after both calls.
-    assert session._intervention_overrides == {}
+    assert session.intervention_override_count() == 0
