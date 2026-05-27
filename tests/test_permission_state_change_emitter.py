@@ -146,7 +146,7 @@ def test_persist_callback_exception_does_not_crash_persist(tmp_path):
     # Good callback still fired despite bad_cb raising.
     assert good_calls == ["safe.key"]
     # And approvals.yaml side still completed.
-    assert resolver._saved.get("safe.key") is True
+    assert resolver.saved_get("safe.key") is True
 
 
 # ── ChatSession wiring ────────────────────────────────────────────────
@@ -216,7 +216,7 @@ def test_session_with_no_resolver_works_unchanged(tmp_path):
         snapshot_path=tmp_path / "loner_snapshot.json",
         # permission_resolver=None — default
     )
-    assert session._on_perm_persist_cb is None
+    assert session.on_perm_persist_cb is None
     # No exception even though no resolver was wired.
 
 
@@ -229,12 +229,12 @@ async def test_session_shutdown_unregisters_callback(tmp_path):
     resolver = _make_resolver(tmp_path)
     session = _make_session(tmp_path, agent_name="ephemeral", perm_resolver=resolver)
 
-    pre = len(resolver._on_persist_callbacks)
+    pre = resolver.on_persist_callback_count()
     assert pre == 1
 
     await session.shutdown()
     # Drain the shutdown signal that shutdown put on the inbox so the
     # call doesn't block other tests if reused. Inbox shutdown isn't
     # the focus here — just confirming unregister fired.
-    assert session._on_perm_persist_cb is None
-    assert len(resolver._on_persist_callbacks) == pre - 1
+    assert session.on_perm_persist_cb is None
+    assert resolver.on_persist_callback_count() == pre - 1
