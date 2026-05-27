@@ -51,15 +51,122 @@ Not yet implemented (= Phase 2 step 3+):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import math
+import os
 import struct
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
 if TYPE_CHECKING:
     from reyn.embedding.provider import EmbeddingProvider
+
+
+def _pid_alive(pid: int) -> bool:
+    """Best-effort check whether a PID corresponds to a live process.
+
+    On POSIX, ``os.kill(pid, 0)`` raises ProcessLookupError when the PID
+    is gone and PermissionError when it exists but is not ours; both
+    mean "still alive enough to defer to". Windows is best-effort.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+@contextlib.contextmanager
+def _try_acquire_build_lock(persist_dir: Path) -> Iterator[bool]:
+    """Advisory cross-process build lock — non-blocking, take-or-skip.
+
+    Writes a marker file at ``<persist_dir>/.build.lock`` carrying
+    ``{pid, ts}``. The contract:
+
+      - If the file is absent OR the previous holder's PID is dead,
+        we take the lock and yield ``True``. The caller proceeds with
+        the build and the marker is removed on exit.
+      - If a live holder is detected, we yield ``False`` immediately
+        (= no waiting, no embed-call duplication). The caller is
+        expected to either fall back to whatever's already on disk or
+        skip the build entirely and let the next attempt observe the
+        finished state.
+
+    Atomicity: uses ``O_CREAT | O_EXCL`` for the take so two processes
+    racing the take produce exactly one winner. A subsequent stale-PID
+    reap is also atomic (unlink + re-take).
+
+    Filesystem-write errors fall through with ``False`` (= caller skips
+    the build rather than crashing on a permission / quota issue).
+    """
+    lock_path = persist_dir / ".build.lock"
+    try:
+        persist_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        yield False
+        return
+
+    def _take_atomic() -> bool:
+        try:
+            fd = os.open(
+                str(lock_path),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o644,
+            )
+        except FileExistsError:
+            return False
+        except OSError:
+            return False
+        try:
+            os.write(
+                fd,
+                json.dumps({"pid": os.getpid(), "ts": time.time()}).encode(),
+            )
+        finally:
+            os.close(fd)
+        return True
+
+    took = _take_atomic()
+    if not took:
+        # Existing lock — see if the holder is alive.
+        try:
+            data = json.loads(lock_path.read_text(encoding="utf-8"))
+            holder_pid = int(data.get("pid", 0))
+        except (OSError, ValueError, json.JSONDecodeError):
+            holder_pid = 0
+        if holder_pid and _pid_alive(holder_pid):
+            yield False
+            return
+        # Stale lock — reap and retry exactly once.
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            yield False
+            return
+        if not _take_atomic():
+            yield False
+            return
+
+    try:
+        yield True
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -125,6 +232,7 @@ class ActionEmbeddingIndex:
         self._vectors: dict[str, list[float]] = {}
         self._items: dict[str, dict[str, Any]] = {}
         self._catalog_hash: str | None = None
+        self._model_class: str | None = None  # FP-0043 Component E: class-swap detection
         self._build_lock = asyncio.Lock()
         self._building = False
         self._persist_dir = persist_dir
@@ -137,14 +245,23 @@ class ActionEmbeddingIndex:
             return None
         return self._persist_dir / "index.db"
 
-    def _try_load_from_disk(self, expected_hash: str) -> bool:
-        """Load vectors from SQLite if the on-disk catalog hash matches.
+    def _try_load_from_disk(
+        self, expected_hash: str, expected_model_class: str,
+    ) -> bool:
+        """Load vectors from SQLite if BOTH catalog hash AND model class match.
 
         Returns True and populates ``_vectors`` / ``_items`` /
-        ``_catalog_hash`` when the disk state is fresh.  Returns False
-        (without mutating state) when the DB is absent, unreadable, or
-        has a different hash.  Any exception is swallowed — disk load
-        failure is non-fatal; the caller falls through to re-embedding.
+        ``_catalog_hash`` / ``_model_class`` when the disk state is
+        fresh against the supplied expectations. Returns False (without
+        mutating state) when the DB is absent, unreadable, or has a
+        different catalog hash or a different model class.
+
+        FP-0043 Component E: model class is checked alongside catalog
+        hash so a class swap (= operator edits
+        ``action_retrieval.embedding_class`` between sessions, or two
+        sessions configured against different classes share the cache
+        dir) invalidates the cache. Otherwise vectors from a different
+        embedding model would be returned by query() → garbage results.
 
         Caller MUST hold ``_build_lock``.
         """
@@ -156,19 +273,22 @@ class ActionEmbeddingIndex:
             con = sqlite3.connect(str(db_path))
             con.execute("PRAGMA journal_mode=WAL")
             try:
-                row = con.execute(
-                    "SELECT value FROM meta WHERE key='catalog_hash'"
-                ).fetchone()
-                if row is None or row[0] != expected_hash:
-                    return False
                 rows = con.execute(
+                    "SELECT key, value FROM meta"
+                ).fetchall()
+                meta = {k: v for k, v in rows}
+                if meta.get("catalog_hash") != expected_hash:
+                    return False
+                if meta.get("model_class") != expected_model_class:
+                    return False
+                vec_rows = con.execute(
                     "SELECT qualified_name, item_json, vector_blob FROM vectors"
                 ).fetchall()
             finally:
                 con.close()
             vectors: dict[str, list[float]] = {}
             items: dict[str, dict[str, Any]] = {}
-            for qn, item_json, vec_blob in rows:
+            for qn, item_json, vec_blob in vec_rows:
                 n = len(vec_blob) // 8
                 vec = list(struct.unpack(f"{n}d", vec_blob))
                 vectors[qn] = vec
@@ -176,6 +296,7 @@ class ActionEmbeddingIndex:
             self._vectors = vectors
             self._items = items
             self._catalog_hash = expected_hash
+            self._model_class = expected_model_class
             return True
         except Exception:
             return False
@@ -186,6 +307,13 @@ class ActionEmbeddingIndex:
         No-op when ``persist_dir`` is None or no catalog hash is recorded.
         Persistence failures are swallowed — in-memory state is always
         authoritative; a failed write is retried on the next build.
+
+        FP-0043 Component E: ``model_class`` is persisted alongside
+        ``catalog_hash`` so a future load can detect class-swap
+        invalidation. The two keys are co-written in the same
+        transaction; the new vectors are also written in the same
+        transaction so an interrupted save can't leave the meta keys
+        pointing at the previous build's vectors.
 
         Caller MUST hold ``_build_lock``.
         """
@@ -211,6 +339,10 @@ class ActionEmbeddingIndex:
                 con.execute(
                     "INSERT OR REPLACE INTO meta VALUES ('catalog_hash', ?)",
                     (self._catalog_hash,),
+                )
+                con.execute(
+                    "INSERT OR REPLACE INTO meta VALUES ('model_class', ?)",
+                    (self._model_class or "",),
                 )
                 rows_to_insert = []
                 for qn, vec in self._vectors.items():
@@ -241,6 +373,18 @@ class ActionEmbeddingIndex:
         """Return the recorded catalog snapshot hash, or None pre-build."""
         return self._catalog_hash
 
+    @property
+    def model_class(self) -> str | None:
+        """Return the model class associated with the current vectors, or None.
+
+        FP-0043 Component E: paired with ``catalog_hash`` as a two-axis
+        cache key. A change in either axis triggers rebuild on the next
+        ``build()`` call. Exposed as a public read-only property so
+        callers + tests can observe the binding without reaching into
+        the underscored attribute.
+        """
+        return self._model_class
+
     def size(self) -> int:
         """Return the number of indexed items (= vectors stored)."""
         return len(self._vectors)
@@ -259,67 +403,121 @@ class ActionEmbeddingIndex:
         category-prefixed name and the human-readable summary
         contribute to the embedding.
 
-        Idempotent: when the catalog hash matches the current state,
-        returns immediately without re-embedding.  Different hash
-        triggers a full rebuild (Phase 2 step 2 will diff).
+        Unified build trigger (FP-0043 Component E): the call is
+        idempotent in three orthogonal ways —
+
+          1. catalog hash matches AND model class matches  → no-op
+          2. catalog hash matches BUT model class differs  → rebuild
+             (class-swap invalidates vectors from the previous model)
+          3. catalog hash differs                          → rebuild
+             (= the existing "different hash triggers rebuild" semantics
+             from Phase 2 step 2 are preserved as a strict subset)
+
+        Cross-process build coordination: when ``persist_dir`` is set,
+        a non-blocking advisory file lock (= ``.build.lock`` marker
+        carrying ``{pid, ts}``) coordinates concurrent builds across
+        OS processes. If another live process is mid-build, this call
+        falls back to the disk state without invoking the embedding
+        provider — preventing duplicate API-cost / duplicate
+        sentence-transformers model loads. Single-process callers
+        bypass the file lock when ``persist_dir`` is None.
         """
         async with self._build_lock:
             new_hash = compute_catalog_hash(list(items))
-            if new_hash == self._catalog_hash:
-                return  # idempotent (in-memory match)
+            if (
+                new_hash == self._catalog_hash
+                and self._model_class == model_class
+            ):
+                return  # idempotent (in-memory match on BOTH axes)
 
-            # Phase 2 step 2: try loading from disk before embedding.
-            if self._try_load_from_disk(new_hash):
+            # Phase 2 step 2 + Component E: try loading from disk first.
+            # The disk check honours the same (catalog_hash, model_class)
+            # pair, so a class-swap with a fresh catalog hash will load
+            # cleanly when that combination was persisted previously
+            # (= e.g. user toggles between local-mini and standard).
+            if self._try_load_from_disk(new_hash, model_class):
                 return  # cache hit — skip embed call
 
-            # Filter out items missing qualified_name once; embed each
-            # remaining one.  Keep the items list ordered by sorted
-            # qualified_name for determinism in tests.
-            valid_items = sorted(
-                (dict(it) for it in items if it.get("qualified_name")),
-                key=lambda it: str(it["qualified_name"]),
-            )
-            if not valid_items:
-                # Empty catalog — record the empty hash and persist.
-                self._vectors = {}
-                self._items = {}
-                self._catalog_hash = new_hash
-                self._save_to_disk()
-                return
+            # Cross-process advisory lock (= take-or-skip). When another
+            # live process holds the lock, fall back to whatever's on
+            # disk and avoid duplicate embed calls. We accept that the
+            # fallback may be a stale state — the in-flight build will
+            # publish its result, and the next build() call on this
+            # instance observes it via _try_load_from_disk.
+            persist_dir = self._persist_dir
+            if persist_dir is not None:
+                file_lock_cm = _try_acquire_build_lock(persist_dir)
+            else:
+                # No persist_dir → no cross-process coordination needed
+                # (= test / fully-in-memory path). Use a trivial
+                # always-acquired context to keep the control flow flat.
+                file_lock_cm = contextlib.nullcontext(True)
 
-            texts = [
-                f"{it['qualified_name']}: {it.get('short_description', '')}"
-                for it in valid_items
-            ]
+            with file_lock_cm as got_lock:
+                if not got_lock:
+                    # Another process is building. We can't safely block
+                    # the event loop on a sync lock; surface our current
+                    # state (likely empty or stale) and let the next
+                    # call observe the in-progress process's result.
+                    return
 
-            self._building = True
-            _built_ok = False
-            try:
-                result = await provider.embed(texts, model_class)
-                vectors = list(result["vectors"])
-                if len(vectors) != len(valid_items):
-                    # Provider returned a mismatched count — refuse the
-                    # partial result so we don't end up with a corrupt
-                    # half-populated index.  The catalog hash is NOT
-                    # updated so the next build attempt retries.
-                    raise RuntimeError(
-                        f"EmbeddingProvider returned {len(vectors)} vectors "
-                        f"for {len(valid_items)} items; refusing partial build"
-                    )
-                self._vectors = {
-                    str(it["qualified_name"]): list(v)
-                    for it, v in zip(valid_items, vectors)
-                }
-                self._items = {
-                    str(it["qualified_name"]): it
+                # Re-check disk under the lock — another process may
+                # have completed between our pre-lock check and now.
+                if self._try_load_from_disk(new_hash, model_class):
+                    return
+
+                # Filter out items missing qualified_name once; embed
+                # each remaining one. Keep the items list ordered by
+                # sorted qualified_name for determinism in tests.
+                valid_items = sorted(
+                    (dict(it) for it in items if it.get("qualified_name")),
+                    key=lambda it: str(it["qualified_name"]),
+                )
+                if not valid_items:
+                    # Empty catalog — record the empty hash and persist.
+                    self._vectors = {}
+                    self._items = {}
+                    self._catalog_hash = new_hash
+                    self._model_class = model_class
+                    self._save_to_disk()
+                    return
+
+                texts = [
+                    f"{it['qualified_name']}: {it.get('short_description', '')}"
                     for it in valid_items
-                }
-                self._catalog_hash = new_hash
-                _built_ok = True
-            finally:
-                self._building = False
-            if _built_ok:
-                self._save_to_disk()
+                ]
+
+                self._building = True
+                _built_ok = False
+                try:
+                    result = await provider.embed(texts, model_class)
+                    vectors = list(result["vectors"])
+                    if len(vectors) != len(valid_items):
+                        # Provider returned a mismatched count — refuse
+                        # the partial result so we don't end up with a
+                        # corrupt half-populated index. The catalog
+                        # hash is NOT updated so the next build attempt
+                        # retries.
+                        raise RuntimeError(
+                            f"EmbeddingProvider returned {len(vectors)} "
+                            f"vectors for {len(valid_items)} items; "
+                            f"refusing partial build"
+                        )
+                    self._vectors = {
+                        str(it["qualified_name"]): list(v)
+                        for it, v in zip(valid_items, vectors)
+                    }
+                    self._items = {
+                        str(it["qualified_name"]): it
+                        for it in valid_items
+                    }
+                    self._catalog_hash = new_hash
+                    self._model_class = model_class
+                    _built_ok = True
+                finally:
+                    self._building = False
+                if _built_ok:
+                    self._save_to_disk()
 
     async def query(
         self,
