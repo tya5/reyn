@@ -7,7 +7,7 @@ real against a per-test tmp cache dir.
 
 URL resolution: PR-9 (post #571 collapse arc, 2026-05-24) made the
 base URL resolution honor ``REYN_MCP_REGISTRY_URL`` env var, mirroring
-the chain used by ``reyn.registry.client._base_url``. See the "URL
+the chain used by ``reyn.registry.client.base_url``. See the "URL
 resolution" section below for the tests pinning that behavior.
 
 Threat-model rationale (= ambient registry lookup, no per-skill
@@ -229,25 +229,25 @@ def test_lookup_caches_response(_isolated_cache):
 def test_base_url_default_is_official_registry(monkeypatch):
     """Tier 2: default base URL falls back to the official MCP registry."""
     monkeypatch.delenv("REYN_MCP_REGISTRY_URL", raising=False)
-    assert sr._base_url() == "https://registry.modelcontextprotocol.io"
+    assert sr.base_url() == "https://registry.modelcontextprotocol.io"
 
 
 def test_base_url_honors_env_var(monkeypatch):
     """Tier 2: ``REYN_MCP_REGISTRY_URL`` overrides the default URL.
 
     Mirrors the resolution chain in
-    ``reyn.registry.client._base_url`` so an operator-set private /
+    ``reyn.registry.client.base_url`` so an operator-set private /
     corporate registry applies uniformly to both the async op-handler
     client and this safe-mode skill-internal lookup.
     """
     monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://private.example.com/mcp")
-    assert sr._base_url() == "https://private.example.com/mcp"
+    assert sr.base_url() == "https://private.example.com/mcp"
 
 
 def test_base_url_strips_trailing_slash(monkeypatch):
     """Tier 2: trailing slash on the env-var value is normalised away."""
     monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://private.example.com/mcp/")
-    assert sr._base_url() == "https://private.example.com/mcp"
+    assert sr.base_url() == "https://private.example.com/mcp"
 
 
 def test_search_uses_overridden_base_url(monkeypatch, _isolated_cache):
@@ -289,7 +289,7 @@ def test_registry_urls_plural_env_var_takes_priority(monkeypatch):
     """Tier 2: ``REYN_MCP_REGISTRY_URLS`` (plural) wins over singular."""
     monkeypatch.setenv("REYN_MCP_REGISTRY_URLS", "https://private.example.com,https://public.example.com")
     monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://singular.example.com")
-    assert sr._registry_urls() == [
+    assert sr.registry_urls() == [
         "https://private.example.com",
         "https://public.example.com",
     ]
@@ -299,20 +299,20 @@ def test_registry_urls_falls_back_to_singular(monkeypatch):
     """Tier 2: when plural is unset, singular env var becomes a one-item list."""
     monkeypatch.delenv("REYN_MCP_REGISTRY_URLS", raising=False)
     monkeypatch.setenv("REYN_MCP_REGISTRY_URL", "https://singular.example.com")
-    assert sr._registry_urls() == ["https://singular.example.com"]
+    assert sr.registry_urls() == ["https://singular.example.com"]
 
 
 def test_registry_urls_default(monkeypatch):
     """Tier 2: with neither env var set, default to the public registry."""
     monkeypatch.delenv("REYN_MCP_REGISTRY_URLS", raising=False)
     monkeypatch.delenv("REYN_MCP_REGISTRY_URL", raising=False)
-    assert sr._registry_urls() == ["https://registry.modelcontextprotocol.io"]
+    assert sr.registry_urls() == ["https://registry.modelcontextprotocol.io"]
 
 
 def test_registry_urls_strips_trailing_slashes(monkeypatch):
     """Tier 2: trailing slashes are normalised per-entry."""
     monkeypatch.setenv("REYN_MCP_REGISTRY_URLS", "https://a.example/, https://b.example/mcp/")
-    assert sr._registry_urls() == ["https://a.example", "https://b.example/mcp"]
+    assert sr.registry_urls() == ["https://a.example", "https://b.example/mcp"]
 
 
 def test_lookup_iterates_on_404_fallback(monkeypatch, _isolated_cache):
