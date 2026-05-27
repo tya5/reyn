@@ -235,9 +235,9 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
         return result
 
     monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
-    monkeypatch.setattr(session._router_host, "spawn_skill", fake_adapter_spawn_skill)
+    monkeypatch.setattr(session.router_host, "spawn_skill", fake_adapter_spawn_skill)
     monkeypatch.setattr(
-        session._router_host,
+        session.router_host,
         "list_available_skills",
         lambda: [{"name": "some_skill", "category": "general"}],
     )
@@ -338,10 +338,10 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
-    """Tier 1: public contract — RouterHostAdapter (session._router_host) exposes all RouterLoopHost required methods and property types. Protocol compliance test; fails when required API is removed or renamed from the adapter."""
+    """Tier 1: public contract — RouterHostAdapter (session.router_host) exposes all RouterLoopHost required methods and property types. Protocol compliance test; fails when required API is removed or renamed from the adapter."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    host = session._router_host
+    host = session.router_host
 
     required = [
         "chat_id", "agent_name", "agent_role",
@@ -375,8 +375,8 @@ def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
     resolver = ModelResolver({"router": "openai/gpt-4o-mini"})
     session = ChatSession(agent_name="test_agent", resolver=resolver)
 
-    assert session._router_host.resolve_model("router") == "openai/gpt-4o-mini"
-    assert session._router_host.resolve_model("unknown") == "unknown"  # pass-through
+    assert session.router_host.resolve_model("router") == "openai/gpt-4o-mini"
+    assert session.router_host.resolve_model("unknown") == "unknown"  # pass-through
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +388,7 @@ def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
 
-    skills = session._router_host.list_available_skills()
+    skills = session.router_host.list_available_skills()
     names = {s.get("name") for s in skills}
     assert "skill_router" not in names
     assert "chat_compactor" not in names

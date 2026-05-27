@@ -1851,6 +1851,16 @@ class ChatSession:
         return self._agent_role
 
     @property
+    def router_host(self):
+        """Read-only accessor for the session's RouterHostAdapter.
+
+        Tests (Tier-1 protocol-compliance + Tier-2 behavioural) probe
+        the adapter via this surface. The adapter instance is set once
+        in ``__init__`` and never re-bound.
+        """
+        return self._router_host
+
+    @property
     def outbox_interceptor(self):
         """Read-only accessor for the per-session outbox interceptor.
 
