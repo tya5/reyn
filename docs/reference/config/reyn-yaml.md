@@ -313,7 +313,7 @@ FP-0034 universal catalog visibility + retrieval settings.  Provides the chat ro
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # default since PR-3b-iv; set false to opt out
-  embedding_class: null               # name in embedding.classes for search_actions
+  embedding_class: local-mini         # default since FP-0043 Phase 4
   hot_list_n: 10                      # Phase 2 — top-N freq+recency projection
   mode: default                       # default | minimal | performance (§D24)
 ```
@@ -331,7 +331,7 @@ action_retrieval:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | When `true` (default since PR-3b-iv), the router's `tools=` exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM but remain in the registry as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class` (FP-0034 §D14).  Set `false` to disable the wrapper surface entirely (= no catalog routing; legacy tools become the only addressing path again — primarily for fixture-stability tests). |
-| `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search (FP-0034 §D13).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled. Setting this also enables [eager embedding build](#reyn-chat---eager-embedding-build) on cold-start sessions to avoid Turn-1 hallucinations. |
+| `embedding_class` | string \| null | `"local-mini"` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search (FP-0034 §D13).  Default since FP-0043 Phase 4: `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  Setting this also enables [eager embedding build](#reyn-chat---eager-embedding-build) on cold-start sessions to avoid Turn-1 hallucinations.  **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, ChatSession silently treats this as `null` and the [`list_actions` hidden-state hint](../../concepts/universal-catalog.md#what-stays-out-of-phase-1) surfaces the install command to the LLM. Set explicitly to `standard` (= OpenAI) or `null` (= opt out) to override. |
 | `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases (FP-0034 §D2 / §D24). Must be ≥ 0. `0` opts out entirely (= §D24 minimal mode). |
 | `mode` | string | `"default"` | Operational mode label per §D24: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
 

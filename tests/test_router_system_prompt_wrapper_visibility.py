@@ -92,9 +92,12 @@ def test_search_actions_enabled_true_includes_behaviour_guidance() -> None:
 def test_search_actions_enabled_false_omits_search_actions_from_sp() -> None:
     """Tier 2: search_actions_enabled=False → search_actions absent from SP.
 
-    This is the path when no embedding_class is configured (= default env).
-    The LLM must not see search_actions in the SP because it is not in
-    tools=, which would invite hallucinated calls (N5 finding).
+    This is the path when embedding_class is unset (= explicit ``null`` /
+    empty in ``reyn.yaml``) OR the graceful-degrade probe fired (= FP-0043
+    Phase 4 default `local-mini` but ``reyn[local-embed]`` extras absent).
+    Both routes set ``search_actions_enabled=False`` upstream. The LLM
+    must not see search_actions in the SP because it is not in tools=,
+    which would invite hallucinated calls (N5 finding).
     """
     sp = build_system_prompt(**_BASE, search_actions_enabled=False)
     assert "search_actions" not in sp

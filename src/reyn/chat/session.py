@@ -142,6 +142,43 @@ def _parse_no_reply_marker(text: str) -> tuple[str, str] | None:
     return m.group(1).strip(), m.group(2).strip()
 
 
+def _embedding_class_needs_missing_extras(
+    class_name: str, embedding_config: Any,
+) -> bool:
+    """Whether the configured embedding class needs sentence-transformers
+    extras that haven't been installed (FP-0043 Phase 4 graceful-degrade).
+
+    The Phase 4 default flip makes ``action_retrieval.embedding_class``
+    default to ``"local-mini"``. For fresh installs that don't have
+    ``pip install 'reyn[local-embed]'`` yet, we don't want to instantiate
+    an ActionEmbeddingIndex whose first embed() call will ImportError —
+    we want ``search_actions`` to stay hidden and let list_actions
+    surface the hidden-state hint pointing operators at the install
+    command. Returns True iff:
+
+      1. ``class_name`` resolves to an entry in ``embedding_config.classes``
+      2. that entry's ``model`` starts with ``sentence-transformers/``
+      3. ``sentence_transformers`` is NOT importable in this env
+
+    Any other failure mode (= unknown class, malformed config) returns
+    False — let the normal try/except path handle it.
+    """
+    try:
+        from reyn.embedding.sentence_transformers_provider import (
+            _PREFIX,
+            is_available,
+        )
+        spec = embedding_config.classes.get(class_name)
+        if spec is None:
+            return False
+        model = getattr(spec, "model", None)
+        if not isinstance(model, str) or not model.startswith(_PREFIX):
+            return False
+        return not is_available()
+    except Exception:
+        return False
+
+
 # Localized user-facing message when a peer agent's reply signals failure (B2-H2).
 # "en" is the global-safe default (no regional fallback to "ja" per the Q2
 # i18n principle). Placeholders: {peer} = peer agent name, {reason} = failure reason.
@@ -1284,6 +1321,10 @@ class ChatSession:
             self._action_retrieval.universal_wrappers_enabled
             and self._action_retrieval.embedding_class
             and embedding_config is not None
+            and not _embedding_class_needs_missing_extras(
+                self._action_retrieval.embedding_class,
+                embedding_config,
+            )
         ):
             try:
                 from reyn.embedding import get_provider as _get_provider

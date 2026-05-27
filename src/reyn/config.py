@@ -1147,9 +1147,22 @@ class ActionRetrievalConfig:
             empty, ``search_actions`` is excluded from tools= even if
             ``universal_wrappers_enabled`` is True (§D14 gating).
 
-            Phase 1 leaves the embedding index unbuilt; PR-3b+ may
-            add it. Setting this field today is harmless (= no
-            consumers).
+            **Default since FP-0043 Phase 4**: ``"local-mini"`` (=
+            ``sentence-transformers/all-MiniLM-L6-v2``). When the
+            ``local-embed`` extras are not installed (= ``import
+            sentence_transformers`` fails), ChatSession silently
+            degrades to None — ``search_actions`` stays hidden and
+            ``list_actions`` injects a hidden-state hint pointing
+            operators at ``pip install 'reyn[local-embed]'``. So the
+            new default is "active when the import succeeds, no-op
+            otherwise", giving zero-config fresh users semantic
+            search the moment they install the extras.
+
+            Operators who want OpenAI-backed embeddings instead can
+            set ``action_retrieval.embedding_class: standard`` (= or
+            ``light`` / ``strong``) explicitly in reyn.yaml. Setting
+            it to ``null`` or empty disables ``search_actions``
+            entirely.
 
         hot_list_n:
             Hot list size for top-N freq+recency projection (§D2).
@@ -1170,7 +1183,7 @@ class ActionRetrievalConfig:
     """
 
     universal_wrappers_enabled: bool = True
-    embedding_class: str | None = None
+    embedding_class: str | None = "local-mini"
     hot_list_n: int = 20
     mode: str = "default"
     # FP-0034 §D16: seed qualified names for initial hot list (before freq
