@@ -36,25 +36,25 @@ def test_set_in_flight_toggles_css_class_idempotently() -> None:
 
     bar = InputBar()
     # Default state.
-    assert bar._in_flight is False
+    assert bar.is_in_flight() is False
     assert not bar.has_class("in-flight")
 
     bar.set_in_flight(True)
-    assert bar._in_flight is True
+    assert bar.is_in_flight() is True
     assert bar.has_class("in-flight")
 
     # Idempotent re-set is a no-op.
     bar.set_in_flight(True)
-    assert bar._in_flight is True
+    assert bar.is_in_flight() is True
     assert bar.has_class("in-flight")
 
     bar.set_in_flight(False)
-    assert bar._in_flight is False
+    assert bar.is_in_flight() is False
     assert not bar.has_class("in-flight")
 
     # Idempotent un-set.
     bar.set_in_flight(False)
-    assert bar._in_flight is False
+    assert bar.is_in_flight() is False
     assert not bar.has_class("in-flight")
 
 
@@ -102,7 +102,7 @@ async def test_submit_during_in_flight_swallows_text_unchanged() -> None:
         bar._submit(ta)
         (first_msg,) = posted
         assert first_msg.text == "hi"
-        assert bar._in_flight is True
+        assert bar.is_in_flight() is True
         assert bar.has_class("in-flight")
         assert ta.text == "", "first submit should clear the TextArea"
 
@@ -146,5 +146,5 @@ async def test_ctrl_c_releases_in_flight_lock() -> None:
 
         app.action_cancel_inflight()
         await pilot.pause()
-        assert bar._in_flight is False
+        assert bar.is_in_flight() is False
         assert not bar.has_class("in-flight")

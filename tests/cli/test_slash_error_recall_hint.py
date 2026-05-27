@@ -209,9 +209,9 @@ async def test_inputbar_history_captures_slash_submit() -> None:
         ta.load_text("/image")
         input_bar._submit(ta)
 
-        assert "/image" in input_bar._history, (
+        assert "/image" in input_bar.history, (
             "InputBar history must contain '/image' after _submit; "
-            f"got history: {list(input_bar._history)!r}"
+            f"got history: {list(input_bar.history)!r}"
         )
 
 
@@ -244,7 +244,7 @@ async def test_inputbar_history_captures_errored_slash_submit() -> None:
         ta.load_text("/image bad-path")
         input_bar._submit(ta)
 
-        assert "/image bad-path" in input_bar._history, (
+        assert "/image bad-path" in input_bar.history, (
             "InputBar history must contain '/image bad-path' after _submit; "
-            f"got history: {list(input_bar._history)!r}"
+            f"got history: {list(input_bar.history)!r}"
         )

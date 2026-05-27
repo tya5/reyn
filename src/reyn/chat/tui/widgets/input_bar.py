@@ -333,6 +333,19 @@ class InputBar(Widget):
         """
         return self._in_flight
 
+    @property
+    def history(self) -> "deque[str]":
+        """Return the live input-history deque.
+
+        Exposed for tests so they can inspect length, membership, and
+        the ordered sequence without asserting on the private ``_history``
+        attribute (feedback_test_public_surface_not_private_state policy).
+        Tests that need to seed or clear history for setup use this property
+        directly — the deque is mutable on purpose so test isolation is
+        straightforward.
+        """
+        return self._history
+
 
     def append_text(self, text: str) -> None:
         """Append text to the current input (used by voice dictation).

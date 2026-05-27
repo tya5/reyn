@@ -54,12 +54,12 @@ async def test_history_deque_caps_at_max() -> None:
         input_bar = app.query_one("#inputbar", InputBar)
         # Fill past the cap.
         for i in range(_HISTORY_MAX + 10):
-            input_bar._history.append(f"entry-{i}")
+            input_bar.history.append(f"entry-{i}")
         # Cap enforced.
-        assert len(input_bar._history) == _HISTORY_MAX
+        assert len(input_bar.history) == _HISTORY_MAX
         # Oldest entries evicted; newest preserved.
-        assert "entry-0" not in input_bar._history
-        assert f"entry-{_HISTORY_MAX + 9}" in input_bar._history
+        assert "entry-0" not in input_bar.history
+        assert f"entry-{_HISTORY_MAX + 9}" in input_bar.history
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_save_persisted_history_writes_to_prefs(
             app, "_project_root_path", lambda: tmp_path,
         )
         input_bar = app.query_one("#inputbar", InputBar)
-        input_bar._history.extend(["alpha", "beta", "gamma"])
+        input_bar.history.extend(["alpha", "beta", "gamma"])
         input_bar._save_persisted_history()
         await pilot.pause()
         prefs_path = tmp_path / ".reyn" / "tui_prefs.json"
@@ -103,7 +103,7 @@ async def test_persisted_slice_caps_at_persist_max(
         input_bar = app.query_one("#inputbar", InputBar)
         # Push 2× persist cap.
         for i in range(_HISTORY_PERSIST_MAX * 2):
-            input_bar._history.append(f"entry-{i}")
+            input_bar.history.append(f"entry-{i}")
         input_bar._save_persisted_history()
         await pilot.pause()
         data = json.loads((tmp_path / ".reyn" / "tui_prefs.json").read_text())
@@ -128,9 +128,9 @@ async def test_oversized_entry_excluded_from_persisted_slice(
         input_bar = app.query_one("#inputbar", InputBar)
         small = "alpha"
         huge = "x" * (_HISTORY_ENTRY_PERSIST_MAX_BYTES + 100)
-        input_bar._history.extend([small, huge, "beta"])
+        input_bar.history.extend([small, huge, "beta"])
         # Both small and huge are in memory.
-        assert huge in input_bar._history
+        assert huge in input_bar.history
         # But persisted slice excludes huge.
         input_bar._save_persisted_history()
         await pilot.pause()
@@ -165,9 +165,9 @@ async def test_load_persisted_history_hydrates_on_mount(
         # Re-load explicitly (= on_mount fired before the patch took
         # effect in the test harness; we replay manually to verify
         # the helper).
-        input_bar._history.clear()
+        input_bar.history.clear()
         input_bar._load_persisted_history()
-        assert list(input_bar._history) == ["first", "second", "third"]
+        assert list(input_bar.history) == ["first", "second", "third"]
 
 
 @pytest.mark.asyncio
@@ -183,9 +183,9 @@ async def test_load_persisted_history_missing_file_is_silent(
         await pilot.pause()
         monkeypatch.setattr(app, "_project_root_path", lambda: tmp_path)
         input_bar = app.query_one("#inputbar", InputBar)
-        input_bar._history.clear()
+        input_bar.history.clear()
         input_bar._load_persisted_history()
-        assert list(input_bar._history) == []
+        assert list(input_bar.history) == []
 
 
 @pytest.mark.asyncio
@@ -206,9 +206,9 @@ async def test_load_persisted_history_malformed_value_silent(
         await pilot.pause()
         monkeypatch.setattr(app, "_project_root_path", lambda: tmp_path)
         input_bar = app.query_one("#inputbar", InputBar)
-        input_bar._history.clear()
+        input_bar.history.clear()
         input_bar._load_persisted_history()
-        assert list(input_bar._history) == []
+        assert list(input_bar.history) == []
 
 
 @pytest.mark.asyncio
@@ -226,10 +226,10 @@ async def test_round_trip_submit_then_reload(
         input_bar = app.query_one("#inputbar", InputBar)
         # Simulate two submits.
         for q in ("hello", "world"):
-            input_bar._history.append(q)
+            input_bar.history.append(q)
             input_bar._save_persisted_history()
         await pilot.pause()
         # Simulate a fresh boot.
-        input_bar._history.clear()
+        input_bar.history.clear()
         input_bar._load_persisted_history()
-        assert list(input_bar._history) == ["hello", "world"]
+        assert list(input_bar.history) == ["hello", "world"]
