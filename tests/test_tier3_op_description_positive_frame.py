@@ -90,11 +90,11 @@ def test_shell_op_description_is_positive_frame(tmp_path: Path) -> None:
     executor = _build_executor(tmp_path, shell_allowed=True)
     specs = executor.available_ops()
     shell_specs = [s for s in specs if s.kind == "shell"]
-    assert len(shell_specs) == 1, (
-        f"Expected exactly one shell op spec when shell_allowed=True; "
-        f"got {len(shell_specs)}"
-    )
-    _assert_no_misleading_caveat(shell_specs[0].description, "shell")
+    # unpack-enforcement (= behavior pin, not size pin): raises
+    # ValueError when shell_specs has != 1 element. Caught by the
+    # test framework with a clear message.
+    (shell_spec,) = shell_specs
+    _assert_no_misleading_caveat(shell_spec.description, "shell")
 
 
 def test_shell_op_description_carries_positive_affirmation(tmp_path: Path) -> None:
@@ -123,11 +123,9 @@ def test_mcp_op_description_is_positive_frame(tmp_path: Path) -> None:
         mcp_servers={"servers": {"github": {"transport": "stdio"}}},
     )
     mcp_specs = [s for s in executor.available_ops() if s.kind == "mcp"]
-    assert len(mcp_specs) == 1, (
-        f"Expected exactly one mcp op spec when mcp_servers is non-empty; "
-        f"got {len(mcp_specs)}"
-    )
-    _assert_no_misleading_caveat(mcp_specs[0].description, "mcp")
+    # unpack-enforcement (= behavior pin, not size pin)
+    (mcp_spec,) = mcp_specs
+    _assert_no_misleading_caveat(mcp_spec.description, "mcp")
 
 
 def test_mcp_install_tool_description_is_positive_frame() -> None:
