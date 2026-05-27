@@ -257,14 +257,28 @@ def setup_worktree(worker: WorkerSpec, head: str, repo_root: Path) -> None:
         "  web.fetch: allow\n"
         "sandbox:\n"
         "  backend: noop\n"
+    )
+    # B55 retro fix (2026-05-27): chat.compaction config lowering is opt-in
+    # per worker via ``compaction_grant: true`` in the batch yaml. Previously
+    # it was injected unconditionally — that cross-impacted unrelated
+    # short-skill scenarios on other workers because the lowered
+    # head_size/tail_size (= 1/1) is consumed by
+    # ``_build_history_for_router`` (session.py:4454), which slices history
+    # to ``head + tail`` whenever ``len(turns) > head + tail``. A normal
+    # skill spawn turn has 4 history entries (user request + assistant
+    # tool_call + tool response + ``[task_completed]``); 1/1 slicing keeps
+    # only the first + last, dropping the assistant turn. The LLM at the
+    # next router call sees only ``[user_request, task_completed]`` and
+    # re-spawns the skill (= B55 W1-S4 R verdict — reply ends as a
+    # spawn-ack instead of the actual stats). Only the worker hosting
+    # chat_compactor_auto_trigger needs the grant.
+    compaction_block = (
         "# B54 R-3 (2026-05-24): chat_compactor needs ~10s of turns to reach\n"
         "# default trigger_total_tokens=30000 via head/tail=12 + min_batch=5.\n"
         "# Lower thresholds so a 5-turn dogfood scenario can trigger the\n"
-        "# CompactionController auto-fire path. Override is additive (= other\n"
-        "# scenarios whose prompts don't grow context don't fire compaction)\n"
-        "# and compaction events are not in any current must_emit /\n"
-        "# must_not_emit rubric outside the chat_compactor_auto_trigger\n"
-        "# scenario, so the change is safe across the rest of the batch.\n"
+        "# CompactionController auto-fire path. Opt-in per worker (B55 retro)\n"
+        "# to avoid cross-impacting short-skill scenarios on workers that do\n"
+        "# not host chat_compactor_auto_trigger.\n"
         "chat:\n"
         "  compaction:\n"
         "    trigger_total_tokens: 2000\n"
@@ -272,6 +286,8 @@ def setup_worktree(worker: WorkerSpec, head: str, repo_root: Path) -> None:
         "    tail_size: 1\n"
         "    min_compact_batch: 2\n"
     )
+    if worker.compaction_grant:
+        runner_grants = runner_grants + compaction_block
     if "Dogfood worker env grants" not in text:
         text = text.rstrip() + "\n" + runner_grants
     dst.write_text(text)

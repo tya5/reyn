@@ -72,6 +72,7 @@ workers:
     n_scenarios: 7
     worktree: /tmp/reyn-worktrees/b55-2
     agent_prefix: dogfood-b55-2-s
+    compaction_grant: true  # B55 retro: opt-in for chat_compactor_auto_trigger
 
   - name: W3
     scenario_set: control_ir_ops.yaml
