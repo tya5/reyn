@@ -121,7 +121,7 @@ async def test_registry_restore_all_includes_outstanding_interventions(tmp_path,
     # Yield so the restore tasks register the iv into the queue
     for _ in range(3):
         await asyncio.sleep(0)
-    iv_ids = [iv.id for iv in session._interventions.list_active()]
+    iv_ids = [iv.id for iv in session.interventions.list_active()]
     assert "iv_stranded" in iv_ids, (
         f"restored intervention must be in the session's queue; got {iv_ids}"
     )
@@ -146,7 +146,7 @@ async def test_session_restore_state_re_enqueues_intervention(tmp_path, monkeypa
     # Yield so any restore-time asyncio tasks schedule
     await asyncio.sleep(0)
 
-    actives = session._interventions.list_active()
+    actives = session.interventions.list_active()
     assert actives
     assert actives[0].id == "iv_recovered"
     assert actives[0].prompt == "Recovered Q?"
@@ -221,7 +221,7 @@ async def test_multiple_restored_interventions_preserve_order(tmp_path, monkeypa
     for _ in range(3):
         await asyncio.sleep(0)
 
-    actives = session._interventions.list_active()
+    actives = session.interventions.list_active()
     assert [iv.id for iv in actives] == ["iv_0", "iv_1", "iv_2"]
 
 
@@ -238,4 +238,4 @@ async def test_restore_state_with_no_interventions_is_noop(tmp_path, monkeypatch
     for _ in range(3):
         await asyncio.sleep(0)
 
-    assert session._interventions.list_active() == []
+    assert session.interventions.list_active() == []
