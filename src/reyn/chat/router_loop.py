@@ -2457,7 +2457,7 @@ class RouterLoop:
     # RouterCallerState callable fields populated by ``_build_router_caller_state``.
     # Tools NOT in this set fall through to the legacy if/elif tree below; the
     # set expands cluster-by-cluster as Phase 3.5 lands the remaining adapters.
-    _REGISTRY_DISPATCH_TOOLS: frozenset[str] = frozenset({
+    REGISTRY_DISPATCH_TOOLS: frozenset[str] = frozenset({
         # Phase 3 step 2 (commit 649a426)
         "list_skills", "describe_skill", "list_agents", "describe_agent",
         "delegate_to_agent", "plan",
@@ -2805,16 +2805,16 @@ class RouterLoop:
         """Execute a validated tool call by name.
 
         Called by dispatch_tool after name/args validation. Tools in
-        ``_REGISTRY_DISPATCH_TOOLS`` go through the unified registry path
+        ``REGISTRY_DISPATCH_TOOLS`` go through the unified registry path
         (= ADR-0026); the rest fall through to the legacy if/elif tree
         until Phase 3.5 ports their handlers.
         """
         # ADR-0026 M4 Phase 3 step 2 — registry dispatch for activated tools
-        if name in self._REGISTRY_DISPATCH_TOOLS:
+        if name in self.REGISTRY_DISPATCH_TOOLS:
             return await self._invoke_via_registry(name, args)
 
         # All router tool clusters are now dispatched via the unified
-        # registry — see ``_REGISTRY_DISPATCH_TOOLS`` at the top of this
+        # registry — see ``REGISTRY_DISPATCH_TOOLS`` at the top of this
         # method.  Phase 3 step 2 + Phase 3.5-D / A+C / B-light / B-mid /
         # B-heavy migrations land here; the legacy if/elif tree was
         # retained only for clusters whose adapter design needed

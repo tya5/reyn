@@ -221,7 +221,7 @@ def test_wrappers_are_in_router_loop_dispatch_set() -> None:
 
     Prevents the regression that landed initially in PR-3b-i: wrappers
     were added to ``tools=`` and registered in the unified registry,
-    but the RouterLoop dispatch set (``_REGISTRY_DISPATCH_TOOLS``) was
+    but the RouterLoop dispatch set (``REGISTRY_DISPATCH_TOOLS``) was
     not extended, so when the LLM actually called list_actions /
     describe_action / invoke_action the router returned
     ``{"error": "unhandled tool: <name>"}`` to the LLM.
@@ -235,9 +235,9 @@ def test_wrappers_are_in_router_loop_dispatch_set() -> None:
         "list_actions", "search_actions",
         "describe_action", "invoke_action",
     ):
-        assert wrapper in RouterLoop._REGISTRY_DISPATCH_TOOLS, (
+        assert wrapper in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
             f"Universal wrapper {wrapper!r} is in get_default_registry() "
-            f"but not in RouterLoop._REGISTRY_DISPATCH_TOOLS. The LLM "
+            f"but not in RouterLoop.REGISTRY_DISPATCH_TOOLS. The LLM "
             f"would see 'unhandled tool: {wrapper}' on every call."
         )
 
@@ -477,11 +477,11 @@ async def test_non_qualified_name_does_not_redirect() -> None:
     tool names — the caller (dispatch_tool) already validated them
     against the catalog, so unrecognised names correctly error.
 
-    Uses a name not in _REGISTRY_DISPATCH_TOOLS to avoid registry dispatch.
+    Uses a name not in REGISTRY_DISPATCH_TOOLS to avoid registry dispatch.
     The '__' check must NOT match names that are plain alphanumeric.
     """
     loop = _CapturingRouterLoop()
-    # 'unknown_plain_tool' has no '__' and is not in _REGISTRY_DISPATCH_TOOLS.
+    # 'unknown_plain_tool' has no '__' and is not in REGISTRY_DISPATCH_TOOLS.
     result = await loop._invoke_router_tool("unknown_plain_tool", {})
 
     # No _invoke_via_registry call via the alias path — falls through to error

@@ -377,26 +377,26 @@ def test_drop_source_in_build_tools():
 
 
 def test_recall_in_dispatch_registry():
-    """Tier 2: recall is in RouterLoop._REGISTRY_DISPATCH_TOOLS for runtime dispatch.
+    """Tier 2: recall is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
 
     B17-S6-1 fix: without this, dispatch_tool would fall through to the
     legacy if/elif tree and return {"error": "unhandled tool: recall"}.
-    _REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
+    REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
     """
     from reyn.chat.router_loop import RouterLoop
-    assert "recall" in RouterLoop._REGISTRY_DISPATCH_TOOLS, (
-        "'recall' missing from RouterLoop._REGISTRY_DISPATCH_TOOLS"
+    assert "recall" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
+        "'recall' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
     )
 
 
 def test_drop_source_in_dispatch_registry():
-    """Tier 2: drop_source is in RouterLoop._REGISTRY_DISPATCH_TOOLS for runtime dispatch.
+    """Tier 2: drop_source is in RouterLoop.REGISTRY_DISPATCH_TOOLS for runtime dispatch.
 
     B17-S8-2 fix: without this, dispatch_tool would fall through to the
     legacy if/elif tree and return {"error": "unhandled tool: drop_source"}.
-    _REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
+    REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
     """
     from reyn.chat.router_loop import RouterLoop
-    assert "drop_source" in RouterLoop._REGISTRY_DISPATCH_TOOLS, (
-        "'drop_source' missing from RouterLoop._REGISTRY_DISPATCH_TOOLS"
+    assert "drop_source" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
+        "'drop_source' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
     )
