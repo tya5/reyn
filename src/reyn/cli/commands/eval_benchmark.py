@@ -63,6 +63,24 @@ def register_benchmark(eval_sub) -> None:
         "--model", default=None, metavar="MODEL",
         help="Model override (default: from reyn.yaml)",
     )
+    p.add_argument(
+        "--allow-shell", dest="allow_shell", action="store_true",
+        help=(
+            "Enable the 'shell' Control IR op for every task in this batch. "
+            "Required when the target skill declares `permissions.shell: true` "
+            "(e.g. `swe_bench`, which checks out repos + runs tests). "
+            "Off by default for safety; matches `reyn run --allow-shell`."
+        ),
+    )
+    p.add_argument(
+        "--allow-unsafe-python", "--allow-untrusted-python",
+        dest="allow_unsafe_python", action="store_true",
+        help=(
+            "Enable unsafe-mode Python preprocessor steps (no AST sandboxing) "
+            "for every task in this batch. Safe-mode python steps run without "
+            "this flag. Off by default; matches `reyn run --allow-unsafe-python`."
+        ),
+    )
 
 
 def run_benchmark(args: argparse.Namespace) -> None:
@@ -220,8 +238,22 @@ async def _run_single_task(
     session,
     run_dir: Path,
     semaphore: asyncio.Semaphore,
+    shell_allowed: bool = False,
+    permission_resolver=None,
+    python_allowed_modules: list[str] | None = None,
 ) -> dict:
-    """Run a single task under the semaphore; return a result record."""
+    """Run a single task under the semaphore; return a result record.
+
+    ``shell_allowed`` + ``permission_resolver`` are derived once at batch
+    start (= from ``--allow-shell`` / ``--allow-unsafe-python`` + the
+    skill's declared permissions) and threaded through every task so the
+    Agent's op_catalog exposes the shell op uniformly. Without this, the
+    LLM doesn't see ``shell`` in the catalog and hallucinates a fake
+    schema (= ``{kind: "shell", op: "run", command: ...}`` vs the real
+    ``{kind: "shell", cmd: ...}``), every retry hits the validator, the
+    batch reports $0.00 cost + 100% error rate. See PR-D follow-up to PR-B
+    (= FP-0008 sandbox_2 calibration block 2026-05-28).
+    """
     from reyn.agent import Agent
     from reyn.config import _find_project_root, load_project_context
     from reyn.user_intervention import StdinInterventionBus
@@ -242,6 +274,10 @@ async def _run_single_task(
             resolver=session.resolver,
             intervention_bus=StdinInterventionBus(),
             safety=session.safety_for(argparse.Namespace()),
+            shell_allowed=shell_allowed,
+            permission_resolver=permission_resolver,
+            python_allowed_modules=python_allowed_modules or list(session.config.python.allowed_modules),
+            mcp_servers=session.config.mcp,
             prompt_cache_enabled=session.config.prompt_cache_enabled,
             project_context=project_context,
             caller="direct",
@@ -314,6 +350,17 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
 
     session = session_mod.Session.from_args(args)
     model = getattr(args, "model", None) or session.config.model
+
+    # Derive shell_allowed + permission_resolver once at batch start (= mirrors
+    # `reyn run`'s pattern in cli/commands/run.py). Without this, the Agent's
+    # OS runtime keeps `shell` out of the op_catalog and the LLM hallucinates
+    # a fake schema on every retry — see _run_single_task docstring.
+    shell_allowed = session.shell_allowed_for(args)
+    unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
+    from reyn.cli.commands.run import _build_permission_resolver
+    perm_resolver = _build_permission_resolver(
+        session.config, shell_allowed, unsafe_python=unsafe_python,
+    )
 
     # Load tasks
     tasks_path = Path(args.tasks)
@@ -388,6 +435,8 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
                 session=session,
                 run_dir=run_dir,
                 semaphore=semaphore,
+                shell_allowed=shell_allowed,
+                permission_resolver=perm_resolver,
             )
         except Exception as exc:
             # A task failure never aborts the batch — log and record the error.

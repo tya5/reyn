@@ -38,6 +38,8 @@ def _make_benchmark_args(
     limit: int | None = None,
     resume: bool = False,
     model: str | None = None,
+    allow_shell: bool = False,
+    allow_unsafe_python: bool = False,
 ) -> argparse.Namespace:
     ns = argparse.Namespace()
     ns.skill_name = skill_name
@@ -47,6 +49,8 @@ def _make_benchmark_args(
     ns.limit = limit
     ns.resume = resume
     ns.model = model
+    ns.allow_shell = allow_shell
+    ns.allow_unsafe_python = allow_unsafe_python
     ns.eval_cmd = "benchmark"
     return ns
 
@@ -143,6 +147,45 @@ def test_benchmark_parses() -> None:
     assert args.concurrency == 8
     assert args.limit == 50
     assert args.resume is True
+    # Permission-flag defaults (= off, matching reyn run)
+    assert args.allow_shell is False
+    assert args.allow_unsafe_python is False
+
+
+def test_benchmark_parses_allow_flags() -> None:
+    """Tier 2: '--allow-shell' + '--allow-unsafe-python' flags parse correctly.
+
+    Pins the parity with ``reyn run``'s permission flags (= PR-D follow-up
+    to PR-B, FP-0008 2026-05-28 calibration block). Without these flags,
+    skills like ``swe_bench`` that declare ``permissions.shell: true``
+    can't actually execute shell ops in batch mode.
+    """
+    from reyn.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "eval", "benchmark", "swe_bench",
+        "--tasks", "tasks.jsonl",
+        "--output", "results/",
+        "--allow-shell",
+        "--allow-unsafe-python",
+    ])
+    assert args.allow_shell is True
+    assert args.allow_unsafe_python is True
+
+
+def test_benchmark_parses_legacy_unsafe_python_alias() -> None:
+    """Tier 2: legacy '--allow-untrusted-python' alias still parses (parity with reyn run)."""
+    from reyn.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "eval", "benchmark", "my_skill",
+        "--tasks", "tasks.jsonl",
+        "--output", "results/",
+        "--allow-untrusted-python",
+    ])
+    assert args.allow_unsafe_python is True
 
 
 # ── test 2: load_tasks valid ──────────────────────────────────────────────────
@@ -380,7 +423,8 @@ def test_single_task_failure_no_abort(
     call_count = 0
 
     async def _stub_run_single_task(
-        task, instance_id, skill, skill_root, model, session, run_dir, semaphore
+        task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
+        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
     ):
         nonlocal call_count
         async with semaphore:
@@ -427,3 +471,98 @@ def test_single_task_failure_no_abort(
     )
     # Find the error entry for t1 in completed_ids (it's still in the list)
     assert "t1" in data.get("completed_ids", []), "t1 must be tracked even when it errored"
+
+
+# ── test 12: --allow-shell propagates to per-task runner ──────────────────────
+
+
+def test_allow_shell_propagates_to_single_task(
+    benchmark_workspace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Tier 2: --allow-shell flag reaches _run_single_task as ``shell_allowed=True``.
+
+    Pins the FP-0008 PR-D fix (= 2026-05-28 calibration block root cause).
+    Without the propagation, the Agent's op_catalog omits shell + the LLM
+    hallucinates a fake shell schema → every retry fails → batch reports
+    100% error with $0.00 cost.
+
+    Verifies the wiring at the per-task layer: when ``--allow-shell`` is
+    set on the namespace, ``_run_single_task`` is called with
+    ``shell_allowed=True``. The reverse (= flag absent → ``shell_allowed=False``)
+    is the default-off path.
+    """
+    # Override the stub Session to honor the actual allow_shell flag
+    # (= the workspace fixture defaults to always-False; we want truth-following)
+    from reyn.cli import session as session_mod
+    from reyn.cli.commands import eval_benchmark as bm
+    from reyn.config import ReynConfig, SafetyConfig
+    from reyn.llm.model_resolver import ModelResolver
+
+    class _TruthfulSession:
+        config = ReynConfig()
+        resolver = ModelResolver({})
+
+        @classmethod
+        def from_args(cls, _args):
+            return cls()
+
+        def model_for(self, args):
+            return "standard", "standard"
+
+        def output_language_for(self, args):
+            return None
+
+        def safety_for(self, args):
+            return SafetyConfig()
+
+        def shell_allowed_for(self, args):
+            return bool(getattr(args, "allow_shell", False))
+
+    monkeypatch.setattr(session_mod, "Session", _TruthfulSession)
+
+    captured: dict = {}
+
+    async def _capture_shell_allowed(
+        task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
+        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
+    ):
+        async with semaphore:
+            captured["shell_allowed"] = shell_allowed
+            captured["permission_resolver_built"] = permission_resolver is not None
+            return {"instance_id": instance_id, "cost_usd": 0.0}
+
+    monkeypatch.setattr(bm, "_run_single_task", _capture_shell_allowed)
+
+    tasks_path = benchmark_workspace.write_tasks([{"instance_id": "t1"}])
+    output_dir = tmp_path / "bench_output_shell"
+
+    # Case A: --allow-shell set → shell_allowed=True reaches the runner
+    args_on = _make_benchmark_args(
+        skill_name="test_skill",
+        tasks_path=str(tasks_path),
+        output_dir=str(output_dir),
+        concurrency=1,
+        allow_shell=True,
+    )
+    asyncio.run(bm._run_benchmark_async(args_on))
+    assert captured["shell_allowed"] is True, (
+        "Expected shell_allowed=True to reach _run_single_task when --allow-shell is set"
+    )
+    assert captured["permission_resolver_built"] is True, (
+        "Expected a non-None permission_resolver to be built when --allow-shell is set"
+    )
+
+    # Case B: --allow-shell absent → shell_allowed=False is the default
+    captured.clear()
+    output_dir_b = tmp_path / "bench_output_no_shell"
+    args_off = _make_benchmark_args(
+        skill_name="test_skill",
+        tasks_path=str(tasks_path),
+        output_dir=str(output_dir_b),
+        concurrency=1,
+        allow_shell=False,
+    )
+    asyncio.run(bm._run_benchmark_async(args_off))
+    assert captured["shell_allowed"] is False, (
+        "Expected shell_allowed=False when --allow-shell is not set"
+    )
