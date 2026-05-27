@@ -58,6 +58,11 @@ class _FakeSession:
     _pending_user_images: list[dict] = field(default_factory=list)
     captured_outbox: list[_OutboxRecord] = field(default_factory=list)
 
+    @property
+    def pending_user_images(self) -> list[dict]:
+        """Mirror of ChatSession.pending_user_images for the fake stub."""
+        return self._pending_user_images
+
     async def _put_outbox(self, msg: object) -> None:
         self.captured_outbox.append(
             _OutboxRecord(
@@ -106,8 +111,8 @@ def test_image_cmd_queues_png(tmp_path, monkeypatch):
     handler = _get_image_handler()
     _run(handler(session, "shot.png"))
 
-    assert session._pending_user_images, "expected image queued"
-    block = session._pending_user_images[0]
+    assert session.pending_user_images, "expected image queued"
+    block = session.pending_user_images[0]
     # Issue #383 PR-C: /image now stores a path-ref to the user's file
     # instead of inlining base64. Storage stays out of history.jsonl.
     assert block["type"] == "image"
@@ -128,8 +133,8 @@ def test_image_cmd_supports_jpeg_and_alias(tmp_path, monkeypatch):
     session = _FakeSession()
     _run(cmd.handler(session, "pic.jpg"))
 
-    assert session._pending_user_images, "expected image queued"
-    block = session._pending_user_images[0]
+    assert session.pending_user_images, "expected image queued"
+    block = session.pending_user_images[0]
     assert block["mime_type"] == "image/jpeg"
     assert "pic.jpg" in block["path"]
 
@@ -147,7 +152,7 @@ def test_multiple_image_calls_stack(tmp_path, monkeypatch):
     _run(handler(session, "a.png"))
     _run(handler(session, "b.png"))
 
-    paths = [b["path"] for b in session._pending_user_images]
+    paths = [b["path"] for b in session.pending_user_images]
     assert any("a.png" in p for p in paths)
     assert any("b.png" in p for p in paths)
 
@@ -161,7 +166,7 @@ def test_image_cmd_empty_path_errors(tmp_path):
     handler = _get_image_handler()
     _run(handler(session, ""))
 
-    assert session._pending_user_images == []
+    assert session.pending_user_images == []
     assert any(m.kind == "error" and "usage" in m.text for m in session.captured_outbox)
 
 
@@ -172,7 +177,7 @@ def test_image_cmd_missing_file_errors(tmp_path, monkeypatch):
     handler = _get_image_handler()
     _run(handler(session, "no-such.png"))
 
-    assert session._pending_user_images == []
+    assert session.pending_user_images == []
     assert any(m.kind == "error" and "not found" in m.text for m in session.captured_outbox)
 
 
@@ -184,7 +189,7 @@ def test_image_cmd_unsupported_extension_errors(tmp_path, monkeypatch):
     handler = _get_image_handler()
     _run(handler(session, "notes.txt"))
 
-    assert session._pending_user_images == []
+    assert session.pending_user_images == []
     assert any(m.kind == "error" and "unsupported" in m.text for m in session.captured_outbox)
 
 
@@ -206,7 +211,7 @@ def test_image_cmd_oversize_with_deny_keeps_queue_empty(tmp_path, monkeypatch):
     handler = _get_image_handler()
     _run(handler(session, "huge.png"))
 
-    assert session._pending_user_images == []
+    assert session.pending_user_images == []
     assert any(m.kind == "error" for m in session.captured_outbox)
 
 
@@ -223,7 +228,7 @@ def test_image_cmd_oversize_with_ask_no_keeps_queue_empty(tmp_path, monkeypatch)
     handler = _get_image_handler()
     _run(handler(session, "huge.png"))
 
-    assert session._pending_user_images == []
+    assert session.pending_user_images == []
 
 
 def test_image_cmd_no_multimodal_config_skips_gate(tmp_path, monkeypatch):
@@ -237,7 +242,7 @@ def test_image_cmd_no_multimodal_config_skips_gate(tmp_path, monkeypatch):
     handler = _get_image_handler()
     _run(handler(session, "any.png"))
 
-    assert session._pending_user_images, "expected image queued (gate skipped)"
+    assert session.pending_user_images, "expected image queued (gate skipped)"
 
 
 # ── ChatMessage content shape (issue #383 update) ──────────────────────
