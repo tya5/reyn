@@ -812,7 +812,7 @@ class _MCPProgressBridge:
     notification delivery failed).
     """
 
-    _TRACKED_EVENTS = frozenset({
+    TRACKED_EVENTS = frozenset({
         "phase_started",
         "llm_called",
         "act_executed",
@@ -833,6 +833,15 @@ class _MCPProgressBridge:
         self._ordinal = 0
         self._detached = False
         self._tasks: list[asyncio.Task[None]] = []
+
+    @property
+    def detached(self) -> bool:
+        """Read-only accessor for the bridge's detached flag.
+
+        Symmetric with ``_A2AProgressBridge.detached``; tests verify the
+        attach / detach lifecycle via this surface.
+        """
+        return self._detached
 
     def attach(self) -> None:
         events = getattr(self._session, "_chat_events", None)
@@ -858,7 +867,7 @@ class _MCPProgressBridge:
         if self._detached:
             return
         event_type = getattr(event, "type", None)
-        if event_type not in self._TRACKED_EVENTS:
+        if event_type not in self.TRACKED_EVENTS:
             return
         data = getattr(event, "data", {}) or {}
         message = self._format_message(event_type, data)

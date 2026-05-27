@@ -16,7 +16,7 @@ future third instance is the trigger to lift to a shared base.
 
 Pins:
 
-  1. ``_A2AProgressBridge`` exists with ``_TRACKED_EVENTS`` = the 3
+  1. ``_A2AProgressBridge`` exists with ``TRACKED_EVENTS`` = the 3
      declared kinds, matching ``_MCPProgressBridge``'s scope (= the
      contract two bridges share).
   2. ``attach()`` subscribes to ``session._chat_events``;
@@ -93,7 +93,7 @@ def _make_bridge(*, captured_posts: list[tuple[str, dict]], events: EventLog | N
 
 
 def test_a2a_progress_bridge_tracks_three_lifecycle_events() -> None:
-    """Tier 2: ``_A2AProgressBridge._TRACKED_EVENTS`` matches the MCP
+    """Tier 2: ``_A2AProgressBridge.TRACKED_EVENTS`` matches the MCP
     bridge's scope exactly (= same 3 lifecycle event kinds). This
     keeps the per-protocol bridges aligned so a future third-instance
     abstraction has a stable contract to lift.
@@ -101,8 +101,8 @@ def test_a2a_progress_bridge_tracks_three_lifecycle_events() -> None:
     from reyn.mcp_server import _MCPProgressBridge
     from reyn.web.routers.a2a import _A2AProgressBridge
 
-    assert _A2AProgressBridge._TRACKED_EVENTS == _MCPProgressBridge._TRACKED_EVENTS
-    assert _A2AProgressBridge._TRACKED_EVENTS == frozenset({
+    assert _A2AProgressBridge.TRACKED_EVENTS == _MCPProgressBridge.TRACKED_EVENTS
+    assert _A2AProgressBridge.TRACKED_EVENTS == frozenset({
         "phase_started", "llm_called", "act_executed",
     })
 
@@ -117,9 +117,9 @@ def test_attach_subscribes_to_chat_events() -> None:
     """
     captured: list = []
     bridge, events = _make_bridge(captured_posts=captured)
-    assert bridge.on_event not in events._subscribers
+    assert bridge.on_event not in events.subscribers
     bridge.attach()
-    assert bridge.on_event in events._subscribers
+    assert bridge.on_event in events.subscribers
 
 
 def test_detach_unsubscribes_from_chat_events() -> None:
@@ -129,10 +129,10 @@ def test_detach_unsubscribes_from_chat_events() -> None:
     captured: list = []
     bridge, events = _make_bridge(captured_posts=captured)
     bridge.attach()
-    assert bridge.on_event in events._subscribers
+    assert bridge.on_event in events.subscribers
     bridge.detach()
-    assert bridge.on_event not in events._subscribers
-    assert bridge._detached is True
+    assert bridge.on_event not in events.subscribers
+    assert bridge.detached is True
 
 
 def test_detach_is_idempotent() -> None:
@@ -152,7 +152,7 @@ def test_detach_is_idempotent() -> None:
 
 
 def test_untracked_event_kinds_are_ignored() -> None:
-    """Tier 2: events outside ``_TRACKED_EVENTS`` (= e.g.
+    """Tier 2: events outside ``TRACKED_EVENTS`` (= e.g.
     ``intervention_routed`` / ``phase_completed`` / ``agent_response``)
     do NOT fire a webhook.
     """
@@ -313,7 +313,9 @@ def test_late_event_after_detach_is_ignored() -> None:
     bridge.attach()
 
     # Manually invoke detach but DO NOT remove the subscriber yet (=
-    # simulate the race window).
+    # simulate the race window). Setting the private storage attribute
+    # directly is the canonical "fixture state" pattern; the assertion-side
+    # uses the public ``bridge.detached`` accessor.
     bridge._detached = True
 
     async def _drive() -> None:
