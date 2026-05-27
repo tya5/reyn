@@ -68,6 +68,7 @@ def register(sub) -> None:
     _register_report(eval_sub)
     _register_compare(eval_sub)
     _register_spec(eval_sub)
+    _register_benchmark(eval_sub)
 
     p.set_defaults(func=_dispatch)
 
@@ -83,9 +84,11 @@ def _dispatch(args: argparse.Namespace) -> None:
         _run_compare(args)
     elif cmd == "spec":
         _run_spec(args)
+    elif cmd == "benchmark":
+        _run_benchmark(args)
     else:
         # Should never happen because eval_sub.required = True.
-        print("Error: expected sub-command: run | report | compare | spec", file=sys.stderr)
+        print("Error: expected sub-command: run | report | compare | spec | benchmark", file=sys.stderr)
         sys.exit(1)
 
 
@@ -882,3 +885,20 @@ def _run_spec_case(
         print(f"  {data['summary']}")
 
     return ({"case_name": case.name, **data}, result.token_usage, result.cost_usd)
+
+
+# ── `reyn eval benchmark` ─────────────────────────────────────────────────────
+
+
+def _register_benchmark(eval_sub) -> None:
+    """Register the `reyn eval benchmark` sub-command (delegated to eval_benchmark)."""
+    from reyn.cli.commands.eval_benchmark import register_benchmark
+
+    register_benchmark(eval_sub)
+
+
+def _run_benchmark(args: argparse.Namespace) -> None:
+    """Execute `reyn eval benchmark` (delegated to eval_benchmark)."""
+    from reyn.cli.commands.eval_benchmark import run_benchmark
+
+    run_benchmark(args)
