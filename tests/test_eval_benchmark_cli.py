@@ -204,7 +204,8 @@ def test_load_tasks_valid(tmp_path: Path) -> None:
     p.write_text(_make_tasks_jsonl(tasks) + "\n", encoding="utf-8")
 
     loaded = load_tasks(p)
-    assert len(loaded) == 3
+    n_loaded = len(loaded)
+    assert n_loaded == 3
     assert loaded[0]["instance_id"] == "t1"
     assert loaded[2]["instance_id"] == "t3"
 
@@ -240,7 +241,8 @@ def test_load_tasks_trailing_newline(tmp_path: Path) -> None:
     p.write_text(content, encoding="utf-8")
 
     loaded = load_tasks(p)
-    assert len(loaded) == 2
+    n_loaded = len(loaded)
+    assert n_loaded == 2
 
 
 # ── test 5: summary.json shape ────────────────────────────────────────────────
@@ -375,7 +377,8 @@ def test_limit_applied_after_resume(tmp_path: Path) -> None:
     limit = 4
     pending = pending[:limit]
 
-    assert len(pending) == 4
+    n_pending = len(pending)
+    assert n_pending == 4
     ids = [_instance_id(t, i) for i, t in pending]
     assert "t0" not in ids
     assert "t1" not in ids

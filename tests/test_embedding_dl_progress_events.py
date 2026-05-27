@@ -122,7 +122,8 @@ def test_no_sink_no_emissions_on_successful_load(monkeypatch, tmp_path) -> None:
         "sentence-transformers/all-MiniLM-L6-v2",
     ))
     # No event_sink set → no observable side-effect besides the load.
-    assert len(_FakeST.instances) == 1
+    n_st_instances = len(_FakeST.instances)
+    assert n_st_instances == 1
     assert result["vectors"][0]  # actually loaded + ran encode
 
 
@@ -148,8 +149,8 @@ def test_import_error_emits_error_event_with_install_hint(
         ))
     assert "reyn[local-embed]" in str(excinfo.value)
     # Exactly one event: error with retry_hint pointing at the extras.
-    assert len(events) == 1
-    kind, _text, meta = events[0]
+    (only_event,) = events
+    kind, _text, meta = only_event
     assert kind == "error"
     assert "reyn[local-embed]" in meta["retry_hint"]
     assert meta["model"] == "sentence-transformers/all-MiniLM-L6-v2"

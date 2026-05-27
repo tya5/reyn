@@ -69,9 +69,11 @@ def test_manifest_loads_and_carries_schema_version_and_sha() -> None:
     data = _load_manifest()
     assert data["schema_version"] == 1
     assert isinstance(data["last_synced_commit_sha"], str)
-    assert len(data["last_synced_commit_sha"]) >= 40  # full git SHA
+    sha_len = len(data["last_synced_commit_sha"])
+    assert sha_len >= 40  # full git SHA
     assert isinstance(data["fixtures"], list)
-    assert len(data["fixtures"]) >= 10  # the bench must not shrink silently
+    n_fixtures = len(data["fixtures"])
+    assert n_fixtures >= 10  # the bench must not shrink silently
 
 
 # ── 2. Per-fixture field contract ─────────────────────────────────────────────

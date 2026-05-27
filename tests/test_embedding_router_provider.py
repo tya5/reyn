@@ -102,7 +102,8 @@ def test_openai_model_routes_to_litellm() -> None:
     provider = _make_provider(litellm, st)
 
     result = _run(provider.embed(["hello"], "openai/text-embedding-3-small"))
-    assert len(litellm.embed_calls) == 1
+    n_litellm_calls = len(litellm.embed_calls)
+    assert n_litellm_calls == 1
     assert litellm.embed_calls[0][1] == "openai/text-embedding-3-small"
     assert result["model"].startswith("litellm::")
     assert not st.embed_calls  # ST backend never touched
@@ -129,7 +130,8 @@ def test_st_prefix_model_routes_to_sentence_transformers_backend() -> None:
     provider = _make_provider(litellm, st)
 
     _run(provider.embed(["hi"], "sentence-transformers/all-MiniLM-L6-v2"))
-    assert len(st.embed_calls) == 1
+    n_st_calls = len(st.embed_calls)
+    assert n_st_calls == 1
     assert st.embed_calls[0][1] == "sentence-transformers/all-MiniLM-L6-v2"
     assert not litellm.embed_calls
 
@@ -141,7 +143,8 @@ def test_class_name_resolving_to_st_routes_to_st_backend() -> None:
     provider = _make_provider(litellm, st)
 
     _run(provider.embed(["hi"], "local-mini"))
-    assert len(st.embed_calls) == 1 and st.embed_calls[0][1] == "local-mini"
+    n_st_calls = len(st.embed_calls)
+    assert n_st_calls == 1 and st.embed_calls[0][1] == "local-mini"
     assert not litellm.embed_calls
 
 
