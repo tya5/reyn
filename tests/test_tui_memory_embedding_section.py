@@ -71,9 +71,8 @@ def test_on_embedding_status_emits_outbox_message_with_meta() -> None:
         "device": "cpu",
     }))
     msgs = _drain(outbox)
-    assert len(msgs) == 1
+    assert [m.kind for m in msgs] == ["embedding_status"]
     msg = msgs[0]
-    assert msg.kind == "embedding_status"
     assert msg.text == "loading model X"
     assert msg.meta["model"] == "sentence-transformers/all-MiniLM-L6-v2"
     assert msg.meta["device"] == "cpu"
@@ -89,7 +88,7 @@ def test_on_embedding_skill_done_emits_outbox_message_with_dimension() -> None:
         "dimension": 384,
     }))
     msgs = _drain(outbox)
-    assert len(msgs) == 1 and msgs[0].kind == "embedding_skill_done"
+    assert [m.kind for m in msgs] == ["embedding_skill_done"]
     assert msgs[0].meta["dimension"] == 384
 
 
@@ -102,7 +101,7 @@ def test_on_embedding_error_emits_outbox_message_with_retry_hint() -> None:
         "retry_hint": "Run `reyn embeddings clear` to wipe partial state.",
     }))
     msgs = _drain(outbox)
-    assert len(msgs) == 1 and msgs[0].kind == "embedding_error"
+    assert [m.kind for m in msgs] == ["embedding_error"]
     assert "reyn embeddings clear" in msgs[0].meta["retry_hint"]
 
 

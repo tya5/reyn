@@ -111,7 +111,8 @@ def test_ensure_all_assets_copies_both_on_first_run(tmp_path: Path):
     """Tier 1: clean cwd → all 3 shipped assets (chainlit.md /
     .chainlit/config.toml / public/reyn.css) land."""
     written = ensure_all_assets(tmp_path)
-    assert len(written) == 3
+    written_names = sorted(p.name for p in written)
+    assert written_names == ["chainlit.md", "config.toml", "reyn.css"]
     assert (tmp_path / "chainlit.md").is_file()
     assert (tmp_path / ".chainlit" / "config.toml").is_file()
     assert (tmp_path / "public" / "reyn.css").is_file()
@@ -136,8 +137,9 @@ def test_ensure_all_assets_partial_one_existing_one_missing(tmp_path: Path):
     missing ones (= per-asset idempotence, not all-or-nothing)."""
     (tmp_path / "chainlit.md").write_text("custom welcome")
     written = ensure_all_assets(tmp_path)
-    # config.toml + public/reyn.css missing → 2 copies.
-    assert len(written) == 2
+    # config.toml + public/reyn.css missing, chainlit.md preserved → copy
+    # only the 2 missing ones (= name-set comparison rather than count
+    # alone so the contract is the actual set, not its cardinality).
     written_names = sorted(p.name for p in written)
     assert written_names == ["config.toml", "reyn.css"]
     assert (tmp_path / "chainlit.md").read_text() == "custom welcome"
@@ -196,7 +198,8 @@ def test_ensure_public_css_skips_when_present(tmp_path: Path):
 def test_ensure_all_assets_includes_public_css(tmp_path: Path):
     """Tier 1: clean cwd → all 3 shipped assets land."""
     written = ensure_all_assets(tmp_path)
-    assert len(written) == 3
+    written_names = sorted(p.name for p in written)
+    assert written_names == ["chainlit.md", "config.toml", "reyn.css"]
     assert (tmp_path / "chainlit.md").is_file()
     assert (tmp_path / ".chainlit" / "config.toml").is_file()
     assert (tmp_path / "public" / "reyn.css").is_file()

@@ -97,5 +97,5 @@ def test_role_attr_missing_treated_as_empty():
             return _RolelessProfile(name=name)
 
     out = list_agent_profiles(_Reg())
-    assert len(out) == 1
+    assert [p.name for p in out] == ["x"]
     assert out[0].markdown_description == _NO_ROLE_MARKER

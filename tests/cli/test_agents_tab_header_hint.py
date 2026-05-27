@@ -38,7 +38,7 @@ async def test_agents_header_surfaces_space_and_c_hints() -> None:
         await pilot.pause()
         panel = app.query_one(RightPanel)
         panel._panel_type = "agents"
-        markup = panel._panel_header_markup()
+        markup = panel.panel_header_markup()
         assert "Agents" in markup
         assert "j↓ k↑" in markup
         assert "space=open" in markup, (
@@ -70,9 +70,9 @@ async def test_agents_header_hint_matches_memory_idiom() -> None:
         await pilot.pause()
         panel = app.query_one(RightPanel)
         panel._panel_type = "memory"
-        memory_markup = panel._panel_header_markup()
+        memory_markup = panel.panel_header_markup()
         panel._panel_type = "agents"
-        agents_markup = panel._panel_header_markup()
+        agents_markup = panel.panel_header_markup()
         # Shared affordances ("space=open", "c=copy", "j↓ k↑") appear
         # in BOTH headers (= cross-tab consistency for the bindings
         # that work the same way).
@@ -104,15 +104,15 @@ async def test_other_tab_headers_unchanged() -> None:
         panel = app.query_one(RightPanel)
         # Keys: minimal navigation hint
         panel._panel_type = "keys"
-        assert "j↓ k↑" in panel._panel_header_markup()
+        assert "j↓ k↑" in panel.panel_header_markup()
         # Cost: minimal navigation hint
         panel._panel_type = "cost"
-        assert "j↓ k↑" in panel._panel_header_markup()
+        assert "j↓ k↑" in panel.panel_header_markup()
         # Pending: discard + claim
         panel._panel_type = "pending"
-        ph = panel._panel_header_markup()
+        ph = panel.panel_header_markup()
         assert "d=discard" in ph and "c=claim" in ph
         # Docs: filter + open
         panel._panel_type = "docs"
-        dh = panel._panel_header_markup()
+        dh = panel.panel_header_markup()
         assert "space=open" in dh and "/=filter" in dh

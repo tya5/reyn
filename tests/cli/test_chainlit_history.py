@@ -74,8 +74,7 @@ def test_multimodal_list_content_extracts_text_parts():
             {"type": "text", "text": "what is it?"},
         ]),
     ])
-    assert len(out) == 1
-    assert out[0].author == "user"
+    assert [e.author for e in out] == ["user"]
     assert out[0].content == "look at this\n[image: shot.png]\nwhat is it?"
 
 
@@ -157,45 +156,47 @@ def _seq_history(n: int) -> list:
     return out
 
 
+_FULL_TEN_CONTENT = [f"turn{i}" for i in range(10)]
+
+
 def test_cap_none_returns_full_history():
     """Tier 1: cap=None (default) → no truncation, no marker, all entries."""
     out = history_to_chainlit(_seq_history(10))
-    assert len(out) == 10
-    assert all(e.author != "system" for e in out)
+    assert [e.content for e in out] == _FULL_TEN_CONTENT
 
 
 def test_cap_zero_treated_as_unlimited():
     """Tier 1: cap=0 → unlimited (= the env-var "show all" sentinel)."""
     out = history_to_chainlit(_seq_history(10), cap=0)
-    assert len(out) == 10
-    assert all(e.author != "system" for e in out)
+    assert [e.content for e in out] == _FULL_TEN_CONTENT
 
 
 def test_cap_negative_treated_as_unlimited():
     """Tier 1: cap=-1 → unlimited (= defensive, same as cap=0)."""
     out = history_to_chainlit(_seq_history(10), cap=-1)
-    assert len(out) == 10
+    assert [e.content for e in out] == _FULL_TEN_CONTENT
 
 
 def test_cap_larger_than_history_no_marker():
     """Tier 1: cap=100 on 10-entry history → no truncation, no marker."""
     out = history_to_chainlit(_seq_history(10), cap=100)
-    assert len(out) == 10
-    assert all(e.author != "system" for e in out)
+    assert [e.content for e in out] == _FULL_TEN_CONTENT
 
 
 def test_cap_equal_to_history_no_marker():
     """Tier 1: cap=10 on 10-entry history → exact fit, no marker."""
     out = history_to_chainlit(_seq_history(10), cap=10)
-    assert len(out) == 10
-    assert all(e.author != "system" for e in out)
+    assert [e.content for e in out] == _FULL_TEN_CONTENT
 
 
 def test_cap_slices_to_last_n_with_marker():
-    """Tier 1: cap=3 on 10-entry history → 1 system marker + last 3 entries."""
+    """Tier 1: cap=3 on 10-entry history → 1 system marker + last 3 entries.
+
+    seq alternates user/assistant by index parity; assistant maps to
+    author "agent" via ``_AUTHOR_BY_ROLE``, so the kept tail (i=7,8,9)
+    renders as agent / user / agent."""
     out = history_to_chainlit(_seq_history(10), cap=3)
-    assert len(out) == 4  # 1 marker + 3 kept
-    assert out[0].author == "system"
+    assert [e.author for e in out] == ["system", "agent", "user", "agent"]
     assert "7" in out[0].content  # 10 - 3 = 7 omitted
     assert [e.content for e in out[1:]] == ["turn7", "turn8", "turn9"]
 
@@ -220,6 +221,5 @@ def test_cap_applied_after_filtering():
         _FakeMsg(role="assistant", content="visible2"),
     ])
     out = history_to_chainlit(msgs, cap=10)
-    assert len(out) == 2
     assert [e.content for e in out] == ["visible1", "visible2"]
-    assert all(e.author != "system" for e in out)
+    assert [e.author for e in out] == ["user", "agent"]

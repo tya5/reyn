@@ -2407,6 +2407,10 @@ class RightPanel(Widget):
 
     # ── render dispatch ───────────────────────────────────────────────────────
 
+    def panel_header_markup(self) -> str:
+        """Public alias for the per-tab header markup builder."""
+        return self._panel_header_markup()
+
     def _panel_header_markup(self) -> str:
         if self._panel_type == "keys":
             return f"[bold {_CORAL}]Key Bindings[/]  [#555555]j↓ k↑[/]"
