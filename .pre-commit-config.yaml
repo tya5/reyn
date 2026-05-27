@@ -1,0 +1,27 @@
+# Reyn pre-commit hooks — opt-in.
+#
+# Activation (one-time per dev clone):
+#     pip install -e ".[dev]"   # installs pre-commit>=3
+#     pre-commit install         # writes .git/hooks/pre-commit
+#
+# Currently runs the test-tier auditor, which catches Tier 4 policy
+# violations in changed test files. CI mirrors this via the ``audit``
+# job in .github/workflows/test.yml — a missed local install does not
+# bypass the merge gate, it just means you find out later.
+#
+# Policy reference: docs/deep-dives/contributing/testing.ja.md
+repos:
+  - repo: local
+    hooks:
+      - id: test-tier-audit
+        name: Reyn test-tier auditor
+        entry: python scripts/test_tier_audit.py --strict
+        language: system
+        files: ^tests/.*\.py$
+        pass_filenames: true
+        require_serial: true
+        description: >
+          Detects Tier 4 violations (missing tier docstring, format
+          pinning, private state assert, mock usage, bounded-life,
+          snapshot tests outside scaffold/). Exits 1 on any
+          violation (= --strict treats warnings as errors too).
