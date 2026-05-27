@@ -6,7 +6,7 @@ the WAL to drop entries below it. This is the policy layer on top of
 `StateLog.truncate_below` (the rewrite primitive, tested separately).
 
 Tests target the public surface (`truncate_wal_if_eligible`,
-`_compute_truncate_floor`); observation flows through:
+`compute_truncate_floor`); observation flows through:
   - the on-disk WAL (re-read after truncation)
   - the returned stats dict
 No mocks — we construct real `AgentRegistry` instances backed by real
@@ -112,7 +112,7 @@ def test_compute_floor_uses_min_applied_seq_across_agents(tmp_path):
     _seed_agent(registry, "beta", applied_seq=4)
     _seed_agent(registry, "gamma", applied_seq=7)
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     assert floor == 5  # min(10, 4, 7) + 1
 
 
@@ -123,7 +123,7 @@ def test_compute_floor_includes_active_skill_snapshots(tmp_path):
     _seed_agent(registry, "beta", applied_seq=10)
     _seed_skill(registry, "alpha", "run_xyz", last_phase_applied_seq=2)
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     assert floor == 3  # min(10, 10, 2) + 1
 
 
@@ -135,7 +135,7 @@ def test_compute_floor_includes_active_plan_snapshots(tmp_path):
     _seed_agent(registry, "alpha", applied_seq=10)
     _seed_plan(registry, "alpha", "p001", last_step_applied_seq=4)
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     assert floor == 5  # min(10, 4) + 1
 
 
@@ -148,7 +148,7 @@ def test_compute_floor_min_across_skill_and_plan(tmp_path):
     _seed_skill(registry, "alpha", "run_xyz", last_phase_applied_seq=6)
     _seed_plan(registry, "alpha", "p001", last_step_applied_seq=3)
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     assert floor == 4  # min(10, 6, 3) + 1
 
 
@@ -164,7 +164,7 @@ def test_compute_floor_zero_on_corrupt_plan_snapshot(tmp_path):
     )
     snap_path.write_text("{not valid json", encoding="utf-8")
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     assert floor == 0
 
 
@@ -178,7 +178,7 @@ def test_compute_floor_zero_when_no_persistent_agents(tmp_path):
     """
     registry = _make_registry(tmp_path)
     # `default` was auto-created but has no snapshot.json — dormant, skipped.
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     assert floor == 0
 
 
@@ -194,7 +194,7 @@ def test_compute_floor_zero_on_corrupt_agent_snapshot(tmp_path):
     snap_path = registry._dir / "alpha" / "state" / "snapshot.json"
     snap_path.write_text("{not valid json", encoding="utf-8")
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     assert floor == 0
 
 
@@ -210,7 +210,7 @@ def test_compute_floor_skips_dormant_agent_with_zero_applied_seq(tmp_path):
     _seed_agent(registry, "alpha", applied_seq=10)
     _seed_agent(registry, "dormant", applied_seq=0)  # restore_all-style baseline
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     # Dormant skipped → floor based on alpha alone
     assert floor == 11
 
@@ -223,7 +223,7 @@ def test_compute_floor_zero_on_corrupt_skill_snapshot(tmp_path):
     skills_dir.mkdir(parents=True, exist_ok=True)
     (skills_dir / "bad.snapshot.json").write_text("{garbage", encoding="utf-8")
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     assert floor == 0
 
 
