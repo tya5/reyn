@@ -58,8 +58,8 @@ class _CancelSession:
 
     def __init__(self, rid: str):
         self._rid = rid
-        self._task = _CancelTask()
-        self.running_skills = {rid: self._task}
+        self.task = _CancelTask()
+        self.running_skills = {rid: self.task}
         self.running_skills_started_at = {}
         self.outbox_messages: list[OutboxMessage] = []
 
@@ -94,7 +94,7 @@ async def test_cancel_no_confirm_shows_warning_not_cancelled() -> None:
     await cmd.handler(sess, rid)
 
     # task must NOT be cancelled
-    assert not sess._task.cancelled
+    assert not sess.task.cancelled
 
     # outbox must contain a system warning with "confirm" hint
     warn_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
@@ -117,7 +117,7 @@ async def test_cancel_with_confirm_cancels_task() -> None:
     cmd = _get_cmd("cancel")
     await cmd.handler(sess, f"{rid} confirm")
 
-    assert sess._task.cancelled
+    assert sess.task.cancelled
 
     # outbox must carry the cancel-requested system message
     system_msgs = [m for m in sess.outbox_messages if m.kind == "system"]
@@ -143,15 +143,15 @@ async def test_plan_discard_no_confirm_shows_warning(tmp_path, monkeypatch):
     )
     session.is_attached = True
 
-    await session._journal.record_plan_started(
+    await session.journal.record_plan_started(
         plan_id="p_warn", goal="g", n_steps=2,
     )
-    assert "p_warn" in session._journal.snapshot.active_plan_ids
+    assert "p_warn" in session.journal.snapshot.active_plan_ids
 
     await session._maybe_handle_slash("/plan discard p_warn")
 
     # Plan must still be active.
-    assert "p_warn" in session._journal.snapshot.active_plan_ids
+    assert "p_warn" in session.journal.snapshot.active_plan_ids
 
     # Outbox must carry a warning with "confirm" hint.
     msgs = []
@@ -177,7 +177,7 @@ async def test_plan_discard_with_confirm_discards_plan(tmp_path, monkeypatch):
     )
     session.is_attached = True
 
-    await session._journal.record_plan_started(
+    await session.journal.record_plan_started(
         plan_id="p_confirm", goal="g", n_steps=2,
     )
 
@@ -187,7 +187,7 @@ async def test_plan_discard_with_confirm_discards_plan(tmp_path, monkeypatch):
     assert consumed is True
 
     # Plan must be cleared.
-    assert "p_confirm" not in session._journal.snapshot.active_plan_ids
+    assert "p_confirm" not in session.journal.snapshot.active_plan_ids
 
     # Outbox must carry the "discarded plan run" confirmation.
     msgs = []

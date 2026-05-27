@@ -1904,6 +1904,18 @@ class ChatSession:
         """
         return self._pending_user_images
 
+    @property
+    def journal(self) -> "SnapshotJournal":
+        """Read-only accessor for the session's SnapshotJournal.
+
+        The journal carries rich public API (``record_plan_started`` /
+        ``record_plan_aborted`` / ``append_inbox`` / ``consume_inbox`` /
+        ``snapshot``); exposing the holder via a public name keeps slash
+        commands and tests off the underscore field. The journal
+        instance is set once in ``__init__`` and never re-bound.
+        """
+        return self._journal
+
     def current_state_summary(self) -> dict:
         """Return a lightweight snapshot for slash-command display.
 
