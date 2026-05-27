@@ -85,7 +85,7 @@ async def test_plan_list_shows_active_ids_without_task(tmp_path, monkeypatch):
     session.is_attached = True
 
     # Simulate a plan_id surviving in the agent snapshot without a task.
-    await session._journal.record_plan_started(
+    await session.journal.record_plan_started(
         plan_id="plan_xyz789", goal="g", n_steps=2,
     )
     consumed = await session._maybe_handle_slash("/plan list")
@@ -122,10 +122,10 @@ async def test_plan_discard_records_plan_aborted(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    await session._journal.record_plan_started(
+    await session.journal.record_plan_started(
         plan_id="p_to_discard", goal="g", n_steps=2,
     )
-    assert "p_to_discard" in session._journal.snapshot.active_plan_ids
+    assert "p_to_discard" in session.journal.snapshot.active_plan_ids
 
     consumed = await session._maybe_handle_slash(
         "/plan discard p_to_discard confirm",
@@ -133,7 +133,7 @@ async def test_plan_discard_records_plan_aborted(tmp_path, monkeypatch):
     assert consumed is True
 
     # active_plan_ids cleared via plan_aborted apply.
-    assert "p_to_discard" not in session._journal.snapshot.active_plan_ids
+    assert "p_to_discard" not in session.journal.snapshot.active_plan_ids
 
     # Confirmation message in outbox.
     msgs = _drain_outbox(session)
@@ -163,7 +163,7 @@ async def test_plan_discard_cancels_running_task(tmp_path, monkeypatch):
     task = asyncio.create_task(_task_body())
     await started.wait()
     session.running_plans["p_running"] = task
-    await session._journal.record_plan_started(
+    await session.journal.record_plan_started(
         plan_id="p_running", goal="g", n_steps=1,
     )
 
@@ -200,7 +200,7 @@ async def test_plan_discard_deletes_decomposition_artifact(tmp_path, monkeypatch
     artifact = decomposition_path(agent_state_dir, "p_artifact")
     assert artifact.exists()
 
-    await session._journal.record_plan_started(
+    await session.journal.record_plan_started(
         plan_id="p_artifact", goal="g", n_steps=2,
     )
 
@@ -218,7 +218,7 @@ async def test_plan_discard_emits_plan_aborted_outbox(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    await session._journal.record_plan_started(
+    await session.journal.record_plan_started(
         plan_id="p_aborted_emit", goal="g", n_steps=2,
     )
 
