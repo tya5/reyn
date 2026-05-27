@@ -171,7 +171,7 @@ class LiteLLMEmbeddingProvider:
 
     # ── Model resolution ───────────────────────────────────────────────────
 
-    def _resolve_model(self, model: str) -> str:
+    def resolve_model(self, model: str) -> str:
         """Resolve a model class name or literal string to a LiteLLM model.
 
         If model contains "/" it's already a literal string — use directly.
@@ -204,7 +204,7 @@ class LiteLLMEmbeddingProvider:
 
     def get_dimension(self, model: str) -> int:
         """Return vector dimension for a model. Uses static table; defaults 1536."""
-        resolved = self._resolve_model(model)
+        resolved = self.resolve_model(model)
         return _MODEL_DIMENSIONS.get(resolved, _DEFAULT_DIMENSION)
 
     # ── Core embed ─────────────────────────────────────────────────────────
@@ -223,10 +223,10 @@ class LiteLLMEmbeddingProvider:
             EmbedBatchResult with vectors, canonical model name, total_tokens.
         """
         if not texts:
-            resolved = self._resolve_model(model)
+            resolved = self.resolve_model(model)
             return EmbedBatchResult(vectors=[], model=resolved, total_tokens=0)
 
-        resolved_model = self._resolve_model(model)
+        resolved_model = self.resolve_model(model)
 
         # Split into batches
         batches: list[list[str]] = []
