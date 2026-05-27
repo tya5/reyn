@@ -170,8 +170,8 @@ async def test_latest_failed_tool_row_set_after_fail() -> None:
         result = conv.latest_failed_tool_row()
         assert result is not None
         # The row is in failure terminal state.
-        assert result._finished is True
-        assert result._success is False
+        assert result.finished is True
+        assert result.success is False
 
 
 def test_keys_tab_routes_f7_to_conversation() -> None:
