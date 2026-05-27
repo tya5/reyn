@@ -76,13 +76,13 @@ def test_constructor_accepts_resume_plan(tmp_path):
     plan = _plan_with([])
     executor, _ = _executor(tmp_path, resume_plan=plan)
     # Stored for propagation; introspectable for downstream coordination
-    assert executor._resume_plan is plan
+    assert executor.resume_plan is plan
 
 
 def test_constructor_default_none(tmp_path):
     """Tier 2: backward compat — default resume_plan is None."""
     executor, _ = _executor(tmp_path)
-    assert executor._resume_plan is None
+    assert executor.resume_plan is None
 
 
 def test_resume_plan_is_propagated_to_dispatch_context(tmp_path, monkeypatch):
