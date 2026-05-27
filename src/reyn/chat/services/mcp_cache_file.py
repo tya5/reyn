@@ -1,4 +1,4 @@
-"""Persistent MCP tools cache file utilities — FP-0037 S1.
+"""Persistent MCP tools cache file utilities — FP-0037 S1/S2.
 
 Cache file location: ``<state_dir>/mcp_tools_cache.json``
 
@@ -19,10 +19,11 @@ Format (version 1):
     }
 
 Public API:
-    cache_file_path(state_dir)  -> Path
-    write_cache(path, servers)  -> None  (atomic via .tmp + os.replace)
-    read_cache(path)            -> dict[str, list[dict]] | None
-    file_mtime(path)            -> float | None
+    cache_file_path(state_dir)           -> Path
+    write_cache(path, servers)           -> None  (atomic via .tmp + os.replace)
+    read_cache(path)                     -> dict[str, list[dict]] | None
+    file_mtime(path)                     -> float | None
+    yaml_scope_paths(project_root)       -> list[Path]   (FP-0037 S2)
 """
 from __future__ import annotations
 
@@ -118,3 +119,30 @@ def file_mtime(path: Path) -> float | None:
         return Path(path).stat().st_mtime
     except OSError:
         return None
+
+
+def yaml_scope_paths(project_root: "Path | None") -> list[Path]:
+    """Return the ordered list of MCP yaml config paths for the 3 scope tiers.
+
+    FP-0037 S2: shared helper used by ``RouterHostAdapter.maybe_refresh_mcp_tools_from_yaml``
+    and (as a follow-up) by ``cli/commands/mcp.py``.
+
+    Tiers (matching ``reyn mcp list`` priority, lowest → highest):
+      1. user-global: ``~/.reyn/config.yaml``    (always included)
+      2. project:     ``<project_root>/reyn.yaml``       (when project_root is not None)
+      3. project-local: ``<project_root>/reyn.local.yaml`` (when project_root is not None)
+
+    Only the *potential* paths are returned — callers are responsible for
+    checking existence before reading.  The list never includes a path for
+    scopes that cannot be resolved (i.e. project/local when project_root
+    is None).
+
+    Never raises.
+    """
+    paths: list[Path] = []
+    paths.append(Path.home() / ".reyn" / "config.yaml")
+    if project_root is not None:
+        root = Path(project_root)
+        paths.append(root / "reyn.yaml")
+        paths.append(root / "reyn.local.yaml")
+    return paths

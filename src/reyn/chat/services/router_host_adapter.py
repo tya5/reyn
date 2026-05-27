@@ -205,6 +205,10 @@ class RouterHostAdapter:
         # (= the project root in all production entry points). Tests pass
         # a tmp_path subdirectory to isolate writes.
         state_dir: Path | None = None,
+        # FP-0037 S2: project root for yaml mtime watch (3-scope cascade).
+        # When None, only the user-global ~/.reyn/config.yaml is watched.
+        # ChatSession passes the project root so all 3 tiers are covered.
+        project_root: Path | None = None,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -223,6 +227,15 @@ class RouterHostAdapter:
         self._mcp_tools_cache_mtime: float | None = None
         # FP-0037 S1: state dir for the persistent cache file.
         self._state_dir: Path = Path(state_dir) if state_dir is not None else _DEFAULT_STATE_DIR
+        # FP-0037 S2: project root for yaml scope path resolution.
+        # None = no project yaml tiers (user-global only).
+        self._project_root: Path | None = (
+            Path(project_root) if project_root is not None else None
+        )
+        # FP-0037 S2: last-seen mtimes for the 3 yaml scope tier files.
+        # Keyed by Path; absent = never seen. Populated on first call to
+        # maybe_refresh_mcp_tools_from_yaml; used to detect changes.
+        self._yaml_mtimes_seen: dict[Path, float] = {}
         self._project_context = project_context
         self._events = events
         self._resolver = resolver
@@ -1093,6 +1106,169 @@ class RouterHostAdapter:
         if self._mcp_tools_cache is None:
             return None
         return dict(self._mcp_tools_cache)
+
+    @property
+    def yaml_mtimes_snapshot(self) -> dict[Path, float]:
+        """Read-only snapshot of the last-seen yaml mtime table.
+
+        FP-0037 S2: test-supporting public surface. Returns a shallow copy
+        keyed by Path so callers can inspect which yaml files have been
+        observed without touching adapter internals. Empty dict until the
+        first call to maybe_refresh_mcp_tools_from_yaml.
+        """
+        return dict(self._yaml_mtimes_seen)
+
+    async def maybe_refresh_mcp_tools_from_yaml(self) -> None:
+        """Re-probe MCP servers and update the cache if any yaml config has changed.
+
+        FP-0037 S2: called at each turn boundary BEFORE
+        ``maybe_reload_mcp_tools_cache_from_disk`` so that yaml edits are
+        caught, probed, and written to disk before the disk-reload step picks
+        them up.
+
+        Algorithm:
+        1. Resolve the 3 yaml scope tier paths via ``yaml_scope_paths``.
+        2. Stat each existing path and compare against ``_yaml_mtimes_seen``.
+        3. If any mtime advanced (or a new yaml appeared): re-read MCP config
+           from the yaml files, re-probe each server, write the cache file,
+           and update ``_yaml_mtimes_seen``.
+        4. On first call (``_yaml_mtimes_seen`` is empty): seed the mtime table
+           without triggering a probe (= first-call "no diff" semantics).
+
+        All failures (stat error, yaml parse error, probe error, cache write
+        error) degrade silently — a warning is logged but the method never
+        raises so the user-message hot path is not broken.
+        """
+        import asyncio
+
+        from reyn.chat.services.mcp_cache_file import (
+            cache_file_path,
+            write_cache,
+            yaml_scope_paths,
+        )
+
+        try:
+            yaml_paths = yaml_scope_paths(self._project_root)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("maybe_refresh_mcp_tools_from_yaml: yaml_scope_paths failed: %r", exc)
+            return
+
+        # --- Stat current mtimes (best-effort; missing files are silently skipped) ---
+        current_mtimes: dict[Path, float] = {}
+        for p in yaml_paths:
+            try:
+                mtime = p.stat().st_mtime
+                current_mtimes[p] = mtime
+            except OSError:
+                # File does not exist or is unreadable — skip silently.
+                pass
+
+        # --- First call: seed the mtime table, no probe ---
+        if not self._yaml_mtimes_seen:
+            self._yaml_mtimes_seen = dict(current_mtimes)
+            return
+
+        # --- Detect changes: new file or advanced mtime ---
+        changed = False
+        for p, mtime in current_mtimes.items():
+            prev = self._yaml_mtimes_seen.get(p)
+            if prev is None or mtime > prev:
+                changed = True
+                break
+        # Also detect files that appeared (= in current but not in seen)
+        if not changed:
+            new_paths = set(current_mtimes) - set(self._yaml_mtimes_seen)
+            if new_paths:
+                changed = True
+
+        if not changed:
+            return
+
+        # --- Changed: re-read MCP server config from yaml files ---
+        servers_flat: dict[str, dict] = {}
+        try:
+            servers_flat = self._read_mcp_servers_from_yaml(yaml_paths)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "maybe_refresh_mcp_tools_from_yaml: could not read yaml config: %r", exc,
+            )
+            # Still update mtime table so we don't hammer on every turn.
+            self._yaml_mtimes_seen = dict(current_mtimes)
+            return
+
+        if not servers_flat:
+            # No MCP servers in any yaml — write empty cache to advance mtime.
+            try:
+                cache_path = cache_file_path(self._state_dir)
+                write_cache(cache_path, {})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "maybe_refresh_mcp_tools_from_yaml: cache write failed: %r", exc,
+                )
+            self._yaml_mtimes_seen = dict(current_mtimes)
+            return
+
+        # --- Re-probe servers in parallel (shared helper from CLI) ---
+        from reyn.cli.commands.mcp import _probe_server_tools
+
+        async def _probe_all() -> dict[str, list[dict]]:
+            tasks = [
+                _probe_server_tools(name, cfg)
+                for name, cfg in servers_flat.items()
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=False)
+            return dict(results)
+
+        try:
+            probe_results = await _probe_all()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "maybe_refresh_mcp_tools_from_yaml: probe failed: %r", exc,
+            )
+            self._yaml_mtimes_seen = dict(current_mtimes)
+            return
+
+        # --- Write updated cache to disk (= S1's disk-reload picks it up) ---
+        try:
+            cache_path = cache_file_path(self._state_dir)
+            write_cache(cache_path, probe_results)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "maybe_refresh_mcp_tools_from_yaml: cache write failed: %r", exc,
+            )
+
+        # --- Update mtime table regardless of cache-write success ---
+        self._yaml_mtimes_seen = dict(current_mtimes)
+
+    @staticmethod
+    def _read_mcp_servers_from_yaml(yaml_paths: "list[Path]") -> dict[str, dict]:
+        """Read and merge MCP server configs from the given ordered yaml paths.
+
+        Priority: later paths override earlier ones for the same server name
+        (= local > project > user, following ``_all_servers_with_scope`` order).
+
+        Returns a flat ``{server_name: cfg_dict}`` mapping.
+        Never raises — yaml parse failures are logged and skipped.
+        """
+        merged: dict[str, dict] = {}
+        for p in yaml_paths:
+            if not p.exists():
+                continue
+            try:
+                import yaml  # lazy import to avoid yaml dep at import time
+                raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+                if not isinstance(raw, dict):
+                    continue
+                servers = (raw.get("mcp") or {}).get("servers") or {}
+                if not isinstance(servers, dict):
+                    continue
+                for name, cfg in servers.items():
+                    merged[name] = cfg if isinstance(cfg, dict) else {}
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "_read_mcp_servers_from_yaml: could not parse %s: %r", p, exc,
+                )
+        return merged
 
     def make_router_op_context(self) -> Any:
         """Build an OpContext for router-initiated file / MCP / web ops.
