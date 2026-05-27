@@ -16,6 +16,8 @@ from reyn.events.events import EventLog
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_STATE_DIR = Path(".reyn") / "state"
+
 
 class RouterHostAdapter:
     """Concrete RouterLoopHost implementation extracted from ChatSession.
@@ -198,6 +200,11 @@ class RouterHostAdapter:
         multimodal_config: Any = None,
         # Issue #383 PR-C: media + tool-result file storage.
         media_store: Any = None,
+        # FP-0037 S1: persistent MCP tools cache directory.
+        # Default is Path(".reyn/state") which resolves relative to cwd
+        # (= the project root in all production entry points). Tests pass
+        # a tmp_path subdirectory to isolate writes.
+        state_dir: Path | None = None,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -210,6 +217,12 @@ class RouterHostAdapter:
         # ensure_mcp_tools_cached() on the first user turn; None means
         # "not yet probed". See FP-0037 issue #160.
         self._mcp_tools_cache: dict[str, list[dict]] | None = None
+        # FP-0037 S1: mtime of the cache file when we last loaded from it.
+        # None = never loaded from disk. Used by maybe_reload_mcp_tools_cache_from_disk
+        # to detect when the CLI has written a fresher version.
+        self._mcp_tools_cache_mtime: float | None = None
+        # FP-0037 S1: state dir for the persistent cache file.
+        self._state_dir: Path = Path(state_dir) if state_dir is not None else _DEFAULT_STATE_DIR
         self._project_context = project_context
         self._events = events
         self._resolver = resolver
@@ -944,6 +957,13 @@ class RouterHostAdapter:
         user turn. The first call populates the cache (= lazy, post-startup,
         per FP-0037 issue #160). Subsequent calls are no-ops.
 
+        FP-0037 S1: before probing, checks for a pre-written cache file at
+        ``<state_dir>/mcp_tools_cache.json``. If present and parseable, the
+        in-memory cache is warm-started from disk (= zero probe latency on
+        sessions after the operator ran ``reyn mcp refresh``). On cache-miss
+        (file absent / corrupt) the existing live-probe path runs unchanged,
+        and the result is written back to disk for future warm-starts.
+
         Probes run in parallel via `asyncio.gather` with `return_exceptions=True`
         so a single slow / unreachable server does not block the others.
         Per-server timeout caps each probe; on timeout or exception the
@@ -956,8 +976,24 @@ class RouterHostAdapter:
         """
         import asyncio
 
+        from reyn.chat.services.mcp_cache_file import (
+            cache_file_path,
+            file_mtime,
+            read_cache,
+            write_cache,
+        )
+
         if self._mcp_tools_cache is not None:
             return
+
+        # FP-0037 S1: warm-start from persistent cache file when available.
+        cache_path = cache_file_path(self._state_dir)
+        disk_cache = read_cache(cache_path)
+        if disk_cache is not None:
+            self._mcp_tools_cache = disk_cache
+            self._mcp_tools_cache_mtime = file_mtime(cache_path)
+            return
+
         servers = self._mcp_servers_flat()
         if not servers:
             self._mcp_tools_cache = {}
@@ -996,6 +1032,67 @@ class RouterHostAdapter:
             return_exceptions=False,  # _probe_one handles its own errors
         )
         self._mcp_tools_cache = dict(results)
+
+        # FP-0037 S1: persist the live-probe result so subsequent sessions
+        # and turns can warm-start from disk. Failures are opportunistic
+        # and must NOT abort the session.
+        try:
+            write_cache(cache_path, self._mcp_tools_cache)
+            self._mcp_tools_cache_mtime = file_mtime(cache_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "ensure_mcp_tools_cached: could not write cache to %s: %r",
+                cache_path, exc,
+            )
+
+    def maybe_reload_mcp_tools_cache_from_disk(self) -> None:
+        """Reload the in-memory MCP tools cache if the on-disk file is newer.
+
+        FP-0037 S1: called at each turn boundary (in ChatSession before
+        `ensure_mcp_tools_cached`). When the operator runs ``reyn mcp refresh``
+        while a session is active, the cache file's mtime advances. This
+        method detects that and hot-swaps the in-memory cache so the very next
+        turn sees the refreshed tool list — no session restart required.
+
+        Behaviour:
+        - File absent or unreadable → no-op (silent).
+        - File mtime unchanged since last load → no-op.
+        - File mtime advanced → replace in-memory cache + update mtime record.
+        Never raises.
+        """
+        from reyn.chat.services.mcp_cache_file import (
+            cache_file_path,
+            file_mtime,
+            read_cache,
+        )
+
+        cache_path = cache_file_path(self._state_dir)
+        current_mtime = file_mtime(cache_path)
+        if current_mtime is None:
+            return
+        if (
+            self._mcp_tools_cache_mtime is not None
+            and current_mtime <= self._mcp_tools_cache_mtime
+        ):
+            return
+        fresh = read_cache(cache_path)
+        if fresh is None:
+            return
+        self._mcp_tools_cache = fresh
+        self._mcp_tools_cache_mtime = current_mtime
+
+    @property
+    def mcp_tools_cache_snapshot(self) -> dict[str, list[dict]] | None:
+        """Read-only snapshot of the current in-memory MCP tools cache.
+
+        FP-0037 S1: test-supporting public surface (per Tier policy
+        [[feedback_tier_policy_strict_compliance]]). Returns a shallow copy
+        so callers cannot mutate adapter internals through the returned dict.
+        Returns None when the cache has not yet been populated.
+        """
+        if self._mcp_tools_cache is None:
+            return None
+        return dict(self._mcp_tools_cache)
 
     def make_router_op_context(self) -> Any:
         """Build an OpContext for router-initiated file / MCP / web ops.

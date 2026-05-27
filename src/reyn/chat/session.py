@@ -2730,6 +2730,14 @@ class ChatSession:
         # budget without resetting.
         self._reset_router_turn_counter()
 
+        # FP-0037 S1: check whether the operator ran `reyn mcp refresh`
+        # since the last turn. Reloads the in-memory tools cache from disk
+        # when the cache file mtime has advanced. No-op on first turn (file
+        # absent or mtime unchanged). Called BEFORE ensure_mcp_tools_cached
+        # so a refresh written between session start and first turn is still
+        # visible on turn 1.
+        self._router_host.maybe_reload_mcp_tools_cache_from_disk()
+
         # FP-0037 issue #160: lazy MCP tool discovery cache. First user
         # turn probes every configured MCP server's tool list once;
         # subsequent turns no-op. Zero startup latency; first-turn cost
