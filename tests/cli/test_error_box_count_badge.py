@@ -43,7 +43,7 @@ def _header_text_of(box) -> str:
     renderable = getattr(label, "_renderable", None) or getattr(label, "renderable", None)
     if renderable is None:
         # Fallback to building the header directly from the widget's helper.
-        return box._header_text()
+        return box.header_text()
     return str(getattr(renderable, "plain", renderable))
 
 
@@ -59,7 +59,7 @@ async def test_single_error_no_badge() -> None:
         conv = app.query_one("#conversation", ConversationView)
         box = conv.mount_error(message="solo error")
         await pilot.pause()
-        header = box._header_text()
+        header = box.header_text()
         # No badge present.
         assert "[1/1]" not in header
         # ``✗ solo error  ▶`` shape preserved.
@@ -79,8 +79,8 @@ async def test_two_errors_renumber_correctly() -> None:
         first = conv.mount_error(message="first error")
         second = conv.mount_error(message="second error")
         await pilot.pause()
-        assert "[1/2]" in first._header_text()
-        assert "[2/2]" in second._header_text()
+        assert "[1/2]" in first.header_text()
+        assert "[2/2]" in second.header_text()
 
 
 @pytest.mark.asyncio
@@ -97,9 +97,9 @@ async def test_three_errors_renumber_correctly() -> None:
             conv.mount_error(message=f"err {i}") for i in range(3)
         ]
         await pilot.pause()
-        assert "[1/3]" in boxes[0]._header_text()
-        assert "[2/3]" in boxes[1]._header_text()
-        assert "[3/3]" in boxes[2]._header_text()
+        assert "[1/3]" in boxes[0].header_text()
+        assert "[2/3]" in boxes[1].header_text()
+        assert "[3/3]" in boxes[2].header_text()
 
 
 @pytest.mark.asyncio
@@ -116,17 +116,17 @@ async def test_dismiss_renumbers_survivors() -> None:
         second = conv.mount_error(message="second")
         third = conv.mount_error(message="third")
         await pilot.pause()
-        assert "[3/3]" in third._header_text()
+        assert "[3/3]" in third.header_text()
         conv.dismiss_last_error()  # removes third
         await pilot.pause()
         # Now 2 remain; renumber to [1/2] [2/2].
-        assert "[1/2]" in first._header_text()
-        assert "[2/2]" in second._header_text()
+        assert "[1/2]" in first.header_text()
+        assert "[2/2]" in second.header_text()
         conv.dismiss_last_error()  # removes second
         await pilot.pause()
         # Single error remaining → no badge.
-        assert "[1/" not in first._header_text()
-        assert "[2/" not in first._header_text()
+        assert "[1/" not in first.header_text()
+        assert "[2/" not in first.header_text()
 
 
 def test_header_text_omits_badge_for_total_one() -> None:
@@ -139,10 +139,10 @@ def test_header_text_omits_badge_for_total_one() -> None:
 
     # total=1, single error case.
     box = ErrorBox(message="x", index=1, total=1)
-    assert "[1/1]" not in box._header_text()
+    assert "[1/1]" not in box.header_text()
     # Defaults: index=0, total=0 — no badge.
     box2 = ErrorBox(message="x")
-    assert "/" not in box2._header_text().split("✗", 1)[1].split("▶")[0]
+    assert "/" not in box2.header_text().split("✗", 1)[1].split("▶")[0]
 
 
 def test_set_index_total_idempotent_skip() -> None:
@@ -156,12 +156,12 @@ def test_set_index_total_idempotent_skip() -> None:
 
     box = ErrorBox(message="x")
     box.set_index_total(2, 3)
-    assert box._index == 2
-    assert box._total == 3
+    assert box.index == 2
+    assert box.total == 3
     # Same values — equality gate short-circuits.
     box.set_index_total(2, 3)
-    assert box._index == 2
-    assert box._total == 3
+    assert box.index == 2
+    assert box.total == 3
 
 
 @pytest.mark.asyncio
@@ -178,4 +178,4 @@ async def test_set_index_total_updates_header() -> None:
         await pilot.pause()
         box.set_index_total(2, 5)
         await pilot.pause()
-        assert "[2/5]" in box._header_text()
+        assert "[2/5]" in box.header_text()
