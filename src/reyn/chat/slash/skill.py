@@ -64,7 +64,7 @@ async def _list_skill_runs(session: "ChatSession") -> None:
     list) display as roots — the parent has either completed or this
     is a stale snapshot.
     """
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     if reg is None:
         await reply(session, "(no active skills — state log not configured)")
         return
@@ -168,7 +168,7 @@ async def _discard_skill_run(session: "ChatSession", args: str) -> None:
     if not run_id:
         await reply_error(session, "Usage: /skill discard <run_id> [--force]")
         return
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     if reg is None:
         await reply_error(session, "skill registry not available")
         return

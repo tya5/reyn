@@ -173,7 +173,7 @@ def test_e2e_chatsession_auto_resume_completes_crashed_skill(tmp_path: Path, mon
         rt = _StubResumeRuntime(
             _make_skill(),
             resume_plan=decision.plan,
-            skill_registry=session._get_skill_registry(),
+            skill_registry=session.get_skill_registry(),
             state_log=session._state_log,
         )
         result = await rt.run(decision.plan.skill_input)

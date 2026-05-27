@@ -12,7 +12,7 @@ them a correctly-wired SkillRegistry. A wiring regression would silently
 disable resume.
 
 Observation flows through:
-  - ChatSession._get_skill_registry() return value type
+  - ChatSession.get_skill_registry() return value type
   - The returned registry's behavior when its lifecycle methods are called
     (does start() append to the WAL? does the hook fire?)
 No mocks — real ChatSession with no LLM (we never call _run_skill_awaitable),
@@ -65,7 +65,7 @@ def test_get_skill_registry_returns_none_without_state_log(tmp_path, monkeypatch
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, with_state_log=False, with_registry=False)
-    assert session._get_skill_registry() is None
+    assert session.get_skill_registry() is None
 
 
 def test_get_skill_registry_lazy_constructs_with_state_log(tmp_path, monkeypatch):
@@ -77,9 +77,9 @@ def test_get_skill_registry_lazy_constructs_with_state_log(tmp_path, monkeypatch
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, with_state_log=True, with_registry=False)
 
-    reg1 = session._get_skill_registry()
+    reg1 = session.get_skill_registry()
     assert isinstance(reg1, SkillRegistry)
-    reg2 = session._get_skill_registry()
+    reg2 = session.get_skill_registry()
     assert reg1 is reg2  # cached
 
 
@@ -90,7 +90,7 @@ def test_skill_registry_writes_to_session_state_log(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, with_state_log=True, with_registry=False)
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
 
     async def go():
         await reg.start(
@@ -120,8 +120,8 @@ def test_truncate_hook_unwired_without_registry(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, with_state_log=True, with_registry=False)
-    reg = session._get_skill_registry()
-    assert reg._truncate_hook is None
+    reg = session.get_skill_registry()
+    assert reg.truncate_hook is None
 
 
 def test_truncate_hook_wired_with_registry(tmp_path, monkeypatch):
@@ -153,8 +153,8 @@ def test_truncate_hook_wired_with_registry(tmp_path, monkeypatch):
         Path(".reyn") / "agents" / "alpha" / "state" / "snapshot.json",
     )
 
-    reg = session._get_skill_registry()
-    assert reg._truncate_hook is not None
+    reg = session.get_skill_registry()
+    assert reg.truncate_hook is not None
 
     async def go():
         await reg.start(run_id="r", skill_name="s", skill_input={})
@@ -165,4 +165,4 @@ def test_truncate_hook_wired_with_registry(tmp_path, monkeypatch):
 
     # Throttle stamp set proves the hook reached AgentRegistry's truncation
     # path AND truncation actually attempted a rewrite (floor>0).
-    assert session._registry.last_truncation_ts is not None
+    assert session.agent_registry.last_truncation_ts is not None
