@@ -1288,7 +1288,31 @@ class ChatSession:
             try:
                 from reyn.embedding import get_provider as _get_provider
                 from reyn.tools.action_index import ActionEmbeddingIndex
-                self._embedding_provider = _get_provider("litellm", embedding_config)
+
+                # FP-0043 Component C.3: surface the sentence-transformers
+                # lazy model-load lifecycle (= downloading / loaded /
+                # error) via the session's events bus so the TUI /
+                # chainlit surfaces can render a sticky status row + a
+                # green "done" frame + a retry-hint error row. The sink
+                # is called from the embed worker thread; events.emit is
+                # GIL-protected + sync so this is safe without a
+                # call_soon_threadsafe bridge.
+                _events = self.events
+
+                def _embedding_event_sink(
+                    kind: str, text: str, meta: dict,
+                ) -> None:
+                    _events.emit(
+                        f"embedding_{kind}",
+                        text=text,
+                        **meta,
+                    )
+
+                self._embedding_provider = _get_provider(
+                    "litellm",
+                    embedding_config,
+                    event_sink=_embedding_event_sink,
+                )
                 self._embedding_model_class = self._action_retrieval.embedding_class
                 self._action_embedding_index = ActionEmbeddingIndex(
                     persist_dir=Path(".reyn") / "action_index",

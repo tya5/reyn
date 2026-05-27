@@ -22,6 +22,8 @@ Layers (ADR-0033 + FP-0043):
 """
 from __future__ import annotations
 
+from typing import Any
+
 from reyn.embedding.cost_estimator import CostEstimate, estimate_indexing_cost
 from reyn.embedding.litellm_provider import LiteLLMEmbeddingProvider
 from reyn.embedding.provider import EmbedBatchResult, EmbeddingProvider
@@ -51,7 +53,10 @@ def register_provider(name: str, impl: type[EmbeddingProvider]) -> None:
 
 
 def get_provider(
-    name: str = "litellm", config: dict | None = None
+    name: str = "litellm",
+    config: dict | None = None,
+    *,
+    event_sink: "Any | None" = None,
 ) -> EmbeddingProvider:
     """Instantiate and return an EmbeddingProvider by name.
 
@@ -62,6 +67,13 @@ def get_provider(
                 carries the ``sentence-transformers/`` prefix).
         config: Provider configuration dict (e.g. reyn.yaml ``embedding:``
                 section). Empty dict used when None.
+        event_sink: Optional ``(kind, text, meta) -> None`` callable
+                forwarded to backends that emit lifecycle events (= the
+                routing wrapper passes it through to the lazily-built
+                sentence-transformers backend for model-load
+                notifications). Passed only to provider classes that
+                accept the kwarg; ignored otherwise.
+                FP-0043 Component C.3 onboarding UX.
 
     Returns:
         An EmbeddingProvider instance.
@@ -70,6 +82,8 @@ def get_provider(
         KeyError: if name is not registered.
     """
     cls = _PROVIDERS[name]
+    if event_sink is not None and cls is RoutingEmbeddingProvider:
+        return cls(config or {}, event_sink=event_sink)  # type: ignore[call-arg]
     return cls(config or {})  # type: ignore[call-arg]
 
 
