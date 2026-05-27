@@ -277,11 +277,37 @@ action_retrieval:
 
 ## What stays out of Phase 1
 
-The structural surface is complete; behavioral / discovery features
-deferred to Phase 2:
+The structural surface is complete. Discovery features landed and
+deferred:
 
-- **`search_actions`** — semantic, embedding-backed search. The
-  handler is a stub; visibility waits for `ActionEmbeddingIndex`.
+**Landed post-1.0:**
+
+- **`search_actions`** — semantic, embedding-backed search **shipped
+  in FP-0043 (2026-05)**. `ActionEmbeddingIndex` (= SQLite-WAL
+  persistence + class-swap detection + cross-process build lock)
+  backs the handler; visibility is gated by §D14 (= tool appears only
+  once the index has built ≥1 vector). When the gate fails, the
+  `list_actions` response carries a structured **hidden-state hint**
+  pointing operators at `pip install 'reyn[local-embed]'` /
+  `reyn embeddings status` so the install path is self-discoverable
+  mid-chat. The local backend is the default; the OpenAI-backed
+  classes (`light` / `standard` / `strong`) are equally usable. See
+  [Guide: enable semantic search](../guide/for-users/enable-semantic-search.md)
+  and the [`reyn embeddings`](../reference/cli/embeddings.md) CLI for
+  the operator surface.
+
+**Category validation + legacy redirect**
+
+`list_actions(category=[...])` and `search_actions(category=[...])`
+validate every supplied name against the live category enum.
+Unknown names return an explicit error carrying a `legacy → current`
+mapping (`mcp.server` → `mcp`, `agent.peer` → `multi_agent`, …) so
+LLMs whose training data references a pre-collapse name self-correct
+in a single retry. See `_LEGACY_CATEGORY_REDIRECTS` in
+`src/reyn/tools/universal_catalog.py`.
+
+**Deferred to Phase 2:**
+
 - **`rag.corpus` enumeration** — needs a `RouterCallerState` field
   carrying indexed-source metadata, then plumbing through
   `RouterHostAdapter`. The `invoke` and `describe` paths already work

@@ -286,6 +286,7 @@ All ops are documented in the single reference page: **[Control IR](reference/ru
 | `reyn mcp` | Serve, search, install, and manage MCP servers | [Reference](reference/cli/mcp.md) |
 | `reyn secret` | Set / list / clear secrets in `~/.reyn/secrets.env` | [Reference](reference/cli/secret.md) |
 | `reyn source` | List, describe, and remove indexed RAG sources | [Reference](reference/cli/source.md) |
+| `reyn embeddings` | `status` / `rebuild` / `clear` for the action embedding index (`search_actions`) | [Reference](reference/cli/embeddings.md) |
 | `reyn config` | Show, query, and set effective configuration | [Reference](reference/cli/config.md) |
 | `reyn web` | Start FastAPI + WebSocket gateway server | [Reference](reference/cli/web.md) |
 | `reyn init` | Scaffold `reyn.yaml` and `.reyn/` in current directory | [Reference](reference/cli/init.md) |
@@ -352,11 +353,14 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | LiteLLM embedding backend | Any provider via named model class config | [RAG concepts](concepts/rag.md) |
+| Local embedding backend | sentence-transformers via `pip install 'reyn[local-embed]'` — `local-mini` / `local-e5` classes, credential-free, GPU-optional via `REYN_EMBED_DEVICE` (FP-0043) | [RAG concepts § Local embedding backend](concepts/rag.md#local-embedding-backend-fp-0043) · [Guide](guide/for-users/enable-semantic-search.md) |
+| Provider-prefix routing | `sentence-transformers/` → local backend; anything else → LiteLLM (FP-0043) | [RAG concepts § Embedding configuration](concepts/rag.md#embedding-configuration) |
 | Batch embed | Configurable `batch_size` with concurrency semaphore | [RAG concepts](concepts/rag.md) |
 | Dimension table | Static lookup for OpenAI / Voyage / Cohere | [RAG concepts](concepts/rag.md) |
 | SQLite index per source | `.reyn/index/<source>/index.db` with WAL mode | [RAG concepts](concepts/rag.md) |
 | Chunk dedup | `content_hash` upsert prevents re-indexing | [RAG concepts](concepts/rag.md) |
 | `recall` op | embed → `index_query` per source → merge top-K globally | [Control IR](reference/runtime/control-ir.md) |
+| Action embedding index | `ActionEmbeddingIndex` (SQLite-WAL, class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses (FP-0043) | [Universal catalog § search_actions](concepts/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
 | Memory CRUD | `list` / `read` / `remember_shared` / `remember_agent` / `forget` | [Memory concepts](concepts/memory.md) · [reyn memory CLI](reference/cli/memory.md) |
 | Chat compaction | head+tail preservation + rolling LLM summary within token budget | [Chat Compaction](concepts/chat-compaction.md) · [`chat_compactor`](reference/stdlib/chat_compactor.md) |
 
