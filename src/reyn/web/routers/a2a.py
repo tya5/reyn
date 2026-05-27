@@ -733,7 +733,7 @@ class _A2AProgressBridge:
     ``_handle_async_mode._run``) is the authoritative outcome.
     """
 
-    _TRACKED_EVENTS = frozenset({
+    TRACKED_EVENTS = frozenset({
         "phase_started",
         "llm_called",
         "act_executed",
@@ -757,6 +757,16 @@ class _A2AProgressBridge:
         self._detached = False
         self._tasks: list[asyncio.Task[None]] = []
 
+    @property
+    def detached(self) -> bool:
+        """Read-only accessor for the bridge's detached flag.
+
+        Tests verify the attach / detach lifecycle via this surface.
+        Mutation continues to go through ``self._detached`` so the
+        lifecycle call sites in ``detach`` stay visible.
+        """
+        return self._detached
+
     def attach(self) -> None:
         events = getattr(self._session, "_chat_events", None)
         if events is not None:
@@ -779,7 +789,7 @@ class _A2AProgressBridge:
         if self._detached:
             return
         event_type = getattr(event, "type", None)
-        if event_type not in self._TRACKED_EVENTS:
+        if event_type not in self.TRACKED_EVENTS:
             return
         data = getattr(event, "data", {}) or {}
         message = self.format_message(event_type, data)
