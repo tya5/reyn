@@ -72,6 +72,12 @@ class RoutingEmbeddingProvider:
             instantiated lazily on first prefix-match (= production
             posture: zero overhead when only LiteLLM-routable models
             are used). Tests pass a fake here to verify dispatch.
+        event_sink: Optional ``(kind, text, meta) -> None`` callable
+            forwarded to the lazily-constructed sentence-transformers
+            backend so its model-load lifecycle (= downloading / loaded
+            / error) surfaces back to the caller. Ignored for the
+            LiteLLM backend (= no lazy load to report on).
+            FP-0043 Component C.3 onboarding UX.
     """
 
     def __init__(
@@ -80,6 +86,7 @@ class RoutingEmbeddingProvider:
         *,
         litellm_provider: "Any | None" = None,
         sentence_transformers_provider: "Any | None" = None,
+        event_sink: "Any | None" = None,
     ) -> None:
         self._config = config
         self._litellm = (
@@ -88,6 +95,7 @@ class RoutingEmbeddingProvider:
             else LiteLLMEmbeddingProvider(config=config)
         )
         self._st: Any = sentence_transformers_provider  # lazy when None
+        self._event_sink = event_sink
 
         # Cache the classes map for prefix resolution without re-walking
         # the EmbeddingConfig structure on every embed() call.
@@ -117,6 +125,7 @@ class RoutingEmbeddingProvider:
                 )
                 self._st = SentenceTransformersEmbeddingProvider(
                     config=self._config,
+                    event_sink=self._event_sink,
                 )
             return self._st
         return self._litellm

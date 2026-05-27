@@ -57,9 +57,27 @@ import asyncio
 import os
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.embedding.provider import EmbedBatchResult
+
+# FP-0043 Component C.3 — first-time DL progress UX.
+#
+# An EventSink is an optional ``(kind, text, meta) -> None`` callable
+# the caller passes in to receive lifecycle notifications during the
+# lazy model load. The provider emits:
+#
+#   ("status",     "<msg>", {model, target_dir, device})   on DL start
+#   ("skill_done", "<msg>", {model, dimension})            on load complete
+#   ("error",      "<msg>", {model, retry_hint})           on load failure
+#
+# The sink is called synchronously from inside ``_load`` (= which itself
+# runs under ``asyncio.to_thread`` when invoked via ``embed``). Sink
+# implementations that need to bridge into an async event bus should
+# either be thread-safe or use a thread-safe primitive (= queue,
+# loop.call_soon_threadsafe). Sink exceptions are swallowed so a
+# misbehaving sink can never break the embedding load.
+EventSink = Callable[[str, str, dict], None]
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer  # noqa: F401
@@ -118,9 +136,19 @@ class SentenceTransformersEmbeddingProvider:
             lookup table; this provider does NOT honour batch_size /
             max_concurrent_batches at the moment — sentence-transformers
             encodes in a single call per batch internally.
+        event_sink: Optional ``(kind, text, meta) -> None`` callable
+            that receives lifecycle notifications during the lazy model
+            load (= "downloading...", "loaded", "error"). When ``None``
+            the load runs silently — preserves the pre-#922 behaviour.
+            FP-0043 Component C.3 onboarding UX.
     """
 
-    def __init__(self, config: "dict[str, Any] | Any | None" = None) -> None:
+    def __init__(
+        self,
+        config: "dict[str, Any] | Any | None" = None,
+        *,
+        event_sink: "EventSink | None" = None,
+    ) -> None:
         if config is None:
             config = {}
         if not isinstance(config, dict) and hasattr(config, "classes"):
@@ -134,6 +162,25 @@ class SentenceTransformersEmbeddingProvider:
         self._models: dict[str, Any] = {}
         self._cache_dir = _resolve_cache_dir()
         self._device = _resolve_device()
+        self._event_sink: "EventSink | None" = event_sink
+
+    # ── Event sink helper ─────────────────────────────────────────────────
+
+    def _emit(self, kind: str, text: str, meta: "dict | None" = None) -> None:
+        """Dispatch a lifecycle event through the configured sink, if any.
+
+        Sink exceptions are intentionally swallowed: an event-bus
+        misconfiguration must not prevent the embedding load from
+        completing (= the LLM still needs vectors regardless of
+        whether the operator's TUI got a "downloading..." line).
+        """
+        sink = self._event_sink
+        if sink is None:
+            return
+        try:
+            sink(kind, text, meta or {})
+        except Exception:
+            pass
 
     # ── Model resolution ───────────────────────────────────────────────────
 
@@ -158,6 +205,16 @@ class SentenceTransformersEmbeddingProvider:
         Raises ImportError when the optional dep is missing — the caller
         is expected to surface this with the canonical install hint
         (already embedded in the exception message).
+
+        Lifecycle events (FP-0043 Component C.3):
+          * ``status`` before the load begins, carrying ``model`` /
+            ``target_dir`` / ``device`` so the TUI can render a sticky
+            status row.
+          * ``skill_done`` after the load succeeds, with the resolved
+            dimension for cross-checking.
+          * ``error`` if the load (or the underlying import) fails,
+            with a ``retry_hint`` pointing at the relevant recovery
+            command.
         """
         cached = self._models.get(resolved_model)
         if cached is not None:
@@ -165,14 +222,62 @@ class SentenceTransformersEmbeddingProvider:
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
+            self._emit(
+                "error",
+                f"sentence_transformers not installed; cannot load "
+                f"{resolved_model!r}",
+                {
+                    "model": resolved_model,
+                    "retry_hint": (
+                        "Run `pip install 'reyn[local-embed]'` to "
+                        "install the local embedding extras, then retry."
+                    ),
+                },
+            )
             raise ImportError(_INSTALL_HINT) from exc
 
         hf_id = _strip_prefix(resolved_model)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        model = SentenceTransformer(
-            hf_id,
-            cache_folder=str(self._cache_dir),
-            device=self._device,
+        self._emit(
+            "status",
+            f"loading embedding model {resolved_model!r} "
+            f"(first run may download ~20-120 MB)",
+            {
+                "model": resolved_model,
+                "target_dir": str(self._cache_dir),
+                "device": self._device,
+            },
+        )
+        try:
+            model = SentenceTransformer(
+                hf_id,
+                cache_folder=str(self._cache_dir),
+                device=self._device,
+            )
+        except Exception as exc:
+            self._emit(
+                "error",
+                f"failed to load {resolved_model!r}: {exc}",
+                {
+                    "model": resolved_model,
+                    "retry_hint": (
+                        "Check network connectivity, then retry. If the "
+                        "cache is partial / corrupt, run "
+                        "`reyn embeddings clear` to wipe and start fresh."
+                    ),
+                },
+            )
+            raise
+        # Resolve dimension without re-loading; sentence-transformers
+        # exposes this on the loaded instance.
+        try:
+            dim = int(model.get_sentence_embedding_dimension())
+        except Exception:
+            dim = 0
+        self._emit(
+            "skill_done",
+            f"loaded embedding model {resolved_model!r} ({dim}d)",
+            {"model": resolved_model, "dimension": dim},
         )
         self._models[resolved_model] = model
         return model
@@ -247,6 +352,7 @@ class SentenceTransformersEmbeddingProvider:
 
 __all__ = [
     "SentenceTransformersEmbeddingProvider",
+    "EventSink",
     "_PREFIX",  # exported for the routing layer
     "_resolve_cache_dir",  # exported for tests
     "_resolve_device",
