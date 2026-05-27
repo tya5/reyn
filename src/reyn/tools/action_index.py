@@ -240,7 +240,7 @@ class ActionEmbeddingIndex:
     # ── SQLite persistence helpers (Phase 2 step 2) ───────────────────────
 
     @property
-    def _db_path(self) -> Path | None:
+    def db_path(self) -> Path | None:
         if self._persist_dir is None:
             return None
         return self._persist_dir / "index.db"
@@ -265,7 +265,7 @@ class ActionEmbeddingIndex:
 
         Caller MUST hold ``_build_lock``.
         """
-        db_path = self._db_path
+        db_path = self.db_path
         if db_path is None or not db_path.exists():
             return False
         try:
@@ -317,7 +317,7 @@ class ActionEmbeddingIndex:
 
         Caller MUST hold ``_build_lock``.
         """
-        db_path = self._db_path
+        db_path = self.db_path
         if db_path is None or self._catalog_hash is None:
             return
         try:
