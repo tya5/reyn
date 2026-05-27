@@ -221,10 +221,19 @@ def _build_legacy_op_context(ctx: ToolContext) -> Any:
     from reyn.op_runtime.context import OpContext
     from reyn.permissions.permissions import PermissionDecl
 
+    # Propagate the active phase's PermissionDecl via phase_state.op_context
+    # (FP-0008 Tool→OpContext bridge fix 2026-05-28).
+    phase_op_ctx = (
+        ctx.phase_state.op_context if ctx.phase_state is not None else None
+    )
     return OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
-        permission_decl=PermissionDecl(),
+        permission_decl=(
+            phase_op_ctx.permission_decl
+            if phase_op_ctx is not None
+            else PermissionDecl()
+        ),
         permission_resolver=ctx.permission_resolver,
         skill_name="",
     )

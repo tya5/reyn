@@ -59,12 +59,23 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     # shell_allowed=True because gate enforcement (Layer 1) has already
     # passed by the time the handler is invoked. The permission_resolver
     # on ToolContext, if present, will still be consulted by handle_shell
-    # for the per-call Layer 3 check (require_shell). When permission_resolver
-    # is None we fall back to shell_allowed=True (gate passed = execution allowed).
+    # for the per-call Layer 3 check (require_shell). The Layer-3 check
+    # reads decl.shell from the OpContext's permission_decl — propagate
+    # the active phase's PermissionDecl so the skill's declared shell
+    # permission survives the Tool→OpContext bridge (FP-0008 sandbox_2
+    # 2026-05-28 calibration v2: hardcoded PermissionDecl() here caused
+    # require_shell to fire on skills that DID declare shell=true).
+    phase_op_ctx = (
+        ctx.phase_state.op_context if ctx.phase_state is not None else None
+    )
     legacy_ctx = OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
-        permission_decl=PermissionDecl(),
+        permission_decl=(
+            phase_op_ctx.permission_decl
+            if phase_op_ctx is not None
+            else PermissionDecl()
+        ),
         permission_resolver=ctx.permission_resolver,
         skill_name="",
         skill=None,
@@ -78,11 +89,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         shell_allowed=True,
         mcp_servers={},
         mcp_clients={},
-        intervention_bus=getattr(
-            ctx.phase_state.op_context if ctx.phase_state is not None else None,
-            "intervention_bus",
-            None,
-        ),
+        intervention_bus=getattr(phase_op_ctx, "intervention_bus", None),
         current_phase="",
         caller="direct",
         parent_skill_run_id=None,

@@ -339,10 +339,20 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     if rs is not None and rs.op_context_factory is not None:
         legacy_ctx = rs.op_context_factory()
     else:
+        # Propagate the active phase's PermissionDecl via
+        # phase_state.op_context (FP-0008 Tool→OpContext bridge fix
+        # 2026-05-28).
+        phase_op_ctx = (
+            ctx.phase_state.op_context if ctx.phase_state is not None else None
+        )
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
-            permission_decl=PermissionDecl(),
+            permission_decl=(
+                phase_op_ctx.permission_decl
+                if phase_op_ctx is not None
+                else PermissionDecl()
+            ),
             permission_resolver=ctx.permission_resolver,
             skill_name="",
             subscribers=getattr(ctx.events, "subscribers", []),

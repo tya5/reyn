@@ -164,10 +164,19 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
     else:
         # Minimal context for router-side calls without a factory.
         # Recall is read-only with respect to the workspace (no writes).
+        # Propagate the active phase's PermissionDecl when available
+        # (FP-0008 Tool→OpContext bridge fix 2026-05-28).
+        phase_op_ctx = (
+            ctx.phase_state.op_context if ctx.phase_state is not None else None
+        )
         legacy_ctx = OpContext(
             workspace=ctx.workspace,
             events=ctx.events,
-            permission_decl=PermissionDecl(),
+            permission_decl=(
+                phase_op_ctx.permission_decl
+                if phase_op_ctx is not None
+                else PermissionDecl()
+            ),
             permission_resolver=ctx.permission_resolver,
             skill_name="",
             subscribers=getattr(ctx.events, "subscribers", []),
