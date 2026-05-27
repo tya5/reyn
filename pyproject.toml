@@ -64,11 +64,6 @@ dev = [
     "ruff",
     "mypy",
     "pytest-asyncio>=0.23",
-    # Issue #927 Phase A: ``@pytest.mark.flaky(reruns=N)`` for tests
-    # with a known CI-env race we haven't root-fixed yet. Each
-    # decorator carries a comment + issue link; removal is the
-    # Phase B PR's exit criterion.
-    "pytest-rerunfailures>=14",
 ]
 fetch = [
     "trafilatura>=1.8",       # higher-quality HTML extraction for web__fetch (issue #355)

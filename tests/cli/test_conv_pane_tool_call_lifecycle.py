@@ -46,6 +46,35 @@ class _ConvOnlyApp(App):
         yield ConversationView(id="conversation")
 
 
+async def _wait_until_no_tool_rows(
+    pilot, conv, *, max_wait_s: float = 2.0, step_s: float = 0.05,
+) -> int:
+    """Pump ``pilot.pause(step_s)`` until ``conv`` has zero ToolCallRow,
+    or ``max_wait_s`` elapses. Returns the final row count.
+
+    Issue #927 root fix: ``_flush_tool_call_row`` schedules the unmount
+    via ``app.set_timer(delay, ...)`` so the row stays visible for the
+    F-H min-display-time threshold (0.3s) before its
+    ``row.remove()`` runs. A fixed ``await pilot.pause(0.6)`` looks
+    generous but is **not deterministic under CI load** — the test
+    event-loop can return from the pause before the timer callback +
+    subsequent ``remove()`` task have drained, leaving the row
+    mounted and the ``len(...) == 0`` assertion failing with
+    ``assert 1 == 0`` (the exact shape #927 captured N=6 times).
+
+    The polling pattern yields control repeatedly so every pending
+    timer + remove task gets a chance to land; the cap stops the
+    test from hanging if the unmount is genuinely broken (= a real
+    regression still surfaces as ``return 1`` after ~2s).
+    """
+    deadline_steps = max(1, int(max_wait_s / step_s))
+    for _ in range(deadline_steps):
+        if not list(conv.query(ToolCallRow)):
+            return 0
+        await pilot.pause(step_s)
+    return len(list(conv.query(ToolCallRow)))
+
+
 # ── Conv pane lifecycle API tests ─────────────────────────────────────────────
 
 
@@ -83,17 +112,18 @@ async def test_start_tool_call_row_is_idempotent_for_same_op_id():
         assert len(list(conv.query(ToolCallRow))) == 1
 
 
-@pytest.mark.flaky(reruns=2, reruns_delay=1)
 @pytest.mark.asyncio
 async def test_complete_tool_call_row_unmounts_live_widget():
     """Tier 2: success terminal removes the live row from the DOM.
 
-    F-H min-display-time defers flush by up to 0.3s for very fast ops;
-    the test waits past the threshold so the deferred unmount completes.
-    The pause margin is sized generously (= 0.6s, 2× the F-H threshold)
-    so CI runners under event-loop load can still meet the deadline
-    without flaking — previously a 0.4s margin failed intermittently
-    on Python 3.11 / 3.12 GitHub Actions runs during high concurrency.
+    Issue #927 Phase B root fix: F-H min-display-time defers flush
+    via ``app.set_timer(0.3, ...)``. The deferred unmount runs on
+    a later event-loop tick and a fixed ``await pilot.pause(0.6)``
+    can return BEFORE that tick fires under CI load (= N=6 flake
+    instances). ``_wait_until_no_tool_rows`` polls in 0.05s steps
+    up to 2.0s so every pending timer + remove task gets a chance
+    to land deterministically; a genuinely broken unmount still
+    surfaces as a non-zero return after the cap.
     """
     app = _ConvOnlyApp()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -103,16 +133,17 @@ async def test_complete_tool_call_row_unmounts_live_widget():
         await pilot.pause()
         assert len(list(conv.query(ToolCallRow))) == 1
         conv.complete_tool_call_row("op-b", result_snippet="200 OK 1.2KB")
-        # Wait well past the F-H min-display-time deferral so the
-        # deferred unmount has a generous margin even under CI load.
-        await pilot.pause(0.6)
-        # Row is unmounted after flush.
-        assert len(list(conv.query(ToolCallRow))) == 0
+        assert await _wait_until_no_tool_rows(pilot, conv) == 0
 
 
 @pytest.mark.asyncio
 async def test_fail_tool_call_row_unmounts_live_widget_and_records_error():
-    """Tier 2: failure terminal removes the live row from the DOM."""
+    """Tier 2: failure terminal removes the live row from the DOM.
+
+    Uses the same ``_wait_until_no_tool_rows`` polling pattern as
+    the success-terminal sibling so the deferred unmount window
+    drains deterministically (= issue #927 Phase B root fix).
+    """
     app = _ConvOnlyApp()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -120,12 +151,7 @@ async def test_fail_tool_call_row_unmounts_live_widget_and_records_error():
         conv.start_tool_call_row("op-c", "shell")
         await pilot.pause()
         conv.fail_tool_call_row("op-c", error="timeout")
-        # Generous margin past the F-H 0.3s deferral so CI load doesn't
-        # leave the row mounted past the assertion (= the 0.4s prior
-        # margin was too tight under Python 3.11/3.12 GitHub Actions
-        # concurrency).
-        await pilot.pause(0.6)
-        assert len(list(conv.query(ToolCallRow))) == 0
+        assert await _wait_until_no_tool_rows(pilot, conv) == 0
 
 
 @pytest.mark.asyncio
@@ -362,7 +388,6 @@ def test_format_tool_result_short_result_unchanged():
 # ── abort_tool_call_rows sweep (C-F1 wave-8) ──────────────────────────────────
 
 
-@pytest.mark.flaky(reruns=2, reruns_delay=1)
 @pytest.mark.asyncio
 async def test_abort_tool_call_rows_seals_live_rows_with_aborted_terminal():
     """Tier 2b: ``abort_tool_call_rows`` finishes every live row as ⊘. (C-F1 sweep)
@@ -371,6 +396,13 @@ async def test_abort_tool_call_rows_seals_live_rows_with_aborted_terminal():
     without this sweep, in-flight tool_call widgets stayed mounted as
     ``●`` spinners and eventually got flushed to RichLog still in the
     running state (= frozen spinner in scroll history).
+
+    Issue #927 Phase B root fix: uses ``_wait_until_no_tool_rows``
+    polling instead of a fixed ``pilot.pause(0.4)`` — the deferred
+    unmount runs after the F-H min-display-time timer fires plus a
+    subsequent event-loop tick for ``row.remove()``, which under CI
+    load can land past the fixed pause boundary (= the original
+    flake mode).
     """
     app = _ConvOnlyApp()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -382,10 +414,7 @@ async def test_abort_tool_call_rows_seals_live_rows_with_aborted_terminal():
         assert len(list(conv.query(ToolCallRow))) == 2
         cancelled = conv.abort_tool_call_rows(reason="cancelled")
         assert cancelled == 2
-        # Allow F-H min-display-time deferral to elapse before checking
-        # the unmount — same wait pattern the other lifecycle tests use.
-        await pilot.pause(0.4)
-        assert len(list(conv.query(ToolCallRow))) == 0
+        assert await _wait_until_no_tool_rows(pilot, conv) == 0
 
 
 @pytest.mark.asyncio
