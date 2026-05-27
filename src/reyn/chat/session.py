@@ -3054,6 +3054,25 @@ class ChatSession:
         """Remove an override. Idempotent."""
         self._intervention_overrides.pop(chain_id, None)
 
+    def has_intervention_override(self, chain_id: str) -> bool:
+        """Return True iff *chain_id* currently has a registered override
+        ``RequestBus``. Public read-side counterpart to
+        ``register_intervention_override`` / ``unregister_intervention_override``.
+        """
+        return chain_id in self._intervention_overrides
+
+    def get_intervention_override(self, chain_id: str) -> "RequestBus | None":
+        """Return the override bus for *chain_id* or None if absent. Read-only
+        accessor for callers (= primarily tests) that need to confirm the
+        registered bus identity without consuming the override."""
+        return self._intervention_overrides.get(chain_id)
+
+    def intervention_override_count(self) -> int:
+        """Return the number of currently-registered overrides. Public
+        emptiness probe for cleanup-leak tests (= prefer over reading the
+        private mapping directly)."""
+        return len(self._intervention_overrides)
+
     # ── Listener registration (issue #254 Phase 1) ──────────────────────────
 
     def register_intervention_listener(self, listener_id: str) -> None:
