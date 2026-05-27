@@ -3081,11 +3081,11 @@ class ChatSession:
     # continue to pass until the Tier-4 tests are replaced.
 
     @property
-    def _router_invocations_this_turn(self) -> int:
+    def router_invocations_this_turn(self) -> int:
         return self._budget._router_invocations_this_turn
 
-    @_router_invocations_this_turn.setter
-    def _router_invocations_this_turn(self, value: int) -> None:
+    @router_invocations_this_turn.setter
+    def router_invocations_this_turn(self, value: int) -> None:
         self._budget._router_invocations_this_turn = value
 
     @property

@@ -97,7 +97,7 @@ def test_retry_exhausted_fallback_is_japanese_when_output_language_ja(
     # Pre-spend the budget and suppress the reset so the very first
     # _run_router_loop attempt inside _handle_user_message is rejected.
     monkeypatch.setattr(ChatSession, "_reset_router_turn_counter", lambda self: None)
-    session._router_invocations_this_turn = 3
+    session.router_invocations_this_turn = 3
     session._router_last_reason = "out_of_scope"
 
     _run(session._handle_user_message("こんにちは", chain_id="chain-ja"))
@@ -126,7 +126,7 @@ def test_retry_exhausted_fallback_is_english_when_output_language_en(
     session = _make_session(tmp_path, cap=3, output_language="en")
 
     monkeypatch.setattr(ChatSession, "_reset_router_turn_counter", lambda self: None)
-    session._router_invocations_this_turn = 3
+    session.router_invocations_this_turn = 3
     session._router_last_reason = "test_reason"
 
     _run(session._handle_user_message("hello", chain_id="chain-en"))
@@ -151,7 +151,7 @@ def test_retry_exhausted_fallback_defaults_to_english_for_unsupported_language(
     session = _make_session(tmp_path, cap=3, output_language="fr")
 
     monkeypatch.setattr(ChatSession, "_reset_router_turn_counter", lambda self: None)
-    session._router_invocations_this_turn = 3
+    session.router_invocations_this_turn = 3
     session._router_last_reason = ""
 
     # Must not raise.

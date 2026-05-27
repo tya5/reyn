@@ -7,7 +7,7 @@ ChatSession now enforces a configurable cap (default 3) on consecutive
 agent_request).
 
 **Tier classification (R-D6 audit)**: these tests inject private state
-(``session._router_invocations_this_turn = 3``,
+(``session.router_invocations_this_turn = 3``,
 ``_router_last_reason = ...``) and monkeypatch a private method
 (``_reset_router_turn_counter``). Per
 ``docs/deep-dives/contributing/testing.ja.md`` this is Tier 4 — the test couples
@@ -72,7 +72,7 @@ def test_router_retry_cap_enforced(tmp_path, monkeypatch):
 
     # Pre-spend the budget so the next check crosses the cap.
     session._reset_router_turn_counter()
-    session._router_invocations_this_turn = 3
+    session.router_invocations_this_turn = 3
     session._router_last_reason = "previous_reason"
 
     # The next attempt should overflow immediately via the cap check.
@@ -88,7 +88,7 @@ def test_router_retry_cap_enforced(tmp_path, monkeypatch):
     assert exc.last_reason == "previous_reason"
 
     # Counter is unchanged (no spurious increment on rejection).
-    assert session._router_invocations_this_turn == 3
+    assert session.router_invocations_this_turn == 3
 
 
 def test_handle_user_message_emits_fallback_when_cap_exhausted(
@@ -107,7 +107,7 @@ def test_handle_user_message_emits_fallback_when_cap_exhausted(
     monkeypatch.setattr(
         ChatSession, "_reset_router_turn_counter", lambda self: None,
     )
-    session._router_invocations_this_turn = 3
+    session.router_invocations_this_turn = 3
     session._router_last_reason = "out_of_scope"
 
     captured_events: list[dict] = []
@@ -177,12 +177,12 @@ def test_router_succeeds_within_cap(tmp_path, monkeypatch):
     # First turn: one router call, counter at 1, no exception.
     _run(session._handle_user_message("first message", chain_id="c1"))
     assert call_count["n"] == 1
-    assert session._router_invocations_this_turn == 1
+    assert session.router_invocations_this_turn == 1
 
     # Second turn: counter resets to 0 then increments to 1 — well under cap.
     _run(session._handle_user_message("second message", chain_id="c2"))
     assert call_count["n"] == 2
-    assert session._router_invocations_this_turn == 1
+    assert session.router_invocations_this_turn == 1
 
     # Outbox includes the agent reply for both turns.
     msgs = _drain_outbox(session)
@@ -207,4 +207,4 @@ def test_cap_zero_disables_check(tmp_path, monkeypatch):
         asyncio.run(session._check_and_increment_router_cap("noop"))  # must not raise
 
     # Counter does not increment when cap is disabled.
-    assert session._router_invocations_this_turn == 0
+    assert session.router_invocations_this_turn == 0
