@@ -91,6 +91,15 @@ class SlashPicker(RenderableCacheMixin, Static):
     # ── public API ────────────────────────────────────────────────────────────
 
     @property
+    def selected_index(self) -> int:
+        """Currently highlighted row index (0-based).
+
+        Always 0 when no matches are loaded. Read-only; mutate via
+        ``move_selection`` or ``select_at_y``.
+        """
+        return self._selected
+
+    @property
     def visible_(self) -> bool:
         """True iff the picker is showing selectable matches.
 

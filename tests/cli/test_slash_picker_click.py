@@ -69,16 +69,16 @@ async def test_select_at_y_moves_selection_to_clicked_row() -> None:
         picker = app.query_one("#slash-picker", SlashPicker)
         picker.set_matches(_candidates(5))
         await pilot.pause()
-        assert picker._selected == 0
+        assert picker.selected_index == 0
 
         # Hit row 3 directly
         assert picker.select_at_y(3) is True
-        assert picker._selected == 3
+        assert picker.selected_index == 3
         assert picker.selected_command().name == "cmd3"
 
         # Hit row 0 — back to top
         assert picker.select_at_y(0) is True
-        assert picker._selected == 0
+        assert picker.selected_index == 0
 
 
 @pytest.mark.asyncio
@@ -94,7 +94,7 @@ async def test_select_at_y_rejects_out_of_range() -> None:
         # Beyond the last row → no change, returns False
         assert picker.select_at_y(99) is False
         assert picker.select_at_y(3) is False     # one past last (idx 2)
-        assert picker._selected == 0
+        assert picker.selected_index == 0
 
 
 @pytest.mark.asyncio
