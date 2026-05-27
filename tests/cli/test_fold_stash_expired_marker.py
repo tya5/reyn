@@ -99,15 +99,15 @@ async def test_long_reply_after_fold_adds_second_foldable():
 
         conv._write_agent_markdown_with_fold(_long_reply(60))
         await pilot.pause()
-        first_stash = conv._last_long_reply
+        first_stash = conv.last_long_reply
 
         conv._write_agent_markdown_with_fold(_long_reply(80))
         await pilot.pause()
         # has_pending_expand still True (latest reply is also long)
         assert conv.has_pending_expand
-        # _last_long_reply replaced with second reply's tail
-        assert conv._last_long_reply is not None
-        assert conv._last_long_reply != first_stash
+        # last_long_reply replaced with second reply's tail
+        assert conv.last_long_reply is not None
+        assert conv.last_long_reply != first_stash
         # Two FoldableMarkdown widgets mounted
         foldables = list(conv.query(FoldableMarkdown))
         fm_first, fm_second = foldables  # exactly 2 foldable widgets expected

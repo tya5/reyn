@@ -64,7 +64,7 @@ async def test_initial_state_auto_scroll_on_flag_off() -> None:
         conv = app.query_one("#conversation", ConversationView)
         log = conv.query_one(RichLog)
         assert log.auto_scroll is True
-        assert conv._user_scrolled is False
+        assert conv.user_scrolled is False
 
 
 # ── user scroll up → suppress ────────────────────────────────────────────────
@@ -97,7 +97,7 @@ async def test_scroll_up_disables_auto_scroll_and_sets_flag() -> None:
         assert log.auto_scroll is False, (
             "auto_scroll should flip off when user scrolls above the bottom"
         )
-        assert conv._user_scrolled is True
+        assert conv.user_scrolled is True
 
 
 # ── user scroll back to bottom → re-arm ──────────────────────────────────────
@@ -118,7 +118,7 @@ async def test_returning_to_bottom_rearms_auto_scroll() -> None:
         log.scroll_to(y=0, animate=False)
         await pilot.pause()
         assert log.auto_scroll is False
-        assert conv._user_scrolled is True
+        assert conv.user_scrolled is True
 
         # User scrolls back to the bottom
         log.scroll_end(animate=False)
@@ -128,7 +128,7 @@ async def test_returning_to_bottom_rearms_auto_scroll() -> None:
         assert log.auto_scroll is True, (
             "auto_scroll should re-arm when user returns to the tail"
         )
-        assert conv._user_scrolled is False
+        assert conv.user_scrolled is False
 
 
 # ── writes during scroll-up don't snap back ──────────────────────────────────
@@ -191,14 +191,14 @@ async def test_render_user_message_snaps_back_to_bottom() -> None:
         log.scroll_to(y=0, animate=False)
         await pilot.pause()
         assert log.auto_scroll is False
-        assert conv._user_scrolled is True
+        assert conv.user_scrolled is True
 
         conv.render_user_message("hello again")
         await pilot.pause()
         await pilot.pause()
 
         assert log.auto_scroll is True
-        assert conv._user_scrolled is False
+        assert conv.user_scrolled is False
         # And we're (close to) the bottom — scroll_y == max_scroll_y
         assert log.scroll_y >= log.max_scroll_y - 1
 
@@ -219,10 +219,10 @@ async def test_clear_resets_scroll_state() -> None:
         await pilot.pause()
         log.scroll_to(y=0, animate=False)
         await pilot.pause()
-        assert conv._user_scrolled is True
+        assert conv.user_scrolled is True
         assert log.auto_scroll is False
 
         conv.clear()
         await pilot.pause()
-        assert conv._user_scrolled is False
+        assert conv.user_scrolled is False
         assert log.auto_scroll is True

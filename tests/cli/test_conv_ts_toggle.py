@@ -84,7 +84,7 @@ async def test_ts_on_by_default_header_contains_timestamp():
         conv = app.query_one("#conversation", ConversationView)
         log = conv.query_one(RichLog)
 
-        assert conv._show_timestamps is True
+        assert conv.show_timestamps is True
         conv.render_user_message("hello ts-on")
         await pilot.pause()
 
@@ -129,7 +129,7 @@ async def test_ts_off_after_toggle_no_timestamp_in_header():
         # Flip to off.
         new_state = conv.toggle_timestamps()
         assert new_state is False
-        assert conv._show_timestamps is False
+        assert conv.show_timestamps is False
 
         conv.render_user_message("hello ts-off")
         await pilot.pause()
@@ -165,11 +165,11 @@ async def test_toggle_twice_returns_to_on():
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
 
-        assert conv._show_timestamps is True
+        assert conv.show_timestamps is True
         conv.toggle_timestamps()
-        assert conv._show_timestamps is False
+        assert conv.show_timestamps is False
         conv.toggle_timestamps()
-        assert conv._show_timestamps is True
+        assert conv.show_timestamps is True
 
         # Body rendered after second toggle uses ts-on inline layout.
         log = conv.query_one(RichLog)
@@ -201,12 +201,12 @@ async def test_f9_dispatch_flips_state_and_flashes_status():
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
 
-        before = conv._show_timestamps
+        before = conv.show_timestamps
         app.action_toggle_timestamps()
         await pilot.pause()
 
-        assert conv._show_timestamps is not before, (
-            "action_toggle_timestamps must flip _show_timestamps"
+        assert conv.show_timestamps is not before, (
+            "action_toggle_timestamps must flip show_timestamps"
         )
         # Flash status: StickyStatus should have been updated (we don't
         # assert exact text to avoid pinning sticky internals, but the

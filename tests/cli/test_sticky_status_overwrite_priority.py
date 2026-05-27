@@ -149,13 +149,13 @@ async def test_trim_warning_writes_permanent_log_line() -> None:
         # for the test — the public ``_maybe_warn_about_trimmed_history``
         # reads via ``getattr(log, "_start_line", 0)``.
         log._start_line = 137  # type: ignore[attr-defined]
-        assert not conv._trim_warned
+        assert not conv.trim_warned
 
         conv._maybe_warn_about_trimmed_history(log)
         await pilot.pause()
 
         # One-shot — the flag flips so subsequent calls are no-ops.
-        assert conv._trim_warned
+        assert conv.trim_warned
 
         # The permanent log line was written.
         log_lines = [

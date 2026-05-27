@@ -58,13 +58,13 @@ async def test_last_speaker_at_is_wall_clock_after_header_write() -> None:
         now_wall = time.time()
         # The stored timestamp should be within ~10s of the wall-clock
         # reading and definitely in the wall-clock range (= > 1e9).
-        assert conv._last_speaker_at > 1e9, (
-            f"_last_speaker_at should be a wall-clock timestamp "
-            f"(seconds since epoch); got {conv._last_speaker_at}"
+        assert conv.last_speaker_at > 1e9, (
+            f"last_speaker_at should be a wall-clock timestamp "
+            f"(seconds since epoch); got {conv.last_speaker_at}"
         )
-        assert abs(conv._last_speaker_at - now_wall) < 10.0, (
-            f"_last_speaker_at should be roughly now (within 10s); "
-            f"got {conv._last_speaker_at} vs now={now_wall}"
+        assert abs(conv.last_speaker_at - now_wall) < 10.0, (
+            f"last_speaker_at should be roughly now (within 10s); "
+            f"got {conv.last_speaker_at} vs now={now_wall}"
         )
 
 

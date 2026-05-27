@@ -83,15 +83,15 @@ async def test_anchor_survives_partial_trim_and_projects_correctly() -> None:
         # Now record a header anchor.
         conv._maybe_write_header("user", ">", "bold")
         await pilot.pause()
-        assert conv._turn_anchors  # at least one anchor recorded
-        anchor_abs = conv._turn_anchors[0]
+        assert conv.turn_anchors_snapshot()  # at least one anchor recorded
+        anchor_abs = conv.turn_anchors_snapshot()[0]
         assert anchor_abs >= 20, f"expected anchor past baseline, got {anchor_abs}"
 
         # Simulate a trim that pushes _start_line up by less than the anchor.
         log._start_line += 5
 
         # Stored anchor stays constant (= absolute storage).
-        assert conv._turn_anchors[0] == anchor_abs
+        assert conv.turn_anchors_snapshot()[0] == anchor_abs
 
         # Projection subtracts the trim offset.
         resolved = conv._resolve_anchors_to_current_view(log)
@@ -112,7 +112,7 @@ async def test_anchor_dropped_when_target_trimmed() -> None:
         # Write a header at absolute position N.
         conv._maybe_write_header("user", ">", "bold")
         await pilot.pause()
-        anchor = conv._turn_anchors[0]
+        anchor = conv.turn_anchors_snapshot()[0]
 
         # Trim past the anchor — its target line has been ring-buffered out.
         log._start_line = anchor + 10
@@ -143,7 +143,7 @@ async def test_jump_no_crash_when_all_anchors_trimmed() -> None:
         conv.jump_next_turn()
         await pilot.pause()
         # And the one-shot warning latched
-        assert conv._trim_warned
+        assert conv.trim_warned
 
 
 @pytest.mark.asyncio
@@ -158,10 +158,10 @@ async def test_clear_resets_trim_warn_latch() -> None:
         await pilot.pause()
         log._start_line = 999_999
         conv.jump_prev_turn()
-        assert conv._trim_warned
+        assert conv.trim_warned
 
         conv.clear()
-        assert not conv._trim_warned, "clear() must reset the trim-warned latch"
+        assert not conv.trim_warned, "clear() must reset the trim-warned latch"
 
 
 @pytest.mark.asyncio

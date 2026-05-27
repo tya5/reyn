@@ -613,6 +613,124 @@ class ConversationView(Widget):
             pass
         return self._show_timestamps
 
+    # ── Public state accessors (Tier C Path C — replaces private-attr asserts) ─
+
+    @property
+    def user_scrolled(self) -> bool:
+        """True when the user has manually scrolled away from the tail.
+
+        Read-only accessor for the ``_user_scrolled`` latch. Tests and
+        external observers should read this property rather than accessing
+        ``_user_scrolled`` directly.
+        """
+        return self._user_scrolled
+
+    @property
+    def trim_warned(self) -> bool:
+        """True when the one-shot ring-buffer-trim warning has been emitted.
+
+        The latch fires at most once per session (or per clear()). Tests
+        that need to verify whether the trim warning fired should use this
+        property rather than accessing ``_trim_warned`` directly.
+        """
+        return self._trim_warned
+
+    @property
+    def last_long_reply(self) -> str | None:
+        """Tail text of the most recent long agent reply (= fold tail), or None.
+
+        Mirrors the ``_last_long_reply`` slot: set when the most recent
+        reply triggered the B3 fold (= too long for inline), cleared when
+        a subsequent short reply fits inline. Use ``has_pending_expand``
+        for the boolean form; this property exposes the raw value for
+        tests that need to distinguish *which* tail was stashed.
+        """
+        return self._last_long_reply
+
+    @property
+    def last_speaker_at(self) -> float:
+        """Wall-clock timestamp (``time.time()`` epoch seconds) of the last header write.
+
+        Used by header-grouping tests to verify the clock source is wall
+        time and not monotonic. Read-only — tests that need to simulate
+        time passage write ``conv._last_speaker_at`` directly for setup.
+        """
+        return self._last_speaker_at
+
+    @property
+    def last_header_date(self) -> str:
+        """``YYYY-MM-DD`` string of the last date-separator written, or ``""`` before any message.
+
+        ``clear()`` updates this to today so same-day Ctrl+L doesn't
+        re-emit the date separator. Tests verify this via the property
+        rather than accessing ``_last_header_date`` directly.
+        """
+        return self._last_header_date
+
+    def turn_anchors_snapshot(self) -> tuple[int, ...]:
+        """Return a snapshot of the current turn-anchor list as an immutable tuple.
+
+        Each value is an absolute line position (drop-aware, monotonically
+        growing). Tests should use this rather than accessing
+        ``_turn_anchors`` directly.
+        """
+        return tuple(self._turn_anchors)
+
+    @property
+    def tool_call_row_ids(self) -> frozenset:
+        """Frozenset of op_id strings for currently-tracked in-flight tool-call rows.
+
+        Supports membership tests (``op_id in conv.tool_call_row_ids``),
+        emptiness checks (``not conv.tool_call_row_ids``), and equality
+        (``conv.tool_call_row_ids == frozenset()``). Tests should use this
+        rather than accessing ``_tool_call_rows`` directly.
+        """
+        return frozenset(self._tool_call_rows)
+
+    def error_box_count(self) -> int:
+        """Number of currently-mounted (undismissed) ErrorBox widgets.
+
+        Tests should use this rather than accessing ``_error_boxes`` directly.
+        Zero means no live error boxes; ``> 0`` means at least one is
+        mounted and visible. See also ``has_error_boxes()`` for the boolean
+        form.
+        """
+        return len(self._error_boxes)
+
+    def richlog_start_line(self, log: "RichLog") -> int:
+        """Public wrapper around ``_richlog_start_line`` for test access.
+
+        Returns the RichLog's cumulative dropped-lines counter (=
+        ``log._start_line``) with a one-shot warning when the attribute is
+        missing. Tests that verify the ring-buffer trim / anchor-projection
+        logic should call this rather than ``_richlog_start_line`` directly.
+        """
+        return self._richlog_start_line(log)
+
+    def absolute_line_position(self, log: "RichLog") -> int:
+        """Public wrapper around ``_absolute_line_position`` for test access.
+
+        Returns ``richlog_start_line(log) + len(log.lines)`` — the
+        monotonically-growing absolute write position. Tests that verify
+        anchor storage should call this rather than ``_absolute_line_position``
+        directly.
+        """
+        return self._absolute_line_position(log)
+
+    def async_stack_snapshot(self) -> list:
+        """Return the AsyncStackPanel's current snapshot list, or ``[]`` if absent.
+
+        Mirrors the ``AsyncStackPanel.snapshot()`` return shape: a list of
+        dicts with at minimum ``agent_id``, ``summary``, and ``is_overflow``
+        keys. Returns an empty list when the panel is not mounted (= test
+        harness path or pre-compose). Tests should call this rather than
+        accessing ``_async_stack().snapshot()`` directly.
+        """
+        panel = self._async_stack()
+        if panel is None:
+            return []
+        return panel.snapshot()
+
     def on_mount(self) -> None:
         """Wire a scroll watcher so user scroll-up suppresses auto-scroll.
 

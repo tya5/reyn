@@ -53,9 +53,9 @@ async def test_clear_sets_last_header_date_to_today() -> None:
         await pilot.pause()
 
         today = time.strftime("%Y-%m-%d")
-        assert conv._last_header_date == today, (
-            f"clear() should set _last_header_date to today's date "
-            f"({today!r}); got {conv._last_header_date!r}"
+        assert conv.last_header_date == today, (
+            f"clear() should set last_header_date to today's date "
+            f"({today!r}); got {conv.last_header_date!r}"
         )
 
 
