@@ -91,6 +91,20 @@ class WorkerSpec:
     n_scenarios: int  # caller-declared, validated/overridden against actual scenario yaml at load time
     worktree: str
     agent_prefix: str
+    # B55 retro fix (2026-05-27): the chat.compaction config lowering
+    # introduced for chat_compactor_auto_trigger (PR #880) sets
+    # head_size: 1 / tail_size: 1, which ``_build_history_for_router``
+    # uses on every router LLM call to slice history when len > head+tail.
+    # With 1/1, the slice keeps only the first + last entries — dropping
+    # the assistant tool_call + tool response in the middle. The next
+    # router turn after ``[task_completed]`` then loses the evidence that
+    # the skill was already invoked, and the LLM re-spawns the skill
+    # (= B55 W1-S4 word_stats_demo R verdict; the reply ends as a
+    # spawn-ack instead of the actual stats). Inject the config only on
+    # the worker that actually hosts chat_compactor_auto_trigger; other
+    # workers keep the production-default head/tail (= 12/12) so the
+    # 4-entry skill-spawn turn pattern survives the slicer.
+    compaction_grant: bool = False
 
 
 @dataclass(frozen=True)
@@ -169,6 +183,7 @@ def load_batch_config(path: Path) -> BatchConfig:
             n_scenarios=n_scenarios,
             worktree=w["worktree"],
             agent_prefix=w["agent_prefix"],
+            compaction_grant=bool(w.get("compaction_grant", False)),
         ))
 
     past_batches = tuple(
