@@ -151,6 +151,16 @@ class ControlIRExecutor:
         return self._resume_plan
 
     @property
+    def mcp_clients(self) -> dict:
+        """Read-only accessor for the cached MCP client map (server name →
+        client). Tests inspect this to verify the teardown lifecycle
+        (= ``teardown_mcp_clients`` empties the dict). Production
+        callers continue to use ``self._mcp_clients`` for the write
+        side (= ops cache new clients there).
+        """
+        return self._mcp_clients
+
+    @property
     def secret_store(self):
         """Read-only accessor for the injected ScopedSecretStore (or None)."""
         return self._secret_store
