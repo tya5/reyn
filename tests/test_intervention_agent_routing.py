@@ -3,8 +3,8 @@
 Pins the 3-way routing decision the Agent makes in
 ``ChatSession.handle_intervention(iv)``:
 
-  1. ``self_answer`` (= ``_try_self_answer`` hook returns non-None)
-  2. ``parent_agent.delegate`` (= ``_resolve_parent_agent`` hook returns
+  1. ``self_answer`` (= ``try_self_answer`` hook returns non-None)
+  2. ``parent_agent.delegate`` (= ``resolve_parent_agent`` hook returns
      a ChatSession)
   3. ``user_channel.deliver`` (= default, falls through to
      ``_dispatch_intervention``)
@@ -35,24 +35,24 @@ from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 
 def test_try_self_answer_hook_exists() -> None:
-    """Tier 2: ChatSession exposes ``_try_self_answer(iv) -> Answer|None``
+    """Tier 2: ChatSession exposes ``try_self_answer(iv) -> Answer|None``
     as the self-answer routing hook.
     """
-    assert hasattr(ChatSession, "_try_self_answer")
-    assert inspect.iscoroutinefunction(ChatSession._try_self_answer)
-    sig = inspect.signature(ChatSession._try_self_answer)
+    assert hasattr(ChatSession, "try_self_answer")
+    assert inspect.iscoroutinefunction(ChatSession.try_self_answer)
+    sig = inspect.signature(ChatSession.try_self_answer)
     assert list(sig.parameters.keys()) == ["self", "iv"]
 
 
 def test_resolve_parent_agent_hook_exists() -> None:
-    """Tier 2: ChatSession exposes ``_resolve_parent_agent(iv) -> ChatSession|None``
+    """Tier 2: ChatSession exposes ``resolve_parent_agent(iv) -> ChatSession|None``
     as the parent-delegate routing hook.
 
     Synchronous (not async) — chain-walk lookups don't need to await.
     """
-    assert hasattr(ChatSession, "_resolve_parent_agent")
-    assert not inspect.iscoroutinefunction(ChatSession._resolve_parent_agent)
-    sig = inspect.signature(ChatSession._resolve_parent_agent)
+    assert hasattr(ChatSession, "resolve_parent_agent")
+    assert not inspect.iscoroutinefunction(ChatSession.resolve_parent_agent)
+    sig = inspect.signature(ChatSession.resolve_parent_agent)
     assert list(sig.parameters.keys()) == ["self", "iv"]
 
 
@@ -64,10 +64,10 @@ def test_default_hooks_return_none() -> None:
     iv = UserIntervention(kind="ask_user", prompt="Q?")
 
     async def _check_self_answer() -> InterventionAnswer | None:
-        return await session._try_self_answer(iv)
+        return await session.try_self_answer(iv)
 
     assert asyncio.run(_check_self_answer()) is None
-    assert session._resolve_parent_agent(iv) is None
+    assert session.resolve_parent_agent(iv) is None
 
 
 # ── 2. Default routing — user_channel branch fires ─────────────────────
@@ -119,12 +119,12 @@ def test_default_routing_emits_user_channel_event(tmp_path: Path) -> None:
 class _SelfAnsweringSession(ChatSession):
     """Subclass that always self-answers with a fixed answer."""
 
-    async def _try_self_answer(self, iv: UserIntervention) -> InterventionAnswer | None:
+    async def try_self_answer(self, iv: UserIntervention) -> InterventionAnswer | None:
         return InterventionAnswer(text="self-policy", choice_id="self")
 
 
 def test_self_answer_branch_returns_directly_without_dispatch() -> None:
-    """Tier 2: when ``_try_self_answer`` returns a non-None answer, the
+    """Tier 2: when ``try_self_answer`` returns a non-None answer, the
     handler returns it immediately without invoking
     ``_dispatch_intervention`` — the user surface is never touched.
     """
@@ -170,12 +170,12 @@ class _DelegatingSession(ChatSession):
     def set_parent(self, parent: ChatSession) -> None:
         self._parent_session = parent
 
-    def _resolve_parent_agent(self, iv: UserIntervention) -> ChatSession | None:
+    def resolve_parent_agent(self, iv: UserIntervention) -> ChatSession | None:
         return getattr(self, "_parent_session", None)
 
 
 def test_parent_delegate_branch_forwards_to_parent() -> None:
-    """Tier 2: when ``_resolve_parent_agent`` returns a parent session,
+    """Tier 2: when ``resolve_parent_agent`` returns a parent session,
     the handler forwards the intervention to ``parent.handle_intervention``
     and returns the parent's decision verbatim.
 
@@ -233,12 +233,12 @@ class _SelfAndParentSession(_DelegatingSession):
     consulting upstream).
     """
 
-    async def _try_self_answer(self, iv: UserIntervention) -> InterventionAnswer | None:
+    async def try_self_answer(self, iv: UserIntervention) -> InterventionAnswer | None:
         return InterventionAnswer(text="child-self", choice_id="child")
 
 
 def test_self_answer_takes_precedence_over_parent_delegate() -> None:
-    """Tier 2: when both hooks could fire, ``_try_self_answer`` runs
+    """Tier 2: when both hooks could fire, ``try_self_answer`` runs
     first — the agent decides itself rather than consulting upstream.
     This encodes "the agent has its own will" per the Reyn peer-to-peer
     design (issue #254 design discussion log).
