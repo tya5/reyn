@@ -420,10 +420,10 @@ class _CapturingRouterLoop(RouterLoop):
         # not the full host/chain_id/catalog wiring.
         self.host = None  # type: ignore[assignment]
         self.chain_id = "test-chain"
-        self._calls: list[tuple[str, dict]] = []
+        self.calls: list[tuple[str, dict]] = []
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:  # type: ignore[override]
-        self._calls.append((name, args))
+        self.calls.append((name, args))
         return {"captured": True}
 
 
@@ -443,7 +443,7 @@ async def test_hot_list_alias_call_redirects_to_invoke_action() -> None:
     result = await loop._invoke_router_tool("skill__code_review", {"pr_url": "https://example.com"})
 
     assert result == {"captured": True}, "Expected _invoke_via_registry to be called"
-    dispatched_name, dispatched_args = loop._calls[0]
+    dispatched_name, dispatched_args = loop.calls[0]
     assert dispatched_name == "invoke_action", (
         f"Expected redirect to 'invoke_action', got {dispatched_name!r}"
     )
@@ -463,7 +463,7 @@ async def test_hot_list_alias_with_none_args_uses_empty_dict() -> None:
     loop = _CapturingRouterLoop()
     await loop._invoke_router_tool("rag.corpus__meetings", None)  # type: ignore[arg-type]
 
-    assert loop._calls[0] == (
+    assert loop.calls[0] == (
         "invoke_action",
         {"action_name": "rag.corpus__meetings", "args": {}},
     )
@@ -485,5 +485,5 @@ async def test_non_qualified_name_does_not_redirect() -> None:
     result = await loop._invoke_router_tool("unknown_plain_tool", {})
 
     # No _invoke_via_registry call via the alias path — falls through to error
-    assert loop._calls == [], "Plain name must not trigger invoke_action redirect"
+    assert loop.calls == [], "Plain name must not trigger invoke_action redirect"
     assert "error" in result
