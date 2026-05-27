@@ -298,7 +298,7 @@ def test_cost_preflight_not_exceeded_for_few_files(grant_tmp_read: Path):
 
 
 # ---------------------------------------------------------------------------
-# _path_suffix / _detect_structure (internal helpers — pinned because the
+# path_suffix / detect_structure (internal helpers — pinned because the
 # LLM-facing structure_hint string must stay stable across the migration)
 # ---------------------------------------------------------------------------
 
@@ -316,8 +316,8 @@ def test_cost_preflight_not_exceeded_for_few_files(grant_tmp_read: Path):
     ],
 )
 def test_path_suffix_mirrors_pathlib(path: str, expected: str):
-    """Tier 2: _path_suffix matches pathlib.PurePath.suffix for our cases."""
-    assert _C._path_suffix(path) == expected
+    """Tier 2: path_suffix matches pathlib.PurePath.suffix for our cases."""
+    assert _C.path_suffix(path) == expected
 
 
 @pytest.mark.parametrize(
@@ -333,7 +333,7 @@ def test_path_suffix_mirrors_pathlib(path: str, expected: str):
     ],
 )
 def test_detect_structure_mirrors_unsafe_heuristic(ext: str, text: str, expected: str):
-    """Tier 2: _detect_structure strings match chunkers.py's legacy heuristic
+    """Tier 2: detect_structure strings match chunkers.py's legacy heuristic
     exactly — the LLM sees identical structure_hint values across the
     FP-0042 migration."""
-    assert _C._detect_structure(text, ext) == expected
+    assert _C.detect_structure(text, ext) == expected
