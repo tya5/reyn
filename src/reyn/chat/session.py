@@ -1838,6 +1838,18 @@ class ChatSession:
         """
         return self._plan_runner.running_plans
 
+    @property
+    def pending_user_images(self) -> list[dict]:
+        """Read-only accessor for the per-session image upload queue.
+
+        Tests and slash commands inspect this queue to verify that an
+        uploaded image landed (= ``/image`` slash + chainlit attachment
+        button both feed the same list). The write side stays on
+        ``self._pending_user_images`` so the lifecycle (= drain on
+        send, reset to []) is visible in the production call sites.
+        """
+        return self._pending_user_images
+
     def current_state_summary(self) -> dict:
         """Return a lightweight snapshot for slash-command display.
 
