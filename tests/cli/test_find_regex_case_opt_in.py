@@ -201,10 +201,10 @@ async def test_on_find_with_flags_seeds_router_state() -> None:
             header,
         )
         await pilot.pause()
-        assert router._find_query == "ab."
-        assert router._find_regex is True
-        assert router._find_case_sensitive is False
-        assert router._find_cursor_idx is not None
+        assert router.find_query == "ab."
+        assert router.find_regex_enabled is True
+        assert router.find_case_sensitive is False
+        assert router.find_cursor_index is not None
 
 
 @pytest.mark.asyncio
@@ -233,7 +233,7 @@ async def test_on_find_invalid_regex_emits_error_status() -> None:
         assert snap["active"] is True
         assert "invalid pattern" in snap["body"]
         # No stale cycle state.
-        assert router._find_query is None
+        assert router.find_query is None
 
 
 @pytest.mark.asyncio
@@ -262,12 +262,12 @@ async def test_cycle_find_preserves_flags() -> None:
         await pilot.pause()
         # Cycle forward — should walk only the Foo1/Foo3 case-
         # sensitive matches (skipping foo2).
-        prev_cursor = router._find_cursor_idx
+        prev_cursor = router.find_cursor_index
         router.cycle_find(+1)
         await pilot.pause()
         # The cursor moved AND case_sensitive flag survived.
-        assert router._find_case_sensitive is True
-        new_cursor = router._find_cursor_idx
+        assert router.find_case_sensitive is True
+        new_cursor = router.find_cursor_index
         # New target is the OTHER Foo line, not the foo2 lower-case line.
         assert new_cursor != prev_cursor
         # Sanity: foo2 is at idx between Foo1 and Foo3; verify cursor

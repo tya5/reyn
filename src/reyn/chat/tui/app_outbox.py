@@ -242,7 +242,7 @@ class OutboxRouter:
             "__donut__":                self._on_donut,
             "__cost_inline_toggle__":   self._on_cost_inline_toggle,
             "__expand_last_reply__":    self._on_expand_last_reply,
-            "__copy_last_reply__":      self._on_copy_last_reply,
+            "__copy_last_reply__":      self.on_copy_last_reply,
             "__find__":                 self._on_find,
             "__save__":                 self._on_save,
             "__docs_filter__":          self._on_docs_filter,
@@ -273,6 +273,32 @@ class OutboxRouter:
             "tool_call_completed":      self._on_tool_call_completed,
             "tool_call_failed":         self._on_tool_call_failed,
         }
+
+    # ── public read-only accessors ────────────────────────────────────────────
+
+    @property
+    def find_query(self) -> "str | None":
+        """The active ``/find`` query string, or ``None`` if no search is seeded."""
+        return self._find_query
+
+    @property
+    def find_regex_enabled(self) -> bool:
+        """``True`` when the active ``/find`` cycle uses regex mode."""
+        return self._find_regex
+
+    @property
+    def find_case_sensitive(self) -> bool:
+        """``True`` when the active ``/find`` cycle uses case-sensitive matching."""
+        return self._find_case_sensitive
+
+    @property
+    def find_cursor_index(self) -> "int | None":
+        """Line index of the current ``/find`` cursor, or ``None`` if unset."""
+        return self._find_cursor_idx
+
+    def has_transient_status_timer(self) -> bool:
+        """Return ``True`` when an auto-hide transient-status timer is armed."""
+        return self._transient_status_timer is not None
 
     # ── transient sticky helpers ──────────────────────────────────────────────
 
@@ -538,7 +564,7 @@ class OutboxRouter:
         if not conv.toggle_last_foldable():
             self._show_transient_status(conv, "nothing to expand", duration=2.0)
 
-    def _on_copy_last_reply(
+    def on_copy_last_reply(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
         """`__copy_last_reply__` — /copy slash; pipe a buffered reply to OS clipboard.
