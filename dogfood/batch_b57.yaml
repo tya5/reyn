@@ -1,0 +1,94 @@
+batch:
+  name: B57
+  date: "2026-05-26"
+  head: b91b5cee  # post PR #925 (description-tone symmetric) + #928/#929 (FP-0043 P1/P2)
+  env_vars:
+    REYN_EMPTY_STOP_RETRY: "1"
+    REYN_SPAWN_ACK_TO_LLM: "1"
+  user_params:
+    hot_list_n: 10
+    models_tier: flash-lite
+  hard_caps:
+    tool_uses: 50
+    wall_clock_min: 15
+
+# B57 = PRIMARY = PR #925 (description-tone symmetric rewrite) clean A/B
+# against B56 baseline (= search_actions call-rate 0/N).
+#
+# Pre-batch trace-patch-replay verify (per B55 lesson, 2026-05-26):
+#   - hit axis: rid a4bce526 ("MCP github 探して"): search_actions 0/10 → 10/10 ✓
+#   - control axis: rid 3de2cd09 ("利用可能なスキル"): list_actions 10/10 → 10/10 ✓
+#   - Cost ~$0.20 (= 25x cheaper than $5 batch)
+#
+# B57 PRIMARY measurement (apples-to-apples vs B56, main HEAD differs):
+#   Axis A — search_actions call-rate: 0/N → ~7-9/N expected (semantic-intent)
+#   Axis B — list_actions call-rate: unchanged (control)
+#   Axis C — V delta: secondary, no number committed (B55 lesson)
+#
+# Carry-over from B56 (not addressed in #925):
+#   - R-2 async eval timing / R-3 chat_compactor threshold
+#   - W2-S7 zero-chunks / W7-S1 source__read / W7-S5 plan empty step
+#   - W4-S1/S2 events strict + mcp_install earlier-stage
+
+workers:
+  - name: W1
+    scenario_set: chat_router_smoke.yaml
+    scenario_set_path: dogfood/scenarios/chat_router_smoke.yaml
+    port: 8681
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b57-1
+    agent_prefix: dogfood-b57-1-s
+
+  - name: W2
+    scenario_set: stdlib_skills_core.yaml
+    scenario_set_path: dogfood/scenarios/stdlib_skills_core.yaml
+    port: 8682
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b57-2
+    agent_prefix: dogfood-b57-2-s
+
+  - name: W3
+    scenario_set: control_ir_ops.yaml
+    scenario_set_path: dogfood/scenarios/control_ir_ops.yaml
+    port: 8683
+    n_scenarios: 9
+    worktree: /tmp/reyn-worktrees/b57-3
+    agent_prefix: dogfood-b57-3-s
+
+  - name: W4
+    scenario_set: permissions_and_safety.yaml
+    scenario_set_path: dogfood/scenarios/permissions_and_safety.yaml
+    port: 8684
+    n_scenarios: 8
+    worktree: /tmp/reyn-worktrees/b57-4
+    agent_prefix: dogfood-b57-4-s
+
+  - name: W5
+    scenario_set: multi_agent_and_mcp.yaml
+    scenario_set_path: dogfood/scenarios/multi_agent_and_mcp.yaml
+    port: 8685
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b57-5
+    agent_prefix: dogfood-b57-5-s
+
+  - name: W6
+    scenario_set: plan_mode_redesigned
+    scenario_set_path: dogfood/scenarios/plan_mode.yaml
+    port: 8686
+    n_scenarios: 5
+    worktree: /tmp/reyn-worktrees/b57-6
+    agent_prefix: dogfood-b57-6-s
+
+  - name: W7
+    scenario_set: long_session_v1.yaml
+    scenario_set_path: dogfood/scenarios/long_session_v1.yaml
+    port: 8687
+    n_scenarios: 7
+    worktree: /tmp/reyn-worktrees/b57-7
+    agent_prefix: dogfood-b57-7-s
+
+past_batches:
+  - name: B56
+    aggregate_path: docs/deep-dives/journal/dogfood/2026-05-26-batch-56-search-actions-eager-baseline/aggregate.json
+
+journal_dir: docs/deep-dives/journal/dogfood/2026-05-26-batch-57-search-actions-description-symmetric
