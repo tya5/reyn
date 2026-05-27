@@ -372,3 +372,14 @@ class StreamingRow(Widget):
     def height_dirty(self, value: bool) -> None:
         """Allow tests to reset the flag to establish a clean baseline."""
         self._height_dirty = value
+
+    def build_renderable(self) -> "Text":
+        """Public alias for ``_build_renderable()``.
+
+        Returns the Rich ``Text`` object that would be pushed to the
+        inner Static on the next flush — prefix + accumulated content +
+        cursor/stall cue. Exposed so tests can inspect the rendered
+        output without calling the private method directly, per the
+        project testing policy (feedback_test_public_surface_not_private_state).
+        """
+        return self._build_renderable()

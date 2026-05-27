@@ -196,4 +196,4 @@ def test_session_proxy_exposes_attrs_tui_reads_defensively() -> None:
     assert proxy.agent_name == "default"
     assert proxy.running_skills == {}
     assert proxy.running_plans == {}
-    assert proxy._interventions is None
+    assert proxy.interventions is None

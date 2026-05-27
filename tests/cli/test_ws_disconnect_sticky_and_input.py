@@ -22,7 +22,7 @@ state assertions):
 
 1. Disconnect frame → sticky snapshot contains "connection lost" with
    kind="error".
-2. Disconnect frame → ``InputBar.disconnected`` attribute / CSS class
+2. Disconnect frame → ``InputBar.disconnected`` property / CSS class
    True.
 3. After disconnect, submit does NOT post a ``UserSubmitted`` message.
 4. Normal error path (no sentinel) does NOT trigger the persistent
@@ -116,11 +116,11 @@ async def test_disconnect_frame_shows_persistent_sticky_with_error_kind() -> Non
 
 @pytest.mark.asyncio
 async def test_disconnect_frame_sets_inputbar_disconnected_state() -> None:
-    """Tier 2: disconnect outbox frame → InputBar._disconnected True + CSS class.
+    """Tier 2: disconnect outbox frame → InputBar.disconnected True + CSS class.
 
     After _on_error routes the ws_disconnected sentinel, InputBar must
-    carry both the ``_disconnected`` flag (public via the attribute) and
-    the ``.disconnected`` CSS class so styling can dim the border/text.
+    carry both the ``disconnected`` property (True) and the ``.disconnected``
+    CSS class so styling can dim the border/text.
     """
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.app_outbox import OutboxRouter
@@ -136,14 +136,14 @@ async def test_disconnect_frame_sets_inputbar_disconnected_state() -> None:
         bar = app.query_one("#inputbar", InputBar)
 
         # Pre-condition: not yet disconnected.
-        assert bar._disconnected is False
+        assert bar.disconnected is False
         assert not bar.has_class("disconnected")
 
         router._on_error(_make_disconnect_msg(), conv, header)
         await pilot.pause()
 
-        assert bar._disconnected is True, (
-            "InputBar._disconnected must be True after disconnect frame"
+        assert bar.disconnected is True, (
+            "InputBar.disconnected must be True after disconnect frame"
         )
         assert bar.has_class("disconnected"), (
             "InputBar must have .disconnected CSS class after disconnect frame"
@@ -233,8 +233,8 @@ async def test_normal_error_frame_does_not_trigger_disconnected_state() -> None:
         await pilot.pause()
 
         # InputBar must NOT be in disconnected state.
-        assert bar._disconnected is False, (
-            "Normal error must not set InputBar._disconnected"
+        assert bar.disconnected is False, (
+            "Normal error must not set InputBar.disconnected"
         )
         assert not bar.has_class("disconnected"), (
             "Normal error must not add .disconnected CSS class"

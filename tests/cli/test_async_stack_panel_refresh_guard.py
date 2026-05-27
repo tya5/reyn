@@ -64,7 +64,7 @@ def _panel_with_overridable_mounted(monkeypatch):
         raising=False,
     )
     panel = AsyncStackPanel()
-    panel._static = _StubStatic()  # type: ignore[assignment]
+    panel._static = _StubStatic()  # type: ignore[assignment]  # inject stub via private attr (setup only)
     yield panel
     # monkeypatch.setattr handles cleanup; ``original`` referenced to quiet linter.
     del original
@@ -77,9 +77,9 @@ def test_refresh_pre_mount_is_silent_noop(_panel_with_overridable_mounted) -> No
 
     panel._refresh()
 
-    assert panel._static.updates == [], (  # type: ignore[union-attr]
+    assert panel.static_widget.updates == [], (  # type: ignore[union-attr]
         f"pre-mount _refresh should not push updates; got "
-        f"{panel._static.updates!r}"  # type: ignore[union-attr]
+        f"{panel.static_widget.updates!r}"  # type: ignore[union-attr]
     )
 
 
@@ -90,7 +90,7 @@ def test_refresh_post_mount_pushes_update(_panel_with_overridable_mounted) -> No
 
     panel._refresh()
 
-    assert panel._static.updates, (  # type: ignore[union-attr]
+    assert panel.static_widget.updates, (  # type: ignore[union-attr]
         "post-mount _refresh should push at least one update"
     )
 

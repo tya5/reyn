@@ -334,6 +334,19 @@ class InputBar(Widget):
         return self._in_flight
 
     @property
+    def disconnected(self) -> bool:
+        """True when the WebSocket connection has permanently dropped.
+
+        Set True by ``set_disconnected(True)`` (Wave-13 T1-3). Once True,
+        the session cannot recover without a TUI restart — ``_submit``
+        silently swallows all input and the ``.disconnected`` CSS class
+        keeps the border/text dimmed. Exposed so tests can verify the
+        disconnected state without reaching into the private ``_disconnected``
+        flag (per feedback_test_public_surface_not_private_state policy).
+        """
+        return self._disconnected
+
+    @property
     def history(self) -> "deque[str]":
         """Return the live input-history deque.
 

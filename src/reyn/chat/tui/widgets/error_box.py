@@ -199,6 +199,16 @@ class ErrorBox(Widget):
         """True when the detail section is visible (= widget is expanded)."""
         return self._expanded
 
+    @property
+    def skill_name(self) -> str:
+        """Skill name shown in the header prefix (empty when not from a skill run)."""
+        return self._skill_name
+
+    @property
+    def run_id_short(self) -> str:
+        """Short run ID suffix shown in the header prefix (empty when absent)."""
+        return self._run_id_short
+
     # ── header text helpers ───────────────────────────────────────────────────
 
     def _prefix(self) -> str:
