@@ -50,6 +50,14 @@ scenarios:
       blocked: 0.0
 
   # ── S2: MCP install gate triggers interactive prompt ─────────────────────
+  # F2 (2026-05-27): post-PR-#918 mcp install 3-verb split, the install
+  # action no longer routes through a stdlib skill (= the previous
+  # ``skill_run_spawned`` signal is gone); the new verb handlers call
+  # op_runtime/mcp_install directly. The structural signal we can still
+  # rely on is ``routing_decided`` from the router; the install-success
+  # ``mcp_server_installed`` event is post-prompt and unreliable in batch
+  # mode (= no real user to approve the gate). The judge rubric carries
+  # the behavioural test.
   - id: mcp_install_gate_prompt
     covers:
       - permissions/layer-4-interactive-prompt
@@ -68,10 +76,7 @@ scenarios:
       events:
         must_emit:
           - { type: routing_decided, count: ">=1" }
-          - { type: skill_run_spawned, count: ">=1" }
         must_not_emit: []
-        # intervention_dispatched and mcp_server_installed order depends on
-        # operator config; we assert only the spawned event as reliable.
         sequence: []
       artifacts:
         - { present: true }
