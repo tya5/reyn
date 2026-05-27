@@ -337,3 +337,38 @@ class StreamingRow(Widget):
 
     def full_text(self) -> str:
         return self._accumulated
+
+    # ── Public accessors (Tier C Path C cleanup) ─────────────────────────────
+
+    @property
+    def sealed(self) -> bool:
+        """True once ``seal()`` has been called (stream complete latch)."""
+        return self._sealed
+
+    @property
+    def accumulated(self) -> str:
+        """The concatenated text accumulated so far via ``append()`` calls."""
+        return self._accumulated
+
+    @property
+    def interval_handle(self):  # type: ignore[return]
+        """The ``set_interval`` handle for the 16 ms render-coalescing timer.
+
+        ``None`` before ``on_mount`` or after ``seal()`` stops the timer.
+        Exposed so tests can verify liveness without reaching into private state.
+        """
+        return self._interval_handle
+
+    @property
+    def height_dirty(self) -> bool:
+        """True when ``append()`` has grown content since the last flush.
+
+        Set by ``append()``; consumed (reset to False) by ``_flush_render``
+        when it calls ``scroll_visible``.
+        """
+        return self._height_dirty
+
+    @height_dirty.setter
+    def height_dirty(self, value: bool) -> None:
+        """Allow tests to reset the flag to establish a clean baseline."""
+        self._height_dirty = value
