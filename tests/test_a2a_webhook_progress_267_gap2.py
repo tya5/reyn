@@ -23,7 +23,7 @@ Pins:
      ``detach()`` unsubscribes + cancels in-flight tasks; idempotent.
   3. Untracked event types are ignored (= ``intervention_routed`` /
      ``phase_completed`` / etc. don't fire the bridge).
-  4. ``_format_message`` produces the expected text for each kind.
+  4. ``format_message`` produces the expected text for each kind.
   5. ``_send`` POSTs the canonical progress payload to the configured
      webhook_url.
   6. ``ordinal`` is monotonic across multiple events on one bridge.
@@ -111,15 +111,15 @@ def test_a2a_progress_bridge_tracks_three_lifecycle_events() -> None:
 
 
 def test_attach_subscribes_to_chat_events() -> None:
-    """Tier 2: ``attach()`` adds the bridge's ``_on_event`` callback to
+    """Tier 2: ``attach()`` adds the bridge's ``on_event`` callback to
     the session's chat_events subscriber list (= so EventLog dispatches
     will reach the bridge).
     """
     captured: list = []
     bridge, events = _make_bridge(captured_posts=captured)
-    assert bridge._on_event not in events._subscribers
+    assert bridge.on_event not in events._subscribers
     bridge.attach()
-    assert bridge._on_event in events._subscribers
+    assert bridge.on_event in events._subscribers
 
 
 def test_detach_unsubscribes_from_chat_events() -> None:
@@ -129,9 +129,9 @@ def test_detach_unsubscribes_from_chat_events() -> None:
     captured: list = []
     bridge, events = _make_bridge(captured_posts=captured)
     bridge.attach()
-    assert bridge._on_event in events._subscribers
+    assert bridge.on_event in events._subscribers
     bridge.detach()
-    assert bridge._on_event not in events._subscribers
+    assert bridge.on_event not in events._subscribers
     assert bridge._detached is True
 
 
@@ -199,28 +199,28 @@ def test_tracked_events_each_fire_one_post() -> None:
 
 
 def test_format_message_for_each_event_kind() -> None:
-    """Tier 2: ``_format_message`` outputs the canonical human-readable
+    """Tier 2: ``format_message`` outputs the canonical human-readable
     text per event kind. Matches the MCP bridge's format so peer
     consumers can apply the same parser to both transports.
     """
     from reyn.web.routers.a2a import _A2AProgressBridge
 
-    assert _A2AProgressBridge._format_message(
+    assert _A2AProgressBridge.format_message(
         "phase_started", {"phase": "planning"},
     ) == "phase: planning"
-    assert _A2AProgressBridge._format_message(
+    assert _A2AProgressBridge.format_message(
         "llm_called", {"model": "gemini-2.5-flash-lite"},
     ) == "llm: gemini-2.5-flash-lite"
     # Singular form for 1 op.
-    assert _A2AProgressBridge._format_message(
+    assert _A2AProgressBridge.format_message(
         "act_executed", {"op_count": 1},
     ) == "act: 1 op"
     # Plural form for N>1.
-    assert _A2AProgressBridge._format_message(
+    assert _A2AProgressBridge.format_message(
         "act_executed", {"op_count": 5},
     ) == "act: 5 ops"
     # Missing fields fall back to "?".
-    assert _A2AProgressBridge._format_message(
+    assert _A2AProgressBridge.format_message(
         "phase_started", {},
     ) == "phase: ?"
 

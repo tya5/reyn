@@ -760,7 +760,7 @@ class _A2AProgressBridge:
     def attach(self) -> None:
         events = getattr(self._session, "_chat_events", None)
         if events is not None:
-            events.add_subscriber(self._on_event)
+            events.add_subscriber(self.on_event)
 
     def detach(self) -> None:
         if self._detached:
@@ -768,12 +768,12 @@ class _A2AProgressBridge:
         self._detached = True
         events = getattr(self._session, "_chat_events", None)
         if events is not None:
-            events.remove_subscriber(self._on_event)
+            events.remove_subscriber(self.on_event)
         for task in self._tasks:
             if not task.done():
                 task.cancel()
 
-    def _on_event(self, event: "object") -> None:
+    def on_event(self, event: "object") -> None:
         # Sync callback from EventLog dispatcher. Filter by type, build
         # payload, schedule async POST.
         if self._detached:
@@ -782,7 +782,7 @@ class _A2AProgressBridge:
         if event_type not in self._TRACKED_EVENTS:
             return
         data = getattr(event, "data", {}) or {}
-        message = self._format_message(event_type, data)
+        message = self.format_message(event_type, data)
         self._ordinal += 1
         ordinal = self._ordinal
         try:
@@ -795,7 +795,7 @@ class _A2AProgressBridge:
         self._tasks.append(task)
 
     @staticmethod
-    def _format_message(event_type: str, data: dict) -> str:
+    def format_message(event_type: str, data: dict) -> str:
         if event_type == "phase_started":
             phase = data.get("phase") or "?"
             return f"phase: {phase}"
