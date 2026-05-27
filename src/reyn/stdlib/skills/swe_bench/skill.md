@@ -1,0 +1,96 @@
+---
+type: skill
+name: swe_bench
+description: Solve a SWE-bench task — reproduce a GitHub issue fix in a real repository, verify with the provided tests, and emit a git diff patch.
+entry: setup
+final_output: swe_bench_result
+final_output_description: |
+  The git diff patch produced for this SWE-bench instance, whether the tests
+  passed, and how many apply/verify attempts were made.
+finish_criteria:
+  - setup has checked out base_commit and prepared the environment
+  - explore has identified the relevant code regions
+  - plan has recorded a concrete edit plan in the workspace
+  - apply has executed all planned edits
+  - verify has run the test_patch tests and recorded the outcome
+  - report has captured the final git diff as the patch string
+  - swe_bench_result records instance_id, patch, tests_passed, and attempts
+graph:
+  setup:   [explore]
+  explore: [plan]
+  plan:    [apply]
+  apply:   [verify, plan]
+  verify:  [report, apply]
+  report:  []
+routing:
+  intents: [task]
+  when_to_use:
+    - Input contains instance_id, base_commit, and problem_statement (SWE-bench format)
+    - User wants to run a SWE-bench task or GitHub issue fix benchmark
+    - Batch evaluation loop calls this skill per SWE-bench instance
+  when_not_to_use:
+    - User wants to fix arbitrary code without a base_commit anchor
+    - No test_patch provided to verify the fix (use skill_builder or direct_llm instead)
+    - User wants to evaluate an existing skill's quality (use eval skill instead)
+permissions:
+  file.read:
+    - path: "*"
+      scope: recursive
+  file.write:
+    - path: "*"
+      scope: recursive
+  shell: true
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
+---
+
+## Overview
+
+Solves a single SWE-bench Verified task end-to-end: checks out the target
+commit, explores the codebase to understand the problem, plans and applies
+edits, verifies against the provided test patch, then emits a `git diff`
+patch as the final output.
+
+All required capabilities (`read_file`, `edit_file`, `shell`, `grep`) are
+existing OS ops — no OS changes required (P7 compliant).
+
+## Phase flow
+
+```
+setup → explore → plan → apply → verify → report
+                              ↑        ↓
+                              └─ plan ←┘  (tests fail → back to plan)
+                                     ↑
+                              apply ←─┘  (verify execution failed → back to apply)
+```
+
+| Phase   | Role        | Responsibility |
+|---------|-------------|----------------|
+| setup   | initializer | Check out base_commit, confirm test runner is available |
+| explore | analyst     | Grep and read to find relevant code; save exploration notes |
+| plan    | architect   | Decide which files to edit and what to change |
+| apply   | implementer | Execute the plan via file edits |
+| verify  | tester      | Run test_patch tests; transition to report on pass, back to apply on fail |
+| report  | reporter    | Run `git diff HEAD` to produce the final patch |
+
+## Input
+
+Structured `swe_bench_input` artifact matching the SWE-bench dataset format:
+
+```json
+{
+  "type": "swe_bench_input",
+  "data": {
+    "instance_id": "django__django-12345",
+    "repo": "django/django",
+    "base_commit": "abc123def456",
+    "problem_statement": "BUG: ...",
+    "hints_text": "Look at foo/bar.py ...",
+    "test_patch": "diff --git a/tests/... ..."
+  }
+}
+```
+
+## Output
+
+`swe_bench_result` with the git diff patch, pass/fail outcome, and attempt count.

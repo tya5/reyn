@@ -1,0 +1,24 @@
+name: exploration
+description: Findings from the explore phase — relevant files, symbols, and context needed to plan the fix.
+schema:
+  type: object
+  properties:
+    instance_id:
+      type: string
+      description: SWE-bench instance identifier (carried from input).
+    relevant_files:
+      type: array
+      items:
+        type: string
+      description: Repository-relative paths of files identified as relevant to the fix.
+    summary:
+      type: string
+      description: Prose summary of what the problem is and where in the codebase it originates.
+    hints_used:
+      type: boolean
+      description: True if hints_text was non-empty and influenced the exploration.
+  required:
+    - instance_id
+    - relevant_files
+    - summary
+    - hints_used

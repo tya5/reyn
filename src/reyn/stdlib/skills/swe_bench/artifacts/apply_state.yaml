@@ -1,0 +1,25 @@
+name: apply_state
+description: State after the apply phase — which files were edited and the current attempt count.
+schema:
+  type: object
+  properties:
+    instance_id:
+      type: string
+      description: SWE-bench instance identifier (carried from input).
+    files_edited:
+      type: array
+      items:
+        type: string
+      description: Repository-relative paths of files that were modified in this apply phase.
+    attempt:
+      type: integer
+      minimum: 1
+      description: Which attempt number this is (matches the plan.attempt that was executed).
+    test_patch:
+      type: string
+      description: The test_patch string from the input, carried forward so verify can apply it.
+  required:
+    - instance_id
+    - files_edited
+    - attempt
+    - test_patch
