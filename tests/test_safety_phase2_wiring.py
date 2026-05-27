@@ -169,7 +169,7 @@ def test_chatsession_default_on_limit_is_interactive() -> None:
     See ``OnLimitConfig`` docstring for the headless safety story.
     """
     s = ChatSession(agent_name="t")
-    assert s._on_limit.mode == "interactive"
+    assert s.on_limit.mode == "interactive"
 
 
 def test_chatsession_threads_on_limit_through_constructor() -> None:
@@ -180,6 +180,6 @@ def test_chatsession_threads_on_limit_through_constructor() -> None:
     """
     on_limit = OnLimitConfig(mode="interactive", auto_extend_times=5)
     s = ChatSession(agent_name="t", safety=SafetyConfig(on_limit=on_limit))
-    assert s._on_limit is on_limit
-    assert s._on_limit.mode == "interactive"
-    assert s._on_limit.auto_extend_times == 5
+    assert s.on_limit is on_limit
+    assert s.on_limit.mode == "interactive"
+    assert s.on_limit.auto_extend_times == 5
