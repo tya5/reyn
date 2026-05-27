@@ -177,6 +177,18 @@ class StickyStatus(Static):
         self._current_priority = 0
         self.remove_class("active")
 
+    @property
+    def glyph(self) -> str:
+        """Public read of the resolved glyph character for the current kind.
+
+        Returns the string that ``_repaint`` writes at the start of the
+        rendered Text (e.g. ``"✗"`` for kind="error", ``"●"`` for
+        kind="general"). Exposed so tests can verify the glyph without
+        reading the private ``_glyph`` slot — per CLAUDE.md testing
+        policy.
+        """
+        return self._glyph
+
     def snapshot(self) -> dict:
         """Return the current display state for inspection by callers / tests.
 

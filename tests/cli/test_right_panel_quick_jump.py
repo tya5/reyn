@@ -106,10 +106,10 @@ async def test_quick_jump_opens_hidden_panel() -> None:
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         # Panel starts hidden in the cold-default app config.
-        assert app._panel_visible is False
+        assert app.panel_visible is False
         app.action_panel_jump_cost()
         await pilot.pause()
-        assert app._panel_visible is True
+        assert app.panel_visible is True
         panel = app.query_one("#right_panel", RightPanel)
         tabs = panel.query_one("#panel-tabs")
         assert tabs.active == "cost"
@@ -133,12 +133,12 @@ async def test_quick_jump_open_panel_does_not_re_toggle() -> None:
         # Open the panel explicitly first.
         app.action_toggle_panel()
         await pilot.pause()
-        assert app._panel_visible is True
+        assert app.panel_visible is True
         # Quick-jump to a different tab.
         app.action_panel_jump_agents()
         await pilot.pause()
         # Panel stays visible (= no spurious close-then-open flicker).
-        assert app._panel_visible is True
+        assert app.panel_visible is True
         panel = app.query_one("#right_panel", RightPanel)
         tabs = panel.query_one("#panel-tabs")
         assert tabs.active == "agents"

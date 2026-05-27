@@ -299,6 +299,16 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         self._reason = reason
         self._refresh()
 
+    def build_running(self) -> "Text":
+        """Public alias for ``_build_running()``.
+
+        Returns the ``rich.text.Text`` for the running (= not yet
+        finished) state of the row. Callers and tests can use this to
+        inspect the rendered output without reading the private method
+        directly — per CLAUDE.md testing policy.
+        """
+        return self._build_running()
+
     # ── Internal rendering ─────────────────────────────────────────────────────
 
     def _tick(self) -> None:

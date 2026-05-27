@@ -259,7 +259,8 @@ async def test_panel_next_content_gated_on_panel_visible() -> None:
         assert app.check_action("panel_prev_content", None) is False
 
         # Open the panel
-        app._panel_visible = True
+        app.action_toggle_panel()
+        await pilot.pause()
         assert app.check_action("panel_next_content", None) is True
         assert app.check_action("panel_prev_content", None) is True
 
@@ -286,7 +287,7 @@ async def test_focus_toggle_panel_allowed_when_intervention_pending() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         # No intervention, panel hidden → gated off (= existing behavior)
-        assert app._panel_visible is False
+        assert app.panel_visible is False
         assert app.check_action("focus_toggle_panel", None) is False
 
         # Mount an intervention, panel still hidden → now allowed
@@ -301,5 +302,6 @@ async def test_focus_toggle_panel_allowed_when_intervention_pending() -> None:
         assert app.check_action("focus_toggle_panel", None) is True
 
         # Panel visible → still allowed regardless of intervention presence
-        app._panel_visible = True
+        app.action_toggle_panel()
+        await pilot.pause()
         assert app.check_action("focus_toggle_panel", None) is True

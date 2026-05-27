@@ -506,6 +506,17 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
             })
         return out
 
+    def build_lines(self) -> "Text":
+        """Public alias for ``_build_lines()``.
+
+        Returns the multi-line ``rich.text.Text`` that would be rendered
+        to the Static — one row per visible entry plus an overflow
+        indicator when entries exceed ``_CAP``. Exposed so tests can
+        inspect the rendered output without calling the private method
+        directly — per CLAUDE.md testing policy.
+        """
+        return self._build_lines()
+
     # ── Internal rendering ───────────────────────────────────────────────────
 
     def _tick(self) -> None:

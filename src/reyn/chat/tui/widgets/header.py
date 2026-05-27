@@ -616,6 +616,28 @@ class ReynHeader(RenderableCacheMixin, Widget):
         self._voice_state = state
         self._repaint_status()
 
+    @property
+    def voice_state(self) -> str | None:
+        """Public read of the current voice-mode badge state.
+
+        Returns ``None`` (= no badge), ``"recording"``, or
+        ``"transcribing"``. Use ``set_voice_state()`` to mutate.
+        Exposes the private ``_voice_state`` slot through the public
+        surface so tests (and callers) don't need to reach into private
+        state — per CLAUDE.md testing policy.
+        """
+        return self._voice_state
+
+    @property
+    def find_state(self) -> dict | None:
+        """Public read of the current ``/find`` badge state.
+
+        Returns the ``{"query", "position", "total"}`` dict when a
+        /find query is active, or ``None`` when no find mode is live.
+        Use ``set_find_state()`` to mutate.
+        """
+        return self._find_state
+
     def badge_at_x(self, x: int) -> str | None:
         """Return the badge key under widget-local cell column ``x``, or None.
 

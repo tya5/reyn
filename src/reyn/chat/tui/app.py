@@ -260,6 +260,21 @@ class ReynTUIApp(App):
         self._voice_input = None  # type: ignore[var-annotated]
         self._voice_busy: bool = False  # True while transcription is running
 
+    @property
+    def panel_visible(self) -> bool:
+        """Public read of the right-panel visibility state.
+
+        Returns ``True`` when the panel is currently shown, ``False``
+        when hidden. Use ``action_toggle_panel()`` or the panel-jump
+        actions to mutate — direct assignment to ``_panel_visible`` is
+        not part of the public contract.
+
+        Exposed for tests (and callers like ``_dispatch_pending_click``)
+        so they don't need to reach into private state — per CLAUDE.md
+        testing policy.
+        """
+        return self._panel_visible
+
     # ── composition ───────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:

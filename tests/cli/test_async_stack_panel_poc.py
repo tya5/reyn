@@ -60,7 +60,7 @@ def _panel() -> AsyncStackPanel:
 def test_empty_panel_renders_empty_text_and_empty_snapshot() -> None:
     """Tier 2b: no entries → empty Text + empty snapshot list."""
     panel = _panel()
-    assert panel._build_lines().plain == ""
+    assert panel.build_lines().plain == ""
     assert panel.snapshot() == []
 
 
@@ -73,7 +73,7 @@ def test_add_creates_running_entry_visible_in_snapshot() -> None:
     assert snap[0]["glyph"] == "⟳"
     assert snap[0]["summary"] == "code_review"
     assert snap[0]["pending_count"] == 0
-    rendered = panel._build_lines().plain
+    rendered = panel.build_lines().plain
     assert "alice" in rendered
     assert "code_review" in rendered
     assert "⟳" in rendered
@@ -98,7 +98,7 @@ def test_set_pending_switches_glyph_and_carries_count() -> None:
     snap = panel.snapshot()
     assert snap[0]["glyph"] == "⚑"
     assert snap[0]["pending_count"] == 2
-    rendered = panel._build_lines().plain
+    rendered = panel.build_lines().plain
     assert "⚑" in rendered
     assert "2 pending" in rendered
 
@@ -123,7 +123,7 @@ def test_remove_drops_entry() -> None:
     panel.remove("alice")
     snap = panel.snapshot()
     assert snap[0]["agent_id"] == "bob"
-    rendered = panel._build_lines().plain
+    rendered = panel.build_lines().plain
     assert "alice" not in rendered
     assert "bob" in rendered
 
@@ -150,7 +150,7 @@ def test_cap_collapses_tail_to_overflow_indicator() -> None:
     snap = panel.snapshot()
     assert snap[-1]["is_overflow"] is True
     assert "+3 more" in snap[-1]["summary"]
-    rendered = panel._build_lines().plain
+    rendered = panel.build_lines().plain
     assert "+3 more" in rendered
 
 
@@ -172,7 +172,7 @@ def test_clear_resets_all_entries() -> None:
     panel.add("bob", "y")
     panel.clear()
     assert panel.snapshot() == []
-    assert panel._build_lines().plain == ""
+    assert panel.build_lines().plain == ""
 
 
 # ── Mounted integration test ────────────────────────────────────────────────
@@ -189,7 +189,7 @@ async def test_panel_renders_under_app_with_multiple_entries():
         panel.add("bob", "monitor")
         panel.set_pending("alice", 1)
         await pilot.pause()
-        rendered = panel._build_lines().plain
+        rendered = panel.build_lines().plain
         # Both agents appear; pending sorted first.
         assert "alice" in rendered
         assert "bob" in rendered

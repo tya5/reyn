@@ -112,7 +112,7 @@ async def test_unknown_state_is_normalized_to_none() -> None:
         header.set_voice_state("garbage-typo")
         await pilot.pause()
         assert "🔴" not in _header_text(header)
-        assert header._voice_state is None
+        assert header.voice_state is None
 
 
 @pytest.mark.asyncio
@@ -132,7 +132,7 @@ async def test_set_voice_state_idempotent_no_churn() -> None:
         header.set_voice_state("recording")
         await pilot.pause()
         # Internal state unchanged.
-        assert header._voice_state == "recording"
+        assert header.voice_state == "recording"
         # Rendered text unchanged (= idempotent; clock seconds may
         # differ but the badge is stable).
         assert "🔴 voice" in _header_text(header)
@@ -174,10 +174,10 @@ async def test_app_voice_set_header_state_helper_routes_through_header() -> None
         app._voice_set_header_state("recording")
         await pilot.pause()
         header = app.query_one("#header", ReynHeader)
-        assert header._voice_state == "recording"
+        assert header.voice_state == "recording"
         app._voice_set_header_state(None)
         await pilot.pause()
-        assert header._voice_state is None
+        assert header.voice_state is None
 
 
 @pytest.mark.asyncio
