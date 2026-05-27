@@ -136,7 +136,7 @@ def test_a2a_restart_resume_round_trip_ask_user(tmp_path: Path) -> None:
             await asyncio.sleep(0)
 
         # The iv must be back in the active queue.
-        assert session._interventions.get(iv_id) is not None
+        assert session.interventions.get(iv_id) is not None
 
         # ── Phase 3: simulate peer answer via A2A router path ──────
         # This is what _handle_answer_injection calls under α.

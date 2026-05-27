@@ -205,7 +205,7 @@ def test_agent_request_bus_request_with_registered_listener_round_trip(
     assert answer.text == "hello"
 
 
-# ── 5. session._interventions attribute path is stable (tui-coder Q2) ──
+# ── 5. session.interventions attribute path is stable (tui-coder Q2) ──
 
 
 def test_session_interventions_attribute_path_is_stable_in_phase3() -> None:
@@ -215,17 +215,17 @@ def test_session_interventions_attribute_path_is_stable_in_phase3() -> None:
 
     Phase 3 introduces the Agent-layer entry point + AgentRequestBus
     adapter but does NOT move ownership of the registry. TUI continues
-    to read ``session._interventions.queued_count()`` etc. without any
+    to read ``session.interventions.queued_count()`` etc. without any
     import / call site change. If a future phase moves the registry into
-    a sub-component, ``session._interventions`` must remain a proxy.
+    a sub-component, ``session.interventions`` must remain a proxy.
     """
     from reyn.chat.services.intervention_registry import InterventionRegistry
 
     session = ChatSession(agent_name="t")
     assert hasattr(session, "_interventions")
-    assert isinstance(session._interventions, InterventionRegistry)
+    assert isinstance(session.interventions, InterventionRegistry)
     # The registry is still enforcing the Phase 1 subscriber guard.
-    assert session._interventions.is_listener_enforcement_enabled() is True
+    assert session.interventions.is_listener_enforcement_enabled() is True
 
 
 # ── 6. handle_intervention preserves the chain-override path ───────────

@@ -1850,6 +1850,19 @@ class ChatSession:
         """
         return self._agent_role
 
+    @property
+    def interventions(self) -> "InterventionRegistry":
+        """Read-only public accessor for the session's InterventionRegistry.
+
+        The registry itself carries rich public API (= ``get`` /
+        ``queued_count`` / ``list_active`` / ``has_active_listener`` /
+        ``is_listener_enforcement_enabled``), so exposing it directly
+        keeps callers off the underscore field without forcing a
+        delegate-method explosion on ChatSession. The registry
+        instance is set once in ``__init__`` and never re-bound.
+        """
+        return self._interventions
+
     # ── SkillRunner forwarding (FP-0019 Wave 1b) ────────────────────────────────
     # slash/skill.py and slash/tasks.py access these dicts directly via session.
     # Forward to SkillRunner so external callers see the same live dict.

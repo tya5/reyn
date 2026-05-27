@@ -136,7 +136,7 @@ def test_self_answer_branch_returns_directly_without_dispatch() -> None:
     assert answer.choice_id == "self"
 
     # And the registry queue must be untouched — no prompt was enqueued.
-    assert session._interventions.queued_count() == 0
+    assert session.interventions.queued_count() == 0
 
 
 def test_self_answer_branch_emits_self_answer_event() -> None:

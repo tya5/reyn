@@ -224,8 +224,8 @@ def test_chat_session_constructs_registry_in_enforced_mode(tmp_path: Path) -> No
     # Internal attribute access is acceptable here because we are pinning
     # the wiring invariant the entry-point relies on. The public surface
     # ``register_intervention_listener`` is what callers use.
-    assert session._interventions.is_listener_enforcement_enabled() is True
-    assert session._interventions.has_active_listener() is False
+    assert session.interventions.is_listener_enforcement_enabled() is True
+    assert session.interventions.has_active_listener() is False
 
 
 def test_chat_session_register_intervention_listener_round_trip() -> None:
@@ -235,10 +235,10 @@ def test_chat_session_register_intervention_listener_round_trip() -> None:
     session = ChatSession(agent_name="test_agent")
 
     session.register_intervention_listener("tui")
-    assert session._interventions.has_active_listener() is True
+    assert session.interventions.has_active_listener() is True
 
     session.unregister_intervention_listener("tui")
-    assert session._interventions.has_active_listener() is False
+    assert session.interventions.has_active_listener() is False
 
 
 # ── 6. End-to-end: limit hit under interactive + timeout=0 + no listener ──
