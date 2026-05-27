@@ -58,7 +58,10 @@ jobs:
   audit:
     name: test-tier audit
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Matches the `test` job ceiling — local runs at ~1 min but GitHub
+    # ubuntu-latest runners (2 vCPU, slow disk I/O) take ~5 min for
+    # the AST parse over 5663 tests. 15 min gives healthy margin.
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6
