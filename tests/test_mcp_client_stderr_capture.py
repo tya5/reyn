@@ -13,10 +13,10 @@ This file pins the contract independently of the mcp SDK:
   1. ``_open_stdio()`` creates a temp file and passes it as
      ``errlog`` to ``stdio_client`` (= verified via signature
      introspection + the stand-in in ``test_mcp_client.py``).
-  2. ``_read_stderr_tail()`` returns captured text up to the configured
+  2. ``read_stderr_tail()`` returns captured text up to the configured
      byte cap; truncates with a ``...(truncated)`` prefix.
-  3. ``_close_stderr_capture()`` is idempotent and never raises.
-  4. ``_read_stderr_tail()`` on a missing / closed capture returns ``""``.
+  3. ``close_stderr_capture()`` is idempotent and never raises.
+  4. ``read_stderr_tail()`` on a missing / closed capture returns ``""``.
   5. The init-failure branch in ``initialize()`` enriches MCPError
      with the captured tail when present.
 
@@ -51,15 +51,15 @@ def _client(transport_type: str = "stdio") -> MCPClient:
 def test_read_stderr_tail_returns_empty_when_no_capture() -> None:
     """Tier 2: no capture configured → tail is empty string."""
     client = _client()
-    assert client._stderr_capture is None
-    assert client._read_stderr_tail() == ""
+    assert client.stderr_capture is None
+    assert client.read_stderr_tail() == ""
 
 
 def test_close_stderr_capture_is_idempotent_with_no_capture() -> None:
     """Tier 2: closing a never-opened capture is a safe no-op."""
     client = _client()
-    client._close_stderr_capture()  # must not raise
-    client._close_stderr_capture()  # second call also safe
+    client.close_stderr_capture()  # must not raise
+    client.close_stderr_capture()  # second call also safe
 
 
 # ── 2. tail returns captured text ────────────────────────────────────────
@@ -71,7 +71,7 @@ def test_read_stderr_tail_returns_captured_content() -> None:
     capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
     capture.write("ImportError: No module named 'foo'\n")
     client._stderr_capture = capture
-    tail = client._read_stderr_tail()
+    tail = client.read_stderr_tail()
     assert "ImportError: No module named 'foo'" in tail
 
 
@@ -84,14 +84,14 @@ def test_read_stderr_tail_truncates_long_content() -> None:
     """
     client = _client()
     capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
-    long_text = "X" * (MCPClient._STDERR_TAIL_BYTES + 500)
+    long_text = "X" * (MCPClient.STDERR_TAIL_BYTES + 500)
     capture.write(long_text)
     client._stderr_capture = capture
-    tail = client._read_stderr_tail()
+    tail = client.read_stderr_tail()
     assert tail.startswith("...(truncated)")
     # Body length is capped at the configured byte limit.
     body = tail[len("...(truncated)\n"):]
-    assert len(body) == MCPClient._STDERR_TAIL_BYTES
+    assert len(body) == MCPClient.STDERR_TAIL_BYTES
 
 
 def test_close_stderr_capture_clears_attribute() -> None:
@@ -99,9 +99,9 @@ def test_close_stderr_capture_clears_attribute() -> None:
     client = _client()
     client._stderr_capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
     client._stderr_capture.write("anything")
-    client._close_stderr_capture()
-    assert client._stderr_capture is None
-    assert client._read_stderr_tail() == ""
+    client.close_stderr_capture()
+    assert client.stderr_capture is None
+    assert client.read_stderr_tail() == ""
 
 
 # ── 3. tail survives a closed underlying file (= defensive) ─────────────
@@ -119,7 +119,7 @@ def test_read_stderr_tail_returns_empty_when_file_closed() -> None:
     capture.write("should-not-leak")
     capture.close()
     client._stderr_capture = capture
-    assert client._read_stderr_tail() == ""
+    assert client.read_stderr_tail() == ""
 
 
 # ── 4. http transport does not allocate a capture ────────────────────────
@@ -132,8 +132,8 @@ def test_http_transport_does_not_allocate_capture() -> None:
     field stays None so close() is a no-op.
     """
     client = _client("http")
-    assert client._stderr_capture is None
-    client._close_stderr_capture()  # safe
+    assert client.stderr_capture is None
+    client.close_stderr_capture()  # safe
 
 
 # ── 5. open_stdio sets up the capture as a side effect ──────────────────
@@ -148,16 +148,16 @@ def test_open_stdio_allocates_stderr_capture() -> None:
     """
     pytest.importorskip("mcp")  # requires the optional dep
     client = _client()
-    assert client._stderr_capture is None
+    assert client.stderr_capture is None
     cm = client._open_stdio()
     try:
-        assert client._stderr_capture is not None
+        assert client.stderr_capture is not None
         # writable text file with utf-8
-        client._stderr_capture.write("hello")
-        client._stderr_capture.flush()
-        assert client._read_stderr_tail() == "hello"
+        client.stderr_capture.write("hello")
+        client.stderr_capture.flush()
+        assert client.read_stderr_tail() == "hello"
     finally:
-        client._close_stderr_capture()
+        client.close_stderr_capture()
         # cm is an async generator; we never entered it so no awaitable cleanup needed
         del cm
 
@@ -197,4 +197,4 @@ def test_initialize_failure_includes_stderr_tail_in_error() -> None:
     assert "MCP initialize failed" in msg
     assert "Traceback: ImportError: missing dep 'foo'" in msg
     # After error path, capture is closed.
-    assert client._stderr_capture is None
+    assert client.stderr_capture is None

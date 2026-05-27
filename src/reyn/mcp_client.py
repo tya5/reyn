@@ -90,6 +90,17 @@ class MCPClient:
         # ``_open_stdio``; closed in ``close``.
         self._stderr_capture: Any = None  # tempfile.TemporaryFile | None
 
+    @property
+    def stderr_capture(self) -> "Any":
+        """Read-only accessor for the stderr-capture tempfile (or None).
+
+        Tests inspect this to verify the capture lifecycle (= None
+        initially, populated after ``_open_stdio``, None again after
+        ``close_stderr_capture``). The write side stays internal so the
+        lifecycle stays visible at the call sites that own it.
+        """
+        return self._stderr_capture
+
     # ── public API ──────────────────────────────────────────────────────────
 
     def is_initialized(self) -> bool:
@@ -127,12 +138,12 @@ class MCPClient:
             await session.initialize()
         except MCPError:
             await stack.aclose()
-            self._close_stderr_capture()
+            self.close_stderr_capture()
             raise
         except Exception as exc:
             await stack.aclose()
-            tail = self._read_stderr_tail()
-            self._close_stderr_capture()
+            tail = self.read_stderr_tail()
+            self.close_stderr_capture()
             if tail:
                 raise MCPError(
                     f"MCP initialize failed: {exc}\n"
@@ -192,7 +203,7 @@ class MCPClient:
     async def close(self) -> None:
         """Tear down the transport and session. Safe to call repeatedly."""
         if self._stack is None:
-            self._close_stderr_capture()
+            self.close_stderr_capture()
             return
         stack = self._stack
         self._stack = None
@@ -203,16 +214,16 @@ class MCPClient:
         except Exception:
             # Best-effort cleanup; transport may already be down.
             pass
-        self._close_stderr_capture()
+        self.close_stderr_capture()
 
     # ── stderr capture (stdio only) ─────────────────────────────────────────
 
-    _STDERR_TAIL_BYTES = 2048
+    STDERR_TAIL_BYTES = 2048
 
-    def _read_stderr_tail(self) -> str:
+    def read_stderr_tail(self) -> str:
         """Return the tail of the subprocess stderr capture, or ''.
 
-        Reads up to ``_STDERR_TAIL_BYTES`` from the end of the temp
+        Reads up to ``STDERR_TAIL_BYTES`` from the end of the temp
         file. Returns empty string when no capture is configured (= http
         transport, or stdio capture failed to open) or read raises.
         Failures here are advisory: never propagate beyond the helper
@@ -240,11 +251,11 @@ class MCPClient:
                 return ""
         else:
             text = data
-        if len(text) > self._STDERR_TAIL_BYTES:
-            return "...(truncated)\n" + text[-self._STDERR_TAIL_BYTES :]
+        if len(text) > self.STDERR_TAIL_BYTES:
+            return "...(truncated)\n" + text[-self.STDERR_TAIL_BYTES :]
         return text
 
-    def _close_stderr_capture(self) -> None:
+    def close_stderr_capture(self) -> None:
         """Close + delete the stderr temp file, if any. Idempotent."""
         capture = self._stderr_capture
         if capture is None:
