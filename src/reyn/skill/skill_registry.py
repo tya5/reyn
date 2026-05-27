@@ -81,6 +81,11 @@ class SkillRegistry:
         self._snapshots: dict[str, SkillSnapshot] = {}
 
     @property
+    def truncate_hook(self):
+        """Read-only accessor for the registered WAL-truncate hook (or None)."""
+        return self._truncate_hook
+
+    @property
     def state_dir(self) -> Path:
         """Public view of the per-agent state directory (R-D10).
 

@@ -238,7 +238,7 @@ def test_slash_discard_notifies_upstream_chain_waiter(tmp_path: Path, monkeypatc
             origin_depth=0,
         )
         # B has a skill_run processing chain X-D14
-        b_reg = sess_b._get_skill_registry()
+        b_reg = sess_b.get_skill_registry()
         assert b_reg is not None
         await b_reg.start(
             run_id="run_b_d14",
@@ -301,7 +301,7 @@ def test_slash_discard_no_chain_does_not_notify(tmp_path: Path, monkeypatch):
     registry.notify_chain_discarded = fake_notify  # type: ignore[assignment]
 
     async def go():
-        b_reg = sess_b._get_skill_registry()
+        b_reg = sess_b.get_skill_registry()
         await b_reg.start(
             run_id="run_b_solo", skill_name="standalone",
             skill_input={"type": "input", "data": {}},

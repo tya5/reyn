@@ -1637,7 +1637,7 @@ class ChatSession:
             enqueue_skill_completed=self._enqueue_skill_completed,
             accumulate=self._accumulate,
             drop_interventions_for_run=self._drop_interventions_for_run,
-            get_skill_registry=self._get_skill_registry,
+            get_skill_registry=self.get_skill_registry,
             ask_budget_extension=self._ask_budget_extension,
             outbox=self.outbox,
         )
@@ -1781,7 +1781,7 @@ class ChatSession:
         self._auto_resume_handler = AutoResumeHandler(
             event_log=self._chat_events,
             state_log=self._state_log,
-            get_skill_registry=self._get_skill_registry,
+            get_skill_registry=self.get_skill_registry,
             drop_interventions_for_run=self._drop_interventions_for_run,
             launcher=self._skill_runner.spawn_resumed_skill,
         )
@@ -1901,6 +1901,15 @@ class ChatSession:
         underscore name; this property is the read-only public view.
         """
         return self._on_limit
+
+    @property
+    def agent_registry(self):
+        """Read-only accessor for the session's owning AgentRegistry (or None
+        when running outside a registry). Tests verify cross-agent state
+        (= e.g. AgentRegistry.last_truncation_ts on shared WAL) via this
+        surface.
+        """
+        return self._registry
 
     @property
     def interventions(self) -> "InterventionRegistry":
@@ -2778,7 +2787,7 @@ class ChatSession:
     # (RunSpawner wave). Callers go through ``self._skill_runner`` directly;
     # the AutoResumeHandler wiring in __init__ uses the method reference.
 
-    def _get_skill_registry(self) -> "SkillRegistry | None":
+    def get_skill_registry(self) -> "SkillRegistry | None":
         """Return the per-agent SkillRegistry, lazily constructed on first call.
 
         Returns None when no state_log is wired (test / standalone mode) —
@@ -2825,7 +2834,7 @@ class ChatSession:
         Returns None when no state_log is wired — test / standalone
         mode without persistence.
 
-        Truncate hook mirrors _get_skill_registry: fires
+        Truncate hook mirrors get_skill_registry: fires
         AgentRegistry.truncate_wal_if_eligible after every durable
         per-plan mutation (= last_step_applied_seq bump).
         """

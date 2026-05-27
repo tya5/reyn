@@ -156,7 +156,7 @@ def test_skill_list_shows_root_skill_flat(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     assert reg is not None
 
     async def go():
@@ -186,7 +186,7 @@ def test_skill_list_shows_parent_child_lineage(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     assert reg is not None
 
     async def go():
@@ -216,7 +216,7 @@ def test_skill_list_handles_three_level_chain(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     assert reg is not None
 
     async def go():
@@ -256,7 +256,7 @@ def test_skill_list_handles_orphaned_child(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     assert reg is not None
 
     async def go():

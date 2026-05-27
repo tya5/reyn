@@ -64,7 +64,7 @@ class AutoResumeHandler:
     ) -> None:
         self._events = event_log
         self._state_log = state_log
-        self._get_skill_registry = get_skill_registry
+        self.get_skill_registry = get_skill_registry
         self._drop_interventions_for_run = drop_interventions_for_run
         self._launcher = launcher
 
@@ -123,7 +123,7 @@ class AutoResumeHandler:
             SkillResumeCoordinator as _Coord,
         )
 
-        registry = self._get_skill_registry()
+        registry = self.get_skill_registry()
         if registry is None or self._state_log is None:
             return []
 

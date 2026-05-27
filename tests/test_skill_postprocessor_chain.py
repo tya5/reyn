@@ -284,7 +284,7 @@ def test_postprocessor_mid_run_discard_notifies_upstream(
         assert sess_a.chains.find_chain("chain-post-001") is not None
 
         # B starts a skill_run (simulates a skill that has entered __post__)
-        b_reg = sess_b._get_skill_registry()
+        b_reg = sess_b.get_skill_registry()
         assert b_reg is not None
         await b_reg.start(
             run_id="run_b_post_001",
@@ -415,7 +415,7 @@ def test_postprocessor_mid_run_chain_timeout_fires(
         assert sess_a.chains.find_chain("chain-timeout-post-001") is not None
 
         # B starts its skill — simulates __post__ state (no completion)
-        b_reg = sess_b._get_skill_registry()
+        b_reg = sess_b.get_skill_registry()
         assert b_reg is not None
         await b_reg.start(
             run_id="run_b_timeout_001",

@@ -58,7 +58,7 @@ async def test_skill_list_shows_active_runs(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     assert reg is not None
     await reg.start(
         run_id="run_A", skill_name="blog_writer",
@@ -114,7 +114,7 @@ async def test_skill_discard_completes_with_discarded_status(tmp_path, monkeypat
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     await reg.start(
         run_id="run_to_discard", skill_name="demo",
         skill_input={"type": "input", "data": {}},
@@ -145,7 +145,7 @@ async def test_skill_discard_without_force_is_confirmation_only(tmp_path, monkey
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     await reg.start(
         run_id="run_pending", skill_name="long_writer",
         skill_input={"type": "input", "data": {}},
@@ -182,7 +182,7 @@ async def test_skill_discard_without_force_leaves_task_running(tmp_path, monkeyp
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     await reg.start(
         run_id="run_keep_running", skill_name="demo",
         skill_input={"type": "input", "data": {}},
@@ -221,7 +221,7 @@ async def test_skill_discard_force_flag_order_independent(tmp_path, monkeypatch)
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     await reg.start(
         run_id="run_flag_first", skill_name="demo",
         skill_input={"type": "input", "data": {}},
@@ -261,7 +261,7 @@ async def test_skill_discard_cancels_running_task(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     await reg.start(
         run_id="run_running", skill_name="demo",
         skill_input={"type": "input", "data": {}},
@@ -292,7 +292,7 @@ async def test_skill_discard_drops_interventions(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     await reg.start(
         run_id="run_with_iv", skill_name="demo",
         skill_input={"type": "input", "data": {}},

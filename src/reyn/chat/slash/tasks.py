@@ -127,7 +127,7 @@ def _list_skill_lines(session: "ChatSession") -> list[str]:
     if not running:
         return []
     started_at = getattr(session, "running_skills_started_at", {}) or {}
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     now = time.monotonic()
     lines: list[str] = []
     for run_id in running.keys():
@@ -190,7 +190,7 @@ async def _task_status(session: "ChatSession", args: str) -> None:
 async def _skill_status(session: "ChatSession", run_id: str) -> None:
     started_at = getattr(session, "running_skills_started_at", {}) or {}
     elapsed = time.monotonic() - started_at.get(run_id, time.monotonic())
-    reg = session._get_skill_registry()
+    reg = session.get_skill_registry()
     out: list[str] = [
         f"skill run {run_id}",
         f"  elapsed:  {_format_elapsed(elapsed)}",
