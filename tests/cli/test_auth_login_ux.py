@@ -33,7 +33,7 @@ from reyn.cli.commands import auth as auth_mod
 
 def test_box_user_code_renders_three_line_unicode_box() -> None:
     """Tier 2: box has top border, code line, bottom border (= 3 lines)."""
-    out = auth_mod._box_user_code("ABCD-EFGH")
+    out = auth_mod.box_user_code("ABCD-EFGH")
     top, mid, bot = out.splitlines()  # exactly 3 lines: top border / code / bottom border
     assert "┌" in top and "┐" in top
     assert "ABCD-EFGH" in mid
@@ -47,7 +47,7 @@ def test_box_user_code_border_width_matches_inner_width() -> None:
     drawing chars so we count code points, not byte widths.
     """
     code = "ABCD-EFGH"
-    out = auth_mod._box_user_code(code)
+    out = auth_mod.box_user_code(code)
     top, mid, bot = out.splitlines()
     # Strip the indent + corner chars to compare inner widths.
     top_border = top.strip().strip("┌┐")
@@ -59,7 +59,7 @@ def test_box_user_code_border_width_matches_inner_width() -> None:
 
 def test_box_user_code_empty_falls_back_gracefully() -> None:
     """Tier 2: empty/missing code → `(no user code)` placeholder, no crash."""
-    assert "(no user code)" in auth_mod._box_user_code("")
+    assert "(no user code)" in auth_mod.box_user_code("")
 
 
 # ── _print_user_action ──────────────────────────────────────────────────────

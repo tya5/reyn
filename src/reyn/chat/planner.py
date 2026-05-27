@@ -744,7 +744,7 @@ def _build_sub_loop_memo_provider(
 ) -> Any:
     """ADR-0025: construct a SubLoopMemoProvider for one step's sub-loop.
 
-    Best-effort: if the host doesn't expose ``_get_plan_registry`` (=
+    Best-effort: if the host doesn't expose ``get_plan_registry`` (=
     test stub) or no PlanRegistry is available (= state_log not wired),
     returns None so RouterLoop runs without memoization. The plan still
     executes correctly; resume just re-pays LLM cost on crashed steps.
@@ -754,7 +754,7 @@ def _build_sub_loop_memo_provider(
     from PlanSnapshot.step_llm_calls).
     """
     plan_registry = None
-    getter = getattr(parent_host, "_get_plan_registry", None)
+    getter = getattr(parent_host, "get_plan_registry", None)
     if getter is not None:
         try:
             plan_registry = getter()

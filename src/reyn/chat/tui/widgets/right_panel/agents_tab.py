@@ -320,7 +320,7 @@ def _plans_for_agent(registry: "AgentRegistry", name: str) -> list[dict]:
     ``total`` (total step count), ``status`` (running / paused).
 
     Defensive — main hasn't been rebased into this branch yet, so
-    ``running_plans`` / ``_get_plan_registry`` may not exist on the session.
+    ``running_plans`` / ``get_plan_registry`` may not exist on the session.
     Returns ``[]`` for any failure path so the agents tab keeps rendering.
     """
     out: list[dict] = []
@@ -333,13 +333,13 @@ def _plans_for_agent(registry: "AgentRegistry", name: str) -> list[dict]:
 
     running = getattr(session, "running_plans", None) or {}
     plan_reg = None
-    getter = getattr(session, "_get_plan_registry", None)
+    getter = getattr(session, "get_plan_registry", None)
     if callable(getter):
         try:
             plan_reg = getter()
         except Exception as exc:
             logger.warning(
-                "right_panel agents: _get_plan_registry(%s) failed: %s",
+                "right_panel agents: get_plan_registry(%s) failed: %s",
                 name, exc,
             )
             plan_reg = None

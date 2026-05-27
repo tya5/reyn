@@ -8,7 +8,7 @@ Intervention coupling audit (FP-0019 Wave 1b):
     _run_stdlib_skill and _spawn_skill/_run_one_skill both pass a
     ChatInterventionBus to _build_agent. The bus holds a reference to
     ChatSession (for _dispatch_intervention and
-    _consume_buffered_intervention_answer). SkillRunner does NOT call
+    consume_buffered_intervention_answer). SkillRunner does NOT call
     intervention methods directly; it receives a ``build_agent_fn``
     callback from the session that encapsulates the bus construction.
     Dependency direction: session wires the bus, SkillRunner only calls

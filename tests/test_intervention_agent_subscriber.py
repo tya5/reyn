@@ -138,7 +138,7 @@ def test_as_request_bus_returns_fresh_adapter_each_call() -> None:
     bus2 = session.as_request_bus()
     assert bus1 is not bus2
     # Both reference the same session.
-    assert bus1._session is bus2._session is session
+    assert bus1.session is bus2.session is session
 
 
 # ── 4. End-to-end: AgentRequestBus.request → session.handle_intervention

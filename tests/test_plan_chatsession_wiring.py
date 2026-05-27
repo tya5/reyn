@@ -176,8 +176,8 @@ def test_get_plan_registry_returns_singleton(tmp_path, monkeypatch):
     """Tier 2: lazy-init returns the same instance across calls."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    reg1 = session._get_plan_registry()
-    reg2 = session._get_plan_registry()
+    reg1 = session.get_plan_registry()
+    reg2 = session.get_plan_registry()
     assert reg1 is reg2
 
 
@@ -187,7 +187,7 @@ def test_get_plan_registry_returns_none_without_state_log(tmp_path):
         agent_name="alpha", state_log=None,
         snapshot_path=tmp_path / "snap.json",
     )
-    assert session._get_plan_registry() is None
+    assert session.get_plan_registry() is None
 
 
 # ── FP-0031-A: plan summary status before execution ──────────────────────

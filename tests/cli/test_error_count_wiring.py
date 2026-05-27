@@ -1,6 +1,6 @@
-"""Tier 2: session._error_box_count is wired to mount/dismiss/clear lifecycle.
+"""Tier 2: session.error_box_count is wired to mount/dismiss/clear lifecycle.
 
-Wave-13 cascade audit finding C[1]: session._error_box_count was declared
+Wave-13 cascade audit finding C[1]: session.error_box_count was declared
 on ChatSession (line 1627) with the comment "TUI outbox handler increments
 on mount_error and decrements on dismiss", but NO caller ever wrote to it.
 /pending list and /reset preview always showed "0 errors" regardless of how
@@ -40,10 +40,15 @@ if str(_SRC) not in sys.path:
 
 
 class _StubSession:
-    """Minimal session stub exposing _error_box_count."""
+    """Minimal session stub exposing error_box_count."""
 
     def __init__(self) -> None:
         self._error_box_count: int = 0
+
+    @property
+    def error_box_count(self) -> int:
+        """Mirror of ChatSession.error_box_count for the fake stub."""
+        return self._error_box_count
 
 
 class _StubSessionNoAttr:
@@ -69,7 +74,7 @@ def _make_error_msg(text: str = "oops"):
 
 @pytest.mark.asyncio
 async def test_three_render_messages_count_three() -> None:
-    """Tier 2: 3 × render_message via _on_error → session._error_box_count == 3."""
+    """Tier 2: 3 × render_message via _on_error → session.error_box_count == 3."""
     from reyn.chat.tui.app_outbox import OutboxRouter
     from reyn.chat.tui.widgets import ConversationView, ReynHeader
 
@@ -90,8 +95,8 @@ async def test_three_render_messages_count_three() -> None:
             router._on_error(_make_error_msg(f"error {i}"), conv, header)
         await pilot.pause()
 
-        assert session._error_box_count == 3, (
-            f"expected 3 after 3 × _on_error, got {session._error_box_count}"
+        assert session.error_box_count == 3, (
+            f"expected 3 after 3 × _on_error, got {session.error_box_count}"
         )
 
 
@@ -120,13 +125,13 @@ async def test_dismiss_last_error_decrements_count() -> None:
             router._on_error(_make_error_msg(f"error {i}"), conv, header)
         await pilot.pause()
 
-        assert session._error_box_count == 3, "pre-condition: 3 mounts"
+        assert session.error_box_count == 3, "pre-condition: 3 mounts"
 
         conv.dismiss_last_error()
         await pilot.pause()
 
-        assert session._error_box_count == 2, (
-            f"expected 2 after one dismiss, got {session._error_box_count}"
+        assert session.error_box_count == 2, (
+            f"expected 2 after one dismiss, got {session.error_box_count}"
         )
 
 
@@ -155,13 +160,13 @@ async def test_dismiss_all_errors_zeros_count() -> None:
             router._on_error(_make_error_msg(f"error {i}"), conv, header)
         await pilot.pause()
 
-        assert session._error_box_count == 3, "pre-condition: 3 mounts"
+        assert session.error_box_count == 3, "pre-condition: 3 mounts"
 
         conv.dismiss_all_errors()
         await pilot.pause()
 
-        assert session._error_box_count == 0, (
-            f"expected 0 after dismiss_all_errors, got {session._error_box_count}"
+        assert session.error_box_count == 0, (
+            f"expected 0 after dismiss_all_errors, got {session.error_box_count}"
         )
 
 
@@ -170,7 +175,7 @@ async def test_dismiss_all_errors_zeros_count() -> None:
 
 @pytest.mark.asyncio
 async def test_clear_zeros_count() -> None:
-    """Tier 2: clear() with 3 mounted boxes → session._error_box_count == 0."""
+    """Tier 2: clear() with 3 mounted boxes → session.error_box_count == 0."""
     from reyn.chat.tui.app_outbox import OutboxRouter
     from reyn.chat.tui.widgets import ConversationView, ReynHeader
 
@@ -190,13 +195,13 @@ async def test_clear_zeros_count() -> None:
             router._on_error(_make_error_msg(f"error {i}"), conv, header)
         await pilot.pause()
 
-        assert session._error_box_count == 3, "pre-condition: 3 mounts"
+        assert session.error_box_count == 3, "pre-condition: 3 mounts"
 
         conv.clear()
         await pilot.pause()
 
-        assert session._error_box_count == 0, (
-            f"expected 0 after clear(), got {session._error_box_count}"
+        assert session.error_box_count == 0, (
+            f"expected 0 after clear(), got {session.error_box_count}"
         )
 
 

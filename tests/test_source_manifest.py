@@ -348,8 +348,8 @@ async def test_internal_writes_dont_trigger_spurious_reload(tmp_path: Path):
     file_mtime = yaml_path.stat().st_mtime
 
     # _loaded_mtime must match the file we just wrote
-    assert m._loaded_mtime == file_mtime, (
-        f"_loaded_mtime ({m._loaded_mtime}) != file mtime ({file_mtime}) "
+    assert m.loaded_mtime == file_mtime, (
+        f"_loaded_mtime ({m.loaded_mtime}) != file mtime ({file_mtime}) "
         "after upsert — own write would trigger spurious reload"
     )
 
