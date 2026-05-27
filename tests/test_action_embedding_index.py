@@ -381,4 +381,4 @@ def test_no_persist_dir_no_file_created(tmp_path: "Path") -> None:
     idx = ActionEmbeddingIndex(persist_dir=None)
     _run(idx.build(items, _FakeEmbeddingProvider(), "standard"))
     assert idx.is_ready() is True
-    assert idx._db_path is None
+    assert idx.db_path is None
