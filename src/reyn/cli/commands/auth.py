@@ -295,7 +295,7 @@ def run_login(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-def _classify_token_status(delta_seconds: float) -> str:
+def classify_token_status(delta_seconds: float) -> str:
     """Map an ``expires_at - now`` delta (seconds) to a 3-state label.
 
     Issue #291 Priority 3 #9: previously the 2-state label ``valid`` /
@@ -331,7 +331,7 @@ def run_list(args: argparse.Namespace) -> None:
             print(f"  {key}: <malformed>")
             continue
         delta = token.expires_at - now
-        status = _classify_token_status(delta.total_seconds())
+        status = classify_token_status(delta.total_seconds())
         print(f"  {key}: {status}, expires {token.expires_at.isoformat()}")
 
 
