@@ -57,7 +57,7 @@ def test_invoke_skill_gate_phase_allow():
 
 # ── 3. Description byte-identity ─────────────────────────────────────────────
 
-def test_invoke_skill_description_byte_identical():
+def test_invoke_skill_description_matches_legacy():
     """Tier 2: INVOKE_SKILL.description is byte-identical to the router_tools.py
     invoke_skill ToolSpec.description (= excluding dynamic enum content).
     Drift here would invalidate LLMReplay fixtures."""

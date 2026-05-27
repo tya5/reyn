@@ -148,11 +148,8 @@ def test_swe_bench_exactly_one_terminal_phase():
         for name in skill.phases
         if not skill.graph.transitions.get(name)
     ]
-    assert len(terminal_phases) == 1, (
-        f"Expected exactly 1 terminal phase, found {len(terminal_phases)}: "
-        f"{sorted(terminal_phases)}"
-    )
-    assert terminal_phases[0] == "report", (
+    (only_terminal,) = terminal_phases  # unpack-enforcement: exactly one terminal
+    assert only_terminal == "report", (
         f"Terminal phase must be 'report', got: '{terminal_phases[0]}'"
     )
 

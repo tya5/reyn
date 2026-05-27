@@ -50,7 +50,7 @@ def test_default_flag_off_excludes_universal_wrappers() -> None:
         )
 
 
-def test_default_flag_off_byte_identical_to_explicit_false() -> None:
+def test_default_flag_off_matches_explicit_false() -> None:
     """Tier 2: default flag matches explicit False.
 
     Defensive check — confirms no unintentional default flip during
