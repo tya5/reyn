@@ -91,7 +91,7 @@ from reyn.registry.models import server_info_from_raw
 _DEFAULT_BASE_URL = "https://registry.modelcontextprotocol.io"
 
 
-def _registry_urls() -> list[str]:
+def registry_urls() -> list[str]:
     """Resolve the ordered list of registry URLs to try.
 
     Resolution priority (= same chain as
@@ -114,14 +114,14 @@ def _registry_urls() -> list[str]:
     return [_DEFAULT_BASE_URL]
 
 
-def _base_url() -> str:
+def base_url() -> str:
     """Return the first registry URL (= preserved for backward compat).
 
     Callers that only need a single URL (= legacy paths, tests) can
     keep using this; the multi-URL iteration happens inside ``search``
-    and ``lookup`` via :func:`_registry_urls`.
+    and ``lookup`` via :func:`registry_urls`.
     """
-    return _registry_urls()[0]
+    return registry_urls()[0]
 
 # urlopen timeout in seconds. 10s covers the canonical registry's p99
 # without leaving steps hanging if the network is wedged.
@@ -188,7 +188,7 @@ def _candidates_from_payload(payload: dict) -> list[dict]:
 def search(query: str, *, limit: int = 20) -> list[dict]:
     """Search the MCP registry for servers matching ``query``.
 
-    Iterates the resolved registry URL list (= ``_registry_urls()``)
+    Iterates the resolved registry URL list (= ``registry_urls()``)
     and returns the first non-empty result list — "private first,
     public fallback" semantics. A :class:`RegistryError` from one URL
     falls through to the next; if every URL fails the final error is
@@ -208,7 +208,7 @@ def search(query: str, *, limit: int = 20) -> list[dict]:
 
     qs = urllib.parse.urlencode({"search": query, "limit": str(limit)})
     last_error: RegistryError | None = None
-    for base in _registry_urls():
+    for base in registry_urls():
         try:
             data = _http_get_json(f"{base}/v0.1/servers?{qs}")
         except RegistryError as exc:
@@ -227,7 +227,7 @@ def search(query: str, *, limit: int = 20) -> list[dict]:
 def lookup(server_id: str) -> dict | None:
     """Return the registry entry for the exact ``server_id``, or None.
 
-    Iterates the resolved registry URL list (= ``_registry_urls()``):
+    Iterates the resolved registry URL list (= ``registry_urls()``):
     a 404 from one URL falls through to the next; a non-404 hit
     returns immediately. Returns None when every URL replies 404.
     Raises :class:`RegistryError` if the final URL fails with a
@@ -245,7 +245,7 @@ def lookup(server_id: str) -> dict | None:
 
     encoded_id = urllib.parse.quote(server_id, safe="")
     last_error: RegistryError | None = None
-    for base in _registry_urls():
+    for base in registry_urls():
         try:
             data = _http_get_json(
                 f"{base}/v0.1/servers/{encoded_id}/versions/latest"
