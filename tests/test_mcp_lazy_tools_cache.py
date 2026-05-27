@@ -94,6 +94,9 @@ def _make_adapter_with_mcp(
         file_delete=_null_file_delete,
         file_regenerate_index=_null_file_regen,
     )
+    # FP-0037 S1: pass an empty per-test state_dir so the warm-start path
+    # never reads a stale on-disk cache from the project root (.reyn/state/).
+    # Each test gets a fresh isolated directory → live probe always runs.
     return RouterHostAdapter(
         agent_name="test-agent",
         agent_role="test",
@@ -127,6 +130,7 @@ def _make_adapter_with_mcp(
         spawn_plan_task=_null_spawn_plan_task,
         delegation_tracker=lambda: None,
         agent_replies_tracker=lambda: None,
+        state_dir=tmp_path / "state",
     )
 
 
