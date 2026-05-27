@@ -40,8 +40,10 @@ def test_setting_id_is_stable():
 
 def test_language_items_non_empty():
     """Tier 1: at least Auto + 1 language so the dropdown isn't useless."""
-    assert len(LANGUAGE_ITEMS) >= 2
-    assert "auto" in LANGUAGE_ITEMS.values()
+    values = set(LANGUAGE_ITEMS.values())
+    assert {"auto"} < values, (
+        f"expected auto + at least one real language, got {sorted(values)}"
+    )
 
 
 def test_language_to_value_none_maps_to_auto():
