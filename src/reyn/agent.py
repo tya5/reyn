@@ -92,6 +92,16 @@ class Agent:
     def caller(self) -> str:
         return self._caller
 
+    @property
+    def secret_store(self):
+        """Read-only accessor for the injected ScopedSecretStore (or None).
+
+        Mirrors ``OSRuntime.secret_store`` / ``ControlIRExecutor.secret_store``
+        so callers (= tests verifying DI identity) can probe the wiring via
+        the public surface instead of reaching into ``_secret_store``.
+        """
+        return self._secret_store
+
     async def run(
         self,
         skill: Skill,

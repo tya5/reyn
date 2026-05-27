@@ -106,7 +106,7 @@ def test_agent_default_secret_store_is_none() -> None:
     from reyn.agent import Agent
 
     agent = Agent(model="standard")
-    assert agent._secret_store is None
+    assert agent.secret_store is None
 
 
 def test_agent_explicit_secret_store_is_stored() -> None:
@@ -115,7 +115,7 @@ def test_agent_explicit_secret_store_is_stored() -> None:
 
     store = _make_store(["API_KEY"])
     agent = Agent(model="standard", secret_store=store)
-    assert agent._secret_store is store
+    assert agent.secret_store is store
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ def test_osruntime_stores_secret_store(tmp_path: Path) -> None:
     skill = _make_minimal_skill()
     store = _make_store(["DB_PASSWORD"])
     runtime = OSRuntime(skill, "standard", secret_store=store)
-    assert runtime._secret_store is store
+    assert runtime.secret_store is store
 
 
 def test_osruntime_propagates_store_to_control_ir_executor(tmp_path: Path) -> None:
@@ -172,14 +172,14 @@ def test_osruntime_none_store_propagates_as_none(tmp_path: Path) -> None:
 def test_control_ir_executor_default_secret_store_is_none(tmp_path: Path) -> None:
     """Tier 2: ControlIRExecutor() without secret_store defaults _secret_store to None."""
     executor = _make_executor(tmp_path)
-    assert executor._secret_store is None
+    assert executor.secret_store is None
 
 
 def test_control_ir_executor_stores_secret_store(tmp_path: Path) -> None:
     """Tier 2: ControlIRExecutor(secret_store=<store>) stores on _secret_store."""
     store = _make_store(["API_TOKEN"])
     executor = _make_executor(tmp_path, secret_store=store)
-    assert executor._secret_store is store
+    assert executor.secret_store is store
 
 
 def test_control_ir_executor_build_ctx_propagates_store(tmp_path: Path) -> None:
@@ -207,14 +207,14 @@ def test_control_ir_executor_build_ctx_none_store_propagates_none(tmp_path: Path
 def test_preprocessor_executor_default_secret_store_is_none() -> None:
     """Tier 2: PreprocessorExecutor() without secret_store defaults _secret_store to None."""
     executor = _make_preprocessor_executor()
-    assert executor._secret_store is None
+    assert executor.secret_store is None
 
 
 def test_preprocessor_executor_stores_secret_store() -> None:
     """Tier 2: PreprocessorExecutor(secret_store=<store>) stores on _secret_store."""
     store = _make_store(["WEBHOOK_SECRET"])
     executor = _make_preprocessor_executor(secret_store=store)
-    assert executor._secret_store is store
+    assert executor.secret_store is store
 
 
 def test_preprocessor_executor_build_op_ctx_propagates_store() -> None:
