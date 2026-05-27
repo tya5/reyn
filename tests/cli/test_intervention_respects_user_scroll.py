@@ -56,7 +56,7 @@ async def test_intervention_scrolls_visible_when_user_at_tail() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        assert conv._user_scrolled is False
+        assert conv.user_scrolled is False
 
         async def _cb(_a: str) -> None:
             return None
@@ -172,7 +172,7 @@ async def test_mount_error_scrolls_visible_when_user_at_tail() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        assert conv._user_scrolled is False
+        assert conv.user_scrolled is False
 
         # Just verify the mount completes without raising — the
         # positive-case scroll-visible behaviour is hard to observe

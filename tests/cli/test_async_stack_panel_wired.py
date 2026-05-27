@@ -66,7 +66,7 @@ async def test_add_async_task_surfaces_entry_in_snapshot() -> None:
         conv = app.query_one("#conversation", ConversationView)
         conv.add_async_task("run-abc", "code_review")
         await pilot.pause()
-        snap = conv._async_stack().snapshot()  # type: ignore[union-attr]
+        snap = conv.async_stack_snapshot()
         # First non-overflow entry should be our task.
         running = [s for s in snap if not s["is_overflow"]]
         assert running, "task should appear in panel snapshot"
@@ -88,13 +88,13 @@ async def test_remove_async_task_drops_entry() -> None:
         await pilot.pause()
         assert any(
             s["agent_id"] == "run-xyz"
-            for s in conv._async_stack().snapshot()  # type: ignore[union-attr]
+            for s in conv.async_stack_snapshot()
         )
         conv.remove_async_task("run-xyz")
         await pilot.pause()
         assert all(
             s["agent_id"] != "run-xyz"
-            for s in conv._async_stack().snapshot()  # type: ignore[union-attr]
+            for s in conv.async_stack_snapshot()
         )
 
 
@@ -115,10 +115,10 @@ async def test_clear_async_tasks_empties_panel() -> None:
         conv.add_async_task("run-1", "a")
         conv.add_async_task("run-2", "b")
         await pilot.pause()
-        assert len(conv._async_stack().snapshot()) >= 2  # type: ignore[union-attr]
+        assert len(conv.async_stack_snapshot()) >= 2
         conv.clear()
         await pilot.pause()
-        assert conv._async_stack().snapshot() == []  # type: ignore[union-attr]
+        assert conv.async_stack_snapshot() == []
 
 
 @pytest.mark.asyncio

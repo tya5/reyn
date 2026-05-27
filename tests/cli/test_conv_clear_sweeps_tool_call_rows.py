@@ -58,7 +58,7 @@ async def test_clear_removes_in_flight_tool_call_widgets() -> None:
         assert app.query(ToolCallRow), (
             "test scaffolding broken — ToolCallRow should be mounted"
         )
-        assert "op-clear-1" in conv._tool_call_rows
+        assert "op-clear-1" in conv.tool_call_row_ids
 
         conv.clear()
         await pilot.pause()
@@ -66,9 +66,9 @@ async def test_clear_removes_in_flight_tool_call_widgets() -> None:
         assert not app.query(ToolCallRow), (
             "ToolCallRow widget should be removed from DOM after clear()"
         )
-        assert not conv._tool_call_rows, (
-            f"_tool_call_rows dict should be empty after clear(), "
-            f"got {list(conv._tool_call_rows.keys())!r}"
+        assert not conv.tool_call_row_ids, (
+            f"tool_call_row_ids should be empty after clear(), "
+            f"got {conv.tool_call_row_ids!r}"
         )
 
 
@@ -105,7 +105,7 @@ async def test_tool_completion_after_clear_does_not_raise() -> None:
         )
         await pilot.pause()
         # Dict stays empty.
-        assert "op-late-completion" not in conv._tool_call_rows
+        assert "op-late-completion" not in conv.tool_call_row_ids
 
 
 @pytest.mark.asyncio
@@ -124,4 +124,4 @@ async def test_clear_with_no_tool_call_rows_is_no_op_safe() -> None:
         # No tool calls created — just clear.
         conv.clear()
         await pilot.pause()
-        assert conv._tool_call_rows == {}
+        assert conv.tool_call_row_ids == frozenset()

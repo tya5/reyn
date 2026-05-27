@@ -41,8 +41,8 @@ async def test_scroll_to_bottom_still_resets_user_scrolled_flag() -> None:
         conv._user_scrolled = True
         conv.scroll_to_bottom()
         await pilot.pause()
-        assert conv._user_scrolled is False, (
-            "scroll_to_bottom must still leave _user_scrolled False; "
+        assert conv.user_scrolled is False, (
+            "scroll_to_bottom must still leave user_scrolled False; "
             "the flag set was delegated to _snap_to_bottom, not removed"
         )
 

@@ -118,7 +118,7 @@ async def test_ctrl_p_turn_nav_still_scrolls_without_focus() -> None:
         conv._maybe_write_header("user", ">", "bold")
         conv._maybe_write_header("reyn", "⏺", "bold")
         await pilot.pause()
-        assert len(conv._turn_anchors) >= 1
+        assert len(conv.turn_anchors_snapshot()) >= 1
 
         # jump_prev_turn must not raise even without RichLog focus
         conv.jump_prev_turn()

@@ -71,7 +71,7 @@ async def test_jump_to_relative_anchor_marks_user_scrolled_true() -> None:
         conv._jump_to_relative_anchor(-1)
         await pilot.pause()
 
-        assert conv._user_scrolled is True, (
+        assert conv.user_scrolled is True, (
             "_jump_to_relative_anchor(-1) must mark user_scrolled True "
             "so the next chunk's auto_scroll doesn't snap back to the tail"
         )
@@ -109,7 +109,7 @@ async def test_jump_keeps_user_scrolled_even_on_forward_to_last_anchor() -> None
         conv._jump_to_relative_anchor(+1)
         await pilot.pause()
 
-        assert conv._user_scrolled is True, (
+        assert conv.user_scrolled is True, (
             "_jump_to_relative_anchor(+1) must mark user_scrolled True "
             "regardless of where the jump lands relative to the tail"
         )

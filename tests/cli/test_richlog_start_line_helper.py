@@ -56,7 +56,7 @@ async def test_normal_call_returns_attribute_value() -> None:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         log = _StubLog(start_line=137)
-        assert conv._richlog_start_line(log) == 137
+        assert conv.richlog_start_line(log) == 137
 
 
 @pytest.mark.asyncio
@@ -72,7 +72,7 @@ async def test_missing_attribute_returns_zero_fallback() -> None:
         # Reset warning state in case the previous test fired it.
         conv._start_line_warned = False
         log = _StubLog()  # no _start_line attribute
-        assert conv._richlog_start_line(log) == 0
+        assert conv.richlog_start_line(log) == 0
 
 
 @pytest.mark.asyncio
@@ -95,15 +95,15 @@ async def test_missing_attribute_logs_one_shot_warning(caplog) -> None:
 
         with caplog.at_level(logging.WARNING):
             caplog.clear()
-            conv._richlog_start_line(log)
+            conv.richlog_start_line(log)
             first_count = sum(
                 1 for r in caplog.records
                 if "RichLog._start_line is missing" in r.getMessage()
             )
             # Three more calls — should NOT log again.
-            conv._richlog_start_line(log)
-            conv._richlog_start_line(log)
-            conv._richlog_start_line(log)
+            conv.richlog_start_line(log)
+            conv.richlog_start_line(log)
+            conv.richlog_start_line(log)
             total_count = sum(
                 1 for r in caplog.records
                 if "RichLog._start_line is missing" in r.getMessage()
@@ -136,6 +136,6 @@ async def test_absolute_line_position_uses_helper() -> None:
         conv = app.query_one("#conversation", ConversationView)
         log = _StubLog(start_line=42)
         # absolute = start_line + len(log.lines); lines is empty, so 42.
-        assert conv._absolute_line_position(log) == 42
+        assert conv.absolute_line_position(log) == 42
         log.lines = [1, 2, 3]  # 3 entries
-        assert conv._absolute_line_position(log) == 45
+        assert conv.absolute_line_position(log) == 45

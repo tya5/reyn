@@ -58,7 +58,7 @@ async def test_plan_summary_adds_async_stack_row() -> None:
         router._on_system(msg, conv, header)
         await pilot.pause()
 
-        snap = conv._async_stack().snapshot()  # type: ignore[union-attr]
+        snap = conv.async_stack_snapshot()
         rows = [s for s in snap if not s["is_overflow"]]
         assert any(
             s["agent_id"] == "plan-abc12345-def6" for s in rows
@@ -90,7 +90,7 @@ async def test_plan_complete_removes_async_stack_row() -> None:
         await pilot.pause()
         assert any(
             s["agent_id"] == "plan-zzz999"
-            for s in conv._async_stack().snapshot()  # type: ignore[union-attr]
+            for s in conv.async_stack_snapshot()
             if not s["is_overflow"]
         )
 
@@ -104,7 +104,7 @@ async def test_plan_complete_removes_async_stack_row() -> None:
         await pilot.pause()
         assert all(
             s["agent_id"] != "plan-zzz999"
-            for s in conv._async_stack().snapshot()  # type: ignore[union-attr]
+            for s in conv.async_stack_snapshot()
         )
 
 
@@ -137,7 +137,7 @@ async def test_non_plan_system_message_does_not_touch_async_stack() -> None:
         router._on_system(msg, conv, header)
         await pilot.pause()
 
-        assert conv._async_stack().snapshot() == [], (  # type: ignore[union-attr]
+        assert conv.async_stack_snapshot() == [], (
             "non-plan system message must not touch the AsyncStackPanel"
         )
 
@@ -171,4 +171,4 @@ async def test_missing_plan_id_is_silent_noop() -> None:
         router._on_system(msg, conv, header)
         await pilot.pause()
         # Panel stays empty — no row keyed on empty string.
-        assert conv._async_stack().snapshot() == []  # type: ignore[union-attr]
+        assert conv.async_stack_snapshot() == []

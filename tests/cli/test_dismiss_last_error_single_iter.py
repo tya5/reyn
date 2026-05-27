@@ -50,7 +50,7 @@ async def test_dismiss_writes_breadcrumb_for_most_recent_error() -> None:
         conv.mount_error(message="middle error message")
         conv.mount_error(message="most recent error message")
         await pilot.pause()
-        assert conv._error_boxes, "setup: expected error boxes to be mounted"
+        assert conv.error_box_count() > 0, "setup: expected error boxes to be mounted"
 
         conv.dismiss_last_error()
         await pilot.pause()
@@ -62,7 +62,7 @@ async def test_dismiss_writes_breadcrumb_for_most_recent_error() -> None:
             f"log:\n{log_text!r}"
         )
         # At least one box still in the list (the older two remain).
-        assert len(conv._error_boxes) > 0
+        assert conv.error_box_count() > 0
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_dismiss_with_no_errors_is_noop() -> None:
         # Must not raise.
         conv.dismiss_last_error()
         await pilot.pause()
-        assert conv._error_boxes == []
+        assert conv.error_box_count() == 0
 
 
 @pytest.mark.asyncio
@@ -101,7 +101,7 @@ async def test_sequential_dismisses_pop_last_in_first_out() -> None:
         conv.dismiss_last_error()  # → A
         await pilot.pause()
 
-        assert conv._error_boxes == []
+        assert conv.error_box_count() == 0
         log_text = _log_text(conv)
         # All three breadcrumbs written, in last-in-first-out order.
         idx_C = log_text.find("C newest")
