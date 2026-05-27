@@ -183,21 +183,39 @@ Embedded 5K / 100K chunks (5%), ETA 25 min
 
 ## Embedding configuration
 
-The embedding model and batching behaviour are configured under `embedding:` in `reyn.yaml`:
+The embedding model and batching behaviour are configured under `embedding:` in `reyn.yaml`. Five built-in classes ship by default — three OpenAI-backed and two sentence-transformers-backed (= local; activated by the `local-embed` extras, see [§Local embedding backend](#local-embedding-backend-fp-0043) below):
 
 ```yaml
 embedding:
   default_class: standard
   classes:
-    light:    openai/text-embedding-3-small
-    standard: openai/text-embedding-3-small
-    strong:   openai/text-embedding-3-large
+    light:      openai/text-embedding-3-small
+    standard:   openai/text-embedding-3-small
+    strong:     openai/text-embedding-3-large
+    local-mini: sentence-transformers/all-MiniLM-L6-v2
+    local-e5:   sentence-transformers/intfloat/multilingual-e5-small
   batch_size: 100
   max_retries: 3
   cost_warn_threshold: 10000
 ```
 
-The API key is read from `~/.reyn/secrets.env` via `${OPENAI_API_KEY}` — no literal value in `reyn.yaml`. After setting the key with `reyn secret set OPENAI_API_KEY`, indexing works out of the box with no further configuration.
+Dispatch is **provider-prefix-based**: classes whose `model` string starts with `sentence-transformers/` route to the local backend; everything else (`openai/`, future LiteLLM-routable providers) routes through LiteLLM. Existing OpenAI-backed callers are byte-identical to pre-FP-0043; the routing wrapper passes them through transparently.
+
+The OpenAI API key is read from `~/.reyn/secrets.env` via `${OPENAI_API_KEY}` — no literal value in `reyn.yaml`. After setting the key with `reyn secret set OPENAI_API_KEY`, indexing with `standard` / `light` / `strong` works out of the box with no further configuration.
+
+### Local embedding backend (FP-0043)
+
+`local-mini` and `local-e5` use [sentence-transformers](https://www.sbert.net/) to embed locally (= no API, no credentials, no per-query cost). They are gated behind an `extras` install so the base `reyn` package stays small:
+
+```bash
+pip install 'reyn[local-embed]'
+```
+
+This pulls `sentence-transformers >= 2.7` and `torch >= 2.0`. The model itself downloads on first use (~22 MB for `local-mini`, ~118 MB for `local-e5`) and caches under `~/.cache/reyn/sentence-transformers/` (overridable via `REYN_CACHE_DIR` / `XDG_CACHE_HOME`).
+
+Device selection is `cpu` by default; opt into GPU acceleration via the `REYN_EMBED_DEVICE` env var (`mps` for Apple Silicon, `cuda` for NVIDIA). Invalid values warn and fall back to `cpu`.
+
+For chat-side action retrieval specifically (= `search_actions`), see [Guide: enable semantic search](../guide/for-users/enable-semantic-search.md) and the [`reyn embeddings`](../reference/cli/embeddings.md) CLI for cache management.
 
 ## Phase 1 scope
 
@@ -216,12 +234,16 @@ The API key is read from `~/.reyn/secrets.env` via `${OPENAI_API_KEY}` — no li
 
 - Memory layer migration from inline expansion to `recall(sources=["memory"])`. Memory continues to work as-is in 1.0.
 
+**Landed post-1.0:**
+
+- Local embedding models via sentence-transformers (FP-0043, 2026-05) — see [§Local embedding backend](#local-embedding-backend-fp-0043). The chat-side `search_actions` surface is the first consumer; the same `local-mini` / `local-e5` classes are reachable from `embedding.default_class` for document indexing too.
+
 **Deferred to Phase 2 (post-1.1):**
 
 - Alternative vector store backends (Qdrant, FAISS, Pinecone)
 - Incremental re-indexing on file change
 - Advanced retrieval (rerank, HyDE, contextual retrieval)
-- Local embedding models (sentence-transformers, ollama)
+- Additional local backends (ollama, ONNX, GGUF)
 - RAG evaluation framework
 
 ## Limitations
@@ -231,7 +253,7 @@ The API key is read from `~/.reyn/secrets.env` via `${OPENAI_API_KEY}` — no li
 - **Memory layer is unchanged in Phase 1.** Session memory still uses inline system-prompt expansion. The `recall` tool and memory are independent systems in this release.
 - **No advanced retrieval.** Phase 1 uses cosine similarity only — no reranking, HyDE, or contextual retrieval.
 - **Sensitive data.** reyn does not redact sensitive content before indexing. Do not index secrets, credentials, or PII unless you understand the implications. A redaction policy is planned for Phase 2.
-- **Embedding API required.** Phase 1 has no local embedding path. An OpenAI-compatible API key is required.
+- **Embedding requires either an API key OR local-embed extras.** OpenAI-backed classes (`light` / `standard` / `strong`) need `OPENAI_API_KEY`; local classes (`local-mini` / `local-e5`) need `pip install 'reyn[local-embed]'` and a one-time model download. See [§Embedding configuration](#embedding-configuration). A fully credential-free, zero-extras `recall` path is not yet available.
 
 ## Operational Intelligence — `recall` on events
 
