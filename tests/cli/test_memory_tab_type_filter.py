@@ -63,7 +63,7 @@ async def test_cycle_memory_type_filter_walks_order() -> None:
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         panel = app.query_one("#right_panel", RightPanel)
-        assert panel._memory_type_filter is None
+        assert panel.memory_type_filter is None
         assert panel.cycle_memory_type_filter() == "user"
         assert panel.cycle_memory_type_filter() == "feedback"
         assert panel.cycle_memory_type_filter() == "project"
@@ -83,7 +83,7 @@ async def test_cycle_resets_memory_cursor() -> None:
         panel = app.query_one("#right_panel", RightPanel)
         panel._memory_cursor = 7
         panel.cycle_memory_type_filter()
-        assert panel._memory_cursor == 0
+        assert panel.memory_cursor == 0
 
 
 def test_render_memory_with_type_filter_keeps_only_target(tmp_path: Path) -> None:
@@ -172,11 +172,11 @@ async def test_t_key_on_memory_tab_invokes_cycle() -> None:
         panel = app.query_one("#right_panel", RightPanel)
         panel.set_panel_type("memory")
         await pilot.pause()
-        assert panel._memory_type_filter is None
+        assert panel.memory_type_filter is None
         key_event = textual_events.Key(key="t", character="t")
         panel.on_key(key_event)
         await pilot.pause()
-        assert panel._memory_type_filter == "user"
+        assert panel.memory_type_filter == "user"
 
 
 def test_keys_tab_t_first_occurrence_is_events() -> None:

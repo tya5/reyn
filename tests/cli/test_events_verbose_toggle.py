@@ -195,22 +195,22 @@ async def test_v_key_on_events_tab_toggles_verbose() -> None:
         await pilot.pause()
 
         # Default state is False (= hide compaction_check)
-        assert panel._events_verbose is False
+        assert panel.events_verbose is False
 
         # First v press → True
         key_event = textual_events.Key(key="v", character="v")
         panel.on_key(key_event)
         await pilot.pause()
-        assert panel._events_verbose is True, (
-            "Expected _events_verbose=True after first v press on events tab"
+        assert panel.events_verbose is True, (
+            "Expected events_verbose=True after first v press on events tab"
         )
 
         # Second v press → False again
         key_event2 = textual_events.Key(key="v", character="v")
         panel.on_key(key_event2)
         await pilot.pause()
-        assert panel._events_verbose is False, (
-            "Expected _events_verbose=False after second v press on events tab"
+        assert panel.events_verbose is False, (
+            "Expected events_verbose=False after second v press on events tab"
         )
 
 
@@ -233,15 +233,15 @@ async def test_v_key_on_memory_tab_does_not_toggle_verbose() -> None:
         panel.set_panel_type("memory")
         await pilot.pause()
 
-        assert panel._events_verbose is False
+        assert panel.events_verbose is False
 
         key_event = textual_events.Key(key="v", character="v")
         panel.on_key(key_event)
         await pilot.pause()
 
         # Must still be False — the v handler is events-tab-only
-        assert panel._events_verbose is False, (
-            "_events_verbose must not change when v is pressed on a non-events tab"
+        assert panel.events_verbose is False, (
+            "events_verbose must not change when v is pressed on a non-events tab"
         )
 
 

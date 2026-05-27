@@ -323,6 +323,61 @@ class RightPanel(Widget):
     def preview_visible(self) -> bool:
         return self._preview_visible
 
+    # ── read-only scalar accessors (Tier C Path C cleanup) ───────────────────
+
+    @property
+    def events_chain_isolate(self) -> "str | None":
+        """Active chain isolation filter, or None when off."""
+        return self._events_chain_isolate
+
+    @property
+    def events_verbose(self) -> bool:
+        """Whether events tab verbose mode (show compaction_check) is on."""
+        return self._events_verbose
+
+    @property
+    def memory_type_filter(self) -> "str | None":
+        """Active memory tab per-type filter, or None for all types."""
+        return self._memory_type_filter
+
+    @property
+    def memory_cursor(self) -> int:
+        """Current memory tab cursor index."""
+        return self._memory_cursor
+
+    @property
+    def docs_cursor(self) -> int:
+        """Current docs tab cursor index into ``_docs_files``."""
+        return self._docs_cursor
+
+    @property
+    def docs_lang(self) -> str:
+        """Active docs language preference (``"en"`` or ``"ja"``)."""
+        return self._docs_lang
+
+    @property
+    def docs_filter(self) -> str:
+        """Active docs tab substring filter; empty string means no filter."""
+        return self._docs_filter
+
+    @property
+    def panel_width(self) -> int:
+        """Cached absolute column width; 0 means CSS-default 33% is active."""
+        return self._panel_width
+
+    @property
+    def event_tail_idx(self) -> int:
+        """Index into ``_TAIL_CYCLE`` for the current tail-N setting."""
+        return self._event_tail_idx
+
+    def has_previewable_content(self) -> bool:
+        """Public alias for the internal ``_has_previewable_content`` check.
+
+        Whether the current tab has at least one item the preview pane
+        can render. Keys / cost tabs never have previews.
+        """
+        return self._has_previewable_content()
+
     def cycle(self, delta: int) -> None:
         """Advance (delta=+1) or retreat (delta=-1) through tabs."""
         tabs = self.query_one("#panel-tabs", Tabs)

@@ -92,7 +92,7 @@ async def test_d_key_on_events_tab_jumps_to_docs_events_md(
         # Start on events tab.
         panel.set_panel_type("events")
         await pilot.pause()
-        assert panel._panel_type == "events"
+        assert panel.panel_type == "events"
 
         # Dispatch 'd'.
         key_event = textual_events.Key(key="d", character="d")
@@ -100,8 +100,8 @@ async def test_d_key_on_events_tab_jumps_to_docs_events_md(
         await pilot.pause()
 
         # Docs tab must now be active.
-        assert panel._panel_type == "docs", (
-            f"Expected panel_type='docs', got {panel._panel_type!r}"
+        assert panel.panel_type == "docs", (
+            f"Expected panel_type='docs', got {panel.panel_type!r}"
         )
         # Cursor must be on events.md (stem = "events").
         stem = panel.current_doc_stem()
@@ -134,10 +134,10 @@ async def test_d_key_on_memory_tab_does_not_open_docs(tmp_path: Path) -> None:
         # Switch to memory tab (not events).
         panel.set_panel_type("memory")
         await pilot.pause()
-        assert panel._panel_type == "memory"
+        assert panel.panel_type == "memory"
 
         # Record docs cursor before the key press.
-        cursor_before = panel._docs_cursor
+        cursor_before = panel.docs_cursor
 
         # Dispatch 'd' — should be a no-op for the docs jump.
         # (Memory tab has no `d` handler, so it falls through to the
@@ -147,8 +147,8 @@ async def test_d_key_on_memory_tab_does_not_open_docs(tmp_path: Path) -> None:
         await pilot.pause()
 
         # Panel must still be on memory, not docs.
-        assert panel._panel_type == "memory", (
-            f"Expected 'memory', got {panel._panel_type!r}"
+        assert panel.panel_type == "memory", (
+            f"Expected 'memory', got {panel.panel_type!r}"
         )
         # Docs cursor must not have moved.
-        assert panel._docs_cursor == cursor_before
+        assert panel.docs_cursor == cursor_before

@@ -68,9 +68,9 @@ async def test_terminal_shrink_clamps_cached_panel_width() -> None:
         _stub_max_width(panel, 52)
         panel.on_resize(event=None)  # the handler ignores the event arg
 
-        assert panel._panel_width == 52, (
-            f"on_resize must clamp _panel_width down to the new max; "
-            f"got {panel._panel_width}"
+        assert panel.panel_width == 52, (
+            f"on_resize must clamp panel_width down to the new max; "
+            f"got {panel.panel_width}"
         )
 
 
@@ -87,9 +87,9 @@ async def test_terminal_grow_preserves_cached_panel_width() -> None:
         _stub_max_width(panel, 132)
         panel.on_resize(event=None)
 
-        assert panel._panel_width == 60, (
+        assert panel.panel_width == 60, (
             f"on_resize must NOT re-expand a smaller cached width; "
-            f"got {panel._panel_width}"
+            f"got {panel.panel_width}"
         )
 
 
@@ -106,14 +106,14 @@ async def test_panel_at_css_default_is_left_alone() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         panel = app.query_one("#right_panel", RightPanel)
-        # _panel_width default is 0 (= CSS-managed)
-        assert panel._panel_width == 0
+        # panel_width default is 0 (= CSS-managed)
+        assert panel.panel_width == 0
 
         _stub_max_width(panel, 52)
         panel.on_resize(event=None)
 
         # Still 0 — Textual handles the CSS-default reflow on its own.
-        assert panel._panel_width == 0, (
+        assert panel.panel_width == 0, (
             f"on_resize must not touch the CSS-default panel; "
-            f"got {panel._panel_width}"
+            f"got {panel.panel_width}"
         )

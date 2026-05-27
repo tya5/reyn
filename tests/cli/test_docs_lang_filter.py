@@ -229,8 +229,8 @@ def test_right_panel_g_key_on_docs_tab_toggles_lang() -> None:
 
     ev = _Event()
     panel.on_key(ev)
-    assert panel._docs_lang == "en", (
-        f"First 'g' press on docs tab must toggle ja → en; got {panel._docs_lang!r}"
+    assert panel.docs_lang == "en", (
+        f"First 'g' press on docs tab must toggle ja → en; got {panel.docs_lang!r}"
     )
     assert invalidated == [True]
     assert ev.prevented is True
@@ -238,8 +238,8 @@ def test_right_panel_g_key_on_docs_tab_toggles_lang() -> None:
     # Second press: en → ja.
     ev2 = _Event()
     panel.on_key(ev2)
-    assert panel._docs_lang == "ja", (
-        f"Second 'g' press must toggle en → ja; got {panel._docs_lang!r}"
+    assert panel.docs_lang == "ja", (
+        f"Second 'g' press must toggle en → ja; got {panel.docs_lang!r}"
     )
 
 
@@ -271,8 +271,8 @@ def test_right_panel_g_key_on_memory_tab_does_not_toggle_lang() -> None:
 
     ev = _Event()
     panel.on_key(ev)
-    assert panel._docs_lang == "ja", (
-        f"'g' on memory tab must NOT change _docs_lang; got {panel._docs_lang!r}"
+    assert panel.docs_lang == "ja", (
+        f"'g' on memory tab must NOT change docs_lang; got {panel.docs_lang!r}"
     )
     # _invalidate must NOT have been called (no state change occurred).
     assert invalidated == [], (

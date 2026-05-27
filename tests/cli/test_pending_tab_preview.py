@@ -55,7 +55,7 @@ def test_has_previewable_content_returns_true_for_pending_with_items() -> None:
     panel._events_visible = []
     panel._memory_entries = []
     panel._agents_items = []
-    assert panel._has_previewable_content() is True
+    assert panel.has_previewable_content() is True
 
 
 def test_has_previewable_content_returns_false_for_pending_empty() -> None:
@@ -69,7 +69,7 @@ def test_has_previewable_content_returns_false_for_pending_empty() -> None:
     panel._events_visible = []
     panel._memory_entries = []
     panel._agents_items = []
-    assert panel._has_previewable_content() is False
+    assert panel.has_previewable_content() is False
 
 
 def test_show_pending_in_preview_writes_intervention_fields() -> None:
