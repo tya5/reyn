@@ -622,6 +622,93 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     return []
 
 
+# ── Category validation (#934 stale-enum explicit error) ────────────────────
+#
+# LLM providers vary in how strictly they enforce a JSON-Schema ``enum`` on a
+# tool argument. In practice an LLM whose training-data catalog snapshot
+# pre-dates one of Reyn's category collapses (#882 mcp / #909 multi_agent /
+# etc.) passes a stale name like ``"mcp.server"`` through to the handler.
+# Pre-#934 the handlers silently dropped unknown entries from ``category=[…]``
+# and returned an empty result; the LLM had no recovery cue.
+#
+# Post-#934 the handlers surface an explicit error envelope that lists the
+# current valid categories AND maps the legacy names to their replacement,
+# so the LLM can self-correct in a single retry without further inference.
+
+_LEGACY_CATEGORY_REDIRECTS: Final[dict[str, str]] = {
+    # PR #882 — mcp.server / mcp.tool / mcp.operation collapsed into a single
+    # ``mcp`` verb category.
+    "mcp.server": "mcp",
+    "mcp.tool": "mcp",
+    "mcp.operation": "mcp",
+    # PR #909 — agent.peer resource category collapsed into ``multi_agent``
+    # operation category (= multi_agent__list_peers / __describe_peer /
+    # __delegate).
+    "agent.peer": "multi_agent",
+}
+
+
+def _unknown_categories_error(unknowns: list[str]) -> dict[str, Any]:
+    """Build the error envelope returned when ``category=[…]`` carries an
+    unknown name.
+
+    The message inlines (a) the full current ``CATEGORIES`` list and (b) any
+    legacy→current mapping that matches an unknown entry. The mapping is the
+    load-bearing part: a bare valid-list forces the LLM to do a "which is
+    the new name" inference round-trip; the inline mapping enables
+    single-turn self-correction. See #934 design rationale (= sandbox_2
+    B57 W6-S3-style observation).
+    """
+    valid_list = ", ".join(repr(c) for c in CATEGORIES)
+    redirects = [
+        f"{legacy!r} → {current!r}"
+        for legacy in unknowns
+        if (current := _LEGACY_CATEGORY_REDIRECTS.get(legacy)) is not None
+    ]
+    redirect_block = ""
+    if redirects:
+        redirect_block = (
+            "\n\nLegacy categories from prior collapse refactors:\n  "
+            + "\n  ".join(redirects)
+        )
+    return {
+        "error": (
+            f"unknown category {unknowns[0]!r}"
+            if len(unknowns) == 1
+            else f"unknown categories {unknowns!r}"
+        ),
+        "reason": (
+            f"category names must be one of: {valid_list}.{redirect_block}"
+        ),
+        "hint": (
+            "Re-call with `category=[<valid name>]`. Use list_actions() with "
+            "no category argument to enumerate everything visible."
+        ),
+        "unknown": list(unknowns),
+        "valid": list(CATEGORIES),
+    }
+
+
+def _validate_category_filter(
+    raw: "list[str] | str | None",
+) -> "tuple[list[str], dict[str, Any] | None]":
+    """Normalise + validate the ``category=[…]`` argument.
+
+    Returns ``(normalised_list, error_envelope_or_None)``. When the
+    returned envelope is non-None, the handler must surface it verbatim
+    instead of proceeding with enumeration / search — every entry the
+    LLM supplied must be a current category for the call to succeed.
+    """
+    if not raw:
+        return [], None
+    if isinstance(raw, str):
+        raw = [raw]
+    unknowns = [c for c in raw if c not in CATEGORIES]
+    if unknowns:
+        return [], _unknown_categories_error(unknowns)
+    return list(raw), None
+
+
 # ── Real handlers (PR-3a) ─────────────────────────────────────────────────
 
 
@@ -636,15 +723,17 @@ async def _handle_list_actions(
 
     Sort is alphabetical by qualified_name (= pagination stability).
     Pagination uses offset+limit REST conventions.
+
+    #934: when ``category=[…]`` carries a name not in the current
+    ``CATEGORIES`` tuple (= LLM-training-time stale enum), the handler
+    returns an explicit error envelope instead of silently filtering.
     """
-    # Resolve category filter — empty / unset = all visible categories
-    category_filter = args.get("category") or []
-    if isinstance(category_filter, str):
-        category_filter = [category_filter]
-    if category_filter:
-        categories = [c for c in category_filter if c in CATEGORIES]
-    else:
-        categories = list(CATEGORIES)
+    # Validate category filter — surface stale-enum errors explicitly.
+    raw_filter = args.get("category") or []
+    valid_filter, err = _validate_category_filter(raw_filter)
+    if err is not None:
+        return err
+    categories = valid_filter if valid_filter else list(CATEGORIES)
 
     offset = max(0, int(args.get("offset", 0) or 0))
     limit = max(1, int(args.get("limit", 20) or 20))
@@ -713,14 +802,13 @@ async def _handle_search_actions(
         return {"items": [], "total": 0}
 
     # Optional category restriction (§D14 schema), default = all.
-    category_filter = args.get("category") or []
-    if isinstance(category_filter, str):
-        category_filter = [category_filter]
-    category_set = (
-        {c for c in category_filter if c in CATEGORIES}
-        if category_filter
-        else None
-    )
+    # #934: validate up-front; stale-enum entries surface as an explicit
+    # error envelope rather than silently dropping.
+    raw_filter = args.get("category") or []
+    valid_filter, err = _validate_category_filter(raw_filter)
+    if err is not None:
+        return err
+    category_set = set(valid_filter) if valid_filter else None
 
     limit = args.get("limit", 10)
     try:

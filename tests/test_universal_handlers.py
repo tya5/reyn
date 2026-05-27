@@ -351,9 +351,16 @@ def test_search_actions_filters_by_category() -> None:
 
 
 def test_list_actions_dynamic_category_empty_when_state_absent() -> None:
-    """Tier 2: dynamic categories return empty without router_state."""
+    """Tier 2: dynamic categories return empty without router_state.
+
+    Restricted to truly dynamic categories (= those whose enumeration
+    requires session state). Pre-#882 / pre-#909 names ``agent.peer``
+    / ``mcp.server`` / ``mcp.tool`` were dropped from CATEGORIES and
+    now surface as explicit errors per #934 — their handling is
+    verified by the dedicated stale-enum tests below.
+    """
     result = _run(LIST_ACTIONS.handler(
-        {"category": ["skill", "agent.peer", "mcp.server", "mcp.tool"]},
+        {"category": ["skill", "rag.corpus", "memory.entry"]},
         _make_ctx(),
     ))
     assert result["items"] == []
@@ -373,13 +380,85 @@ def test_list_actions_pagination_offset_limit() -> None:
     assert page["items"][0]["qualified_name"] == full["items"][1]["qualified_name"]
 
 
-def test_list_actions_unknown_category_silently_ignored() -> None:
-    """Tier 2: unknown category in filter list is dropped (not error)."""
+def test_list_actions_unknown_category_returns_explicit_error() -> None:
+    """Tier 2: #934 — unknown category in filter surfaces an explicit error.
+
+    Pre-#934 the handler silently dropped unknown entries and returned
+    the partial result. Post-#934 it returns the error envelope listing
+    valid categories so the LLM can self-correct rather than seeing
+    misleading partial output.
+    """
     result = _run(LIST_ACTIONS.handler(
         {"category": ["file", "not_a_category"]}, _make_ctx(),
     ))
-    # File items still returned (7 after FP-0040 +edit); bad category contributed 0
-    assert result["total"] == 7
+    assert "error" in result
+    assert "not_a_category" in result["error"]
+    assert "valid" in result and "file" in result["valid"]
+    # Items/total are absent in the error shape — the LLM sees a clear
+    # failure rather than a half-filled result.
+    assert "items" not in result
+
+
+def test_list_actions_legacy_mcp_server_carries_redirect_hint() -> None:
+    """Tier 2: #934 — stale ``mcp.server`` triggers error with mapping hint.
+
+    The error payload's ``reason`` field inlines the legacy→current
+    mapping (= ``'mcp.server' → 'mcp'``) so the LLM self-corrects in
+    a single retry without further inference. Pinned because the
+    redirect hint is the load-bearing part of the design per
+    sandbox_2's B57 W6-S3-style observation.
+    """
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["mcp.server"]}, _make_ctx(),
+    ))
+    assert "error" in result
+    assert "mcp.server" in result["error"]
+    # Mapping hint MUST identify both the legacy name and its replacement.
+    assert "'mcp.server' → 'mcp'" in result["reason"], (
+        f"redirect hint missing; reason={result['reason']!r}"
+    )
+
+
+def test_list_actions_legacy_agent_peer_carries_redirect_hint() -> None:
+    """Tier 2: #934 — stale ``agent.peer`` → ``multi_agent`` redirect surfaced."""
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["agent.peer"]}, _make_ctx(),
+    ))
+    assert "error" in result
+    assert "'agent.peer' → 'multi_agent'" in result["reason"]
+
+
+def test_list_actions_mixed_valid_and_stale_returns_error() -> None:
+    """Tier 2: #934 — even a single stale entry in a mixed list errors.
+
+    Partial success would hide the LLM's mistake (= return file items
+    while ``mcp.server`` was silently dropped). The handler treats the
+    whole call as a no-go so the LLM sees the issue.
+    """
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["file", "mcp.server"]}, _make_ctx(),
+    ))
+    assert "error" in result
+    assert "items" not in result
+    assert "mcp.server" in result["error"]
+
+
+def test_list_actions_empty_category_list_remains_unfiltered() -> None:
+    """Tier 2: #934 regression guard — empty ``category=[]`` is NOT an error.
+
+    The handler must keep treating ``category=[]`` (and the omitted
+    case) as "no filter applied"; only entries that ARE present and
+    unknown trigger the error.
+    """
+    result = _run(LIST_ACTIONS.handler(
+        {"category": []}, _make_ctx(),
+    ))
+    assert "items" in result
+    assert "error" not in result
+    # And the no-arg case also stays valid.
+    result2 = _run(LIST_ACTIONS.handler({}, _make_ctx()))
+    assert "items" in result2
+    assert "error" not in result2
 
 
 # ── 4. describe_action returns target schema ──────────────────────────────

@@ -220,3 +220,33 @@ fixtures:
     expected_reach_path:
       - 'search_actions({query: "PDF"})'
     axis: [call_rate]
+
+  # ── stale-enum self-correction (#934, sandbox_2 B57 finding) ─────────────
+  #
+  # B57 observed: LLM passes a category that no longer exists (= 'mcp.server'
+  # post-#882) into list_actions / search_actions; the pre-#934 silent
+  # filter returns an empty list and the LLM has no recovery cue. This
+  # fixture captures the "fires + downstream args invalid → retry with the
+  # current name → success" failure-and-recover loop so the #934
+  # explicit-error-with-redirect fix is regression-gated in the bench.
+  #
+  # Regression detector scope: a single-round self-correction is only
+  # possible because #934's error envelope carries the legacy→current
+  # mapping inline (= the LLM doesn't need a separate inference round to
+  # figure out "which is the new name"). If a future PR simplifies the
+  # envelope by dropping the mapping block, the prefix-match here would
+  # silently lengthen (= more rounds before reach), so this fixture
+  # doubles as a content regression detector for the envelope itself,
+  # not just for the silent-vs-explicit dichotomy.
+
+  - id: stale_mcp_category_self_correction
+    source: synthesized
+    prompt: "MCP の category にあるアクションを一覧して。"
+    expected_action: mcp__list_servers
+    expected_reach_path:
+      # First attempt may carry the stale category name; the explicit
+      # error envelope (#934) carries the legacy→current mapping inline
+      # so the LLM self-corrects in a single round to the current name.
+      - 'list_actions({category: ["mcp.server"]})'
+      - 'list_actions({category: ["mcp"]})'
+    axis: [call_rate]
