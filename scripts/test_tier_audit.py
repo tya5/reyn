@@ -37,7 +37,34 @@ TIER_DOCSTRING_RE = re.compile(r"^Tier [123][abc]?:", re.IGNORECASE)
 # Exemption: len(x) > 0  (simple existence check)
 FORMAT_PIN_RE = re.compile(r"len\([^)]+\)\s*[<>=!]+\s*(\d+)")
 
-PRIVATE_ATTR_RE = re.compile(r"\.\w+\._\w+")
+# Private-state detection is AST-based via ``_find_private_attr_access``
+# below. The prior implementation used a regex ``r"\.\w+\._\w+"`` which
+# required a preceding dot to anchor and silently missed bare
+# ``assert obj._x`` — the most common private-state shape — so violations
+# accumulated unnoticed across the test corpus (= sub-discipline 6-round
+# trap, memory ``feedback_tier4_private_state_repeat_6_round``). Replaced
+# with the AST walk 2026-05-27 (Tier C1 dispatch).
+
+
+def _find_private_attr_access(node: ast.AST) -> list[ast.Attribute]:
+    """Walk *node* and return every ``ast.Attribute`` whose ``attr`` is a
+    single-underscore-prefixed name (= private state).
+
+    Dunder names (``__init__``, ``__class__``, ``__name__``) are excluded —
+    they're language-level surfaces, not private state in the policy sense.
+    Module imports (``from mod._private import X``) and docstring text are
+    not represented as ``ast.Attribute`` nodes in the assertion's value
+    tree, so AST scoping eliminates those false positives automatically.
+    """
+    results: list[ast.Attribute] = []
+    for inner in ast.walk(node):
+        if not isinstance(inner, ast.Attribute):
+            continue
+        attr = inner.attr
+        # Single leading underscore, NOT dunder
+        if attr.startswith("_") and not attr.startswith("__"):
+            results.append(inner)
+    return results
 
 BOUNDED_LIFE_KEYWORDS = (
     "byte_identical",
@@ -242,22 +269,44 @@ class TestAuditor:
                         )
                     )
 
-        # --- Rule 3: Private state assertion ---
+        # --- Rule 3: Private state assertion (AST-based, Tier C1 2026-05-27) ---
+        # Earlier regex required a preceding dot anchor and missed bare
+        # ``assert obj._x`` — the most common form. AST detection walks each
+        # ``ast.Assert`` value tree for any ``ast.Attribute`` whose ``attr``
+        # starts with a single underscore (excluding dunder), so it catches
+        # bare, nested, chained, and subscript forms uniformly.
         if self._rule_active("private-state"):
+            seen_lines: set[int] = set()
             for stmt in ast.walk(node):
-                if isinstance(stmt, ast.Assert):
-                    stmt_src = ast.get_source_segment(source, stmt)
-                    if stmt_src and PRIVATE_ATTR_RE.search(stmt_src):
-                        result.findings.append(
-                            Finding(
-                                rule="private-state",
-                                level="ERROR",
-                                line=stmt.lineno,
-                                message=f"private state assertion: {stmt_src.strip()[:80]}",
-                                suggestion="Use snapshot() or public API instead",
-                                policy_ref="testing.ja.md Tier 4: private state への直接 assert",
-                            )
-                        )
+                if not isinstance(stmt, ast.Assert):
+                    continue
+                # Walk the assertion's test expression for any private attr.
+                # ``ast.walk`` on the whole Assert would re-traverse but
+                # confining to ``stmt.test`` keeps msg expressions (= the
+                # second arg of assert) out of scope, matching policy intent.
+                private_attrs = _find_private_attr_access(stmt.test)
+                if not private_attrs:
+                    continue
+                # One finding per assert (= use the first private access for
+                # the message; line is the assert's line so reviewers find it).
+                first = private_attrs[0]
+                stmt_src = ast.get_source_segment(source, stmt) or ""
+                if stmt.lineno in seen_lines:
+                    continue
+                seen_lines.add(stmt.lineno)
+                result.findings.append(
+                    Finding(
+                        rule="private-state",
+                        level="ERROR",
+                        line=stmt.lineno,
+                        message=(
+                            f"private state assertion (.{first.attr}): "
+                            f"{stmt_src.strip()[:80]}"
+                        ),
+                        suggestion="Use snapshot() or public API instead",
+                        policy_ref="testing.ja.md Tier 4: private state への直接 assert",
+                    )
+                )
 
         # --- Rule 4: MagicMock / AsyncMock / patch ---
         if self._rule_active("mock"):
