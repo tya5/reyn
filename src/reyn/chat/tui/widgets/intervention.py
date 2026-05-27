@@ -189,6 +189,10 @@ class InterventionWidget(Widget):
         # None / empty skips the Label entirely so old callers that
         # don't supply detail keep the prior single-line layout.
         self._detail = detail
+        # Public alias for test assertions that pin the detail kwarg
+        # was stored (= contract-level visibility of the optional
+        # secondary line); writes still go through ``__init__`` only.
+        self.detail = detail
         # Issue #261: when the ``parent_delegate`` branch fires on an
         # upstream agent, the OutboxMessage carries ``source_agent``
         # naming that agent. Render as ``[parent: <name>]`` above the

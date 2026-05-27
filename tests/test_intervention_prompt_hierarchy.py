@@ -138,23 +138,24 @@ def test_announce_ask_user_prefixes_question_label() -> None:
 
 
 def test_widget_accepts_detail_kwarg() -> None:
-    """Tier 2: InterventionWidget(detail=...) stores it on _detail."""
+    """Tier 2: InterventionWidget(detail=...) stores it on the public
+    ``detail`` accessor."""
     widget = InterventionWidget(
         question="Permission request — web.fetch",
         detail="web fetch: https://example.com",
         iv_id="iv1",
     )
-    assert widget._detail == "web fetch: https://example.com"
+    assert widget.detail == "web fetch: https://example.com"
 
 
 def test_widget_detail_defaults_to_none() -> None:
-    """Tier 2: no detail kwarg → _detail is None (= no extra Label).
+    """Tier 2: no detail kwarg → ``detail`` is None (= no extra Label).
 
     Backward-compat for the (legacy) callers that don't supply detail
     yet — the widget compose() path skips the iv-detail Label when None.
     """
     widget = InterventionWidget(question="hello", iv_id="iv1")
-    assert widget._detail is None
+    assert widget.detail is None
 
 
 # ── 3. app-level mount path threads detail through ────────────────────────
