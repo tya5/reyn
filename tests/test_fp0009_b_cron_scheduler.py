@@ -179,7 +179,7 @@ async def test_start_spawns_tasks_for_enabled_jobs_only():
     try:
         # Give tasks a moment to initialise without firing (schedules are hours away)
         await asyncio.sleep(0.01)
-        task_names = set(sched._tasks.keys())
+        task_names = set(sched.tasks.keys())
         assert "enabled1" in task_names
         assert "enabled2" in task_names
         assert "disabled" not in task_names
@@ -205,8 +205,8 @@ async def test_stop_cancels_all_tasks():
     await sched.stop()
 
     # After stop, no tasks remain in the dict
-    assert sched._tasks == {}
-    assert sched._running is False
+    assert sched.tasks == {}
+    assert sched.running is False
 
 
 @pytest.mark.asyncio
@@ -388,10 +388,10 @@ async def test_start_is_idempotent():
     sched = CronScheduler([job], runner_fn=runner)
 
     await sched.start()
-    task_after_first = dict(sched._tasks)
+    task_after_first = dict(sched.tasks)
 
     await sched.start()  # second call must be no-op
-    task_after_second = dict(sched._tasks)
+    task_after_second = dict(sched.tasks)
 
     # Same task objects — no duplication
     assert set(task_after_first.keys()) == set(task_after_second.keys())
