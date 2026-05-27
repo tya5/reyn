@@ -1,0 +1,23 @@
+name: verify_state
+description: Outcome of the verify phase — test results and whether to proceed to report or retry.
+schema:
+  type: object
+  properties:
+    instance_id:
+      type: string
+      description: SWE-bench instance identifier (carried from input).
+    tests_passed:
+      type: boolean
+      description: True if all test_patch tests passed; false if any failed or errored.
+    attempt:
+      type: integer
+      minimum: 1
+      description: Attempt number that was just verified.
+    failure_summary:
+      type: string
+      description: Brief description of which tests failed and why, to guide the next plan phase. Empty string when tests_passed is true.
+  required:
+    - instance_id
+    - tests_passed
+    - attempt
+    - failure_summary

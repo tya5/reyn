@@ -1,0 +1,23 @@
+name: swe_bench_result
+description: Final output of a swe_bench skill run — the git diff patch, test outcome, and attempt count.
+schema:
+  type: object
+  properties:
+    instance_id:
+      type: string
+      description: The SWE-bench instance identifier, carried through from the input.
+    patch:
+      type: string
+      description: The unified diff produced by `git diff HEAD` after all edits. Empty string if no changes were made.
+    tests_passed:
+      type: boolean
+      description: True if all test_patch tests passed in the final verify phase; false otherwise.
+    attempts:
+      type: integer
+      minimum: 1
+      description: Total number of apply/verify cycles performed (1 = solved on first attempt).
+  required:
+    - instance_id
+    - patch
+    - tests_passed
+    - attempts

@@ -1,0 +1,29 @@
+name: swe_bench_input
+description: Input for a single SWE-bench task — matches the official SWE-bench Verified dataset format.
+schema:
+  type: object
+  properties:
+    instance_id:
+      type: string
+      description: Unique identifier for this SWE-bench instance (e.g. "django__django-12345").
+    repo:
+      type: string
+      description: GitHub repository slug (e.g. "django/django").
+    base_commit:
+      type: string
+      description: Git commit SHA that the repository must be checked out to before applying the fix.
+    problem_statement:
+      type: string
+      description: Natural-language description of the bug or feature request to fix (the GitHub issue body).
+    hints_text:
+      type: string
+      description: Optional hints from the issue thread that may help locate relevant code.
+    test_patch:
+      type: string
+      description: Unified diff of the test file(s) that the harness applies to verify the fix. These tests must pass after the fix is applied but fail on base_commit.
+  required:
+    - instance_id
+    - repo
+    - base_commit
+    - problem_statement
+    - test_patch
