@@ -192,6 +192,13 @@ class RightPanel(Widget):
         # list is non-empty; otherwise the section is omitted entirely
         # so the existing layout is unchanged on cold-start.
         self._hot_list_ranking: list[dict] = []
+
+        # FP-0043 C.4 — cached embedding model-load lifecycle snapshot.
+        # Fed by ``update_embedding_state`` (= driven from
+        # ``OutboxRouter._on_embedding_lifecycle``). Memory tab reads it
+        # when next painting; ``None`` = no embedding activity observed
+        # this session (= operator default, search_actions hidden).
+        self._embedding_state: dict | None = None
         # y-coord (0-indexed line) of each memory entry's name row in the
         # rendered output. Populated by `render_memory`; used by
         # `_scroll_memory_into_view` to keep the cursor visible as j/k
@@ -388,6 +395,21 @@ class RightPanel(Widget):
         the next paint of any other tab via the same field.
         """
         self._hot_list_ranking = list(ranking)
+        if self._panel_type == "memory":
+            self._invalidate()
+
+    def update_embedding_state(self, state: dict) -> None:
+        """FP-0043 C.4 — cache the embedding model-load lifecycle snapshot.
+
+        Called from ``OutboxRouter._on_embedding_lifecycle`` whenever
+        the lifecycle forwarder emits ``embedding_status`` /
+        ``embedding_skill_done`` / ``embedding_error``. The cached
+        snapshot is consumed by ``render_memory`` to render the
+        Embeddings end-section (= current model + state + retry hint
+        on failure). Mirrors the ``update_hot_list`` invalidation
+        pattern: refresh only when the Memory tab is currently visible.
+        """
+        self._embedding_state = dict(state)
         if self._panel_type == "memory":
             self._invalidate()
 
@@ -2419,6 +2441,7 @@ class RightPanel(Widget):
                     cursor=self._memory_cursor,
                     hot_list=self._hot_list_ranking,
                     type_filter=self._memory_type_filter,
+                    embedding_state=self._embedding_state,
                 )
                 self._memory_entries = flat_entries
                 self._memory_entry_ys = entry_ys

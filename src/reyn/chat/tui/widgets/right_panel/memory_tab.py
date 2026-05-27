@@ -49,6 +49,7 @@ def render_memory(
     cursor: int = 0,
     hot_list: list[dict] | None = None,
     type_filter: str | None = None,
+    embedding_state: dict | None = None,
 ) -> tuple[str, list[Any], list[int]]:
     """Return Rich markup + the flat ordered list of MemoryEntry items
     + the y-coordinate (= 0-indexed line number) of each entry's name row.
@@ -69,6 +70,14 @@ def render_memory(
     turn. The hot list is **not** part of ``flat_entries`` — entries
     listed there are MemoryEntry items, and the hot list carries
     qualified action names which are a different kind of object.
+
+    ``embedding_state`` (FP-0043 C.4): the latest snapshot from the
+    sentence-transformers lazy-load lifecycle, forwarded by
+    ``ChatLifecycleForwarder.on_embedding_{status,skill_done,error}``.
+    When present, an ``EMBEDDINGS`` end-section renders below SHARED /
+    AGENT showing the current state — "loading…", "loaded · Nd", or
+    "error · <retry hint>". The state is also NOT part of
+    ``flat_entries`` (= metadata, not a navigable memory entry).
     """
     if project_root is None:
         return "[#555555]  (no project root)[/]", [], []
@@ -207,7 +216,73 @@ def render_memory(
             agent_entries = list_entries(mem_dir)
             _render_scope(agent_entries, f"AGENT  {agent_dir.name}", "#7a9fc7")
 
+    # FP-0043 C.4 — Embedding model-load lifecycle section. Renders
+    # only when an event has been observed this session; absent state
+    # means "operator hasn't enabled embedding_class" (= the §C.1
+    # list_actions hint covers that path on the LLM side), so the TUI
+    # stays quiet rather than displaying a permanent "(none)" line.
+    if embedding_state:
+        _render_embedding_section(lines, embedding_state)
+
     return "\n".join(lines), flat_entries, entry_ys
+
+
+def _render_embedding_section(
+    lines: list[str], state: dict,
+) -> None:
+    """Append the EMBEDDINGS section reflecting the latest lifecycle event.
+
+    Three shapes per ``state["kind"]``:
+
+      embedding_status     loading… · <model> · <device>
+      embedding_skill_done loaded · <model> · <dimension>d
+      embedding_error      error · <model> · <retry_hint truncated>
+
+    The model string is shortened (= drop the ``sentence-transformers/``
+    prefix when present) so it fits a narrow right panel.
+    """
+    kind = str(state.get("kind", "") or "")
+    model_raw = str(state.get("model", "") or "")
+    model = model_raw[len("sentence-transformers/"):] if model_raw.startswith(
+        "sentence-transformers/",
+    ) else model_raw
+
+    lines.append("[bold #6aa9c7]  EMBEDDINGS[/]")
+    if kind == "embedding_status":
+        device = str(state.get("device", "") or "")
+        device_part = f" · {_esc(device)}" if device else ""
+        model_part = f" · {_esc(model)}" if model else ""
+        lines.append(
+            f"[#888888]    ⟳ loading…[/][#aaaaaa]{model_part}{device_part}[/]"
+        )
+    elif kind == "embedding_skill_done":
+        try:
+            dim = int(state.get("dimension", 0))
+        except (TypeError, ValueError):
+            dim = 0
+        dim_part = f" · {dim}d" if dim > 0 else ""
+        model_part = f" · {_esc(model)}" if model else ""
+        lines.append(
+            f"[#44cc88]    ✓ loaded[/][#cccccc]{model_part}{dim_part}[/]"
+        )
+    elif kind == "embedding_error":
+        hint_raw = str(state.get("retry_hint", "") or "")
+        # Truncate the retry hint so it survives the ~33%-panel
+        # default width; the full text is in the events tab.
+        max_hint = 60
+        hint = hint_raw if len(hint_raw) <= max_hint else hint_raw[:max_hint - 1].rstrip() + "…"
+        model_part = f" · {_esc(model)}" if model else ""
+        lines.append(
+            f"[#ff6666]    ✗ error[/][#dddddd]{model_part}[/]"
+        )
+        if hint:
+            lines.append(f"[#aaaaaa]      {_esc(hint)}[/]")
+    else:
+        # Unknown kind from a future emitter — show the raw text as a
+        # graceful fallback rather than rendering nothing at all.
+        text = str(state.get("text", "") or "(no detail)")
+        lines.append(f"[#888888]    {_esc(text)}[/]")
+    lines.append("")
 
 
 __all__ = ["render_memory"]

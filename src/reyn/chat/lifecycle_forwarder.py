@@ -97,6 +97,49 @@ class ChatLifecycleForwarder:
             pct_part = ""
         self._enqueue(f"[↑ budget warn: {dim}{pct_part}]")
 
+    # ── Embedding model load lifecycle (FP-0043 C.3 → C.4) ───────────────
+    #
+    # C.3 added three ``embedding_*`` events on the chat_events bus
+    # (``status`` / ``skill_done`` / ``error``) covering the lazy
+    # sentence-transformers model download + load. C.4 forwards them to
+    # the chat outbox as structured signals so the TUI Memory tab can
+    # render a sticky status row + green "done" frame + retry-hint
+    # error row without polling. The outbox payload preserves the full
+    # meta dict (= model, target_dir, device, dimension, retry_hint
+    # depending on kind); the conv pane suppresses these kinds at
+    # display time — they're data signals for the right-panel
+    # subscriber, not chat-stream lines.
+
+    def on_embedding_status(self, data: dict) -> None:
+        """Forward ``embedding_status`` (= DL/load starting) to outbox."""
+        self._forward_embedding("embedding_status", data)
+
+    def on_embedding_skill_done(self, data: dict) -> None:
+        """Forward ``embedding_skill_done`` (= load completed) to outbox."""
+        self._forward_embedding("embedding_skill_done", data)
+
+    def on_embedding_error(self, data: dict) -> None:
+        """Forward ``embedding_error`` (= load failed; retry_hint inline) to outbox."""
+        self._forward_embedding("embedding_error", data)
+
+    def _forward_embedding(self, kind: str, data: dict) -> None:
+        """Common forwarder for embedding lifecycle events.
+
+        Preserves the full meta dict so the Memory tab subscriber can
+        surface ``model`` / ``device`` / ``dimension`` / ``retry_hint``
+        as appropriate per ``kind``. Falls back to an empty text since
+        these kinds are data signals (= the structured ``meta`` is the
+        load-bearing payload).
+        """
+        text = str(data.get("text", "") or "")
+        meta = {k: v for k, v in data.items() if k != "text"}
+        try:
+            self.outbox.put_nowait(OutboxMessage(
+                kind=kind, text=text, meta=meta,
+            ))
+        except asyncio.QueueFull:
+            pass
+
     # ── Compaction (issue #162) ──────────────────────────────────────────
 
     def on_compaction_completed(self, data: dict) -> None:

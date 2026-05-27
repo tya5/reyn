@@ -21,7 +21,7 @@ Design:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.chat.outbox import OutboxMessage
 
@@ -260,6 +260,12 @@ class OutboxRouter:
             # workflow_aborted events) and handled in app._handle_trace_for_skill_row.
             "error":                    self._on_error,
             "hot_list_updated":         self._on_hot_list_updated,
+            # FP-0043 Component C.4 — embedding model-load lifecycle.
+            # The 3 kinds share an update path on the right panel; the
+            # Memory tab renders the cached snapshot via render_memory.
+            "embedding_status":         self._on_embedding_lifecycle,
+            "embedding_skill_done":     self._on_embedding_lifecycle,
+            "embedding_error":          self._on_embedding_lifecycle,
             # Issue #427 step 4: tool-call lifecycle from ChatEventForwarder
             # (= step 3). Mount a ToolCallRow on _started, finalise
             # on _completed / _failed, keyed by op_id.
@@ -1486,6 +1492,33 @@ class OutboxRouter:
             reason = error_kind or error_msg or "failed"
         try:
             conv.fail_tool_call_row(op_id, error=reason)
+        except Exception:
+            pass
+
+    def _on_embedding_lifecycle(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """FP-0043 C.4 — embedding model-load lifecycle → right panel cache.
+
+        Handles the 3 ``embedding_status`` / ``embedding_skill_done`` /
+        ``embedding_error`` outbox kinds (= forwarded by
+        ``ChatLifecycleForwarder``). Pushes a snapshot dict to the
+        ``RightPanel`` whose Memory tab renders an Embeddings end-section
+        with current model + state + retry hint. The conv pane
+        intentionally suppresses these kinds at display time — they are
+        data signals for the right-panel subscriber, not chat lines.
+        """
+        state: dict[str, Any] = {
+            "kind": msg.kind,  # "embedding_status" / "_skill_done" / "_error"
+            "text": msg.text,
+        }
+        if msg.meta:
+            state.update(msg.meta)
+        try:
+            from .widgets import RightPanel
+            self._app.query_one(
+                "#right_panel", RightPanel,
+            ).update_embedding_state(state)
         except Exception:
             pass
 

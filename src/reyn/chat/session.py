@@ -1297,16 +1297,29 @@ class ChatSession:
                 # is called from the embed worker thread; events.emit is
                 # GIL-protected + sync so this is safe without a
                 # call_soon_threadsafe bridge.
-                _events = self.events
-
+                #
+                # C.4 hotfix (2026-05-27): the sink closure resolves
+                # ``self._chat_events`` at *call* time, not at
+                # construction time — the EventLog is built later in
+                # __init__ (= line ~1482). The previous C.3 wiring
+                # captured ``self.events`` (= attribute that does NOT
+                # exist on ChatSession), which silently raised
+                # AttributeError at this point and the outer ``except``
+                # swallowed it, disabling search_actions for every
+                # operator who had ``embedding_class`` set. Mirrors the
+                # ``_on_hot_list_changed`` closure pattern in the
+                # ActionUsageTracker setup below.
                 def _embedding_event_sink(
                     kind: str, text: str, meta: dict,
                 ) -> None:
-                    _events.emit(
-                        f"embedding_{kind}",
-                        text=text,
-                        **meta,
-                    )
+                    try:
+                        self._chat_events.emit(
+                            f"embedding_{kind}",
+                            text=text,
+                            **meta,
+                        )
+                    except Exception:
+                        pass
 
                 self._embedding_provider = _get_provider(
                     "litellm",
