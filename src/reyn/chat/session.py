@@ -1873,6 +1873,15 @@ class ChatSession:
         return self._last_reply_to
 
     @property
+    def on_perm_persist_cb(self):
+        """Read-only accessor for the permission-persist callback that this
+        session registered on its ``PermissionResolver`` (or None if no
+        resolver / no callback was wired). Tests verify the
+        register/unregister balance through this surface.
+        """
+        return self._on_perm_persist_cb
+
+    @property
     def interventions(self) -> "InterventionRegistry":
         """Read-only public accessor for the session's InterventionRegistry.
 

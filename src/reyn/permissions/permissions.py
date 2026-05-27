@@ -360,6 +360,21 @@ class PermissionResolver:
         # callback so a project-wide grant notifies every active session.
         self._on_persist_callbacks: list[Callable[[str, bool], None]] = []
 
+    # ── Public read helpers (= Tier-C1 cleanup wave 27) ───────────────────
+
+    def saved_get(self, key: str) -> bool | None:
+        """Read accessor for the persisted approvals map. Returns the
+        stored boolean (or None when not yet recorded)."""
+        return self._saved.get(key)
+
+    def on_persist_callback_count(self) -> int:
+        """Return the number of registered ``on_persist`` callbacks.
+
+        Tests / observers use this to verify register / unregister
+        balance without reaching into the internal list.
+        """
+        return len(self._on_persist_callbacks)
+
     # ── Persistence ──────────────────────────────────────────────────────────
 
     def _load_saved(self) -> dict[str, bool]:
