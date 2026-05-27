@@ -169,6 +169,28 @@ class LiteLLMEmbeddingProvider:
             self._retry_backoff: float = float(config.get("retry_backoff", 2.0))
             self.tokenizer: str = config.get("tokenizer", "cl100k_base")
 
+    # ── Config read-only accessors ────────────────────────────────────────
+    # Tier-C1 cleanup: expose the init-time-frozen config fields via
+    # ``@property`` so callers (= tests, future tooling) can read them
+    # without reaching for ``_batch_size`` etc. Pure read-only — the
+    # provider does not mutate these after ``__init__``.
+
+    @property
+    def batch_size(self) -> int:
+        return self._batch_size
+
+    @property
+    def max_concurrent(self) -> int:
+        return self._max_concurrent
+
+    @property
+    def max_retries(self) -> int:
+        return self._max_retries
+
+    @property
+    def retry_backoff(self) -> float:
+        return self._retry_backoff
+
     # ── Model resolution ───────────────────────────────────────────────────
 
     def resolve_model(self, model: str) -> str:
