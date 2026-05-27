@@ -358,10 +358,10 @@ def test_teardown_mcp_clients_empties_dict(patched_sdk):
 
         # The dict must be empty — no stale refs that could be GC-finalised
         # cross-task after this point.
-        assert not executor._mcp_clients, "_mcp_clients must be empty after teardown"
+        assert not executor.mcp_clients, "_mcp_clients must be empty after teardown"
 
         # Second call is a no-op (nothing to close, no exception).
         await executor.teardown_mcp_clients()
-        assert not executor._mcp_clients
+        assert not executor.mcp_clients
 
     asyncio.run(_run_it())
