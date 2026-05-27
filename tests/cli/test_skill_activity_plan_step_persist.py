@@ -17,7 +17,7 @@ rendered ``_build_running`` output even after:
    in the render output.
 
 All assertions go through the public render surface
-(``row._build_running().plain``) per CLAUDE.md testing policy: "NEVER
+(``row.build_running().plain``) per CLAUDE.md testing policy: "NEVER
 assert on private state. Use the public surface or a snapshot()-style
 read." The renderer is what the user actually sees; verifying through
 the render contract keeps the test robust against future field /
@@ -57,9 +57,9 @@ def test_plan_step_badge_persists_through_in_phase_detail() -> None:
     row = _row()
     row.set_phase("resolve")
     row.set_detail("plan 2/5")
-    assert "plan 2/5" in row._build_running().plain
+    assert "plan 2/5" in row.build_running().plain
     row.set_detail("llm: opus-4-7")
-    rendered = row._build_running().plain
+    rendered = row.build_running().plain
     assert "plan 2/5" in rendered, (
         "plan badge must survive the next in-phase set_detail call"
     )
@@ -76,11 +76,11 @@ def test_plan_step_badge_survives_set_phase() -> None:
     row.set_phase("resolve")
     row.set_detail("plan 3/7")
     row.set_detail("act: 2 ops")
-    pre = row._build_running().plain
+    pre = row.build_running().plain
     assert "plan 3/7" in pre
     assert "act: 2 ops" in pre
     row.set_phase("execute", visit=1)
-    post = row._build_running().plain
+    post = row.build_running().plain
     assert "plan 3/7" in post, (
         "plan badge must survive set_phase clearing the ephemeral detail"
     )
@@ -101,7 +101,7 @@ def test_plan_step_badge_appears_on_first_set_detail() -> None:
     row = _row()
     row.set_phase("resolve")
     row.set_detail("plan 4/9")
-    rendered = row._build_running().plain
+    rendered = row.build_running().plain
     assert "plan 4/9" in rendered
 
 
@@ -117,12 +117,12 @@ def test_non_plan_details_do_not_leak_plan_marker_into_render() -> None:
     row = _row()
     row.set_phase("resolve")
     row.set_detail("llm: opus")
-    rendered = row._build_running().plain
+    rendered = row.build_running().plain
     assert "llm: opus" in rendered
     # No plan-step badge appears because no "plan N/M" payload was
     # routed in.
     assert "plan " not in rendered
     row.set_detail("act: 3 ops")
-    rendered = row._build_running().plain
+    rendered = row.build_running().plain
     assert "act: 3 ops" in rendered
     assert "plan " not in rendered

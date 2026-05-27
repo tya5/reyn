@@ -128,12 +128,12 @@ async def test_set_find_state_idempotent_no_repaint_churn() -> None:
         header = app.query_one("#header", ReynHeader)
         header.set_find_state("foo", 1, 3)
         await pilot.pause()
-        first_state = dict(header._find_state)  # snapshot
+        first_state = dict(header.find_state)  # snapshot
         # Same call again — should be a no-op.
         header.set_find_state("foo", 1, 3)
         await pilot.pause()
         # Internal state unchanged (= still the same dict shape).
-        assert header._find_state == first_state
+        assert header.find_state == first_state
 
 
 @pytest.mark.asyncio

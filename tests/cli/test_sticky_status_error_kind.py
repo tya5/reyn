@@ -122,9 +122,9 @@ async def test_error_glyph_resolves_to_check_cross() -> None:
         s = await _sticky(pilot)
         s.show("copy failed", kind="error")
         await pilot.pause()
-        # ``_glyph`` is the resolved glyph string used by ``_repaint``.
-        assert s._glyph == "✗", (
-            f"error kind glyph should be ✗, got {s._glyph!r}"
+        # ``glyph`` is the resolved glyph string used by ``_repaint``.
+        assert s.glyph == "✗", (
+            f"error kind glyph should be ✗, got {s.glyph!r}"
         )
         # And the old thinking glyph must NOT have been selected.
-        assert s._glyph != "⟳"
+        assert s.glyph != "⟳"
