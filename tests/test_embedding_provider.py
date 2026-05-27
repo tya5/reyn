@@ -466,17 +466,17 @@ class TestConfigDefaults:
     def test_default_batch_size(self):
         """Tier 2: batch_size defaults to 100 when not in config."""
         provider = _make_provider()
-        assert provider._batch_size == 100
+        assert provider.batch_size == 100
 
     def test_default_max_concurrent(self):
         """Tier 2: max_concurrent_batches defaults to 1 (sequential)."""
         provider = _make_provider()
-        assert provider._max_concurrent == 1
+        assert provider.max_concurrent == 1
 
     def test_default_max_retries(self):
         """Tier 2: max_retries defaults to 3."""
         provider = _make_provider()
-        assert provider._max_retries == 3
+        assert provider.max_retries == 3
 
     def test_default_tokenizer(self):
         """Tier 2: tokenizer defaults to cl100k_base."""
@@ -493,8 +493,8 @@ class TestConfigDefaults:
             "tokenizer": "p50k_base",
         }
         provider = _make_provider(config)
-        assert provider._batch_size == 25
-        assert provider._max_concurrent == 4
-        assert provider._max_retries == 5
-        assert provider._retry_backoff == 3.0
+        assert provider.batch_size == 25
+        assert provider.max_concurrent == 4
+        assert provider.max_retries == 5
+        assert provider.retry_backoff == 3.0
         assert provider.tokenizer == "p50k_base"
