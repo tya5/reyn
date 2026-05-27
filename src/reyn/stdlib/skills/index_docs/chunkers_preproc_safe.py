@@ -20,7 +20,7 @@ Output-shape contract: the two functions here return the same shape
 as the pre-FP-0042 ``chunkers.py`` implementations did, so the
 LLM-facing artifact at ``data.samples_result`` / ``data.cost`` is
 bit-compatible across the migration. Field names, key sets,
-rounding, and the ``_detect_structure`` heuristic all mirror the
+rounding, and the ``detect_structure`` heuristic all mirror the
 legacy unsafe-mode versions.
 """
 from __future__ import annotations
@@ -58,12 +58,12 @@ def _is_regular_file(path: str) -> bool:
     return (int(info.get("mode", 0)) & _S_IFMT) == _S_IFREG
 
 
-def _path_suffix(path: str) -> str:
+def path_suffix(path: str) -> str:
     """Return the lowercase extension including the leading dot.
 
     Pathlib is not in the safe-mode allowlist, so use plain string
     manipulation. Mirrors ``pathlib.PurePath.suffix`` for the cases
-    that matter to ``_detect_structure``:
+    that matter to ``detect_structure``:
 
     - ``foo.md`` → ``.md``
     - ``.hidden`` → ``""`` (hidden file with no real extension)
@@ -80,7 +80,7 @@ def _approx_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
-def _detect_structure(text: str, ext: str) -> str:
+def detect_structure(text: str, ext: str) -> str:
     """Heuristic structure hint for LLM strategy context.
 
     Mirrors the pre-FP-0042 ``chunkers.py`` heuristic exactly so the
@@ -152,7 +152,7 @@ def gather_samples(artifact: dict) -> dict:
     by_ext: dict[str, list[str]] = {}
     total_bytes = 0
     for f in files:
-        ext = _path_suffix(f)
+        ext = path_suffix(f)
         by_ext.setdefault(ext, []).append(f)
         try:
             total_bytes += int(_safe_file.stat(f).get("size", 0))
@@ -181,7 +181,7 @@ def gather_samples(artifact: dict) -> dict:
                 "path": f,
                 "excerpt": excerpt,
                 "size_tokens": _approx_tokens(text),
-                "structure_hint": _detect_structure(text, _path_suffix(f)),
+                "structure_hint": detect_structure(text, path_suffix(f)),
             }
         )
 
