@@ -1882,6 +1882,17 @@ class ChatSession:
         return self._on_perm_persist_cb
 
     @property
+    def on_limit(self) -> "_OnLimitConfig":
+        """Read-only accessor for the safety-loop OnLimit config.
+
+        Captured at construction from ``SafetyConfig.on_limit``; tests
+        verify the mode + auto_extend semantics through this surface.
+        Production callers in ``session.py`` continue to use the
+        underscore name; this property is the read-only public view.
+        """
+        return self._on_limit
+
+    @property
     def interventions(self) -> "InterventionRegistry":
         """Read-only public accessor for the session's InterventionRegistry.
 
