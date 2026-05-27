@@ -88,8 +88,8 @@ async def test_header_refresh_updates_status():
         await pilot.pause()
         header = app.query_one("#header", ReynHeader)
         header.refresh_status(agent_name="bob", model="m2")
-        assert "bob" in header._format_status()
-        assert "m2" in header._format_status()
+        assert "bob" in header.format_status()
+        assert "m2" in header.format_status()
 
 
 # ── test: input bar ───────────────────────────────────────────────────────────
@@ -333,7 +333,7 @@ async def test_streaming_via_begin_append_end():
         result = conv.end_stream("stream_abc")
         assert result == "token1 token2"
         # After end, the stream_id is removed
-        assert "stream_abc" not in conv._stream_rows
+        assert "stream_abc" not in conv.stream_rows
 
 
 # ── test: intervention widget ─────────────────────────────────────────────────
@@ -756,48 +756,48 @@ async def test_preview_pane_shift_jk_moves_parent_tab_cursor():
         panel._docs_cursor = 0
 
         pane.on_key(_FakeKey("J"))
-        assert panel._docs_cursor == 1, "J should advance the docs cursor"
+        assert panel.docs_cursor == 1, "J should advance the docs cursor"
         pane.on_key(_FakeKey("n"))  # bonus alias
-        assert panel._docs_cursor == 2, "n alias should also advance"
+        assert panel.docs_cursor == 2, "n alias should also advance"
         pane.on_key(_FakeKey("J"))  # wrap forward
-        assert panel._docs_cursor == 0
+        assert panel.docs_cursor == 0
         pane.on_key(_FakeKey("K"))  # wrap backward
-        assert panel._docs_cursor == 2
+        assert panel.docs_cursor == 2
         pane.on_key(_FakeKey("p"))  # bonus alias for previous
-        assert panel._docs_cursor == 1
+        assert panel.docs_cursor == 1
 
         # Lowercase j / k must NOT move the parent cursor (still scroll-inside).
-        before = panel._docs_cursor
+        before = panel.docs_cursor
         pane.on_key(_FakeKey("j"))
         pane.on_key(_FakeKey("k"))
-        assert panel._docs_cursor == before, "lowercase j/k must not move parent cursor"
+        assert panel.docs_cursor == before, "lowercase j/k must not move parent cursor"
 
         # ── events tab: same contract on the events cursor ──
         panel._panel_type = "events"
         panel._events_visible = [{"type": "e0"}, {"type": "e1"}, {"type": "e2"}]
         panel._events_cursor = 0
         pane.on_key(_FakeKey("J"))
-        assert panel._events_cursor == 1
+        assert panel.events_cursor == 1
         pane.on_key(_FakeKey("K"))
-        assert panel._events_cursor == 0
+        assert panel.events_cursor == 0
 
         # ── memory tab ──
         panel._panel_type = "memory"
         panel._memory_entries = [object(), object(), object()]
         panel._memory_cursor = 0
         pane.on_key(_FakeKey("J"))
-        assert panel._memory_cursor == 1
+        assert panel.memory_cursor == 1
         pane.on_key(_FakeKey("K"))
-        assert panel._memory_cursor == 0
+        assert panel.memory_cursor == 0
 
         # ── agents tab ──
         panel._panel_type = "agents"
         panel._agents_items = [{"kind": "x"}, {"kind": "y"}]
         panel._agents_cursor = 0
         pane.on_key(_FakeKey("J"))
-        assert panel._agents_cursor == 1
+        assert panel.agents_cursor == 1
         pane.on_key(_FakeKey("K"))
-        assert panel._agents_cursor == 0
+        assert panel.agents_cursor == 0
 
 
 # ── test: right panel — events tab chronological sort ───────────────────────
@@ -873,14 +873,14 @@ async def test_event_filter_cycling_rotates_through_groups():
         panel = app.query_one("#right_panel")
 
         n = len(_FILTER_GROUPS)
-        assert panel._event_filter_idx == 0  # initial state
+        assert panel.event_filter_idx == 0  # initial state
 
         for i in range(1, n + 1):
             panel.cycle_event_filter()
-            assert panel._event_filter_idx == i % n
+            assert panel.event_filter_idx == i % n
 
         # Wrap-around: after n cycles we land back at 0
-        assert panel._event_filter_idx == 0
+        assert panel.event_filter_idx == 0
 
 
 # ── test: right panel — docs cursor navigation ───────────────────────────────
@@ -906,15 +906,15 @@ async def test_docs_cursor_advances_with_j_keypress():
         panel._docs_cursor = 0
 
         panel._docs_move(+1)
-        assert panel._docs_cursor == 1
+        assert panel.docs_cursor == 1
         panel._docs_move(+1)
-        assert panel._docs_cursor == 2
+        assert panel.docs_cursor == 2
         # Wraparound — stepping past the last file returns to index 0.
         panel._docs_move(+1)
-        assert panel._docs_cursor == 0
+        assert panel.docs_cursor == 0
         # Reverse from the top wraps to the last file.
         panel._docs_move(-1)
-        assert panel._docs_cursor == 2
+        assert panel.docs_cursor == 2
 
 
 # ── test: right panel — tab cycling ──────────────────────────────────────────
@@ -981,16 +981,16 @@ async def test_slash_picker_wraps_around_at_boundaries():
             for i in range(3)
         ]
         picker.set_matches(candidates)
-        assert picker._selected == 0
+        assert picker.selected_index == 0
 
         # Walk forward N times: 0 -> 1 -> 2 -> 0 (wrap)
         picker.move_selection(+1)
-        assert picker._selected == 1
+        assert picker.selected_index == 1
         picker.move_selection(+1)
-        assert picker._selected == 2
+        assert picker.selected_index == 2
         picker.move_selection(+1)
-        assert picker._selected == 0
+        assert picker.selected_index == 0
 
         # Walk backward from 0 wraps to the last entry
         picker.move_selection(-1)
-        assert picker._selected == len(candidates) - 1
+        assert picker.selected_index == len(candidates) - 1

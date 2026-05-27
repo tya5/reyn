@@ -638,6 +638,27 @@ class ReynHeader(RenderableCacheMixin, Widget):
         """
         return self._find_state
 
+    def format_status(self) -> Text:
+        """Public alias for the internal ``_format_status()`` builder.
+
+        Returns the current status Rich Text (right side of the header).
+        Tests use this to assert on rendered agent name and model without
+        reaching into the private implementation.
+        """
+        return self._format_status()
+
+    @property
+    def badge_offsets(self) -> dict[str, tuple[int, int]]:
+        """Read-only copy of the badge-name → (start, end) cell-range map.
+
+        Populated by ``_format_status`` whenever a badge is rendered.
+        Keys are ``"find"``, ``"pending"``, or ``"voice"``; values are
+        ``(start_cell, end_cell)`` in text-relative (= status-text-local)
+        coordinates. Tests use this to verify badge placement without
+        reaching into the private dict.
+        """
+        return dict(self._badge_offsets)
+
     def badge_at_x(self, x: int) -> str | None:
         """Return the badge key under widget-local cell column ``x``, or None.
 

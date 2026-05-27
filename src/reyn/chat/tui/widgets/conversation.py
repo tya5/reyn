@@ -731,6 +731,28 @@ class ConversationView(Widget):
             return []
         return panel.snapshot()
 
+    @property
+    def stream_rows(self) -> "dict[str, StreamingRow]":
+        """Shallow copy of the in-flight stream-row registry (msg_id → row).
+
+        Tests that need to assert on stream routing (= which msg_ids are
+        live, which have been sealed and removed) call this rather than
+        accessing ``_stream_rows`` directly — per CLAUDE.md testing
+        policy.  Returns a snapshot; do not mutate the returned dict.
+        """
+        return dict(self._stream_rows)
+
+    @property
+    def foldables(self) -> "list[FoldableMarkdown]":
+        """A copy of the list of live ``FoldableMarkdown`` widgets.
+
+        Populated by ``_write_agent_markdown_with_fold`` when a reply is
+        long enough to fold. Tests use this to locate the widgets without
+        reaching into ``_foldables`` directly — per CLAUDE.md testing
+        policy. Returns a shallow list copy; do not mutate.
+        """
+        return list(self._foldables)
+
     def on_mount(self) -> None:
         """Wire a scroll watcher so user scroll-up suppresses auto-scroll.
 

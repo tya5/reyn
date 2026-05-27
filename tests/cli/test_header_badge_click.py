@@ -56,8 +56,8 @@ async def test_badge_offsets_populated_for_find_badge() -> None:
         header = app.query_one("#header", ReynHeader)
         header.set_find_state("foo", position=1, total=3)
         await pilot.pause()
-        assert "find" in header._badge_offsets
-        start, end = header._badge_offsets["find"]
+        assert "find" in header.badge_offsets
+        start, end = header.badge_offsets["find"]
         # Range should be non-trivial (badge is ~17 cells: "[find: 'foo' 1/3]").
         assert end > start
         assert end - start >= 10
@@ -75,8 +75,8 @@ async def test_badge_offsets_populated_for_pending_badge() -> None:
         header = app.query_one("#header", ReynHeader)
         header.refresh_status(stalled_count=3)
         await pilot.pause()
-        assert "pending" in header._badge_offsets
-        start, end = header._badge_offsets["pending"]
+        assert "pending" in header.badge_offsets
+        start, end = header.badge_offsets["pending"]
         assert end > start
 
 
@@ -91,9 +91,9 @@ async def test_badge_offsets_empty_when_no_badges() -> None:
         await pilot.pause()
         header = app.query_one("#header", ReynHeader)
         # Nothing set up — no badges.
-        assert "find" not in header._badge_offsets
-        assert "pending" not in header._badge_offsets
-        assert "voice" not in header._badge_offsets
+        assert "find" not in header.badge_offsets
+        assert "pending" not in header.badge_offsets
+        assert "voice" not in header.badge_offsets
 
 
 @pytest.mark.asyncio
@@ -131,7 +131,7 @@ async def test_badge_at_x_hits_find_badge() -> None:
         rendered = header.rendered_text()
         text_cells = cell_len(rendered)
         text_left = header.size.width - 2 - text_cells
-        find_start, find_end = header._badge_offsets["find"]
+        find_start, find_end = header.badge_offsets["find"]
         # Pick the middle of the badge.
         mid_x = text_left + (find_start + find_end) // 2
         assert header.badge_at_x(mid_x) == "find"
@@ -173,12 +173,12 @@ async def test_click_on_find_badge_invokes_action_find_next() -> None:
             header,
         )
         await pilot.pause()
-        initial_cursor = router._find_cursor_idx
+        initial_cursor = router.find_cursor_index
         # Synthesise click on the find badge.
         rendered = header.rendered_text()
         text_cells = cell_len(rendered)
         text_left = header.size.width - 2 - text_cells
-        find_start, find_end = header._badge_offsets["find"]
+        find_start, find_end = header.badge_offsets["find"]
         mid_x = text_left + (find_start + find_end) // 2
         click = textual_events.Click(
             chain=1, widget=header, x=mid_x, y=0,
@@ -189,7 +189,7 @@ async def test_click_on_find_badge_invokes_action_find_next() -> None:
         header.on_click(click)
         await pilot.pause()
         # Cursor advanced after the click-driven find_next.
-        assert router._find_cursor_idx != initial_cursor
+        assert router.find_cursor_index != initial_cursor
 
 
 @pytest.mark.asyncio
@@ -208,7 +208,7 @@ async def test_click_on_pending_badge_opens_panel_to_pending_tab() -> None:
         header.refresh_status(stalled_count=2)
         await pilot.pause()
         # Pre-state: panel hidden.
-        assert app._panel_visible is False
+        assert app.panel_visible is False
         rendered = header.rendered_text()
         text_cells = cell_len(rendered)
         text_left = header.size.width - 2 - text_cells
@@ -223,7 +223,7 @@ async def test_click_on_pending_badge_opens_panel_to_pending_tab() -> None:
         header.on_click(click)
         await pilot.pause()
         # Panel opens to pending tab.
-        assert app._panel_visible is True
+        assert app.panel_visible is True
         panel = app.query_one("#right_panel", RightPanel)
         tabs = panel.query_one("#panel-tabs")
         assert tabs.active == "pending"
@@ -243,7 +243,7 @@ async def test_click_outside_badge_is_silent_no_op() -> None:
         header = app.query_one("#header", ReynHeader)
         header.set_find_state("foo", 1, 3)
         await pilot.pause()
-        before_panel = app._panel_visible
+        before_panel = app.panel_visible
         # Click far-left (= title region).
         click = textual_events.Click(
             chain=1, widget=header, x=2, y=0,
@@ -254,4 +254,4 @@ async def test_click_outside_badge_is_silent_no_op() -> None:
         header.on_click(click)
         await pilot.pause()
         # Panel unchanged (= no badge was hit, no action).
-        assert app._panel_visible == before_panel
+        assert app.panel_visible == before_panel

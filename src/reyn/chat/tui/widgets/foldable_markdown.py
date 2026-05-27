@@ -94,6 +94,34 @@ class FoldableMarkdown(Widget):
         """Return True when the widget is currently in expanded state."""
         return self._expanded
 
+    @property
+    def remaining_lines(self) -> int:
+        """Number of lines hidden in collapsed state (= total − preview threshold).
+
+        Displayed in the collapsed hint footer. Tests assert on this
+        value to verify the fold logic without reaching into
+        ``_remaining_lines`` directly.
+        """
+        return self._remaining_lines
+
+    @property
+    def preview_text(self) -> str:
+        """The Markdown text shown in the collapsed (preview) state.
+
+        Tests assert on this to verify which lines land in the preview
+        section without reaching into ``_preview_text`` directly.
+        """
+        return self._preview_text
+
+    @property
+    def full_text(self) -> str:
+        """The complete Markdown text shown in the expanded state.
+
+        Tests assert on this to verify the full reply content without
+        reaching into ``_full_text`` directly.
+        """
+        return self._full_text
+
     def _refresh_display(self) -> None:
         """Update the body Static and hint Label to match _expanded."""
         try:

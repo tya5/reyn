@@ -351,6 +351,25 @@ class RightPanel(Widget):
         return self._docs_cursor
 
     @property
+    def events_cursor(self) -> int:
+        """Current events tab cursor index into the visible event list."""
+        return self._events_cursor
+
+    @property
+    def agents_cursor(self) -> int:
+        """Current agents tab cursor index into ``_agents_items``."""
+        return self._agents_cursor
+
+    @property
+    def event_filter_idx(self) -> int:
+        """Index of the active event-filter group in ``_FILTER_GROUPS``.
+
+        Use ``cycle_event_filter()`` to advance it; this property is
+        read-only and intended for test assertions.
+        """
+        return self._event_filter_idx
+
+    @property
     def docs_lang(self) -> str:
         """Active docs language preference (``"en"`` or ``"ja"``)."""
         return self._docs_lang
