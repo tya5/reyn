@@ -93,7 +93,7 @@ def test_handler_resolves_chain_and_emits_audit_event(tmp_path: Path):
 
     async def go():
         # A registers a chain waiting on B
-        await sess_a._chains.register(
+        await sess_a.chains.register(
             chain_id="X-001",
             from_user=True,
             depth=1,
@@ -103,7 +103,7 @@ def test_handler_resolves_chain_and_emits_audit_event(tmp_path: Path):
             origin_agent="user",
             origin_depth=0,
         )
-        assert sess_a._chains.find_chain("X-001") is not None
+        assert sess_a.chains.find_chain("X-001") is not None
         # Trigger the handler directly
         await sess_a._on_chain_peer_discarded(
             chain_id="X-001",
@@ -113,7 +113,7 @@ def test_handler_resolves_chain_and_emits_audit_event(tmp_path: Path):
 
     asyncio.run(go())
     # Chain is gone
-    assert sess_a._chains.find_chain("X-001") is None
+    assert sess_a.chains.find_chain("X-001") is None
     # WAL has chain_resolve for X-001
     events = list(state_log.iter_from(0))
     resolve_events = [
@@ -147,7 +147,7 @@ def test_notify_finds_waiter_and_returns_true(tmp_path: Path):
     registry, sess_a, _sess_b, _log = _make_registry_with_two_agents(tmp_path)
 
     async def go():
-        await sess_a._chains.register(
+        await sess_a.chains.register(
             chain_id="X-002",
             from_user=True,
             depth=1,
@@ -165,7 +165,7 @@ def test_notify_finds_waiter_and_returns_true(tmp_path: Path):
     notified = asyncio.run(go())
     assert notified is True
     # A's chain was force-resolved
-    assert sess_a._chains.find_chain("X-002") is None
+    assert sess_a.chains.find_chain("X-002") is None
 
 
 def test_notify_returns_false_when_no_waiter_tracks_chain(tmp_path: Path):
@@ -191,7 +191,7 @@ def test_notify_excludes_self_from_scan(tmp_path: Path):
 
     async def go():
         # B registers a chain (irrelevant to the discard)
-        await sess_b._chains.register(
+        await sess_b.chains.register(
             chain_id="X-self",
             from_user=False,
             depth=1,
@@ -211,7 +211,7 @@ def test_notify_excludes_self_from_scan(tmp_path: Path):
     # Not notified — only B tracks it, and we exclude B
     assert notified is False
     # B's own chain is intact
-    assert sess_b._chains.find_chain("X-self") is not None
+    assert sess_b.chains.find_chain("X-self") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +227,7 @@ def test_slash_discard_notifies_upstream_chain_waiter(tmp_path: Path, monkeypatc
 
     async def go():
         # A is waiting on B for chain X-D14
-        await sess_a._chains.register(
+        await sess_a.chains.register(
             chain_id="X-D14",
             from_user=True,
             depth=1,
@@ -262,7 +262,7 @@ def test_slash_discard_notifies_upstream_chain_waiter(tmp_path: Path, monkeypatc
 
     # Verifications:
     # 1. A's chain is force-resolved (no longer tracked)
-    assert sess_a._chains.find_chain("X-D14") is None
+    assert sess_a.chains.find_chain("X-D14") is None
     # 2. WAL has chain_resolve for X-D14
     events = list(state_log.iter_from(0))
     resolves = [

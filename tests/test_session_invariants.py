@@ -15,7 +15,7 @@ Policy compliance (`docs/deep-dives/contributing/testing.ja.md`):
     - `AgentSnapshot.load(agent_name, path)` for fully external snapshot re-read
     - `iv.future` (the producer-side contract for a UserIntervention)
 - Internal-attribute access is restricted to:
-    - `session._chains.has()` / `.get()` — public ChainManager methods, used as a
+    - `session.chains.has()` / `.get()` — public ChainManager methods, used as a
       precondition check; final post-condition uses `AgentSnapshot.load`.
     - `session._dispatch_intervention` / `_drop_interventions_for_run` /
       `_maybe_answer_oldest_intervention` — session-level thin wrappers over
@@ -293,7 +293,7 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
     })
 
     # Verify chain is registered.
-    assert session._chains.has("chain-res-001"), (
+    assert session.chains.has("chain-res-001"), (
         "Chain should be pending after delegation"
     )
 
@@ -467,10 +467,10 @@ async def test_restore_reconstructs_chains_and_inbox_from_snapshot(tmp_path, mon
     assert payload.get("text") == "hello from snapshot"
 
     # ChainManager must have the chain loaded (public query API).
-    assert session._chains.has(chain_id), (
+    assert session.chains.has(chain_id), (
         f"ChainManager.has({chain_id!r}) returned False after restore_state"
     )
-    pc = session._chains.get(chain_id)
+    pc = session.chains.get(chain_id)
     assert pc is not None
     assert pc.origin_agent == "origin"
     assert "peer_agent" in pc.waiting_on
@@ -791,7 +791,7 @@ async def test_p6_chain_state_changes_emit_events(tmp_path, monkeypatch):
     chain_id = payload["chain_id"]
 
     # ── chain_register ────────────────────────────────────────────────────
-    await session._chains.register(
+    await session.chains.register(
         chain_id=chain_id,
         from_user=False,
         depth=1,
@@ -803,7 +803,7 @@ async def test_p6_chain_state_changes_emit_events(tmp_path, monkeypatch):
     )
 
     # ── chain_resolve ─────────────────────────────────────────────────────
-    resolved_chain = await session._chains.resolve(chain_id)
+    resolved_chain = await session.chains.resolve(chain_id)
     assert resolved_chain is not None, "resolve must return the chain"
 
     # ── WAL read: verify P6 invariant ─────────────────────────────────────
@@ -1085,7 +1085,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     # Manually register a pending chain: relay_agent is waiting on "specialist"
     # for a request that came from "origin_agent".
     chain_id = "chain-b2h2-relay-001"
-    await session._chains.register(
+    await session.chains.register(
         chain_id=chain_id,
         from_user=False,
         depth=2,
@@ -1097,7 +1097,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     )
 
     # Confirm the chain exists.
-    assert session._chains.get(chain_id) is not None
+    assert session.chains.get(chain_id) is not None
 
     # _run_router_loop must NOT be called.
     router_called = []
@@ -1122,7 +1122,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     assert not router_called, "B2-H2 relay regression: _run_router_loop was called for a marker"
 
     # Chain must be resolved.
-    assert session._chains.get(chain_id) is None, (
+    assert session.chains.get(chain_id) is None, (
         "B2-H2 relay: chain should be resolved after marker detection, but it is still pending"
     )
 

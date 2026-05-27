@@ -138,7 +138,7 @@ async def test_two_simultaneous_delegations_both_resolve(tmp_path: Path):
     # Directly register two chains on A, simulating that A delegated to B
     # and C simultaneously (the router would do this; we bypass the LLM to
     # test pure chain mechanics).
-    await sess_a._chains.register(
+    await sess_a.chains.register(
         chain_id=chain_ab,
         from_user=True,
         depth=1,
@@ -148,7 +148,7 @@ async def test_two_simultaneous_delegations_both_resolve(tmp_path: Path):
         origin_agent="",
         origin_depth=0,
     )
-    await sess_a._chains.register(
+    await sess_a.chains.register(
         chain_id=chain_ac,
         from_user=True,
         depth=1,
@@ -160,30 +160,30 @@ async def test_two_simultaneous_delegations_both_resolve(tmp_path: Path):
     )
 
     # Both chains must be pending now.
-    assert sess_a._chains.has(chain_ab), "chain_ab must be pending after register"
-    assert sess_a._chains.has(chain_ac), "chain_ac must be pending after register"
+    assert sess_a.chains.has(chain_ab), "chain_ab must be pending after register"
+    assert sess_a.chains.has(chain_ac), "chain_ac must be pending after register"
 
     # Resolve chain_ab (B replied).
-    resolved_ab = await sess_a._chains.resolve(chain_ab)
+    resolved_ab = await sess_a.chains.resolve(chain_ab)
     assert resolved_ab is not None, "resolve must return the chain for chain_ab"
     assert resolved_ab.chain_id == chain_ab
 
     # chain_ac must still be pending — resolve is independent.
-    assert sess_a._chains.has(chain_ac), (
+    assert sess_a.chains.has(chain_ac), (
         "chain_ac must still be pending after chain_ab resolves"
     )
-    assert not sess_a._chains.has(chain_ab), (
+    assert not sess_a.chains.has(chain_ab), (
         "chain_ab must no longer be pending after resolve"
     )
 
     # Resolve chain_ac (C replied).
-    resolved_ac = await sess_a._chains.resolve(chain_ac)
+    resolved_ac = await sess_a.chains.resolve(chain_ac)
     assert resolved_ac is not None, "resolve must return the chain for chain_ac"
     assert resolved_ac.chain_id == chain_ac
 
     # Both chains are gone.
-    assert not sess_a._chains.has(chain_ab)
-    assert not sess_a._chains.has(chain_ac)
+    assert not sess_a.chains.has(chain_ab)
+    assert not sess_a.chains.has(chain_ac)
 
     # WAL must have two chain_register and two chain_resolve events.
     wal_entries = list(state_log.iter_from(0))

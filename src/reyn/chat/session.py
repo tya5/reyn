@@ -1863,6 +1863,18 @@ class ChatSession:
         """
         return self._interventions
 
+    @property
+    def chains(self) -> "ChainManager":
+        """Read-only accessor for the session's ChainManager.
+
+        The manager carries rich public API (``find_chain`` / ``has`` /
+        ``get`` / ``all_chain_ids`` / ``register`` / ``update`` /
+        ``resolve``), so exposing the holder via a public name keeps
+        callers off the underscore field. The manager instance is set
+        once in ``__init__`` and never re-bound.
+        """
+        return self._chains
+
     # ── SkillRunner forwarding (FP-0019 Wave 1b) ────────────────────────────────
     # slash/skill.py and slash/tasks.py access these dicts directly via session.
     # Forward to SkillRunner so external callers see the same live dict.
