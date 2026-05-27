@@ -47,7 +47,7 @@ class SkillSnapshot:
     awaiting_intervention_id: str | None = None
     # R-D16: monotonic timestamp captured when this run started awaiting an
     # intervention (e.g. ``ask_user``). ``None`` when not awaiting. Read by
-    # ``AgentRegistry._compute_truncate_floor`` to exclude long-awaiting
+    # ``AgentRegistry.compute_truncate_floor`` to exclude long-awaiting
     # skills from the WAL truncation floor: a single skill stuck on
     # ``ask_user`` for hours would otherwise pin the floor at its
     # ``last_phase_applied_seq`` indefinitely. Long-await skills accept

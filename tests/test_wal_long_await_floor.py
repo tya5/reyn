@@ -12,9 +12,8 @@ op falls through to re-execute, identical to a memo cache miss.
 
 These tests target the public surface:
   - ``SkillSnapshot`` save/load (the persisted field)
-  - ``AgentRegistry._compute_truncate_floor`` (called via the public
-    ``truncate_wal_if_eligible``; the private name is a stable named
-    helper inside this module — same probe pattern as
+  - ``AgentRegistry.compute_truncate_floor`` (called via the public
+    ``truncate_wal_if_eligible``; same probe pattern as
     ``test_registry_wal_truncate.py``)
 
 No mocks; real instances. ``time.monotonic`` is monkeypatched inside the
@@ -103,7 +102,7 @@ def test_floor_includes_short_await_skill(tmp_path: Path, monkeypatch):
     # monotonic at "now=200.0" → elapsed=100s, well under 300s threshold.
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 200.0)
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     # min(agent=1000, skill=50) + 1 = 51
     assert floor == 51
 
@@ -120,7 +119,7 @@ def test_floor_excludes_long_await_skill(tmp_path: Path, monkeypatch):
     # now=500 → elapsed=400s > 300s threshold → skill excluded.
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     # Only the agent's applied_seq=1000 survives; floor = 1001 (not 51).
     assert floor == 1001
 
@@ -148,7 +147,7 @@ def test_floor_mixes_short_long_and_non_await(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)
 
-    floor = registry._compute_truncate_floor()
+    floor = registry.compute_truncate_floor()
     # min(agent=1000, short=80, active=70) + 1 = 71. Long is excluded.
     assert floor == 71
 
@@ -165,7 +164,7 @@ def test_clearing_awaiting_since_restores_inclusion(tmp_path: Path, monkeypatch)
 
     # First: long-await → excluded, floor=1001
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)
-    assert registry._compute_truncate_floor() == 1001
+    assert registry.compute_truncate_floor() == 1001
 
     # User answered: clear awaiting_since on disk.
     snap = SkillSnapshot.load("run-x", skill_path)
@@ -173,7 +172,7 @@ def test_clearing_awaiting_since_restores_inclusion(tmp_path: Path, monkeypatch)
     snap.save(skill_path)
 
     # Now the skill is included again → floor pinned at 51.
-    assert registry._compute_truncate_floor() == 51
+    assert registry.compute_truncate_floor() == 51
 
 
 def test_threshold_is_300_seconds(tmp_path: Path, monkeypatch):
@@ -193,11 +192,11 @@ def test_threshold_is_300_seconds(tmp_path: Path, monkeypatch):
 
     # Just under threshold (elapsed=299.9s) → still included → floor=51.
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 399.9)
-    assert registry._compute_truncate_floor() == 51
+    assert registry.compute_truncate_floor() == 51
 
     # At/over threshold (elapsed=300.0s) → excluded → floor=1001.
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 400.0)
-    assert registry._compute_truncate_floor() == 1001
+    assert registry.compute_truncate_floor() == 1001
 
 
 def test_long_await_alone_returns_zero(tmp_path: Path, monkeypatch):
@@ -218,7 +217,7 @@ def test_long_await_alone_returns_zero(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)
     # All sources excluded → seqs empty → floor=0 (no truncation).
-    assert registry._compute_truncate_floor() == 0
+    assert registry.compute_truncate_floor() == 0
 
 
 def test_unset_awaiting_since_treats_as_not_awaiting(tmp_path: Path, monkeypatch):
@@ -237,4 +236,4 @@ def test_unset_awaiting_since_treats_as_not_awaiting(tmp_path: Path, monkeypatch
     # Even at t=10**9 monotonic, awaiting_since=None means "not awaiting"
     # → skill stays in the floor.
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 1_000_000_000.0)
-    assert registry._compute_truncate_floor() == 51
+    assert registry.compute_truncate_floor() == 51

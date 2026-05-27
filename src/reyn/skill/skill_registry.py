@@ -263,7 +263,7 @@ class SkillRegistry:
 
         Sets ``awaiting_since`` to ``time.monotonic()`` and records
         ``awaiting_intervention_id``. Read by
-        ``AgentRegistry._compute_truncate_floor`` to skip long-awaiting
+        ``AgentRegistry.compute_truncate_floor`` to skip long-awaiting
         runs from the WAL truncation floor (R-D16).
 
         No-op if ``run_id`` is unknown — defensive, matches the same

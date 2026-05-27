@@ -546,7 +546,7 @@ class AgentRegistry:
                 and now - self._last_truncation_ts < self._TRUNCATION_THROTTLE_SECS):
             return None
         try:
-            floor = self._compute_truncate_floor()
+            floor = self.compute_truncate_floor()
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("WAL truncation: floor computation failed: %s", e)
             return None
@@ -676,7 +676,7 @@ class AgentRegistry:
     # cache miss.
     _LONG_AWAIT_THRESHOLD_SEC: float = 300.0
 
-    def _compute_truncate_floor(self) -> int:
+    def compute_truncate_floor(self) -> int:
         """Return the lowest seq that MUST remain in the WAL.
 
         ``floor = min(全 持続 agent applied_seq, 全 active skill
