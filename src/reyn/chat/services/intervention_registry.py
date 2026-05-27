@@ -92,6 +92,26 @@ class InterventionRegistry:
         # exclusive — an iv is in one or the other, never both.
         self._stalled: dict[str, UserIntervention] = {}
 
+    # ── Read helpers for tests / external observers ─────────────────────────
+
+    def has_active(self, iv_id: str) -> bool:
+        """Return True iff *iv_id* is currently in the active queue."""
+        return iv_id in self._active
+
+    def has_stalled(self, iv_id: str) -> bool:
+        """Return True iff *iv_id* is currently in the stalled queue."""
+        return iv_id in self._stalled
+
+    def is_queued(self, iv_id: str) -> bool:
+        """Return True iff *iv_id* is currently in the FIFO order deque.
+
+        The order deque tracks the emission sequence for the active map;
+        an entry stays in both ``_active`` and the order deque while
+        active, and leaves both when ``mark_stalled`` / ``deliver_answer``
+        / ``discard_stalled`` / ``claim_stalled`` runs.
+        """
+        return iv_id in self._order
+
     # ── Listener registration (issue #254 Phase 1) ───────────────────────────
 
     def register_listener(self, listener_id: str) -> None:

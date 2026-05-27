@@ -103,8 +103,8 @@ def test_registry_mark_stalled_moves_iv_from_active_to_stalled() -> None:
     reg._order.append(iv.id)
 
     assert reg.mark_stalled(iv.id) is True
-    assert iv.id not in reg._active
-    assert iv.id not in reg._order
+    assert not reg.has_active(iv.id)
+    assert not reg.is_queued(iv.id)
     assert reg.get_stalled(iv.id) is iv
     assert reg.stalled_count() == 1
 
@@ -161,7 +161,7 @@ def test_registry_discard_stalled_resolves_future_with_empty_answer() -> None:
         reg._stalled[iv.id] = iv
         # Discard from another "channel".
         assert reg.discard_stalled(iv.id) is True
-        assert iv.id not in reg._stalled
+        assert not reg.has_stalled(iv.id)
         return await iv.future
 
     answer = asyncio.run(_drive())
@@ -187,7 +187,7 @@ def test_registry_claim_stalled_rebinds_origin_and_returns_iv() -> None:
     claimed = reg.claim_stalled(iv.id, "tui:new-session")
     assert claimed is iv
     assert claimed.origin_channel_id == "tui:new-session"
-    assert iv.id not in reg._stalled
+    assert not reg.has_stalled(iv.id)
 
 
 def test_registry_claim_stalled_returns_none_when_not_stalled() -> None:
