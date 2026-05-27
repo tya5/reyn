@@ -1990,6 +1990,13 @@ class ChatSession:
             pass
         self._last_sender = new_sender
 
+    def last_sender(self) -> str | None:
+        """Return the most-recently-attributed sender label or None if no
+        message has been routed yet. Read-only accessor for
+        ``_last_sender`` — write side stays internal to the dispatch
+        attribution path."""
+        return self._last_sender
+
     def _on_chat_event_for_state_change(self, event) -> None:
         """Generic events-log subscriber that converts known emitter events
         to ``state_change`` history entries (= #398 v4 emitter family).

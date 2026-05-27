@@ -75,7 +75,7 @@ def test_first_sender_triggers_first_attributed_turn_entry(tmp_path):
     was from ..." framing doesn't apply).
     """
     session = _make_session(tmp_path)
-    assert session._last_sender is None
+    assert session.last_sender() is None
 
     session._handle_sender_attribution({"sender": "slack:U456:bob"})
 
@@ -84,7 +84,7 @@ def test_first_sender_triggers_first_attributed_turn_entry(tmp_path):
     (entry,) = entries
     assert "bob (Slack)" in entry.content
     assert "first attributed turn" in entry.content
-    assert session._last_sender == "slack:U456:bob"
+    assert session.last_sender() == "slack:U456:bob"
 
 
 # ── sender transition ────────────────────────────────────────────────
@@ -108,7 +108,7 @@ def test_sender_transition_emits_state_change(tmp_path):
     assert "bob (Slack)" in last
     assert "morning_news" in last  # previous = cron job
     assert "Previous turn was from" in last
-    assert session._last_sender == "slack:U456:bob"
+    assert session.last_sender() == "slack:U456:bob"
 
 
 # ── same sender = no transition ────────────────────────────────────────
@@ -128,7 +128,7 @@ def test_same_sender_consecutive_does_not_emit(tmp_path):
     session._handle_sender_attribution({"sender": "user:tui"})
 
     assert len(_attribution_entries(session)) == pre_count
-    assert session._last_sender == "user:tui"
+    assert session.last_sender() == "user:tui"
 
 
 # ── backward compat: no sender ─────────────────────────────────────────
@@ -142,12 +142,12 @@ def test_payload_without_sender_skips_attribution(tmp_path):
     """
     session = _make_session(tmp_path)
     pre_count = len(_attribution_entries(session))
-    pre_last = session._last_sender
+    pre_last = session.last_sender()
 
     session._handle_sender_attribution({"text": "hello", "chain_id": "c1"})
 
     assert len(_attribution_entries(session)) == pre_count
-    assert session._last_sender == pre_last  # unchanged
+    assert session.last_sender() == pre_last  # unchanged
 
 
 def test_empty_sender_string_skips_attribution(tmp_path):
@@ -159,7 +159,7 @@ def test_empty_sender_string_skips_attribution(tmp_path):
     session._handle_sender_attribution({"sender": ""})
 
     assert len(_attribution_entries(session)) == 0
-    assert session._last_sender is None
+    assert session.last_sender() is None
 
 
 # ── defensive: non-dict payload ────────────────────────────────────────
@@ -178,7 +178,7 @@ def test_non_dict_payload_does_not_crash(tmp_path):
     session._handle_sender_attribution(42)
 
     assert len(_attribution_entries(session)) == 0
-    assert session._last_sender is None
+    assert session.last_sender() is None
 
 
 # ── 3-way transition ──────────────────────────────────────────────────
@@ -196,7 +196,7 @@ def test_three_way_transition_each_fires(tmp_path):
     entries = _attribution_entries(session)
     e0, e1, e2 = entries
     # Final state reflects the latest sender.
-    assert session._last_sender == "a2a:peer_one"
+    assert session.last_sender() == "a2a:peer_one"
     # Each entry mentions the current sender's label.
     assert "user (TUI)" in e0.content
     assert "nightly" in e1.content
@@ -267,4 +267,4 @@ def test_attribution_resilient_to_notify_state_change_failure(
     session._handle_sender_attribution({"sender": "slack:U456:bob"})
 
     # _last_sender did update despite the failure.
-    assert session._last_sender == "slack:U456:bob"
+    assert session.last_sender() == "slack:U456:bob"
