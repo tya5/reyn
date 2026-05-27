@@ -68,7 +68,7 @@ def test_attribution_captures_reply_to_from_payload(tmp_path):
         "sender": "slack:U1",
         "reply_to": rt,
     })
-    assert session._last_reply_to is rt
+    assert session.last_reply_to is rt
 
 
 def test_attribution_does_not_clear_reply_to_when_payload_lacks_it(tmp_path):
@@ -81,7 +81,7 @@ def test_attribution_does_not_clear_reply_to_when_payload_lacks_it(tmp_path):
     session._handle_sender_attribution({"sender": "slack:U1", "reply_to": rt})
     # Second payload, no reply_to.
     session._handle_sender_attribution({"sender": "slack:U1"})
-    assert session._last_reply_to is rt
+    assert session.last_reply_to is rt
 
 
 def test_attribution_updates_reply_to_when_payload_carries_new_one(tmp_path):
@@ -94,7 +94,7 @@ def test_attribution_updates_reply_to_when_payload_carries_new_one(tmp_path):
     session._handle_sender_attribution({
         "sender": "slack:U1", "reply_to": new_rt,
     })
-    assert session._last_reply_to is new_rt
+    assert session.last_reply_to is new_rt
 
 
 # ── Section 2: _put_outbox reply_to defaulting + interceptor ──────────

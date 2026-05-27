@@ -1851,6 +1851,28 @@ class ChatSession:
         return self._agent_role
 
     @property
+    def outbox_interceptor(self):
+        """Read-only accessor for the per-session outbox interceptor.
+
+        Set by the web layer's ``_wire_external_outbox_interceptor`` when
+        external transports are configured; remains ``None`` otherwise.
+        Mutation continues to go through ``self._outbox_interceptor``
+        so the wire-up call site stays visible.
+        """
+        return self._outbox_interceptor
+
+    @property
+    def last_reply_to(self):
+        """Read-only accessor for the most-recent inbox ``reply_to``.
+
+        Captured by the sender-attribution path and used by
+        ``_put_outbox`` to default the outbox message's ``reply_to``
+        when the caller did not supply one. Tests verify the capture
+        + default chain through this surface.
+        """
+        return self._last_reply_to
+
+    @property
     def interventions(self) -> "InterventionRegistry":
         """Read-only public accessor for the session's InterventionRegistry.
 
