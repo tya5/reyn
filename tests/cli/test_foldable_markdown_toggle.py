@@ -61,16 +61,16 @@ async def test_foldable_collapsed_shows_preview_and_glyph() -> None:
         assert foldables, "FoldableMarkdown should be mounted for long reply"
         fm = foldables[-1]
         assert not fm.is_expanded(), "widget starts collapsed"
-        assert fm._remaining_lines == 30, (
-            f"remaining_lines should be 30 (60 lines - 30 threshold), got {fm._remaining_lines}"
+        assert fm.remaining_lines == 30, (
+            f"remaining_lines should be 30 (60 lines - 30 threshold), got {fm.remaining_lines}"
         )
         hint = fm._collapsed_hint()
         assert "▶" in hint, f"collapsed hint should contain ▶, got: {hint!r}"
         assert "more lines" in hint, f"collapsed hint should contain 'more lines', got: {hint!r}"
         # Preview text should be first 30 lines
-        assert "line 0" in fm._preview_text
+        assert "line 0" in fm.preview_text
         # Full text should contain all lines
-        assert "line 59" in fm._full_text
+        assert "line 59" in fm.full_text
 
 
 # ── 2. After toggle() → full text + ▼ hint ───────────────────────────────────
@@ -167,10 +167,10 @@ async def test_conv_foldables_list_has_one_after_long_reply() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        assert not conv._foldables, "starts empty"
+        assert not conv.foldables, "starts empty"
         conv._write_agent_markdown_with_fold(_long_reply(60))
         await pilot.pause()
-        (only_foldable,) = conv._foldables
+        (only_foldable,) = conv.foldables
 
 
 # ── 6. toggle_last_foldable() toggles latest and returns True ────────────────
@@ -188,7 +188,7 @@ async def test_toggle_last_foldable_returns_true_and_toggles() -> None:
         conv._write_agent_markdown_with_fold(_long_reply(60))
         await pilot.pause()
 
-        fm = conv._foldables[-1]
+        fm = conv.foldables[-1]
         assert not fm.is_expanded()
 
         result = conv.toggle_last_foldable()

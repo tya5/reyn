@@ -62,11 +62,11 @@ async def test_two_transients_cancel_the_first_timer() -> None:
 
         router = OutboxRouter(app)
         router._show_transient_status(conv, "first")
-        first_timer = router._transient_status_timer
+        first_timer = router.transient_status_timer
         assert first_timer is not None
 
         router._show_transient_status(conv, "second")
-        second_timer = router._transient_status_timer
+        second_timer = router.transient_status_timer
         assert second_timer is not None
         assert second_timer is not first_timer, (
             "second arming must replace the timer handle, not re-use it"
@@ -99,14 +99,14 @@ async def test_live_status_cancels_pending_transient_timer() -> None:
         router = OutboxRouter(app)
         # Arm a transient
         router._show_transient_status(conv, "cost-inline on")
-        assert router._transient_status_timer is not None
+        assert router.transient_status_timer is not None
 
         # Live status arrives — must cancel the timer
         router._on_status(
             OutboxMessage(kind="status", text="thinking…"),
             conv, header,
         )
-        assert router._transient_status_timer is None
+        assert router.transient_status_timer is None
         # And the live status is showing
         sticky = conv.query_one("#sticky-status", StickyStatus)
         assert sticky.has_class("active")
@@ -128,13 +128,13 @@ async def test_stream_start_cancels_pending_transient_timer() -> None:
 
         router = OutboxRouter(app)
         router._show_transient_status(conv, "/cost-inline on")
-        assert router._transient_status_timer is not None
+        assert router.transient_status_timer is not None
 
         router._on_stream_start(
             OutboxMessage(kind="__stream_start__", text="", meta={"msg_id": "x"}),
             conv, header,
         )
-        assert router._transient_status_timer is None
+        assert router.transient_status_timer is None
 
 
 @pytest.mark.asyncio
@@ -159,7 +159,7 @@ async def test_attach_clears_sticky_and_cancels_transient() -> None:
         # Also arm a transient (could be from a slash that fired earlier)
         router = OutboxRouter(app)
         router._show_transient_status(conv, "earlier transient")
-        assert router._transient_status_timer is not None
+        assert router.transient_status_timer is not None
 
         # Now /attach a new agent — must clear sticky and cancel timer
         # Set _agent_registry to a non-None sentinel so the handler doesn't no-op
@@ -168,11 +168,11 @@ async def test_attach_clears_sticky_and_cancels_transient() -> None:
             OutboxMessage(kind="__attach_request__", text="bob"),
             conv, header,
         )
-        assert app._agent_name == "bob"
+        assert app.agent_name == "bob"
         assert not sticky.has_class("active"), (
             "sticky must be cleared after attach (previous agent's spinner is stale)"
         )
-        assert router._transient_status_timer is None
+        assert router.transient_status_timer is None
 
 
 @pytest.mark.asyncio
@@ -182,7 +182,7 @@ async def test_cancel_transient_is_idempotent_when_no_timer() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         router = OutboxRouter(app)
-        assert router._transient_status_timer is None
+        assert router.transient_status_timer is None
         # Should not raise
         router._cancel_transient_timer()
-        assert router._transient_status_timer is None
+        assert router.transient_status_timer is None

@@ -300,6 +300,19 @@ class OutboxRouter:
         """Return ``True`` when an auto-hide transient-status timer is armed."""
         return self._transient_status_timer is not None
 
+    @property
+    def transient_status_timer(self) -> "Any":
+        """The Textual ``Timer`` handle for the pending auto-hide, or ``None``.
+
+        Tests that need to assert on timer identity (= two successive
+        transients replace the handle, not reuse it) or inspect the
+        timer's internal stopped state use this property rather than
+        reaching into ``_transient_status_timer`` directly — per
+        CLAUDE.md testing policy.  Callers must NOT mutate the returned
+        object; use ``_cancel_transient_timer()`` to stop it.
+        """
+        return self._transient_status_timer
+
     # ── transient sticky helpers ──────────────────────────────────────────────
 
     def _cancel_transient_timer(self) -> None:

@@ -79,10 +79,10 @@ async def test_skill_done_finished_cleans_up_fully() -> None:
         await pilot.pause()
 
         # Confirm setup is in place.
-        assert run_id in app._skill_exec
+        assert run_id in app.skill_exec_snapshot()
         assert any(
             s["agent_id"] == run_id
-            for s in conv._async_stack().snapshot()  # type: ignore[union-attr]
+            for s in conv.async_stack_snapshot()
         )
         assert input_bar.is_in_flight()
 
@@ -92,13 +92,13 @@ async def test_skill_done_finished_cleans_up_fully() -> None:
         await pilot.pause()
 
         # _skill_exec cleaned up.
-        assert run_id not in app._skill_exec, (
+        assert run_id not in app.skill_exec_snapshot(), (
             "_skill_exec must not contain run_id after skill done"
         )
         # AsyncStackPanel row removed.
         assert all(
             s["agent_id"] != run_id
-            for s in conv._async_stack().snapshot()  # type: ignore[union-attr]
+            for s in conv.async_stack_snapshot()
         ), "AsyncStackPanel must not have the row after skill done: finished"
         # InputBar unlocked (last skill popped → _skill_exec empty).
         assert not input_bar.is_in_flight(), (
@@ -155,7 +155,7 @@ async def test_finish_skill_row_raise_does_not_block_other_cleanup() -> None:
         await pilot.pause()
 
         # _skill_exec must be cleaned up despite finish_skill_row raising.
-        assert run_id not in app._skill_exec, (
+        assert run_id not in app.skill_exec_snapshot(), (
             "_skill_exec.pop must run even when finish_skill_row raises"
         )
         # remove_async_task must have been invoked.
@@ -220,7 +220,7 @@ async def test_remove_async_task_raise_does_not_block_other_cleanup() -> None:
         await pilot.pause()
 
         # _skill_exec must be cleaned up (it runs BEFORE remove_async_task).
-        assert run_id not in app._skill_exec, (
+        assert run_id not in app.skill_exec_snapshot(), (
             "_skill_exec.pop must run even when remove_async_task raises"
         )
         # InputBar must be unlocked — this runs AFTER remove_async_task, so

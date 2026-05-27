@@ -275,6 +275,47 @@ class ReynTUIApp(App):
         """
         return self._panel_visible
 
+    @property
+    def outbox_router(self) -> "OutboxRouter | None":
+        """The active ``OutboxRouter`` instance, or ``None`` when no registry.
+
+        Set to a live router by ``_outbox_loop`` when a registry is
+        attached; reset to ``None`` when the loop exits. Tests use this
+        to assert on router presence / absence without reaching into the
+        private slot — per CLAUDE.md testing policy.
+        """
+        return self._outbox_router
+
+    @property
+    def current_stream_id(self) -> "str | None":
+        """The msg_id of the most-recently started stream, or ``None``.
+
+        Updated on every ``__stream_start__`` and cleared to ``None``
+        when the matching ``__stream_end__`` arrives. Tests that need to
+        assert on the global stream pointer use this property rather than
+        ``_current_stream_id`` directly.
+        """
+        return self._current_stream_id
+
+    @property
+    def agent_name(self) -> "str | None":
+        """The current agent name string shown in the header.
+
+        Updated by ``_on_attach_request`` when ``/attach`` changes the
+        active agent. Tests assert on this rather than ``_agent_name``.
+        """
+        return self._agent_name
+
+    def skill_exec_snapshot(self) -> "dict[str, dict]":
+        """Return a shallow copy of the in-flight skill-exec registry.
+
+        ``_skill_exec`` maps run_id → metadata dict for every skill that
+        is currently executing.  Tests call this to assert on membership
+        without holding a live reference to the internal dict — per
+        CLAUDE.md testing policy.
+        """
+        return dict(self._skill_exec)
+
     # ── composition ───────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:

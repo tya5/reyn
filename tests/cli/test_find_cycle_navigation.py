@@ -76,12 +76,12 @@ async def test_cycle_find_forward_steps_through_matches() -> None:
         )
         await pilot.pause()
         # Initial /find lands on the first below-cursor match = idx 0
-        assert router._find_cursor_idx == 0
+        assert router.find_cursor_index == 0
 
         # Cycle forward → next match (idx 2)
         router.cycle_find(+1)
         await pilot.pause()
-        assert router._find_cursor_idx == 2
+        assert router.find_cursor_index == 2
         snap = conv._sticky().snapshot()  # type: ignore[union-attr]
         assert snap["active"] is True
         assert "match 2/3" in snap["body"]
@@ -91,7 +91,7 @@ async def test_cycle_find_forward_steps_through_matches() -> None:
         # Cycle forward again → idx 4
         router.cycle_find(+1)
         await pilot.pause()
-        assert router._find_cursor_idx == 4
+        assert router.find_cursor_index == 4
         snap = conv._sticky().snapshot()  # type: ignore[union-attr]
         assert "match 3/3" in snap["body"]
 
@@ -123,14 +123,14 @@ async def test_cycle_find_forward_wraps_to_first() -> None:
             header,
         )
         await pilot.pause()
-        assert router._find_cursor_idx == 0
+        assert router.find_cursor_index == 0
         # Forward to last, then forward again → wrap to first
         router.cycle_find(+1)
         await pilot.pause()
-        assert router._find_cursor_idx == 2
+        assert router.find_cursor_index == 2
         router.cycle_find(+1)
         await pilot.pause()
-        assert router._find_cursor_idx == 0
+        assert router.find_cursor_index == 0
         snap = conv._sticky().snapshot()  # type: ignore[union-attr]
         assert "match 1/2" in snap["body"]
 
@@ -164,19 +164,19 @@ async def test_cycle_find_backward_steps_and_wraps() -> None:
             header,
         )
         await pilot.pause()
-        assert router._find_cursor_idx == 0
+        assert router.find_cursor_index == 0
 
         # Backward from first → wraps to last (idx 4)
         router.cycle_find(-1)
         await pilot.pause()
-        assert router._find_cursor_idx == 4
+        assert router.find_cursor_index == 4
         snap = conv._sticky().snapshot()  # type: ignore[union-attr]
         assert "match 3/3" in snap["body"]
 
         # Backward again → idx 2 (middle)
         router.cycle_find(-1)
         await pilot.pause()
-        assert router._find_cursor_idx == 2
+        assert router.find_cursor_index == 2
         snap = conv._sticky().snapshot()  # type: ignore[union-attr]
         assert "match 2/3" in snap["body"]
 
@@ -194,7 +194,7 @@ async def test_cycle_find_without_prior_query_shows_usage_hint() -> None:
         conv = app.query_one("#conversation", ConversationView)
         # No /find dispatched — cycle should report usage.
         router = OutboxRouter(app)
-        assert router._find_query is None
+        assert router.find_query is None
         router.cycle_find(+1)
         await pilot.pause()
         snap = conv._sticky().snapshot()  # type: ignore[union-attr]
@@ -232,8 +232,8 @@ async def test_cycle_find_handles_buffer_mutation_to_zero_matches() -> None:
             header,
         )
         await pilot.pause()
-        assert router._find_query == "tag"
-        assert router._find_cursor_idx is not None
+        assert router.find_query == "tag"
+        assert router.find_cursor_index is not None
 
         # Wipe the buffer — Ctrl+L equivalent.
         conv.clear()
@@ -244,8 +244,8 @@ async def test_cycle_find_handles_buffer_mutation_to_zero_matches() -> None:
         snap = conv._sticky().snapshot()  # type: ignore[union-attr]
         assert "no matches for 'tag'" in snap["body"]
         # State cleared so a fresh /find isn't shadowed.
-        assert router._find_query is None
-        assert router._find_cursor_idx is None
+        assert router.find_query is None
+        assert router.find_cursor_index is None
 
 
 @pytest.mark.asyncio
@@ -279,7 +279,7 @@ async def test_action_find_next_safe_when_router_absent() -> None:
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         # Router never started (no registry); attribute is None.
-        assert app._outbox_router is None
+        assert app.outbox_router is None
         # Both actions must be safe no-ops.
         app.action_find_next()
         app.action_find_prev()
@@ -313,5 +313,5 @@ async def test_initial_find_seeds_cycle_state() -> None:
             header,
         )
         await pilot.pause()
-        assert router._find_query == "apple"
-        assert router._find_cursor_idx == 1  # 'apple' is at line idx 1
+        assert router.find_query == "apple"
+        assert router.find_cursor_index == 1  # 'apple' is at line idx 1

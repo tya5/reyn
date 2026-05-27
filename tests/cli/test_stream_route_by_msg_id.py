@@ -74,7 +74,7 @@ async def test_single_stream_chunks_land_on_their_row() -> None:
         router._on_stream_chunk(_chunk_msg("A1", "world"), conv, header)
         await pilot.pause()
 
-        row = conv._stream_rows.get("A1")
+        row = conv.stream_rows.get("A1")
         assert row is not None
         assert row.full_text() == "hello world"
 
@@ -116,8 +116,8 @@ async def test_late_chunk_from_old_stream_routes_to_its_own_row() -> None:
         router._on_stream_chunk(_chunk_msg("A1", " — late"), conv, header)
         await pilot.pause()
 
-        a_row = conv._stream_rows.get("A1")
-        b_row = conv._stream_rows.get("B1")
+        a_row = conv.stream_rows.get("A1")
+        b_row = conv.stream_rows.get("B1")
         assert a_row is not None and b_row is not None
         assert a_row.full_text() == "from a  — late", (
             f"A's late chunk leaked into B's row; A.full_text={a_row.full_text()!r}"
@@ -145,18 +145,18 @@ async def test_end_of_older_stream_does_not_clear_current_pointer() -> None:
         router._on_stream_start(_start_msg("A1"), conv, header)
         router._on_stream_start(_start_msg("B1"), conv, header)
         # Latest is B1
-        assert app._current_stream_id == "B1"
+        assert app.current_stream_id == "B1"
 
         # A1 finishes after B1 started
         router._on_stream_end(_end_msg("A1"), conv, header)
         # The latest pointer must NOT have been wiped to None
-        assert app._current_stream_id == "B1", (
+        assert app.current_stream_id == "B1", (
             f"older stream's end cleared the global; got {app._current_stream_id!r}"
         )
 
         # When the latest does end, the global clears
         router._on_stream_end(_end_msg("B1"), conv, header)
-        assert app._current_stream_id is None
+        assert app.current_stream_id is None
 
 
 @pytest.mark.asyncio
@@ -179,7 +179,7 @@ async def test_chunk_with_no_msg_id_is_silently_dropped() -> None:
         router._on_stream_chunk(bad_chunk, conv, header)
         await pilot.pause()
         # No row created
-        assert conv._stream_rows == {}
+        assert conv.stream_rows == {}
 
 
 @pytest.mark.asyncio
@@ -200,7 +200,7 @@ async def test_end_seals_only_the_named_stream() -> None:
 
         router._on_stream_end(_end_msg("A1"), conv, header)
         await pilot.pause()
-        assert "A1" not in conv._stream_rows
-        assert "B1" in conv._stream_rows, (
+        assert "A1" not in conv.stream_rows
+        assert "B1" in conv.stream_rows, (
             "ending A1 must not touch B1's row"
         )
