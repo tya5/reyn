@@ -271,7 +271,7 @@ def test_postprocessor_mid_run_discard_notifies_upstream(
 
     async def go() -> None:
         # A registers a chain waiting on B
-        await sess_a._chains.register(
+        await sess_a.chains.register(
             chain_id="chain-post-001",
             from_user=True,
             depth=1,
@@ -281,7 +281,7 @@ def test_postprocessor_mid_run_discard_notifies_upstream(
             origin_agent="user",
             origin_depth=0,
         )
-        assert sess_a._chains.find_chain("chain-post-001") is not None
+        assert sess_a.chains.find_chain("chain-post-001") is not None
 
         # B starts a skill_run (simulates a skill that has entered __post__)
         b_reg = sess_b._get_skill_registry()
@@ -309,7 +309,7 @@ def test_postprocessor_mid_run_discard_notifies_upstream(
     asyncio.run(go())
 
     # A's chain must be force-resolved
-    assert sess_a._chains.find_chain("chain-post-001") is None, (
+    assert sess_a.chains.find_chain("chain-post-001") is None, (
         "A's pending chain must be resolved after B's run is discarded"
     )
 
@@ -396,7 +396,7 @@ def test_postprocessor_mid_run_chain_timeout_fires(
 
     async def go() -> None:
         # A registers a chain waiting on B — arm the watchdog at the same time
-        chain = await sess_a._chains.register(
+        chain = await sess_a.chains.register(
             chain_id="chain-timeout-post-001",
             from_user=True,
             depth=1,
@@ -406,13 +406,13 @@ def test_postprocessor_mid_run_chain_timeout_fires(
             origin_agent="user",
             origin_depth=0,
         )
-        sess_a._chains.arm_timeout(
+        sess_a.chains.arm_timeout(
             "chain-timeout-post-001",
             on_fire=sess_a._on_chain_timeout_fire,
         )
 
         # Verify chain is registered
-        assert sess_a._chains.find_chain("chain-timeout-post-001") is not None
+        assert sess_a.chains.find_chain("chain-timeout-post-001") is not None
 
         # B starts its skill — simulates __post__ state (no completion)
         b_reg = sess_b._get_skill_registry()
@@ -431,7 +431,7 @@ def test_postprocessor_mid_run_chain_timeout_fires(
     asyncio.run(go())
 
     # A's chain must be force-resolved by the watchdog
-    assert sess_a._chains.find_chain("chain-timeout-post-001") is None, (
+    assert sess_a.chains.find_chain("chain-timeout-post-001") is None, (
         "watchdog must force-resolve A's chain regardless of postprocessor state"
     )
 
