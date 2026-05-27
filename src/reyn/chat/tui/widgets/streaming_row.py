@@ -81,6 +81,9 @@ def _fmt_idle(idle_seconds: float) -> str:
 # import cycle (conversation already imports this module); must stay in
 # sync with conversation._BODY_INDENT_WITH_TS (= _BODY_INDENT_COLS alias).
 _BODY_INDENT_COLS = 8
+# Public alias for cross-module invariant tests that check the
+# ts-on indent stays in sync with ``conversation.BODY_INDENT_COLS``.
+BODY_INDENT_COLS = _BODY_INDENT_COLS
 
 
 class StreamingRow(Widget):

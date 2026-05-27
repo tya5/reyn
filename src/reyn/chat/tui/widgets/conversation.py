@@ -85,6 +85,9 @@ _BODY_INDENT_NO_TS = 2
 # directly (e.g. streaming_row.py, foldable_markdown.py, tests) still
 # compiles. Points at the ts-on value (= the default).
 _BODY_INDENT_COLS = _BODY_INDENT_WITH_TS
+# Public alias for cross-module invariant tests that pin
+# ``streaming_row.BODY_INDENT_COLS == conversation.BODY_INDENT_COLS``.
+BODY_INDENT_COLS = _BODY_INDENT_COLS
 _FOLD_WIDTH_FALLBACK = 73   # estimated body width when size.width is 0 (= 80 - _BODY_INDENT_WITH_TS)
 # /copy ring-buffer depth. Far enough back that the user can grab "the
 # reply two turns ago" — the typical "wait, that one was useful" recovery

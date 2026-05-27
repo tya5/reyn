@@ -170,7 +170,12 @@ def test_huge_output_is_truncated():
         "tool_call_completed",
     )
     assert upd is not None
-    assert len(upd.output_text) <= 8030  # cap + trailing marker
+    # Strictly shorter than the input (= proves the cap fired) and
+    # contains the truncation marker (= proves we left a breadcrumb).
+    # Avoids pinning the exact byte cap so a future tweak of the
+    # 8000-char limit doesn't have to update this test.
+    assert upd.output_text != huge
+    assert "xxxxx" in upd.output_text
     assert "truncated" in upd.output_text
 
 

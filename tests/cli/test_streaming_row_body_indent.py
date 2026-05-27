@@ -33,7 +33,7 @@ if str(_SRC) not in sys.path:
 
 
 def test_streaming_row_indent_constant_matches_conversation() -> None:
-    """Tier 2: local ``_BODY_INDENT_COLS`` matches conversation.py source.
+    """Tier 2: local ``BODY_INDENT_COLS`` matches conversation.py source.
 
     Pins the cross-module contract — both files must agree on the
     ts-on hanging indent or the horizontal jump returns.
@@ -41,9 +41,9 @@ def test_streaming_row_indent_constant_matches_conversation() -> None:
     from reyn.chat.tui.widgets import conversation as conv_mod
     from reyn.chat.tui.widgets import streaming_row as stream_mod
 
-    assert stream_mod._BODY_INDENT_COLS == conv_mod._BODY_INDENT_COLS, (
-        f"streaming_row._BODY_INDENT_COLS={stream_mod._BODY_INDENT_COLS} "
-        f"must match conversation._BODY_INDENT_COLS={conv_mod._BODY_INDENT_COLS}"
+    assert stream_mod.BODY_INDENT_COLS == conv_mod.BODY_INDENT_COLS, (
+        f"streaming_row.BODY_INDENT_COLS={stream_mod.BODY_INDENT_COLS} "
+        f"must match conversation.BODY_INDENT_COLS={conv_mod.BODY_INDENT_COLS}"
     )
 
 

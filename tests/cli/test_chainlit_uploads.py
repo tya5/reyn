@@ -126,8 +126,7 @@ def test_collect_skips_non_image_silently(tmp_path: Path):
         _FakeElement(path=str(tmp_path / "ghost.png")),
     ]
     out = collect_image_blocks(elements)
-    assert len(out) == 1
-    assert out[0]["path"] == str(img.resolve())
+    assert [b["path"] for b in out] == [str(img.resolve())]
 
 
 def test_collect_handles_empty_or_none(tmp_path: Path):
