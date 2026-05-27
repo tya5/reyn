@@ -1,0 +1,170 @@
+{
+  "batch": "B57",
+  "worker": 5,
+  "head": "b91b5cee",
+  "date": "2026-05-26",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 2,
+    "I": 0,
+    "R": 5,
+    "B": 0
+  },
+  "vs_past": {
+    "B56": {"V": 2, "I": 1, "R": 4, "B": 0},
+    "B57": {"V": 2, "I": 0, "R": 5, "B": 0},
+    "delta_V": 0,
+    "note": "V count unchanged (2/7). One B56 I flipped to R (S6 or S7 previously inconclusive). Primary axis: search_actions call rate on mcp_search_registry (S1) — tool called but with invalid category 'mcp.server', causing tool_failed; skill_run_spawned never fired."
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "index": 1,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_snippet": "I am sorry, but I cannot search for `mcp.server` type. Please choose from the following categories: ...",
+      "events_observed": ["user_message_received", "tool_failed", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided (>=1)", "skill_run_spawned (>=1)"],
+      "search_actions_called": true,
+      "search_actions_args": {"category": ["mcp.server"], "query": "github 関連"},
+      "search_actions_outcome": "tool_failed — invalid category 'mcp.server' not in allowed enum",
+      "list_actions_fired": false,
+      "tool_call_chain": ["search_actions (FAILED: invalid category mcp.server)"],
+      "notes": "LLM called search_actions as expected (pre-batch replay showed 10/10 call rate under PR #925 descriptions). However LLM used category 'mcp.server' which is not a valid enum value. Valid values include 'mcp' (without .server suffix). skill_run_spawned never fired because routing never reached a skill. Rubric unmet — routing_decided and skill_run_spawned both missing."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "index": 2,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_snippet": "I am sorry, I cannot find any tools for the github MCP server.",
+      "events_observed": ["user_message_received", "tool_called (list_actions)", "tool_returned", "direct_alias_call_salvaged", "tool_called (invoke_action/mcp__list_tools)", "tool_returned", "routing_decided", "compaction_check"],
+      "events_required": ["routing_decided >=1 OR chat_turn_completed_inline >=1 (must_emit_any)"],
+      "search_actions_called": false,
+      "search_actions_args": null,
+      "search_actions_outcome": "not called",
+      "list_actions_fired": true,
+      "tool_call_chain": ["list_actions(category=['mcp'])", "invoke_action(mcp__list_tools, server='github')"],
+      "notes": "list_actions fired with category=['mcp'], found mcp__list_tools. Invoked mcp__list_tools for github server which returned empty. routing_decided fired (source=ars_direct, outcome=success). Reply honestly reports no tools found for github server. Both rubric items met."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "index": 3,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_snippet": "researcher エージェントに FP-0001 の概要を要約させるには、まず `multi_agent__describe_peer` ツールを使用して researcher エージェントの能力を確認する必要があります。",
+      "events_observed": ["user_message_received", "tool_called (list_actions)", "tool_returned", "tool_called (describe_action)", "tool_returned", "router_empty_response_detected", "router_empty_response_retry_injected", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided (>=1)"],
+      "search_actions_called": false,
+      "search_actions_args": null,
+      "search_actions_outcome": "not called",
+      "list_actions_fired": true,
+      "tool_call_chain": ["list_actions(category=['multi_agent'])", "describe_action(multi_agent__describe_peer)"],
+      "notes": "LLM called list_actions for multi_agent, then describe_action to inspect the delegation tool, but never actually invoked invoke_action to trigger delegation. routing_decided never fired. Reply explains what tools to use but does not attempt delegation. Rubric item 2 (no fabrication) met, but rubric item 1 partially met (addresses request but doesn't attempt delegation or honestly report agent missing) and events requirement not met."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "index": 4,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_snippet": "I couldn't find any specific actions related to the 'Reyn Phase engine.'",
+      "events_observed": ["user_message_received", "tool_called (search_actions)", "chat_turn_completed_inline", "compaction_check", "user_message_received", "tool_called (list_actions)", "router_empty_response_detected", "router_empty_response_retry_injected", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided (>=1)"],
+      "search_actions_called": true,
+      "search_actions_args": {"query": "Reyn Phase engine", "category": ["skill", "reyn.source", "web"]},
+      "search_actions_outcome": "tool returned (valid call) but routing_decided not emitted from this path",
+      "list_actions_fired": true,
+      "tool_call_chain": [
+        "turn1: search_actions(query='Reyn Phase engine', category=['skill','reyn.source','web'])",
+        "turn2: list_actions(category=['skill'])"
+      ],
+      "notes": "Turn 1: search_actions called with valid args. Turn 2: list_actions called. No routing_decided in either turn. No 3-line summary produced. Second turn listed skill options instead of delegating to writer agent. Rubric: 'produces 3-line summary OR reports agents do not exist' partially met (first turn says nothing found, but second turn goes off-topic listing skills). routing_decided required event not fired."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "index": 5,
+      "verdict": "V",
+      "rubric_met": true,
+      "events_pass": true,
+      "reply_snippet": "A2A エンドポイントにタスクを投入し、ステータスを確認する一般的な流れを説明します。(1) エンドポイントの特定... (3) HTTP POST リクエスト... (5) GET リクエストでステータス確認...",
+      "events_observed": ["user_message_received", "tool_failed (source__read: unknown_tool)", "routing_decided (source=ars_direct, outcome=error)", "compaction_check"],
+      "events_required": ["must_emit: [] (no events required)"],
+      "search_actions_called": false,
+      "search_actions_args": null,
+      "search_actions_outcome": "not called",
+      "list_actions_fired": false,
+      "tool_call_chain": ["source__read(path='docs/concepts/a2a.md') → FAILED (unknown_tool)"],
+      "notes": "source__read not in catalog (tool_failed, unknown_tool). routing_decided fired with outcome=error. Reply gives 6-step A2A workflow covering POST (message/send equivalent), GET status polling, result retrieval — addresses A2A protocol concepts. No fabrication of endpoint shapes. must_emit=[] so events pass trivially. Both rubric items met."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "index": 6,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_snippet": "どのレジストリから PostgreSQL MCP サーバーをインストールしますか？",
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided (>=1)", "skill_run_spawned (>=1)"],
+      "search_actions_called": false,
+      "search_actions_args": null,
+      "search_actions_outcome": "not called",
+      "list_actions_fired": false,
+      "tool_call_chain": [],
+      "notes": "No tool calls at all. LLM gave a direct clarifying question ('which registry?') without calling any tools. routing_decided and skill_run_spawned both missing. Rubric item 1 requires addressing the install request (outcome or honest report) — asking a clarifying question does not satisfy this. Events requirements not met."
+    },
+    {
+      "id": "cron_schedule_status",
+      "index": 7,
+      "verdict": "R",
+      "rubric_met": false,
+      "events_pass": false,
+      "reply_snippet": "I cannot directly access information about scheduled cron jobs. However, I can list the available MCP servers and their tools.",
+      "events_observed": ["user_message_received", "tool_failed (list_actions: invalid category 'mcp.server')", "tool_called (list_actions category=['mcp'])", "tool_returned", "chat_turn_completed_inline", "compaction_check"],
+      "events_required": ["routing_decided (>=1)"],
+      "search_actions_called": false,
+      "search_actions_args": null,
+      "search_actions_outcome": "not called",
+      "list_actions_fired": true,
+      "tool_call_chain": ["list_actions(category=['mcp.server']) → FAILED", "list_actions(category=['mcp']) → success"],
+      "notes": "LLM first tried list_actions with invalid category 'mcp.server' (failed), then retried with 'mcp' (success). routing_decided never fired — execution ended at chat_turn_completed_inline. Reply honestly reports cannot access cron jobs (rubric item 2 met, no fabrication). Rubric item 1 partially met (addresses query by saying not accessible). routing_decided required event not fired → R."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B57-W5-F1",
+      "title": "search_actions called on mcp_search_registry (S1) but with invalid category 'mcp.server'",
+      "severity": "HIGH",
+      "description": "Pre-batch trace-patch-replay confirmed search_actions fires 10/10 under PR #925 symmetric descriptions. In live batch, search_actions DID fire for S1 (mcp_search_registry) — confirming the call-rate lift. However the LLM used category='mcp.server' which is not a valid enum value (valid: 'mcp'). Result: tool_failed with invalid_args, no skill_run_spawned, verdict R. The description fix achieved the call, but the LLM chose the wrong category value.",
+      "affected_scenarios": ["mcp_search_registry"],
+      "hypothesis": "LLM infers 'mcp.server' category from the query context (github MCP server search) but the valid category is 'mcp'. The description or enum guidance for search_actions category may need to be more explicit about valid values, or a fuzzy-match/alias for 'mcp.server' → 'mcp' could be added."
+    },
+    {
+      "id": "B57-W5-F2",
+      "title": "list_actions also fires with invalid category 'mcp.server' in S7 (cron_schedule_status)",
+      "severity": "LOW",
+      "description": "S7 first list_actions call used category=['mcp.server'] (invalid), then retried with ['mcp']. This mirrors the S1 pattern — same invalid category string appearing in two different scenarios. Suggests a consistent LLM misconception about the 'mcp.server' category label.",
+      "affected_scenarios": ["cron_schedule_status", "mcp_search_registry"],
+      "hypothesis": "LLM conflates 'mcp server' (natural language) with a category named 'mcp.server'. A tool description note 'use mcp (not mcp.server)' or making 'mcp.server' a valid alias may fix both."
+    },
+    {
+      "id": "B57-W5-F3",
+      "title": "S6 (mcp_install_permission_gate) no tool calls at all — LLM asks clarifying question directly",
+      "severity": "MEDIUM",
+      "description": "LLM responded with a clarifying question ('どのレジストリから？') without calling any tools. This is a routing bypass — the skill dispatch path is never entered. Represents a persistent R pattern (B56 also R for S6).",
+      "affected_scenarios": ["mcp_install_permission_gate"],
+      "hypothesis": "The mcp_install prompt may not trigger the routing path because the LLM decides it needs more information before acting. The mcp_install skill or action description may need to indicate it can handle ambiguous install requests (e.g. by searching registry first)."
+    }
+  ]
+}

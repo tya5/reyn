@@ -1,0 +1,164 @@
+{
+  "batch": "B57",
+  "worker": 7,
+  "head": "b91b5cee",
+  "date": "2026-05-26",
+  "scenario_set": "long_session_v1.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 5,
+    "I": 0,
+    "R": 2,
+    "B": 0
+  },
+  "vs_past": {
+    "B56": {"V": 5, "I": 0, "R": 2, "B": 0},
+    "delta": {"V": 0, "I": 0, "R": 0, "B": 0},
+    "note": "Identical V/R split vs B56. B56 R were S1 (source__read attractor) + S5 (plan empty step). Both recur in B57 — structural, not noise."
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "verdict": "R",
+      "turns_completed": 5,
+      "turns_total": 5,
+      "rubric_pass": [
+        {"item": "final answer addresses skill-specific leakage prevention (P7 or equivalent)", "pass": true, "note": "Reply discusses separation of concerns, constrained decision-making, workspace/event principles as P7-equivalent."},
+        {"item": "references concepts established in earlier turns without re-explaining from scratch", "pass": false, "note": "Every turn re-explains Reyn from scratch. source__read called 6 times; agent re-reads project docs on each turn rather than relying on session history."},
+        {"item": "does not produce an empty reply on the final turn", "pass": true, "note": "Final reply non-empty (REYN_EMPTY_STOP_RETRY caught 4 empty stops and retried successfully)."}
+      ],
+      "events_pass": true,
+      "key_observations": [
+        "source__read attractor: routing_decided action_name=reyn.source__read on all 5 turns (6 total calls) — structural recurrence from B56.",
+        "4 router_empty_response_detected events; all caught and retried by REYN_EMPTY_STOP_RETRY=1.",
+        "Rubric item 2 fails: each turn starts with 'Reyn is an LLM workflow operating system...' re-introduction, no use of prior context."
+      ]
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "verdict": "V",
+      "turns_completed": 6,
+      "turns_total": 6,
+      "rubric_pass": [],
+      "events_pass": true,
+      "key_observations": [
+        "No expected/rubric section. All 6 turns returned HTTP 200, non-empty replies.",
+        "Pronoun follow-up turns (T2-T6) received valid responses, though T2-T6 tended to re-list all skills rather than focusing on the simplest one.",
+        "T3 (event types) answered with index_events config fields rather than event types of the simplest skill — plausible interpretation."
+      ]
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "verdict": "V",
+      "turns_completed": 5,
+      "turns_total": 5,
+      "rubric_pass": [],
+      "events_pass": true,
+      "key_observations": [
+        "No expected/rubric section. All 5 turns returned HTTP 200, non-empty replies.",
+        "T4 (compare LangGraph vs Reyn async) and T5 (migration steps) both referenced both systems — cross-reference maintained.",
+        "web__search used for T1 (LangGraph) and T2 (Reyn)."
+      ]
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "verdict": "V",
+      "turns_completed": 6,
+      "turns_total": 6,
+      "rubric_pass": [],
+      "events_pass": true,
+      "key_observations": [
+        "No expected/rubric section. All 6 turns returned HTTP 200, non-empty replies.",
+        "search_actions called once on T3 ('Which of those skills are used most commonly in dogfood sessions?') — expected behavior, not an attractor.",
+        "Repetitive prompts caused list_actions to be called on nearly every turn — expected for this scenario design.",
+        "No empty responses detected for this scenario."
+      ]
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "verdict": "R",
+      "turns_completed": 5,
+      "turns_total": 5,
+      "rubric_pass": [
+        {"item": "final reply contains a working minimal async producer-consumer queue example in Python", "pass": false, "note": "Final reply: 'Regarding the producer-consumer example, I found a relevant one on Stack Overflow that uses asyncio.Queue. Would you like me to fetch and display it?' — no code provided."},
+        {"item": "the code uses asyncio.Queue or equivalent", "pass": false, "note": "No code in reply at all."},
+        {"item": "does not produce an empty reply on the final turn", "pass": true, "note": "Reply text non-empty."}
+      ],
+      "events_pass": true,
+      "key_observations": [
+        "Plan empty step attractor recurs from B56: last plan (goal='...provide a minimal async producer-consumer queue example') had 2 steps; producer_consumer_example step completed with content_len=166 but yielded ask-user question instead of code.",
+        "reyn_src_read called on 'Provide a minimal Python asyncio example' plan step — tried to read examples/asyncio_producer_consumer.py which doesn't exist.",
+        "3 plans total spawned for S5. Compaction triggered (chat_compactor ran with 25 events).",
+        "1 empty plan step detected (event_loop_explanation in plan a5190078, content_len=0)."
+      ]
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "verdict": "V",
+      "turns_completed": 5,
+      "turns_total": 5,
+      "rubric_pass": [],
+      "events_pass": true,
+      "key_observations": [
+        "No expected/rubric section. All 5 turns returned HTTP 200, non-empty replies.",
+        "source__glob called 3 times but returned 'tool not available' errors — agent fell back to 'I cannot find any ADRs' responses.",
+        "T4 used file__glob as fallback after source__glob failure. T5 used reyn.source__list.",
+        "All replies non-empty despite tool failures — agent communicated failure state clearly."
+      ]
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "verdict": "V",
+      "turns_completed": 5,
+      "turns_total": 5,
+      "rubric_pass": [],
+      "events_pass": true,
+      "key_observations": [
+        "No expected/rubric section. All 5 turns returned HTTP 200, non-empty replies.",
+        "T2 (CAP theorem) was short (101 chars) but non-empty.",
+        "T5 (repair strategies) spawned a plan that ended with fallback text: 'the search did not yield any results from the distributed_systems source' — plan ran but yielded insufficient content.",
+        "No source__read attractor (general topic, no project doc reads).",
+        "web_search and recall used appropriately for distributed systems topics."
+      ]
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B57-W7-F1",
+      "title": "S1 source__read attractor is STRUCTURAL (B56 recurrence confirmed)",
+      "severity": "HIGH",
+      "description": "scenario_1 source__read attractor from B56 recurs identically in B57. routing_decided action_name=reyn.source__read on all 5 turns (6 calls). Agent reads project docs on every turn instead of using session history context. This causes rubric item 2 to fail: each turn re-introduces Reyn from scratch regardless of prior conversation. N=2 batches, same behavior.",
+      "evidence": "S1 events: 6x routing_decided {action_name: 'reyn.source__read'}, 4x router_empty_response_detected (all retried). Trace: invoke_action used on all 5 turns.",
+      "hypothesis": "source__read is the dominant path in the router for Reyn-concept questions; session history is not weighted against project source reads."
+    },
+    {
+      "id": "B57-W7-F2",
+      "title": "S5 plan empty step / incomplete code delivery is STRUCTURAL (B56 recurrence confirmed)",
+      "severity": "HIGH",
+      "description": "scenario_5 plan empty step attractor from B56 recurs in B57. Final turn plan step for producer-consumer queue example had content_len=166 but yielded 'Would you like me to fetch and display it?' instead of actual code. The reyn_src_read tool attempted to read examples/asyncio_producer_consumer.py (non-existent file) before falling back to the ask-user pattern. N=2 batches, same behavior.",
+      "evidence": "S5 events: plan_step_completed {step_id: 'producer_consumer_example', content_len: 166}. LLM trace: reyn_src_read called with path='examples/asyncio_producer_consumer.py'. Final reply contains no code block.",
+      "hypothesis": "Plan sub-steps for code examples attempt to read local files first; when file absent, fall back to ask-user rather than generating code directly."
+    },
+    {
+      "id": "B57-W7-F3",
+      "title": "search_actions called once (S4-T3) — not an attractor",
+      "severity": "INFO",
+      "description": "search_actions was called once in S4 T3 ('Which of those skills are used most commonly in dogfood sessions?') with query='dogfood sessions skill usage'. This is appropriate tool use, not an attractor. The B57 dispatch note mentioned monitoring search_actions calls — found 1 call, appears rational.",
+      "evidence": "LLM trace: 1 search_actions call with input {query: 'dogfood sessions skill usage', category: ['skill']}. Caller_hint: router. Trigger: 'Which of those skills are used most commonly in dogfood sessions?'"
+    },
+    {
+      "id": "B57-W7-F4",
+      "title": "REYN_EMPTY_STOP_RETRY=1 effective for S1 empty stops (4 caught)",
+      "severity": "INFO",
+      "description": "S1 triggered 4 router_empty_response_detected events (all on source__read result turns at ~16500 prompt tokens). REYN_EMPTY_STOP_RETRY=1 successfully retried all 4, producing non-empty final replies. Without this env var, S1 would likely be B (blocked) on turns 3-5.",
+      "evidence": "S1 events: 4x {type: 'router_empty_response_detected', data: {completion_tokens: 0, prompt_tokens: ~16510}}. 4x router_empty_response_retry_injected following each."
+    }
+  ]
+}

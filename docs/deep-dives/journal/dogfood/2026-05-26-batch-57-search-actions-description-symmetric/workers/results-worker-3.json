@@ -1,0 +1,193 @@
+{
+  "batch": "B57",
+  "worker": 3,
+  "head": "b91b5cee",
+  "date": "2026-05-27",
+  "scenario_set": "control_ir_ops.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 9,
+    "I": 0,
+    "R": 0,
+    "B": 0
+  },
+  "vs_past": {
+    "B56": {"V": 7, "I": 1, "R": 1, "B": 0},
+    "B57": {"V": 9, "I": 0, "R": 0, "B": 0},
+    "delta": "+2V, -1I, -1R"
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "seq": 1,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Summarised all 8 P1-P8 principles from docs/concepts/principles.md",
+      "events_observed": {
+        "routing_decided": 1,
+        "tool_executed": 1,
+        "tool_called": 1,
+        "permission_granted": 1
+      },
+      "notes": "file__read called directly. No search_actions call observed."
+    },
+    {
+      "id": "file_glob_grep",
+      "seq": 2,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Listed 8 skill.md files under src/ that mention preprocessor",
+      "events_observed": {
+        "routing_decided": 2,
+        "tool_executed": 2,
+        "tool_called": 2,
+        "permission_granted": 2
+      },
+      "notes": "file__glob + file__grep both called. 2 routing_decided events (retry pattern). No search_actions call."
+    },
+    {
+      "id": "web_search_query",
+      "seq": 3,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Reported search results referencing OpenAI Python library on GitHub + 2026 YouTube result",
+      "events_observed": {
+        "routing_decided": 1,
+        "web_search_started": 1,
+        "web_search_completed": 1,
+        "tool_called": 1,
+        "router_empty_response_detected": 1,
+        "router_empty_response_retry_injected": 1
+      },
+      "notes": "web__search called directly (not via invoke_action). Empty-stop retry fired. No search_actions call."
+    },
+    {
+      "id": "web_fetch_url",
+      "seq": 4,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Mentioned PEP 695 type parameter syntax and PEP 701 f-string formalization as key Python 3.12 features",
+      "events_observed": {
+        "routing_decided": 1,
+        "web_fetch_started": 1,
+        "web_fetch_completed": 1,
+        "tool_called": 1,
+        "router_empty_response_detected": 1,
+        "router_empty_response_retry_injected": 1
+      },
+      "notes": "web__fetch called directly. Empty-stop retry fired. No permission_denied. No search_actions call."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "seq": 5,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Reported output as 4, no error or permission denial",
+      "events_observed": {
+        "routing_decided": 1,
+        "sandboxed_exec_started": 1,
+        "sandboxed_exec_completed": 1,
+        "tool_called": 1
+      },
+      "notes": "invoke_action called for sandboxed_exec. No permission_denied. No search_actions call."
+    },
+    {
+      "id": "lint_a_skill",
+      "seq": 6,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Reported index_events skill has one error (preprocessor not declared in permissions.python)",
+      "events_observed": {
+        "routing_decided": 1,
+        "lint_completed": 1,
+        "tool_called": 1,
+        "router_empty_response_detected": 1,
+        "router_empty_response_retry_injected": 1
+      },
+      "notes": "invoke_action called with action_name=validation__lint and skill_path=skill__index_events. Both rubric items met: reported pass/fail status + mentioned error count (one error). No search_actions call."
+    },
+    {
+      "id": "recall_indexed_source",
+      "seq": 7,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Clearly reported no indexed sources found for 'phase rollback'; did not fabricate details",
+      "events_observed": {
+        "routing_decided": 1,
+        "tool_called": 1,
+        "permission_granted": 3
+      },
+      "notes": "invoke_action called with action_name=rag.operation__recall, result={chunks:[], mode:'fallback'}. Rubric: 'clearly reports no indexed sources' path taken. No search_actions call."
+    },
+    {
+      "id": "judge_output_direct",
+      "seq": 8,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Reported verdict=Passed, score=1.0, both criteria met with references to description and phase fields",
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "tool_executed": 1,
+        "workflow_finished": 1,
+        "phase_completed": 1,
+        "artifact_created": 3,
+        "postprocessor_step_completed": 1
+      },
+      "notes": "judge_phase skill ran end-to-end. No validation_error. No permission_denied. All 3 rubric items met. No search_actions call."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "seq": 9,
+      "verdict": "V",
+      "rubric_pass": true,
+      "events_pass": true,
+      "reply_summary": "Turn 1: asked for skill name inline. Turn 2: asked again. Turn 3: used my_demo_skill name, reported scaffolding started",
+      "events_observed": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "chat_turn_completed_inline": 3,
+        "workflow_finished": 1,
+        "phase_completed": 6,
+        "artifact_created": 8
+      },
+      "notes": "Inline clarification path taken (not ask_user Control IR op). must_emit_any satisfied by chat_turn_completed_inline. Final reply references my_demo_skill. skill_builder completed successfully. Required 3 turns (loop on name request). No search_actions call."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B57-W3-F1",
+      "title": "search_actions: 0/9 calls (W3 control_ir_ops) — consistent with B56 baseline",
+      "description": "search_actions was available in the LLM tool list for all 9 router-layer traces (28/76 total traces had it available) but was called 0 times. LLM chose direct tools (file__read, file__glob, file__grep, web__search, web__fetch, invoke_action, skill__skill_builder) in all cases. This is consistent with B56 baseline (0/9 calls). The B57 hypothesis — that description-symmetric changes would lift search_actions call rate — was not confirmed in this scenario set. Direct tool affordance dominates when the tool name is explicitly stated in the prompt.",
+      "severity": "observation",
+      "hypothesis": "search_actions non-use may be prompt-specificity effect: prompts in control_ir_ops scenarios name the tool or action explicitly (e.g. 'validation__lint__skill_path action', 'rag.operation__recall action'), bypassing the discovery path. Scenarios without explicit tool names may show different rates."
+    },
+    {
+      "id": "B57-W3-F2",
+      "title": "S5 sandboxed_exec: V (unexpected vs B56 outcome_prediction 0.0)",
+      "description": "S5 was predicted at 0.0 verified probability (calibrated from prior batches showing macOS Seatbelt issues). In this run, sandboxed_exec_started + sandboxed_exec_completed fired and the reply correctly reported output=4. The worktree reyn.yaml has sandbox.backend: noop configured by the dispatch setup, which explains the success without Seatbelt enforcement.",
+      "severity": "observation"
+    },
+    {
+      "id": "B57-W3-F3",
+      "title": "S9 ask_user: skill_builder looped on name request for 2 turns before proceeding",
+      "description": "Turn 1 and Turn 2 both returned 'what would you like to name the skill?' with the agent seemingly not retaining the turn-1 answer. Only Turn 3 ('The skill name is my_demo_skill. Please proceed.') triggered skill_builder. This is an inline clarification path loop — the agent asked the same question twice before proceeding. The skill ultimately ran to completion with the correct name referenced. Verdict V because rubric and events are both satisfied.",
+      "severity": "minor"
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "batch": "B57",
+  "worker": 1,
+  "head": "b91b5cee",
+  "date": "2026-05-27",
+  "scenario_set": "chat_router_smoke.yaml",
+  "env_vars": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "REYN_SPAWN_ACK_TO_LLM": "1"
+  },
+  "user_params": {
+    "hot_list_n": 10,
+    "models_tier": "flash-lite"
+  },
+  "verdicts": {
+    "V": 5,
+    "I": 0,
+    "R": 2,
+    "B": 0
+  },
+  "vs_past": {
+    "B56": { "V": 5, "I": 0, "R": 2, "B": 0 },
+    "B57": { "V": 5, "I": 0, "R": 2, "B": 0 },
+    "delta": "no change vs B56 (5V/0I/2R/0B)"
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "verdict": "V",
+      "reply_summary": "Described Reyn's capabilities: agent workflow execution, task automation, agent coordination, tool use. Mentions skills explicitly.",
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "rubric_pass": true,
+      "search_actions_called": false,
+      "notes": "Inline reply path. Rubric met: mentions skills, agents, chat capabilities. Events: user_message_received ✓, no permission_denied ✓."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "verdict": "V",
+      "reply_summary": "Explained idempotency with HTTP GET/POST examples clearly.",
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "rubric_pass": true,
+      "search_actions_called": false,
+      "notes": "Inline reply. Rubric met: explains idempotency factually and comprehensibly. No permission_denied ✓."
+    },
+    {
+      "id": "skill_discovery_request",
+      "verdict": "V",
+      "reply_summary": "Listed 14 skills by name with descriptions (direct_llm, eval, word_stats_demo, etc.).",
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check", "router_empty_response_detected", "router_empty_response_retry_injected", "tool_called(list_actions)", "tool_returned"],
+      "rubric_pass": true,
+      "search_actions_called": false,
+      "notes": "Used list_actions tool (not search_actions). must_emit_any: chat_turn_completed_inline ✓. Rubric met: mentions multiple skill names. Empty-stop retry fired (REYN_EMPTY_STOP_RETRY=1 path exercised)."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "verdict": "V",
+      "reply_summary": "word_stats_demo ran (6 spawns due to over-spawning behavior), reply mentions 44 characters.",
+      "events_pass": true,
+      "events_observed": ["user_message_received", "routing_decided(x6)", "skill_run_spawned(x6)", "skill_run_completed(status=finished,x6)", "chat_turn_completed_inline"],
+      "rubric_pass": true,
+      "artifacts_pass": true,
+      "search_actions_called": false,
+      "notes": "Skill ran 6 times (over-spawning attractor — same pattern as prior batches). Rubric met: reply mentions character count (44). Events: routing_decided ✓, skill_run_spawned ✓, skill_run_completed status=finished ✓. Artifacts: word_stats_demo present ✓. invoke_action used (not search_actions)."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "verdict": "R",
+      "reply_summary": "LLM asked for clarification (theme/mood preference) instead of writing a poem.",
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "rubric_pass": false,
+      "artifacts_pass": false,
+      "search_actions_called": false,
+      "notes": "Rubric not met: reply does not contain a poem or poem-like text. LLM deflected to clarification request. Also: artifacts require {skill: direct_llm, present: true} — not dispatched. Same R verdict as B56."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "verdict": "V",
+      "reply_summary": "Turn 1: explained list comprehension in one line. Turn 2: provided two Python code examples (squares, even_numbers) demonstrating list comprehension.",
+      "events_pass": true,
+      "events_observed": ["user_message_received(x2)", "chat_turn_completed_inline(x2)", "compaction_check(x2)"],
+      "rubric_pass": true,
+      "search_actions_called": false,
+      "notes": "Multi-turn worked correctly. Pronoun reference ('それ') resolved correctly to list comprehension. Rubric met: code example present and coherent with first turn."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "verdict": "R",
+      "reply_summary": "LLM asked 'What kind of image would you like?' instead of declining.",
+      "events_pass": true,
+      "events_observed": ["user_message_received", "chat_turn_completed_inline", "compaction_check"],
+      "rubric_pass": false,
+      "search_actions_called": false,
+      "notes": "Rubric not met: reply does not politely decline; instead asks for image details. Same R verdict as B56."
+    }
+  ],
+  "search_actions_observation": {
+    "primary_axis": "search_actions call-rate vs B56 baseline (0/N)",
+    "b56_baseline": "0/7 scenarios called search_actions",
+    "b57_observed": "0/7 scenarios called search_actions",
+    "search_actions_in_tool_calls": false,
+    "search_actions_in_llm_trace_as_available_tool": false,
+    "search_actions_in_system_prompt": true,
+    "note": "search_actions appears in the system prompt instructions (router flow guidance: 'list_actions → search_actions → describe_action → invoke_action') but was never invoked as an actual tool. LLM used list_actions (S3) and invoke_action (S4) directly. No change from B56 baseline."
+  },
+  "new_findings": [
+    {
+      "id": "B57-F1",
+      "severity": "INFO",
+      "description": "search_actions call-rate = 0/7 (unchanged from B56 baseline). Tool appears in system prompt flow guidance but LLM bypassed it in all scenarios, using list_actions and invoke_action directly.",
+      "affected_scenarios": ["all"],
+      "hypothesis": "The description-symmetric change (B57 primary axis) did not increase search_actions call rate above 0. Either the symmetric description is not sufficient to trigger search_actions usage, or flash-lite routes directly to list_actions/invoke_action regardless of description symmetry.",
+      "action": "Escalate to aggregator for cross-worker analysis."
+    },
+    {
+      "id": "B57-F2",
+      "severity": "OBSERVE",
+      "description": "S4 (word_stats_demo) over-spawning persists: 6 skill_run_spawned events for a single user request. Same behavior observed in prior batches.",
+      "affected_scenarios": ["explicit_skill_invocation_word_stats"],
+      "hypothesis": "Carry-over from prior batch over-spawning attractor. Not a regression introduced by B57 changes.",
+      "action": "Track as carry-over; not new."
+    }
+  ]
+}
