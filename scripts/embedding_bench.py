@@ -139,7 +139,7 @@ async def _run_class(
 
     cfg = load_config()
     provider = LiteLLMEmbeddingProvider(config=cfg.embedding)
-    resolved = provider._resolve_model(class_name)
+    resolved = provider.resolve_model(class_name)
 
     index = ActionEmbeddingIndex(persist_dir=None)
     await index.build(catalog, provider, class_name)

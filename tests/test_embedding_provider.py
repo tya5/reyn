@@ -198,14 +198,14 @@ class TestResolveModel:
     def test_literal_model_passthrough(self):
         """Tier 2: model with '/' is used directly without class lookup."""
         provider = _make_provider({"classes": {}})
-        assert provider._resolve_model("openai/text-embedding-3-small") == \
+        assert provider.resolve_model("openai/text-embedding-3-small") == \
             "openai/text-embedding-3-small"
 
     def test_class_lookup_string_value(self):
         """Tier 2: class name without '/' is resolved via classes dict."""
         config = {"classes": {"standard": "openai/text-embedding-3-small"}}
         provider = _make_provider(config)
-        assert provider._resolve_model("standard") == "openai/text-embedding-3-small"
+        assert provider.resolve_model("standard") == "openai/text-embedding-3-small"
 
     def test_class_lookup_dict_value(self):
         """Tier 2: dict-form class is resolved via 'model' key."""
@@ -215,7 +215,7 @@ class TestResolveModel:
             }
         }
         provider = _make_provider(config)
-        assert provider._resolve_model("custom") == "openai/text-embedding-3-large"
+        assert provider.resolve_model("custom") == "openai/text-embedding-3-large"
 
     def test_class_extends_chain(self):
         """Tier 2: 'extends' chain resolves transitively."""
@@ -226,7 +226,7 @@ class TestResolveModel:
             }
         }
         provider = _make_provider(config)
-        assert provider._resolve_model("derived") == "openai/text-embedding-3-small"
+        assert provider.resolve_model("derived") == "openai/text-embedding-3-small"
 
     def test_class_extends_with_model_override(self):
         """Tier 2: 'extends' + explicit 'model' key overrides the base model."""
@@ -240,13 +240,13 @@ class TestResolveModel:
             }
         }
         provider = _make_provider(config)
-        assert provider._resolve_model("custom") == "openai/text-embedding-3-large"
+        assert provider.resolve_model("custom") == "openai/text-embedding-3-large"
 
     def test_unknown_class_passthrough(self):
         """Tier 2: unknown class name (no '/') passes through unchanged."""
         provider = _make_provider({"classes": {}})
         # No slash, not in classes → passthrough (backward compat)
-        assert provider._resolve_model("mystery") == "mystery"
+        assert provider.resolve_model("mystery") == "mystery"
 
     def test_cycle_raises_value_error(self):
         """Tier 2: circular extends raises ValueError."""

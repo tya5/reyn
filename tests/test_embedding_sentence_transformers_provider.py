@@ -112,7 +112,7 @@ def test_class_name_resolves_to_model_string() -> None:
     """Tier 2: 'local-mini' → 'sentence-transformers/all-MiniLM-L6-v2' via classes map."""
     cfg = _config_with_local_class()
     p = SentenceTransformersEmbeddingProvider(config=cfg)
-    assert p._resolve_model("local-mini") == "sentence-transformers/all-MiniLM-L6-v2"
+    assert p.resolve_model("local-mini") == "sentence-transformers/all-MiniLM-L6-v2"
 
 
 def test_model_string_with_slash_passes_through() -> None:
@@ -120,7 +120,7 @@ def test_model_string_with_slash_passes_through() -> None:
     cfg = _config_with_local_class()
     p = SentenceTransformersEmbeddingProvider(config=cfg)
     assert (
-        p._resolve_model("sentence-transformers/all-MiniLM-L6-v2")
+        p.resolve_model("sentence-transformers/all-MiniLM-L6-v2")
         == "sentence-transformers/all-MiniLM-L6-v2"
     )
 

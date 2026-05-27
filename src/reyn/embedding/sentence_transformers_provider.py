@@ -184,7 +184,7 @@ class SentenceTransformersEmbeddingProvider:
 
     # ── Model resolution ───────────────────────────────────────────────────
 
-    def _resolve_model(self, model: str) -> str:
+    def resolve_model(self, model: str) -> str:
         """Resolve a class name to the underlying ``sentence-transformers/<id>``.
 
         If ``model`` already carries the prefix or a ``/``, return as-is.
@@ -304,7 +304,7 @@ class SentenceTransformersEmbeddingProvider:
         table for local models; sentence-transformers exposes this on
         the loaded instance).
         """
-        resolved = self._resolve_model(model)
+        resolved = self.resolve_model(model)
         m = self._load(resolved)
         return int(m.get_sentence_embedding_dimension())
 
@@ -320,7 +320,7 @@ class SentenceTransformersEmbeddingProvider:
             EmbedBatchResult with vectors in input order. ``total_tokens``
             is the estimate (no API per-token billing for local models).
         """
-        resolved = self._resolve_model(model)
+        resolved = self.resolve_model(model)
         if not texts:
             return EmbedBatchResult(vectors=[], model=resolved, total_tokens=0)
 
