@@ -45,18 +45,18 @@ async def test_normal_click_toggles_expanded_and_class() -> None:
         conv = app.query_one("#conversation", ConversationView)
         box = conv.mount_error(message="something broke")
         await pilot.pause()
-        assert box._expanded is False
+        assert box.is_expanded is False
         assert not box.has_class("-expanded")
 
         box.on_click()
         await pilot.pause()
-        assert box._expanded is True
+        assert box.is_expanded is True
         assert box.has_class("-expanded")
 
         # Second click toggles back.
         box.on_click()
         await pilot.pause()
-        assert box._expanded is False
+        assert box.is_expanded is False
         assert not box.has_class("-expanded")
 
 
@@ -64,7 +64,7 @@ async def test_normal_click_toggles_expanded_and_class() -> None:
 async def test_header_update_failure_rolls_back_expanded() -> None:
     """Tier 2: header update raising leaves the widget in pre-click state.
 
-    Simulate the failure by replacing ``_header_text`` with a method
+    Simulate the failure by replacing ``header_text`` with a method
     that raises. The post-toggle internal state should match the
     pre-click state — no drift between ``_expanded`` and the CSS
     class.
@@ -78,19 +78,19 @@ async def test_header_update_failure_rolls_back_expanded() -> None:
         conv = app.query_one("#conversation", ConversationView)
         box = conv.mount_error(message="something broke")
         await pilot.pause()
-        pre_expanded = box._expanded
+        pre_expanded = box.is_expanded
         pre_class = box.has_class("-expanded")
 
         def _explode() -> str:
             raise RuntimeError("header update failed")
 
-        box._header_text = _explode  # type: ignore[method-assign]
+        box.header_text = _explode  # type: ignore[method-assign]
         box.on_click()
         await pilot.pause()
 
         # Both should match the pre-click state (rollback).
-        assert box._expanded == pre_expanded, (
-            f"_expanded should rollback to {pre_expanded}, got {box._expanded}"
+        assert box.is_expanded == pre_expanded, (
+            f"is_expanded should rollback to {pre_expanded}, got {box.is_expanded}"
         )
         assert box.has_class("-expanded") == pre_class, (
             f"class should rollback to {pre_class}, got "

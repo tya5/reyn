@@ -182,6 +182,23 @@ class ErrorBox(Widget):
             self._inline_hint = ""
             self._first_line_for_header = first_line
 
+    # ── public accessors ─────────────────────────────────────────────────────
+
+    @property
+    def index(self) -> int:
+        """Current stack position (1-based). 0 when no badge is shown."""
+        return self._index
+
+    @property
+    def total(self) -> int:
+        """Total number of stacked errors. 0 or 1 means no badge is shown."""
+        return self._total
+
+    @property
+    def is_expanded(self) -> bool:
+        """True when the detail section is visible (= widget is expanded)."""
+        return self._expanded
+
     # ── header text helpers ───────────────────────────────────────────────────
 
     def _prefix(self) -> str:
@@ -192,6 +209,14 @@ class ErrorBox(Widget):
         if self._run_id_short:
             return f"[#{self._run_id_short}]"
         return ""
+
+    def header_text(self) -> str:
+        """Public accessor — build and return the header line string.
+
+        Delegates to ``_header_text`` so callers have a stable public
+        surface without reaching into the private method.
+        """
+        return self._header_text()
 
     def _header_text(self) -> str:
         """Build the header line for a textual ``Label`` (Rich-markup aware).
@@ -273,7 +298,7 @@ class ErrorBox(Widget):
         self._index = index
         self._total = total
         try:
-            self.query_one(".eb-header", Label).update(self._header_text())
+            self.query_one(".eb-header", Label).update(self.header_text())
         except Exception:
             pass
 
@@ -296,7 +321,7 @@ class ErrorBox(Widget):
     # ── compose ───────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        yield Label(self._header_text(), classes="eb-header")
+        yield Label(self.header_text(), classes="eb-header")
         if self._inline_hint:
             # Wave-10 follow-up I-F12: tag the Label with
             # ``-has-content`` so the CSS visibility toggles to
@@ -378,7 +403,7 @@ class ErrorBox(Widget):
             self._expanded = new_expanded
             try:
                 header = self.query_one(".eb-header", Label)
-                header.update(self._header_text())
+                header.update(self.header_text())
             except Exception:
                 # Header update failed AFTER toggle_class succeeded — roll
                 # both back so the widget stays internally consistent.
