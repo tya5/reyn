@@ -86,7 +86,7 @@ async def test_cycle_event_tail_advances_index() -> None:
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         panel = app.query_one("#right_panel", RightPanel)
-        start = panel._event_tail_idx
+        start = panel.event_tail_idx
         panel.cycle_event_tail()
         await pilot.pause()
-        assert panel._event_tail_idx == (start + 1) % len(_TAIL_CYCLE)
+        assert panel.event_tail_idx == (start + 1) % len(_TAIL_CYCLE)

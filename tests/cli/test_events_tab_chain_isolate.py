@@ -56,10 +56,10 @@ async def test_toggle_chain_isolate_captures_cursor_chain() -> None:
             {"type": "phase_started", "data": {"chain_id": "chain-B"}},
         ]
         panel._events_cursor = 0
-        assert panel._events_chain_isolate is None
+        assert panel.events_chain_isolate is None
         became_active = panel.toggle_chain_isolate()
         assert became_active is True
-        assert panel._events_chain_isolate == "chain-A"
+        assert panel.events_chain_isolate == "chain-A"
 
 
 @pytest.mark.asyncio
@@ -77,11 +77,11 @@ async def test_toggle_chain_isolate_second_press_clears() -> None:
         ]
         panel._events_cursor = 0
         panel.toggle_chain_isolate()
-        assert panel._events_chain_isolate == "chain-X"
+        assert panel.events_chain_isolate == "chain-X"
         # Second press clears.
         cleared = panel.toggle_chain_isolate()
         assert cleared is False
-        assert panel._events_chain_isolate is None
+        assert panel.events_chain_isolate is None
 
 
 @pytest.mark.asyncio
@@ -97,7 +97,7 @@ async def test_toggle_chain_isolate_empty_list_returns_false() -> None:
         panel._events_visible = []
         result = panel.toggle_chain_isolate()
         assert result is False
-        assert panel._events_chain_isolate is None
+        assert panel.events_chain_isolate is None
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ async def test_toggle_chain_isolate_cursor_event_no_chain_id() -> None:
         panel._events_cursor = 0
         result = panel.toggle_chain_isolate()
         assert result is False
-        assert panel._events_chain_isolate is None
+        assert panel.events_chain_isolate is None
 
 
 def test_render_events_filters_by_chain_isolate(tmp_path: Path) -> None:
@@ -189,7 +189,7 @@ async def test_i_key_on_events_tab_invokes_toggle() -> None:
         key_event = textual_events.Key(key="i", character="i")
         panel.on_key(key_event)
         await pilot.pause()
-        assert panel._events_chain_isolate == "C"
+        assert panel.events_chain_isolate == "C"
 
 
 def test_keys_tab_lists_i_under_panel_explicit() -> None:

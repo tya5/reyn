@@ -86,7 +86,7 @@ def test_right_panel_on_key_esc_clears_docs_filter() -> None:
     event = _Event()
     panel.on_key(event)
 
-    assert panel._docs_filter == ""
+    assert panel.docs_filter == ""
     assert invalidated == [True]
     assert event.prevented is True
     assert event.stopped is True
