@@ -709,6 +709,79 @@ def _validate_category_filter(
     return list(raw), None
 
 
+# ── Hidden-state hint (FP-0043 Component C.1) ──────────────────────────────
+#
+# When ``search_actions`` is gated out of ``tools=`` (= operator hasn't
+# configured ``action_retrieval.embedding_class``, or the embedding
+# class points at a backend whose extras aren't installed), the LLM
+# has no way to discover that semantic search exists. ``list_actions``
+# is the discovery wrapper the LLM does see; we attach a ``hint`` field
+# to its response so the LLM can surface the install / config path
+# back to the user. This is the "self-service onboarding" bridge in
+# FP-0043 §Component C.
+
+_HIDDEN_STATE_HINT: Final[str] = (
+    "Semantic action search (`search_actions`) is currently unavailable "
+    "in this session. To enable it, run ONE of:\n"
+    "  - `pip install 'reyn[local-embed]'` — local sentence-transformers "
+    "model, no credentials, ~22MB one-time download (recommended for "
+    "first-time users)\n"
+    "  - add to reyn.yaml: `action_retrieval:\\n  embedding_class: standard`"
+    " — uses OpenAI embeddings, requires `OPENAI_API_KEY`\n"
+    "Until enabled, use `list_actions(category=[...])` to browse the "
+    "catalog by category and `describe_action(action_name=...)` to inspect "
+    "a specific action."
+)
+
+
+def _search_actions_ready(rs: Any) -> bool:
+    """Return True iff ``search_actions`` would currently serve queries.
+
+    The check mirrors the router-side §D14 visibility gate (= idx
+    configured + provider + model class + index is_ready) but stays
+    local to the catalog module so the hint logic doesn't need to
+    re-import router internals.
+
+    A None ``rs`` means we're outside a real session (= unit test /
+    standalone caller); the caller decides whether to suppress the
+    hint in that case via the production-context check below.
+    """
+    if rs is None:
+        return False
+    idx = getattr(rs, "action_embedding_index", None)
+    provider = getattr(rs, "embedding_provider", None)
+    model_class = getattr(rs, "embedding_model_class", None)
+    if idx is None or provider is None or not model_class:
+        return False
+    is_ready = getattr(idx, "is_ready", None)
+    if not callable(is_ready):
+        return False
+    try:
+        return bool(is_ready())
+    except Exception:
+        return False
+
+
+def _should_inject_hidden_state_hint(rs: Any) -> bool:
+    """Return True iff the hint should be added to a list_actions response.
+
+    Fires when (a) a production-context router_state is present (=
+    ChatSession-mediated; rules out pure unit-test contexts that
+    don't construct an rs at all) AND (b) search_actions is not
+    currently usable. Pure-test contexts (``rs is None``) are
+    explicitly excluded so test fixtures + LLMReplay don't drift.
+
+    Brief false-positives during the background index build (= rs is
+    present but idx.is_ready() returns False yet) are acceptable —
+    the hint is informational, not blocking; the LLM may surface
+    "install local-embed" once during boot, then stop on subsequent
+    turns once the index becomes ready.
+    """
+    if rs is None:
+        return False
+    return not _search_actions_ready(rs)
+
+
 # ── Real handlers (PR-3a) ─────────────────────────────────────────────────
 
 
@@ -727,6 +800,12 @@ async def _handle_list_actions(
     #934: when ``category=[…]`` carries a name not in the current
     ``CATEGORIES`` tuple (= LLM-training-time stale enum), the handler
     returns an explicit error envelope instead of silently filtering.
+
+    FP-0043 Component C.1: when ``search_actions`` is gated out of
+    ``tools=`` in the current session, a ``hint`` field is added to
+    the response so the LLM can surface install / config instructions
+    to the user. Pure-test contexts (``router_state=None``) don't
+    receive the hint so fixture replay stays byte-stable.
     """
     # Validate category filter — surface stale-enum errors explicitly.
     raw_filter = args.get("category") or []
@@ -747,7 +826,10 @@ async def _handle_list_actions(
     total = len(items)
     page = items[offset:offset + limit]
 
-    return {"items": page, "total": total}
+    response: dict[str, Any] = {"items": page, "total": total}
+    if _should_inject_hidden_state_hint(ctx.router_state):
+        response["hint"] = _HIDDEN_STATE_HINT
+    return response
 
 
 async def _handle_search_actions(
