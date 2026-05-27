@@ -63,7 +63,7 @@ async def test_interval_handle_stored_on_mount() -> None:
         conv = app.query_one("#conversation", ConversationView)
         row = conv.begin_stream("perf_handle_test", "reyn")
         await pilot.pause()
-        assert row._interval_handle is not None, (
+        assert row.interval_handle is not None, (
             "set_interval handle must be stored for seal() to stop later"
         )
 
@@ -83,14 +83,14 @@ async def test_seal_stops_interval_handle() -> None:
         conv = app.query_one("#conversation", ConversationView)
         row = conv.begin_stream("perf_seal_test", "reyn")
         await pilot.pause()
-        assert row._interval_handle is not None
-        captured_handle = row._interval_handle
+        assert row.interval_handle is not None
+        captured_handle = row.interval_handle
 
         row.append("hello")
         row.seal()
         await pilot.pause()
 
-        assert row._interval_handle is None, "handle should be cleared after seal"
+        assert row.interval_handle is None, "handle should be cleared after seal"
         # The captured handle's stop() flag should be set
         active_event = getattr(captured_handle, "_active", None)
         if active_event is not None and hasattr(active_event, "is_set"):
@@ -118,15 +118,15 @@ async def test_seal_before_mount_defers_cancel_to_on_mount() -> None:
         row = StreamingRow(prefix="reyn", id="defer_seal_test")
         row.append("rapid burst")
         row.seal()
-        assert row._sealed
-        assert row._interval_handle is None  # never started
+        assert row.sealed
+        assert row.interval_handle is None  # never started
 
         conv.mount(row)
         await pilot.pause()
 
         # After on_mount: interval was started THEN stopped immediately
         # because _sealed was already True.
-        assert row._interval_handle is None, (
+        assert row.interval_handle is None, (
             "deferred seal must stop the just-started interval in on_mount"
         )
 
@@ -153,7 +153,7 @@ async def test_append_grows_accumulated_string_linearly() -> None:
             row.append(c)
         await pilot.pause()
 
-        assert row._accumulated == "alpha beta gamma"
+        assert row.accumulated == "alpha beta gamma"
         assert row.full_text() == "alpha beta gamma", (
             "full_text() must read from _accumulated, not rebuild from a list"
         )
