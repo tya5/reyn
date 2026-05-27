@@ -90,19 +90,19 @@ def test_truncate_wal_bypasses_throttle_when_flag_set(tmp_path: Path):
         # First call: succeeds, stamps throttle
         first = await registry.truncate_wal_if_eligible()
         assert first is not None
-        ts1 = registry._last_truncation_ts
+        ts1 = registry.last_truncation_ts
         assert ts1 is not None
 
         # Second call WITHOUT bypass: throttled (skipped)
         second = await registry.truncate_wal_if_eligible()
         assert second is None
-        assert registry._last_truncation_ts == ts1  # unchanged
+        assert registry.last_truncation_ts == ts1  # unchanged
 
         # Third call WITH bypass: proceeds despite throttle window
         third = await registry.truncate_wal_if_eligible(bypass_throttle=True)
         assert third is not None
-        assert registry._last_truncation_ts is not None
-        assert registry._last_truncation_ts >= ts1
+        assert registry.last_truncation_ts is not None
+        assert registry.last_truncation_ts >= ts1
 
     asyncio.run(go())
 
@@ -163,14 +163,14 @@ def test_maybe_truncate_for_size_bypasses_throttle(tmp_path: Path):
     async def go():
         # Burn the throttle window
         await registry.truncate_wal_if_eligible()
-        ts1 = registry._last_truncation_ts
+        ts1 = registry.last_truncation_ts
         # Inflate
         await _inflate_wal(registry._state_log, target_bytes=51_200)
         # Size-triggered call should proceed even within throttle window
         result = await registry.maybe_truncate_for_size(threshold_bytes=50_000)
         assert result is not None
-        assert registry._last_truncation_ts is not None
-        assert registry._last_truncation_ts >= ts1
+        assert registry.last_truncation_ts is not None
+        assert registry.last_truncation_ts >= ts1
 
     asyncio.run(go())
 
