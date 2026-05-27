@@ -99,13 +99,13 @@ async def test_on_copy_last_reply_returns_synchronously() -> None:
         await pilot.pause()
 
         router = OutboxRouter(app)
-        assert not inspect.iscoroutinefunction(router._on_copy_last_reply), (
-            "_on_copy_last_reply must stay sync — the OutboxRouter dispatch loop "
+        assert not inspect.iscoroutinefunction(router.on_copy_last_reply), (
+            "on_copy_last_reply must stay sync — the OutboxRouter dispatch loop "
             "calls handlers without await"
         )
 
         # Drive the handler; it must complete without raising
-        router._on_copy_last_reply(
+        router.on_copy_last_reply(
             OutboxMessage(kind="__copy_last_reply__", text=""),
             conv, header,
         )
@@ -146,8 +146,8 @@ async def test_finish_copy_async_overwrites_placeholder_on_success(
         # And a sticky should now be visible (the success transient)
         # — we can't easily read the sticky text without more plumbing,
         # but a follow-up _show_transient_status would have armed a fresh
-        # timer, so the router's handle field is set.
-        assert router._transient_status_timer is not None
+        # timer, so the router reports an active timer.
+        assert router.has_transient_status_timer()
 
 
 @pytest.mark.asyncio
@@ -169,4 +169,4 @@ async def test_finish_copy_async_surfaces_failure_when_no_tool(
         await router._finish_copy_async(conv, "anything", n=1)
         await pilot.pause()
         # No crash, and a transient was armed (= failure status visible)
-        assert router._transient_status_timer is not None
+        assert router.has_transient_status_timer()
