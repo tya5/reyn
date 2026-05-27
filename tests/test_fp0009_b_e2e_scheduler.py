@@ -199,8 +199,8 @@ async def test_scheduler_built_from_config_jobs_and_run_now(tmp_path: Path) -> N
         await scheduler.stop()
 
     # After stop: no tasks remain, running flag cleared
-    assert scheduler._tasks == {}
-    assert scheduler._running is False
+    assert scheduler.tasks == {}
+    assert scheduler.running is False
 
 
 @pytest.mark.asyncio
@@ -252,7 +252,7 @@ async def test_disabled_job_not_scheduled(tmp_path: Path) -> None:
     await scheduler.start()
     try:
         # Only active_job gets a task; disabled_job does not
-        task_names = set(scheduler._tasks.keys())
+        task_names = set(scheduler.tasks.keys())
         assert "active_job" in task_names
         assert "disabled_job" not in task_names
 

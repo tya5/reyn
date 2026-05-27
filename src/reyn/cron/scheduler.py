@@ -117,6 +117,16 @@ class CronScheduler:
         self._tasks: dict[str, asyncio.Task] = {}
         self._running: bool = False
 
+    @property
+    def tasks(self) -> dict:
+        """Read-only accessor for the running cron-task map (name → asyncio.Task)."""
+        return self._tasks
+
+    @property
+    def running(self) -> bool:
+        """Read-only flag: True between ``start()`` and ``stop()``."""
+        return self._running
+
     def set_runner(self, runner_fn: Callable[[CronJob], "asyncio.Future"]) -> None:
         """Inject the runner after construction (= web lifespan needs the
         AgentRegistry which is created after the scheduler in some paths).
