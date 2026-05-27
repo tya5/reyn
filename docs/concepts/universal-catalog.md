@@ -275,6 +275,36 @@ action_retrieval:
   universal_wrappers_enabled: false
 ```
 
+## `embedding_class` default + graceful degrade (FP-0043 Phase 4)
+
+Since **FP-0043 Phase 4 (2026-05-27)**,
+`ActionRetrievalConfig.embedding_class` defaults to `"local-mini"`
+(= `sentence-transformers/all-MiniLM-L6-v2`). This makes
+`search_actions` automatically available for any fresh installation
+that runs `pip install 'reyn[local-embed]'` — no `reyn.yaml` edits
+required.
+
+When the `local-embed` extras are NOT installed, `ChatSession.__init__`
+detects the missing import via a cheap `importlib.util.find_spec`
+probe and silently treats the configured class as if it were `None`:
+no `ActionEmbeddingIndex` is built, `search_actions` stays hidden by
+the §D14 gate, and `list_actions` carries the hidden-state hint
+pointing operators at the install command (= self-discoverable
+mid-chat — see [Guide: enable semantic search](../guide/for-users/enable-semantic-search.md)).
+
+The probe lives in `src/reyn/chat/session.py` as
+`_embedding_class_needs_missing_extras(class_name, embedding_config)`
+and only returns `True` when:
+
+1. The class's `model` string starts with `sentence-transformers/`,
+2. `sentence_transformers` is **not** importable, AND
+3. The configured class exists in `embedding.classes`.
+
+Operators who prefer OpenAI-backed embeddings can override with
+`action_retrieval.embedding_class: standard` (= or `light` / `strong`)
+in `reyn.yaml`; setting it to `null` opts out of `search_actions`
+entirely.
+
 ## What stays out of Phase 1
 
 The structural surface is complete. Discovery features landed and

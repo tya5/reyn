@@ -37,10 +37,14 @@ def test_default_action_retrieval_config_is_on() -> None:
 
     PR-3b-iv flipped universal_wrappers_enabled from False to True.
     FP-0034 Phase 6 removed hide_legacy_tools (wrapper-only is the sole path).
+    FP-0043 Phase 4 flipped embedding_class default from None to "local-mini"
+    so semantic action search is on the moment ``reyn[local-embed]`` extras
+    are installed — graceful-degrade kicks in at ChatSession construction
+    when the extras are absent.
     """
     cfg = ActionRetrievalConfig()
     assert cfg.universal_wrappers_enabled is True
-    assert cfg.embedding_class is None
+    assert cfg.embedding_class == "local-mini"
     assert cfg.hot_list_n == 20  # B37: covers DEFAULT_HOT_LIST_SEED (17) + headroom
     assert cfg.mode == "default"
 
@@ -230,7 +234,7 @@ def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> N
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
-    assert cfg.action_retrieval.embedding_class is None
+    assert cfg.action_retrieval.embedding_class == "local-mini"  # FP-0043 Phase 4
     assert cfg.action_retrieval.hot_list_n == 20
     assert cfg.action_retrieval.mode == "default"
 

@@ -91,6 +91,19 @@ _INSTALL_HINT = (
 )
 
 
+def is_available() -> bool:
+    """Whether the optional sentence-transformers extras are installed.
+
+    Cheap probe using importlib.util.find_spec — does NOT import the
+    heavy module, just checks whether the import would succeed. Used by
+    callers that need to decide between an ST-backed path and a graceful
+    fallback before any actual embed() call (= FP-0043 Phase 4 default-
+    switch graceful-degrade in :class:`ChatSession`).
+    """
+    import importlib.util
+    return importlib.util.find_spec("sentence_transformers") is not None
+
+
 def _resolve_cache_dir() -> Path:
     """Resolve the cache root per O2 reconcile precedence."""
     if v := os.environ.get("REYN_CACHE_DIR"):
