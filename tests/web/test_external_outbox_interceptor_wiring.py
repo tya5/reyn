@@ -78,7 +78,7 @@ def test_wire_sets_interceptor_on_session(tmp_path):
     invocation consults it.
     """
     session = _make_session(tmp_path)
-    assert session._outbox_interceptor is None
+    assert session.outbox_interceptor is None
 
     routing = ExternalTransportRouting(transports={
         "slack": ExternalTransportEntry(
@@ -87,8 +87,8 @@ def test_wire_sets_interceptor_on_session(tmp_path):
         ),
     })
     _wire_external_outbox_interceptor(session, routing)
-    assert session._outbox_interceptor is not None
-    assert callable(session._outbox_interceptor)
+    assert session.outbox_interceptor is not None
+    assert callable(session.outbox_interceptor)
 
 
 # ── dispatcher: separator validation ──────────────────────────────────
@@ -175,4 +175,4 @@ def test_factory_skips_wiring_when_no_external_transports(tmp_path):
     routing = ExternalTransportRouting()
     if routing.transports:
         _wire_external_outbox_interceptor(session, routing)
-    assert session._outbox_interceptor is None
+    assert session.outbox_interceptor is None
