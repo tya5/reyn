@@ -6,7 +6,7 @@ Covers:
 - Backward compat: no tools → legacy key format, stable across runs.
 - tool_choice alone (same tools, different tool_choice) → distinct keys.
 
-No real LLM is called; all tests exercise _key() directly.
+No real LLM is called; all tests exercise key() directly.
 """
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ _TOOLS_B = [
 
 def test_cache_key_differs_when_tools_differ():
     """Tier 3a: Same model + messages + different tools must produce distinct keys."""
-    key_a = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A)
-    key_b = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_B)
+    key_a = LLMReplay.key(_MODEL, _MESSAGES, tools=_TOOLS_A)
+    key_b = LLMReplay.key(_MODEL, _MESSAGES, tools=_TOOLS_B)
     assert key_a != key_b, (
         "Cache collision: different tools= arrays produced identical SHA-256 keys"
     )
@@ -45,8 +45,8 @@ def test_cache_key_differs_when_tools_differ():
 
 def test_cache_key_same_when_tools_identical():
     """Tier 3a: Same model + messages + same tools → identical key (idempotent)."""
-    key_1 = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A)
-    key_2 = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A)
+    key_1 = LLMReplay.key(_MODEL, _MESSAGES, tools=_TOOLS_A)
+    key_2 = LLMReplay.key(_MODEL, _MESSAGES, tools=_TOOLS_A)
     assert key_1 == key_2, (
         "Cache key is not stable: identical tools= arrays produced different keys"
     )
@@ -70,19 +70,19 @@ def test_cache_key_handles_no_tools():
     legacy_key = h.hexdigest()
 
     # None (absent) — no tools at all.
-    assert LLMReplay._key(_MODEL, _MESSAGES) == legacy_key
+    assert LLMReplay.key(_MODEL, _MESSAGES) == legacy_key
     # Empty list — semantically identical to "no tools".
-    assert LLMReplay._key(_MODEL, _MESSAGES, tools=[]) == legacy_key
+    assert LLMReplay.key(_MODEL, _MESSAGES, tools=[]) == legacy_key
     # None tool_choice alongside None tools.
-    assert LLMReplay._key(_MODEL, _MESSAGES, tools=None, tool_choice=None) == legacy_key
+    assert LLMReplay.key(_MODEL, _MESSAGES, tools=None, tool_choice=None) == legacy_key
     # Empty string tool_choice alongside empty tools.
-    assert LLMReplay._key(_MODEL, _MESSAGES, tools=[], tool_choice="") == legacy_key
+    assert LLMReplay.key(_MODEL, _MESSAGES, tools=[], tool_choice="") == legacy_key
 
 
-def test_cache_key_tool_choice_affects_key():
+def test_cache_key_tool_choice_affectskey():
     """Tier 3a: Same messages + same tools but different tool_choice → distinct keys."""
-    key_auto = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A, tool_choice="auto")
-    key_required = LLMReplay._key(_MODEL, _MESSAGES, tools=_TOOLS_A, tool_choice="required")
+    key_auto = LLMReplay.key(_MODEL, _MESSAGES, tools=_TOOLS_A, tool_choice="auto")
+    key_required = LLMReplay.key(_MODEL, _MESSAGES, tools=_TOOLS_A, tool_choice="required")
     assert key_auto != key_required, (
         "Cache collision: 'auto' vs 'required' tool_choice produced identical keys"
     )

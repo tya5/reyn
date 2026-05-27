@@ -102,7 +102,7 @@ class LLMReplay:
     # ── Key computation ────────────────────────────────────────────────────────
 
     @staticmethod
-    def _key(
+    def key(
         model: str,
         messages: list[dict],
         tools: list[dict] | None = None,
@@ -213,7 +213,7 @@ class LLMReplay:
         """
         tools: list[dict] | None = kwargs.get("tools")
         tool_choice: str | None = kwargs.get("tool_choice")
-        key = self._key(model, messages, tools=tools, tool_choice=tool_choice)
+        key = self.key(model, messages, tools=tools, tool_choice=tool_choice)
 
         if self.mode == "replay":
             return self._replay(key, model, messages)
