@@ -157,14 +157,20 @@ scenarios:
 
   # ── 6. MCP install permission gate ───────────────────────────────────────
   # B54 R-5a redesign (2026-05-25): "mentions permission approval step"
-  # content rubric removed — permission gate fires INSIDE the skill, not in
-  # the LLM reply. The structural test (= mcp_install skill spawned) is
-  # what catches permission-gate regression. LLM mention of permission was
-  # over-strict content requirement, not a real Reyn behavior test.
+  # content rubric removed — permission gate fires INSIDE the install
+  # flow, not in the LLM reply. LLM mention of permission was over-strict
+  # content requirement, not a real Reyn behavior test.
+  #
+  # F2 (2026-05-27): post-PR-#918 mcp install 3-verb split removed the
+  # ``mcp_install`` stdlib skill in favour of the
+  # ``mcp__install_registry`` / ``mcp__install_package`` /
+  # ``mcp__install_local`` verb handlers (= op_runtime direct, no skill
+  # spawn). ``skill_run_spawned`` no longer fires for install; structural
+  # signal narrows to ``routing_decided`` + the behavioural rubric. The
+  # ``stdlib-skills/mcp-install`` cover tag is dropped accordingly.
   - id: mcp_install_permission_gate
     covers:
       - mcp/mcp-install
-      - stdlib-skills/mcp-install
       - permissions/layer-4-interactive-prompt
       - control-ir-ops/mcp-install
     input: "postgres MCP サーバーをインストールして。"
@@ -177,7 +183,6 @@ scenarios:
       events:
         must_emit:
           - { type: routing_decided, count: ">=1" }
-          - { type: skill_run_spawned, count: ">=1" }
       outcome_prediction:
         verified: 0.5
         inconclusive: 0.3
