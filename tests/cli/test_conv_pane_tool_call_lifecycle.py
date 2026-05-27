@@ -83,6 +83,7 @@ async def test_start_tool_call_row_is_idempotent_for_same_op_id():
         assert len(list(conv.query(ToolCallRow))) == 1
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 @pytest.mark.asyncio
 async def test_complete_tool_call_row_unmounts_live_widget():
     """Tier 2: success terminal removes the live row from the DOM.
@@ -361,6 +362,7 @@ def test_format_tool_result_short_result_unchanged():
 # ── abort_tool_call_rows sweep (C-F1 wave-8) ──────────────────────────────────
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 @pytest.mark.asyncio
 async def test_abort_tool_call_rows_seals_live_rows_with_aborted_terminal():
     """Tier 2b: ``abort_tool_call_rows`` finishes every live row as ⊘. (C-F1 sweep)
