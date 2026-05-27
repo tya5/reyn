@@ -67,7 +67,7 @@ def test_bridge_constructor_accepts_optional_webhook_url() -> None:
         agent_name="demo",
         run_registry=RunRegistry(),
     )
-    assert bridge._webhook_url is None
+    assert bridge.webhook_url is None
 
 
 # ── 2. _send appends to history_events ────────────────────────────────

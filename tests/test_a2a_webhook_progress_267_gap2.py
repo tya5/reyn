@@ -79,7 +79,7 @@ def _make_bridge(*, captured_posts: list[tuple[str, dict]], events: EventLog | N
             (event_type, {
                 "ordinal": ordinal,
                 "message": message,
-                "url": bridge._webhook_url,
+                "url": bridge.webhook_url,
                 "run_id": bridge._run_id,
                 "agent_name": bridge._agent_name,
             }),

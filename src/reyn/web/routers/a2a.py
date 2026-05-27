@@ -758,6 +758,11 @@ class _A2AProgressBridge:
         self._tasks: list[asyncio.Task[None]] = []
 
     @property
+    def webhook_url(self) -> str:
+        """Read-only accessor for the webhook URL the bridge posts to."""
+        return self._webhook_url
+
+    @property
     def detached(self) -> bool:
         """Read-only accessor for the bridge's detached flag.
 

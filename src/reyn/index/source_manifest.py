@@ -109,6 +109,13 @@ class SourceManifest:
 
     # ── Private ───────────────────────────────────────────────────────────────
 
+
+    @property
+    def loaded_mtime(self) -> "float | None":
+        """Read-only accessor for the cached mtime of the last load.
+        ``None`` before the first load; updated on each cache miss /
+        reload. Tests probe this to verify the cache-freshness contract."""
+        return self._loaded_mtime
     def _is_cache_stale(self) -> bool:
         """Return True if sources.yaml has changed since the cache was loaded.
 

@@ -335,6 +335,13 @@ class AgentRequestBus:
     def __init__(self, session: "ChatSession") -> None:
         self._session = session
 
+    @property
+    def session(self) -> "ChatSession":
+        """Read-only accessor for the backing ChatSession. Tests verify
+        that adapters from the same session share identity through this
+        surface."""
+        return self._session
+
     async def request(self, iv: "UserIntervention") -> "InterventionAnswer":
         """``RequestBus.request`` — delegate to the Agent's intervention handler."""
         return await self._session.handle_intervention(iv)
@@ -434,7 +441,7 @@ class ChatInterventionBus:
         # skill's first ask_user picks it up here without dispatching a
         # duplicate prompt.
         if iv.run_id is not None:
-            buffered = self._session._consume_buffered_intervention_answer(iv.run_id)
+            buffered = self._session.consume_buffered_intervention_answer(iv.run_id)
             if buffered is not None:
                 return buffered
         return await self._session._dispatch_intervention(iv)
@@ -1688,7 +1695,7 @@ class ChatSession:
             agent_registry=self._registry,
             skill_enumerate_fn=enumerate_available_skills,
             agent_workspace_dir=self.workspace_dir,
-            plan_registry_getter=self._get_plan_registry,
+            plan_registry_getter=self.get_plan_registry,
             file_read=self._file_read,
             file_write=self._file_write,
             file_delete=self._file_delete,
@@ -1849,6 +1856,27 @@ class ChatSession:
         commands and tests that need to verify the role.
         """
         return self._agent_role
+
+    @property
+    def error_box_count(self) -> int:
+        """Read-only accessor for the TUI error-box count.
+
+        Incremented by ``app_outbox`` on ``mount_error`` and decremented
+        on ``dismiss_error``. Slash commands and tests read via this
+        public surface; the write path stays on
+        ``self._error_box_count`` so the lifecycle stays visible at the
+        TUI call sites that own it.
+        """
+        return self._error_box_count
+
+    @property
+    def router_loop_agent_replies(self) -> "list[str] | None":
+        """Read-only accessor for the in-flight router-loop agent reply
+        tracker. ``None`` outside a router turn; a list while a turn
+        is open. Tests verify the post-turn clearing semantics through
+        this surface.
+        """
+        return self._router_loop_agent_replies
 
     @property
     def router_host(self):
@@ -2822,7 +2850,7 @@ class ChatSession:
             )
         return self._skill_registry
 
-    def _get_plan_registry(self) -> "Any":
+    def get_plan_registry(self) -> "Any":
         """Return the per-agent PlanRegistry, lazily constructed on first call.
 
         ADR-0023 Phase 2 + ADR-0025: per-plan snapshots persist
@@ -3686,7 +3714,7 @@ class ChatSession:
                         name=f"buffered-answer-dropped-{run_id}",
                     )
 
-    def _consume_buffered_intervention_answer(
+    def consume_buffered_intervention_answer(
         self, run_id: str,
     ) -> "InterventionAnswer | None":
         """Pop and return the buffered answer for ``run_id`` if any.

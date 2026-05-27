@@ -70,7 +70,7 @@ def _no_subcommand(args: argparse.Namespace) -> None:  # pragma: no cover
     sys.exit(1)
 
 
-def _box_user_code(code: str, *, indent: str = "     ") -> str:
+def box_user_code(code: str, *, indent: str = "     ") -> str:
     """Render *code* inside a unicode box for visual emphasis.
 
     Empty / missing codes degrade gracefully — the user still sees the
@@ -175,7 +175,7 @@ def _print_user_action(info: dict) -> None:
     print(file=sys.stderr)
     print("  2. Verify the code matches:", file=sys.stderr)
     print(file=sys.stderr)
-    print(_box_user_code(user_code), file=sys.stderr)
+    print(box_user_code(user_code), file=sys.stderr)
     print(file=sys.stderr)
 
     if isinstance(expires_in, int) and expires_in > 0:

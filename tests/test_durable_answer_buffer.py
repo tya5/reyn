@@ -220,12 +220,12 @@ def test_session_restore_rehydrates_buffered_answers(tmp_path: Path, monkeypatch
     for _ in range(2):
         asyncio.run(asyncio.sleep(0))
 
-    a = session._consume_buffered_intervention_answer("run_resume")
+    a = session.consume_buffered_intervention_answer("run_resume")
     assert isinstance(a, InterventionAnswer)
     assert a.text == "Charlie"
     assert a.choice_id is None
 
-    b = session._consume_buffered_intervention_answer("run_choice")
+    b = session.consume_buffered_intervention_answer("run_choice")
     assert isinstance(b, InterventionAnswer)
     assert b.text == "y"
     assert b.choice_id == "yes"
@@ -240,4 +240,4 @@ def test_session_restore_with_no_buffered_is_noop(tmp_path: Path, monkeypatch):
     snap.applied_seq = 1
     session.restore_state(snap)
 
-    assert session._consume_buffered_intervention_answer("any_run") is None
+    assert session.consume_buffered_intervention_answer("any_run") is None

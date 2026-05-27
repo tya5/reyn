@@ -1238,10 +1238,10 @@ async def test_run_skill_awaitable_returns_status_data_no_outbox(
 
     # Contract 2: no narration side effects on outbox / history /
     # _router_loop_agent_replies — the router LLM is the narrator.
-    assert session._router_loop_agent_replies == [], (
+    assert session.router_loop_agent_replies == [], (
         "FP-0011 contract: _run_skill_awaitable must not push to "
         "_router_loop_agent_replies; got "
-        f"{session._router_loop_agent_replies!r}"
+        f"{session.router_loop_agent_replies!r}"
     )
     assert len(session.history) == history_before, (
         "FP-0011 contract: _run_skill_awaitable must not append to history; "
