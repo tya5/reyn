@@ -100,6 +100,10 @@ class PhaseExecutor:
         # wiring within the strictly-listed ALLOWED files.
         self._phase_compaction_engine: "ChatCompactionEngine | None" = phase_compaction_engine
         self._phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = phase_compaction_cfg
+        # PR-N5: last phase's final control_ir_results, set at end of
+        # _run_act_loop so RunOrchestrator can snapshot them at A → B
+        # transition (= `rollback_state.snapshot_phase_history`).
+        self._last_control_ir_results: list[dict] = []
 
     # ── Phase-budget enforcement (moved up from Component B shim) ─────────────
 
@@ -373,6 +377,10 @@ class PhaseExecutor:
             first_call = False
 
             if raw.get("type") != "act":
+                # PR-N5: persist final control_ir_results so RunOrchestrator
+                # can snapshot them via self._last_control_ir_results at the
+                # A → B transition (= rollback_state.snapshot_phase_history).
+                self._last_control_ir_results = control_ir_results
                 return raw, prior_attempts
 
             act_turn_count += 1
