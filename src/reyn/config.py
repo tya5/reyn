@@ -1039,6 +1039,43 @@ class PlannerStepCompactionConfig:
 
 
 @dataclass
+class PhaseActResultsCompactionConfig:
+    """`phase.act_results_compaction:` — phase act-loop control_ir_results
+    compaction policy. Sibling to CompactionConfig (chat) and
+    PlannerStepCompactionConfig (planner step).
+
+    When accumulated ``control_ir_results`` in a phase's act loop would push
+    the next prompt over the model's effective context budget, older results
+    (outside the ``recent_act_turns_raw`` window) are summarised by
+    ``ChatCompactionEngine`` using a phase-specific system prompt that preserves
+    op-kind structured data (paths, line numbers, exit codes, etc.).
+
+    Fields
+    ------
+    recent_act_turns_raw:
+        Keep the last N act-turn results verbatim; compact older ones.
+        Higher than PlannerStepCompactionConfig.recent_step_results_raw (= 3)
+        because phase ops carry specific data the LLM needs to plan next ops.
+        Default 5.
+    control_ir_results_ratio:
+        Fraction of ``main_pool`` (= T_max - T_SP) allocated for the
+        control_ir_results portion of the act-loop context. Sibling to
+        CompactionConfig.body_ratio.  Default 0.50.
+    summarize_older_threshold_tokens:
+        Total token threshold above which older results are compacted.
+        ``None`` uses ``control_ir_results_ratio × main_pool`` derived from the
+        engine's ComputedBudgets.
+    use_chars4_estimate:
+        When True, use len(text)//4 for token estimation instead of
+        litellm.token_counter (latency opt-out, mirrors CompactionConfig).
+    """
+    recent_act_turns_raw: int = 5
+    control_ir_results_ratio: float = 0.50
+    summarize_older_threshold_tokens: int | None = None
+    use_chars4_estimate: bool = False
+
+
+@dataclass
 class PlanConfig:
     """`plan:` — plan-mode execution tuning.
 
@@ -2047,6 +2084,55 @@ def _build_skill_resume_config(raw: object) -> SkillResumeConfig:
                 continue
             per_skill[str(k)] = v_str
     return SkillResumeConfig(default=default, per_skill=per_skill)
+
+
+def _build_phase_act_results_compaction_config(
+    raw: object,
+) -> "PhaseActResultsCompactionConfig":
+    """Parse ``phase.act_results_compaction:`` sub-block.
+
+    Missing / non-dict block returns defaults.  Unknown keys are ignored
+    (forward-compat).
+    """
+    defaults = PhaseActResultsCompactionConfig()
+    if not isinstance(raw, dict):
+        return defaults
+
+    recent_raw = raw.get("recent_act_turns_raw")
+    try:
+        recent = int(recent_raw) if recent_raw is not None else defaults.recent_act_turns_raw
+    except (TypeError, ValueError):
+        recent = defaults.recent_act_turns_raw
+    if recent < 0:
+        recent = defaults.recent_act_turns_raw
+
+    threshold_raw = raw.get("summarize_older_threshold_tokens")
+    if threshold_raw is None:
+        threshold: int | None = None
+    else:
+        try:
+            threshold = int(threshold_raw)
+            if threshold <= 0:
+                threshold = None
+        except (TypeError, ValueError):
+            threshold = None
+
+    ratio_raw = raw.get("control_ir_results_ratio")
+    try:
+        ratio = float(ratio_raw) if ratio_raw is not None else defaults.control_ir_results_ratio
+    except (TypeError, ValueError):
+        ratio = defaults.control_ir_results_ratio
+    if not (0.0 < ratio <= 1.0):
+        ratio = defaults.control_ir_results_ratio
+
+    use_chars4 = bool(raw.get("use_chars4_estimate", defaults.use_chars4_estimate))
+
+    return PhaseActResultsCompactionConfig(
+        recent_act_turns_raw=recent,
+        control_ir_results_ratio=ratio,
+        summarize_older_threshold_tokens=threshold,
+        use_chars4_estimate=use_chars4,
+    )
 
 
 def _build_plan_step_compaction_config(raw: object) -> "PlannerStepCompactionConfig":
