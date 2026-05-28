@@ -246,20 +246,49 @@ class CompactionController:
         finally:
             self._compacting = False
 
-    async def force_compact_now(self) -> None:
-        """Synchronous force-trigger: bypasses the threshold gate and runs compaction.
+    def _estimate_current_history_tokens(self) -> int:
+        """Cheap chars/4 estimate of the total text tokens in current history.
 
-        Used by the pre-frame guard in ``_build_history_for_router`` when the
-        projected prompt would exceed the model's max_input_tokens.  Emits the
-        same events as the background path but with ``outcome="forced_sync"``
+        Used by the race-recovery loop in :meth:`force_compact_now` to
+        re-measure after each compaction pass.
+        """
+        history = self._history_access()
+        return sum(
+            _estimate_tokens(m.text)
+            for m in history
+            if m.role in ("user", "assistant", "tool", "agent")
+        )
+
+    async def force_compact_now(self, *, max_passes: int = 2) -> None:
+        """Synchronous force-trigger with race-recovery loop (ISSUE #6, Option B).
+
+        Used by the pre-frame guard in ``_maybe_force_compact_for_router`` when
+        the projected prompt would exceed the model's max_input_tokens.  Emits
+        the same events as the background path but with ``outcome="forced_sync"``
         on the ``compaction_check`` event.
+
+        Race tolerance (Option B):
+            Between the fire-decision and lock-acquisition, other async
+            coroutines may append to history (sync ``_append_history`` calls).
+            After each compaction pass, we re-measure the post-state and re-run
+            if still over budget, up to ``max_passes`` total.  Beyond that,
+            a ``force_compact_race_unrecovered`` event is emitted and the method
+            returns — the next router LLM call will see the over-budget prompt,
+            and the existing background ``spawn_maybe()`` will trigger again
+            automatically.
+
+            Choice of Option B over Option A (= async _append_history + lock):
+            Option B is more localised (no call-site changes to _append_history),
+            matches Python async semantics where sync appends are sequential
+            within a coroutine, and the worst-case is a single over-budget turn
+            that resolves on the very next interaction cycle.
 
         The existing background ``spawn_maybe()`` fire-and-forget path is
         unaffected; both paths can co-exist (sync = pre-frame guard,
         async = post-reply background trigger).
 
         Axis 8: acquires the engine's ``compaction_lock`` for the duration of
-        the run.  Any concurrent code path that appends to ChatSession.history
+        each run.  Any concurrent code path that appends to ChatSession.history
         and needs to serialise with compaction must await the same lock before
         appending.
         """
@@ -267,36 +296,58 @@ class CompactionController:
             self._events.emit("compaction_check", outcome="already_running")
             return
         cfg = self._config
-        history = self._history_access()
-        turns = [
-            m for m in history
-            if m.role in ("user", "assistant", "tool", "agent")
-        ]
-        if not turns:
-            self._events.emit("compaction_check", outcome="forced_sync_no_turns")
-            return
-        latest = self._latest_summary()
-        prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
-        cover_floor = max(prev_cover, cfg.head_size)
-        max_seq = max((t.seq for t in turns), default=0)
-        tail_threshold = max_seq - cfg.tail_size
-        candidates = [t for t in turns if cover_floor < t.seq <= tail_threshold]
 
+        for pass_n in range(max_passes):
+            history = self._history_access()
+            turns = [
+                m for m in history
+                if m.role in ("user", "assistant", "tool", "agent")
+            ]
+            if not turns:
+                self._events.emit("compaction_check", outcome="forced_sync_no_turns")
+                return
+            latest = self._latest_summary()
+            prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
+            cover_floor = max(prev_cover, cfg.head_size)
+            max_seq = max((t.seq for t in turns), default=0)
+            tail_threshold = max_seq - cfg.tail_size
+            candidates = [t for t in turns if cover_floor < t.seq <= tail_threshold]
+
+            self._events.emit(
+                "compaction_check", outcome="forced_sync",
+                candidate_count=len(candidates),
+                pass_n=pass_n,
+            )
+            if not candidates:
+                return
+
+            self._compacting = True
+            async with self._engine.compaction_lock:
+                try:
+                    await self._run_compaction(candidates, latest)
+                except Exception as exc:
+                    self._events.emit("compaction_failed", error=str(exc))
+                    return
+                finally:
+                    self._compacting = False
+
+            # Re-measure post-compaction. If still over effective_trigger, loop.
+            budgets = getattr(self._engine, "budgets", None)
+            effective_trigger = (
+                budgets.effective_trigger if budgets is not None else 0
+            )
+            if effective_trigger > 0:
+                post_tokens = self._estimate_current_history_tokens()
+                if post_tokens <= effective_trigger:
+                    return  # budget recovered — done
+            else:
+                return  # no trigger info — assume done
+
+        # All passes exhausted; race not fully recovered.
         self._events.emit(
-            "compaction_check", outcome="forced_sync",
-            candidate_count=len(candidates),
+            "force_compact_race_unrecovered",
+            passes=max_passes,
         )
-        if not candidates:
-            return
-
-        self._compacting = True
-        async with self._engine.compaction_lock:
-            try:
-                await self._run_compaction(candidates, latest)
-            except Exception as exc:
-                self._events.emit("compaction_failed", error=str(exc))
-            finally:
-                self._compacting = False
 
     async def _run_compaction(
         self,

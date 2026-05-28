@@ -813,3 +813,153 @@ def test_new_msg_exceeds_budget_error_fields_and_raises() -> None:
         assert isinstance(exc, Exception)
     finally:
         _mb.get_max_input_tokens = original_fn
+
+
+# ---------------------------------------------------------------------------
+# ISSUE #6: force_compact_now race-recovery loop (Option B)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _CountingEngine(ChatCompactionEngine):
+    """Engine that counts compact() calls and always returns a stub summary."""
+
+    def __init__(self) -> None:
+        # Bypass normal init for test isolation — set fields directly.
+        self._model = "stub"
+        self._events = EventLog()
+        from reyn.config import CompactionConfig as _CC
+        self._cfg = _CC(use_chars4_estimate=True)
+        self._use_chars4 = True
+        self._T_comp_SP = 10
+        self._system_prompt_provider = None
+        self._budgets = ComputedBudgets(
+            main_pool=100_000, head_budget=10_000, body_budget=5_000,
+            tail_budget=15_000, new_msg_budget=10_000,
+            B_M=80_000, main_M_room=65_000, effective_trigger=50_000,
+        )
+        self.compaction_lock = asyncio.Lock()
+        self.compact_call_count = 0
+
+    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+        """Tier 2 stub: increment call count and return a stub summary."""
+        self.compact_call_count += 1
+        return ChatSummary(topic_arc="stub", covers_through_seq=0)
+
+
+def test_force_compact_now_emits_race_unrecovered_when_always_over_budget() -> None:
+    """Tier 2: force_compact_now emits force_compact_race_unrecovered when the
+    history remains over budget after max_passes compaction runs.
+
+    Simulates the race by using a history_access callable that always returns
+    history with token count > effective_trigger, regardless of how many times
+    compaction runs (= race always wins).
+
+    Invariants verified via public API:
+    - force_compact_race_unrecovered event emitted with passes=max_passes.
+    - compact() was called exactly max_passes times.
+    """
+    from reyn.chat.services.compaction_controller import CompactionController
+
+    events = EventLog()
+    engine = _CountingEngine()
+
+    # 600 turns * 100 tokens/turn = 60_000 > effective_trigger=50_000.
+    # History never shrinks (simulating continuous concurrent appends).
+    def _big_history() -> list[_FakeMessage]:
+        return [
+            _FakeMessage(role="user" if i % 2 == 0 else "assistant",
+                         text="a" * 400, seq=i + 1)
+            for i in range(600)
+        ]
+
+    ctrl = CompactionController(
+        event_log=events,
+        config=CompactionConfig(
+            head_size=2, tail_size=2, min_compact_batch=1,
+            trigger_total_tokens=1_000,
+            use_chars4_estimate=True,
+        ),
+        history_access=_big_history,
+        latest_summary=lambda: None,
+        chat_compaction_engine=engine,
+        history_appender=lambda m: None,
+        make_summary_message=lambda rendered, structured, covers: _FakeMessage(
+            role="summary", text=rendered, seq=0,
+            meta={"structured": structured, "covers_through_seq": covers},
+        ),
+        render_summary=lambda s: str(s),
+    )
+
+    asyncio.run(ctrl.force_compact_now(max_passes=2))
+
+    unrecovered = [e for e in events.all() if e.type == "force_compact_race_unrecovered"]
+    assert unrecovered, (
+        "force_compact_race_unrecovered event must be emitted when race persists"
+    )
+    assert unrecovered[0].data["passes"] == 2
+    assert engine.compact_call_count == 2, (
+        f"compact() should be called exactly 2 times, got {engine.compact_call_count}"
+    )
+
+
+def test_force_compact_now_returns_early_when_budget_recovered() -> None:
+    """Tier 2: force_compact_now returns without emitting force_compact_race_unrecovered
+    when the history is within budget after the first pass.
+
+    Uses a history_access callable that returns small history on the second call
+    (= simulates budget recovery after one compaction pass).
+    """
+    from reyn.chat.services.compaction_controller import CompactionController
+
+    events = EventLog()
+    engine = _CountingEngine()
+
+    call_count: list[int] = [0]
+
+    def _shrinking_history() -> list[_FakeMessage]:
+        """First call: big history (over budget). Second+: small history (within budget)."""
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # 600 turns * 100 tokens = 60_000 > effective_trigger=50_000
+            return [
+                _FakeMessage(role="user" if i % 2 == 0 else "assistant",
+                             text="a" * 400, seq=i + 1)
+                for i in range(600)
+            ]
+        else:
+            # After compaction: small history = 5 turns * 100 tokens = 500 < 50_000
+            return [
+                _FakeMessage(role="user" if i % 2 == 0 else "assistant",
+                             text="a" * 400, seq=i + 1)
+                for i in range(5)
+            ]
+
+    ctrl = CompactionController(
+        event_log=events,
+        config=CompactionConfig(
+            head_size=1, tail_size=1, min_compact_batch=1,
+            trigger_total_tokens=1_000,
+            use_chars4_estimate=True,
+        ),
+        history_access=_shrinking_history,
+        latest_summary=lambda: None,
+        chat_compaction_engine=engine,
+        history_appender=lambda m: None,
+        make_summary_message=lambda rendered, structured, covers: _FakeMessage(
+            role="summary", text=rendered, seq=0,
+            meta={"structured": structured, "covers_through_seq": covers},
+        ),
+        render_summary=lambda s: str(s),
+    )
+
+    asyncio.run(ctrl.force_compact_now(max_passes=2))
+
+    unrecovered = [e for e in events.all() if e.type == "force_compact_race_unrecovered"]
+    assert not unrecovered, (
+        "force_compact_race_unrecovered must NOT be emitted when budget was recovered"
+    )
+    assert engine.compact_call_count == 1, (
+        f"compact() should be called exactly 1 time when budget recovers after pass 1, "
+        f"got {engine.compact_call_count}"
+    )
