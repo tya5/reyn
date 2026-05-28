@@ -401,8 +401,14 @@ class CompactionConfig:
     body_token_cap: int = 1500          # hard cap on summary body tokens (post-truncation)
     min_compact_batch: int = 5          # skip compact when fewer than N turns to absorb
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
-    # head_size / tail_size: kept for _maybe_compact() background path which
-    # still uses turn-count gates to identify HEAD / TAIL boundaries.
+    # head_size / tail_size:
+    # DEPRECATED — retained only for the background `_maybe_compact()` legacy
+    # path which still uses turn-count gates to identify HEAD / TAIL
+    # boundaries. The new synchronous force-trigger path (= pre-frame guard
+    # in `_maybe_force_compact_for_router`) uses token-budget only via
+    # `head_ratio` / `tail_ratio` (= 11-axis Axis 3). Background-path removal
+    # is a separate root-fix wave; until then these fields exist to keep the
+    # legacy lifecycle working without scope-creeping PR-N3.
     head_size: int = 12                 # First N user/agent turns = HEAD (background path)
     tail_size: int = 12                 # Last N user/agent turns = TAIL (background path)
 
