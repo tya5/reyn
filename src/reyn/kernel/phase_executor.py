@@ -39,6 +39,8 @@ from reyn.schemas.models import ActOutput, CandidateOutput, LLMOutput
 from reyn.workspace.artifact_validator import validate_artifact_data
 
 if TYPE_CHECKING:
+    from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
+    from reyn.config import PhaseActResultsCompactionConfig
     from reyn.kernel.llm_call_recorder import LLMCallRecorder
     from reyn.kernel.run_state import RunState
     from reyn.schemas.models import Skill
@@ -76,6 +78,8 @@ class PhaseExecutor:
         run_id: str | None = None,
         strict: bool = False,
         build_frame_fn,
+        phase_compaction_engine: "ChatCompactionEngine | None" = None,
+        phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
     ) -> None:
         self._llm_caller = llm_caller
         self._control_ir_executor = control_ir_executor
@@ -89,6 +93,17 @@ class PhaseExecutor:
         # event history). PhaseExecutor receives it as a callable to avoid
         # pulling the full OSRuntime dependency graph into this module.
         self._build_frame = build_frame_fn
+        # PR-N5: phase axis compaction engine + config.  Both optional; when
+        # absent the compaction hook is skipped (= legacy behavior).
+        # Path (b): lazy construction — PhaseExecutor holds references directly
+        # rather than threading through OSRuntime constructor, keeping all PR-N5
+        # wiring within the strictly-listed ALLOWED files.
+        self._phase_compaction_engine: "ChatCompactionEngine | None" = phase_compaction_engine
+        self._phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = phase_compaction_cfg
+        # PR-N5: last phase's final control_ir_results, set at end of
+        # _run_act_loop so RunOrchestrator can snapshot them at A → B
+        # transition (= `rollback_state.snapshot_phase_history`).
+        self._last_control_ir_results: list[dict] = []
 
     # ── Phase-budget enforcement (moved up from Component B shim) ─────────────
 
@@ -289,7 +304,18 @@ class PhaseExecutor:
 
         Returns (raw_decide_response, accumulated_prior_attempts).
         """
-        control_ir_results: list[dict] = []
+        # PR-N5 rollback history restore. When this phase is being re-entered
+        # via rollback from a later phase, run_orchestrator populates
+        # rollback_context["previous_control_ir_results"] with the snapshot
+        # taken at the prior A → B transition. Restoring it lets the LLM resume
+        # with its prior op observations + the rollback reason (= already in
+        # rollback_context["reason"]) instead of re-running the same grep/file_read.
+        if rollback_context and rollback_context.get("previous_control_ir_results"):
+            control_ir_results: list[dict] = list(
+                rollback_context["previous_control_ir_results"]
+            )
+        else:
+            control_ir_results = []
         prior_attempts: list[dict[str, str]] = []
         act_turn_count = 0
         first_call = True
@@ -304,6 +330,34 @@ class PhaseExecutor:
 
             remaining = max_act_turns - act_turn_count if max_act_turns > 0 else None
             force_decide = remaining is not None and remaining <= 0
+
+            # PR-N5: phase axis compaction. When accumulated control_ir_results
+            # would push the next prompt over the model's effective context
+            # budget, summarise the OLDER results (= keep last
+            # cfg.recent_act_turns_raw raw, summarise the rest). Best-effort:
+            # never raises; LLM error falls through to a
+            # `phase_act_results_compaction_failed` event and the un-compacted
+            # prompt.
+            if (
+                self._phase_compaction_engine is not None
+                and self._phase_compaction_cfg is not None
+                and len(control_ir_results) > self._phase_compaction_cfg.recent_act_turns_raw
+            ):
+                from reyn.chat.services.chat_compaction_engine import (
+                    compact_control_ir_results,
+                )
+                n_recent = self._phase_compaction_cfg.recent_act_turns_raw
+                recent = control_ir_results[-n_recent:]
+                older = control_ir_results[:-n_recent]
+                older_compacted = await compact_control_ir_results(
+                    older,
+                    engine=self._phase_compaction_engine,
+                    cfg=self._phase_compaction_cfg,
+                    events=self._events,
+                    phase=phase,
+                )
+                control_ir_results = older_compacted + recent
+
             frame = self._build_frame(
                 phase, artifact, candidates, output_language,
                 control_ir_results=control_ir_results,
@@ -323,6 +377,10 @@ class PhaseExecutor:
             first_call = False
 
             if raw.get("type") != "act":
+                # PR-N5: persist final control_ir_results so RunOrchestrator
+                # can snapshot them via self._last_control_ir_results at the
+                # A → B transition (= rollback_state.snapshot_phase_history).
+                self._last_control_ir_results = control_ir_results
                 return raw, prior_attempts
 
             act_turn_count += 1

@@ -322,7 +322,14 @@ class RunOrchestrator:
             rollback_to=target,
             reason=reason_summary,
         )
-        self._state.rollback.begin_rollback(current_phase, target, reason_summary)
+        ctx = self._state.rollback.begin_rollback(current_phase, target, reason_summary)
+        # PR-N5: inject the target phase's prior control_ir_results snapshot
+        # into the rollback context so PhaseExecutor can restore them at the
+        # top of _run_act_loop.  Falls through to empty list (= current
+        # behavior) when no snapshot exists (first rollback to this phase).
+        snapshot = self._state.rollback.get_snapshot(target)
+        if snapshot is not None:
+            ctx["previous_control_ir_results"] = snapshot
         self._state.history.append(f"{current_phase} → rollback → {target}")
         return target, self._state.rollback.get_input(target), self._state.rollback.get_predecessor(target)
 
@@ -670,6 +677,15 @@ class RunOrchestrator:
                     )
 
                 self._state.rollback.record_output(current_phase, output.artifact)
+
+                # PR-N5: snapshot the current phase's final control_ir_results
+                # so that a future rollback back to this phase can restore the
+                # LLM's prior op observations (grep matches, file_read content,
+                # etc.) instead of re-running those ops from scratch.
+                self._state.rollback.snapshot_phase_history(
+                    current_phase,
+                    self._phase_executor._last_control_ir_results,  # noqa: SLF001
+                )
 
                 artifact_path = self._workspace.store_artifact(
                     current_phase, output.artifact,

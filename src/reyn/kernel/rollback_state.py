@@ -37,6 +37,10 @@ class RollbackState:
     phase_prev: dict[str, str | None] = field(default_factory=dict)
     pending_ctx: dict | None = None
     no_progress_check: dict | None = None
+    # PR-N5: snapshot of each phase's final control_ir_results, keyed by
+    # phase name.  Saved at A → B transition so B → A rollback can restore
+    # A's prior act-loop progress instead of starting fresh.
+    _phase_history_snapshots: dict[str, list[dict]] = field(default_factory=dict)
 
     # ── recording (called by OSRuntime as it advances) ──
 
@@ -109,3 +113,27 @@ class RollbackState:
             return rollback_from
         self.no_progress_check = None
         return None
+
+    # ── PR-N5: phase history snapshots ──
+
+    def snapshot_phase_history(self, phase: str, results: list[dict]) -> None:
+        """Save a snapshot of phase's final control_ir_results, keyed by phase.
+
+        Called when transitioning A → B so that a later B → A rollback can
+        restore A's prior act-loop progress (grep/file_read observations)
+        instead of re-running the same ops from scratch.
+
+        A shallow copy of `results` is stored so that subsequent mutations to
+        the caller's list do not corrupt the snapshot.
+        """
+        self._phase_history_snapshots[phase] = list(results)
+
+    def get_snapshot(self, phase: str) -> list[dict] | None:
+        """Return the saved control_ir_results snapshot for `phase`, or None.
+
+        Returns None when no snapshot has been saved for this phase (= first
+        entry, or the phase was never followed by a transition-then-rollback).
+        The caller falls through to an empty list in that case (= current
+        unmodified behavior).
+        """
+        return self._phase_history_snapshots.get(phase)
