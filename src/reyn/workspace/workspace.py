@@ -29,8 +29,9 @@ class Workspace:
         events: EventLog,
         permission_resolver: "PermissionResolver | None" = None,
         skill_name: str = "",
+        base_dir: "Path | None" = None,
     ) -> None:
-        self.base_dir = Path.cwd()
+        self.base_dir = base_dir.resolve() if base_dir is not None else Path.cwd()
         self.state_dir = (self.base_dir / ".reyn").resolve()
         self._events = events
         self.artifacts: list[dict] = []

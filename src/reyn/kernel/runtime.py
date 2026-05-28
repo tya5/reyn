@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.kernel.rollback_state import (
@@ -78,6 +79,7 @@ class OSRuntime:
         media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
         plan_step: dict | None = None,
+        workspace_base_dir: "Path | None" = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -95,6 +97,7 @@ class OSRuntime:
             self.events,
             permission_resolver=permission_resolver,
             skill_name=skill.name,
+            base_dir=workspace_base_dir,
         )
         # Populate internal limit attributes from SafetyConfig.
         _safety = safety or SafetyConfig()
