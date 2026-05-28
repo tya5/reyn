@@ -59,12 +59,15 @@ While a session is active, lines starting with `/` are intercepted and never rou
 
 | Command | Effect |
 |---------|--------|
+| `/agent edit role <text>` | Rewrite the attached agent's persona (#906) |
 | `/agent new <name>` | Create new agent and attach to it |
 | `/agents` | List loaded agents and which one is currently attached |
 | `/answer <id-prefix> <text>` | Answer a pending `ask_user` / permission prompt (id-prefix: any unique prefix of the intervention id) |
 | `/attach <name>` | Switch the REPL pointer to another agent (the previous one keeps running in the background) |
 | `/budget [reset]` | Full budget breakdown; `/budget reset` clears per-process counters (see [config/budget](../config/budget.md)) |
 | `/cancel <id-prefix>` | Cancel a running skill (accepts any unique prefix of the run_id) |
+| `/clear-history` | Wipe chat history (**destructive**; clears in-memory + persistent history, #903) |
+| `/concept <term>` | Inline glossary lookup (T1-3) |
 | `/copy [N\|list]` | Copy an agent reply to the clipboard (1 = newest, 2 = one turn back, …) |
 | `/cost` | Quick token + USD cost summary for this agent |
 | `/cost-inline` | Toggle per-turn cost suffix in conversation |

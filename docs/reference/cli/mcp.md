@@ -12,14 +12,34 @@ Manage MCP server configuration and expose Reyn agents to external MCP-aware cli
 ## Synopsis
 
 ```
-reyn mcp serve     [--project PATH] [--timeout SECONDS] [common flags]
-reyn mcp search    <QUERY>
-reyn mcp install   <SERVER_ID> [--scope SCOPE] [--env KEY=VALUE ...] [--non-interactive]
-reyn mcp list      [--probe]
-reyn mcp remove    <NAME> [--scope SCOPE]
-reyn mcp set-secret <SERVER> <KEY>[=<VALUE>]
-reyn mcp clear-secret <SERVER> [<KEY>]
+reyn mcp serve         [--project PATH] [--timeout SECONDS] [common flags]
+reyn mcp search        <QUERY>
+reyn mcp install       <SERVER_ID> [--scope SCOPE] [--env KEY=VALUE ...] [--non-interactive]
+reyn mcp list          [--probe]
+reyn mcp remove        <NAME> [--scope SCOPE]
+reyn mcp refresh       [--project PATH]
+reyn mcp set-secret    <SERVER> <KEY>[=<VALUE>]
+reyn mcp clear-secret  <SERVER> [<KEY>]
 ```
+
+### `refresh` quick reference
+
+`reyn mcp refresh` (= FP-0037-S1) re-probes all configured MCP servers and writes results to the persistent cache file (`.reyn/state/mcp_tools_cache.json`). Active `reyn chat` sessions pick up the new cache on their next turn boundary — **no restart required**.
+
+```
+reyn mcp refresh [--project PATH]
+```
+
+| Flag | Description |
+|---|---|
+| `--project PATH` | Project root containing `reyn.yaml` (default: closest ancestor with `reyn.yaml`) |
+
+Use cases:
+- After `reyn mcp install` adds a new server, force a re-probe so active chat sessions see it on the next turn.
+- After editing `.reyn/mcp.yaml` by hand, push the change into the active cache.
+- As a periodic operator command to refresh tool availability without restarting chat sessions.
+
+**Passive auto-refresh** (= FP-0037-S2、 PR #1003): active chat sessions also watch `reyn.yaml` mtime + `.reyn/mcp.yaml` mtime on each turn boundary; an edit to either is picked up without the explicit `reyn mcp refresh` invocation. The explicit CLI subcommand remains useful for the use cases above (= operator-driven re-probe / scripted refresh).
 
 ## Overview
 
