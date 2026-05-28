@@ -1745,6 +1745,9 @@ class ChatSession:
                 self, run_id=None, skill_name="chat_router",
                 channel_id=DEFAULT_CHAT_CHANNEL_ID,
             ),
+            # FP-0037 S2: yaml mtime watch needs the project root to resolve
+            # the 3 yaml scope tier paths. None falls back to user-global only.
+            project_root=getattr(self._registry, "_project_root", None),
         )
 
         # FP-0019 Wave 1: background head/body/tail compaction service.
@@ -2757,6 +2760,14 @@ class ChatSession:
         # this chain, _resolve_pending_chain) accumulate against the same
         # budget without resetting.
         self._reset_router_turn_counter()
+
+        # FP-0037 S2: check whether any of the 3 yaml scope tier files changed
+        # since the last turn. If so, re-probes MCP servers + writes the cache
+        # file so the disk-reload step below picks it up. No-op on first call
+        # (seeds mtime table without probing). Called BEFORE
+        # maybe_reload_mcp_tools_cache_from_disk so yaml-triggered cache writes
+        # are already on disk when the disk-reload step runs.
+        await self._router_host.maybe_refresh_mcp_tools_from_yaml()
 
         # FP-0037 S1: check whether the operator ran `reyn mcp refresh`
         # since the last turn. Reloads the in-memory tools cache from disk
