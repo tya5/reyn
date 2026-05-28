@@ -848,17 +848,24 @@ class _CountingEngine(ChatCompactionEngine):
 
 
 def test_force_compact_now_emits_race_unrecovered_when_always_over_budget() -> None:
-    """Tier 2: force_compact_now emits force_compact_race_unrecovered when the
-    history remains over budget after max_passes compaction runs.
+    """Tier 2: force_compact_now emits event AND raises ForceCompactRaceUnrecoveredError
+    when the history remains over budget after max_passes compaction runs.
 
     Simulates the race by using a history_access callable that always returns
     history with token count > effective_trigger, regardless of how many times
     compaction runs (= race always wins).
 
-    Invariants verified via public API:
+    Invariants verified via public API (= lead-coder accept condition 2026-05-29
+    pairing event emit with fail-fast raise — never silent-continue):
     - force_compact_race_unrecovered event emitted with passes=max_passes.
-    - compact() was called exactly max_passes times.
+    - ForceCompactRaceUnrecoveredError raised with passes attribute.
+    - compact() was called exactly max_passes times before the raise.
     """
+    import pytest
+
+    from reyn.chat.services.chat_compaction_engine import (
+        ForceCompactRaceUnrecoveredError,
+    )
     from reyn.chat.services.compaction_controller import CompactionController
 
     events = EventLog()
@@ -891,7 +898,9 @@ def test_force_compact_now_emits_race_unrecovered_when_always_over_budget() -> N
         render_summary=lambda s: str(s),
     )
 
-    asyncio.run(ctrl.force_compact_now(max_passes=2))
+    with pytest.raises(ForceCompactRaceUnrecoveredError) as exc_info:
+        asyncio.run(ctrl.force_compact_now(max_passes=2))
+    assert exc_info.value.passes == 2
 
     unrecovered = [e for e in events.all() if e.type == "force_compact_race_unrecovered"]
     assert unrecovered, (

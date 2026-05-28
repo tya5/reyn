@@ -271,17 +271,22 @@ class CompactionController:
             Between the fire-decision and lock-acquisition, other async
             coroutines may append to history (sync ``_append_history`` calls).
             After each compaction pass, we re-measure the post-state and re-run
-            if still over budget, up to ``max_passes`` total.  Beyond that,
-            a ``force_compact_race_unrecovered`` event is emitted and the method
-            returns — the next router LLM call will see the over-budget prompt,
-            and the existing background ``spawn_maybe()`` will trigger again
-            automatically.
+            if still over budget, up to ``max_passes`` total.  Beyond that, a
+            ``force_compact_race_unrecovered`` event is emitted and
+            ``ForceCompactRaceUnrecoveredError`` is raised — the contract is
+            fail-fast (lead-coder accept condition 2026-05-29): the caller
+            must surface the unrecovered state rather than allow a silent
+            over-budget LLM call.
 
             Choice of Option B over Option A (= async _append_history + lock):
             Option B is more localised (no call-site changes to _append_history),
             matches Python async semantics where sync appends are sequential
             within a coroutine, and the worst-case is a single over-budget turn
-            that resolves on the very next interaction cycle.
+            that resolves on the very next interaction cycle. Pairing the
+            ``force_compact_race_unrecovered`` event with a raise preserves the
+            mathematical invariant: either compaction succeeds within
+            max_passes, or the caller sees a hard error — never a silent
+            over-budget prompt.
 
         The existing background ``spawn_maybe()`` fire-and-forget path is
         unaffected; both paths can co-exist (sync = pre-frame guard,
@@ -344,10 +349,17 @@ class CompactionController:
                 return  # no trigger info — assume done
 
         # All passes exhausted; race not fully recovered.
+        # Fail-fast per lead-coder accept condition 2026-05-29: the contract
+        # is "compaction succeeds within max_passes OR raises". Silent-continue
+        # would allow an over-budget prompt to reach the LLM.
+        from reyn.chat.services.chat_compaction_engine import (
+            ForceCompactRaceUnrecoveredError,
+        )
         self._events.emit(
             "force_compact_race_unrecovered",
             passes=max_passes,
         )
+        raise ForceCompactRaceUnrecoveredError(passes=max_passes)
 
     async def _run_compaction(
         self,

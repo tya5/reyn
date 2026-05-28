@@ -315,6 +315,36 @@ class NewMsgExceedsBudgetError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# ForceCompactRaceUnrecoveredError (ISSUE #6, lead-coder accept condition)
+# ---------------------------------------------------------------------------
+
+
+class ForceCompactRaceUnrecoveredError(Exception):
+    """Raised when force_compact_now() exhausts max_passes still over budget.
+
+    Option B race-recovery loop accepts up to N passes when concurrent
+    sync history appends keep the prompt over the model's effective
+    trigger. Past N, the contract is fail-fast: the caller must surface
+    the unrecovered state rather than allow a silent over-budget LLM
+    call. Pairs with `force_compact_race_unrecovered` event emit.
+
+    Attributes
+    ----------
+    passes:
+        Number of compaction passes attempted (= max_passes).
+    """
+
+    def __init__(self, passes: int) -> None:
+        self.passes = passes
+        super().__init__(
+            f"force_compact_now exhausted max_passes={passes} still over budget. "
+            f"Concurrent sync history appends are racing with synchronous "
+            f"compaction. The prompt cannot be reduced below effective_trigger "
+            f"within the race-recovery budget."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Deterministic helpers
 # ---------------------------------------------------------------------------
 
@@ -661,6 +691,7 @@ __all__ = [
     "ChatSummaryRaw",
     "ComputedBudgets",
     "HistoryChunkToCompact",
+    "ForceCompactRaceUnrecoveredError",
     "NewMsgExceedsBudgetError",
     "assert_static_bounds",
     "compute_budgets",
