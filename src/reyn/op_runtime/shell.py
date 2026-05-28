@@ -59,11 +59,21 @@ async def handle(op: ShellIROp, ctx: OpContext, caller: Literal["preprocessor", 
         raise OpSkipped("shell_not_allowed")
 
     ctx.events.emit("shell_started", cmd=op.cmd, timeout=op.timeout)
+    # FP-0008 PR-I extension: anchor subprocess cwd to the workspace's
+    # base_dir so concurrent benchmark runs (= --concurrency >1) see
+    # their own workspace as the shell's CWD. Without this, the
+    # subprocess inherits the process-global CWD which the chdir-
+    # removal in this PR otherwise leaves at the launch dir — making
+    # `git checkout`, `pytest`, etc. fail with "Not a git repository"
+    # on benchmark workspaces. ``ctx.workspace.base_dir`` is the
+    # explicit base passed through Workspace ctor (= this PR's main
+    # fix).
     try:
         proc = await asyncio.create_subprocess_shell(
             op.cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=str(ctx.workspace.base_dir),
         )
         try:
             stdout_b, stderr_b = await asyncio.wait_for(

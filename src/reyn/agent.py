@@ -58,6 +58,7 @@ class Agent:
         multimodal_config: "MultimodalConfig | None" = None,
         media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
+        workspace_base_dir: "Path | None" = None,
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -84,6 +85,7 @@ class Agent:
         # Issue #383 PR-C: media + tool-result file storage.
         self._media_store = media_store
         self._secret_store = secret_store
+        self._workspace_base_dir = workspace_base_dir
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -167,6 +169,7 @@ class Agent:
             media_store=self._media_store,
             secret_store=self._secret_store,
             plan_step=plan_step,
+            workspace_base_dir=self._workspace_base_dir,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

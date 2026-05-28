@@ -19,7 +19,6 @@ import argparse
 import asyncio
 import json
 import logging
-import os
 import subprocess
 import sys
 import tempfile
@@ -247,7 +246,6 @@ def _benchmark_isolated_workspace(
     dir) so the task itself fails with a clear "not a git repository"
     error rather than hanging or masking the cause.
     """
-    original_cwd = Path.cwd()
     with tempfile.TemporaryDirectory(prefix="reyn-benchmark-") as tmp:
         tmp_path = Path(tmp)
         if clone_task_repo and task is not None:
@@ -257,11 +255,7 @@ def _benchmark_isolated_workspace(
                 base_commit = data.get("base_commit")
                 if isinstance(repo, str) and isinstance(base_commit, str):
                     _init_workspace_from_repo(tmp_path, repo, base_commit)
-        try:
-            os.chdir(tmp_path)
-            yield tmp_path
-        finally:
-            os.chdir(original_cwd)
+        yield tmp_path
 
 
 def _init_workspace_from_repo(
@@ -342,20 +336,6 @@ async def _run_single_task(
         project_root = _find_project_root(Path.cwd())
         project_context = load_project_context(session.config, project_root)
 
-        agent = Agent(
-            model=model,
-            resolver=session.resolver,
-            intervention_bus=StdinInterventionBus(),
-            safety=session.safety_for(argparse.Namespace()),
-            shell_allowed=shell_allowed,
-            permission_resolver=permission_resolver,
-            python_allowed_modules=python_allowed_modules or list(session.config.python.allowed_modules),
-            mcp_servers=session.config.mcp,
-            prompt_cache_enabled=session.config.prompt_cache_enabled,
-            project_context=project_context,
-            caller="direct",
-        )
-
         result_data: dict = {}
         error_msg: str | None = None
         cost_usd: float | None = None
@@ -363,7 +343,21 @@ async def _run_single_task(
         try:
             with _benchmark_isolated_workspace(
                 task=task, clone_task_repo=clone_task_repo,
-            ):
+            ) as workspace_path:
+                agent = Agent(
+                    model=model,
+                    resolver=session.resolver,
+                    intervention_bus=StdinInterventionBus(),
+                    safety=session.safety_for(argparse.Namespace()),
+                    shell_allowed=shell_allowed,
+                    permission_resolver=permission_resolver,
+                    python_allowed_modules=python_allowed_modules or list(session.config.python.allowed_modules),
+                    mcp_servers=session.config.mcp,
+                    prompt_cache_enabled=session.config.prompt_cache_enabled,
+                    project_context=project_context,
+                    caller="direct",
+                    workspace_base_dir=workspace_path,
+                )
                 run_result = await agent.run(skill, input_artifact)
 
             if run_result.ok:
