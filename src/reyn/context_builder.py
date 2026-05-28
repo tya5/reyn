@@ -9,6 +9,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import litellm
+
+from reyn.llm.model_budget import get_max_input_tokens
 from reyn.schemas.models import (
     CandidateOutput,
     ContextFrame,
@@ -21,122 +24,141 @@ from reyn.schemas.models import (
 ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref in ContextFrame
 MAX_INLINE_BOOST = 65_536  # characters; artifacts up to 64KB are still inlined (inline-boost range)
 
-# Per-result size cap for control_ir_results (FP-0008 PR-N v8).
-# sandbox_2 v8 calibration (2026-05-28) showed file_read / shell op results
-# accumulating unbounded across act turns; at N=14 turns the prompt reached
-# 100K-400K tokens (396K / 366K / 217K / 113K / 101K observed), triggering
-# OS-side termination. 8 KiB per result keeps a 14-turn run well under 200K
-# characters of accumulated results while still fitting typical file snippets
-# and shell output. The full result body is preserved in the act_executed
-# event (P6 audit guarantee) and the LLM can issue a follow-up file_read with
-# offset/limit if it needs more content.
-MAX_CONTROL_IR_RESULT_BYTES = 8_192  # bytes; results exceeding this are truncated
-_TRUNCATION_PREVIEW_BYTES = 2_048   # bytes shown at the head of a truncated result
-_TRUNCATION_TAIL_BYTES = 512        # bytes shown at the tail of a truncated result
+# Compaction safety margin: trigger compaction when estimated prompt size
+# exceeds 85% of the model's max_input_tokens. 0.85 is intentionally
+# conservative — we want a meaningful buffer below the hard limit so that the
+# system prompt + LLM response tokens do not push the total over the cap.
+# YAGNI: not exposed as a config knob; 0.85 is universally appropriate for the
+# "drop oldest results" strategy (= no risk of over-compacting because each
+# retained result still leaves headroom for the LLM's own output).
+_COMPACTION_SAFETY_MARGIN = 0.85
+
+# Placeholder shape injected for a dropped result.  Contains only fields that
+# are safe to expose without the content body.  Preserves LLM visibility of
+# "an op happened at this position" without re-including the large payload.
+_COMPACTED_RESULT_PLACEHOLDER_KEYS = ("kind", "status")
 
 
-def _large_field_keys(result: dict) -> list[str]:
-    """Return field names in *result* whose string values are candidates for truncation.
+def _estimate_tokens(text: str, model: str) -> int:
+    """Estimate token count for *text* against *model*.
 
-    We truncate string-valued fields that are likely to carry large content:
-    ``content`` (file_read), ``stdout`` / ``stderr`` (shell / sandboxed_exec),
-    and ``output`` (any future op that follows the same convention).  All other
-    fields (status, kind, path, …) are left intact so the LLM retains
-    structured metadata.
+    Uses ``litellm.token_counter`` for accurate per-model token counts when
+    the model is known to LiteLLM.  Falls back to ``len(text) / 4`` (= rough
+    chars-per-token estimate) when ``token_counter`` returns 0 or raises.
+
+    The fallback is intentionally conservative (4 chars/token is below the
+    average for English prose at ~4.5 chars/token) so estimates err toward
+    compacting more rather than less.
     """
-    return [k for k in ("content", "stdout", "stderr", "output") if isinstance(result.get(k), str)]
+    try:
+        count = litellm.token_counter(model=model, text=text)
+        if count and count > 0:
+            return count
+    except Exception:
+        pass
+    # Fallback: 4 chars ≈ 1 token (conservative estimate)
+    return max(1, len(text) // 4)
 
 
-def _truncate_string_to_bytes(s: str, max_bytes: int) -> tuple[str, int]:
-    """Return *(truncated_str, original_byte_len)*.
-
-    The returned string is at most *max_bytes* bytes when encoded as UTF-8.
-    We do a simple encode-slice-decode so we never split a multi-byte character.
-    """
-    encoded = s.encode("utf-8")
-    original = len(encoded)
-    if original <= max_bytes:
-        return s, original
-    return encoded[:max_bytes].decode("utf-8", errors="ignore"), original
+def _make_placeholder(result: dict, idx: int, original_bytes: int) -> dict:
+    """Return a small placeholder dict preserving audit fields, dropping content."""
+    placeholder: dict = {"compacted": True, "result_idx": idx, "original_bytes": original_bytes}
+    for key in _COMPACTED_RESULT_PLACEHOLDER_KEYS:
+        if key in result:
+            placeholder[key] = result[key]
+    return placeholder
 
 
-def cap_control_ir_result(
-    result: dict,
-    idx: int,
+def compact_control_ir_results(
+    results: list[dict],
+    model: str,
+    frame_json_without_results: str,
     *,
     events: Any = None,
     phase: str | None = None,
     run_id: str | None = None,
     turn: int | None = None,
-) -> dict:
-    """Return *result* with large string fields truncated to MAX_CONTROL_IR_RESULT_BYTES.
+) -> list[dict]:
+    """Selectively drop oldest results until estimated prompt size fits the model budget.
 
-    If no field exceeds the cap the original dict is returned unchanged.
-    When truncation occurs:
-    - Each oversized field is replaced with a structured marker string that
-      includes the original byte count, a head preview, and a tail preview.
-    - A ``control_ir_result_truncated`` observability event is emitted so the
-      truncation is audit-visible (P6).
+    Algorithm:
+      1. Compute the model's token budget threshold (max_input_tokens × safety_margin).
+      2. Serialize the current results list and combine with the rest of the
+         frame JSON to get the estimated total prompt size.
+      3. If estimated tokens ≤ threshold: return results unchanged.
+      4. Otherwise: replace the OLDEST result with a compact placeholder and
+         re-estimate. Repeat until within budget or all results are compacted.
+      5. Emit a ``control_ir_results_compacted`` observability event (P6) when
+         any compaction occurs.
 
-    The marker format is deliberately human-readable and LLM-parseable so the
-    model can tell at a glance how much content was omitted and issue a
-    targeted file_read with offset/limit if it needs more.
+    The full result body is preserved in the ``act_executed`` event (P6 audit
+    guarantee) — this function only modifies the in-prompt copy.
+
+    Parameters
+    ----------
+    results:
+        The list of control_ir_results to potentially compact.
+    model:
+        LiteLLM model string used for token counting and budget query.
+    frame_json_without_results:
+        JSON serialization of the ContextFrame *excluding* the results field,
+        used to estimate the non-results portion of the prompt.
+    events:
+        Optional EventLog for emitting the compaction event.
+    phase / run_id / turn:
+        Observability fields passed through to the emitted event.
     """
-    large_keys = _large_field_keys(result)
-    if not large_keys:
-        return result
+    if not results:
+        return results
 
-    truncated_fields: dict[str, int] = {}
-    new_result = dict(result)
+    max_input_tokens = get_max_input_tokens(model, events=events, phase=phase, run_id=run_id)
+    threshold = int(max_input_tokens * _COMPACTION_SAFETY_MARGIN)
 
-    for key in large_keys:
-        value: str = result[key]
-        encoded = value.encode("utf-8")
-        original_bytes = len(encoded)
-        if original_bytes <= MAX_CONTROL_IR_RESULT_BYTES:
-            continue
+    # Estimate current total prompt size (base frame + results).
+    results_json = json.dumps(results, ensure_ascii=False)
+    combined_text = frame_json_without_results + results_json
+    estimated_tokens_before = _estimate_tokens(combined_text, model)
 
-        # Build head + tail preview.
-        head_bytes = min(_TRUNCATION_PREVIEW_BYTES, MAX_CONTROL_IR_RESULT_BYTES)
-        tail_bytes = min(_TRUNCATION_TAIL_BYTES, MAX_CONTROL_IR_RESULT_BYTES - head_bytes)
-        head = encoded[:head_bytes].decode("utf-8", errors="ignore")
-        tail = encoded[-tail_bytes:].decode("utf-8", errors="ignore") if tail_bytes > 0 else ""
+    if estimated_tokens_before <= threshold:
+        return results
 
-        marker_parts = [
-            f"<truncated: original {original_bytes} bytes, cap {MAX_CONTROL_IR_RESULT_BYTES} bytes>",
-            f"<preview (first {len(head.encode())} bytes)>",
-            head,
-            "</preview>",
-        ]
-        if tail:
-            marker_parts += [
-                f"<tail (last {len(tail.encode())} bytes)>",
-                tail,
-                "</tail>",
-            ]
-        marker_parts.append(
-            "<note: full content preserved in act_executed event log (P6); "
-            "issue a file.read op with offset/limit for targeted access></note>"
-        )
-        new_result[key] = "\n".join(marker_parts)
-        truncated_fields[key] = original_bytes
+    # Compaction needed: work on a mutable copy.
+    working = list(results)
+    compacted_count = 0
 
-    if not truncated_fields:
-        return result
+    for idx in range(len(working)):
+        if estimated_tokens_before <= threshold:
+            break
+        original = working[idx]
+        if original.get("compacted"):
+            continue  # already a placeholder — skip
+        original_bytes = len(json.dumps(original, ensure_ascii=False).encode("utf-8"))
+        working[idx] = _make_placeholder(original, idx, original_bytes)
+        compacted_count += 1
 
-    if events is not None:
+        # Re-estimate after each replacement.
+        results_json = json.dumps(working, ensure_ascii=False)
+        combined_text = frame_json_without_results + results_json
+        estimated_tokens_before = _estimate_tokens(combined_text, model)
+
+    estimated_tokens_after = estimated_tokens_before
+
+    if compacted_count > 0 and events is not None:
         events.emit(
-            "control_ir_result_truncated",
+            "control_ir_results_compacted",
             phase=phase,
             run_id=run_id,
             turn=turn,
-            result_idx=idx,
-            result_kind=result.get("kind"),
-            truncated_fields=truncated_fields,
-            cap_bytes=MAX_CONTROL_IR_RESULT_BYTES,
+            compacted_count=compacted_count,
+            estimated_tokens_before=_estimate_tokens(
+                frame_json_without_results + json.dumps(results, ensure_ascii=False), model
+            ),
+            estimated_tokens_after=estimated_tokens_after,
+            max_input_tokens=max_input_tokens,
+            safety_margin=_COMPACTION_SAFETY_MARGIN,
         )
 
-    return new_result
+    return working
 
 
 def maybe_ref_artifact(
@@ -208,21 +230,8 @@ def build_frame(
     current_visit = visit_counts.get(phase_name, 1)
     total_steps = sum(visit_counts.values())
 
-    # Apply per-result size cap before the results enter the LLM prompt.
-    # Large file_read / shell / sandboxed_exec results can balloon the prompt
-    # to 100K-400K tokens over N=14 act turns (FP-0008 PR-N v8).
-    capped_results = [
-        cap_control_ir_result(
-            r,
-            idx,
-            events=events,
-            phase=phase_name,
-            run_id=run_id,
-            turn=act_turn,
-        )
-        for idx, r in enumerate(control_ir_results or [])
-    ]
-
+    # Build the base frame without control_ir_results first so we can estimate
+    # the non-results portion of the prompt for compaction threshold calculation.
     frame = ContextFrame(
         current_phase=phase_name,
         current_phase_role=phase.role,
@@ -241,7 +250,50 @@ def build_frame(
         output_language=output_language,
         model=effective_model,
         model_resolved=model_resolved,
-        control_ir_results=capped_results,
+        control_ir_results=[],
+        remaining_act_turns=remaining_act_turns,
+    )
+
+    # Apply model-aware compaction before results enter the LLM prompt.
+    # Compaction replaces the oldest results with compact placeholders when
+    # the estimated prompt token count would exceed the model's input budget
+    # (= max_input_tokens × safety_margin).  The full result body is preserved
+    # in the act_executed event (P6 audit guarantee).
+    raw_results = list(control_ir_results or [])
+    if raw_results:
+        frame_json_base = json.dumps(frame.model_dump(mode="json"), ensure_ascii=False)
+        compacted_results = compact_control_ir_results(
+            raw_results,
+            model=effective_model,
+            frame_json_without_results=frame_json_base,
+            events=events,
+            phase=phase_name,
+            run_id=run_id,
+            turn=act_turn,
+        )
+    else:
+        compacted_results = []
+
+    # Rebuild frame with (possibly compacted) results.
+    frame = ContextFrame(
+        current_phase=phase_name,
+        current_phase_role=phase.role,
+        instructions=phase.instructions,
+        input_artifact=maybe_ref_artifact(artifact, artifact_path, events=events, phase=phase_name),
+        execution=ExecutionState(
+            path=list(history)[-10:],
+            current_visit=current_visit,
+            total_steps=total_steps,
+        ),
+        candidate_outputs=candidates,
+        finish_criteria=finish_criteria if "end" in allowed_next else [],
+        constraints=PhaseConstraints(max_phase_visits=max_phase_visits),
+        available_control_ops=available_ops,
+        op_catalog=op_catalog or [],
+        output_language=output_language,
+        model=effective_model,
+        model_resolved=model_resolved,
+        control_ir_results=compacted_results,
         remaining_act_turns=remaining_act_turns,
     )
 
