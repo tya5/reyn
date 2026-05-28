@@ -368,15 +368,49 @@ class CompactionSectionCaps:
 class CompactionConfig:
     """`chat.compaction:` — Head/Body/Tail compaction policy.
 
-    See PR4 in /Users/yasudatetsuya/.claude/plans/abstract-knitting-moonbeam.md
-    for the design rationale.
+    PR-N3 (11-axis): budget allocation is now ratio-based relative to the
+    model's main context pool (= T_max - T_SP).  The four ratio fields must
+    sum to ≤ 1.0; this is asserted at engine init via assert_static_bounds().
+
+    Ratios:
+        head_ratio   — fraction of main_pool reserved for the HEAD slice
+        body_ratio   — fraction of main_pool reserved for the BODY (summary)
+        tail_ratio   — fraction of main_pool reserved for the TAIL slice
+        new_msg_ratio — fraction of main_pool reserved for the incoming user msg
+
+    Tokeniser:
+        use_chars4_estimate=False (default) → litellm.token_counter per turn.
+        use_chars4_estimate=True  → len(text)//4 (latency-opt for large deploys).
+
+    Legacy/background trigger:
+        trigger_total_tokens is kept for the background _maybe_compact() path
+        that fires after each reply (not the synchronous pre-frame guard).
     """
-    trigger_total_tokens: int = 30000   # Compact when uncovered middle exceeds this
-    head_size: int = 12                 # First N user/agent turns kept raw
-    tail_size: int = 12                 # Last N user/agent turns kept raw
-    body_token_cap: int = 1500          # Total cap across all summary sections
-    min_compact_batch: int = 5          # Skip compact when fewer than N turns to absorb
+    # Ratio-based budget allocation (PR-N3 Axis 1). Ratios sum must be ≤ 1.0.
+    head_ratio: float = 0.10
+    body_ratio: float = 0.05
+    tail_ratio: float = 0.15
+    new_msg_ratio: float = 0.10
+    # section_caps_spec_tokens: static overhead budget for section_token_caps
+    # serialisation in the compactor prompt.
+    section_caps_spec_tokens: int = 100
+    # Tokeniser opt-out (Axis 10): set True for latency-sensitive deployments.
+    use_chars4_estimate: bool = False
+    # Legacy fields kept for background trigger path and section caps.
+    trigger_total_tokens: int = 30000   # background trigger: compact when middle exceeds this
+    body_token_cap: int = 1500          # hard cap on summary body tokens (post-truncation)
+    min_compact_batch: int = 5          # skip compact when fewer than N turns to absorb
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
+    # head_size / tail_size:
+    # DEPRECATED — retained only for the background `_maybe_compact()` legacy
+    # path which still uses turn-count gates to identify HEAD / TAIL
+    # boundaries. The new synchronous force-trigger path (= pre-frame guard
+    # in `_maybe_force_compact_for_router`) uses token-budget only via
+    # `head_ratio` / `tail_ratio` (= 11-axis Axis 3). Background-path removal
+    # is a separate root-fix wave; until then these fields exist to keep the
+    # legacy lifecycle working without scope-creeping PR-N3.
+    head_size: int = 12                 # First N user/agent turns = HEAD (background path)
+    tail_size: int = 12                 # Last N user/agent turns = TAIL (background path)
 
 
 @dataclass
@@ -1688,16 +1722,26 @@ def _build_chat_config(raw: object) -> ChatConfig:
     )
     defaults = CompactionConfig()
     compaction = CompactionConfig(
+        head_ratio=float(compaction_raw.get("head_ratio", defaults.head_ratio)),
+        body_ratio=float(compaction_raw.get("body_ratio", defaults.body_ratio)),
+        tail_ratio=float(compaction_raw.get("tail_ratio", defaults.tail_ratio)),
+        new_msg_ratio=float(compaction_raw.get("new_msg_ratio", defaults.new_msg_ratio)),
+        section_caps_spec_tokens=int(
+            compaction_raw.get("section_caps_spec_tokens", defaults.section_caps_spec_tokens)
+        ),
+        use_chars4_estimate=bool(
+            compaction_raw.get("use_chars4_estimate", defaults.use_chars4_estimate)
+        ),
         trigger_total_tokens=int(
             compaction_raw.get("trigger_total_tokens", defaults.trigger_total_tokens)
         ),
-        head_size=int(compaction_raw.get("head_size", defaults.head_size)),
-        tail_size=int(compaction_raw.get("tail_size", defaults.tail_size)),
         body_token_cap=int(compaction_raw.get("body_token_cap", defaults.body_token_cap)),
         min_compact_batch=int(
             compaction_raw.get("min_compact_batch", defaults.min_compact_batch)
         ),
         section_token_caps=section,
+        head_size=int(compaction_raw.get("head_size", defaults.head_size)),
+        tail_size=int(compaction_raw.get("tail_size", defaults.tail_size)),
     )
     return ChatConfig(compaction=compaction)
 

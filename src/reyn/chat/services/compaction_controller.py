@@ -1,19 +1,33 @@
 """CompactionController — background head/body/tail compaction.
 
 Extracted from ChatSession (FP-0019 Wave 1).  Owns the background
-asyncio.Task that runs ``chat_compactor`` skill against the rolling
-chat history.
+asyncio.Task that drives OS-internal compaction (PR-N3: direct Python
+helper, no skill/phase overhead).
 
 All event emissions go through the injected ``event_log``; no silent
 state changes (P6).  Business logic lives entirely here; ChatSession
-delegates via :meth:`spawn_maybe` and :meth:`cancel` (P3).
+delegates via :meth:`spawn_maybe`, :meth:`cancel`, and
+:meth:`force_compact_now` (P3).
+
+Axis 8 (B_M trigger race strict):
+    ``force_compact_now()`` acquires the engine's ``compaction_lock``
+    (asyncio.Lock) for the entire duration of the compaction run.
+    Any code path that appends to ``ChatSession.history`` between the
+    force-trigger decision and compaction completion must await this
+    lock before appending, ensuring the mathematical gap is 0: no new
+    turn can land between the "T(M) > effective_trigger" decision and
+    the moment compaction reduces T(M) back below the budget.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING, Callable
 
+from reyn.chat.services.chat_compaction_engine import (
+    ChatCompactionEngine,
+    HistoryChunkToCompact,
+)
 from reyn.config import CompactionConfig
 from reyn.events.events import EventLog
 
@@ -82,9 +96,9 @@ class CompactionController:
     latest_summary:
         Zero-argument callable that returns the most recent ``"summary"``
         :class:`~reyn.chat.session.ChatMessage`, or ``None``.
-    run_compaction_skill:
-        Async callable ``(skill_name, input_artifact, *, state_subdir) ->
-        RunResult``.  Wraps ``ChatSession._run_stdlib_skill``.
+    chat_compaction_engine:
+        :class:`~reyn.chat.services.chat_compaction_engine.ChatCompactionEngine`
+        that owns the single LLM call (PR-N3: OS-internal, no skill/phase).
     history_appender:
         Callable ``(ChatMessage) -> None`` that appends a message to the
         persisted history.  Wraps ``ChatSession._append_history``.
@@ -114,7 +128,7 @@ class CompactionController:
         config: CompactionConfig,
         history_access: Callable[[], list[ChatMessage]],
         latest_summary: Callable[[], ChatMessage | None],
-        run_compaction_skill: Callable[..., Awaitable],
+        chat_compaction_engine: ChatCompactionEngine,
         history_appender: Callable[[ChatMessage], None],
         make_summary_message: Callable[..., ChatMessage],
         render_summary: Callable[[dict], str],
@@ -124,7 +138,7 @@ class CompactionController:
         self._config = config
         self._history_access = history_access
         self._latest_summary = latest_summary
-        self._run_compaction_skill = run_compaction_skill
+        self._engine = chat_compaction_engine
         self._append_history = history_appender
         self._make_summary_message = make_summary_message
         self._render_summary = render_summary
@@ -232,15 +246,127 @@ class CompactionController:
         finally:
             self._compacting = False
 
+    def _estimate_current_history_tokens(self) -> int:
+        """Cheap chars/4 estimate of the total text tokens in current history.
+
+        Used by the race-recovery loop in :meth:`force_compact_now` to
+        re-measure after each compaction pass.
+        """
+        history = self._history_access()
+        return sum(
+            _estimate_tokens(m.text)
+            for m in history
+            if m.role in ("user", "assistant", "tool", "agent")
+        )
+
+    async def force_compact_now(self, *, max_passes: int = 2) -> None:
+        """Synchronous force-trigger with race-recovery loop (ISSUE #6, Option B).
+
+        Used by the pre-frame guard in ``_maybe_force_compact_for_router`` when
+        the projected prompt would exceed the model's max_input_tokens.  Emits
+        the same events as the background path but with ``outcome="forced_sync"``
+        on the ``compaction_check`` event.
+
+        Race tolerance (Option B):
+            Between the fire-decision and lock-acquisition, other async
+            coroutines may append to history (sync ``_append_history`` calls).
+            After each compaction pass, we re-measure the post-state and re-run
+            if still over budget, up to ``max_passes`` total.  Beyond that, a
+            ``force_compact_race_unrecovered`` event is emitted and
+            ``ForceCompactRaceUnrecoveredError`` is raised — the contract is
+            fail-fast (lead-coder accept condition 2026-05-29): the caller
+            must surface the unrecovered state rather than allow a silent
+            over-budget LLM call.
+
+            Choice of Option B over Option A (= async _append_history + lock):
+            Option B is more localised (no call-site changes to _append_history),
+            matches Python async semantics where sync appends are sequential
+            within a coroutine, and the worst-case is a single over-budget turn
+            that resolves on the very next interaction cycle. Pairing the
+            ``force_compact_race_unrecovered`` event with a raise preserves the
+            mathematical invariant: either compaction succeeds within
+            max_passes, or the caller sees a hard error — never a silent
+            over-budget prompt.
+
+        The existing background ``spawn_maybe()`` fire-and-forget path is
+        unaffected; both paths can co-exist (sync = pre-frame guard,
+        async = post-reply background trigger).
+
+        Axis 8: acquires the engine's ``compaction_lock`` for the duration of
+        each run.  Any concurrent code path that appends to ChatSession.history
+        and needs to serialise with compaction must await the same lock before
+        appending.
+        """
+        if self._compacting:
+            self._events.emit("compaction_check", outcome="already_running")
+            return
+        cfg = self._config
+
+        for pass_n in range(max_passes):
+            history = self._history_access()
+            turns = [
+                m for m in history
+                if m.role in ("user", "assistant", "tool", "agent")
+            ]
+            if not turns:
+                self._events.emit("compaction_check", outcome="forced_sync_no_turns")
+                return
+            latest = self._latest_summary()
+            prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
+            cover_floor = max(prev_cover, cfg.head_size)
+            max_seq = max((t.seq for t in turns), default=0)
+            tail_threshold = max_seq - cfg.tail_size
+            candidates = [t for t in turns if cover_floor < t.seq <= tail_threshold]
+
+            self._events.emit(
+                "compaction_check", outcome="forced_sync",
+                candidate_count=len(candidates),
+                pass_n=pass_n,
+            )
+            if not candidates:
+                return
+
+            self._compacting = True
+            async with self._engine.compaction_lock:
+                try:
+                    await self._run_compaction(candidates, latest)
+                except Exception as exc:
+                    self._events.emit("compaction_failed", error=str(exc))
+                    return
+                finally:
+                    self._compacting = False
+
+            # Re-measure post-compaction. If still over effective_trigger, loop.
+            budgets = getattr(self._engine, "budgets", None)
+            effective_trigger = (
+                budgets.effective_trigger if budgets is not None else 0
+            )
+            if effective_trigger > 0:
+                post_tokens = self._estimate_current_history_tokens()
+                if post_tokens <= effective_trigger:
+                    return  # budget recovered — done
+            else:
+                return  # no trigger info — assume done
+
+        # All passes exhausted; race not fully recovered.
+        # Fail-fast per lead-coder accept condition 2026-05-29: the contract
+        # is "compaction succeeds within max_passes OR raises". Silent-continue
+        # would allow an over-budget prompt to reach the LLM.
+        from reyn.chat.services.chat_compaction_engine import (
+            ForceCompactRaceUnrecoveredError,
+        )
+        self._events.emit(
+            "force_compact_race_unrecovered",
+            passes=max_passes,
+        )
+        raise ForceCompactRaceUnrecoveredError(passes=max_passes)
+
     async def _run_compaction(
         self,
         candidates: list[ChatMessage],
         previous_summary: ChatMessage | None,
     ) -> None:
-        """Invoke chat_compactor and persist the resulting summary entry.
-
-        Originally session.py L1370-1440.
-        """
+        """Call the compaction engine and persist the resulting summary entry."""
         cfg = self._config
         prev_structured: dict | None = None
         if previous_summary is not None:
@@ -255,23 +381,17 @@ class CompactionController:
                         "covers_through_seq": meta.get("covers_through_seq", 0),
                     }
 
-        input_artifact = {
-            "type": "history_chunk_to_compact",
-            "data": {
-                "previous_summary": prev_structured,
-                "new_turns": [
-                    _turn_to_compactor_input(t)
-                    for t in candidates
-                ],
-                "section_token_caps": {
-                    "topic_arc": cfg.section_token_caps.topic_arc,
-                    "decisions": cfg.section_token_caps.decisions,
-                    "pending": cfg.section_token_caps.pending,
-                    "session_user_facts": cfg.section_token_caps.session_user_facts,
-                    "artifacts_referenced": cfg.section_token_caps.artifacts_referenced,
-                },
+        input_chunk = HistoryChunkToCompact(
+            previous_summary=prev_structured,
+            new_turns=[_turn_to_compactor_input(t) for t in candidates],
+            section_token_caps={
+                "topic_arc": cfg.section_token_caps.topic_arc,
+                "decisions": cfg.section_token_caps.decisions,
+                "pending": cfg.section_token_caps.pending,
+                "session_user_facts": cfg.section_token_caps.session_user_facts,
+                "artifacts_referenced": cfg.section_token_caps.artifacts_referenced,
             },
-        }
+        )
 
         new_turn_count = len(candidates)
         self._events.emit(
@@ -280,18 +400,10 @@ class CompactionController:
             covers_through_seq=candidates[-1].seq,
             had_previous=previous_summary is not None,
         )
-        result = await self._run_compaction_skill(
-            "chat_compactor", input_artifact, state_subdir="compaction",
-        )
-        if not result.ok:
-            self._events.emit(
-                "compaction_aborted",
-                reason=f"compactor result status={result.status}",
-            )
-            return
 
-        structured = dict(result.data or {})
-        covers = int(structured.get("covers_through_seq") or candidates[-1].seq)
+        chat_summary = await self._engine.compact(input_chunk)
+        structured = chat_summary.to_dict()
+        covers = chat_summary.covers_through_seq or candidates[-1].seq
         rendered = self._render_summary(structured)
 
         summary_msg = self._make_summary_message(rendered, structured, covers)

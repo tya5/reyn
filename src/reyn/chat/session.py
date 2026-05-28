@@ -38,6 +38,7 @@ from reyn.chat.services import (
 )
 from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.chain_manager import _PendingChain
+from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
@@ -1770,7 +1771,11 @@ class ChatSession:
             config=self._compaction,
             history_access=lambda: self.history,
             latest_summary=self._latest_summary,
-            run_compaction_skill=self._skill_runner.run_stdlib,
+            chat_compaction_engine=ChatCompactionEngine(
+                model=self.model,
+                events=self._chat_events,
+                system_prompt_provider=self._build_router_system_prompt,
+            ),
             history_appender=self._append_history,
             make_summary_message=lambda rendered, structured, covers: ChatMessage(
                 role="summary",
@@ -4857,6 +4862,121 @@ class ChatSession:
             messages.append(msg)
         return messages
 
+    def _build_router_system_prompt(self) -> str:
+        """Return the router system prompt for the current session state.
+
+        ISSUE #4 (PR-N3): used as the ``system_prompt_provider`` for
+        :class:`~reyn.chat.services.chat_compaction_engine.ChatCompactionEngine`
+        so that T_SP is measured dynamically — operator-editable REYN.md and
+        skills catalog changes are reflected before each pre-frame budget check.
+
+        Note: ``indexed_sources_section`` is omitted (= None) because this
+        method is synchronous and cannot await ``get_source_manifest()``.
+        The omission means T_SP is slightly under-counted, which is conservative
+        (= compaction triggers slightly more often than strictly necessary).
+        The error is small relative to the total context window.
+        """
+        from reyn.chat.router_system_prompt import build_system_prompt
+        return build_system_prompt(
+            agent_name=self._router_host.agent_name,
+            agent_role=self._router_host.agent_role,
+            available_skills=self._router_host.list_available_skills(),
+            available_agents=self._router_host.list_available_agents(),
+            memory_index=self._router_host.get_memory_index(),
+            file_permissions=self._router_host.get_file_permissions(),
+            mcp_servers=self._router_host.get_mcp_servers(),
+            web_fetch_allowed=self._router_host.get_web_fetch_allowed(),
+            output_language=self._router_host.output_language,
+            project_context=self._router_host.get_project_context(),
+            indexed_sources_section=None,
+            universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
+        )
+
+    async def _maybe_force_compact_for_router(
+        self,
+        new_msg_text: "str | None" = None,
+    ) -> None:
+        """Pre-frame context-overflow guard (PR-N3, 11-axis).
+
+        Uses the ComputedBudgets.effective_trigger from the compaction engine
+        as the threshold (= min(main_M_room, B_M)).  Estimates the projected
+        token count of the current history slice; if it exceeds effective_trigger,
+        runs force_compact_now() synchronously so the history fits before the
+        router LLM call.
+
+        Axis 11 (ISSUE #5): if new_msg_text is provided (= the raw user text for
+        this turn), checks that the incoming message is within new_msg_budget;
+        raises NewMsgExceedsBudgetError if not.  A minimal ``{"role": "user",
+        "content": new_msg_text}`` dict is built internally for token estimation.
+
+        The existing background spawn_maybe() path is separate and unaffected.
+        """
+        from reyn.chat.services.chat_compaction_engine import (
+            NewMsgExceedsBudgetError,
+            estimate_tokens,
+            estimate_tokens_for_turn,
+        )
+
+        # ISSUE #4: re-measure T_SP dynamically before checking budgets so
+        # operator-editable SP changes (REYN.md, skills catalog reloads) are
+        # reflected in the effective_trigger for this turn.
+        engine = self._compaction_controller._engine
+        try:
+            engine.recompute_budgets()
+        except Exception:
+            pass  # fail-safe: static budgets remain in effect
+
+        # Retrieve the computed budgets from the engine (Axis 1).
+        engine = self._compaction_controller._engine
+        budgets = getattr(engine, "budgets", None)
+        effective_trigger: int
+        new_msg_budget: int
+        if budgets is not None:
+            effective_trigger = budgets.effective_trigger
+            new_msg_budget = budgets.new_msg_budget
+        else:
+            # Fallback: use raw model max_tokens (pre-budget-compute path).
+            from reyn.llm.model_budget import get_max_input_tokens
+            effective_trigger = get_max_input_tokens(self.model, events=self._chat_events)
+            new_msg_budget = effective_trigger
+
+        # Axis 11 (ISSUE #5): check new_msg_budget before estimating history.
+        if new_msg_text is not None:
+            new_msg_turn = {"role": "user", "content": new_msg_text}
+            use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+            new_msg_tokens = estimate_tokens_for_turn(
+                new_msg_turn, self.model, use_chars4=use_chars4
+            )
+            if new_msg_tokens > new_msg_budget:
+                self._chat_events.emit(
+                    "new_msg_exceeds_budget",
+                    new_msg_tokens=new_msg_tokens,
+                    new_msg_budget=new_msg_budget,
+                )
+                raise NewMsgExceedsBudgetError(
+                    new_msg_tokens=new_msg_tokens,
+                    new_msg_budget=new_msg_budget,
+                )
+
+        # Quick estimate of the current history slice.
+        import json as _json
+        try:
+            history_msgs = self._build_history_for_router()
+            combined = _json.dumps(history_msgs, ensure_ascii=False)
+            use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+            estimated = estimate_tokens(combined, self.model, use_chars4=use_chars4)
+        except Exception:
+            return
+
+        if estimated > effective_trigger:
+            self._chat_events.emit(
+                "compaction_check",
+                outcome="pre_frame_overflow",
+                estimated_tokens=estimated,
+                effective_trigger=effective_trigger,
+            )
+            await self._compaction_controller.force_compact_now()
+
     async def _run_router_loop(
         self,
         user_text: str,
@@ -4888,6 +5008,12 @@ class ChatSession:
             empty_stop_retry_directive=_CHAT_ROUTER_EMPTY_STOP_RETRY_DIRECTIVE,
             plan_invalid_retries=_plan_invalid_retries_cap,
         )
+        # PR-N3: pre-frame context-overflow guard.
+        # Estimate the projected history token count; if it would exceed
+        # the model's max_input_tokens, run compaction synchronously so
+        # the assembled history fits before the router LLM call.
+        # ISSUE #5: pass user_text so Axis-11 new_msg_budget check fires.
+        await self._maybe_force_compact_for_router(new_msg_text=user_text)
         history = self._build_history_for_router()
         router_usage = await loop.run(user_text=user_text, history=history)
 
