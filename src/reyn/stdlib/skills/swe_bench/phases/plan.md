@@ -14,19 +14,34 @@ what to change in each, sufficient for the apply phase to implement the fix.
 
 The input is either:
 
-- `exploration` — first plan for this instance (attempt 1)
-- `verify_state` — a prior verify attempt failed; use `failure_summary` plus
-  the exploration notes from the workspace to revise the plan
+- `exploration` (= attempt 1) — produced by the previous explore phase.
+  Read its `data` fields (which files contain the bug, what the root cause
+  appears to be, candidate edit targets) to ground the plan.
+- `verify_state` (= attempt > 1) — a prior verify attempt failed. Read
+  `data.failure_summary` to understand which tests failed and why, plus
+  the exploration artifact saved to the workspace by the earlier explore
+  phase.
+
+In both cases the fields are present in the prompt's input-artifact block
+(= the OS injects the artifact data structurally — no need to abort with
+"exploration missing" before reading the prompt). You may ALSO need to
+refer back to the original SWE-bench input fields (`problem_statement`,
+`test_patch`) for context — those were carried into the workspace by the
+explore phase and can be re-read via a file op against the exploration
+summary if needed.
 
 ## Step 1 — Review the exploration summary
 
-Read the workspace artifact from the explore phase.  If the input is a
-`verify_state`, also read `failure_summary` to understand which tests failed
-and why.
+Read the workspace artifact from the explore phase. Look for the fields
+explore.md recorded: which files contain the bug, what the root cause
+appears to be, and which code regions need to change.
+
+If the input artifact type is `verify_state`, also read its
+`data.failure_summary` to understand which tests failed and why.
 
 When re-planning (attempt > 1), first read the previous plan and the verify
-failure summary from the workspace.  Avoid repeating edits that already failed
-without changing the approach.
+failure summary from the workspace.  Avoid repeating edits that already
+failed without changing the approach.
 
 ## Step 2 — Re-read targeted code sections (if needed)
 

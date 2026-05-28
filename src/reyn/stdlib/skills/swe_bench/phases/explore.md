@@ -11,10 +11,36 @@ Understand the problem by reading the `problem_statement` and finding the
 relevant code in the repository.  The goal is to identify the files most
 likely to need editing.
 
+## Where to find the input fields
+
+This phase receives an input artifact of type `swe_bench_input`. Its `data`
+object contains every field you need. Concretely, the input shape is:
+
+```json
+{
+  "type": "swe_bench_input",
+  "data": {
+    "instance_id": "django__django-12345",
+    "repo": "django/django",
+    "base_commit": "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
+    "problem_statement": "<GitHub issue body, typically 1-3 paragraphs>",
+    "hints_text": "<optional hint string, may be empty>",
+    "test_patch": "<unified diff text>"
+  }
+}
+```
+
+All six fields are present in the prompt's artifact section that the OS
+gives you (= no need to grep / search / probe to find them). Read them
+directly from `data.*` — do NOT abort with "problem_statement missing"
+before reading the artifact, because the fields ARE there. If you genuinely
+cannot find them, recheck the prompt's input-artifact block before aborting.
+
 ## Step 1 — Read the problem statement
 
-Read `problem_statement` from the input artifact.  If `hints_text` is
-non-empty, use it as additional guidance for where to look.
+Read `data.problem_statement` from the input artifact. This is the GitHub
+issue text describing the bug to fix. If `data.hints_text` is non-empty,
+use it as additional guidance for where to look.
 
 ## Step 2 — Locate relevant code with grep
 
@@ -37,9 +63,14 @@ entire repository.
 
 ## Step 4 — Inspect the test_patch to understand expected behavior
 
-Read the `test_patch` field from the input to understand what the tests expect
-the fixed code to do.  This gives a precise specification: the fix must make
-those tests pass.  Do NOT apply the test_patch now — that happens in verify.
+Read `data.test_patch` from the input artifact to understand what the tests
+expect the fixed code to do.  This is a unified diff string that has been
+present in the input from Step 1 — you do NOT need to issue a shell or file
+op to access it. The value lives at `data.test_patch` in the same input
+artifact as `data.problem_statement`.
+
+This gives a precise specification: the fix must make those tests pass. Do
+NOT apply the test_patch now — that happens in verify.
 
 ## Step 5 — Record exploration findings
 
