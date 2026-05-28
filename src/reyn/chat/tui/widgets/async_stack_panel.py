@@ -654,17 +654,24 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         summary_budget = max(
             0, body_budget - prefix_cells - sep_cells - elapsed_cells,
         )
-        # Wave-11 B#5: when summary would be wiped to ≤ a few cells
-        # by a long agent_id (typical UUID = 36 cells), middle-elide
-        # the id to free room for the more-informative summary.
-        # Identity preserved via head+tail preview; full id is rarely
-        # needed at-a-glance, but the summary tells the user what's
-        # actually running.
-        if entry.summary and summary_budget < _MIN_SUMMARY_BUDGET_CELLS:
+        # Wave-11 B#5 + exploration finding #3 (2026-05-28): the
+        # summary (= skill name) is the most user-readable signal —
+        # ``word_stats_demo`` tells the user WHAT is running, while
+        # the agent_id (= timestamp + skill + 4-hex suffix) is mostly
+        # a unique-ish handle. So whenever rendering the full summary
+        # would require truncating it, middle-elide the agent_id
+        # first to free cells (= the head+tail preview still
+        # disambiguates among ≤ _CAP simultaneous tasks, while the
+        # full skill name lands without the ``word_stats…`` truncation
+        # the prior threshold-based logic left behind for narrow-ish
+        # widths). Identity floor is _MIN_ELIDED_ID_CELLS; below that
+        # the panel is so narrow we accept summary truncation too.
+        desired_summary_cells = cell_len(entry.summary or "")
+        if entry.summary and summary_budget < desired_summary_cells:
             fixed_cells = cell_len(f"{glyph} async: ") + sep_cells + elapsed_cells
             target_id_cells = max(
                 _MIN_ELIDED_ID_CELLS,
-                body_budget - fixed_cells - _MIN_SUMMARY_BUDGET_CELLS,
+                body_budget - fixed_cells - desired_summary_cells,
             )
             if target_id_cells < cell_len(agent_id):
                 agent_id = _middle_elide_id(agent_id, target_id_cells)
