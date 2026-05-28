@@ -4861,40 +4861,76 @@ class ChatSession:
             messages.append(msg)
         return messages
 
-    async def _maybe_force_compact_for_router(self) -> None:
-        """Pre-frame context-overflow guard (PR-N3).
+    async def _maybe_force_compact_for_router(
+        self,
+        new_msg_turn: "dict | None" = None,
+    ) -> None:
+        """Pre-frame context-overflow guard (PR-N3, 11-axis).
 
-        Estimates the projected token count of the current history slice.
-        If it exceeds the model's max_input_tokens (literal, no safety_margin),
+        Uses the ComputedBudgets.effective_trigger from the compaction engine
+        as the threshold (= min(main_M_room, B_M)).  Estimates the projected
+        token count of the current history slice; if it exceeds effective_trigger,
         runs force_compact_now() synchronously so the history fits before the
-        router LLM call.  The existing background spawn_maybe() path is
-        separate and unaffected.
+        router LLM call.
+
+        Axis 11: if new_msg_turn is provided, checks that the incoming message
+        is within new_msg_budget; raises NewMsgExceedsBudgetError if not.
+
+        The existing background spawn_maybe() path is separate and unaffected.
         """
-        from reyn.llm.model_budget import get_max_input_tokens
-        max_tokens = get_max_input_tokens(
-            self.model, events=self._chat_events,
+        from reyn.chat.services.chat_compaction_engine import (
+            NewMsgExceedsBudgetError,
+            estimate_tokens,
+            estimate_tokens_for_turn,
         )
+
+        # Retrieve the computed budgets from the engine (Axis 1).
+        engine = self._compaction_controller._engine
+        budgets = getattr(engine, "budgets", None)
+        effective_trigger: int
+        new_msg_budget: int
+        if budgets is not None:
+            effective_trigger = budgets.effective_trigger
+            new_msg_budget = budgets.new_msg_budget
+        else:
+            # Fallback: use raw model max_tokens (pre-budget-compute path).
+            from reyn.llm.model_budget import get_max_input_tokens
+            effective_trigger = get_max_input_tokens(self.model, events=self._chat_events)
+            new_msg_budget = effective_trigger
+
+        # Axis 11: check new_msg_budget before estimating history.
+        if new_msg_turn is not None:
+            use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+            new_msg_tokens = estimate_tokens_for_turn(
+                new_msg_turn, self.model, use_chars4=use_chars4
+            )
+            if new_msg_tokens > new_msg_budget:
+                self._chat_events.emit(
+                    "new_msg_exceeds_budget",
+                    new_msg_tokens=new_msg_tokens,
+                    new_msg_budget=new_msg_budget,
+                )
+                raise NewMsgExceedsBudgetError(
+                    new_msg_tokens=new_msg_tokens,
+                    new_msg_budget=new_msg_budget,
+                )
+
         # Quick estimate of the current history slice.
         import json as _json
         try:
             history_msgs = self._build_history_for_router()
             combined = _json.dumps(history_msgs, ensure_ascii=False)
-            import litellm as _litellm
-            try:
-                estimated = _litellm.token_counter(model=self.model, text=combined)
-                if not estimated:
-                    estimated = max(1, len(combined) // 4)
-            except Exception:
-                estimated = max(1, len(combined) // 4)
+            use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+            estimated = estimate_tokens(combined, self.model, use_chars4=use_chars4)
         except Exception:
             return
 
-        if estimated > max_tokens:
+        if estimated > effective_trigger:
             self._chat_events.emit(
                 "compaction_check",
                 outcome="pre_frame_overflow",
                 estimated_tokens=estimated,
-                max_input_tokens=max_tokens,
+                effective_trigger=effective_trigger,
             )
             await self._compaction_controller.force_compact_now()
 
