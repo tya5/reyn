@@ -7,23 +7,47 @@ applies_to: [reyn eval]
 
 # `reyn eval`
 
-Evaluate a skill. Three subcommands:
+Evaluate a skill. Subcommands:
 
 | Subcommand | Description |
 |------------|-------------|
 | `run` | Run a skill against a golden JSONL dataset; gate CI on pass rate |
 | `report` | Summarise past `reyn eval run` results for a skill |
 | `compare` | Compare pass rate across two skill versions using P6 event log |
+| `benchmark` | Run a skill across a JSONL task file with concurrent dispatch (FP-0008 PR-B); used by SWE-bench harness |
 | `spec` | Legacy: run an `eval.md` spec file non-interactively (backward compat) |
 
 ## Synopsis
 
 ```
-reyn eval run <SKILL_NAME> [OPTIONS]
-reyn eval report <SKILL_NAME> [OPTIONS]
-reyn eval compare <SKILL_NAME> [OPTIONS]
-reyn eval spec FILE [OPTIONS]
+reyn eval run       <SKILL_NAME> [OPTIONS]
+reyn eval report    <SKILL_NAME> [OPTIONS]
+reyn eval compare   <SKILL_NAME> [OPTIONS]
+reyn eval benchmark <SKILL_NAME> --tasks PATH --output DIR
+                                 [--concurrency N] [--limit N] [--resume]
+                                 [--model MODEL] [common flags]
+reyn eval spec      FILE [OPTIONS]
 ```
+
+## Subcommand: `benchmark`
+
+Run a skill against a JSONL task file with concurrent dispatch. Each line of the task file is one task input matching the skill's `input_schema`. Used as the execution layer for the SWE-bench harness wrapper (see [guide: run-swe-bench](../../guide/for-users/run-swe-bench.md)).
+
+```
+reyn eval benchmark <SKILL_NAME> --tasks PATH --output DIR [OPTIONS]
+```
+
+| Flag | Description |
+|---|---|
+| `<SKILL_NAME>` | Skill name to run (resolved via reyn/project → local → stdlib) |
+| `--tasks PATH` | **required** — JSONL task file; each line = one task input |
+| `--output DIR` | **required** — output directory; results written under `<DIR>/run_<timestamp>/` |
+| `--concurrency N` | Max concurrent skill runs (default: `4`) |
+| `--limit N` | Stop after the first N tasks (applied after `--resume` filtering) |
+| `--resume` | Resume from latest prior run in `<output>`; skip already-completed tasks |
+| `--model MODEL` | Model override (default: from `reyn.yaml`) |
+
+The benchmark dispatcher uses workspace-isolated runs (= `_benchmark_isolated_workspace` in `cli/commands/eval_benchmark.py`) so concurrent task runs do not collide on cwd/files.
 
 ## Non-interactive constraint
 
