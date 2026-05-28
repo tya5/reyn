@@ -135,6 +135,57 @@ def _in_default_read_zone(path_str: str) -> bool:
         return False
 
 
+def _decl_covers_path(entries: list[dict], path: str) -> bool:
+    """Whether the skill's declared file_read / file_write entries cover ``path``.
+
+    Used by ``require_file_read`` / ``require_file_write`` in non-interactive
+    mode to honor skill declarations directly (FP-0008 PR-H, 2026-05-28).
+
+    Matching rules:
+
+    - ``path == "*"`` in any entry → wildcard, matches anything.
+    - Empty / missing entry path → skip the entry.
+    - ``scope: "recursive"`` → matches the declared path itself OR any
+      descendant resolved-path.
+    - ``scope: "just_path"`` (default) → matches the resolved declared path
+      exactly.
+
+    Returns False on any resolution error so the caller can fall through
+    to the standard PermissionError.
+    """
+    if not entries:
+        return False
+    try:
+        p_resolved = Path(path).expanduser().resolve()
+    except Exception:
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        decl_path = entry.get("path", "")
+        scope = entry.get("scope", "just_path")
+        if not decl_path:
+            continue
+        if decl_path == "*":
+            return True
+        try:
+            decl_resolved = Path(decl_path).expanduser().resolve()
+        except Exception:
+            continue
+        if scope == "recursive":
+            if p_resolved == decl_resolved:
+                return True
+            try:
+                p_resolved.relative_to(decl_resolved)
+                return True
+            except ValueError:
+                pass
+        else:  # just_path
+            if p_resolved == decl_resolved:
+                return True
+    return False
+
+
 @dataclass
 class PythonPermission:
     """Per-(module, function) permission for a python preprocessor step.
@@ -914,12 +965,23 @@ class PermissionResolver:
         Raise PermissionError if read/glob/grep access to path is not allowed.
         Default zone (CWD and below) is always granted.
         Outside CWD, the path must have been approved at startup or via config.
+
+        FP-0008 PR-H (2026-05-28): in non-interactive mode where the
+        startup guard cannot prompt the user, honor the skill's
+        declared paths directly. This brings runtime into alignment
+        with declared intent for batch/cron/CI workflows. Same class
+        of wiring-gap fix as PR #1004 (= Tool→OpContext bridge).
+        Interactive mode is unchanged — the user may decline at
+        startup, decline is tracked in ``_session``, and is respected
+        by ``_is_path_approved_for`` above.
         """
         if _in_default_read_zone(path):
             return
         if self._is_config_approved("file.read"):
             return
         if self._is_path_approved_for(path, skill_name, "file.read"):
+            return
+        if not self._interactive and _decl_covers_path(decl.file_read, path):
             return
         raise PermissionError(
             f"read from '{path}' was not approved. "
@@ -936,12 +998,20 @@ class PermissionResolver:
         Raise PermissionError if write/edit/delete access to path is not allowed.
         Default zone (.reyn/, reyn/) is always granted.
         Outside the default zone, the path must have been approved at startup.
+
+        FP-0008 PR-H (2026-05-28): in non-interactive mode where the
+        startup guard cannot prompt the user, honor the skill's
+        declared paths directly. See ``require_file_read`` for the
+        rationale (= PR #1004 class N=2 trigger; wiring gap that
+        leaves declared intent un-honored in batch mode).
         """
         if _in_default_write_zone(path):
             return
         if self._is_config_approved("file.write"):
             return
         if self._is_path_approved_for(path, skill_name, "file.write"):
+            return
+        if not self._interactive and _decl_covers_path(decl.file_write, path):
             return
         raise PermissionError(
             f"write to '{path}' was not approved. "
