@@ -19,17 +19,44 @@ from reyn.schemas.models import (
 )
 
 ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref in ContextFrame
+MAX_INLINE_BOOST = 65_536  # characters; artifacts up to 64KB are still inlined (inline-boost range)
 
 
-def maybe_ref_artifact(artifact: dict, artifact_path: str | None) -> dict:
+def maybe_ref_artifact(
+    artifact: dict,
+    artifact_path: str | None,
+    *,
+    events: Any = None,
+    phase: str | None = None,
+) -> dict:
     """
-    Return the artifact as-is if small, or an artifact_ref pointer if large.
-    The LLM can read the ref path via a file op.
+    Return the artifact as-is if small-or-medium, or an artifact_ref pointer if large.
+
+    Decision logic:
+      size <= ARTIFACT_REF_THRESHOLD            → inline (existing path)
+      ARTIFACT_REF_THRESHOLD < size <= MAX_INLINE_BOOST → inline (inline-boost path)
+      size > MAX_INLINE_BOOST                   → artifact_ref (existing path)
+
+    The LLM can read artifact_ref paths via a file op. The inline-boost path
+    keeps mid-size artifacts (e.g. SWE-bench task inputs, ~8–28KB) directly
+    visible in the prompt so the LLM does not need a round-trip file read.
     """
     if artifact_path is None:
         return artifact
     serialized = json.dumps(artifact, ensure_ascii=False)
-    if len(serialized) <= ARTIFACT_REF_THRESHOLD:
+    size = len(serialized)
+    if size <= ARTIFACT_REF_THRESHOLD:
+        return artifact
+    if size <= MAX_INLINE_BOOST:
+        # Inline-boost: mid-size artifact stays inlined to prevent fabrication.
+        # Emit an observability event so this decision is auditable.
+        if events is not None:
+            events.emit(
+                "artifact_inline_boost",
+                phase=phase,
+                size_chars=size,
+                artifact_path=artifact_path,
+            )
         return artifact
     return {
         "type": "artifact_ref",
@@ -66,7 +93,7 @@ def build_frame(
         current_phase=phase_name,
         current_phase_role=phase.role,
         instructions=phase.instructions,
-        input_artifact=maybe_ref_artifact(artifact, artifact_path),
+        input_artifact=maybe_ref_artifact(artifact, artifact_path, events=events, phase=phase_name),
         execution=ExecutionState(
             path=list(history)[-10:],
             current_visit=current_visit,
