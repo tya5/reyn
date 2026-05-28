@@ -22,6 +22,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
+| `mcp_drop_server` | Remove an MCP server from project/local/user config (FP-0034 §D23, inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
 | `embed` | Embed texts or artifact chunks via a LiteLLM embedding model | none (embedding API cost) |
 | `index_write` | Write embedded chunks to an index backend (SQLite) | none |
 | `index_query` | Semantic vector search over one indexed source | none |
