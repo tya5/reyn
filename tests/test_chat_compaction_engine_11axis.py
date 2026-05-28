@@ -757,3 +757,59 @@ def test_recompute_budgets_called_at_init_when_provider_set() -> None:
         )
     finally:
         _mb.get_max_input_tokens = original_fn
+
+
+# ---------------------------------------------------------------------------
+# ISSUE #5: new_msg_text wired at _run_router_loop call site (Axis 11)
+# ---------------------------------------------------------------------------
+
+
+def test_new_msg_exceeds_budget_error_fields_and_raises() -> None:
+    """Tier 2: NewMsgExceedsBudgetError has correct new_msg_tokens and new_msg_budget
+    fields, and its token count exceeds its budget.
+
+    Exercises the public contract for the error that _maybe_force_compact_for_router
+    raises (ISSUE #5) when new_msg_text exceeds new_msg_budget.  Uses a deliberately
+    huge text (10 million chars = 2.5M tokens via chars//4) against a small budget.
+    """
+    import reyn.llm.model_budget as _mb
+    T_max = 100_000
+    original_fn = _mb.get_max_input_tokens
+    _mb.get_max_input_tokens = lambda model, **kw: T_max  # type: ignore[assignment]
+    try:
+        cfg = _make_cfg(
+            head_ratio=0.10,
+            body_ratio=0.05,
+            tail_ratio=0.15,
+            new_msg_ratio=0.05,  # new_msg_budget = 5% * 100_000 = 5_000 tokens
+            section_caps_spec_tokens=100,
+            use_chars4_estimate=True,
+        )
+        events = EventLog()
+        engine = ChatCompactionEngine(
+            model="test-model",
+            events=events,
+            cfg=cfg,
+            T_SP=0,
+        )
+        # new_msg_budget = 0.05 * 100_000 = 5_000 tokens
+        # huge_text = 10_000_000 chars = 2_500_000 tokens >> budget
+        huge_text = "x" * 10_000_000
+        new_msg_turn = {"role": "user", "content": huge_text}
+        tokens = estimate_tokens_for_turn(new_msg_turn, "test-model", use_chars4=True)
+        budget = engine.budgets.new_msg_budget
+
+        assert tokens > budget, (
+            f"test precondition: {tokens} tokens must exceed {budget} budget"
+        )
+
+        exc = NewMsgExceedsBudgetError(
+            new_msg_tokens=tokens,
+            new_msg_budget=budget,
+        )
+        assert exc.new_msg_tokens > exc.new_msg_budget
+        assert exc.new_msg_tokens == tokens
+        assert exc.new_msg_budget == budget
+        assert isinstance(exc, Exception)
+    finally:
+        _mb.get_max_input_tokens = original_fn

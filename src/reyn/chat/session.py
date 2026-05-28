@@ -4894,7 +4894,7 @@ class ChatSession:
 
     async def _maybe_force_compact_for_router(
         self,
-        new_msg_turn: "dict | None" = None,
+        new_msg_text: "str | None" = None,
     ) -> None:
         """Pre-frame context-overflow guard (PR-N3, 11-axis).
 
@@ -4904,8 +4904,10 @@ class ChatSession:
         runs force_compact_now() synchronously so the history fits before the
         router LLM call.
 
-        Axis 11: if new_msg_turn is provided, checks that the incoming message
-        is within new_msg_budget; raises NewMsgExceedsBudgetError if not.
+        Axis 11 (ISSUE #5): if new_msg_text is provided (= the raw user text for
+        this turn), checks that the incoming message is within new_msg_budget;
+        raises NewMsgExceedsBudgetError if not.  A minimal ``{"role": "user",
+        "content": new_msg_text}`` dict is built internally for token estimation.
 
         The existing background spawn_maybe() path is separate and unaffected.
         """
@@ -4938,8 +4940,9 @@ class ChatSession:
             effective_trigger = get_max_input_tokens(self.model, events=self._chat_events)
             new_msg_budget = effective_trigger
 
-        # Axis 11: check new_msg_budget before estimating history.
-        if new_msg_turn is not None:
+        # Axis 11 (ISSUE #5): check new_msg_budget before estimating history.
+        if new_msg_text is not None:
+            new_msg_turn = {"role": "user", "content": new_msg_text}
             use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
             new_msg_tokens = estimate_tokens_for_turn(
                 new_msg_turn, self.model, use_chars4=use_chars4
@@ -5009,7 +5012,8 @@ class ChatSession:
         # Estimate the projected history token count; if it would exceed
         # the model's max_input_tokens, run compaction synchronously so
         # the assembled history fits before the router LLM call.
-        await self._maybe_force_compact_for_router()
+        # ISSUE #5: pass user_text so Axis-11 new_msg_budget check fires.
+        await self._maybe_force_compact_for_router(new_msg_text=user_text)
         history = self._build_history_for_router()
         router_usage = await loop.run(user_text=user_text, history=history)
 
