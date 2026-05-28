@@ -416,10 +416,15 @@ class SkillRunner:
                     },
                 }
 
-        run_id = (
-            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-            f"_{skill_name}_{uuid.uuid4().hex[:4]}"
-        )
+        # tui-coder finding #1 fix (2026-05-28): use the OS-level canonical
+        # run_id form via Agent._make_run_id. Prior bespoke construction
+        # here added a `_4-hex` suffix that the agent / events layer did
+        # NOT use, leaving the same skill run with 2 run_id forms in
+        # flight — TUI `remove_async_task(run_id)` then failed to find rows
+        # by key. Funneling through the canonical eliminates the
+        # cross-layer mismatch class.
+        from reyn.agent import Agent as _Agent
+        run_id = _Agent._make_run_id(skill_name)
         self._events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
         self.running_skills_started_at[run_id] = time.monotonic()
         self.running_skills_chain[run_id] = chain_id
@@ -586,10 +591,11 @@ class SkillRunner:
             }
         self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
 
-        run_id = (
-            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-            f"_{skill_name}_{uuid.uuid4().hex[:4]}"
-        )
+        # tui-coder finding #1 fix (2026-05-28): canonical run_id form via
+        # Agent._make_run_id (see sibling spawn site above for full
+        # rationale).
+        from reyn.agent import Agent as _Agent
+        run_id = _Agent._make_run_id(skill_name)
         self._events.emit(
             "skill_run_spawned", run_id=run_id, skill=skill_name,
         )
