@@ -5,6 +5,7 @@ input: exploration | verify_state
 role: architect
 model_class: standard
 allowed_ops: [file, grep]
+max_act_turns: 15
 ---
 
 Produce a concrete edit plan: a list of files to change and a description of

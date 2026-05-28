@@ -5,6 +5,7 @@ input: swe_bench_input
 role: initializer
 model_class: standard
 allowed_ops: [shell]
+max_act_turns: 5
 ---
 
 Prepare the repository for the fix by checking out the exact commit the

@@ -6,6 +6,7 @@ role: reporter
 model_class: standard
 can_finish: true
 allowed_ops: [shell]
+max_act_turns: 10
 ---
 
 Produce the final output by capturing the git diff of all changes made during

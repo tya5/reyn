@@ -6,6 +6,7 @@ role: tester
 model_class: standard
 allowed_ops: [file, shell]
 max_retries: 3
+max_act_turns: 30
 ---
 
 Run the SWE-bench test patch against the current codebase to determine whether
