@@ -5,6 +5,7 @@ input: swe_bench_input
 role: analyst
 model_class: standard
 allowed_ops: [file, grep, shell]
+max_act_turns: 20
 ---
 
 Understand the problem by reading the `problem_statement` and finding the

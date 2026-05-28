@@ -5,6 +5,7 @@ input: plan
 role: implementer
 model_class: standard
 allowed_ops: [file, shell]
+max_act_turns: 30
 ---
 
 Implement the edit plan by modifying the repository files.
