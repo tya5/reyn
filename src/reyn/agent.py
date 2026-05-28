@@ -60,6 +60,7 @@ class Agent:
         media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
         workspace_base_dir: "Path | None" = None,
+        run_id: str | None = None,
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -88,7 +89,14 @@ class Agent:
         self._secret_store = secret_store
         self._workspace_base_dir = workspace_base_dir
         self._runtime: OSRuntime | None = None
-        self.run_id: str | None = None
+        # FP-0008 PR-R (= tui-coder finding #1 propagation): run_id from
+        # construction site preserves the canonical run_id set by the
+        # caller (e.g. ChatSession._build_agent_for_skill_runner passes
+        # the skill_runner-generated canonical here so the Agent instance
+        # carries the same id from birth, before agent.run() is invoked).
+        # When None, agent.run() will generate a fresh canonical at
+        # invocation time (= back-compat with direct callers).
+        self.run_id: str | None = run_id
         self.events_path: Path | None = None
 
     @property
@@ -118,11 +126,19 @@ class Agent:
         parent_run_id: str | None = None,
         plan_step: dict | None = None,
     ) -> RunResult:
-        # On resume, callers pass the original run_id so the WAL events
-        # stay scoped to the same skill run (= step events from before
-        # the crash are paired with new ones via shared run_id). On
-        # fresh starts, generate a new id.
-        self.run_id = run_id or self._make_run_id(skill.name)
+        # Run-id resolution priority (FP-0008 PR-R wiring contract):
+        #   1. ``run_id`` kwarg to this call    (= caller overrides per-call)
+        #   2. ``self.run_id`` set at __init__  (= ChatSession spawn path)
+        #   3. fresh ``_make_run_id(skill.name)`` (= direct callers, resume)
+        # The (2) layer is what PR-R adds: ChatSession's
+        # ``_build_agent_for_skill_runner`` passes the skill_runner-
+        # generated canonical to Agent.__init__, so by the time
+        # agent.run() runs, the instance already owns the canonical id.
+        # Prior to PR-R, the instance had ``self.run_id = None`` so
+        # agent.run() always generated a fresh id even when the caller
+        # had a canonical from skill_runner — driving the 2-form
+        # mismatch tui-coder caught in 5-point smoke.
+        self.run_id = run_id or self.run_id or self._make_run_id(skill.name)
         # PR20: events live under
         #   <state_dir>/events/<caller>/skill_runs/<YYYY-MM>/<start>_<skill>.jsonl
         # caller ∈ {"direct", "agents/<name>"}.

@@ -2114,8 +2114,18 @@ class ChatSession:
 
         Supplied as ``build_agent_fn`` to SkillRunner so SkillRunner
         never imports ChatInterventionBus or holds a session reference.
+
+        FP-0008 PR-R (tui-coder finding #1 propagation): propagate
+        ``run_id`` to the Agent constructor so the instance carries
+        the skill_runner-generated canonical run_id from birth
+        (= before ``agent.run()`` is invoked). Without this,
+        ``self.run_id = None`` at instance level + ``agent.run()``
+        would generate a fresh canonical, creating a 2-form mismatch
+        between the chat-side spawn-ack id and the skill-side events
+        id (= 5-point smoke trace 2026-05-28).
         """
         return self._build_agent(
+            run_id=run_id,
             intervention_bus=ChatInterventionBus(
                 self, run_id, skill_name,
                 channel_id=DEFAULT_CHAT_CHANNEL_ID,
@@ -2978,11 +2988,20 @@ class ChatSession:
     def _build_agent(
         self,
         *,
+        run_id: str | None = None,
         intervention_bus: RequestBus | None = None,
         mcp_servers: dict | None = None,
         subscribers: list | None = None,
     ) -> Agent:
-        """Construct an Agent with this session's shared defaults applied."""
+        """Construct an Agent with this session's shared defaults applied.
+
+        ``run_id`` (FP-0008 PR-R): when provided, the Agent instance
+        carries this id from construction time. ``agent.run()`` honors
+        the pre-set value (instead of generating a fresh canonical).
+        Used by ``_build_agent_for_skill_runner`` to keep the chat-side
+        and skill-side ids consistent. ``None`` (= default) preserves
+        the prior behavior of agent-side id generation at run time.
+        """
         return Agent(
             model=self.model,
             resolver=self._resolver,
@@ -2999,6 +3018,7 @@ class ChatSession:
             sandbox_config=self._sandbox_config,
             multimodal_config=self._multimodal_config,
             media_store=self._media_store,
+            run_id=run_id,
         )
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
