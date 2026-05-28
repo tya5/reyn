@@ -184,8 +184,22 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
     AsyncStackPanel {
         dock: bottom;
         height: auto;
+        max-height: 6;
         padding: 0 1;
         background: transparent;
+        overflow: hidden;
+    }
+    AsyncStackPanel #async_stack_text {
+        /* Force the inner Static to clip rather than wrap when a
+           pre-truncated row's residual width briefly exceeds the
+           constrained panel width (= e.g. between Ctrl+B side-panel
+           mount and the next ``_refresh`` tick, ``self.size.width``
+           reports the wider pre-mount value and ``_build_lines``
+           pre-truncates against that stale budget). Combined with
+           the ``on_resize`` hook below which forces a synchronous
+           rebuild on the new width, wrap is eliminated. */
+        height: auto;
+        overflow: hidden;
     }
     AsyncStackPanel:focus {
         background: #1a1a1a;
@@ -244,6 +258,19 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
 
     def on_blur(self, event: events.Blur) -> None:
         """Repaint to drop the cursor caret when focus leaves."""
+        self._refresh()
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Rebuild rows when the panel's own width changes.
+
+        ``_build_lines`` uses ``self.size.width`` to compute
+        ``body_budget`` for per-row truncation. Without this hook the
+        panel only refreshes on the 1 Hz tick, so opening the side
+        panel (Ctrl+B) leaves a window where the rows render
+        pre-truncated against the old wider budget — Rich then wraps
+        the residue across multiple visual lines instead of eliding
+        cleanly. Exploration finding #2, 2026-05-28.
+        """
         self._refresh()
 
     # ── Public API ───────────────────────────────────────────────────────────
