@@ -17,6 +17,10 @@ Covers:
 - B_M trigger race (Axis 8): synchronous force_compact_now() + concurrent
   history-append attempt → ordering guarantee verified.
 - Axis 10 opt-out: use_chars4_estimate=True → chars//4 used, no litellm call needed.
+- ISSUE #4: recompute_budgets() with dynamic provider changes effective_trigger.
+- ISSUE #5: NewMsgExceedsBudgetError raised when new_msg exceeds new_msg_budget.
+- ISSUE #6: force_compact_now() race-recovery loop: N=2 passes when post-compaction
+  still over budget; force_compact_race_unrecovered event when race persists.
 
 Policy compliance:
 - No unittest.mock usage.
@@ -626,3 +630,130 @@ def test_estimate_tokens_for_turn_chars4_opt_out_multimodal() -> None:
     }
     tokens = estimate_tokens_for_turn(turn, model="no-such-model", use_chars4=True)
     assert tokens == 100 + _IMAGE_FIXED_TOKEN_COST
+
+
+# ---------------------------------------------------------------------------
+# ISSUE #4: recompute_budgets() — dynamic system_prompt_provider
+# ---------------------------------------------------------------------------
+
+
+def test_recompute_budgets_with_provider_changes_effective_trigger() -> None:
+    """Tier 2: recompute_budgets() with a dynamic provider that returns different
+    SP strings causes budgets.effective_trigger to change.
+
+    Uses a real lambda as the provider (no mock).  Two calls: first with a
+    small SP, then with a larger SP (= smaller main_pool = smaller effective_trigger).
+    """
+    import reyn.llm.model_budget as _mb
+    T_max = 100_000
+    original_fn = _mb.get_max_input_tokens
+    _mb.get_max_input_tokens = lambda model, **kw: T_max  # type: ignore[assignment]
+    try:
+        cfg = _make_cfg(
+            head_ratio=0.10,
+            body_ratio=0.05,
+            tail_ratio=0.15,
+            new_msg_ratio=0.10,
+            section_caps_spec_tokens=100,
+            use_chars4_estimate=True,
+        )
+        events = EventLog()
+
+        # Provider returns a 40-char SP = 10 tokens initially.
+        sp_state: list[str] = ["a" * 40]
+        provider = lambda: sp_state[0]  # noqa: E731
+
+        engine = ChatCompactionEngine(
+            model="test-model",
+            events=events,
+            cfg=cfg,
+            system_prompt_provider=provider,
+        )
+        trigger_small_sp = engine.budgets.effective_trigger
+
+        # Now switch to a larger SP (= T_SP grows → main_pool shrinks → trigger shrinks).
+        # Use 40_000 chars = 10_000 tokens (10% of T_max=100_000 → still valid).
+        sp_state[0] = "a" * 40_000  # 10_000 tokens via chars//4
+        engine.recompute_budgets()
+        trigger_large_sp = engine.budgets.effective_trigger
+
+        assert trigger_small_sp > trigger_large_sp, (
+            f"larger SP should produce smaller effective_trigger; "
+            f"small_sp trigger={trigger_small_sp}, large_sp trigger={trigger_large_sp}"
+        )
+    finally:
+        _mb.get_max_input_tokens = original_fn
+
+
+def test_recompute_budgets_noop_when_no_provider() -> None:
+    """Tier 2: recompute_budgets() is a no-op when no system_prompt_provider was set.
+
+    After calling recompute_budgets() the budgets remain the same as at init.
+    """
+    import reyn.llm.model_budget as _mb
+    T_max = 100_000
+    original_fn = _mb.get_max_input_tokens
+    _mb.get_max_input_tokens = lambda model, **kw: T_max  # type: ignore[assignment]
+    try:
+        cfg = _make_cfg()
+        events = EventLog()
+        engine = ChatCompactionEngine(
+            model="test-model",
+            events=events,
+            cfg=cfg,
+            T_SP=1_000,
+        )
+        trigger_before = engine.budgets.effective_trigger
+        engine.recompute_budgets()
+        trigger_after = engine.budgets.effective_trigger
+        assert trigger_before == trigger_after, (
+            "recompute_budgets() with no provider must not change effective_trigger"
+        )
+    finally:
+        _mb.get_max_input_tokens = original_fn
+
+
+def test_recompute_budgets_called_at_init_when_provider_set() -> None:
+    """Tier 2: when system_prompt_provider is set, the first recompute_budgets()
+    call fires at engine init — budgets reflect the initial provider output.
+
+    Verifies that the engine's main_pool at init matches T_max - T_SP where
+    T_SP is derived from the provider's returned text.
+    """
+    import reyn.llm.model_budget as _mb
+    T_max = 100_000
+    original_fn = _mb.get_max_input_tokens
+    _mb.get_max_input_tokens = lambda model, **kw: T_max  # type: ignore[assignment]
+    try:
+        cfg = _make_cfg(
+            head_ratio=0.10,
+            body_ratio=0.05,
+            tail_ratio=0.15,
+            new_msg_ratio=0.10,
+            section_caps_spec_tokens=100,
+            use_chars4_estimate=True,
+        )
+        sp_text = "b" * 200  # 50 tokens via chars//4
+        events = EventLog()
+
+        engine = ChatCompactionEngine(
+            model="test-model",
+            events=events,
+            cfg=cfg,
+            system_prompt_provider=lambda: sp_text,
+        )
+
+        # Verify: main_pool = T_max - T_SP where T_SP = len(sp_text)//4 = 50.
+        # This checks that the provider was actually consulted at init time.
+        T_SP_expected = len(sp_text) // 4  # 50 (chars//4 estimate)
+        expected_main_pool = T_max - T_SP_expected  # 99_950
+
+        assert engine.budgets.effective_trigger > 0, (
+            "effective_trigger must be > 0 after init with valid config"
+        )
+        assert engine.budgets.main_pool == expected_main_pool, (
+            f"main_pool expected {expected_main_pool} (T_max={T_max} - T_SP={T_SP_expected}), "
+            f"got {engine.budgets.main_pool}"
+        )
+    finally:
+        _mb.get_max_input_tokens = original_fn

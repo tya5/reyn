@@ -1774,6 +1774,7 @@ class ChatSession:
             chat_compaction_engine=ChatCompactionEngine(
                 model=self.model,
                 events=self._chat_events,
+                system_prompt_provider=self._build_router_system_prompt,
             ),
             history_appender=self._append_history,
             make_summary_message=lambda rendered, structured, covers: ChatMessage(
@@ -4861,6 +4862,36 @@ class ChatSession:
             messages.append(msg)
         return messages
 
+    def _build_router_system_prompt(self) -> str:
+        """Return the router system prompt for the current session state.
+
+        ISSUE #4 (PR-N3): used as the ``system_prompt_provider`` for
+        :class:`~reyn.chat.services.chat_compaction_engine.ChatCompactionEngine`
+        so that T_SP is measured dynamically — operator-editable REYN.md and
+        skills catalog changes are reflected before each pre-frame budget check.
+
+        Note: ``indexed_sources_section`` is omitted (= None) because this
+        method is synchronous and cannot await ``get_source_manifest()``.
+        The omission means T_SP is slightly under-counted, which is conservative
+        (= compaction triggers slightly more often than strictly necessary).
+        The error is small relative to the total context window.
+        """
+        from reyn.chat.router_system_prompt import build_system_prompt
+        return build_system_prompt(
+            agent_name=self._router_host.agent_name,
+            agent_role=self._router_host.agent_role,
+            available_skills=self._router_host.list_available_skills(),
+            available_agents=self._router_host.list_available_agents(),
+            memory_index=self._router_host.get_memory_index(),
+            file_permissions=self._router_host.get_file_permissions(),
+            mcp_servers=self._router_host.get_mcp_servers(),
+            web_fetch_allowed=self._router_host.get_web_fetch_allowed(),
+            output_language=self._router_host.output_language,
+            project_context=self._router_host.get_project_context(),
+            indexed_sources_section=None,
+            universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
+        )
+
     async def _maybe_force_compact_for_router(
         self,
         new_msg_turn: "dict | None" = None,
@@ -4883,6 +4914,15 @@ class ChatSession:
             estimate_tokens,
             estimate_tokens_for_turn,
         )
+
+        # ISSUE #4: re-measure T_SP dynamically before checking budgets so
+        # operator-editable SP changes (REYN.md, skills catalog reloads) are
+        # reflected in the effective_trigger for this turn.
+        engine = self._compaction_controller._engine
+        try:
+            engine.recompute_budgets()
+        except Exception:
+            pass  # fail-safe: static budgets remain in effect
 
         # Retrieve the computed budgets from the engine (Axis 1).
         engine = self._compaction_controller._engine

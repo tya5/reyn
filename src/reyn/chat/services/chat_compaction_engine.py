@@ -42,7 +42,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import litellm
 
@@ -477,6 +477,10 @@ class ChatCompactionEngine:
     returns a ``ChatSummary``.
 
     Axis 2: measures T_comp_SP at init time (independent of main session SP).
+    Axis 4 (ISSUE #4): when ``system_prompt_provider`` is supplied, budgets
+        are re-derived dynamically via :meth:`recompute_budgets` so that
+        operator-editable SP changes (REYN.md reloads, skill catalog changes)
+        are reflected before each pre-frame check.
     Axis 8: exposes an ``asyncio.Lock`` (``compaction_lock``) that
         force_compact_now() callers must hold while compaction is in progress.
         History appends that need to be serialised with compaction must await
@@ -492,8 +496,16 @@ class ChatCompactionEngine:
         CompactionConfig; used for use_chars4_estimate. When None a default
         config is used (for backward-compat test construction).
     T_SP:
-        Tokens consumed by the main session's system prompt.
-        Required for compute_budgets. Defaults to 0 (= no SP measured).
+        Static tokens consumed by the main session's system prompt.
+        Ignored when ``system_prompt_provider`` is set (dynamic path).
+        Defaults to 0 (= no SP measured).
+    system_prompt_provider:
+        Optional zero-argument callable that returns the current system
+        prompt text.  When provided, :meth:`recompute_budgets` measures
+        ``T_SP`` dynamically from the returned text so that operator-editable
+        changes (REYN.md, skills catalog reloads) are reflected before each
+        pre-frame check.  When ``None``, the static ``T_SP`` from ``__init__``
+        is used for the lifetime of the engine.
     """
 
     def __init__(
@@ -503,6 +515,7 @@ class ChatCompactionEngine:
         cfg: "CompactionConfig | None" = None,
         *,
         T_SP: int = 0,
+        system_prompt_provider: Callable[[], str] | None = None,
     ) -> None:
         self._model = model
         self._events = events
@@ -510,20 +523,51 @@ class ChatCompactionEngine:
         from reyn.config import CompactionConfig as _CC
         self._cfg: "CompactionConfig" = cfg if cfg is not None else _CC()
         self._use_chars4 = self._cfg.use_chars4_estimate
+        self._system_prompt_provider = system_prompt_provider
 
         # Axis 2: measure comp_SP token cost once at init.
         self._T_comp_SP: int = estimate_tokens(
             _COMPACTION_SYSTEM_PROMPT, model, use_chars4=self._use_chars4
         )
 
-        # Axis 1 + derived: compute budgets and assert static bounds.
-        self._budgets: ComputedBudgets = compute_budgets(
-            self._cfg, model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
-        )
-        assert_static_bounds(self._cfg, self._budgets)
+        if system_prompt_provider is not None:
+            # Dynamic path (ISSUE #4): budgets computed via recompute_budgets()
+            # which measures T_SP from the provider.  Defer assert_static_bounds
+            # to the first recompute_budgets() call below.
+            # Initialise with a placeholder so _budgets is always set.
+            self._budgets: ComputedBudgets = compute_budgets(
+                self._cfg, model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
+            )
+            # Run the first recompute immediately so the provider is consulted
+            # at init time and assert_static_bounds fires fail-fast.
+            self.recompute_budgets()
+        else:
+            # Static path: T_SP is fixed for the session lifetime.
+            self._budgets = compute_budgets(
+                self._cfg, model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
+            )
+            assert_static_bounds(self._cfg, self._budgets)
 
         # Axis 8: compaction lock for synchronous force_compact path.
         self.compaction_lock: asyncio.Lock = asyncio.Lock()
+
+    def recompute_budgets(self) -> None:
+        """Re-measure T_SP from the provider and recompute budgets.
+
+        Called by session before each pre-frame check so dynamic SP state
+        (= operator-editable REYN.md, skills catalog reloads) is reflected.
+
+        When no ``system_prompt_provider`` was supplied at init, this method
+        is a no-op — the static T_SP from ``__init__`` remains in effect.
+        """
+        if self._system_prompt_provider is None:
+            return  # static T_SP from __init__ remains
+        sp_text = self._system_prompt_provider()
+        T_SP = estimate_tokens(sp_text, self._model, use_chars4=self._use_chars4)
+        self._budgets = compute_budgets(
+            self._cfg, self._model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
+        )
+        assert_static_bounds(self._cfg, self._budgets)
 
     @property
     def budgets(self) -> ComputedBudgets:
