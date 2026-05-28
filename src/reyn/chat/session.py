@@ -2479,6 +2479,76 @@ class ChatSession:
             self._on_perm_persist_cb = None
         await self.inbox.put(("shutdown", {}))
 
+    async def refresh_mcp_servers(self) -> dict:
+        """Programmatic MCP-tools refresh — re-probe configured servers + reload cache.
+
+        Calls the same 3-step turn-boundary chain that fires implicitly on each
+        user message:
+
+          1. ``RouterHostAdapter.maybe_refresh_mcp_tools_from_yaml()`` (S2)
+             — re-stats yaml scope tiers, re-probes when any mtime advanced.
+          2. ``RouterHostAdapter.maybe_reload_mcp_tools_cache_from_disk()`` (S1)
+             — picks up the on-disk cache file if newer than the in-memory cache.
+          3. ``RouterHostAdapter.ensure_mcp_tools_cached()`` (#160 lazy probe)
+             — first-call fallback when neither (1) nor (2) populated the cache.
+
+        Use cases (FP-0037 #164):
+          - Test scenarios where MCP config changes mid-test.
+          - Skills that install a new MCP server and want it visible within
+            the same chat session (= without waiting for the operator to
+            run ``reyn mcp refresh`` or for a yaml mtime advance).
+
+        Returns a dict snapshot::
+
+            {
+              "refreshed": bool,        # True iff (1) or (2) actually swapped the cache
+              "servers": {<name>: <tool_count>, ...},  # in-memory cache after refresh
+            }
+
+        On failure a defensive ``"error"`` key is added and ``"refreshed"``
+        is False — the method never raises.
+        """
+        # Snapshot the cache before the chain so we can detect a swap.
+        snapshot_before = self._router_host.mcp_tools_cache_snapshot
+
+        try:
+            # Step 1 (S2): yaml mtime watch — re-probes when any yaml changed.
+            await self._router_host.maybe_refresh_mcp_tools_from_yaml()
+            # Step 2 (S1): disk-reload — picks up CLI refresh written between turns.
+            self._router_host.maybe_reload_mcp_tools_cache_from_disk()
+            # Step 3 (#160): lazy probe — fills cache on first call.
+            await self._router_host.ensure_mcp_tools_cached()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("refresh_mcp_servers: turn-boundary chain raised: %r", exc)
+            snapshot_after = self._router_host.mcp_tools_cache_snapshot or {}
+            return {
+                "refreshed": False,
+                "servers": {
+                    name: len(tools)
+                    for name, tools in snapshot_after.items()
+                },
+                "error": str(exc),
+            }
+
+        snapshot_after = self._router_host.mcp_tools_cache_snapshot or {}
+
+        # Detect cache swap: compare id() of the snapshot objects.
+        # snapshot_before is a *copy* taken before the chain (or None when no
+        # cache existed yet). snapshot_after is a fresh copy taken after.
+        # The underlying adapter replaces _mcp_tools_cache with a new dict
+        # whenever a reload/probe fires. Because both snapshots are independent
+        # copies, we compare their content rather than identity to decide
+        # whether the visible cache actually changed.
+        refreshed = snapshot_before != snapshot_after
+
+        return {
+            "refreshed": refreshed,
+            "servers": {
+                name: len(tools)
+                for name, tools in snapshot_after.items()
+            },
+        }
+
     # ── PR21: state persistence helpers (WAL + snapshot) ─────────────────────
     # PR-refactor-session-1 wave 2: WAL/snapshot ownership moved to
     # SnapshotJournal; pending_chains lifecycle moved to ChainManager.
