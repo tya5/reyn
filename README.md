@@ -101,7 +101,7 @@ reyn run my_skill '{"type":"request","data":{"topic":"AI in education"}}'
 reyn run my_skill "Summarize AI trends in education."
 ```
 
-Full tutorial: [docs/guide/getting-started/02-your-first-skill.md](docs/guide/getting-started/02-your-first-skill.md)
+Full tutorial: [docs/guide/getting-started/03-your-first-skill.md](docs/guide/getting-started/03-your-first-skill.md)
 
 ### Index documents and chat
 
@@ -403,7 +403,7 @@ The "framework foundation" framing is honest, not a hedge. The following live do
 - **RAG evaluation framework.** Hosted eval pipelines and rubric marketplaces — eval-as-a-service is a downstream consumer of `LLMReplay`, not bundled.
 - **IDE integration.** Editor plugins, in-IDE retrieval, semantic search panels — downstream territory.
 - **Memory layer migration.** Reyn 0.x's inline-expansion memory continues to work; migration to `recall(sources=["memory"])` is phase 1.5 (1.1+), gated on dogfood-retest non-regression.
-- **Local embedding models.** sentence-transformers / ollama — phase 2.
+- **Ollama embedding models.** ollama-backed local embedding — phase 2. (= sentence-transformers local-mini / local-e5 shipped in FP-0043 Phase 2/4, default since 2026-05)
 - **Sensitive-data redaction policy.** Phase 2 — in 1.0, the docs warn but do not redact.
 
 Post-1.0 vision (= the "Flywheel" — operational intelligence, skill self-improvement, RAG routing) is captured under `docs/deep-dives/research/landscape/milestone-flywheel.md` and FP-0006..0010. Mentioned for transparency, not promised.
