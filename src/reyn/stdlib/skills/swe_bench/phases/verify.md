@@ -86,3 +86,21 @@ If `attempt` has reached the maximum allowed (3 by default), set
 `tests_passed = false` and transition to report anyway — the skill reports the
 best-effort patch even when tests did not pass, matching SWE-bench harness
 expectations.
+
+## Convergence guard — MANDATORY
+
+If `git apply` (or `git apply --check`) has failed **3 or more consecutive
+times** with the same error (same `returncode`, same `stderr` substring), STOP
+attempting to apply the patch.  Do ONE of:
+
+- If the error is "No valid patches in input" or a similar content-empty
+  error: the patch you wrote is invalid.  Transition back to **apply** so the
+  fix can be re-examined.
+- If the error is a context-line conflict: the repository state differs from
+  what the patch expects.  Transition back to **apply** with the failure
+  summary.
+
+Do NOT write a new version of the same patch and retry `git apply` in a loop.
+Each identical write+apply pair consumes 2 turns with zero forward progress.
+After 3 consecutive failures, treating the error as structural and transitioning
+is always more productive than additional retries.
