@@ -13,6 +13,7 @@ from reyn.schemas.models import (
 )
 
 from .ir import ArtifactDef, PhaseDef, SkillDef
+from .shape_renderer import render_shape_only_blocks
 
 _PreprocessorAdapter = TypeAdapter(list[PreprocessorStep])
 
@@ -61,6 +62,13 @@ def expand_phase(
             f"Phase '{phase_def.name}': invalid preprocessor definition — {exc}"
         ) from exc
 
+    # Apply the `shape_only` annotation: transform any ``json shape_only``
+    # fenced code blocks in the phase instructions.  Blocks without the
+    # annotation pass through unchanged.  This is the compile-time step that
+    # makes the DSL annotation work: the LLM only ever sees the transformed
+    # (placeholder) form, never the natural-looking example values.
+    rendered_instructions = render_shape_only_blocks(phase_def.instructions)
+
     # allowed_ops: PhaseDef.allowed_ops is None when frontmatter omitted the
     # key; in that case let the Phase model default factory supply
     # ["file", "ask_user"]. An explicit empty list means "no ops".
@@ -70,7 +78,7 @@ def expand_phase(
         input_schema=input_schema,
         input_schema_name=input_schema_name,
         input_description=input_description,
-        instructions=phase_def.instructions,
+        instructions=rendered_instructions,
         max_act_turns=phase_def.max_act_turns,
         model_class=phase_def.model_class,
         preprocessor=preprocessor,
@@ -178,10 +186,16 @@ def expand_skill(
         final_output_schema = {"type": "object"}
         final_output_name = skill_def.final_output
 
+    # Apply the `shape_only` annotation to the skill doc (the body of skill.md).
+    # This is primarily for documentation consistency — skill.doc is not
+    # currently rendered in the LLM system prompt.  Phase instructions (where
+    # the LLM-visible text lives) are transformed in expand_phase above.
+    rendered_doc = render_shape_only_blocks(skill_def.doc)
+
     return Skill(
         name=skill_def.name,
         description=skill_def.description,
-        doc=skill_def.doc,
+        doc=rendered_doc,
         entry_phase=skill_def.entry,
         phases=phase_objects,
         graph=SkillGraph(

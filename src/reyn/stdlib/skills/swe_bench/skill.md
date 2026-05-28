@@ -77,7 +77,7 @@ setup → explore → plan → apply → verify → report
 
 Structured `swe_bench_input` artifact matching the SWE-bench dataset format:
 
-```json
+```json shape_only
 {
   "type": "swe_bench_input",
   "data": {

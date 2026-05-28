@@ -15,31 +15,21 @@ likely to need editing.
 ## Where to find the input fields
 
 This phase receives an input artifact of type `swe_bench_input`. Its `data`
-object contains every field you need. The shape (with ALL-CAPS placeholders
-denoting values you must read from the actual artifact in the prompt — NOT
-literal values to copy) is:
+object contains every field you need. The input shape is:
 
-```json
+```json shape_only
 {
   "type": "swe_bench_input",
   "data": {
-    "instance_id": "<INSTANCE_ID_FROM_ARTIFACT>",
-    "repo": "<REPO_SLUG_FROM_ARTIFACT>",
-    "base_commit": "<COMMIT_SHA_FROM_ARTIFACT>",
-    "problem_statement": "<GITHUB_ISSUE_BODY_FROM_ARTIFACT>",
-    "hints_text": "<OPTIONAL_HINTS_FROM_ARTIFACT>",
-    "test_patch": "<UNIFIED_DIFF_FROM_ARTIFACT>"
+    "instance_id": "django__django-12345",
+    "repo": "django/django",
+    "base_commit": "d16bfe05a744909de4b27f5875fe0d4ed41ce607",
+    "problem_statement": "BUG: AttributeError when calling foo() on a queryset ...",
+    "hints_text": "Look at django/db/models/query.py near the foo method",
+    "test_patch": "diff --git a/tests/test_foo.py b/tests/test_foo.py\n..."
   }
 }
 ```
-
-**Critical**: the angle-bracketed `<…_FROM_ARTIFACT>` strings above are
-documentation placeholders showing the SHAPE of the data. They are NOT
-literal values you should copy into shell commands, file paths, grep
-patterns, or any other tool call. The actual values live in the prompt's
-input-artifact section; read them from there and inline the REAL values
-(e.g. real owner/repo string like `astropy/astropy`, real 40-char SHA,
-real issue body text) into your tool calls.
 
 All six fields are present in the prompt's artifact section that the OS
 gives you (= no need to grep / search / probe to find them). Read them
