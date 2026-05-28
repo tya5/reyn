@@ -18,7 +18,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
+import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -79,6 +81,17 @@ def register_benchmark(eval_sub) -> None:
             "Enable unsafe-mode Python preprocessor steps (no AST sandboxing) "
             "for every task in this batch. Safe-mode python steps run without "
             "this flag. Off by default; matches `reyn run --allow-unsafe-python`."
+        ),
+    )
+    p.add_argument(
+        "--clone-task-repo", dest="clone_task_repo", action="store_true",
+        help=(
+            "Before each task runs, initialise its workspace by cloning "
+            "https://github.com/<task.data.repo>.git and checking out "
+            "<task.data.base_commit>. Required for SWE-bench tasks "
+            "whose skill expects a pre-cloned repo (= setup phase issues "
+            "`git checkout` against the empty workspace otherwise). "
+            "Off by default for generic batch runs."
         ),
     )
 
@@ -215,15 +228,74 @@ def _write_summary(
 
 
 @contextmanager
-def _benchmark_isolated_workspace() -> Iterator[Path]:
-    """Run body inside a throwaway temp directory to isolate .reyn/ writes."""
+def _benchmark_isolated_workspace(
+    task: dict | None = None,
+    clone_task_repo: bool = False,
+) -> Iterator[Path]:
+    """Run body inside a throwaway temp directory to isolate .reyn/ writes.
+
+    When ``clone_task_repo`` is True AND the task carries both ``repo``
+    and ``base_commit`` fields (= SWE-bench task input convention), the
+    workspace is initialised as a git checkout at the target commit
+    before the skill runs (= FP-0008 PR-E). This unblocks tasks whose
+    skill expects to operate on a pre-cloned repo (e.g. the swe_bench
+    setup phase issues ``git checkout <base_commit>`` which only works
+    inside an existing repository).
+
+    The clone uses ``https://github.com/<repo>.git`` as the URL. On
+    clone / checkout failure, the workspace is left empty (= no .git
+    dir) so the task itself fails with a clear "not a git repository"
+    error rather than hanging or masking the cause.
+    """
     original_cwd = Path.cwd()
     with tempfile.TemporaryDirectory(prefix="reyn-benchmark-") as tmp:
+        tmp_path = Path(tmp)
+        if clone_task_repo and task is not None:
+            data = task.get("data", task) if isinstance(task, dict) else {}
+            if isinstance(data, dict):
+                repo = data.get("repo")
+                base_commit = data.get("base_commit")
+                if isinstance(repo, str) and isinstance(base_commit, str):
+                    _init_workspace_from_repo(tmp_path, repo, base_commit)
         try:
-            os.chdir(tmp)
-            yield Path(tmp)
+            os.chdir(tmp_path)
+            yield tmp_path
         finally:
             os.chdir(original_cwd)
+
+
+def _init_workspace_from_repo(
+    workspace: Path, repo: str, base_commit: str,
+) -> None:
+    """Clone ``https://github.com/<repo>.git`` + checkout base_commit into workspace.
+
+    Defensive: any subprocess failure (timeout, network, missing commit)
+    is logged via stdlib logging and silently absorbed. The workspace
+    is left as-is; the calling task will surface the missing-repo error
+    via its own setup phase. The 600s clone timeout covers large repos
+    on slow networks.
+    """
+    url = f"https://github.com/{repo}.git"
+    try:
+        subprocess.run(
+            ["git", "clone", url, "."],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            timeout=600,
+        )
+        subprocess.run(
+            ["git", "checkout", base_commit],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        logging.getLogger(__name__).warning(
+            "benchmark workspace clone failed for repo=%s commit=%s: %s",
+            repo, base_commit, exc,
+        )
 
 
 # ── per-task runner ───────────────────────────────────────────────────────────
@@ -241,6 +313,7 @@ async def _run_single_task(
     shell_allowed: bool = False,
     permission_resolver=None,
     python_allowed_modules: list[str] | None = None,
+    clone_task_repo: bool = False,
 ) -> dict:
     """Run a single task under the semaphore; return a result record.
 
@@ -288,7 +361,9 @@ async def _run_single_task(
         cost_usd: float | None = None
 
         try:
-            with _benchmark_isolated_workspace():
+            with _benchmark_isolated_workspace(
+                task=task, clone_task_repo=clone_task_repo,
+            ):
                 run_result = await agent.run(skill, input_artifact)
 
             if run_result.ok:
@@ -357,6 +432,7 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
     # a fake schema on every retry — see _run_single_task docstring.
     shell_allowed = session.shell_allowed_for(args)
     unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
+    clone_task_repo = bool(getattr(args, "clone_task_repo", False))
     from reyn.cli.commands.run import _build_permission_resolver
     perm_resolver = _build_permission_resolver(
         session.config, shell_allowed, unsafe_python=unsafe_python,
@@ -437,6 +513,7 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
                 semaphore=semaphore,
                 shell_allowed=shell_allowed,
                 permission_resolver=perm_resolver,
+                clone_task_repo=clone_task_repo,
             )
         except Exception as exc:
             # A task failure never aborts the batch — log and record the error.
