@@ -54,3 +54,26 @@ jobs:
 
       - name: Run ruff
         run: ruff check .
+
+  audit:
+    name: test-tier audit
+    runs-on: ubuntu-latest
+    # Matches the `test` job ceiling — local runs at ~1 min but GitHub
+    # ubuntu-latest runners (2 vCPU, slow disk I/O) take ~5 min for
+    # the AST parse over 5663 tests. 15 min gives healthy margin.
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # scripts/test_tier_audit.py is stdlib-only (argparse / ast / re
+      # / json / pathlib). No pip install needed — keeps the job fast
+      # and decoupled from src/ install state.
+      - name: Run test-tier audit
+        run: python scripts/test_tier_audit.py --strict tests/
