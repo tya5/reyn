@@ -62,17 +62,22 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     )
 
     # Build a legacy OpContext from the new ToolContext.
-    # OpContext.permission_decl is a required field with no equivalent
-    # on ToolContext. We use PermissionDecl() (empty defaults = no
-    # granted permissions) which is safe for lint because the
-    # handler does not perform permission checks (lint is read-only
-    # / structural analysis only). This is the only mandatory field
-    # that ToolContext cannot supply; see adapter shim note in the
-    # ADR-0026 M2 findings doc.
+    # Propagate the active phase's PermissionDecl + intervention_bus
+    # via phase_state.op_context (FP-0008 Tool→OpContext bridge fix
+    # 2026-05-28). Lint itself is read-only / structural-analysis only,
+    # but uniform bridge wiring avoids future class bugs if lint ever
+    # gains permission-gated paths.
+    phase_op_ctx = (
+        ctx.phase_state.op_context if ctx.phase_state is not None else None
+    )
     legacy_ctx = OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
-        permission_decl=PermissionDecl(),
+        permission_decl=(
+            phase_op_ctx.permission_decl
+            if phase_op_ctx is not None
+            else PermissionDecl()
+        ),
         permission_resolver=ctx.permission_resolver,
         skill_name="",
         skill=None,
@@ -86,7 +91,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         shell_allowed=False,
         mcp_servers={},
         mcp_clients={},
-        intervention_bus=None,
+        intervention_bus=getattr(phase_op_ctx, "intervention_bus", None),
         current_phase="",
         caller="direct",
         parent_skill_run_id=None,

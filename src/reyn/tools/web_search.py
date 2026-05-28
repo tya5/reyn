@@ -63,22 +63,27 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     )
 
     # Build a legacy OpContext from the new ToolContext.
-    # OpContext.permission_decl is a required field with no equivalent
-    # on ToolContext. We use PermissionDecl() (empty defaults = no
-    # granted permissions) which is safe for web_search because the
-    # handler does not perform permission checks (web search is
-    # read-only / public queries). This is the only mandatory field
-    # that ToolContext cannot supply; see adapter shim note in the
-    # ADR-0026 M2 findings doc.
+    # Propagate the active phase's PermissionDecl via
+    # phase_state.op_context (FP-0008 Tool→OpContext bridge fix
+    # 2026-05-28). Web search is read-only / public queries today, but
+    # uniform bridge wiring avoids future class bugs if web_search
+    # gains permission-gated paths.
     #
     # events.subscribers: the existing OpContext constructor requires
     # this to forward subscribers to sub-skill invocations. Web search
     # does not spawn sub-skills, but OpContext.subscribers is set
     # defensively via getattr fallback.
+    phase_op_ctx = (
+        ctx.phase_state.op_context if ctx.phase_state is not None else None
+    )
     legacy_ctx = OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
-        permission_decl=PermissionDecl(),
+        permission_decl=(
+            phase_op_ctx.permission_decl
+            if phase_op_ctx is not None
+            else PermissionDecl()
+        ),
         permission_resolver=ctx.permission_resolver,
         skill_name="",
         skill=None,

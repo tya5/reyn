@@ -174,14 +174,20 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     )
 
     # Build a legacy OpContext from the new ToolContext.
-    # PermissionDecl() with empty defaults is safe here because the
-    # run_skill handler derives its permission checks from the sub-skill's
-    # own permission_resolver (ctx.permission_resolver is forwarded).
-    # This mirrors the web_search adapter shim pattern (M2 POC).
+    # Propagate the active phase's PermissionDecl + intervention_bus
+    # via phase_state.op_context (FP-0008 Tool→OpContext bridge fix
+    # 2026-05-28).
+    phase_op_ctx = (
+        ctx.phase_state.op_context if ctx.phase_state is not None else None
+    )
     legacy_ctx = OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
-        permission_decl=PermissionDecl(),
+        permission_decl=(
+            phase_op_ctx.permission_decl
+            if phase_op_ctx is not None
+            else PermissionDecl()
+        ),
         permission_resolver=ctx.permission_resolver,
         skill_name="",
         skill=None,
@@ -195,7 +201,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         shell_allowed=False,
         mcp_servers={},
         mcp_clients={},
-        intervention_bus=None,
+        intervention_bus=getattr(phase_op_ctx, "intervention_bus", None),
         current_phase="",
         caller="direct",
         parent_skill_run_id=None,
