@@ -7,6 +7,19 @@ model_class: standard
 allowed_ops: [file, shell]
 max_retries: 3
 max_act_turns: 30
+preprocessor:
+  # FP-0008 PR-O v8: deterministic test_patch sanitizer normalizes
+  # line endings (CRLF → LF), strips BOM, ensures trailing newline.
+  # Runs BEFORE the LLM enters this phase. The sanitized string is
+  # written into `data.test_patch`, replacing the LLM-visible field
+  # so `git apply` operates on a clean diff.
+  - type: python
+    module: ./sanitize_test_patch.py
+    function: sanitize_test_patch
+    mode: safe
+    into: data.test_patch
+    output_schema:
+      type: string
 ---
 
 Run the SWE-bench test patch against the current codebase to determine whether
@@ -14,23 +27,34 @@ the fix is correct.
 
 ## Step 1 — Apply the test_patch
 
-The `test_patch` field in the input contains a unified diff that adds or
-modifies test files.  Apply it with:
+The `data.test_patch` field in the input is a unified diff. The
+verify-phase preprocessor has already normalized it deterministically
+(= CRLF → LF, BOM stripped, trailing newline ensured) so `git apply`
+operates on a clean diff.
+
+Write the sanitized diff to a temp file (e.g. `.reyn/swe_bench_test.patch`)
+then apply with robust flags:
 
 ```
-git apply --check <test_patch_content>
+git apply --3way --recount --whitespace=fix .reyn/swe_bench_test.patch
 ```
 
-Write `test_patch` to a temporary file (e.g. `.reyn/swe_bench_test.patch`)
-then run:
+The flags layer second-line defenses on top of the preprocessor:
+`--3way` enables merge-style recovery on context drift, `--recount`
+tolerates off-by-N context line counts, and `--whitespace=fix`
+forgives trailing-space drift.
 
-```
-git apply .reyn/swe_bench_test.patch
-```
+If `git apply` STILL fails after preprocessor sanitization + robust
+flags, record the failure in `failure_summary` (= include the exact
+stderr from git apply, NOT a vague "patch failed" summary) and treat
+this as a verify execution failure (not a test failure) — transition
+back to apply so the patch can be re-examined.
 
-If `git apply` fails, record the failure in `failure_summary` and treat this
-as a verify execution failure (not a test failure) — transition back to apply
-so the patch can be re-examined.
+**Do NOT skip the test_patch** — an unapplied test patch means tests
+can't be evaluated; that's NOT a pass. The schema invariant
+(`oneOf` on `swe_bench_result`) rejects `tests_passed=true` with an
+empty patch, but an unapplied test_patch could still produce a
+mis-attributed `tests_passed=true` if the LLM bypasses Step 1.
 
 ## Step 2 — Run the tests
 

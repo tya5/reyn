@@ -40,6 +40,16 @@ permissions:
     - path: "*"
       scope: recursive
   shell: true
+  # FP-0008 PR-O v8: deterministic test_patch sanitizer (= line-ending
+  # / BOM / trailing-newline normalization) runs as a `safe`-mode
+  # python preprocessor step at the verify phase entry, BEFORE the
+  # LLM issues `git apply`. Eliminates the sandbox_2 v8 test_patch
+  # apply-reject failure class structurally.
+  python:
+    - module: ./sanitize_test_patch.py
+      function: sanitize_test_patch
+      mode: safe
+      timeout: 5
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---
