@@ -377,6 +377,13 @@ class CompactionConfig:
     body_token_cap: int = 1500          # Total cap across all summary sections
     min_compact_batch: int = 5          # Skip compact when fewer than N turns to absorb
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
+    # PR-N3: token caps for head/tail slices (bounded computation guarantee).
+    # "N turns OR max_tokens, short wins" — whichever limit is hit first.
+    head_max_total_tokens: int = 4096   # Token cap on the head slice
+    tail_max_total_tokens: int = 4096   # Token cap on the tail slice
+    # PR-N3: max tokens for the body chunk sent to the compaction LLM.
+    # None = compute from get_model_info() at runtime; explicit int overrides.
+    max_compact_batch_tokens: int | None = None
 
 
 @dataclass
@@ -1687,6 +1694,10 @@ def _build_chat_config(raw: object) -> ChatConfig:
         ),
     )
     defaults = CompactionConfig()
+    _mcbt_raw = compaction_raw.get("max_compact_batch_tokens", defaults.max_compact_batch_tokens)
+    max_compact_batch_tokens: int | None = (
+        int(_mcbt_raw) if _mcbt_raw is not None else None
+    )
     compaction = CompactionConfig(
         trigger_total_tokens=int(
             compaction_raw.get("trigger_total_tokens", defaults.trigger_total_tokens)
@@ -1698,6 +1709,13 @@ def _build_chat_config(raw: object) -> ChatConfig:
             compaction_raw.get("min_compact_batch", defaults.min_compact_batch)
         ),
         section_token_caps=section,
+        head_max_total_tokens=int(
+            compaction_raw.get("head_max_total_tokens", defaults.head_max_total_tokens)
+        ),
+        tail_max_total_tokens=int(
+            compaction_raw.get("tail_max_total_tokens", defaults.tail_max_total_tokens)
+        ),
+        max_compact_batch_tokens=max_compact_batch_tokens,
     )
     return ChatConfig(compaction=compaction)
 

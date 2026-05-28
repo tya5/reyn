@@ -3,9 +3,10 @@
 PR10 introduced the file with the minimal schema (`name`, `role`,
 `created_at`). PR15 adds `allowed_skills`: an optional allowlist of
 project / stdlib skill names this agent may invoke. stdlib `skill_router`
-/ `chat_compactor` are always available — the allowlist only constrains
-user-visible skills the router would otherwise hand off to. (FP-0011:
-`skill_narrator` was removed; the router LLM narrates inline.)
+is always available — the allowlist only constrains user-visible skills
+the router would otherwise hand off to. (FP-0011: `skill_narrator` was
+removed; the router LLM narrates inline. PR-N3: `chat_compactor` skill
+retired — compaction is now OS-internal Python.)
 
 Semantics for `allowed_skills`:
 - absent / null  → no restriction (every project + stdlib skill, default)

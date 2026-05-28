@@ -67,7 +67,6 @@ mindmap
       phase.md
       artifact YAML
     Stdlib Skills
-      chat_compactor
       direct_llm
       eval
       eval_builder
@@ -253,7 +252,6 @@ All ops are documented in the single reference page: **[Control IR](reference/ru
 
 | Skill | Description | Documentation |
 |-------|-------------|---------------|
-| `chat_compactor` | Fold chat history into a rolling summary within token budget | [Reference](reference/stdlib/chat_compactor.md) |
 | `direct_llm` | Single-shot LLM fallback for catalogue gaps | [Reference](reference/stdlib/direct_llm.md) |
 | `eval` | Evaluate a skill against test cases via `judge_phase` as judge | [Reference](reference/stdlib/eval.md) |
 | `eval_builder` | Generate an eval spec with test cases and rubric | [Reference](reference/stdlib/eval_builder.md) |
@@ -362,7 +360,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `recall` op | embed → `index_query` per source → merge top-K globally | [Control IR](reference/runtime/control-ir.md) |
 | Action embedding index | `ActionEmbeddingIndex` (SQLite-WAL, class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses (FP-0043) | [Universal catalog § search_actions](concepts/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
 | Memory CRUD | `list` / `read` / `remember_shared` / `remember_agent` / `forget` | [Memory concepts](concepts/memory.md) · [reyn memory CLI](reference/cli/memory.md) |
-| Chat compaction | head+tail preservation + rolling LLM summary within token budget | [Chat Compaction](concepts/chat-compaction.md) · [`chat_compactor`](reference/stdlib/chat_compactor.md) |
+| Chat compaction | head+tail preservation + rolling LLM summary within token budget (OS-internal since PR-N3) | [Chat Compaction](concepts/chat-compaction.md) |
 
 ---
 

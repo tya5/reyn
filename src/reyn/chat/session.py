@@ -38,6 +38,7 @@ from reyn.chat.services import (
 )
 from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.chain_manager import _PendingChain
+from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
@@ -1770,7 +1771,10 @@ class ChatSession:
             config=self._compaction,
             history_access=lambda: self.history,
             latest_summary=self._latest_summary,
-            run_compaction_skill=self._skill_runner.run_stdlib,
+            chat_compaction_engine=ChatCompactionEngine(
+                model=self.model,
+                events=self._chat_events,
+            ),
             history_appender=self._append_history,
             make_summary_message=lambda rendered, structured, covers: ChatMessage(
                 role="summary",
@@ -4857,6 +4861,43 @@ class ChatSession:
             messages.append(msg)
         return messages
 
+    async def _maybe_force_compact_for_router(self) -> None:
+        """Pre-frame context-overflow guard (PR-N3).
+
+        Estimates the projected token count of the current history slice.
+        If it exceeds the model's max_input_tokens (literal, no safety_margin),
+        runs force_compact_now() synchronously so the history fits before the
+        router LLM call.  The existing background spawn_maybe() path is
+        separate and unaffected.
+        """
+        from reyn.llm.model_budget import get_max_input_tokens
+        max_tokens = get_max_input_tokens(
+            self.model, events=self._chat_events,
+        )
+        # Quick estimate of the current history slice.
+        import json as _json
+        try:
+            history_msgs = self._build_history_for_router()
+            combined = _json.dumps(history_msgs, ensure_ascii=False)
+            import litellm as _litellm
+            try:
+                estimated = _litellm.token_counter(model=self.model, text=combined)
+                if not estimated:
+                    estimated = max(1, len(combined) // 4)
+            except Exception:
+                estimated = max(1, len(combined) // 4)
+        except Exception:
+            return
+
+        if estimated > max_tokens:
+            self._chat_events.emit(
+                "compaction_check",
+                outcome="pre_frame_overflow",
+                estimated_tokens=estimated,
+                max_input_tokens=max_tokens,
+            )
+            await self._compaction_controller.force_compact_now()
+
     async def _run_router_loop(
         self,
         user_text: str,
@@ -4888,6 +4929,11 @@ class ChatSession:
             empty_stop_retry_directive=_CHAT_ROUTER_EMPTY_STOP_RETRY_DIRECTIVE,
             plan_invalid_retries=_plan_invalid_retries_cap,
         )
+        # PR-N3: pre-frame context-overflow guard.
+        # Estimate the projected history token count; if it would exceed
+        # the model's max_input_tokens, run compaction synchronously so
+        # the assembled history fits before the router LLM call.
+        await self._maybe_force_compact_for_router()
         history = self._build_history_for_router()
         router_usage = await loop.run(user_text=user_text, history=history)
 

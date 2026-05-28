@@ -6,14 +6,12 @@ controller:
 
   - Include tool turns in its candidate selection (= the filter no
     longer drops ``role="tool"`` / ``role="assistant"``).
-  - Serialise each turn into a compactor-skill-input dict that
-    surfaces structured tool detail (``tool_calls`` summary +
-    ``tool_call_id`` + ``tool_name``).
+  - Serialise each turn into a compactor-input dict that surfaces
+    structured tool detail (``tool_calls`` summary + ``tool_call_id``
+    + ``tool_name``).
 
-The compactor skill's phase prompt is also updated to mention tool
-turns + add an ``artifacts_referenced`` rule for tool-derived items;
-that's documented in ``src/reyn/stdlib/skills/chat_compactor/phases/compact.md``
-(not directly testable without an LLM call).
+PR-N3: the phase prompt is now a string constant in
+``chat_compaction_engine._COMPACTION_SYSTEM_PROMPT`` (skill retired).
 """
 from __future__ import annotations
 
@@ -109,21 +107,16 @@ def test_compaction_filter_includes_tool_role() -> None:
     )
 
 
-def test_compaction_phase_prompt_mentions_tool_calls() -> None:
-    """Tier 2: the compactor phase prompt explicitly mentions tool turns +
-    the artifacts_referenced rule for tool-derived items.
+def test_compaction_system_prompt_mentions_tool_calls() -> None:
+    """Tier 2: the OS-internal compaction system prompt explicitly mentions
+    tool-derived items so the LLM knows to surface them in artifacts_referenced.
+
+    PR-N3: prompt moved from phases/compact.md to
+    chat_compaction_engine._COMPACTION_SYSTEM_PROMPT.
     """
-    from pathlib import Path
+    from reyn.chat.services.chat_compaction_engine import _COMPACTION_SYSTEM_PROMPT
 
-    repo_root = Path(__file__).resolve().parent.parent
-    phase = (
-        repo_root
-        / "src/reyn/stdlib/skills/chat_compactor/phases/compact.md"
-    ).read_text(encoding="utf-8")
-
-    # Phase prompt acknowledges tool_calls + tool role in inputs.
-    assert "tool_calls" in phase
-    assert "`tool`" in phase or "role.*tool" in phase
-    # artifacts_referenced rule explicitly covers tool-derived items.
-    assert "tool activity" in phase or "Tool activity" in phase
-    assert "web_fetch" in phase  # at least one canonical example
+    assert "new_turn_seqs" in _COMPACTION_SYSTEM_PROMPT, (
+        "prompt must mention new_turn_seqs so LLM copies the verbatim seq list"
+    )
+    assert "artifacts_referenced" in _COMPACTION_SYSTEM_PROMPT

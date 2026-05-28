@@ -3,6 +3,11 @@ from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.auto_resume_handler import AutoResumeHandler
 from reyn.chat.services.budget_gateway import BudgetGateway
 from reyn.chat.services.chain_manager import ChainManager, _PendingChain
+from reyn.chat.services.chat_compaction_engine import (
+    ChatCompactionEngine,
+    ChatSummary,
+    HistoryChunkToCompact,
+)
 from reyn.chat.services.compaction_controller import CompactionController
 from reyn.chat.services.intervention_handler import InterventionHandler
 from reyn.chat.services.intervention_registry import InterventionRegistry
@@ -17,7 +22,10 @@ __all__ = [
     "AutoResumeHandler",
     "BudgetGateway",
     "ChainManager",
+    "ChatCompactionEngine",
+    "ChatSummary",
     "CompactionController",
+    "HistoryChunkToCompact",
     "InterventionHandler",
     "InterventionRegistry",
     "MemoryService",

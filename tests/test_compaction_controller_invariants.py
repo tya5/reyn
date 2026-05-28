@@ -12,16 +12,20 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Awaitable
 
 import pytest  # noqa: F401 — used implicitly by pytest discovery
 
+from reyn.chat.services.chat_compaction_engine import (
+    ChatCompactionEngine,
+    ChatSummary,
+    HistoryChunkToCompact,
+)
 from reyn.chat.services.compaction_controller import CompactionController
 from reyn.config import CompactionConfig
 from reyn.events.events import EventLog
 
 # ---------------------------------------------------------------------------
-# Helpers — minimal ChatMessage stand-in and fixture factory
+# Helpers — minimal ChatMessage stand-in and engine stub
 # ---------------------------------------------------------------------------
 
 
@@ -35,22 +39,70 @@ class _FakeMessage:
     meta: dict = field(default_factory=dict)
 
 
-class _FakeRunResult:
-    """Minimal RunResult substitute: always returns ok=False to abort early."""
-    ok: bool = False
-    status: str = "aborted"
-    data: dict | None = None
+class _AbortingEngine(ChatCompactionEngine):
+    """Engine stub that always raises so compaction aborts early.
+
+    Inherits from the real engine but overrides compact() — no LLM call.
+    """
+
+    def __init__(self) -> None:
+        # Skip ChatCompactionEngine.__init__ (needs model + events).
+        self._model = "stub"
+        self._events = EventLog()
+
+    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+        raise RuntimeError("aborting engine stub: test-time abort")
 
 
-async def _noop_skill(*_args, **_kwargs) -> _FakeRunResult:
-    return _FakeRunResult()
+class _SucceedingEngine(ChatCompactionEngine):
+    """Engine stub that returns a minimal ChatSummary without an LLM call."""
+
+    def __init__(self, covers: int = 0) -> None:
+        self._model = "stub"
+        self._events = EventLog()
+        self._covers = covers
+
+    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+        seqs = [int(t.get("seq", 0)) for t in input_chunk.new_turns if isinstance(t, dict)]
+        covers = max(seqs) if seqs else self._covers
+        return ChatSummary(topic_arc="stub", covers_through_seq=covers)
+
+
+class _BlockingEngine(ChatCompactionEngine):
+    """Engine stub that blocks on an asyncio.Event — for single-flight tests."""
+
+    def __init__(self, gate: asyncio.Event) -> None:
+        self._model = "stub"
+        self._events = EventLog()
+        self._gate = gate
+        self.call_count = 0
+
+    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+        self.call_count += 1
+        await self._gate.wait()
+        raise RuntimeError("blocking engine stub released")
+
+
+class _CancellableEngine(ChatCompactionEngine):
+    """Engine stub that signals start then waits forever (for cancel tests)."""
+
+    def __init__(self, start_gate: asyncio.Event, cancel_gate: asyncio.Event) -> None:
+        self._model = "stub"
+        self._events = EventLog()
+        self._start = start_gate
+        self._cancel = cancel_gate
+
+    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
+        self._start.set()
+        await self._cancel.wait()
+        return ChatSummary(topic_arc="", covers_through_seq=0)
 
 
 def _make_controller(
     *,
     history: list[_FakeMessage] | None = None,
     config: CompactionConfig | None = None,
-    run_skill=None,
+    engine: ChatCompactionEngine | None = None,
 ) -> tuple[CompactionController, EventLog]:
     """Return a (CompactionController, EventLog) pair ready for testing."""
     events = EventLog()
@@ -84,7 +136,7 @@ def _make_controller(
         config=cfg,
         history_access=lambda: list(_history),
         latest_summary=_latest_summary,
-        run_compaction_skill=run_skill or _noop_skill,
+        chat_compaction_engine=engine or _AbortingEngine(),
         history_appender=_appender,
         make_summary_message=_make_msg,
         render_summary=lambda s: str(s),
@@ -149,48 +201,40 @@ def test_single_flight_lock_prevents_concurrent():
     compaction_check with outcome='already_running', without starting
     another compaction.
 
-    Verified by: (a) injecting a slow skill that never completes to hold
-    _compacting=True, (b) calling _maybe_compact a second time
-    concurrently, (c) asserting exactly one 'already_running' check event
-    and no second compaction_started.
+    Verified by: (a) injecting a blocking engine to hold _compacting=True,
+    (b) calling _maybe_compact a second time concurrently,
+    (c) asserting exactly one 'already_running' check event and no second
+    compaction_started.
     """
-    # History with enough turns to pass the threshold checks.
     history: list[_FakeMessage] = []
     for i in range(1, 12):
         role = "user" if i % 2 == 1 else "agent"
-        # Large text to exceed low token threshold.
         history.append(_FakeMessage(role=role, text="x" * 200, seq=i))
 
     blocked: asyncio.Event = asyncio.Event()
-    started_count: list[int] = [0]
-
-    async def _blocking_skill(*_args, **_kwargs) -> _FakeRunResult:
-        started_count[0] += 1
-        await blocked.wait()  # block until test releases
-        return _FakeRunResult()
+    blocking_engine = _BlockingEngine(gate=blocked)
 
     ctrl, events = _make_controller(
         history=history,
         config=CompactionConfig(
-            trigger_total_tokens=1,  # very low threshold → always triggers
+            trigger_total_tokens=1,
             head_size=2,
             tail_size=2,
             min_compact_batch=3,
         ),
-        run_skill=_blocking_skill,
+        engine=blocking_engine,
     )
 
     async def _run():
-        # Launch the first compaction; it will block inside _blocking_skill.
         task1 = asyncio.create_task(ctrl._maybe_compact())
-        # Give task1 a chance to reach _compacting=True.
         await asyncio.sleep(0)
         await asyncio.sleep(0)
-        # Second call while first is in flight.
         await ctrl._maybe_compact()
-        # Release the blocked skill so task1 can finish.
         blocked.set()
-        await task1
+        try:
+            await task1
+        except Exception:
+            pass
 
     asyncio.run(_run())
 
@@ -205,9 +249,8 @@ def test_single_flight_lock_prevents_concurrent():
     assert already_running[0].data.get("outcome") == "already_running", (
         f"check event must carry outcome='already_running', got {already_running[0].data!r}"
     )
-    # The blocking skill was only invoked once (single flight).
-    assert started_count[0] == 1, (
-        f"Expected skill invoked once (single-flight), got {started_count[0]}"
+    assert blocking_engine.call_count == 1, (
+        f"Expected engine compact() invoked once (single-flight), got {blocking_engine.call_count}"
     )
 
 
@@ -226,11 +269,7 @@ def test_cancel_during_shutdown_graceful():
     """
     start_gate: asyncio.Event = asyncio.Event()
     cancel_gate: asyncio.Event = asyncio.Event()
-
-    async def _cancellable_skill(*_args, **_kwargs):
-        start_gate.set()         # signal that the skill has started
-        await cancel_gate.wait() # wait forever — will be cancelled
-        return _FakeRunResult()
+    cancellable_engine = _CancellableEngine(start_gate=start_gate, cancel_gate=cancel_gate)
 
     history: list[_FakeMessage] = []
     for i in range(1, 12):
@@ -245,15 +284,12 @@ def test_cancel_during_shutdown_graceful():
             tail_size=2,
             min_compact_batch=3,
         ),
-        run_skill=_cancellable_skill,
+        engine=cancellable_engine,
     )
 
     async def _run():
-        # Spawn compaction in the background.
         ctrl.spawn_maybe()
-        # Wait until the skill is actually running.
         await start_gate.wait()
-        # Now simulate shutdown — must not raise.
         await ctrl.cancel()
 
     asyncio.run(_run())

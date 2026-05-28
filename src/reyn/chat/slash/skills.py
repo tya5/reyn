@@ -28,8 +28,8 @@ async def skills_cmd(session: "object", args: str) -> None:
     project_root = Path.cwd()
     # stdlib skills live under <stdlib_root>/skills/<name>/skill.md, not
     # directly under <stdlib_root>. The old path always produced an empty
-    # list, so /skills hid every shipped skill (chat_compactor, eval,
-    # direct_llm, skill_router, …).
+    # list, so /skills hid every shipped skill (eval,
+    # direct_llm, skill_router, …). PR-N3: chat_compactor retired.
     sources: list[tuple[str, list[str]]] = [
         ("stdlib", _list_skills(stdlib_root() / "skills")),
         ("project", _list_skills(project_root / "reyn" / "project")),
