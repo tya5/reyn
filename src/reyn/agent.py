@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -191,9 +192,29 @@ class Agent:
 
     @staticmethod
     def _make_run_id(skill_name: str) -> str:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        """Canonical OS-level run_id. ALL spawn paths must use this.
+
+        Form: ``{ts_with_microseconds}_{safe_name}_{4hex}``
+
+        - Microsecond timestamp + 4-hex random suffix together prevent
+          collision on concurrent spawns of the same skill (= asyncio.gather
+          scenarios). Microsecond precision handles the typical case;
+          the 4-hex suffix is belt-and-suspenders for the genuine
+          same-microsecond case.
+        - Single canonical form across spawn → events.jsonl → TUI
+          subscriber → state log. Prior cross-layer mismatch (=
+          ``skill_runner.spawn`` adding its own ``_4-hex`` suffix while
+          ``_make_run_id`` had no suffix) caused TUI ``remove_async_task``
+          to fail keying, leaving rows stuck (= tui-coder finding #1
+          cross-layer 2026-05-28). Fixed by funneling all spawn sites
+          through this method.
+        """
+        # %f is 6-digit microseconds; placed inside the timestamp so the
+        # full timestamp portion is `YYYYMMDDTHHMMSSffffffZ`.
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         safe_name = _safe_skill_name(skill_name)
-        return f"{ts}_{safe_name}"
+        suffix = uuid.uuid4().hex[:4]
+        return f"{ts}_{safe_name}_{suffix}"
 
 
 def _safe_skill_name(name: str) -> str:
