@@ -221,52 +221,72 @@ def test_assert_static_bounds_passes_valid_config() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_trim_head_stops_at_budget_not_count() -> None:
-    """Tier 2: trim_head stops at token budget regardless of list length.
+def _sum_tokens(turns: list, model: str, use_chars4: bool) -> int:
+    return sum(estimate_tokens_for_turn(t, model, use_chars4=use_chars4) for t in turns)
 
-    With use_chars4=True, each 40-char turn = 10 tokens.
-    Budget of 25 tokens should admit exactly 2 turns (20 tokens total),
-    stopping before the 3rd (would be 30 total).
+
+def test_trim_head_stops_at_budget_not_count() -> None:
+    """Tier 2: trim_head budget invariant — cumulative tokens stay ≤ max_tokens
+    and the next omitted turn would push past it (= Axis 3, token budget only).
     """
-    # 8 turns, each with 40 chars = 10 tokens via chars//4.
-    texts = ["a" * 40] * 8
+    texts = ["a" * 40] * 8  # 10 tokens each via chars//4
     turns = _turns(texts)
     result = trim_head(turns, max_tokens=25, model="", use_chars4=True)
-    assert len(result) == 2, (
-        f"expected 2 turns (20 tokens ≤ 25), got {len(result)}"
+
+    assert _sum_tokens(result, model="", use_chars4=True) <= 25, (
+        "result token sum must not exceed budget"
     )
-    assert result[0]["seq"] == 1
-    assert result[1]["seq"] == 2
+    # Result must be a prefix of the input (= trim_head, not arbitrary subset)
+    assert result == turns[:len(result)], "result must be a prefix of input"
+    # The first omitted turn (if any) would push over budget — proves we
+    # didn't stop early.
+    if len(result) < len(turns):
+        next_turn_tokens = estimate_tokens_for_turn(
+            turns[len(result)], model="", use_chars4=True
+        )
+        assert _sum_tokens(result, "", True) + next_turn_tokens > 25, (
+            "trim_head stopped early — next turn would still fit"
+        )
 
 
 def test_trim_tail_stops_at_budget_not_count() -> None:
-    """Tier 2: trim_tail stops at token budget regardless of list length.
-
-    Same math as trim_head — takes from the end.  Budget 25, 10 tokens/turn.
+    """Tier 2: trim_tail budget invariant — cumulative tokens stay ≤ max_tokens
+    and the result is a suffix of the input.
     """
     texts = ["a" * 40] * 8
     turns = _turns(texts)
     result = trim_tail(turns, max_tokens=25, model="", use_chars4=True)
-    assert len(result) == 2, (
-        f"expected 2 turns (20 tokens ≤ 25), got {len(result)}"
+
+    assert _sum_tokens(result, model="", use_chars4=True) <= 25, (
+        "result token sum must not exceed budget"
     )
-    # Must be the LAST two turns.
-    assert result[-1]["seq"] == 8
-    assert result[0]["seq"] == 7
+    # Result must be a suffix of the input (= trim_tail picks from the end)
+    if result:
+        assert result == turns[-len(result):], "result must be a suffix of input"
+        # The first omitted turn from the tail (= one before the first kept
+        # turn) would push over budget if included.
+        omitted_idx = len(turns) - len(result) - 1
+        if omitted_idx >= 0:
+            next_turn_tokens = estimate_tokens_for_turn(
+                turns[omitted_idx], model="", use_chars4=True
+            )
+            assert _sum_tokens(result, "", True) + next_turn_tokens > 25, (
+                "trim_tail stopped early — earlier turn would still fit"
+            )
 
 
 def test_trim_head_includes_all_within_budget() -> None:
-    """Tier 2: trim_head includes all turns when total tokens < max_tokens."""
-    turns = _turns(["hi"] * 5)  # tiny turns
+    """Tier 2: trim_head with budget ≫ total tokens returns the full input."""
+    turns = _turns(["hi"] * 5)
     result = trim_head(turns, max_tokens=100_000, model="", use_chars4=True)
-    assert len(result) == 5
+    assert result == turns, "all-within-budget case must return input unchanged"
 
 
 def test_trim_tail_includes_all_within_budget() -> None:
-    """Tier 2: trim_tail includes all turns when total tokens < max_tokens."""
+    """Tier 2: trim_tail with budget ≫ total tokens returns the full input."""
     turns = _turns(["hi"] * 5)
     result = trim_tail(turns, max_tokens=100_000, model="", use_chars4=True)
-    assert len(result) == 5
+    assert result == turns, "all-within-budget case must return input unchanged"
 
 
 # ---------------------------------------------------------------------------
@@ -423,19 +443,25 @@ def test_trim_tail_oversized_turn_event_has_required_fields() -> None:
 
 
 def test_trim_head_oversized_turn_still_included() -> None:
-    """Tier 2: when a single turn exceeds max_tokens, trim_head still includes
-    it (Axis 7 — preserves conversation flow).
+    """Tier 2: oversized single turn (= exceeds budget alone) is still included
+    by trim_head (= Axis 7, preserves conversation flow, escape hatch fires).
     """
     turns = [{"role": "user", "text": "x" * 4000, "seq": 1}]
     result = trim_head(turns, max_tokens=10, model="", use_chars4=True)
-    assert len(result) == 1, "oversized turn must still be included in result"
+    assert any(t["seq"] == 1 for t in result), (
+        "oversized turn must remain visible in the result, not silently dropped"
+    )
 
 
 def test_trim_tail_oversized_turn_still_included() -> None:
-    """Tier 2: when a single turn exceeds max_tokens, trim_tail still includes it."""
+    """Tier 2: oversized single turn (= exceeds budget alone) is still included
+    by trim_tail.
+    """
     turns = [{"role": "user", "text": "x" * 4000, "seq": 1}]
     result = trim_tail(turns, max_tokens=10, model="", use_chars4=True)
-    assert len(result) == 1
+    assert any(t["seq"] == 1 for t in result), (
+        "oversized turn must remain visible in the result, not silently dropped"
+    )
 
 
 # ---------------------------------------------------------------------------
