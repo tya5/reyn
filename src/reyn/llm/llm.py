@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Coroutine, TypeVar, Union
 
+import httpx
 import litellm
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ from reyn.schemas.models import ContextFrame
 
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
+    from reyn.events.events import EventLog
 
 T = TypeVar("T")
 
@@ -408,6 +410,103 @@ class LLMToolCallResult:
     # raw message for debugging:
     raw_message: object | None = None
 
+# ---------------------------------------------------------------------------
+# Infrastructure retry — exponential backoff on transient LLM API errors
+# ---------------------------------------------------------------------------
+
+# Retryable: infrastructure / transient errors where the same call may succeed.
+# Non-retryable: semantic / auth / quota errors (4xx) where retry won't help.
+_RETRYABLE_LITELLM_EXCEPTIONS = (
+    litellm.exceptions.Timeout,           # request timed out
+    litellm.exceptions.APIConnectionError, # network-level connection failure
+    litellm.exceptions.ServiceUnavailableError,  # 503
+    litellm.exceptions.BadGatewayError,    # 502
+    litellm.exceptions.InternalServerError, # 500
+)
+
+_LLM_RETRY_MAX_ATTEMPTS: int = 3   # total attempts = 1 initial + 2 retries
+_LLM_RETRY_BASE_S: float = 2.0     # first backoff: 2s → 4s → 8s (capped at 16s)
+_LLM_RETRY_MAX_BACKOFF_S: float = 16.0
+
+
+def _is_retryable_exc(exc: BaseException) -> bool:
+    """Return True for infrastructure errors that justify a retry attempt.
+
+    Catches litellm's typed exceptions for 5xx / timeout / connection failures.
+    Also catches httpx transport-level errors that LiteLLM may not wrap when
+    the request fails before reaching the provider's HTTP response logic.
+    """
+    if isinstance(exc, _RETRYABLE_LITELLM_EXCEPTIONS):
+        return True
+    if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout)):
+        return True
+    return False
+
+
+def _backoff_s(attempt: int) -> float:
+    """Exponential backoff: 2s, 4s, 8s, … capped at _LLM_RETRY_MAX_BACKOFF_S.
+
+    ``attempt`` is 0-indexed (= attempt 0 is the first retry, after the initial
+    call fails).  Min 0.0 — never negative if someone passes a negative index.
+    """
+    return min(_LLM_RETRY_BASE_S * (2 ** attempt), _LLM_RETRY_MAX_BACKOFF_S)
+
+
+async def _llm_call_with_retry(
+    coro_fn,
+    model: str,
+    event_log: "EventLog | None",
+) -> object:
+    """Execute ``coro_fn()`` with infrastructure-error retry + backoff.
+
+    ``coro_fn`` must be a zero-arg async callable that returns the litellm
+    response object.  It is called once per attempt.
+
+    Emits ``llm_call_retry`` on each retry and ``llm_call_retry_exhausted``
+    when all attempts are exhausted.  When ``event_log`` is None, observability
+    events are silently skipped (= callers without an EventLog context).
+
+    Raises the last exception when all retries are exhausted.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(_LLM_RETRY_MAX_ATTEMPTS):
+        try:
+            return await coro_fn()
+        except BaseException as exc:
+            if not _is_retryable_exc(exc):
+                raise
+            last_exc = exc
+            retries_remaining = _LLM_RETRY_MAX_ATTEMPTS - attempt - 1
+            if retries_remaining == 0:
+                if event_log is not None:
+                    try:
+                        event_log.emit(
+                            "llm_call_retry_exhausted",
+                            model=model,
+                            attempt_n=attempt + 1,
+                            error_kind=type(exc).__name__,
+                        )
+                    except Exception:
+                        pass
+                raise
+            backoff = _backoff_s(attempt)
+            if event_log is not None:
+                try:
+                    event_log.emit(
+                        "llm_call_retry",
+                        model=model,
+                        attempt_n=attempt + 1,
+                        error_kind=type(exc).__name__,
+                        backoff_s=backoff,
+                    )
+                except Exception:
+                    pass
+            await asyncio.sleep(backoff)
+    # Should be unreachable — loop always raises or returns.
+    assert last_exc is not None
+    raise last_exc  # pragma: no cover
+
+
 _SYSTEM_BASE = """\
 You are an AI agent executing a phase in a structured workflow.
 Respond with ONLY valid JSON — no markdown fences, no explanation, no comments.
@@ -618,6 +717,7 @@ async def call_llm(
     budget: "BudgetTracker | None" = None,
     budget_agent: str | None = None,
     trace_caller: str | None = None,
+    event_log: "EventLog | None" = None,
 ) -> LLMCallResult:
     """
     Call the LLM and return a parsed JSON dict.
@@ -737,19 +837,26 @@ async def call_llm(
                 "spec_kwargs": spec_kwargs,
             })
 
-        try:
-            response = await litellm.acompletion(
-                model=effective_model,
-                messages=messages,
-                response_format={"type": "json_object"},
-                **spec_kwargs,
-                **common_kwargs,
-                **extra,
-            )
-        except Exception:
-            response = await litellm.acompletion(
-                model=effective_model, messages=messages, **spec_kwargs, **common_kwargs, **extra,
-            )
+        async def _do_call() -> object:
+            try:
+                return await litellm.acompletion(
+                    model=effective_model,
+                    messages=messages,
+                    response_format={"type": "json_object"},
+                    **spec_kwargs,
+                    **common_kwargs,
+                    **extra,
+                )
+            except Exception:
+                return await litellm.acompletion(
+                    model=effective_model,
+                    messages=messages,
+                    **spec_kwargs,
+                    **common_kwargs,
+                    **extra,
+                )
+
+        response = await _llm_call_with_retry(_do_call, effective_model, event_log)
 
         usage = _extract_usage(response)
         last_raw = response.choices[0].message.content or ""
@@ -825,6 +932,7 @@ async def call_llm_tools(
     budget: "BudgetTracker | None" = None,
     budget_agent: str | None = None,
     trace_caller: str | None = None,
+    event_log: "EventLog | None" = None,
 ) -> LLMToolCallResult:
     """Tool-use variant of call_llm. Returns raw assistant message.
 
@@ -950,7 +1058,9 @@ async def call_llm_tools(
         },
     })
 
-    response = await litellm.acompletion(**call_kwargs)
+    response = await _llm_call_with_retry(
+        lambda: litellm.acompletion(**call_kwargs), effective_model, event_log
+    )
 
     msg = response.choices[0].message
     usage = _extract_usage(response) or TokenUsage()

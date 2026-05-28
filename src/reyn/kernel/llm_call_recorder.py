@@ -190,6 +190,7 @@ class LLMCallRecorder:
             project_context=self._project_context,
             agent_role=self._agent_role,
             trace_caller=f"phase:{phase}",
+            event_log=self._events,
         )
         raw = llm_result.data
         cost_usd: float | None = None
