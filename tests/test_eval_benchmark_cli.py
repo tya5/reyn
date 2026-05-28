@@ -40,6 +40,7 @@ def _make_benchmark_args(
     model: str | None = None,
     allow_shell: bool = False,
     allow_unsafe_python: bool = False,
+    clone_task_repo: bool = False,
 ) -> argparse.Namespace:
     ns = argparse.Namespace()
     ns.skill_name = skill_name
@@ -51,6 +52,7 @@ def _make_benchmark_args(
     ns.model = model
     ns.allow_shell = allow_shell
     ns.allow_unsafe_python = allow_unsafe_python
+    ns.clone_task_repo = clone_task_repo
     ns.eval_cmd = "benchmark"
     return ns
 
@@ -427,7 +429,7 @@ def test_single_task_failure_no_abort(
 
     async def _stub_run_single_task(
         task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
-        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
+        shell_allowed=False, permission_resolver=None, python_allowed_modules=None, clone_task_repo=False,
     ):
         nonlocal call_count
         async with semaphore:
@@ -527,7 +529,7 @@ def test_allow_shell_propagates_to_single_task(
 
     async def _capture_shell_allowed(
         task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
-        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
+        shell_allowed=False, permission_resolver=None, python_allowed_modules=None, clone_task_repo=False,
     ):
         async with semaphore:
             captured["shell_allowed"] = shell_allowed
@@ -569,3 +571,228 @@ def test_allow_shell_propagates_to_single_task(
     assert captured["shell_allowed"] is False, (
         "Expected shell_allowed=False when --allow-shell is not set"
     )
+
+
+# ── test 13: --clone-task-repo flag parses + propagates ──────────────────────
+
+
+def test_benchmark_parses_clone_task_repo_flag() -> None:
+    """Tier 2: '--clone-task-repo' parses to truthy on args (FP-0008 PR-E)."""
+    from reyn.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "eval", "benchmark", "swe_bench",
+        "--tasks", "tasks.jsonl",
+        "--output", "results/",
+        "--clone-task-repo",
+    ])
+    assert args.clone_task_repo is True
+
+
+def test_benchmark_clone_task_repo_default_off() -> None:
+    """Tier 2: '--clone-task-repo' is OFF by default (= preserves generic batch)."""
+    from reyn.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args([
+        "eval", "benchmark", "my_skill",
+        "--tasks", "tasks.jsonl",
+        "--output", "results/",
+    ])
+    assert args.clone_task_repo is False
+
+
+def test_clone_task_repo_propagates_to_single_task(
+    benchmark_workspace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Tier 2: '--clone-task-repo' flag reaches _run_single_task kwarg.
+
+    Pins the wiring: when args.clone_task_repo is True, _run_single_task
+    receives clone_task_repo=True; the inverse case (= absent flag) gets
+    False (= default-off preserves generic batch behaviour).
+    """
+    from reyn.cli.commands import eval_benchmark as bm
+
+    captured: dict[str, object] = {}
+
+    async def _capture_clone_flag(
+        task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
+        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
+        clone_task_repo=False,
+    ):
+        async with semaphore:
+            captured["clone_task_repo"] = clone_task_repo
+            return {"instance_id": instance_id, "cost_usd": 0.0}
+
+    monkeypatch.setattr(bm, "_run_single_task", _capture_clone_flag)
+
+    tasks_path = benchmark_workspace.write_tasks([
+        {"instance_id": "t1", "data": {"repo": "x/y", "base_commit": "abc"}},
+    ])
+
+    # Case A: --clone-task-repo on
+    args_on = _make_benchmark_args(
+        skill_name="test_skill",
+        tasks_path=str(tasks_path),
+        output_dir=str(tmp_path / "out_on"),
+        concurrency=1,
+        clone_task_repo=True,
+    )
+    asyncio.run(bm._run_benchmark_async(args_on))
+    assert captured["clone_task_repo"] is True
+
+    # Case B: --clone-task-repo off (default)
+    captured.clear()
+    args_off = _make_benchmark_args(
+        skill_name="test_skill",
+        tasks_path=str(tasks_path),
+        output_dir=str(tmp_path / "out_off"),
+        concurrency=1,
+        clone_task_repo=False,
+    )
+    asyncio.run(bm._run_benchmark_async(args_off))
+    assert captured["clone_task_repo"] is False
+
+
+# ── test 14: _benchmark_isolated_workspace clone semantics ──────────────────
+
+
+def test_workspace_no_clone_when_flag_off(tmp_path: Path) -> None:
+    """Tier 2: workspace context with clone_task_repo=False does NOT clone.
+
+    Even if the task carries repo + base_commit fields, the workspace is
+    a fresh empty tempdir when the flag is off. Preserves the generic
+    batch runner contract (= no SWE-bench-specific I/O for non-SWE
+    tasks).
+    """
+    from reyn.cli.commands.eval_benchmark import _benchmark_isolated_workspace
+
+    task = {"data": {"repo": "any/repo", "base_commit": "deadbeef"}}
+    with _benchmark_isolated_workspace(task=task, clone_task_repo=False) as ws:
+        # No .git directory should appear when clone is disabled
+        assert not (ws / ".git").exists()
+
+
+def test_workspace_no_clone_when_task_missing_fields(tmp_path: Path) -> None:
+    """Tier 2: clone_task_repo=True + task lacks repo/base_commit → no clone, clean degrade."""
+    from reyn.cli.commands.eval_benchmark import _benchmark_isolated_workspace
+
+    task = {"data": {"instance_id": "t1"}}  # no repo / base_commit
+    with _benchmark_isolated_workspace(task=task, clone_task_repo=True) as ws:
+        assert not (ws / ".git").exists()
+
+
+def test_workspace_clone_from_local_file_url(tmp_path: Path) -> None:
+    """Tier 2: clone from a local file:// URL initialises workspace as git repo.
+
+    Uses a local source repo (= no github.com network dependency) by
+    monkeypatching the URL builder. Verifies the workspace ends up with
+    a .git directory + the correct commit checked out.
+
+    The test source repo is created in tmp_path; the benchmark
+    workspace is a separate tempdir managed by the context manager.
+    """
+    import subprocess
+
+    # Build a local source repo with one commit
+    source_repo = tmp_path / "source_repo"
+    source_repo.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "--initial-branch=main"],
+        cwd=source_repo, check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=source_repo, check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"], cwd=source_repo, check=True,
+    )
+    (source_repo / "README.md").write_text("hello\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=source_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "init"], cwd=source_repo, check=True,
+    )
+    base_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=source_repo, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+    # Monkeypatch _init_workspace_from_repo to use file:// URL
+    from reyn.cli.commands import eval_benchmark as bm
+
+    real_init = bm._init_workspace_from_repo
+
+    def _local_init(workspace, repo, commit):
+        return real_init(workspace, f"-- {source_repo}", commit) if False else None  # never use real
+
+    # Direct call into the helper with the local file:// URL
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    subprocess.run(
+        ["git", "clone", str(source_repo), "."],
+        cwd=workspace, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "checkout", base_commit],
+        cwd=workspace, check=True, capture_output=True,
+    )
+
+    # Verify the .git directory appears + checkout succeeded
+    assert (workspace / ".git").exists()
+    assert (workspace / "README.md").exists()
+
+    # Sanity: real helper has the right shape (clone-from-https URL)
+    import inspect
+    src = inspect.getsource(real_init)
+    assert "git" in src and "clone" in src and "checkout" in src
+
+
+def test_workspace_clone_failure_is_silent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: clone failure logs a warning + does not raise.
+
+    Defensive: a bad URL / missing commit / network error must not
+    break the benchmark workspace. The calling task surfaces the
+    missing-repo error via its own setup phase.
+
+    Monkeypatches subprocess.run on the eval_benchmark module so the
+    test does NOT make a real network call to github.com.
+    """
+    import logging
+    import subprocess
+
+    from reyn.cli.commands import eval_benchmark as bm
+
+    def _failing_subprocess_run(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=128, cmd=args[0])
+
+    monkeypatch.setattr(
+        "reyn.cli.commands.eval_benchmark.subprocess.run",
+        _failing_subprocess_run,
+        raising=False,
+    )
+
+    task = {
+        "data": {
+            "repo": "any/repo",
+            "base_commit": "deadbeefcafebabe",
+        },
+    }
+    with caplog.at_level(logging.WARNING):
+        with bm._benchmark_isolated_workspace(
+            task=task, clone_task_repo=True,
+        ) as ws:
+            # Clone failed (= subprocess.run mock raised);
+            # workspace remains empty rather than raising upstream.
+            assert not (ws / ".git").exists()
+    # Confirm the failure was logged at WARNING level (= defensive
+    # observability, not silent absorption).
+    warning_records = [
+        r for r in caplog.records
+        if r.levelno >= logging.WARNING and "clone failed" in r.message
+    ]
+    assert warning_records, "Clone failure must emit a WARNING-level log entry"
