@@ -222,6 +222,11 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         # Clamped on every navigation step + on render so deletes
         # / completions can't leave a dangling out-of-range cursor.
         self._cursor: int = 0
+        # Set synchronously in ``_return_focus_to_input`` so the
+        # immediately-following ``_refresh()`` renders without the ▌
+        # caret. Cleared on the next ``on_focus`` (= when the panel
+        # actually regains focus). Exploration finding #6.
+        self._focus_releasing: bool = False
 
     # ── Textual lifecycle ────────────────────────────────────────────────────
 
@@ -240,6 +245,9 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         # time. Without this, returning to the panel after entries
         # changed could land on a stale offset.
         self._cursor = 0
+        # Clear the focus-releasing flag (= we're back, so the caret
+        # should render again on the next paint).
+        self._focus_releasing = False
         self._refresh()
 
     def on_blur(self, event: events.Blur) -> None:
@@ -459,7 +467,17 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
             pass
 
     def _return_focus_to_input(self) -> None:
-        """Esc — return focus to the InputBar without staging anything."""
+        """Esc — return focus to the InputBar without staging anything.
+
+        ``_focus_releasing`` is flipped BEFORE the actual focus transfer
+        so the synchronous ``_refresh()`` repaints the rows without the
+        ▌ caret. Without this, Textual's ``on_blur`` only fires on the
+        next event-loop tick (= ``has_focus`` stays True during the
+        gap), so a casual Esc leaves a ~1-frame ghost caret on screen.
+        Exploration finding #6, 2026-05-28.
+        """
+        self._focus_releasing = True
+        self._refresh()
         try:
             from .input_bar import InputBar
             self.app.query_one("#inputbar", InputBar).focus_input()
@@ -588,7 +606,14 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         # cancelled), so the cursor might drift out of bounds.
         if visible:
             self._cursor = max(0, min(self._cursor, len(visible) - 1))
-        focused = self.has_focus
+        # ``_focus_releasing`` is set synchronously in ``_return_focus_to_input``
+        # before focus actually transfers, so a refresh fired in that same
+        # call paints the rows WITHOUT the ▌ caret. Without this, the user
+        # sees a ~1-frame ghost caret after pressing Esc because Textual
+        # dispatches ``on_blur`` only on the next event-loop tick (= the
+        # window when ``has_focus`` is still True but the panel is no
+        # longer the active focus target). Exploration finding #6, 2026-05-28.
+        focused = self.has_focus and not self._focus_releasing
         for i, (agent_id, entry, glyph) in enumerate(visible):
             if i > 0:
                 t.append("\n")
