@@ -8,6 +8,15 @@ All event emissions go through the injected ``event_log``; no silent
 state changes (P6).  Business logic lives entirely here; ChatSession
 delegates via :meth:`spawn_maybe`, :meth:`cancel`, and
 :meth:`force_compact_now` (P3).
+
+Axis 8 (B_M trigger race strict):
+    ``force_compact_now()`` acquires the engine's ``compaction_lock``
+    (asyncio.Lock) for the entire duration of the compaction run.
+    Any code path that appends to ``ChatSession.history`` between the
+    force-trigger decision and compaction completion must await this
+    lock before appending, ensuring the mathematical gap is 0: no new
+    turn can land between the "T(M) > effective_trigger" decision and
+    the moment compaction reduces T(M) back below the budget.
 """
 from __future__ import annotations
 
@@ -248,6 +257,11 @@ class CompactionController:
         The existing background ``spawn_maybe()`` fire-and-forget path is
         unaffected; both paths can co-exist (sync = pre-frame guard,
         async = post-reply background trigger).
+
+        Axis 8: acquires the engine's ``compaction_lock`` for the duration of
+        the run.  Any concurrent code path that appends to ChatSession.history
+        and needs to serialise with compaction must await the same lock before
+        appending.
         """
         if self._compacting:
             self._events.emit("compaction_check", outcome="already_running")
@@ -276,12 +290,13 @@ class CompactionController:
             return
 
         self._compacting = True
-        try:
-            await self._run_compaction(candidates, latest)
-        except Exception as exc:
-            self._events.emit("compaction_failed", error=str(exc))
-        finally:
-            self._compacting = False
+        async with self._engine.compaction_lock:
+            try:
+                await self._run_compaction(candidates, latest)
+            except Exception as exc:
+                self._events.emit("compaction_failed", error=str(exc))
+            finally:
+                self._compacting = False
 
     async def _run_compaction(
         self,
