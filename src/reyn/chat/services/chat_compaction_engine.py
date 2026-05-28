@@ -47,7 +47,11 @@ from typing import TYPE_CHECKING, Callable
 import litellm
 
 if TYPE_CHECKING:
-    from reyn.config import CompactionConfig, PlannerStepCompactionConfig
+    from reyn.config import (
+        CompactionConfig,
+        PhaseActResultsCompactionConfig,
+        PlannerStepCompactionConfig,
+    )
     from reyn.events.events import EventLog
 
 logger = logging.getLogger(__name__)
@@ -869,6 +873,179 @@ async def compact_step_results(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Phase act-loop control_ir_results compaction (PR-N5)
+# ---------------------------------------------------------------------------
+
+# Phase axis comp_SP — op-kind-aware structured preservation.
+# Distinct from the chat axis comp_SP (_COMPACTION_SYSTEM_PROMPT) because
+# phase op results carry specific data (paths, line numbers, exit codes) that
+# the LLM must retain to continue acting on them; pure abstraction loses
+# utility.
+_PHASE_COMPACTION_SYSTEM_PROMPT = """\
+You are summarising older `control_ir_results` from a phase's act loop
+to keep the next prompt within the model's context budget.
+
+For each older result, preserve op-kind-specific structured data:
+  - grep:      keep matched paths + line numbers (e.g. "src/foo.py:42, src/bar.py:18")
+  - file_read: keep path + byte size + line range (e.g. "src/foo.py L1-200, 8.3 KB")
+  - shell:     keep cmd + exit code + last 5 lines of stdout (head/tail acceptable)
+  - file_write / file_edit: keep path + byte delta + summary of change
+  - web_fetch: keep url + http status + content-type
+  - other:     keep kind + status + a short fact line
+
+Do NOT generalise away path names, line numbers, exit codes, or http status
+codes — the LLM uses these to plan its next op. Keep section budgets
+tight; brevity matters more than narrative.
+"""
+
+
+async def compact_control_ir_results(
+    older_results: list[dict],
+    *,
+    engine: "ChatCompactionEngine",
+    cfg: "PhaseActResultsCompactionConfig",
+    events: "EventLog",
+    phase: str | None = None,
+) -> list[dict]:
+    """Return a list with ``older_results`` summarised into a single
+    ``__compacted_phase_results__`` placeholder entry.
+
+    PR-N5 (FP-0008): phase act-loop control_ir_results compaction.
+
+    Algorithm
+    ---------
+    1. Estimate total token cost of ``older_results`` as plain JSON text.
+    2. Compute the effective threshold: ``cfg.summarize_older_threshold_tokens``
+       when set, else ``cfg.control_ir_results_ratio × engine.budgets.main_pool``.
+    3. If total tokens ≤ threshold → return identity (older_results unchanged).
+    4. Run one LLM summarisation call on older_results via ``_PHASE_COMPACTION_SYSTEM_PROMPT``
+       and the engine's model + proxy configuration.
+    5. Apply ``hard_truncate_summary`` against ``engine.budgets.body_budget``.
+    6. Return a list of length 1 containing
+       ``{"kind": "__compacted_phase_results__", "summary": <text>,
+          "compacted_count": N, "original_tokens": T}``.
+    7. Emit ``phase_act_results_compacted`` event.
+
+    Bounded computation guarantee
+    ------------------------------
+    After compaction, token count of the returned list is bounded by
+    ``body_budget`` (from hard_truncate_summary, same cap as chat summary
+    truncation, Axis 9).
+
+    Failure modes
+    -------------
+    - LLM error → emit ``phase_act_results_compaction_failed`` + return
+      ``older_results`` unchanged (= identity, best-effort — same pattern as
+      PR-N4 planner step axis, distinct from PR-N3 chat axis fail-fast).
+      NEVER raises.
+
+    Multimodal note
+    ---------------
+    ``control_ir_results`` items are op-result dicts like ``{"kind": "grep", ...}``,
+    not multimodal Message turns.  Token estimation uses
+    ``estimate_tokens(json.dumps(item), model)`` — NOT ``estimate_tokens_for_turn``
+    which is for multimodal Message turns.
+    """
+    if not older_results:
+        return older_results
+
+    use_chars4 = cfg.use_chars4_estimate
+    model = engine._model  # noqa: SLF001 — internal use; ChatCompactionEngine owns this
+
+    # Step 1: estimate total tokens of older_results.
+    total_tokens = sum(
+        estimate_tokens(json.dumps(item, ensure_ascii=False), model, use_chars4=use_chars4)
+        for item in older_results
+    )
+
+    # Step 2: effective threshold.
+    if cfg.summarize_older_threshold_tokens is not None:
+        threshold = cfg.summarize_older_threshold_tokens
+    else:
+        threshold = int(cfg.control_ir_results_ratio * engine.budgets.main_pool)
+        if threshold <= 0:
+            # Model context info unavailable — skip compaction.
+            return older_results
+
+    # Step 3: identity check.
+    if total_tokens <= threshold:
+        return older_results
+
+    # Serialise older_results for the LLM call.
+    older_text = json.dumps(older_results, ensure_ascii=False, indent=1)
+
+    # Step 4 + 5: call LLM summariser, then hard-truncate.
+    summary_text: str
+    try:
+        from reyn.llm.llm import proxy_kwargs
+        extra = proxy_kwargs()
+        effective_model = model
+        if extra.get("custom_llm_provider") == "openai":
+            parts = model.split("/", 1)
+            if len(parts) == 2:
+                effective_model = parts[1]
+
+        response = await litellm.acompletion(
+            model=effective_model,
+            messages=[
+                {"role": "system", "content": _PHASE_COMPACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": older_text},
+            ],
+            **extra,
+        )
+        raw_summary = (response.choices[0].message.content or "").strip()
+        if not raw_summary:
+            raise ValueError("phase act_results compaction LLM returned empty response")
+        # Bound the summary to the engine's body_budget (Axis 9 pattern).
+        summary_text = hard_truncate_summary(
+            raw_summary,
+            engine.budgets.body_budget,
+            model,
+            events,
+            use_chars4=use_chars4,
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort; never raise
+        logger.warning(
+            "compact_control_ir_results: LLM summarisation failed (%r); "
+            "proceeding with un-compacted control_ir_results",
+            exc,
+        )
+        try:
+            events.emit(
+                "phase_act_results_compaction_failed",
+                phase=phase,
+                n_older=len(older_results),
+                error=repr(exc),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return older_results
+
+    # Step 6: build result list.
+    compacted_entry: dict = {
+        "kind": "__compacted_phase_results__",
+        "summary": summary_text,
+        "compacted_count": len(older_results),
+        "original_tokens": total_tokens,
+    }
+
+    # Step 7: emit event.
+    summary_tokens = estimate_tokens(summary_text, model, use_chars4=use_chars4)
+    try:
+        events.emit(
+            "phase_act_results_compacted",
+            phase=phase,
+            n_older_compacted=len(older_results),
+            original_tokens=total_tokens,
+            summary_tokens=summary_tokens,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return [compacted_entry]
+
+
 __all__ = [
     "ChatCompactionEngine",
     "ChatSummary",
@@ -879,6 +1056,7 @@ __all__ = [
     "NewMsgExceedsBudgetError",
     "STEP_RESULTS_COMPACTED_KEY",
     "assert_static_bounds",
+    "compact_control_ir_results",
     "compact_step_results",
     "compute_budgets",
     "compute_covers_through_seq",
