@@ -46,10 +46,14 @@ import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from reyn.chat.router_loop import RouterLoop, RouterLoopHost
 from reyn.llm.pricing import TokenUsage
+
+if TYPE_CHECKING:
+    from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
+    from reyn.config import PlannerStepCompactionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -789,6 +793,8 @@ async def execute_plan(
     retry_limit: int | None = None,
     on_limit: Any = None,
     intervention_bus: Any = None,
+    compaction_engine: "ChatCompactionEngine | None" = None,
+    step_compaction_cfg: "PlannerStepCompactionConfig | None" = None,
 ) -> PlanExecutionResult:
     """Run a plan step-by-step in topological order, return the aggregated text.
 
@@ -808,7 +814,63 @@ async def execute_plan(
     before calling here, and the artifact is keyed on ``plan_id``), the
     caller passes it in. ``None`` keeps Phase 1 backward compat: the
     function auto-allocates uuid4-hex[:8].
+
+    ``compaction_engine`` / ``step_compaction_cfg``: PR-N4 wiring. When
+    ``compaction_engine`` is None but ``step_compaction_cfg`` is provided,
+    a minimal engine is constructed lazily from ``router_model`` and the
+    parent host's event log (path b: engine-per-plan-run, no session
+    sharing). When neither is provided, step-results compaction is skipped
+    (= legacy / no-config path, backward-compatible).
     """
+    # PR-N4: lazy engine construction (path b).
+    #
+    # Design choice: path (b) rather than path (a) from the spec.
+    # Threading the ChatSession's engine through dispatcher → RouterLoop →
+    # RouterCallerState → PlanRuntime → execute_plan would require touching
+    # router_loop.py and session.py (outside the ALLOWED file list for this
+    # PR). Path (b) constructs a minimal engine per-plan-run from router_model.
+    # Cost: one extra ChatCompactionEngine.__init__ per plan run (= a few
+    # token_counter calls at init time, cached afterwards). The engine is
+    # never shared across parallel plan runs, which is safe.
+    #
+    # Config loading: when step_compaction_cfg is None, attempt to load it
+    # from ReynConfig.plan.step_compaction so the operator's reyn.yaml
+    # settings are respected without requiring caller-side changes.
+    _effective_step_compaction_cfg = step_compaction_cfg
+    if _effective_step_compaction_cfg is None:
+        try:
+            from reyn.config import load_config
+            _cfg = load_config()
+            _effective_step_compaction_cfg = _cfg.plan.step_compaction
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.debug(
+                "execute_plan: could not load ReynConfig for step_compaction: %r; "
+                "step_results compaction will be skipped",
+                exc,
+            )
+            _effective_step_compaction_cfg = None
+
+    _effective_engine = compaction_engine
+    if _effective_engine is None and _effective_step_compaction_cfg is not None:
+        try:
+            from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
+            # T_SP=0: step-results context is not the main session SP;
+            # main_pool = T_max - 0 = T_max, so threshold =
+            # step_results_ratio * T_max (conservative large-window default).
+            _effective_engine = ChatCompactionEngine(
+                model=router_model,
+                events=parent_host.events,
+                T_SP=0,
+                cfg=None,  # use default CompactionConfig for budget derivation
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort; skip if unavailable
+            logger.warning(
+                "execute_plan: failed to construct lazy compaction engine: %r; "
+                "step_results compaction will be skipped",
+                exc,
+            )
+            _effective_engine = None
+
     # ADR-0022: allocate plan_id + record plan_started in WAL. plan_id is
     # uuid4-hex[:8] following the existing run_id allocation precedent.
     # The exception-aware finally clause mirrors ADR-0013's runtime
@@ -915,6 +977,20 @@ async def execute_plan(
                 depends_on=list(step.depends_on),
                 n_tools=len(step.tools),
             )
+            # PR-N4: pre-frame step_results compaction. If accumulated prior
+            # step outputs would balloon this step's sys_prompt, compact
+            # older entries into a summary before building the prompt.
+            # Best-effort: compact_step_results never raises on LLM error.
+            if _effective_engine is not None and _effective_step_compaction_cfg is not None:
+                from reyn.chat.services.chat_compaction_engine import (
+                    compact_step_results,
+                )
+                step_results = await compact_step_results(
+                    step_results,
+                    engine=_effective_engine,
+                    cfg=_effective_step_compaction_cfg,
+                    events=parent_host.events,
+                )
             narrow_host = _PlanStepHost(
                 plan=plan, step=step, prior_results=step_results, parent=parent_host,
             )

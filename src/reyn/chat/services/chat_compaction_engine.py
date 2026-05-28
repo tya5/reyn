@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Callable
 import litellm
 
 if TYPE_CHECKING:
-    from reyn.config import CompactionConfig
+    from reyn.config import CompactionConfig, PlannerStepCompactionConfig
     from reyn.events.events import EventLog
 
 logger = logging.getLogger(__name__)
@@ -685,6 +685,190 @@ class ChatCompactionEngine:
         )
 
 
+# ---------------------------------------------------------------------------
+# Step-results compaction (PR-N4)
+# ---------------------------------------------------------------------------
+
+# Stable key used to store the compacted summary in the step_results dict.
+# Chosen to be visually distinct from step IDs (which are short hex-like
+# strings) and to signal "this is a synthetic OS-inserted entry".
+STEP_RESULTS_COMPACTED_KEY = "__compacted_step_summary__"
+
+# System prompt for the step-results summariser.  Distinct from
+# _COMPACTION_SYSTEM_PROMPT (chat axis) to avoid coupling the step-results
+# concept to chat-history structure fields (topic_arc, decisions, etc.).
+_STEP_RESULTS_SUMMARY_PROMPT = """\
+You are summarising several prior plan-step outputs into a single concise summary.
+
+Each input entry is a key-value pair where the key is the step ID and the value
+is the step's output text.
+
+Your task:
+- Produce a single paragraph (or two at most) that preserves ALL actionable
+  findings from the inputs: relevant code paths, function names, file paths,
+  line numbers, key values, decisions made.
+- Prioritise information that a later synthesis step would need to produce a
+  correct final reply.
+- Do NOT add commentary about what was summarised — output the summary text only.
+Output ONLY the summary text. No headers, no bullet points, no JSON.
+"""
+
+
+async def compact_step_results(
+    step_results: dict[str, str],
+    *,
+    engine: "ChatCompactionEngine",
+    cfg: "PlannerStepCompactionConfig",
+    events: "EventLog",
+) -> dict[str, str]:
+    """Return a new step_results dict where older entries are summarised.
+
+    PR-N4 (FP-0008): step_results compaction.
+
+    Algorithm
+    ---------
+    1. Estimate total token cost of all step_results values as plain text.
+    2. Compute the effective threshold: ``cfg.summarize_older_threshold_tokens``
+       when set, else ``step_results_ratio * engine.budgets.main_pool``.
+    3. If total tokens ≤ threshold → return the input unchanged (identity).
+    4. Split into *recent* (last ``cfg.recent_step_results_raw`` keys) and
+       *older* (all keys before the recent window).
+    5. Run one LLM summarisation call on the older values via the engine's
+       model and proxy configuration.
+    6. Apply ``hard_truncate_summary`` to bound the summary to ``body_budget``.
+    7. Return ``{STEP_RESULTS_COMPACTED_KEY: summary, **recent_dict}``.
+    8. Emit ``planner_step_results_compacted`` event.
+
+    Bounded
+    -------
+    After compaction, token count of the returned dict's values is bounded by
+    ``body_budget + sum(recent step tokens)`` where ``body_budget`` comes from
+    the engine's ComputedBudgets (= same cap used for chat summary truncation,
+    Axis 9).
+
+    Failure modes
+    -------------
+    - If fewer than 2 step_results exist, or all entries fit in recent window,
+      returns unchanged (= no-op).
+    - If the summarisation LLM call fails, emits
+      ``planner_step_results_compaction_failed`` and returns the input unchanged
+      (= best-effort; does NOT raise — the step proceeds with the un-compacted
+      prompt rather than crashing the plan run).
+
+    Multimodal note: step_results values are plain strings (``dict[str, str]``),
+    so no image-aware token counting is required.
+    """
+    if not step_results:
+        return step_results
+
+    keys = list(step_results.keys())
+    use_chars4 = cfg.use_chars4_estimate
+    model = engine._model  # noqa: SLF001 — internal use; ChatCompactionEngine owns this
+
+    # Step 1: estimate total tokens of all step_results values.
+    total_tokens = sum(
+        estimate_tokens(v, model, use_chars4=use_chars4)
+        for v in step_results.values()
+    )
+
+    # Step 2: effective threshold.
+    if cfg.summarize_older_threshold_tokens is not None:
+        threshold = cfg.summarize_older_threshold_tokens
+    else:
+        threshold = int(cfg.step_results_ratio * engine.budgets.main_pool)
+        if threshold <= 0:
+            # Model context info unavailable — skip compaction.
+            return step_results
+
+    # Step 3: identity check.
+    if total_tokens <= threshold:
+        return step_results
+
+    # Step 4: split into older + recent.
+    n_recent = max(0, cfg.recent_step_results_raw)
+    recent_keys = keys[-n_recent:] if n_recent > 0 else []
+    older_keys = keys[: len(keys) - n_recent] if n_recent > 0 else keys
+
+    if not older_keys:
+        # Nothing to compact (all entries are within the recent window).
+        return step_results
+
+    older_text = "\n\n".join(
+        f"[Step {k}]\n{step_results[k]}" for k in older_keys
+    )
+
+    # Step 5 + 6: call LLM summariser, then hard-truncate.
+    summary_text: str
+    try:
+        from reyn.llm.llm import proxy_kwargs
+        extra = proxy_kwargs()
+        effective_model = model
+        if extra.get("custom_llm_provider") == "openai":
+            parts = model.split("/", 1)
+            if len(parts) == 2:
+                effective_model = parts[1]
+
+        response = await litellm.acompletion(
+            model=effective_model,
+            messages=[
+                {"role": "system", "content": _STEP_RESULTS_SUMMARY_PROMPT},
+                {"role": "user", "content": older_text},
+            ],
+            **extra,
+        )
+        raw_summary = (response.choices[0].message.content or "").strip()
+        if not raw_summary:
+            raise ValueError("step_results compaction LLM returned empty response")
+        # Bound the summary to the engine's body_budget (Axis 9 pattern).
+        summary_text = hard_truncate_summary(
+            raw_summary,
+            engine.budgets.body_budget,
+            model,
+            events,
+            use_chars4=use_chars4,
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort; never raise
+        logger.warning(
+            "compact_step_results: LLM summarisation failed (%r); "
+            "proceeding with un-compacted step_results",
+            exc,
+        )
+        try:
+            events.emit(
+                "planner_step_results_compaction_failed",
+                n_older=len(older_keys),
+                error=repr(exc),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return step_results
+
+    # Step 7: build result dict.
+    recent_dict = {k: step_results[k] for k in recent_keys}
+    result: dict[str, str] = {STEP_RESULTS_COMPACTED_KEY: summary_text, **recent_dict}
+
+    # Step 8: emit event.
+    original_tokens = total_tokens
+    summary_tokens = estimate_tokens(summary_text, model, use_chars4=use_chars4)
+    recent_tokens = sum(
+        estimate_tokens(step_results[k], model, use_chars4=use_chars4)
+        for k in recent_keys
+    )
+    try:
+        events.emit(
+            "planner_step_results_compacted",
+            n_older_compacted=len(older_keys),
+            n_recent_kept=len(recent_keys),
+            original_tokens=original_tokens,
+            summary_tokens=summary_tokens,
+            recent_tokens=recent_tokens,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return result
+
+
 __all__ = [
     "ChatCompactionEngine",
     "ChatSummary",
@@ -693,7 +877,9 @@ __all__ = [
     "HistoryChunkToCompact",
     "ForceCompactRaceUnrecoveredError",
     "NewMsgExceedsBudgetError",
+    "STEP_RESULTS_COMPACTED_KEY",
     "assert_static_bounds",
+    "compact_step_results",
     "compute_budgets",
     "compute_covers_through_seq",
     "estimate_tokens",
