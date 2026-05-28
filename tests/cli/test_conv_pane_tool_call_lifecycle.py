@@ -189,10 +189,13 @@ async def test_fast_tool_call_defers_flush_so_row_stays_visible_briefly():
             "(= the F-H deferred-flush should be set; the row "
             "should NOT unmount synchronously on complete)"
         )
-        # Wait past the threshold with generous CI margin — row
-        # should be flushed by now.
-        await pilot.pause(0.6)
-        assert len(list(conv.query(ToolCallRow))) == 0
+        # Wait past the threshold for the deferred flush. Issue #927
+        # taught that fixed ``pilot.pause(0.6)`` is non-deterministic
+        # under CI load — the timer + ``remove()`` task may still be
+        # in the event-loop queue when the pause returns. The polling
+        # helper yields repeatedly so the unmount can land, and caps
+        # at 2s to surface a genuine regression rather than hang.
+        assert await _wait_until_no_tool_rows(pilot, conv) == 0
 
 
 @pytest.mark.asyncio
