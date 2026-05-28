@@ -35,6 +35,11 @@ Collect the following from the input and the diff output:
 - `tests_passed`: from `verify_state.tests_passed`
 - `attempts`: from `verify_state.attempt`
 
+**Validation contract**: `swe_bench_result` enforces that `tests_passed=true`
+ONLY when `patch` is non-empty. If `git diff HEAD` produced an empty patch
+(= no code changes were made by the apply phase), set `tests_passed=false`
+— an empty-patch "pass" is a no-op submission and the schema rejects it.
+
 ## When to finish
 
 After the diff is captured, finish the skill by emitting `swe_bench_result`
