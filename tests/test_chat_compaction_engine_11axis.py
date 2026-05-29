@@ -1,4 +1,4 @@
-"""Tier 2: OS invariant tests for ChatCompactionEngine 11-axis spec (PR-N3/N6).
+"""Tier 2: OS invariant tests for CompactionEngine 11-axis spec (PR-N3/N6).
 
 Covers:
 - compute_budgets() math: assertions on outputs for known inputs.
@@ -35,9 +35,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from reyn.chat.services.chat_compaction_engine import (
-    ChatCompactionEngine,
+from reyn.config import CompactionConfig
+from reyn.events.events import EventLog
+from reyn.services.compaction.engine import (
     ChatSummary,
+    CompactionEngine,
     ComputedBudgets,
     HistoryChunkToCompact,
     NewMsgExceedsBudgetError,
@@ -48,8 +50,6 @@ from reyn.chat.services.chat_compaction_engine import (
     trim_head,
     trim_tail,
 )
-from reyn.config import CompactionConfig
-from reyn.events.events import EventLog
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -340,7 +340,7 @@ def test_estimate_tokens_for_turn_multimodal_returns_positive() -> None:
     assert tokens > 0, "multimodal turn must have positive token count"
     # Image adds _IMAGE_FIXED_TOKEN_COST (1024), text "hello world" = len//4 = 2
     # So total should be 1024 + 2 = 1026
-    from reyn.chat.services.chat_compaction_engine import _IMAGE_FIXED_TOKEN_COST
+    from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
     assert tokens >= _IMAGE_FIXED_TOKEN_COST, (
         f"multimodal turn token count {tokens} should be ≥ IMAGE_FIXED_TOKEN_COST "
         f"{_IMAGE_FIXED_TOKEN_COST}"
@@ -374,7 +374,7 @@ def test_estimate_tokens_for_turn_image_path() -> None:
         ],
     }
     tokens = estimate_tokens_for_turn(turn, model="", use_chars4=True)
-    from reyn.chat.services.chat_compaction_engine import _IMAGE_FIXED_TOKEN_COST
+    from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
     assert tokens >= _IMAGE_FIXED_TOKEN_COST
 
 
@@ -529,7 +529,7 @@ class _FakeMessage:
     name: str | None = None
 
 
-class _LockHoldingEngine(ChatCompactionEngine):
+class _LockHoldingEngine(CompactionEngine):
     """Engine stub that holds the compaction_lock and signals when running."""
 
     def __init__(self, start_gate: asyncio.Event, release_gate: asyncio.Event) -> None:
@@ -597,7 +597,7 @@ def test_compaction_lock_blocks_concurrent_append() -> None:
         ),
         history_access=lambda: list(history),
         latest_summary=_latest_summary,
-        chat_compaction_engine=engine,
+        compaction_engine=engine,
         history_appender=lambda m: history.append(m),
         make_summary_message=lambda rendered, structured, covers: _FakeMessage(
             role="summary", text=rendered, seq=0,
@@ -654,7 +654,7 @@ def test_estimate_tokens_chars4_opt_out() -> None:
 
     Verify deterministically without any LLM call.
     """
-    from reyn.chat.services.chat_compaction_engine import estimate_tokens
+    from reyn.services.compaction.engine import estimate_tokens
     text = "a" * 400  # 100 tokens via chars//4
     tokens = estimate_tokens(text, model="no-such-model", use_chars4=True)
     assert tokens == 100
@@ -673,7 +673,7 @@ def test_estimate_tokens_for_turn_chars4_opt_out_multimodal() -> None:
     Text part = 400 chars = 100 tokens. Image part = IMAGE_FIXED_TOKEN_COST.
     Total must equal 100 + IMAGE_FIXED_TOKEN_COST.
     """
-    from reyn.chat.services.chat_compaction_engine import _IMAGE_FIXED_TOKEN_COST
+    from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
     turn = {
         "role": "user",
         "seq": 1,
@@ -715,7 +715,7 @@ def test_recompute_budgets_with_provider_changes_effective_trigger() -> None:
         sp_state: list[str] = ["a" * 40]
         provider = lambda: sp_state[0]  # noqa: E731
 
-        engine = ChatCompactionEngine(
+        engine = CompactionEngine(
             model="test-model",
             events=events,
             cfg=cfg,
@@ -749,7 +749,7 @@ def test_recompute_budgets_noop_when_no_provider() -> None:
     try:
         cfg = _make_cfg()
         events = EventLog()
-        engine = ChatCompactionEngine(
+        engine = CompactionEngine(
             model="test-model",
             events=events,
             cfg=cfg,
@@ -784,7 +784,7 @@ def test_recompute_budgets_called_at_init_when_provider_set() -> None:
         sp_text = "b" * 200  # 50 tokens via chars//4
         events = EventLog()
 
-        engine = ChatCompactionEngine(
+        engine = CompactionEngine(
             model="test-model",
             events=events,
             cfg=cfg,
@@ -834,7 +834,7 @@ def test_new_msg_exceeds_budget_error_fields_and_raises() -> None:
             use_chars4_estimate=True,
         )
         events = EventLog()
-        engine = ChatCompactionEngine(
+        engine = CompactionEngine(
             model="test-model",
             events=events,
             cfg=cfg,
@@ -869,7 +869,7 @@ def test_new_msg_exceeds_budget_error_fields_and_raises() -> None:
 
 
 @dataclass
-class _CountingEngine(ChatCompactionEngine):
+class _CountingEngine(CompactionEngine):
     """Engine that counts compact() calls and always returns a stub summary."""
 
     def __init__(self) -> None:
@@ -911,10 +911,10 @@ def test_force_compact_now_emits_race_unrecovered_when_always_over_budget() -> N
     """
     import pytest
 
-    from reyn.chat.services.chat_compaction_engine import (
+    from reyn.chat.services.compaction_controller import CompactionController
+    from reyn.services.compaction.engine import (
         ForceCompactRaceUnrecoveredError,
     )
-    from reyn.chat.services.compaction_controller import CompactionController
 
     events = EventLog()
     engine = _CountingEngine()
@@ -937,7 +937,7 @@ def test_force_compact_now_emits_race_unrecovered_when_always_over_budget() -> N
         ),
         history_access=_big_history,
         latest_summary=lambda: None,
-        chat_compaction_engine=engine,
+        compaction_engine=engine,
         history_appender=lambda m: None,
         make_summary_message=lambda rendered, structured, covers: _FakeMessage(
             role="summary", text=rendered, seq=0,
@@ -1001,7 +1001,7 @@ def test_force_compact_now_returns_early_when_budget_recovered() -> None:
         ),
         history_access=_shrinking_history,
         latest_summary=lambda: None,
-        chat_compaction_engine=engine,
+        compaction_engine=engine,
         history_appender=lambda m: None,
         make_summary_message=lambda rendered, structured, covers: _FakeMessage(
             role="summary", text=rendered, seq=0,

@@ -24,12 +24,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Callable
 
-from reyn.chat.services.chat_compaction_engine import (
-    ChatCompactionEngine,
-    HistoryChunkToCompact,
-)
 from reyn.config import CompactionConfig
 from reyn.events.events import EventLog
+from reyn.services.compaction.engine import (
+    CompactionEngine,
+    HistoryChunkToCompact,
+)
 
 if TYPE_CHECKING:
     from reyn.chat.session import ChatMessage
@@ -96,8 +96,8 @@ class CompactionController:
     latest_summary:
         Zero-argument callable that returns the most recent ``"summary"``
         :class:`~reyn.chat.session.ChatMessage`, or ``None``.
-    chat_compaction_engine:
-        :class:`~reyn.chat.services.chat_compaction_engine.ChatCompactionEngine`
+    compaction_engine:
+        :class:`~reyn.services.compaction.engine.CompactionEngine`
         that owns the single LLM call (PR-N3: OS-internal, no skill/phase).
     history_appender:
         Callable ``(ChatMessage) -> None`` that appends a message to the
@@ -128,7 +128,7 @@ class CompactionController:
         config: CompactionConfig,
         history_access: Callable[[], list[ChatMessage]],
         latest_summary: Callable[[], ChatMessage | None],
-        chat_compaction_engine: ChatCompactionEngine,
+        compaction_engine: CompactionEngine,
         history_appender: Callable[[ChatMessage], None],
         make_summary_message: Callable[..., ChatMessage],
         render_summary: Callable[[dict], str],
@@ -138,7 +138,7 @@ class CompactionController:
         self._config = config
         self._history_access = history_access
         self._latest_summary = latest_summary
-        self._engine = chat_compaction_engine
+        self._engine = compaction_engine
         self._append_history = history_appender
         self._make_summary_message = make_summary_message
         self._render_summary = render_summary
@@ -352,7 +352,7 @@ class CompactionController:
         # Fail-fast per lead-coder accept condition 2026-05-29: the contract
         # is "compaction succeeds within max_passes OR raises". Silent-continue
         # would allow an over-budget prompt to reach the LLM.
-        from reyn.chat.services.chat_compaction_engine import (
+        from reyn.services.compaction.engine import (
             ForceCompactRaceUnrecoveredError,
         )
         self._events.emit(

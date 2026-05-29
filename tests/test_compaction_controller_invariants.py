@@ -15,14 +15,14 @@ from dataclasses import dataclass, field
 
 import pytest  # noqa: F401 — used implicitly by pytest discovery
 
-from reyn.chat.services.chat_compaction_engine import (
-    ChatCompactionEngine,
-    ChatSummary,
-    HistoryChunkToCompact,
-)
 from reyn.chat.services.compaction_controller import CompactionController
 from reyn.config import CompactionConfig
 from reyn.events.events import EventLog
+from reyn.services.compaction.engine import (
+    ChatSummary,
+    CompactionEngine,
+    HistoryChunkToCompact,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal ChatMessage stand-in and engine stub
@@ -39,14 +39,14 @@ class _FakeMessage:
     meta: dict = field(default_factory=dict)
 
 
-class _AbortingEngine(ChatCompactionEngine):
+class _AbortingEngine(CompactionEngine):
     """Engine stub that always raises so compaction aborts early.
 
     Inherits from the real engine but overrides compact() — no LLM call.
     """
 
     def __init__(self) -> None:
-        # Skip ChatCompactionEngine.__init__ (needs model + events).
+        # Skip CompactionEngine.__init__ (needs model + events).
         self._model = "stub"
         self._events = EventLog()
 
@@ -54,7 +54,7 @@ class _AbortingEngine(ChatCompactionEngine):
         raise RuntimeError("aborting engine stub: test-time abort")
 
 
-class _SucceedingEngine(ChatCompactionEngine):
+class _SucceedingEngine(CompactionEngine):
     """Engine stub that returns a minimal ChatSummary without an LLM call."""
 
     def __init__(self, covers: int = 0) -> None:
@@ -68,7 +68,7 @@ class _SucceedingEngine(ChatCompactionEngine):
         return ChatSummary(topic_arc="stub", covers_through_seq=covers)
 
 
-class _BlockingEngine(ChatCompactionEngine):
+class _BlockingEngine(CompactionEngine):
     """Engine stub that blocks on an asyncio.Event — for single-flight tests."""
 
     def __init__(self, gate: asyncio.Event) -> None:
@@ -83,7 +83,7 @@ class _BlockingEngine(ChatCompactionEngine):
         raise RuntimeError("blocking engine stub released")
 
 
-class _CancellableEngine(ChatCompactionEngine):
+class _CancellableEngine(CompactionEngine):
     """Engine stub that signals start then waits forever (for cancel tests)."""
 
     def __init__(self, start_gate: asyncio.Event, cancel_gate: asyncio.Event) -> None:
@@ -102,7 +102,7 @@ def _make_controller(
     *,
     history: list[_FakeMessage] | None = None,
     config: CompactionConfig | None = None,
-    engine: ChatCompactionEngine | None = None,
+    engine: CompactionEngine | None = None,
 ) -> tuple[CompactionController, EventLog]:
     """Return a (CompactionController, EventLog) pair ready for testing."""
     events = EventLog()
@@ -136,7 +136,7 @@ def _make_controller(
         config=cfg,
         history_access=lambda: list(_history),
         latest_summary=_latest_summary,
-        chat_compaction_engine=engine or _AbortingEngine(),
+        compaction_engine=engine or _AbortingEngine(),
         history_appender=_appender,
         make_summary_message=_make_msg,
         render_summary=lambda s: str(s),

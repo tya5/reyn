@@ -32,15 +32,15 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.services.chat_compaction_engine import (
-    ChatCompactionEngine,
+from reyn.config import PhaseActResultsCompactionConfig
+from reyn.events.events import EventLog
+from reyn.kernel.rollback_state import RollbackState
+from reyn.services.compaction.engine import (
+    CompactionEngine,
     compact_control_ir_results,
     estimate_tokens,
     hard_truncate_summary,
 )
-from reyn.config import PhaseActResultsCompactionConfig
-from reyn.events.events import EventLog
-from reyn.kernel.rollback_state import RollbackState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -55,11 +55,11 @@ def _events_of_type(events: EventLog, kind: str) -> list[dict]:
     return [e.data for e in events.all() if e.type == kind]
 
 
-def _make_engine(model: str = "gpt-3.5-turbo") -> ChatCompactionEngine:
-    """Build a minimal ChatCompactionEngine with use_chars4=True for determinism."""
+def _make_engine(model: str = "gpt-3.5-turbo") -> CompactionEngine:
+    """Build a minimal CompactionEngine with use_chars4=True for determinism."""
     from reyn.config import CompactionConfig
     cfg = CompactionConfig(use_chars4_estimate=True)
-    return ChatCompactionEngine(model=model, events=_make_events(), cfg=cfg, T_SP=0)
+    return CompactionEngine(model=model, events=_make_events(), cfg=cfg, T_SP=0)
 
 
 def _make_cfg(**kwargs: Any) -> PhaseActResultsCompactionConfig:
@@ -195,7 +195,7 @@ async def _compact_with_fake_llm(
     events = _make_events()
     from reyn.config import CompactionConfig
     cfg_compact = CompactionConfig(use_chars4_estimate=True)
-    engine = ChatCompactionEngine(
+    engine = CompactionEngine(
         model="gpt-3.5-turbo", events=events, cfg=cfg_compact, T_SP=0,
     )
 
@@ -290,7 +290,7 @@ async def test_compact_control_ir_results_summary_bounded_by_body_budget() -> No
 
     from reyn.config import CompactionConfig
     cfg_compact = CompactionConfig(use_chars4_estimate=True)
-    engine = ChatCompactionEngine(
+    engine = CompactionEngine(
         model="gpt-3.5-turbo", events=_make_events(), cfg=cfg_compact, T_SP=0,
     )
     body_budget = engine.budgets.body_budget
@@ -323,7 +323,7 @@ async def test_compact_control_ir_results_returns_identity_on_llm_error() -> Non
 
     from reyn.config import CompactionConfig
     cfg_compact = CompactionConfig(use_chars4_estimate=True)
-    engine = ChatCompactionEngine(
+    engine = CompactionEngine(
         model="gpt-3.5-turbo", events=events, cfg=cfg_compact, T_SP=0,
     )
 
@@ -360,7 +360,7 @@ def test_phase_compaction_system_prompt_distinct_from_chat_axis() -> None:
     data preservation concepts (grep/file_read/shell) and must not be the
     same string as the chat-axis compaction prompt.
     """
-    from reyn.chat.services import chat_compaction_engine as cce_mod
+    from reyn.services.compaction import engine as cce_mod
 
     phase_sp = cce_mod._PHASE_COMPACTION_SYSTEM_PROMPT  # noqa: SLF001
     chat_sp = cce_mod._COMPACTION_SYSTEM_PROMPT  # noqa: SLF001

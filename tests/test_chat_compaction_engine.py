@@ -1,4 +1,4 @@
-"""Tier 2: OS invariant tests for ChatCompactionEngine helpers (PR-N3).
+"""Tier 2: OS invariant tests for CompactionEngine helpers (PR-N3).
 
 Tests bounded computation guarantee for trim_head / trim_tail and
 ChatSummary backward-compat serialisation.
@@ -10,7 +10,7 @@ Policy compliance:
 """
 from __future__ import annotations
 
-from reyn.chat.services.chat_compaction_engine import (
+from reyn.services.compaction.engine import (
     ChatSummary,
     trim_head,
     trim_tail,

@@ -11,7 +11,7 @@ controller:
     + ``tool_name``).
 
 PR-N3: the phase prompt is now a string constant in
-``chat_compaction_engine._COMPACTION_SYSTEM_PROMPT`` (skill retired).
+``reyn.services.compaction.engine._COMPACTION_SYSTEM_PROMPT`` (skill retired).
 """
 from __future__ import annotations
 
@@ -112,9 +112,9 @@ def test_compaction_system_prompt_mentions_tool_calls() -> None:
     tool-derived items so the LLM knows to surface them in artifacts_referenced.
 
     PR-N3: prompt moved from phases/compact.md to
-    chat_compaction_engine._COMPACTION_SYSTEM_PROMPT.
+    reyn.services.compaction.engine._COMPACTION_SYSTEM_PROMPT.
     """
-    from reyn.chat.services.chat_compaction_engine import _COMPACTION_SYSTEM_PROMPT
+    from reyn.services.compaction.engine import _COMPACTION_SYSTEM_PROMPT
 
     assert "new_turn_seqs" in _COMPACTION_SYSTEM_PROMPT, (
         "prompt must mention new_turn_seqs so LLM copies the verbatim seq list"

@@ -38,7 +38,6 @@ from reyn.chat.services import (
 )
 from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.chain_manager import _PendingChain
-from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
@@ -62,6 +61,7 @@ from reyn.safety.limit_handler import (
     handle_limit_exceeded,
     reset_run_extensions,
 )
+from reyn.services.compaction.engine import CompactionEngine
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.user_intervention import (
@@ -1777,7 +1777,7 @@ class ChatSession:
             config=self._compaction,
             history_access=lambda: self.history,
             latest_summary=self._latest_summary,
-            chat_compaction_engine=ChatCompactionEngine(
+            compaction_engine=CompactionEngine(
                 model=self.model,
                 events=self._chat_events,
                 system_prompt_provider=self._build_router_system_prompt,
@@ -4910,7 +4910,7 @@ class ChatSession:
         """Return the router system prompt for the current session state.
 
         ISSUE #4 (PR-N3): used as the ``system_prompt_provider`` for
-        :class:`~reyn.chat.services.chat_compaction_engine.ChatCompactionEngine`
+        :class:`~reyn.services.compaction.engine.CompactionEngine`
         so that T_SP is measured dynamically — operator-editable REYN.md and
         skills catalog changes are reflected before each pre-frame budget check.
 
@@ -4955,7 +4955,7 @@ class ChatSession:
 
         The existing background spawn_maybe() path is separate and unaffected.
         """
-        from reyn.chat.services.chat_compaction_engine import (
+        from reyn.services.compaction.engine import (
             NewMsgExceedsBudgetError,
             estimate_tokens,
             estimate_tokens_for_turn,
@@ -5063,10 +5063,10 @@ class ChatSession:
         # PR-N6: wrap loop.run() to detect context overflow and invoke
         # retry_loop. The retry_loop is the bounded shrink mechanism;
         # keep _maybe_force_compact_for_router unchanged (= pre-frame guard).
-        from reyn.chat.services.chat_compaction_engine import (
+        from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )
-        from reyn.chat.services.chat_compaction_engine import (
+        from reyn.services.compaction.engine import (
             UnrecoveredError as _UnrecoveredError,
         )
 

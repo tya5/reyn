@@ -1,4 +1,4 @@
-"""ChatCompactionEngine — OS-internal LLM-driven chat history compaction.
+"""CompactionEngine — OS-internal LLM-driven chat history compaction.
 
 PR-N3 (FP-0008, 11-axis): replaces the ``chat_compactor`` stdlib skill with a
 direct Python helper.  One LLM call is retained but the phase-frame overhead
@@ -73,7 +73,7 @@ logger = logging.getLogger(__name__)
 _token_counter_fallback_warned: bool = False
 
 # Per-compaction-run cache: (model, text_hash) -> int
-# Cleared between compaction runs in ChatCompactionEngine.compact().
+# Cleared between compaction runs in CompactionEngine.compact().
 _token_cache: dict[tuple[str, str], int] = {}
 
 # Fixed token cost used for image parts when litellm cannot count them.
@@ -312,7 +312,7 @@ def assert_static_bounds(cfg: "CompactionConfig", budgets: ComputedBudgets) -> N
     """Assert invariants on the computed budgets.
 
     PR-N6: validates component_weights / section_weights (sum > 0, all >= 0).
-    Called at ChatCompactionEngine.__init__ time so a misconfigured
+    Called at CompactionEngine.__init__ time so a misconfigured
     reyn.yaml fails fast at process start, not at first compaction.
     """
     # PR-N6 weight-based assertions (replaces the ratio_sum <= 1.0 check).
@@ -623,7 +623,7 @@ def hard_truncate_summary(
 # ---------------------------------------------------------------------------
 
 
-class ChatCompactionEngine:
+class CompactionEngine:
     """OS-internal compaction engine.
 
     Builds the LLM prompt from an input chunk, calls the model once via
@@ -837,7 +837,7 @@ async def retry_loop(
     new_msg: dict,
     cfg: "CompactionConfig",
     model: str,
-    engine: "ChatCompactionEngine",
+    engine: "CompactionEngine",
     learner: "TokenMultiplierLearner",
     main_call: Callable[..., Awaitable[Any]],
     max_iterations: int = 8,
@@ -888,7 +888,7 @@ async def retry_loop(
     model:
         LiteLLM model string.
     engine:
-        ChatCompactionEngine used for compaction calls.
+        CompactionEngine used for compaction calls.
     learner:
         TokenMultiplierLearner for adaptive estimation feedback.
     main_call:
@@ -1042,7 +1042,7 @@ Output ONLY the summary text. No headers, no bullet points, no JSON.
 async def compact_step_results(
     step_results: dict[str, str],
     *,
-    engine: "ChatCompactionEngine",
+    engine: "CompactionEngine",
     cfg: "PlannerStepCompactionConfig",
     events: "EventLog",
 ) -> dict[str, str]:
@@ -1088,7 +1088,7 @@ async def compact_step_results(
 
     keys = list(step_results.keys())
     use_chars4 = cfg.use_chars4_estimate
-    model = engine._model  # noqa: SLF001 — internal use; ChatCompactionEngine owns this
+    model = engine._model  # noqa: SLF001 — internal use; CompactionEngine owns this
 
     # Step 1: estimate total tokens of all step_results values.
     total_tokens = sum(
@@ -1224,7 +1224,7 @@ tight; brevity matters more than narrative.
 async def compact_control_ir_results(
     older_results: list[dict],
     *,
-    engine: "ChatCompactionEngine",
+    engine: "CompactionEngine",
     cfg: "PhaseActResultsCompactionConfig",
     events: "EventLog",
     phase: str | None = None,
@@ -1272,7 +1272,7 @@ async def compact_control_ir_results(
         return older_results
 
     use_chars4 = cfg.use_chars4_estimate
-    model = engine._model  # noqa: SLF001 — internal use; ChatCompactionEngine owns this
+    model = engine._model  # noqa: SLF001 — internal use; CompactionEngine owns this
 
     # Step 1: estimate total tokens of older_results.
     total_tokens = sum(
@@ -1368,7 +1368,7 @@ async def compact_control_ir_results(
 
 
 __all__ = [
-    "ChatCompactionEngine",
+    "CompactionEngine",
     "ChatSummary",
     "ChatSummaryRaw",
     "ComputedBudgets",
