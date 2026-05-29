@@ -2058,6 +2058,20 @@ class RightPanel(Widget):
         self._docs_files = ordered
         self._docs_cursor = target_idx
         self.set_panel_type("docs")
+        # UX exploration finding F2 (2026-05-29): ``set_panel_type`` →
+        # ``on_tabs_tab_activated`` → ``_scroll_docs_into_view`` runs
+        # synchronously in the same event, before the new tab's content
+        # is painted into ``#panel-scroll``. The scroll helper reads
+        # ``vs.scroll_y`` and ``vs.size.height`` from the panel's prior
+        # state — at minimum the scroll position predates the new
+        # cursor placement, so the viewport stays put and the ``▶``
+        # marker lands off-screen. ``call_after_refresh`` defers the
+        # scroll to the next paint cycle, after the docs content has
+        # been mounted and the new ``_docs_cursor`` is reflected.
+        try:
+            self.app.call_after_refresh(self._scroll_docs_into_view)
+        except Exception:
+            pass
 
     def current_doc_stem(self) -> str:
         """Return the stem of the currently highlighted doc file, or "".
