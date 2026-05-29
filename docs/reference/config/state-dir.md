@@ -7,7 +7,7 @@ applies_to: [.reyn/]
 
 # `.reyn/` — state directory
 
-Per-project state. Default location: `<project_root>/.reyn/`. Override via `reyn.yaml`'s `state_dir` key.
+Per-project state. Location: `<project_root>/.reyn/` — fixed. (There is no `state_dir` knob in `reyn.yaml`; the runtime constructs the path from the discovered project root.)
 
 ## Layout
 

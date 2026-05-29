@@ -45,10 +45,13 @@ models:
 | `agent` | マップ | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
 | `auth` | マップ | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
 | `cron` | マップ | スケジュール付きスキル実行 (FP-0009 Component B)。以下参照。 |
+| `external_transports` | マップ | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など、FP-0041 #489 PR-D2）。以下参照。 |
+| `multimodal` | マップ | バイナリメディア（画像・音声）のサイズ上限と超過時の挙動 (#364 cluster + #383 ストレージパス)。以下参照。 |
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
-| `state_dir` | パス | Reyn がイベント、承認、Memory を書き込む場所。デフォルト `.reyn/`。 |
+| `plan_resume_raw` | マップ | プランモードのレジューム ポリシーの raw dict（ADR-0023 Phase 2）。プランコーディネーターが遅延パース。 |
 | `prompt_cache_enabled` | bool | システムプロンプトに Anthropic プロンプトキャッシュマーカーを付与。デフォルト `true`。 |
 | `project_context_path` | 文字列 | すべての Phase システムプロンプトに注入する Markdown ファイル。デフォルト `REYN.md`。 |
+| `shell_allowed` | bool | `shell` op を事前承認（呼び出しごとのゲートを skip）。デフォルト `false`。 |
 | `api_base` | 文字列 | LiteLLM プロキシベース URL。通常は `reyn.local.yaml`（gitignored）に設定。 |
 
 ## `models` ブロック
@@ -197,6 +200,7 @@ safety:
 | `safety.loop.max_act_turns_per_phase` | int | `10` | — | 1 回の Phase 訪問内で許可される LLM ↔ op ラリー数。`0` = 無制限。 |
 | `safety.loop.max_router_calls_per_turn` | int | `3` | — | ユーザーターンごとのチャットルーター呼び出し数。`0` = 無制限。 |
 | `safety.loop.max_agent_hops` | int | `3` | — | 最大委譲深度（ユーザー → A → B → C = 3 ホップ）。 |
+| `safety.loop.plan_invalid_retries` | int | `1` | — | ルーターが malformed な `plan()` ツール呼び出しを emit した時、エラー + 「内側クォートをエスケープ」 ヒントを user-role directive として追加して LLM に再 emit させる。`0` で無効化。`1`（デフォルト）でチャットターンごとに 1 回の directive 駆動訂正を許可（B51 NF-W6-3）。 |
 
 ### `safety.timeout` フィールド
 
@@ -217,18 +221,33 @@ safety:
 
 ## `plan` ブロック
 
-プランのステップ実行バジェットとリトライ動作を制御します。
+プランのステップ実行バジェット、リトライ動作、ステップ結果コンパクションを制御します。
 
 ```yaml
 plan:
   step_max_iterations: 5   # ステップあたりの最大 RouterLoop ターン数（デフォルト: 5）
   retry_limit: 3           # ステップ失敗時の最大自動リトライ数（デフォルト: 3）
+  step_compaction:
+    recent_step_results_raw: 3                # 最新 N 件の step_results はそのまま保持
+    step_results_ratio: 0.50                  # main_pool のうち step_results に割り当てる比率
+    summarize_older_threshold_tokens: null    # null = main_pool から導出（ComputedBudgets）
+    use_chars4_estimate: false                # true = len(text)//4（レイテンシ opt-out）
 ```
 
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
 | `step_max_iterations` | integer | `5` | 1 つのプランステップが失敗として記録される前に消費できる最大 RouterLoop イテレーション数。 |
 | `retry_limit` | integer | `3` | 一時的エラーによるステップあたりの最大自動リトライ数。上限到達後はユーザーにバジェット延長を求めます。トークン制限と同様のコスト保護上限として機能します。 |
+| `step_compaction` | マップ | 下記デフォルト | PR-N4 の prior `step_results` コンパクションポリシー。`chat.compaction` の sibling — 蓄積したステップ出力が次ステップの sys_prompt を肥大化させそうな時、古いエントリは `ChatCompactionEngine` で要約されます。 |
+
+### `plan.step_compaction` フィールド
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `recent_step_results_raw` | int | `3` | 最新 N 件の step_results はそのまま保持し、それより古いものをコンパクション。 |
+| `step_results_ratio` | float | `0.50` | `main_pool`（= `T_max - T_SP`）のうち次ステップの sys_prompt 内 step_results 部分に割り当てる比率。`chat.compaction.body_ratio` の sibling。 |
+| `summarize_older_threshold_tokens` | int \| null | `null` | 古い step_results をコンパクションする閾値（トークン数）。`null` の場合は `ComputedBudgets`（= `step_results_ratio × main_pool`）から導出。 |
+| `use_chars4_estimate` | bool | `false` | `true` の場合、`litellm.token_counter` の代わりに `len(text)//4` を使用（レイテンシ opt-out、`chat.compaction.use_chars4_estimate` と同じ意味）。 |
 
 ## `web` ブロック
 
@@ -724,24 +743,41 @@ embedding:
 
 組み込みクラス（`classes:` が空または省略時に有効）:
 
-| クラス | モデル |
-|-------|-------|
-| `light` | `openai/text-embedding-3-small` |
-| `standard` | `openai/text-embedding-3-small` |
-| `strong` | `openai/text-embedding-3-large` |
+| クラス | モデル | 備考 |
+|-------|-------|-------|
+| `light` | `openai/text-embedding-3-small` | `OPENAI_API_KEY` が必要。 |
+| `standard` | `openai/text-embedding-3-small` | `OPENAI_API_KEY` が必要。 |
+| `strong` | `openai/text-embedding-3-large` | `OPENAI_API_KEY` が必要。 |
+| `local-mini` | `sentence-transformers/all-MiniLM-L6-v2` | FP-0043。`pip install 'reyn[local-embed]'` が必須。extras が無い場合、初回 `embed()` 呼び出しで raise（`search_actions` の可視化ゲートは hidden へ graceful degrade）。 |
+| `local-e5` | `sentence-transformers/intfloat/multilingual-e5-small` | FP-0043。同じく `local-embed` extras 必須。多言語モデル（非英語コーパスで recall が向上）。 |
+
+FP-0043 の経緯・キャッシュロケーション・トレードオフの全体像は [Concepts: RAG — local embedding backend](../../concepts/rag.ja.md#local-embedding-backend-fp-0043) を参照。
 
 ## `chat` ブロック
 
 チャットセッションの圧縮設定 — 最近のターンを失わずにコンテキストを簡潔に保つ Head/Body/Tail トークンバジェット。
 
+PR-N3 から **比率ベースのバジェット配分** が導入されました: 4 つの ratio はモデルのメインコンテキストプール (= `T_max - T_SP`) の比率として表現され、合計が ≤ 1.0 でなければなりません（エンジン初期化時に `assert_static_bounds()` でアサート）。PR-N6 は同じ ratio バジェット内での詳細な調整のために **weight dict** を追加しました。レガシーフィールド (`trigger_total_tokens` / `head_size` / `tail_size` / `body_token_cap` / `min_compact_batch` / `section_token_caps`) は、各リプライ後に発火する background `_maybe_compact()` パスを駆動します。
+
 ```yaml
 chat:
   compaction:
-    trigger_total_tokens: 30000   # カバーされない中間部がこれを超えると圧縮
-    head_size: 12                  # 最初の N ユーザー/エージェントターンを生のまま保持
-    tail_size: 12                  # 最後の N ユーザー/エージェントターンを生のまま保持
-    body_token_cap: 1500           # 全 body サマリーセクションの合計トークン上限
-    min_compact_batch: 5           # N ターン未満の圧縮はスキップ
+    # PR-N3 ratio ベースのバジェット（合計 ≤ 1.0）:
+    head_ratio: 0.10
+    body_ratio: 0.05
+    tail_ratio: 0.15
+    new_msg_ratio: 0.10
+    section_caps_spec_tokens: 100
+    use_chars4_estimate: false        # true = len(text)//4（レイテンシ opt-out）
+    # PR-N6 weight dict（整数の重み、合計値は任意）:
+    component_weights: {head: 10, body: 5, tail: 15, new_msg: 10}
+    section_weights: {decisions: 40, pending: 40, topic_arc: 20, session_user_facts: 20, artifacts_referenced: 30}
+    # レガシー / background-trigger パス:
+    trigger_total_tokens: 30000        # カバーされない中間部がこれを超えると圧縮
+    head_size: 12                      # 最初の N ユーザー/エージェントターンを生のまま保持
+    tail_size: 12                      # 最後の N ユーザー/エージェントターンを生のまま保持
+    body_token_cap: 1500               # 全 body サマリーセクションの合計トークン上限
+    min_compact_batch: 5               # N ターン未満の圧縮はスキップ
     section_token_caps:
       topic_arc: 200
       decisions: 400
@@ -750,14 +786,32 @@ chat:
       artifacts_referenced: 300
 ```
 
-### `chat.compaction` フィールド
+### `chat.compaction` ratio フィールド（PR-N3）
 
 | フィールド | 型 | デフォルト | 説明 |
 |-------|------|---------|-------------|
-| `trigger_total_tokens` | int | `30000` | 会話のカバーされない中間部がこのトークン数を超えると圧縮を実行。 |
-| `head_size` | int | `12` | 生のまま保持する最初のユーザー/エージェントターン数（要約対象外）。 |
-| `tail_size` | int | `12` | 生のまま保持する最新のユーザー/エージェントターン数。 |
-| `body_token_cap` | int | `1500` | 全 body サマリーセクション合計のトークンバジェット。 |
+| `head_ratio` | float | `0.10` | `main_pool` のうち HEAD スライス（= 最初の生ターン）に割り当てる比率。 |
+| `body_ratio` | float | `0.05` | `main_pool` のうち BODY（= 構造化サマリー）に割り当てる比率。 |
+| `tail_ratio` | float | `0.15` | `main_pool` のうち TAIL スライス（= 最新の生ターン）に割り当てる比率。 |
+| `new_msg_ratio` | float | `0.10` | `main_pool` のうち incoming ユーザーメッセージに割り当てる比率。 |
+| `section_caps_spec_tokens` | int | `100` | コンパクタープロンプト内の `section_token_caps` シリアライズに割り当てる静的オーバーヘッドバジェット。 |
+| `use_chars4_estimate` | bool | `false` | `true` の場合、`litellm.token_counter` の代わりに `len(text)//4` を使用（大規模デプロイ向けレイテンシ opt-out）。 |
+
+### `chat.compaction` weight dict（PR-N6）
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `component_weights` | map[str,int] | `{head: 10, body: 5, tail: 15, new_msg: 10}` | ratio バジェット内のコンポーネントごとの配分を駆動する整数の重み。合計値は任意。指定したキーのみオーバーライド。 |
+| `section_weights` | map[str,int] | （セクションごとのデフォルト） | `body_ratio` 内のサブセクション配分の重み。`component_weights` と同じ shape セマンティクス。 |
+
+### `chat.compaction` レガシー / background-path フィールド
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `trigger_total_tokens` | int | `30000` | background `_maybe_compact()` パス: カバーされない中間部がこのトークン数を超えると圧縮。同期的 pre-frame ガードは ratio フィールドを使用。 |
+| `head_size` | int | `12` | background パス: 生のまま保持する最初のユーザー/エージェントターン数（ターン数ベースのゲート）。 |
+| `tail_size` | int | `12` | background パス: 生のまま保持する最新のユーザー/エージェントターン数（ターン数ベースのゲート）。 |
+| `body_token_cap` | int | `1500` | post-truncation 後のサマリー body トークン上限（legacy ceiling）。 |
 | `min_compact_batch` | int | `5` | 吸収するターン数がこれ未満の場合は圧縮をスキップ（小さな圧縮を回避）。 |
 
 ### `chat.compaction.section_token_caps` フィールド
@@ -892,6 +946,55 @@ python:
 | `allowed_modules` | list[string] | `[]` | セーフモード Python preprocessor ステップが組み込み stdlib 許可リストに加えてインポートできる追加モジュール名。内部で I/O を行うライブラリ（例: `pandas`、`requests`）はセーフモードのサンドボックスを無効化します — 慎重に管理してください。 |
 
 > unsafe Python ステップ（preprocessor フロントマターの `mode: unsafe`）はこのリストで制限されず、ランタイムで `--allow-unsafe-python` も必要です。完全な Permission 文法は [Reference: permissions](permissions.md) を参照してください。
+
+## `multimodal` ブロック
+
+Reyn がバイナリメディア（`web__fetch` / `file__read` / MCP サーバー由来の画像）を扱う方法と、マルチモーダルアーティファクトのディスク上の保存先を制御します（#364 cluster + #383 PR-C ストレージパス）。
+
+```yaml
+multimodal:
+  max_bytes: 5000000              # 5 MB — Anthropic の per-image API 上限
+  on_oversize: ask                # ask | allow | deny
+  media_dir: .reyn/media          # 画像バイナリのプロジェクト相対ディレクトリ
+  tool_results_dir: .reyn/tool-results   # ツール結果ダンプのプロジェクト相対ディレクトリ
+  base_url: null                  # クロスホスト path_ref 用のオプション正規 URL プレフィックス
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `max_bytes` | int | `5000000` (5 MB) | on-oversize ゲートが起動する前のデコード後ペイロードのバイト上限。バイナリサイズ (`len(response.content)` / `len(file_bytes)`) をカウント、base64 後の shape ではない。 |
+| `on_oversize` | 文字列 | `ask` | メディアが `max_bytes` を超えた時の動作: `ask`（intervention bus でサイズ + ソース情報を提示してユーザーに確認、yes でロード、no でドロップ）、`allow`（無条件に受け入れ、信頼済み non-interactive パイプライン向け）、`deny`（無条件に拒否、op は `status="denied"` を返す。コスト重視コンテキスト向け）。 |
+| `media_dir` | 文字列 | `.reyn/media` | 画像バイナリ保存のプロジェクト相対ディレクトリ（#383 PR-C）。ファイルは timestamp + chain-id + tool prefix のフラット命名で `ls -la` が時系列ソートになる。operator が browse + delete 可能。 |
+| `tool_results_dir` | 文字列 | `.reyn/tool-results` | テキスト系ツール結果ダンプのプロジェクト相対ディレクトリ（#385 PoC）。PR-C で writer、PR-D で consumer + preview。 |
+| `base_url` | 文字列 \| null | `null` | クロスホスト `path_ref` 消費用のオプション正規 URL プレフィックス（#385 β cross-host サブタスク）。`"https://reyn.example.com"`（= デプロイ済み `reyn web` の URL）等を設定すると、`MediaStore.save_*` が path_ref に `<base_url>/agents/<agent>/tool-results/<artifact>` を指す `url` フィールドを付与し、A2A peer / MCP client / ブラウザがリソースルーター経由で body を fetch 可能になる。未設定の場合は `url` フィールド非生成（same-host fast-path のみ）。 |
+
+## `external_transports` ブロック
+
+チャット向け受信トランスポート → MCP ツールルーティング（FP-0041 #489 PR-D2）。外部トランスポート名（Slack / LINE / Discord / ...）を、リプライを配信する MCP ツール + ルーター出力をツール引数に shape する `args_template` にマップします。
+
+```yaml
+external_transports:
+  transports:
+    slack:
+      mcp_tool: slack__post_message
+      args_template:
+        channel: "${TRANSPORT_DEST}"
+        text: "${ROUTER_REPLY}"
+    line:
+      mcp_tool: line__push_message
+      args_template:
+        to: "${TRANSPORT_DEST}"
+        messages:
+          - type: text
+            text: "${ROUTER_REPLY}"
+```
+
+| フィールド | 型 | 説明 |
+|-------|------|-------------|
+| `transports.<name>.mcp_tool` | 文字列 | リプライを配信する完全修飾 MCP ツール名 (`<server>__<tool>`)。 |
+| `transports.<name>.args_template` | マップ | MCP ツールに渡される shape。`${TRANSPORT_DEST}` はメッセージごとの宛先 ID（channel / user / room id）に解決、`${ROUTER_REPLY}` はルーターの最終テキストに解決。他の `${VAR}` 参照は標準 interpolation ルールに従って `os.environ` から解決。 |
+
+トランスポートごとの contract と利用可能なテンプレート変数の全集合は `src/reyn/chat/external_routing.py` を参照。
 
 ## 関連情報
 
