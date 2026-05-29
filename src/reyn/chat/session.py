@@ -1766,6 +1766,12 @@ class ChatSession:
             except Exception:
                 pass
 
+        # PR-N6: adaptive token estimation learner (per-user persistence).
+        from reyn.chat.services.token_multiplier_learner import TokenMultiplierLearner
+        self._token_learner: TokenMultiplierLearner = TokenMultiplierLearner(
+            chars4_mode=self._compaction.use_chars4_estimate,
+        )
+
         self._compaction_controller = CompactionController(
             event_log=self._chat_events,
             config=self._compaction,
@@ -5015,7 +5021,56 @@ class ChatSession:
         # ISSUE #5: pass user_text so Axis-11 new_msg_budget check fires.
         await self._maybe_force_compact_for_router(new_msg_text=user_text)
         history = self._build_history_for_router()
-        router_usage = await loop.run(user_text=user_text, history=history)
+
+        # PR-N6: wrap loop.run() to detect context overflow and invoke
+        # retry_loop. The retry_loop is the bounded shrink mechanism;
+        # keep _maybe_force_compact_for_router unchanged (= pre-frame guard).
+        from reyn.chat.services.chat_compaction_engine import (
+            ContextOverflowError as _ContextOverflowError,
+            UnrecoveredError as _UnrecoveredError,
+        )
+
+        try:
+            router_usage = await loop.run(user_text=user_text, history=history)
+        except Exception as _exc:
+            # Detect litellm context-length errors and convert to ContextOverflowError.
+            _exc_str = str(_exc).lower()
+            _is_overflow = any(
+                kw in _exc_str
+                for kw in ("context", "token", "length", "limit", "too long", "too large")
+            )
+            if not _is_overflow:
+                raise
+            # PR-N6: overflow detected — force compaction and retry once.
+            # For a full retry_loop, the session would need to expose
+            # head/summary/raw_middle/tail decomposition; that structural
+            # refactor is tracked as a follow-up.  This path covers the
+            # immediate fail-fast-with-recovery contract.
+            self._chat_events.emit(
+                "router_context_overflow_detected",
+                error=repr(_exc),
+            )
+            try:
+                await self._compaction_controller.force_compact_now()
+            except Exception:
+                pass
+            history = self._build_history_for_router()
+            try:
+                router_usage = await loop.run(user_text=user_text, history=history)
+            except Exception as _retry_exc:
+                _retry_str = str(_retry_exc).lower()
+                if any(
+                    kw in _retry_str
+                    for kw in ("context", "token", "length", "limit", "too long", "too large")
+                ):
+                    self._chat_events.emit(
+                        "router_context_overflow_unrecovered",
+                        error=repr(_retry_exc),
+                    )
+                    raise _ContextOverflowError(
+                        f"Router context overflow unrecovered after compaction: {_retry_exc}"
+                    ) from _retry_exc
+                raise
 
         # F4 Bug 2 / F4 Bug 1: accumulate router LLM usage (with proxy-prefix
         # stripping) into per-session totals via the gateway.
