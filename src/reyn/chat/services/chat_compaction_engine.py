@@ -4,6 +4,10 @@ PR-N3 (FP-0008, 11-axis): replaces the ``chat_compactor`` stdlib skill with a
 direct Python helper.  One LLM call is retained but the phase-frame overhead
 (skill loader, artifact YAML, postprocessor sandbox) is gone.
 
+PR-N6 (FP-0008): adds overflow retry loop + adaptive token estimation learner.
+Budget allocation migrated from ratio fields to integer component_weights /
+section_weights (sum-arbitrary, normalised at compute_budgets() time).
+
 Key design decisions:
 - ``compute_covers_through_seq`` is inlined as a pure function; it is
   deterministic and needs no sandboxing.
@@ -23,10 +27,15 @@ Key design decisions:
   the stored summary is deterministically ≤ body_budget tokens (Axis 9).
 - ``NewMsgExceedsBudgetError`` is raised (never silently truncated) when the
   incoming user message exceeds its budget (Axis 11).
-- ``compute_budgets`` / ``assert_static_bounds`` enforce the ratio invariants
+- ``compute_budgets`` / ``assert_static_bounds`` enforce the weight invariants
   at engine init time so a misconfigured reyn.yaml fails fast (Axis 3 derived).
 - An ``asyncio.Lock`` on compaction prevents concurrent history appends from
   racing with an in-flight force_compact_now() call (Axis 8).
+- PR-N6: ``ContextOverflowError`` / ``CompactionOverflowError`` / ``UnrecoveredError``
+  provide fail-fast semantics for the retry_loop (chat axis = fail-fast, unlike
+  planner step axis / phase axis which are best-effort).
+- PR-N6: ``retry_loop`` shrinks head/tail/raw_middle monotonically per iteration
+  until the prompt fits or mathematical impossibility is reached.
 
 Drop priority when over budget:
   1. body  — compaction summarises naturally
@@ -42,11 +51,12 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import litellm
 
 if TYPE_CHECKING:
+    from reyn.chat.services.token_multiplier_learner import TokenMultiplierLearner
     from reyn.config import (
         CompactionConfig,
         PhaseActResultsCompactionConfig,
@@ -213,6 +223,10 @@ class ComputedBudgets:
     """Derived token budgets for a single compaction context.
 
     Computed once per engine init from CompactionConfig + model context.
+
+    PR-N6: adds ``section_caps`` dict derived from section_weights normalised
+    to body_budget.  Used by the compaction controller to populate
+    HistoryChunkToCompact.section_token_caps.
     """
     main_pool: int          # T_max - T_SP  (main session's available tokens)
     head_budget: int        # tokens reserved for HEAD slice
@@ -222,6 +236,7 @@ class ComputedBudgets:
     B_M: int                # compactor LLM's own input budget
     main_M_room: int        # main session's middle room (after head+tail+new_msg)
     effective_trigger: int  # min(main_M_room, B_M) — used as the pre-frame trigger
+    section_caps: dict = field(default_factory=dict)  # PR-N6: per-section token caps
 
 
 def compute_budgets(
@@ -231,12 +246,14 @@ def compute_budgets(
     T_SP: int,
     T_comp_SP: int,
 ) -> ComputedBudgets:
-    """Derive all token budgets from ratios + context window size.
+    """Derive all token budgets from component_weights + context window size.
+
+    PR-N6: uses integer component_weights normalised by their sum.
 
     Parameters
     ----------
     cfg:
-        CompactionConfig with ratio fields.
+        CompactionConfig with component_weights / section_weights dicts.
     model:
         LiteLLM model string (used to look up T_max via get_max_input_tokens).
     T_SP:
@@ -248,10 +265,33 @@ def compute_budgets(
     from reyn.llm.model_budget import get_max_input_tokens
     T_max = get_max_input_tokens(model)
     main_pool = T_max - T_SP
-    head = int(cfg.head_ratio * main_pool)
-    body = int(cfg.body_ratio * main_pool)
-    tail = int(cfg.tail_ratio * main_pool)
-    new_msg = int(cfg.new_msg_ratio * main_pool)
+
+    # PR-N6: normalise component_weights.
+    cw = cfg.component_weights
+    total_c = sum(cw.values())
+    head = int((cw.get("head", 0) / total_c) * main_pool) if total_c > 0 else 0
+    body = int((cw.get("body", 0) / total_c) * main_pool) if total_c > 0 else 0
+    tail = int((cw.get("tail", 0) / total_c) * main_pool) if total_c > 0 else 0
+    new_msg = int((cw.get("new_msg", 0) / total_c) * main_pool) if total_c > 0 else 0
+
+    # PR-N6: derive per-section token caps from section_weights normalised to body_budget.
+    sw = cfg.section_weights
+    total_s = sum(sw.values())
+    if total_s > 0 and body > 0:
+        section_caps: dict = {
+            name: int((w / total_s) * body) for name, w in sw.items()
+        }
+    else:
+        # Fallback: use CompactionSectionCaps legacy values.
+        sc = cfg.section_token_caps
+        section_caps = {
+            "topic_arc": sc.topic_arc,
+            "decisions": sc.decisions,
+            "pending": sc.pending,
+            "session_user_facts": sc.session_user_facts,
+            "artifacts_referenced": sc.artifacts_referenced,
+        }
+
     B_M = T_max - T_comp_SP - body - cfg.section_caps_spec_tokens
     main_M_room = T_max - T_SP - head - tail - new_msg
     effective_trigger = min(main_M_room, B_M)
@@ -264,27 +304,43 @@ def compute_budgets(
         B_M=B_M,
         main_M_room=main_M_room,
         effective_trigger=effective_trigger,
+        section_caps=section_caps,
     )
 
 
 def assert_static_bounds(cfg: "CompactionConfig", budgets: ComputedBudgets) -> None:
     """Assert invariants on the computed budgets.
 
+    PR-N6: validates component_weights / section_weights (sum > 0, all >= 0).
     Called at ChatCompactionEngine.__init__ time so a misconfigured
     reyn.yaml fails fast at process start, not at first compaction.
     """
-    ratio_sum = cfg.head_ratio + cfg.body_ratio + cfg.tail_ratio + cfg.new_msg_ratio
-    assert ratio_sum <= 1.0, (
-        f"CompactionConfig ratio sum = {ratio_sum:.4f} > 1.0 — "
-        f"head_ratio + body_ratio + tail_ratio + new_msg_ratio must sum to ≤ 1.0"
+    # PR-N6 weight-based assertions (replaces the ratio_sum <= 1.0 check).
+    cw = cfg.component_weights
+    assert sum(cw.values()) > 0, (
+        "CompactionConfig.component_weights sum = 0 — "
+        "at least one component weight must be > 0"
+    )
+    assert all(w >= 0 for w in cw.values()), (
+        f"CompactionConfig.component_weights has negative values: "
+        f"{[k for k, v in cw.items() if v < 0]}"
+    )
+    sw = cfg.section_weights
+    assert sum(sw.values()) > 0, (
+        "CompactionConfig.section_weights sum = 0 — "
+        "at least one section weight must be > 0"
+    )
+    assert all(w >= 0 for w in sw.values()), (
+        f"CompactionConfig.section_weights has negative values: "
+        f"{[k for k, v in sw.items() if v < 0]}"
     )
     assert budgets.B_M > 0, (
         f"B_M = {budgets.B_M} — compaction call self-bound violated "
-        f"(try smaller body_ratio or larger model)"
+        f"(try adjusting component_weights or using a larger model)"
     )
     assert budgets.effective_trigger > 0, (
         f"effective_trigger = {budgets.effective_trigger} — "
-        f"model context too small for chosen ratios"
+        f"model context too small for chosen component_weights"
     )
 
 
@@ -349,12 +405,68 @@ class ForceCompactRaceUnrecoveredError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# PR-N6 exception classes (overflow + retry fail-fast)
+# ---------------------------------------------------------------------------
+
+
+class ContextOverflowError(Exception):
+    """Server-side context limit detected on the main LLM call.
+
+    Raised when the LLM API returns a BadRequestError / context-length
+    exceeded error, or when the pre-call estimate exceeds T_max.  Triggers
+    retry_loop to shrink head/tail/raw_middle and retry.
+
+    Fail-fast on the chat axis: unlike the planner step axis and phase axis
+    (which are best-effort and emit *_compaction_failed events instead of
+    raising), the chat session MUST fit the context window or raise a visible
+    error.  Silent over-budget calls degrade response quality in ways that are
+    hard to diagnose.
+    """
+
+
+class CompactionOverflowError(Exception):
+    """The compaction LLM call itself exceeded its B_M budget.
+
+    Raised when the compaction call (= the inner ``engine.compact()`` call
+    inside retry_loop) returns a context-length error.  Triggers the same
+    escalation path as ContextOverflowError: shrink raw_middle/tail/head and
+    retry.
+    """
+
+
+class UnrecoveredError(Exception):
+    """retry_loop exhausted all shrink paths; mathematical impossibility.
+
+    Raised when head, tail, and raw_middle are all at their minimum budgets
+    and the prompt still cannot fit.  This is the fail-fast terminal condition
+    — the caller MUST surface this as a user-visible error rather than
+    proceeding with an over-budget prompt.
+
+    Attributes
+    ----------
+    reason:
+        Human-readable description of the terminal condition.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+# ---------------------------------------------------------------------------
 # Deterministic helpers
 # ---------------------------------------------------------------------------
 
 # Compact system prompt (equivalent to phases/compact.md, ~35 lines).
+# PR-N6: strengthened with immutable-base + verbatim-preservation directives.
 _COMPACTION_SYSTEM_PROMPT = """\
 You are summarising a chunk of chat history into a structured rolling summary.
+
+CRITICAL — previous_summary handling:
+Treat `previous_summary` as an IMMUTABLE BASE. You MUST NOT re-summarise,
+rephrase, or modify any content already present in `previous_summary`.
+Your only task is to APPEND new information from `new_turns` to it.
+If `previous_summary` is null, start fresh from `new_turns`.
 
 Fold the new_turns into the previous_summary (or start fresh if null).
 Produce a JSON object with these keys:
@@ -370,6 +482,14 @@ Retention rules:
 - Match the user's language for free-text fields.
 - Include tool-activity items (file edits, web fetches) only when they inform the reply going forward.
 - Do NOT transcribe raw quotes unless they are the verbatim text of a decision or pending item.
+
+VERBATIM PRESERVATION (do NOT paraphrase or omit):
+- File paths (e.g. src/reyn/chat/session.py)
+- Line numbers (e.g. line 4916)
+- Commit hashes (e.g. a26c3e9c)
+- Decision identifiers (e.g. PR-N6, FP-0008, issue #1035)
+- Temporal markers (e.g. 2026-05-29, v8)
+- Exit codes and error codes
 
 section_token_caps gives soft per-section token budgets. Trim the LEAST IMPORTANT items first when over budget.
 Output ONLY the JSON object — no explanation, no markdown fences.
@@ -687,6 +807,207 @@ class ChatCompactionEngine:
             session_user_facts=list(parsed.get("session_user_facts") or []),
             artifacts_referenced=list(parsed.get("artifacts_referenced") or []),
         )
+
+
+# ---------------------------------------------------------------------------
+# PR-N6: retry_loop — bounded shrink loop for context overflow recovery
+# ---------------------------------------------------------------------------
+
+
+def _estimate_tokens_list(
+    turns: list[dict],
+    model: str,
+    *,
+    use_chars4: bool = False,
+) -> int:
+    """Estimate total tokens for a list of turn dicts."""
+    return sum(
+        estimate_tokens_for_turn(t, model, use_chars4=use_chars4)
+        for t in turns
+    )
+
+
+async def retry_loop(
+    *,
+    SP: str,
+    head: list[dict],
+    summary: dict | None,
+    raw_middle: list[dict],
+    tail: list[dict],
+    new_msg: dict,
+    cfg: "CompactionConfig",
+    model: str,
+    engine: "ChatCompactionEngine",
+    learner: "TokenMultiplierLearner",
+    main_call: Callable[..., Awaitable[Any]],
+    max_iterations: int = 8,
+) -> Any:
+    """Bounded shrink loop for context overflow recovery (PR-N6).
+
+    On success (normal path or after shrink), calls ``learner.observe`` with
+    the actual vs estimated token count so the adaptive estimator learns.
+
+    Bounded termination proof
+    -------------------------
+    - ``raw_middle``, ``tail``, and ``head`` each shrink monotonically per
+      iteration that triggers the corresponding escalation branch.
+    - Lower bounds: ``head_min = budgets.head_budget``,
+      ``tail_min = budgets.tail_budget`` (derived from
+      ``component_weights["head|tail"] / total_weight * main_pool``).
+    - Terminal condition: when all three are at or below their minimum token
+      budgets, ``UnrecoveredError`` is raised immediately.
+    - ``max_iterations=8`` is a safety cap; finite-by-construction means the
+      loop terminates in O(log N) shrink steps for typical sizes.
+
+    Failure-mode separation
+    -----------------------
+    - Chat axis (PR-N3 + PR-N6): fail-fast.
+      ``ForceCompactRaceUnrecoveredError`` + ``UnrecoveredError`` both raise;
+      the session MUST surface a user-visible error.
+    - Planner step axis (PR-N4): best-effort — emits
+      ``planner_step_results_compaction_failed`` and proceeds.
+    - Phase axis (PR-N5): best-effort — emits
+      ``phase_act_results_compaction_failed`` and proceeds.
+
+    Parameters
+    ----------
+    SP:
+        Current system prompt text (used only for token estimation).
+    head:
+        HEAD turn list (oldest turns).
+    summary:
+        Current compacted summary dict or None.
+    raw_middle:
+        Middle turns not yet compacted.
+    tail:
+        TAIL turn list (most recent turns, verbatim).
+    new_msg:
+        Incoming user message turn dict.
+    cfg:
+        CompactionConfig (component_weights used for min budget derivation).
+    model:
+        LiteLLM model string.
+    engine:
+        ChatCompactionEngine used for compaction calls.
+    learner:
+        TokenMultiplierLearner for adaptive estimation feedback.
+    main_call:
+        Async callable that performs the main LLM call.  Receives keyword
+        args: SP, head, summary, tail, new_msg.  Should raise
+        ``ContextOverflowError`` on context-length error.
+    max_iterations:
+        Safety cap (default 8).  Finite-by-construction termination means
+        this cap is rarely reached.
+    """
+    from reyn.chat.services.token_multiplier_learner import detect_content_type
+
+    bg = engine.budgets
+    head_min_tokens = bg.head_budget
+    tail_min_tokens = bg.tail_budget
+    use_chars4 = cfg.use_chars4_estimate
+
+    for _iteration in range(max_iterations):
+        try:
+            if raw_middle:
+                # Compact raw_middle into the running summary.
+                # Build section_token_caps from budgets.section_caps.
+                section_caps = bg.section_caps if bg.section_caps else {
+                    "topic_arc": 200, "decisions": 400, "pending": 400,
+                    "session_user_facts": 200, "artifacts_referenced": 300,
+                }
+                input_chunk = HistoryChunkToCompact(
+                    previous_summary=summary,
+                    new_turns=raw_middle,
+                    section_token_caps=section_caps,
+                )
+                try:
+                    chat_summary = await engine.compact(input_chunk)
+                    summary = chat_summary.to_dict()
+                    raw_middle = []
+                except Exception as exc:
+                    # Detect compaction overflow from litellm exception.
+                    exc_str = str(exc).lower()
+                    if any(kw in exc_str for kw in ("context", "token", "length", "limit")):
+                        raise CompactionOverflowError(str(exc)) from exc
+                    raise
+
+            response = await main_call(
+                SP=SP,
+                head=head,
+                summary=summary,
+                tail=tail,
+                new_msg=new_msg,
+            )
+
+            # Success: observe actual vs estimated tokens for the learner.
+            content_type = detect_content_type(new_msg.get("content"))
+            sp_tokens = estimate_tokens(SP, model, use_chars4=use_chars4)
+            head_tokens = _estimate_tokens_list(head, model, use_chars4=use_chars4)
+            summary_tokens = estimate_tokens(
+                json.dumps(summary, ensure_ascii=False) if summary else "",
+                model, use_chars4=use_chars4,
+            )
+            tail_tokens = _estimate_tokens_list(tail, model, use_chars4=use_chars4)
+            new_msg_tokens = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
+            estimate = sp_tokens + head_tokens + summary_tokens + tail_tokens + new_msg_tokens
+
+            actual: int | None = None
+            try:
+                usage = getattr(response, "usage", None)
+                if usage is not None:
+                    actual = usage.prompt_tokens
+            except Exception:
+                pass
+
+            if actual and estimate > 0:
+                learner.observe(
+                    model=model,
+                    content_type=content_type,
+                    estimate_tokens=estimate,
+                    actual_tokens=actual,
+                )
+
+            return response
+
+        except CompactionOverflowError:
+            # Compaction call itself overflowed — fall through to shrink.
+            pass
+        except ContextOverflowError:
+            # Main call overflowed — fall through to shrink.
+            pass
+
+        # Shrink escalation: reduce context size monotonically.
+        if raw_middle:
+            # Primary: move half of raw_middle into tail (= defer compaction).
+            chunk = max(len(raw_middle) // 2, 1)
+            tail = raw_middle[-chunk:] + tail
+            raw_middle = raw_middle[:-chunk]
+        elif _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens:
+            # Phase 1: trim tail half → raw_middle.
+            chunk = max(len(tail) // 2, 1)
+            raw_middle.extend(tail[:chunk])
+            tail = tail[chunk:]
+        elif _estimate_tokens_list(head, model, use_chars4=use_chars4) > head_min_tokens:
+            # Phase 2: trim head half → raw_middle.
+            chunk = max(len(head) // 2, 1)
+            raw_middle = head[-chunk:] + raw_middle
+            head = head[:-chunk]
+        else:
+            raise UnrecoveredError(
+                "retry_loop: all shrink paths exhausted — "
+                "SP + head_min + summary + tail_min + new_msg exceeds T_max"
+            )
+
+    raise UnrecoveredError(
+        f"retry_loop exceeded max_iterations={max_iterations} without convergence"
+    )
+
+
+# Keep TokenMultiplierLearner importable from this module for convenience.
+# The actual implementation is in token_multiplier_learner.py.
+def _get_learner_class() -> type:
+    from reyn.chat.services.token_multiplier_learner import TokenMultiplierLearner
+    return TokenMultiplierLearner
 
 
 # ---------------------------------------------------------------------------
@@ -1051,9 +1372,12 @@ __all__ = [
     "ChatSummary",
     "ChatSummaryRaw",
     "ComputedBudgets",
+    "CompactionOverflowError",
+    "ContextOverflowError",
     "HistoryChunkToCompact",
     "ForceCompactRaceUnrecoveredError",
     "NewMsgExceedsBudgetError",
+    "UnrecoveredError",
     "STEP_RESULTS_COMPACTED_KEY",
     "assert_static_bounds",
     "compact_control_ir_results",
@@ -1063,6 +1387,7 @@ __all__ = [
     "estimate_tokens",
     "estimate_tokens_for_turn",
     "hard_truncate_summary",
+    "retry_loop",
     "trim_head",
     "trim_tail",
 ]

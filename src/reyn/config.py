@@ -368,29 +368,54 @@ class CompactionSectionCaps:
 class CompactionConfig:
     """`chat.compaction:` — Head/Body/Tail compaction policy.
 
-    PR-N3 (11-axis): budget allocation is now ratio-based relative to the
-    model's main context pool (= T_max - T_SP).  The four ratio fields must
-    sum to ≤ 1.0; this is asserted at engine init via assert_static_bounds().
+    PR-N6 (FP-0008): budget allocation uses integer component_weights +
+    section_weights, normalised at compute_budgets() time.  Weights are
+    sum-arbitrary (any positive integers work; normalisation handles the rest).
 
-    Ratios:
-        head_ratio   — fraction of main_pool reserved for the HEAD slice
-        body_ratio   — fraction of main_pool reserved for the BODY (summary)
-        tail_ratio   — fraction of main_pool reserved for the TAIL slice
-        new_msg_ratio — fraction of main_pool reserved for the incoming user msg
+    This REPLACES the PR-N3 ratio fields (head_ratio / body_ratio /
+    tail_ratio / new_msg_ratio).  Those fields are REMOVED.
+
+    **Breaking change from PR-N3**: YAML configs with ``head_ratio`` /
+    ``body_ratio`` / ``tail_ratio`` / ``new_msg_ratio`` fields will have those
+    keys silently ignored by _build_chat_config.  Operators must migrate to
+    ``component_weights`` / ``section_weights`` dicts in reyn.yaml.  The old
+    ratio sum <= 1.0 invariant is gone; the startup assertion now checks that
+    all weight values are >= 0 and the total sum > 0.
+
+    component_weights (PR-N6):
+        Integer weights for each prompt component, normalised to sum to 1.0 at
+        compute_budgets() time.  Keys: head / body / tail / new_msg /
+        compaction_batch.
+
+    section_weights (PR-N6 drift-mitigation):
+        Integer weights for each compaction summary section, normalised to
+        body_budget at compute_budgets() time.  Keys: topic_arc / decisions /
+        pending / session_user_facts / artifacts_referenced.
 
     Tokeniser:
-        use_chars4_estimate=False (default) → litellm.token_counter per turn.
-        use_chars4_estimate=True  → len(text)//4 (latency-opt for large deploys).
+        use_chars4_estimate=False (default) -> litellm.token_counter per turn.
+        use_chars4_estimate=True  -> len(text)//4 (latency-opt for large deploys).
 
     Legacy/background trigger:
         trigger_total_tokens is kept for the background _maybe_compact() path
         that fires after each reply (not the synchronous pre-frame guard).
     """
-    # Ratio-based budget allocation (PR-N3 Axis 1). Ratios sum must be ≤ 1.0.
-    head_ratio: float = 0.10
-    body_ratio: float = 0.05
-    tail_ratio: float = 0.15
-    new_msg_ratio: float = 0.10
+    # Integer weight-based budget allocation (PR-N6). Sum-arbitrary; normalised
+    # at compute_budgets() time.
+    component_weights: dict = field(default_factory=lambda: {
+        "head":             10,
+        "body":             5,
+        "tail":             15,
+        "new_msg":          10,
+        "compaction_batch": 60,
+    })
+    section_weights: dict = field(default_factory=lambda: {
+        "topic_arc":            5,    # abstract suppression
+        "decisions":            40,   # specific data emphasis
+        "pending":              25,
+        "session_user_facts":   10,
+        "artifacts_referenced": 35,   # path/line preservation
+    })
     # section_caps_spec_tokens: static overhead budget for section_token_caps
     # serialisation in the compactor prompt.
     section_caps_spec_tokens: int = 100
@@ -406,9 +431,9 @@ class CompactionConfig:
     # path which still uses turn-count gates to identify HEAD / TAIL
     # boundaries. The new synchronous force-trigger path (= pre-frame guard
     # in `_maybe_force_compact_for_router`) uses token-budget only via
-    # `head_ratio` / `tail_ratio` (= 11-axis Axis 3). Background-path removal
-    # is a separate root-fix wave; until then these fields exist to keep the
-    # legacy lifecycle working without scope-creeping PR-N3.
+    # component_weights (= PR-N6). Background-path removal is a separate
+    # root-fix wave; until then these fields exist to keep the legacy lifecycle
+    # working without scope-creeping PR-N3/N6.
     head_size: int = 12                 # First N user/agent turns = HEAD (background path)
     tail_size: int = 12                 # Last N user/agent turns = TAIL (background path)
 
@@ -1027,7 +1052,7 @@ class PlannerStepCompactionConfig:
     step_results_ratio:
         Fraction of ``main_pool`` (= T_max - T_SP) allocated for the
         step_results portion of the next step's sys_prompt.  Sibling to
-        CompactionConfig.body_ratio.
+        CompactionConfig.component_weights["body"].
     use_chars4_estimate:
         When True, use len(text)//4 for token estimation instead of
         litellm.token_counter (latency opt-out, mirrors CompactionConfig).
@@ -1060,7 +1085,7 @@ class PhaseActResultsCompactionConfig:
     control_ir_results_ratio:
         Fraction of ``main_pool`` (= T_max - T_SP) allocated for the
         control_ir_results portion of the act-loop context. Sibling to
-        CompactionConfig.body_ratio.  Default 0.50.
+        CompactionConfig.component_weights["body"].  Default 0.50.
     summarize_older_threshold_tokens:
         Total token threshold above which older results are compacted.
         ``None`` uses ``control_ir_results_ratio × main_pool`` derived from the
@@ -1799,11 +1824,37 @@ def _build_chat_config(raw: object) -> ChatConfig:
         ),
     )
     defaults = CompactionConfig()
+
+    # PR-N6: parse component_weights dict (integer weights, sum-arbitrary).
+    # YAML: chat.compaction.component_weights: {head: 10, body: 5, ...}
+    raw_cw = compaction_raw.get("component_weights")
+    if isinstance(raw_cw, dict):
+        component_weights = {
+            k: int(v) for k, v in raw_cw.items()
+            if isinstance(v, (int, float))
+        }
+        # Fill any missing keys from defaults.
+        for k, v in defaults.component_weights.items():
+            component_weights.setdefault(k, v)
+    else:
+        component_weights = dict(defaults.component_weights)
+
+    # PR-N6: parse section_weights dict.
+    # YAML: chat.compaction.section_weights: {decisions: 40, ...}
+    raw_sw = compaction_raw.get("section_weights")
+    if isinstance(raw_sw, dict):
+        section_weights = {
+            k: int(v) for k, v in raw_sw.items()
+            if isinstance(v, (int, float))
+        }
+        for k, v in defaults.section_weights.items():
+            section_weights.setdefault(k, v)
+    else:
+        section_weights = dict(defaults.section_weights)
+
     compaction = CompactionConfig(
-        head_ratio=float(compaction_raw.get("head_ratio", defaults.head_ratio)),
-        body_ratio=float(compaction_raw.get("body_ratio", defaults.body_ratio)),
-        tail_ratio=float(compaction_raw.get("tail_ratio", defaults.tail_ratio)),
-        new_msg_ratio=float(compaction_raw.get("new_msg_ratio", defaults.new_msg_ratio)),
+        component_weights=component_weights,
+        section_weights=section_weights,
         section_caps_spec_tokens=int(
             compaction_raw.get("section_caps_spec_tokens", defaults.section_caps_spec_tokens)
         ),

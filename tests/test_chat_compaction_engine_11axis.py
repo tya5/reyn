@@ -1,9 +1,9 @@
-"""Tier 2: OS invariant tests for ChatCompactionEngine 11-axis spec (PR-N3).
+"""Tier 2: OS invariant tests for ChatCompactionEngine 11-axis spec (PR-N3/N6).
 
 Covers:
 - compute_budgets() math: assertions on outputs for known inputs.
-- assert_static_bounds() failure modes: ratio sum > 1.0 raises, B_M ≤ 0 raises,
-  effective_trigger ≤ 0 raises.
+- assert_static_bounds() failure modes: PR-N6 weight sum = 0 raises, negative
+  weight raises, B_M ≤ 0 raises, effective_trigger ≤ 0 raises.
 - trim_head / trim_tail post-Axis-3: pure token-budget, no turn count cap.
   Boundary tests.
 - estimate_tokens_for_turn multimodal: turn with content=[{type:text, ...},
@@ -21,6 +21,7 @@ Covers:
 - ISSUE #5: NewMsgExceedsBudgetError raised when new_msg exceeds new_msg_budget.
 - ISSUE #6: force_compact_now() race-recovery loop: N=2 passes when post-compaction
   still over budget; force_compact_race_unrecovered event when race persists.
+- PR-N6: weight normalization invariants.
 
 Policy compliance:
 - No unittest.mock usage.
@@ -60,12 +61,19 @@ def _turns(texts: list[str]) -> list[dict]:
 
 
 def _make_cfg(**kwargs) -> CompactionConfig:
-    """Return a CompactionConfig with test-friendly defaults overridden by kwargs."""
-    defaults = dict(
-        head_ratio=0.10,
-        body_ratio=0.05,
-        tail_ratio=0.15,
-        new_msg_ratio=0.10,
+    """Return a CompactionConfig with test-friendly defaults overridden by kwargs.
+
+    PR-N6: uses component_weights (integer, sum-arbitrary) instead of the old
+    head_ratio/body_ratio/tail_ratio/new_msg_ratio float fields.
+    """
+    defaults: dict = dict(
+        component_weights={
+            "head": 10, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60,
+        },
+        section_weights={
+            "topic_arc": 5, "decisions": 40, "pending": 25,
+            "session_user_facts": 10, "artifacts_referenced": 35,
+        },
         section_caps_spec_tokens=100,
         use_chars4_estimate=True,  # deterministic for tests
     )
@@ -81,29 +89,31 @@ def _make_cfg(**kwargs) -> CompactionConfig:
 def test_compute_budgets_basic_math() -> None:
     """Tier 2: compute_budgets() output values are arithmetically correct.
 
-    Uses a synthetic T_max = 100_000, T_SP = 1_000, T_comp_SP = 500, and
-    a config with known ratios.  Verifies every budget field against manual
-    derivation.
+    PR-N6: uses integer component_weights normalised by their sum.
+
+    Uses a synthetic T_max = 100_000, T_SP = 1_000, T_comp_SP = 500.
+    Weights: head=10, body=5, tail=15, new_msg=10, compaction_batch=60 (sum=100).
+    Manually derives expected budgets and verifies every field.
 
     Injects a synthetic T_max via direct module-level monkey-patch (no mock).
     """
+    # Weights: head=10, body=5, tail=15, new_msg=10, total=100 (ignoring compaction_batch)
+    weights = {"head": 10, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60}
+    total_w = sum(weights.values())  # 100
     cfg = _make_cfg(
-        head_ratio=0.10,
-        body_ratio=0.05,
-        tail_ratio=0.15,
-        new_msg_ratio=0.10,
+        component_weights=weights,
         section_caps_spec_tokens=100,
     )
     T_max = 100_000
     T_SP = 1_000
     T_comp_SP = 500
 
-    # Manually compute expected values.
+    # Manually compute expected values (PR-N6 normalised weights).
     main_pool = T_max - T_SP           # 99_000
-    head = int(0.10 * main_pool)       # 9_900
-    body = int(0.05 * main_pool)       # 4_950
-    tail = int(0.15 * main_pool)       # 14_850
-    new_msg = int(0.10 * main_pool)    # 9_900
+    head = int((weights["head"] / total_w) * main_pool)    # int(0.10 * 99000) = 9_900
+    body = int((weights["body"] / total_w) * main_pool)    # int(0.05 * 99000) = 4_950
+    tail = int((weights["tail"] / total_w) * main_pool)    # int(0.15 * 99000) = 14_850
+    new_msg = int((weights["new_msg"] / total_w) * main_pool)  # int(0.10 * 99000) = 9_900
     B_M = T_max - T_comp_SP - body - 100  # 100_000 - 500 - 4_950 - 100 = 94_450
     main_M_room = T_max - T_SP - head - tail - new_msg  # 64_350
     effective_trigger = min(main_M_room, B_M)  # 64_350
@@ -130,6 +140,8 @@ def test_compute_budgets_basic_math() -> None:
 def test_compute_budgets_effective_trigger_is_min() -> None:
     """Tier 2: effective_trigger = min(main_M_room, B_M), not either alone.
 
+    PR-N6: uses component_weights instead of ratios.
+
     Constructs two configs: one where main_M_room < B_M and one where
     B_M < main_M_room, and verifies the minimum is used in both cases.
     """
@@ -138,22 +150,20 @@ def test_compute_budgets_effective_trigger_is_min() -> None:
     original_fn = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: T_max  # type: ignore[assignment]
     try:
-        # Case 1: large body_ratio → B_M is small → effective_trigger = B_M
+        # Case 1: high body weight → B_M is small → effective_trigger = B_M
         cfg1 = _make_cfg(
-            head_ratio=0.10,
-            body_ratio=0.40,  # large body_ratio → B_M = T_max - T_comp_SP - body - spec
-            tail_ratio=0.10,
-            new_msg_ratio=0.05,
+            component_weights={
+                "head": 10, "body": 40, "tail": 10, "new_msg": 5, "compaction_batch": 35,
+            },
         )
         b1 = compute_budgets(cfg1, "test-model", T_SP=0, T_comp_SP=100)
         assert b1.effective_trigger == min(b1.main_M_room, b1.B_M)
 
-        # Case 2: small body_ratio → B_M is large → effective_trigger = main_M_room
+        # Case 2: low body weight → B_M is large → effective_trigger = main_M_room
         cfg2 = _make_cfg(
-            head_ratio=0.30,
-            body_ratio=0.01,
-            tail_ratio=0.30,
-            new_msg_ratio=0.20,
+            component_weights={
+                "head": 30, "body": 1, "tail": 30, "new_msg": 20, "compaction_batch": 19,
+            },
         )
         b2 = compute_budgets(cfg2, "test-model", T_SP=0, T_comp_SP=100)
         assert b2.effective_trigger == min(b2.main_M_room, b2.B_M)
@@ -166,22 +176,40 @@ def test_compute_budgets_effective_trigger_is_min() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_assert_static_bounds_ratio_sum_over_1_raises() -> None:
-    """Tier 2: assert_static_bounds raises AssertionError when ratio sum > 1.0."""
-    cfg = _make_cfg(head_ratio=0.40, body_ratio=0.30, tail_ratio=0.30, new_msg_ratio=0.10)
-    # sum = 1.10 > 1.0
+def test_assert_static_bounds_zero_weight_sum_raises() -> None:
+    """Tier 2: assert_static_bounds raises AssertionError when component_weights sum = 0.
+
+    PR-N6: replaces the old ratio_sum > 1.0 test.  A zero-weight config is
+    mathematically degenerate (all budgets = 0).
+    """
+    cfg = _make_cfg(component_weights={"head": 0, "body": 0, "tail": 0, "new_msg": 0, "compaction_batch": 0})
     budgets = ComputedBudgets(
-        main_pool=10_000, head_budget=4000, body_budget=3000,
-        tail_budget=3000, new_msg_budget=1000,
-        B_M=5000, main_M_room=2000, effective_trigger=2000,
+        main_pool=10_000, head_budget=0, body_budget=0,
+        tail_budget=0, new_msg_budget=0,
+        B_M=5000, main_M_room=10000, effective_trigger=5000,
     )
-    with pytest.raises(AssertionError, match="ratio sum"):
+    with pytest.raises(AssertionError):
+        assert_static_bounds(cfg, budgets)
+
+
+def test_assert_static_bounds_negative_weight_raises() -> None:
+    """Tier 2: assert_static_bounds raises AssertionError when any weight is negative.
+
+    PR-N6: negative weights violate the non-negative invariant.
+    """
+    cfg = _make_cfg(component_weights={"head": -1, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60})
+    budgets = ComputedBudgets(
+        main_pool=10_000, head_budget=1000, body_budget=500,
+        tail_budget=1000, new_msg_budget=500,
+        B_M=5000, main_M_room=8000, effective_trigger=5000,
+    )
+    with pytest.raises(AssertionError):
         assert_static_bounds(cfg, budgets)
 
 
 def test_assert_static_bounds_B_M_zero_raises() -> None:
     """Tier 2: assert_static_bounds raises AssertionError when B_M ≤ 0."""
-    cfg = _make_cfg(head_ratio=0.10, body_ratio=0.05, tail_ratio=0.10, new_msg_ratio=0.05)
+    cfg = _make_cfg()
     budgets = ComputedBudgets(
         main_pool=10_000, head_budget=1000, body_budget=500,
         tail_budget=1000, new_msg_budget=500,
@@ -194,7 +222,7 @@ def test_assert_static_bounds_B_M_zero_raises() -> None:
 
 def test_assert_static_bounds_effective_trigger_zero_raises() -> None:
     """Tier 2: assert_static_bounds raises AssertionError when effective_trigger ≤ 0."""
-    cfg = _make_cfg(head_ratio=0.10, body_ratio=0.05, tail_ratio=0.10, new_msg_ratio=0.05)
+    cfg = _make_cfg()
     budgets = ComputedBudgets(
         main_pool=10_000, head_budget=1000, body_budget=500,
         tail_budget=1000, new_msg_budget=500,
@@ -206,8 +234,8 @@ def test_assert_static_bounds_effective_trigger_zero_raises() -> None:
 
 
 def test_assert_static_bounds_passes_valid_config() -> None:
-    """Tier 2: assert_static_bounds does NOT raise for valid ratios and positive budgets."""
-    cfg = _make_cfg(head_ratio=0.10, body_ratio=0.05, tail_ratio=0.15, new_msg_ratio=0.10)
+    """Tier 2: assert_static_bounds does NOT raise for valid weights and positive budgets."""
+    cfg = _make_cfg()
     budgets = ComputedBudgets(
         main_pool=100_000, head_budget=10000, body_budget=5000,
         tail_budget=15000, new_msg_budget=10000,
@@ -667,6 +695,8 @@ def test_recompute_budgets_with_provider_changes_effective_trigger() -> None:
     """Tier 2: recompute_budgets() with a dynamic provider that returns different
     SP strings causes budgets.effective_trigger to change.
 
+    PR-N6: uses component_weights instead of ratio fields.
+
     Uses a real lambda as the provider (no mock).  Two calls: first with a
     small SP, then with a larger SP (= smaller main_pool = smaller effective_trigger).
     """
@@ -676,10 +706,6 @@ def test_recompute_budgets_with_provider_changes_effective_trigger() -> None:
     _mb.get_max_input_tokens = lambda model, **kw: T_max  # type: ignore[assignment]
     try:
         cfg = _make_cfg(
-            head_ratio=0.10,
-            body_ratio=0.05,
-            tail_ratio=0.15,
-            new_msg_ratio=0.10,
             section_caps_spec_tokens=100,
             use_chars4_estimate=True,
         )
@@ -752,10 +778,6 @@ def test_recompute_budgets_called_at_init_when_provider_set() -> None:
     _mb.get_max_input_tokens = lambda model, **kw: T_max  # type: ignore[assignment]
     try:
         cfg = _make_cfg(
-            head_ratio=0.10,
-            body_ratio=0.05,
-            tail_ratio=0.15,
-            new_msg_ratio=0.10,
             section_caps_spec_tokens=100,
             use_chars4_estimate=True,
         )
@@ -803,11 +825,11 @@ def test_new_msg_exceeds_budget_error_fields_and_raises() -> None:
     original_fn = _mb.get_max_input_tokens
     _mb.get_max_input_tokens = lambda model, **kw: T_max  # type: ignore[assignment]
     try:
+        # PR-N6: new_msg weight = 5 out of 105 total (5/105 * 100_000 ≈ 4_761 tokens)
         cfg = _make_cfg(
-            head_ratio=0.10,
-            body_ratio=0.05,
-            tail_ratio=0.15,
-            new_msg_ratio=0.05,  # new_msg_budget = 5% * 100_000 = 5_000 tokens
+            component_weights={
+                "head": 10, "body": 5, "tail": 15, "new_msg": 5, "compaction_batch": 70,
+            },
             section_caps_spec_tokens=100,
             use_chars4_estimate=True,
         )
@@ -818,7 +840,7 @@ def test_new_msg_exceeds_budget_error_fields_and_raises() -> None:
             cfg=cfg,
             T_SP=0,
         )
-        # new_msg_budget = 0.05 * 100_000 = 5_000 tokens
+        # new_msg_budget = (5/105) * 100_000 ≈ 4_761 tokens
         # huge_text = 10_000_000 chars = 2_500_000 tokens >> budget
         huge_text = "x" * 10_000_000
         new_msg_turn = {"role": "user", "content": huge_text}
