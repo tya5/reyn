@@ -45,10 +45,13 @@ models:
 | `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
 | `auth` | map | OAuth provider configurations for `reyn auth login`. See below. |
 | `cron` | map | Scheduled skill executions (FP-0009 Component B). See below. |
+| `external_transports` | map | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.) (FP-0041 #489 PR-D2). See below. |
+| `multimodal` | map | Binary media (image/audio) size cap and on-oversize behaviour (#364 cluster + #383 storage paths). See below. |
 | `permissions` | map | Default permission policy. See below. |
-| `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
+| `plan_resume_raw` | map | Raw resume-policy dict for plan-mode runs (ADR-0023 Phase 2). Parsed lazily by the plan coordinator. |
 | `prompt_cache_enabled` | bool | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
 | `project_context_path` | string | Markdown file injected into every phase system prompt. Default `REYN.md`. |
+| `shell_allowed` | bool | Pre-approve the `shell` op so it is not gated per-call. Default `false`. |
 | `api_base` | string | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
 
 ## `models` block
@@ -204,6 +207,7 @@ safety:
 | `safety.loop.max_act_turns_per_phase` | int | `10` | — | LLM ↔ op volleys allowed inside one phase visit. `0` = unlimited. |
 | `safety.loop.max_router_calls_per_turn` | int | `3` | — | Chat-router invocations per user turn. `0` = unlimited. |
 | `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
+| `safety.loop.plan_invalid_retries` | int | `1` | — | When the router emits a malformed `plan()` tool call, append the error + an "escape inner quotes" hint and let the LLM re-emit. `0` disables; `1` (default) allows one directive-driven correction per chat turn. (B51 NF-W6-3.) |
 | `safety.loop.skill_calls_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) spawn cap. `hard_limit` + `warn_ratio` sub-fields. Hybrid: loop-detection semantics, budget-style user approval on hit. |
 | `safety.loop.skill_tokens_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) token cap. `hard_limit` + `warn_ratio` sub-fields. |
 
@@ -226,18 +230,33 @@ safety:
 
 ## `plan` block
 
-Controls plan step execution budget and retry behavior.
+Controls plan step execution budget, retry behaviour, and prior-step compaction.
 
 ```yaml
 plan:
   step_max_iterations: 5   # max RouterLoop turns per step (default: 5)
   retry_limit: 3           # max auto-retries per step on failure (default: 3)
+  step_compaction:
+    recent_step_results_raw: 3                # keep the last N step_results verbatim
+    step_results_ratio: 0.50                  # fraction of main_pool reserved for step_results
+    summarize_older_threshold_tokens: null    # null = derive from main_pool (engine ComputedBudgets)
+    use_chars4_estimate: false                # true = len(text)//4 (latency opt-out)
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `step_max_iterations` | integer | `5` | Maximum RouterLoop iterations one plan step may consume before being recorded as failed. |
 | `retry_limit` | integer | `3` | Maximum automatic retries per step on transient errors. When exhausted, the user is prompted to extend the budget. Acts as a cost protection ceiling analogous to token limits. |
+| `step_compaction` | map | see defaults | PR-N4 prior `step_results` compaction policy. Sibling to `chat.compaction` — when accumulated step outputs would balloon the next step's sys_prompt, older entries are summarised by `ChatCompactionEngine`. |
+
+### `plan.step_compaction` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `recent_step_results_raw` | int | `3` | Keep the last N step_results verbatim; compact older ones. |
+| `step_results_ratio` | float | `0.50` | Fraction of `main_pool` (= `T_max - T_SP`) allocated for the step_results portion of the next step's sys_prompt. Sibling to `chat.compaction.body_ratio`. |
+| `summarize_older_threshold_tokens` | int \| null | `null` | Total token threshold above which older step_results are compacted. `null` derives the threshold from `ComputedBudgets` (= `step_results_ratio × main_pool`). |
+| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out, mirrors `chat.compaction.use_chars4_estimate`). |
 
 ## `web` block
 
@@ -768,24 +787,41 @@ Each key under `embedding.classes` is a class name. Built-in defaults (`light`, 
 
 Built-in classes (active when `classes:` is empty or absent):
 
-| Class | Model |
-|-------|-------|
-| `light` | `openai/text-embedding-3-small` |
-| `standard` | `openai/text-embedding-3-small` |
-| `strong` | `openai/text-embedding-3-large` |
+| Class | Model | Notes |
+|-------|-------|-------|
+| `light` | `openai/text-embedding-3-small` | Needs `OPENAI_API_KEY`. |
+| `standard` | `openai/text-embedding-3-small` | Needs `OPENAI_API_KEY`. |
+| `strong` | `openai/text-embedding-3-large` | Needs `OPENAI_API_KEY`. |
+| `local-mini` | `sentence-transformers/all-MiniLM-L6-v2` | FP-0043. Requires `pip install 'reyn[local-embed]'`; without the extras, instantiating raises at first `embed()` call (the `search_actions` visibility gate degrades to hidden gracefully). |
+| `local-e5` | `sentence-transformers/intfloat/multilingual-e5-small` | FP-0043. Same `local-embed` extras requirement; multilingual model (better recall on non-English corpora). |
+
+See [Concepts: RAG — local embedding backend](../../concepts/rag.md#local-embedding-backend-fp-0043) for the full story on FP-0043, cache locations, and trade-offs.
 
 ## `chat` block
 
 Chat-session compaction — head/body/tail token budgets that keep context concise without losing recent turns.
 
+PR-N3 introduced **ratio-based** budget allocation: each of the four ratios is a fraction of the model's main context pool (= `T_max - T_SP`), and they must sum to ≤ 1.0 (asserted at engine init via `assert_static_bounds()`). PR-N6 added **weight dicts** for fine-grained tuning under the same ratio budget. The legacy `trigger_total_tokens` / `head_size` / `tail_size` / `body_token_cap` / `min_compact_batch` / `section_token_caps` fields drive the background `_maybe_compact()` path that fires after each reply.
+
 ```yaml
 chat:
   compaction:
-    trigger_total_tokens: 30000   # compact when uncovered middle exceeds this
-    head_size: 12                  # first N user/agent turns kept raw
-    tail_size: 12                  # last N user/agent turns kept raw
-    body_token_cap: 1500           # total token cap across all body summary sections
-    min_compact_batch: 5           # skip compaction when fewer than N turns to absorb
+    # PR-N3 ratio-based budget (sum must be ≤ 1.0):
+    head_ratio: 0.10
+    body_ratio: 0.05
+    tail_ratio: 0.15
+    new_msg_ratio: 0.10
+    section_caps_spec_tokens: 100
+    use_chars4_estimate: false        # true = len(text)//4 (latency opt-out)
+    # PR-N6 weight dicts (integer weights, sum-arbitrary):
+    component_weights: {head: 10, body: 5, tail: 15, new_msg: 10}
+    section_weights: {decisions: 40, pending: 40, topic_arc: 20, session_user_facts: 20, artifacts_referenced: 30}
+    # Legacy / background-trigger path:
+    trigger_total_tokens: 30000        # compact when uncovered middle exceeds this
+    head_size: 12                      # first N user/agent turns kept raw
+    tail_size: 12                      # last N user/agent turns kept raw
+    body_token_cap: 1500               # total token cap across all body summary sections
+    min_compact_batch: 5               # skip compaction when fewer than N turns to absorb
     section_token_caps:
       topic_arc: 200
       decisions: 400
@@ -794,14 +830,32 @@ chat:
       artifacts_referenced: 300
 ```
 
-### `chat.compaction` fields
+### `chat.compaction` ratio fields (PR-N3)
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `trigger_total_tokens` | int | `30000` | Compact when the uncovered middle of the conversation exceeds this token count. |
-| `head_size` | int | `12` | Number of earliest user/agent turns kept verbatim (never summarised). |
-| `tail_size` | int | `12` | Number of most-recent user/agent turns kept verbatim. |
-| `body_token_cap` | int | `1500` | Total token budget for all body summary sections combined. |
+| `head_ratio` | float | `0.10` | Fraction of `main_pool` reserved for the HEAD slice (= earliest verbatim turns). |
+| `body_ratio` | float | `0.05` | Fraction of `main_pool` reserved for the BODY (= rolling structured summary). |
+| `tail_ratio` | float | `0.15` | Fraction of `main_pool` reserved for the TAIL slice (= most-recent verbatim turns). |
+| `new_msg_ratio` | float | `0.10` | Fraction of `main_pool` reserved for the incoming user message. |
+| `section_caps_spec_tokens` | int | `100` | Static overhead budget for `section_token_caps` serialisation in the compactor prompt. |
+| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out for large deployments). |
+
+### `chat.compaction` weight dicts (PR-N6)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `component_weights` | map[str,int] | `{head: 10, body: 5, tail: 15, new_msg: 10}` | Integer weights driving per-component allocation within the ratio budget. Sum is arbitrary; individual keys override only those components. |
+| `section_weights` | map[str,int] | (per-section default) | Integer weights for sub-section allocation within `body_ratio`. Same shape semantics as `component_weights`. |
+
+### `chat.compaction` legacy / background-path fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `trigger_total_tokens` | int | `30000` | Background `_maybe_compact()` path: compact when the uncovered middle exceeds this token count. The synchronous pre-frame guard uses the ratio fields instead. |
+| `head_size` | int | `12` | Background path: number of earliest user/agent turns kept verbatim (turn-count gate). |
+| `tail_size` | int | `12` | Background path: number of most-recent user/agent turns kept verbatim (turn-count gate). |
+| `body_token_cap` | int | `1500` | Hard cap on summary body tokens after post-truncation (legacy ceiling). |
 | `min_compact_batch` | int | `5` | Skip compaction when fewer than this many turns would be absorbed (avoids tiny compactions). |
 
 ### `chat.compaction.section_token_caps` fields
@@ -936,6 +990,55 @@ python:
 | `allowed_modules` | list[string] | `[]` | Additional module names that safe-mode Python preprocessor steps may import, on top of the built-in stdlib allowlist. Libraries with internal I/O (e.g. `pandas`, `requests`) defeat safe-mode sandboxing — curate carefully. |
 
 > Unsafe Python steps (`mode: unsafe` in the preprocessor frontmatter) are not restricted by this list and also require `--allow-unsafe-python` at runtime. See [Reference: permissions](permissions.md) for the full permission grammar.
+
+## `multimodal` block
+
+Controls how Reyn handles binary media (images from `web__fetch` / `file__read` / MCP servers) and where multimodal artefacts live on disk (#364 cluster + #383 PR-C storage paths).
+
+```yaml
+multimodal:
+  max_bytes: 5000000              # 5 MB — Anthropic per-image API limit
+  on_oversize: ask                # ask | allow | deny
+  media_dir: .reyn/media          # project-relative dir for image binaries
+  tool_results_dir: .reyn/tool-results   # project-relative dir for tool-result dumps
+  base_url: null                  # optional canonical URL prefix for cross-host path_ref
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_bytes` | int | `5000000` (5 MB) | Decoded-payload byte cap before the on-oversize gate fires. Counts the binary size (`len(response.content)` / `len(file_bytes)`), not the base64-encoded shape. |
+| `on_oversize` | string | `ask` | What to do when a piece of media exceeds `max_bytes`: `ask` (prompt the user via the intervention bus with size + source info; yes loads the media, no drops it), `allow` (silently accept; use in trusted non-interactive pipelines), `deny` (silently reject; the op returns `status="denied"` — use in cost-sensitive contexts). |
+| `media_dir` | string | `.reyn/media` | Project-relative directory for image binary storage (#383 PR-C). Files are flat-named with timestamp + chain-id + tool prefix so `ls -la` sorts chronologically. Operator-browseable and operator-deleteable. |
+| `tool_results_dir` | string | `.reyn/tool-results` | Project-relative directory for text-y tool result dumps (#385 PoC). PR-C lands the writer alongside `media_dir`; PR-D wires the consumer + preview. |
+| `base_url` | string \| null | `null` | Optional canonical URL prefix for cross-host `path_ref` consumption (#385 β cross-host sub-task). When set (e.g. `"https://reyn.example.com"` from a deployed `reyn web`), `MediaStore.save_*` augments the path_ref with a `url` field pointing at `<base_url>/agents/<agent>/tool-results/<artifact>` so A2A peers / MCP clients / browsers can fetch the body via the resources router. Unset → no `url` field minted (same-host fast-path only). |
+
+## `external_transports` block
+
+Inbound transport → MCP tool routing for chat (FP-0041 #489 PR-D2). Maps an external transport name (Slack / LINE / Discord / ...) to the MCP tool that delivers replies, plus an `args_template` describing how router output is shaped into the tool's arguments.
+
+```yaml
+external_transports:
+  transports:
+    slack:
+      mcp_tool: slack__post_message
+      args_template:
+        channel: "${TRANSPORT_DEST}"
+        text: "${ROUTER_REPLY}"
+    line:
+      mcp_tool: line__push_message
+      args_template:
+        to: "${TRANSPORT_DEST}"
+        messages:
+          - type: text
+            text: "${ROUTER_REPLY}"
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `transports.<name>.mcp_tool` | string | Fully-qualified MCP tool name (`<server>__<tool>`) that delivers the reply. |
+| `transports.<name>.args_template` | map | Shape passed to the MCP tool. `${TRANSPORT_DEST}` resolves to the per-message destination identifier (channel / user / room id), `${ROUTER_REPLY}` to the router's final text. Other `${VAR}` references resolve from `os.environ` per the standard interpolation rules. |
+
+See `src/reyn/chat/external_routing.py` for the per-transport contract and the full set of available template variables.
 
 ## See also
 

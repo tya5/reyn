@@ -7,7 +7,7 @@ applies_to: [.reyn/]
 
 # `.reyn/` — 状態ディレクトリ
 
-プロジェクトごとの状態。デフォルトの場所: `<project_root>/.reyn/`。`reyn.yaml` の `state_dir` キーでオーバーライドします。
+プロジェクトごとの状態。場所: `<project_root>/.reyn/` — 固定です。（`reyn.yaml` に `state_dir` knob はありません。ランタイムが検出したプロジェクトルートからパスを構築します。）
 
 ## レイアウト
 
