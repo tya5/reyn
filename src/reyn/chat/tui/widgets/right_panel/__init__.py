@@ -67,6 +67,14 @@ _PANEL_LABELS: dict[str, str] = {
 # trigger (= manual tab switch).
 _LIVE_PANELS = {"events", "agents", "cost", "memory", "pending"}
 _REFRESH_INTERVAL = 2.0
+# Wave Round 2 finding W2 (2026-05-29): below this total terminal width
+# the panel's ``min-width: 44`` (CSS default) crushes the conv pane
+# down to ~16 cols and chat output wraps to 5+ lines per message.
+# Threshold of 60 = panel 44 + conv 16; below that the conv side is
+# functionally unreadable. ``on_resize`` auto-closes the panel below
+# this width — Ctrl+B re-open restores the prior tab so user state
+# survives the visibility flip.
+_PANEL_NARROW_TERMINAL_CUTOFF = 60
 
 
 class RightPanel(Widget):
@@ -262,6 +270,35 @@ class RightPanel(Widget):
         automatically).
         """
         del event  # unused; we re-read app.size below
+        # Wave Round 2 finding W2 (2026-05-29): below
+        # ``_PANEL_NARROW_TERMINAL_CUTOFF`` cols of total terminal width
+        # the panel's ``min-width: 44`` (CSS default) leaves the conv
+        # pane only ~16 cols — chat output wraps to 5+ lines per
+        # message and is effectively unreadable. Auto-close the panel
+        # so the conv pane regains its full width. The app already
+        # restores the last-active tab on ``Ctrl+B`` re-open, so user
+        # state (tab + scroll) survives the auto-close — only the
+        # visibility toggle flips. Flash a short status so the user
+        # understands why their explicit ``Ctrl+B`` open got reversed.
+        try:
+            current_width = int(self.app.size.width or 0)
+        except Exception:
+            current_width = 0
+        if (
+            current_width
+            and current_width < _PANEL_NARROW_TERMINAL_CUTOFF
+            and self.display
+        ):
+            try:
+                self.app.action_toggle_panel()
+                self._flash_status(
+                    f"panel hidden — terminal narrower than "
+                    f"{_PANEL_NARROW_TERMINAL_CUTOFF} cols (Ctrl+B to retry after resize)"
+                )
+            except Exception as exc:
+                logger.warning(
+                    "right_panel narrow-terminal auto-close failed: %s", exc,
+                )
         if self._panel_width == 0:
             return
         max_width = self._max_panel_width()
