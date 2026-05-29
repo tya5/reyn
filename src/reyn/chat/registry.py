@@ -546,7 +546,7 @@ class AgentRegistry:
                 and now - self._last_truncation_ts < self._TRUNCATION_THROTTLE_SECS):
             return None
         try:
-            floor = self.compute_truncate_floor()
+            floor = await asyncio.to_thread(self.compute_truncate_floor)
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("WAL truncation: floor computation failed: %s", e)
             return None
