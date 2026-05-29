@@ -1,20 +1,28 @@
 """Tier 2: OS invariant — AgentRegistry's WAL truncation orchestrator.
 
-The orchestrator gathers `applied_seq` across every agent + every active
-skill snapshot, computes the universally-absorbed floor, and rewrites
-the WAL to drop entries below it. This is the policy layer on top of
-`StateLog.truncate_below` (the rewrite primitive, tested separately).
+The orchestrator gathers ``applied_seq`` from every live session + every
+active skill / plan snapshot, computes the universally-absorbed floor,
+and rewrites the WAL to drop entries below it. This is the policy layer
+on top of ``StateLog.truncate_below`` (the rewrite primitive, tested
+separately).
 
-Tests target the public surface (`truncate_wal_if_eligible`,
-`compute_truncate_floor`); observation flows through:
+PR-N7 (FP-0008): the floor calculation reads exclusively from in-memory
+state (= ``ChatSession.iter_applied_seqs`` via the session's journal +
+skill / plan registries), not from disk. Tests therefore register a
+duck-typed shim session into ``registry._agents`` and accumulate
+watermarks (= the seqs the shim yields) in the shim's seq list. On-disk
+profiles are still created so ``list_names`` reflects the right agents
+for unrelated paths, but the floor calc itself never reads files.
+
+Tests target the public surface (``truncate_wal_if_eligible``,
+``compute_truncate_floor``); observation flows through:
   - the on-disk WAL (re-read after truncation)
   - the returned stats dict
-No mocks — we construct real `AgentRegistry` instances backed by real
-snapshots on a temporary `tmp_path`.
 
 Policy compliance:
-- No `unittest.mock` usage (Fake > Mock per docs/deep-dives/contributing/testing.ja.md)
-- No private-state assertion beyond `_last_truncation_ts` for throttle
+- No ``unittest.mock`` usage (Fake > Mock per
+  docs/deep-dives/contributing/testing.ja.md)
+- No private-state assertion beyond ``_last_truncation_ts`` for throttle
   observation, which has no public surface and is the cleanest probe
   (alternative: time-travel patches, which would be worse)
 """
@@ -25,9 +33,7 @@ from pathlib import Path
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
-from reyn.skill.skill_snapshot import SkillSnapshot
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,14 +54,49 @@ def _make_registry(tmp_path: Path, *, with_state_log: bool = True) -> AgentRegis
     )
 
 
-def _seed_agent(registry: AgentRegistry, name: str, *, applied_seq: int) -> Path:
-    """Create the on-disk profile + snapshot for an agent with the given applied_seq."""
-    AgentProfile.new(name, role="").save(registry._dir / name)
-    snap = AgentSnapshot.empty(name)
-    snap.applied_seq = applied_seq
-    snap_path = registry._dir / name / "state" / "snapshot.json"
-    snap.save(snap_path)
-    return snap_path
+class _ShimSession:
+    """Minimal duck-typed ChatSession exposing only ``iter_applied_seqs``.
+
+    Tests accumulate watermarks via the seed helpers below; the shim
+    surfaces them through the same public-surface contract that
+    ``AgentRegistry.compute_truncate_floor`` consumes in production
+    (= session.iter_applied_seqs returning the union of journal +
+    skill + plan watermarks).
+    """
+
+    def __init__(self) -> None:
+        self._seqs: list[int] = []
+
+    def iter_applied_seqs(self, *, now_ts: float, long_await_threshold: float) -> list[int]:
+        return list(self._seqs)
+
+
+def _get_or_create_shim(registry: AgentRegistry, name: str) -> _ShimSession:
+    """Return the shim session for ``name``, creating + registering it
+    on first use. Mirrors the on-disk-profile creation pattern so
+    ``list_names`` still includes the agent.
+    """
+    if name not in registry._agents:
+        AgentProfile.new(name, role="").save(registry._dir / name)
+        registry._agents[name] = _ShimSession()
+    shim = registry._agents[name]
+    assert isinstance(shim, _ShimSession), (
+        f"agent {name!r} is registered with a non-shim object — test fixture bug"
+    )
+    return shim
+
+
+def _seed_agent(registry: AgentRegistry, name: str, *, applied_seq: int) -> None:
+    """Register the agent's session-level applied_seq watermark.
+
+    PR-N7: pushes the watermark into the shim's seq list. ``applied_seq=0``
+    is intentionally a no-op (mirrors the pre-N7 ``dormant skip`` invariant:
+    a session whose journal snapshot has applied_seq == 0 has never
+    absorbed a WAL event and is excluded from the floor calc).
+    """
+    shim = _get_or_create_shim(registry, name)
+    if applied_seq > 0:
+        shim._seqs.append(int(applied_seq))
 
 
 def _seed_skill(
@@ -64,15 +105,16 @@ def _seed_skill(
     run_id: str,
     *,
     last_phase_applied_seq: int,
-) -> Path:
-    """Create the on-disk per-skill snapshot for an agent's active skill."""
-    snap = SkillSnapshot.empty(run_id, "demo_skill", {"input": "x"})
-    snap.last_phase_applied_seq = last_phase_applied_seq
-    snap_path = (
-        registry._dir / agent_name / "state" / "skills" / f"{run_id}.snapshot.json"
-    )
-    snap.save(snap_path)
-    return snap_path
+) -> None:
+    """Register an active-skill watermark for the agent's shim session.
+
+    PR-N7: ``run_id`` is retained in the signature for call-site
+    compatibility with the pre-N7 disk-seed helper, but the in-memory
+    path doesn't need it — the shim only yields the seq.
+    """
+    del run_id  # only needed for the pre-N7 disk path
+    shim = _get_or_create_shim(registry, agent_name)
+    shim._seqs.append(int(last_phase_applied_seq))
 
 
 def _seed_plan(
@@ -81,19 +123,15 @@ def _seed_plan(
     plan_id: str,
     *,
     last_step_applied_seq: int,
-) -> Path:
-    """Create the on-disk per-plan snapshot for an agent's active plan."""
-    from reyn.plan.plan_snapshot import PlanSnapshot, plan_snapshot_path
-    snap = PlanSnapshot.empty(
-        plan_id=plan_id, agent_name=agent_name, chain_id=f"plan_{plan_id}",
-        goal="g",
-    )
-    snap.last_step_applied_seq = last_step_applied_seq
-    snap_path = plan_snapshot_path(
-        registry._dir / agent_name / "state", plan_id,
-    )
-    snap.save(snap_path)
-    return snap_path
+) -> None:
+    """Register an active-plan watermark for the agent's shim session.
+
+    PR-N7: ``plan_id`` retained for call-site compatibility; in-memory
+    floor calc only needs the seq.
+    """
+    del plan_id
+    shim = _get_or_create_shim(registry, agent_name)
+    shim._seqs.append(int(last_step_applied_seq))
 
 
 def _wal_seqs(state_log: StateLog) -> set[int]:
@@ -152,22 +190,6 @@ def test_compute_floor_min_across_skill_and_plan(tmp_path):
     assert floor == 4  # min(10, 6, 3) + 1
 
 
-def test_compute_floor_zero_on_corrupt_plan_snapshot(tmp_path):
-    """Tier 2: malformed plan snapshot is conservative — returns 0,
-    no truncation. Mirrors the corrupt-skill-snapshot fail-closed
-    invariant."""
-    registry = _make_registry(tmp_path)
-    _seed_agent(registry, "alpha", applied_seq=10)
-    _seed_plan(registry, "alpha", "p001", last_step_applied_seq=5)
-    snap_path = (
-        registry._dir / "alpha" / "state" / "plans" / "p001.snapshot.json"
-    )
-    snap_path.write_text("{not valid json", encoding="utf-8")
-
-    floor = registry.compute_truncate_floor()
-    assert floor == 0
-
-
 def test_compute_floor_zero_when_no_persistent_agents(tmp_path):
     """Tier 2: dormant agents (snapshot-less) are skipped; with zero persistent agents, floor=0 (no truncation).
 
@@ -178,22 +200,6 @@ def test_compute_floor_zero_when_no_persistent_agents(tmp_path):
     """
     registry = _make_registry(tmp_path)
     # `default` was auto-created but has no snapshot.json — dormant, skipped.
-    floor = registry.compute_truncate_floor()
-    assert floor == 0
-
-
-def test_compute_floor_zero_on_corrupt_agent_snapshot(tmp_path):
-    """Tier 2: corrupt agent snapshot returns floor=0 (fail closed — keep WAL intact).
-
-    Truncation parses agent snapshots explicitly (rather than going through
-    ``AgentSnapshot.load``'s defensive empty-fallback) so corruption is
-    distinguishable from the legitimate dormant case (``applied_seq == 0``).
-    """
-    registry = _make_registry(tmp_path)
-    _seed_agent(registry, "alpha", applied_seq=5)
-    snap_path = registry._dir / "alpha" / "state" / "snapshot.json"
-    snap_path.write_text("{not valid json", encoding="utf-8")
-
     floor = registry.compute_truncate_floor()
     assert floor == 0
 
@@ -213,18 +219,6 @@ def test_compute_floor_skips_dormant_agent_with_zero_applied_seq(tmp_path):
     floor = registry.compute_truncate_floor()
     # Dormant skipped → floor based on alpha alone
     assert floor == 11
-
-
-def test_compute_floor_zero_on_corrupt_skill_snapshot(tmp_path):
-    """Tier 2: malformed skill snapshot is conservative — returns 0, no truncation."""
-    registry = _make_registry(tmp_path)
-    _seed_agent(registry, "alpha", applied_seq=10)
-    skills_dir = registry._dir / "alpha" / "state" / "skills"
-    skills_dir.mkdir(parents=True, exist_ok=True)
-    (skills_dir / "bad.snapshot.json").write_text("{garbage", encoding="utf-8")
-
-    floor = registry.compute_truncate_floor()
-    assert floor == 0
 
 
 def test_truncate_eligible_drops_below_floor_and_returns_stats(tmp_path):
@@ -277,12 +271,16 @@ def test_truncate_no_op_when_no_state_log(tmp_path):
 
 
 def test_truncate_no_op_when_floor_not_advanced(tmp_path):
-    """Tier 2: floor=0 (corrupt skill snapshot) skips the rewrite entirely."""
+    """Tier 2: floor=0 (no live session pinning a watermark) skips the rewrite entirely.
+
+    PR-N7: with no registered shim sessions, ``compute_truncate_floor``
+    returns 0, and ``truncate_wal_if_eligible`` returns None (= don't
+    truncate, keep WAL intact). Mirrors the conservative fail-closed
+    posture the pre-N7 disk-read path took when no watermark was
+    available.
+    """
     registry = _make_registry(tmp_path)
-    _seed_agent(registry, "alpha", applied_seq=10)
-    skills_dir = registry._dir / "alpha" / "state" / "skills"
-    skills_dir.mkdir(parents=True, exist_ok=True)
-    (skills_dir / "bad.snapshot.json").write_text("{garbage", encoding="utf-8")
+    # No shim sessions registered → no watermarks → floor = 0.
 
     async def go():
         await registry.state_log.append("inbox_put", target="a", payload={})
@@ -295,22 +293,28 @@ def test_truncate_no_op_when_floor_not_advanced(tmp_path):
 
 
 def test_truncate_advances_seqs_across_active_skill_completion(tmp_path):
-    """Tier 2: end-to-end progression — active skill phase-advances, snapshot updates, next truncation drops the older range."""
+    """Tier 2: end-to-end progression — active skill phase-advances,
+    in-memory watermark updates, next truncation drops the older range.
+
+    PR-N7: the watermark mutation that previously happened via
+    ``SkillSnapshot.load + save`` now happens via the shim's seq list
+    directly — the production path also mutates SkillRegistry's
+    in-memory snapshot when ``advance_phase`` fires, and
+    ``iter_applied_phase_seqs`` reads the fresh value.
+    """
     registry = _make_registry(tmp_path)
     _seed_agent(registry, "alpha", applied_seq=10)
-    skill_snap_path = _seed_skill(
-        registry, "alpha", "run_zzz", last_phase_applied_seq=3,
-    )
+    _seed_skill(registry, "alpha", "run_zzz", last_phase_applied_seq=3)
+    shim = registry._agents["alpha"]
 
     async def go():
         for i in range(1, 21):
             await registry.state_log.append("inbox_put", target=f"a{i}", payload={})
         # First truncation: floor = min(10, 3) + 1 = 4 → drop 1..3
         first = await registry.truncate_wal_if_eligible()
-        # Skill phase-advances to seq 15 — bump its snapshot
-        snap = SkillSnapshot.load("run_zzz", skill_snap_path)
-        snap.last_phase_applied_seq = 15
-        snap.save(skill_snap_path)
+        # Skill phase-advances to seq 15 — replace the watermark in the shim
+        # (mirrors SkillRegistry.advance_phase mutating its in-memory snapshot).
+        shim._seqs = [10, 15]
         # Wait past throttle window
         registry._last_truncation_ts = None
         # Second truncation: floor = min(10, 15) + 1 = 11 → drop 4..10

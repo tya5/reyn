@@ -546,7 +546,7 @@ class AgentRegistry:
                 and now - self._last_truncation_ts < self._TRUNCATION_THROTTLE_SECS):
             return None
         try:
-            floor = await asyncio.to_thread(self.compute_truncate_floor)
+            floor = self.compute_truncate_floor()
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("WAL truncation: floor computation failed: %s", e)
             return None
@@ -679,12 +679,26 @@ class AgentRegistry:
     def compute_truncate_floor(self) -> int:
         """Return the lowest seq that MUST remain in the WAL.
 
-        ``floor = min(全 持続 agent applied_seq, 全 active skill
-        last_phase_applied_seq) + 1``
+        ``floor = min(全 active session applied_seq, 全 active skill
+        last_phase_applied_seq, 全 active plan last_step_applied_seq) + 1``
 
-        Truly dormant agents (no snapshot file on disk) are *excluded*
-        from the floor calculation. The invariant that justifies this
-        skip:
+        PR-N7 (FP-0008): reads watermarks exclusively from in-memory
+        state — session journal snapshots + per-session skill / plan
+        registries — by walking ``self._agents.values()`` and calling
+        each session's ``iter_applied_seqs`` public method. The pre-N7
+        implementation walked every snapshot file on disk inside the
+        async ``truncate_wal_if_eligible`` caller, which blocked the
+        event loop for O(N agents × disk read) and was the root cause
+        of the 13-hour hang observed in PR-N5 13236 single-instance
+        pilot. The in-memory path matches the existing reyn architecture
+        choice (event loop friendly, event-sourced state from WAL apply,
+        no thread offload).
+
+        Dormant agents (no live ChatSession registered in
+        ``self._agents``) are excluded from the floor calculation — the
+        same skip the pre-N7 disk-read path applied for
+        ``applied_seq == 0`` snapshots. The invariant that justifies
+        this:
 
           A dormant agent has no live ``ChatSession``. WAL events are
           only appended through a session's ``SnapshotJournal``, which
@@ -693,130 +707,34 @@ class AgentRegistry:
           this run, and dropping events older than the dormant agent's
           (zero) applied_seq cannot orphan messages.
 
-          When the dormant agent later receives its first event, the
-          ``SnapshotJournal`` assigns ``applied_seq`` to the freshly
-          allocated WAL seq — effectively a "starts here" stamp — so
-          the agent never gets stuck below the truncation floor.
+          When the dormant agent later receives its first event,
+          ``ensure`` instantiates a session that immediately registers
+          here, and the next floor recompute picks up its watermark.
 
-        Returns 0 when:
-          - no persistent agents found on disk (no constraint anywhere
-            in the system → don't truncate)
-          - any snapshot file is malformed (conservative — keep WAL
-            bloated rather than risk dropping needed entries)
+        R-D16: skills awaiting an intervention for longer than
+        ``_LONG_AWAIT_THRESHOLD_SEC`` are excluded so the WAL can keep
+        advancing — delegated to
+        :meth:`SkillRegistry.iter_applied_phase_seqs` which performs
+        the elapsed check in-memory.
+
+        Returns 0 when no watermark is available (no live session, no
+        active skill, no active plan).
         """
         seqs: list[int] = []
-
-        # Per-agent applied_seq from each agent's main snapshot. Two skip
-        # paths for dormant agents (semantically equivalent — an agent that
-        # has never absorbed a WAL event):
-        #   1. snapshot file missing — fresh agent, never persisted
-        #   2. snapshot file present but ``applied_seq == 0`` — written by
-        #      ``restore_all`` for an agent with no events to absorb
-        #
-        # AgentSnapshot.load is defensive (returns empty on parse error),
-        # which would silently mask corruption as the dormant case. We
-        # parse explicitly here to distinguish: corruption returns
-        # floor=0 (fail closed, keep WAL intact); legitimate ``applied_seq
-        # == 0`` means dormant and can be skipped safely.
-        for name in self.list_names():
-            snap_path = self._dir / name / "state" / "snapshot.json"
-            if not snap_path.is_file():
-                continue
-            try:
-                data = json.loads(snap_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as e:
-                logger.warning(
-                    "WAL truncation: cannot read agent snapshot %s: %s",
-                    snap_path, e,
-                )
-                return 0
-            if not isinstance(data, dict):
-                logger.warning(
-                    "WAL truncation: malformed agent snapshot %s "
-                    "(not an object)", snap_path,
-                )
-                return 0
-            try:
-                applied_seq = int(data.get("applied_seq", 0))
-            except (TypeError, ValueError):
-                return 0
-            if applied_seq == 0:
-                # Dormant — no WAL events have targeted this agent
-                # (SnapshotJournal would have bumped applied_seq above 0
-                # on first append). Skip from floor calc.
-                continue
-            seqs.append(applied_seq)
-
-        # Per-active-skill last_phase_applied_seq. We do NOT load the full
-        # SkillSnapshot dataclass here — only need one int field. Direct
-        # JSON read sidesteps any future schema bumps from breaking
-        # truncation just to extract a number.
-        #
-        # R-D16: skills awaiting an intervention for longer than
-        # ``_LONG_AWAIT_THRESHOLD_SEC`` are excluded from the floor calc.
-        # ``awaiting_since`` is a monotonic timestamp captured by
-        # ``SkillRegistry.mark_awaiting`` when a run begins to wait;
-        # ``None`` (= field absent in older snapshots) means not awaiting
-        # and the skill remains pinned (same as R-D4).
         now = time.monotonic()
-        for name in self.list_names():
-            skills_dir = self._dir / name / "state" / "skills"
-            if not skills_dir.is_dir():
+        for session in self._agents.values():
+            iter_method = getattr(session, "iter_applied_seqs", None)
+            if iter_method is None:
+                # Conservative: a session shim without the method (test
+                # fixtures, future variants) is treated as a non-pinner
+                # — never block truncation on a stale shim.
                 continue
-            for snap_file in skills_dir.glob("*.snapshot.json"):
-                try:
-                    data = json.loads(snap_file.read_text(encoding="utf-8"))
-                except Exception as e:  # noqa: BLE001 — see returns 0 above
-                    logger.warning(
-                        "WAL truncation: cannot read skill snapshot %s: %s",
-                        snap_file, e,
-                    )
-                    return 0
-                if not isinstance(data, dict):
-                    continue
-                awaiting_since = data.get("awaiting_since")
-                if awaiting_since is not None:
-                    try:
-                        elapsed = now - float(awaiting_since)
-                    except (TypeError, ValueError):
-                        elapsed = 0.0
-                    if elapsed >= self._LONG_AWAIT_THRESHOLD_SEC:
-                        # Long-await skill — exclude from floor so the
-                        # WAL can keep advancing. Memo entries below the
-                        # new floor are dropped; resume re-executes the
-                        # awaited op (cache miss behaviour).
-                        continue
-                val = data.get("last_phase_applied_seq", 0)
-                try:
-                    seqs.append(int(val))
-                except (TypeError, ValueError):
-                    return 0
-
-        # ADR-0023 §3.1: per-active-plan last_step_applied_seq. Direct
-        # JSON read mirrors the skill block above. Plans live at
-        # state/plans/<plan_id>.snapshot.json (sibling to per-plan dirs).
-        # If a long-running plan exists, its watermark pins the floor so
-        # plan_step_* events the resume analyzer needs aren't truncated.
-        for name in self.list_names():
-            plans_dir = self._dir / name / "state" / "plans"
-            if not plans_dir.is_dir():
-                continue
-            for snap_file in plans_dir.glob("*.snapshot.json"):
-                try:
-                    data = json.loads(snap_file.read_text(encoding="utf-8"))
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        "WAL truncation: cannot read plan snapshot %s: %s",
-                        snap_file, e,
-                    )
-                    return 0
-                if isinstance(data, dict):
-                    val = data.get("last_step_applied_seq", 0)
-                    try:
-                        seqs.append(int(val))
-                    except (TypeError, ValueError):
-                        return 0
-
+            seqs.extend(
+                iter_method(
+                    now_ts=now,
+                    long_await_threshold=self._LONG_AWAIT_THRESHOLD_SEC,
+                )
+            )
         if not seqs:
             return 0
         # Drop entries strictly below the lowest absorbed seq. The +1 makes

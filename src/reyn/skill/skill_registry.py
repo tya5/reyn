@@ -318,6 +318,30 @@ class SkillRegistry:
         """Return run_ids of currently-tracked skill runs (in registration order)."""
         return list(self._snapshots.keys())
 
+    def iter_applied_phase_seqs(
+        self, *, now_ts: float, long_await_threshold: float,
+    ) -> "list[int]":
+        """Return in-memory last_phase_applied_seq values for floor calc.
+
+        Used by AgentRegistry.compute_truncate_floor to derive the WAL
+        truncation floor without disk I/O — preserves the existing reyn
+        architecture choice (= event loop friendly, no thread offload,
+        in-memory state from event-sourced WAL apply).
+
+        R-D16: skills awaiting an intervention for longer than
+        ``long_await_threshold`` (monotonic seconds since
+        ``awaiting_since``) are excluded so the WAL can keep advancing
+        even while a stuck await pins the floor indefinitely.
+        """
+        out: list[int] = []
+        for snap in self._snapshots.values():
+            awaiting_since = snap.awaiting_since
+            if awaiting_since is not None:
+                if (now_ts - float(awaiting_since)) >= long_await_threshold:
+                    continue
+            out.append(int(snap.last_phase_applied_seq))
+        return out
+
     # ── persistence ──────────────────────────────────────────────────────
 
     def load_active(self) -> dict[str, SkillSnapshot]:

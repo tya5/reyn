@@ -486,6 +486,15 @@ class PlanRegistry:
         """Return plan_ids of currently-tracked plans (in registration order)."""
         return list(self._snapshots.keys())
 
+    def iter_step_applied_seqs(self) -> "list[int]":
+        """Return in-memory last_step_applied_seq values for floor calc.
+
+        Mirrors :meth:`SkillRegistry.iter_applied_phase_seqs` — surfaces
+        the watermark the AgentRegistry truncation floor needs from this
+        registry's in-memory state, without disk I/O.
+        """
+        return [int(snap.last_step_applied_seq) for snap in self._snapshots.values()]
+
     # ── persistence ──────────────────────────────────────────────────────
 
     def load_active(self) -> dict[str, PlanSnapshot]:
