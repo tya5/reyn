@@ -310,13 +310,17 @@ def render_keys(
         ("k", "Scroll up (current tab)"),
         ("space", "Toggle preview pane"),
         ("c", "Copy current view (pending tab: claim cursor)"),
-        # A-F2 (wave-8): ``d`` is the primary pending-tab action (=
-        # discard the cursor's intervention).
-        ("d", "Discard cursor (pending tab)"),
-        # T2-5a (wave-12): ``d`` on the events tab opens runtime/events.md
-        # in the Docs tab. Listed as a second row because it's a different
-        # tab context — not a merge of the pending-tab meaning.
-        ("d", "Open events.md reference (events tab)"),
+        # ``d`` does double duty across two tab contexts:
+        #   - A-F2 (wave-8): pending tab → discard cursor's intervention
+        #   - T2-5a (wave-12): events tab → open runtime/events.md
+        # Wave Round 2 finding N5 (2026-05-29): the prior layout
+        # emitted two consecutive ``d`` rows under [PANEL]. Users
+        # encountered them as duplicate entries (= "why is `d` listed
+        # twice?") rather than as one key with two tab-gated meanings.
+        # Merge into a single row with the parenthesised dual-meaning
+        # idiom that ``c`` already uses ("Copy current view (pending
+        # tab: claim cursor)").
+        ("d", "Discard cursor (pending tab) / open events.md (events tab)"),
         # H-F11 (wave-10 follow-up): ``a`` on the Agents tab prefills
         # ``/attach <name>`` into the InputBar for the cursor's agent.
         # Same "per-tab action" idiom as the pending-tab ``d`` / ``c``
