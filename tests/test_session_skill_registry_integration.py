@@ -127,31 +127,32 @@ def test_truncate_hook_unwired_without_registry(tmp_path, monkeypatch):
 def test_truncate_hook_wired_with_registry(tmp_path, monkeypatch):
     """Tier 2: with registry set, the hook bridges to AgentRegistry.truncate_wal_if_eligible.
 
-    Verified end-to-end: seed alpha's profile (so AgentRegistry's
-    ``list_names`` sees it) and snapshot with a non-zero applied_seq
-    (so the floor calc returns a real value), call ``advance_phase``
-    → hook fires → AgentRegistry executes a real truncation pass.
-    Observable signal is the throttle stamp, which is set only when
-    truncation actually attempts a rewrite (floor > 0).
+    PR-N7 (FP-0008): the floor calc reads in-memory session state via
+    ``ChatSession.iter_applied_seqs``. The session must be registered
+    in ``AgentRegistry._agents`` so the floor walk picks it up; the
+    on-disk profile is created so ``list_names`` reflects the agent
+    (some unrelated paths rely on that).
+
+    Verified end-to-end: register the live session into AgentRegistry,
+    call ``advance_phase`` → SkillRegistry's in-memory snapshot bumps
+    ``last_phase_applied_seq`` → hook fires →
+    ``ChatSession.iter_applied_seqs`` yields a non-zero watermark via
+    the skill_registry pass-through → AgentRegistry executes a real
+    truncation pass. Observable signal is the throttle stamp, which is
+    set only when truncation actually attempts a rewrite (floor > 0).
     """
     from reyn.chat.profile import AgentProfile
-    from reyn.events.agent_snapshot import AgentSnapshot
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, with_state_log=True, with_registry=True)
 
-    # Seed alpha as a real on-disk agent so AgentRegistry.list_names
-    # discovers it (it scans the agents/ directory for entries with a
-    # profile.yaml). Without this, alpha is invisible to the truncation
-    # floor calc and floor stays at 0.
+    # On-disk profile so AgentRegistry.list_names reflects the agent.
     AgentProfile.new("alpha", role="").save(
         Path(".reyn") / "agents" / "alpha",
     )
-    snap = AgentSnapshot.empty("alpha")
-    snap.applied_seq = 5
-    snap.save(
-        Path(".reyn") / "agents" / "alpha" / "state" / "snapshot.json",
-    )
+    # Register the live session into the registry's in-memory map so the
+    # PR-N7 in-memory floor walk picks up its iter_applied_seqs.
+    session.agent_registry._agents["alpha"] = session
 
     reg = session.get_skill_registry()
     assert reg.truncate_hook is not None

@@ -2042,6 +2042,44 @@ class ChatSession:
         """
         return self._journal
 
+    def iter_applied_seqs(
+        self, *, now_ts: float, long_await_threshold: float,
+    ) -> "list[int]":
+        """Return in-memory applied_seqs for WAL truncation floor calc.
+
+        Surfaces the watermarks AgentRegistry.compute_truncate_floor
+        needs from this session, sourced exclusively from in-memory
+        state (= journal snapshot + skill_registry + plan_registry).
+        No disk I/O — preserves the existing reyn architecture choice
+        (event loop friendly, no thread offload, in-memory state is
+        event-sourced from WAL apply).
+
+        Yielded watermarks:
+          - ``journal.snapshot.applied_seq`` when > 0 (dormant agents
+            with applied_seq == 0 are skipped — the same skip the
+            disk-read path used so behaviour matches)
+          - per active skill: ``last_phase_applied_seq``, with R-D16
+            long-await exclusion (skills awaiting >= long_await_threshold
+            seconds are dropped from the floor so WAL can keep advancing)
+          - per active plan: ``last_step_applied_seq``
+        """
+        out: list[int] = []
+        snap_applied = int(self._journal.snapshot.applied_seq)
+        if snap_applied > 0:
+            out.append(snap_applied)
+        skill_reg = self.get_skill_registry()
+        if skill_reg is not None:
+            out.extend(
+                skill_reg.iter_applied_phase_seqs(
+                    now_ts=now_ts,
+                    long_await_threshold=long_await_threshold,
+                )
+            )
+        plan_reg = self.get_plan_registry()
+        if plan_reg is not None:
+            out.extend(plan_reg.iter_step_applied_seqs())
+        return out
+
     def current_state_summary(self) -> dict:
         """Return a lightweight snapshot for slash-command display.
 

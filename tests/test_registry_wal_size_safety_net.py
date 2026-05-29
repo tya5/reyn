@@ -26,12 +26,10 @@ from pathlib import Path
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
-from reyn.skill.skill_snapshot import SkillSnapshot
 
 # ---------------------------------------------------------------------------
-# Helpers (mirrors test_registry_wal_truncate.py)
+# Helpers (mirrors test_registry_wal_truncate.py post-PR-N7)
 # ---------------------------------------------------------------------------
 
 
@@ -48,12 +46,51 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
     )
 
 
+class _ShimSession:
+    """Minimal duck-typed ChatSession exposing only ``iter_applied_seqs``.
+
+    PR-N7 (FP-0008): the WAL truncation floor reads exclusively from
+    in-memory session state. Tests register a shim into ``_agents`` and
+    seed the watermarks via ``_seed_agent`` / ``_seed_skill``.
+    """
+
+    def __init__(self) -> None:
+        self._seqs: list[int] = []
+
+    def iter_applied_seqs(self, *, now_ts: float, long_await_threshold: float) -> list[int]:
+        return list(self._seqs)
+
+
+def _get_or_create_shim(registry: AgentRegistry, name: str) -> _ShimSession:
+    if name not in registry._agents:
+        AgentProfile.new(name, role="").save(registry._dir / name)
+        registry._agents[name] = _ShimSession()
+    shim = registry._agents[name]
+    assert isinstance(shim, _ShimSession)
+    return shim
+
+
 def _seed_agent(registry: AgentRegistry, name: str, *, applied_seq: int) -> None:
-    AgentProfile.new(name, role="").save(registry._dir / name)
-    snap = AgentSnapshot.empty(name)
-    snap.applied_seq = applied_seq
-    snap_path = registry._dir / name / "state" / "snapshot.json"
-    snap.save(snap_path)
+    shim = _get_or_create_shim(registry, name)
+    if applied_seq > 0:
+        shim._seqs.append(int(applied_seq))
+
+
+def _seed_skill(
+    registry: AgentRegistry,
+    agent_name: str,
+    run_id: str,
+    *,
+    last_phase_applied_seq: int,
+) -> None:
+    """Register an active-skill watermark for the agent's shim session.
+
+    PR-N7: ``run_id`` retained for call-site compatibility; in-memory
+    floor calc only needs the seq.
+    """
+    del run_id
+    shim = _get_or_create_shim(registry, agent_name)
+    shim._seqs.append(int(last_phase_applied_seq))
 
 
 async def _inflate_wal(log: StateLog, *, target_bytes: int) -> None:
@@ -189,15 +226,9 @@ def test_size_safety_net_protects_active_skill_events(tmp_path: Path):
     """
     registry = _make_registry(tmp_path)
     _seed_agent(registry, "alpha", applied_seq=10_000)
-    # Active skill snapshot pulls the floor down to last_phase_applied_seq + 1.
+    # Active skill pulls the floor down to last_phase_applied_seq + 1.
     # Pick a small value so our inflated WAL straddles it.
-    skill_snap = SkillSnapshot.empty("run_active", "demo_skill", {"x": 1})
-    skill_snap.last_phase_applied_seq = 50
-    skill_path = (
-        registry._dir / "alpha" / "state" / "skills" / "run_active.snapshot.json"
-    )
-    skill_path.parent.mkdir(parents=True, exist_ok=True)
-    skill_snap.save(skill_path)
+    _seed_skill(registry, "alpha", "run_active", last_phase_applied_seq=50)
 
     async def go():
         await _inflate_wal(registry._state_log, target_bytes=51_200)

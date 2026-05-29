@@ -27,12 +27,11 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 from reyn.skill.skill_snapshot import SkillSnapshot
 
 # ---------------------------------------------------------------------------
-# Helpers (mirror test_registry_wal_truncate.py for consistency)
+# Helpers (mirror test_registry_wal_truncate.py post-PR-N7)
 # ---------------------------------------------------------------------------
 
 
@@ -49,11 +48,48 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
     )
 
 
+class _LongAwaitShim:
+    """Minimal duck-typed ChatSession exposing only ``iter_applied_seqs``.
+
+    PR-N7 (FP-0008): the floor calc reads in-memory state via the
+    session's ``iter_applied_seqs`` public method. This shim mirrors
+    the production behavior end-to-end: the session-level applied_seq
+    is yielded when > 0, and per-skill watermarks are yielded subject
+    to the R-D16 long-await elapsed-time check that the real
+    ``SkillRegistry.iter_applied_phase_seqs`` performs.
+    """
+
+    def __init__(self) -> None:
+        self.agent_seq: int = 0  # ChatSession.journal.snapshot.applied_seq
+        # (last_phase_applied_seq, awaiting_since)
+        self.skills: list[tuple[int, "float | None"]] = []
+
+    def iter_applied_seqs(
+        self, *, now_ts: float, long_await_threshold: float,
+    ) -> list[int]:
+        out: list[int] = []
+        if self.agent_seq > 0:
+            out.append(int(self.agent_seq))
+        for last_seq, awaiting_since in self.skills:
+            if awaiting_since is not None:
+                if (now_ts - float(awaiting_since)) >= long_await_threshold:
+                    continue
+            out.append(int(last_seq))
+        return out
+
+
+def _get_or_create_shim(registry: AgentRegistry, name: str) -> _LongAwaitShim:
+    if name not in registry._agents:
+        AgentProfile.new(name, role="").save(registry._dir / name)
+        registry._agents[name] = _LongAwaitShim()
+    shim = registry._agents[name]
+    assert isinstance(shim, _LongAwaitShim)
+    return shim
+
+
 def _seed_agent(registry: AgentRegistry, name: str, *, applied_seq: int) -> None:
-    AgentProfile.new(name, role="").save(registry._dir / name)
-    snap = AgentSnapshot.empty(name)
-    snap.applied_seq = applied_seq
-    snap.save(registry._dir / name / "state" / "snapshot.json")
+    shim = _get_or_create_shim(registry, name)
+    shim.agent_seq = int(applied_seq)
 
 
 def _seed_skill(
@@ -62,16 +98,19 @@ def _seed_skill(
     run_id: str,
     *,
     last_phase_applied_seq: int,
-    awaiting_since: float | None = None,
-) -> Path:
-    snap = SkillSnapshot.empty(run_id, "demo_skill", {"input": "x"})
-    snap.last_phase_applied_seq = last_phase_applied_seq
-    snap.awaiting_since = awaiting_since
-    snap_path = (
-        registry._dir / agent_name / "state" / "skills" / f"{run_id}.snapshot.json"
-    )
-    snap.save(snap_path)
-    return snap_path
+    awaiting_since: "float | None" = None,
+) -> int:
+    """Register an active-skill watermark on the agent's shim.
+
+    Returns the skill's index in the shim's list so callers can mutate
+    ``awaiting_since`` mid-test (= the clearing-restores-inclusion case).
+    PR-N7: ``run_id`` is retained for call-site compatibility.
+    """
+    del run_id
+    shim = _get_or_create_shim(registry, agent_name)
+    idx = len(shim.skills)
+    shim.skills.append((int(last_phase_applied_seq), awaiting_since))
+    return idx
 
 
 # ---------------------------------------------------------------------------
@@ -154,22 +193,27 @@ def test_floor_mixes_short_long_and_non_await(tmp_path: Path, monkeypatch):
 
 def test_clearing_awaiting_since_restores_inclusion(tmp_path: Path, monkeypatch):
     """Tier 2: when a long-await is resolved (awaiting_since=None), the
-    skill is again included in the floor calc."""
+    skill is again included in the floor calc.
+
+    PR-N7: mutates the in-memory shim directly (the production path
+    mutates ``SkillSnapshot.awaiting_since`` in-memory when
+    ``SkillRegistry.clear_awaiting`` fires, and the next floor
+    recompute reads the fresh value).
+    """
     registry = _make_registry(tmp_path)
     _seed_agent(registry, "alpha", applied_seq=1000)
-    skill_path = _seed_skill(
+    _seed_skill(
         registry, "alpha", "run-x",
         last_phase_applied_seq=50, awaiting_since=10.0,
     )
+    shim = registry._agents["alpha"]
 
     # First: long-await → excluded, floor=1001
     monkeypatch.setattr("reyn.chat.registry.time.monotonic", lambda: 500.0)
     assert registry.compute_truncate_floor() == 1001
 
-    # User answered: clear awaiting_since on disk.
-    snap = SkillSnapshot.load("run-x", skill_path)
-    snap.awaiting_since = None
-    snap.save(skill_path)
+    # User answered: clear awaiting_since in memory.
+    shim.skills[0] = (50, None)
 
     # Now the skill is included again → floor pinned at 51.
     assert registry.compute_truncate_floor() == 51
