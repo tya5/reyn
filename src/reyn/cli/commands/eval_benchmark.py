@@ -323,7 +323,6 @@ async def _run_single_task(
     """
     from reyn.agent import Agent
     from reyn.config import _find_project_root, load_project_context
-    from reyn.user_intervention import StdinInterventionBus
 
     async with semaphore:
         # Build input artifact
@@ -347,7 +346,13 @@ async def _run_single_task(
                 agent = Agent(
                     model=model,
                     resolver=session.resolver,
-                    intervention_bus=StdinInterventionBus(),
+                    # PR-N9: benchmark is a non-interactive subprocess. An
+                    # interactive bus blocks on tty raw_mode at limit-checkpoint
+                    # boundaries (= sandbox_2 13977 4h+ hang at apply visit 6).
+                    # Passing None routes through safety/limit_handler.py:173-179
+                    # ``no_bus`` clean abort, the same path scripted/headless
+                    # callers use. See FP-0008 PR-N9 / issue #1045.
+                    intervention_bus=None,
                     safety=session.safety_for(argparse.Namespace()),
                     shell_allowed=shell_allowed,
                     permission_resolver=permission_resolver,
