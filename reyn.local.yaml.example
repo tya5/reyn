@@ -1,70 +1,620 @@
-# ============================================================
-# Local environment settings — example template
+# =============================================================================
+# Local environment overrides — exhaustive example template
 #
-# Copy this file to `reyn.local.yaml` (which is gitignored) and edit it
-# with your local values. Fields here override the corresponding entries
-# in `reyn.yaml`.
+# Copy this file to ``reyn.local.yaml`` (which is gitignored) and uncomment the
+# blocks you want to set. Any field omitted falls back to (a) ``reyn.yaml`` if
+# the project sets it, (b) ``~/.reyn/config.yaml`` for user-global defaults,
+# (c) the built-in defaults declared in ``src/reyn/config.py``.
 #
 #   cp reyn.local.yaml.example reyn.local.yaml
-# ============================================================
-
-# LiteLLM endpoint. Point this at your provider directly (omit api_base) or
-# at a local proxy. Example shown is a LiteLLM proxy on the loopback.
-# api_base: http://localhost:4000
-
-# API key is NOT stored here. Set it in your shell environment so it never
-# lands in a config file or git history:
+#
+# Sections are ordered to mirror ``ReynConfig`` field order so a future
+# version-sync diff against ``src/reyn/config.py`` is straightforward.
+#
+# API keys are NEVER stored in YAML. Set them as environment variables — the
+# variable name is determined by the LiteLLM provider prefix in ``models:``:
 #
 #   export OPENAI_API_KEY=sk-...
 #   export ANTHROPIC_API_KEY=sk-ant-...
+#   export GEMINI_API_KEY=...
 #
-# The variable name depends on the provider prefix in the model string
-# (see reyn.yaml `models:`).
+# Secrets that don't fit the per-provider env-var pattern (= ``GITHUB_TOKEN``,
+# ``LANGFUSE_SECRET_KEY``, etc.) can live in ``~/.reyn/secrets.env`` (= ADR-0030);
+# they are auto-loaded into ``os.environ`` before YAML is parsed, so any
+# ``${VAR}`` reference below resolves transparently.
+# =============================================================================
 
-# Model class -> LiteLLM model string. Override per machine to swap
-# providers without editing the checked-in `reyn.yaml`. A class reference
-# (no `/`) resolves against the built-in catalog or your `reyn.yaml`
-# `models:` block; a string with `/` is passed through to LiteLLM as-is.
+
+# -----------------------------------------------------------------------------
+# model: default model class when --model is not specified on the CLI
+# Built-in default: "standard"
+# -----------------------------------------------------------------------------
+# model: standard
+
+
+# -----------------------------------------------------------------------------
+# output_language: forced LLM reply language (chat router enforces strictly).
+# Unset (default) → no directive added (= LLM follows user message language).
+# Examples: "ja", "en"
+# -----------------------------------------------------------------------------
+# output_language: ja
+
+
+# -----------------------------------------------------------------------------
+# shell_allowed: whether ``shell`` op is unblocked without per-call permission.
+# Default false — operator approves each shell call interactively.
+# -----------------------------------------------------------------------------
+# shell_allowed: false
+
+
+# -----------------------------------------------------------------------------
+# models: model-class → LiteLLM model string. A class reference (no "/")
+# resolves against the built-in catalog or ``reyn.yaml`` ``models:``; a
+# string containing "/" is passed through to LiteLLM as-is.
+# -----------------------------------------------------------------------------
+# models:
+#   light:    openai/gpt-4o-mini
+#   standard: claude-sonnet            # built-in catalog reference
+#   strong:   anthropic/claude-3-7-sonnet
+
+
+# -----------------------------------------------------------------------------
+# api_base: LiteLLM proxy / direct provider base URL.
+# Empty (default) → providers' own endpoints. A local proxy is the most
+# common override:
+# -----------------------------------------------------------------------------
+# api_base: http://localhost:4000
+
+
+# -----------------------------------------------------------------------------
+# permissions: pre-approved permission grants — same structure as phase
+# frontmatter ``permissions:`` block, but value is always ``allow``. Lets the
+# operator pre-approve specific tools so the router doesn't gate them at
+# runtime.
 #
-# Examples:
-#   models:
-#     light:    openai/gpt-4o-mini
-#     standard: claude-sonnet            # built-in catalog reference
-#     strong:   anthropic/claude-3-7-sonnet
-
-# Phase / chain limits. Tighten or relax for local debugging.
+# Shape: nested dict where leaves are ``allow``. Categories:
+#   shell             — pre-approve all shell ops
+#   file.delete       — pre-approve file-delete ops
+#   file.write        — pre-approve file-write ops (path-glob keyed)
+#   python.safe       — pre-approve the python preprocessor's safe mode
+#                       (stdlib skill_router uses this — already set in reyn.yaml)
+#   mcp.<server>      — pre-approve a specific MCP server's tool surface
+# -----------------------------------------------------------------------------
+# permissions:
+#   shell: allow
+#   file.delete: allow
+#   python.safe: allow
+#   mcp:
+#     github: allow
 #
-# limits:
-#   phase:
-#     max_visits: 5
-
-# Permissions pre-approval — required when running headless / benchmark
-# dispatch (= ``reyn eval benchmark ...``). Benchmark Agents are
-# constructed with ``intervention_bus=None`` so any permission prompt
-# the skill declares (e.g. ``file.write: "*"`` in swe_bench) raises
-# immediately instead of asking the user. Pre-approve the same surface
-# in your ``reyn.local.yaml`` to clear the prompt:
+# Headless / benchmark pre-approval (PR-N9 / PR-N11): benchmark Agents are
+# constructed with ``intervention_bus=None`` (= ``reyn eval benchmark ...``),
+# so any permission the skill declares (e.g. swe_bench's ``file.write: "*"``)
+# raises a RuntimeError on the first control_ir op instead of asking the
+# user. Pre-approve the same surface here to clear the prompt — main
+# ``reyn.yaml`` is intentionally left alone (= chat sessions have a bus and
+# CAN ask interactively, so this stays a local / headless-only concern):
 #
 # permissions:
 #   file.write:
 #     "*": allow
 #
-# Narrow the glob (e.g. ``"workspace/**"``) if you want a tighter scope.
-# Without this entry, benchmark runs fail at the first ``file.write``
-# control_ir op with a permission RuntimeError.
+# Narrow the glob (e.g. ``"workspace/**"``) for a tighter scope. Without
+# this entry, benchmark runs fail at the first ``file.write`` control_ir op.
 
-# RAG embedding settings (ADR-0033). Defaults work out of the box with
-# OPENAI_API_KEY — no edits required for the standard case.
+
+# -----------------------------------------------------------------------------
+# mcp: Model Context Protocol server registry (FP-0016 Component A).
 #
+# Two locations write to this section:
+#   - ``reyn.yaml`` / ``reyn.local.yaml`` — operator hand-edited entries
+#   - ``.reyn/mcp.yaml``                  — runtime-managed entries (issue #470)
+#                                           merged LAST; new installs win.
+#
+# Per-server entry (kept as a raw dict so new transport options can be added
+# without OS changes per P7):
+#   type:    "stdio" | "http" | "sse"   (required transport selector)
+#   command, args, env, cwd             (stdio)
+#   url, headers, timeout               (http / sse)
+#
+# ``headers`` supports ``${VAR}`` interpolation so secrets stay out of YAML.
+#
+# ``mcp.search_threshold`` (FP-0024 Component D): number of MCP tools at or
+# above which ``build_tools()`` switches from inlining every tool schema to
+# Anthropic's ``tool_search_tool`` (deferred-loading mode). Default 30 (= Spring AI
+# experiment shows 63–64% token reduction at 40+ tools). Set 0 to disable.
+#
+# ``mcp.registries`` (issue #571): a list of external registry URLs. Propagated
+# into ``REYN_MCP_REGISTRY_URLS`` so the subprocess-side safe registry resolver
+# inherits it. URLs may be discovery endpoints for fetching server manifests.
+# -----------------------------------------------------------------------------
+# mcp:
+#   search_threshold: 30
+#   registries:
+#     - https://mcp-registry.example.com/v1
+#   servers:
+#     github:
+#       type: http
+#       url: https://api.githubcopilot.com/mcp/
+#       headers:
+#         Authorization: "Bearer ${GITHUB_TOKEN}"
+#         X-API-Version: "2024-01-01"
+#     local-files:
+#       type: stdio
+#       command: uvx
+#       args: ["mcp-server-filesystem", "/home/me/projects"]
+#       env:
+#         LOG_LEVEL: info
+
+
+# -----------------------------------------------------------------------------
+# skill_search (FP-0024 Component A): BM25 skill pre-filter.
+# When the catalog has more than ``threshold`` skills, the router narrows
+# ``invoke_skill.name`` enum to the top-``top_k`` BM25 keyword matches before
+# building the tools list. Defaults: threshold 20 / top_k 5 / backend "bm25".
+# (``embedding`` / ``hybrid`` backends reserved for Components C/D.)
+# -----------------------------------------------------------------------------
+# skill_search:
+#   threshold: 20
+#   top_k: 5
+#   backend: bm25
+
+
+# -----------------------------------------------------------------------------
+# python: settings for the python preprocessor step.
+# ``allowed_modules`` extends the stdlib allow-list with extra modules that
+# user code may ``import`` in *safe* mode. Curate carefully — libraries that
+# internally perform I/O (pandas, requests, ...) defeat sandboxing.
+# -----------------------------------------------------------------------------
+# python:
+#   allowed_modules:
+#     - numpy
+#     - dateutil
+
+
+# -----------------------------------------------------------------------------
+# agent (FP-0016 Component E): runtime identity used in audit events and the
+# ``X-Reyn-Agent-Id`` outbound HTTP header.
+# Default: ``reyn/<hostname>``. Set explicitly for multi-agent fleets.
+# -----------------------------------------------------------------------------
+# agent:
+#   id: reyn/dogfood-laptop-01
+
+
+# -----------------------------------------------------------------------------
+# auth (FP-0016 Component C): OAuth provider configurations consumed by
+# ``reyn auth login``. Each entry maps a provider name to its OAuth 2.0
+# device authorization grant parameters. ``client_secret`` is optional for
+# public clients (= PKCE flow); ``audience`` is Auth0-specific.
+# -----------------------------------------------------------------------------
+# auth:
+#   providers:
+#     github:
+#       client_id: "1234abcd"
+#       device_authorization_url: https://github.com/login/device/code
+#       token_url: https://github.com/login/oauth/access_token
+#       scopes: [repo, "user:email"]
+#     google:
+#       client_id: "...apps.googleusercontent.com"
+#       client_secret: ${GOOGLE_OAUTH_SECRET}
+#       device_authorization_url: https://oauth2.googleapis.com/device/code
+#       token_url: https://oauth2.googleapis.com/token
+#       scopes: [openid, email]
+
+
+# -----------------------------------------------------------------------------
+# chat.compaction: Head/Body/Tail chat-history compaction policy.
+#
+# PR-N3 introduced **ratio-based** budget allocation: each ratio is a fraction
+# of the model's main context pool (= T_max - T_SP). The four ratios must sum
+# to ≤ 1.0; this is asserted at engine init.
+#
+# Legacy fields (``trigger_total_tokens``, ``head_size``, ``tail_size``,
+# ``body_token_cap``, ``min_compact_batch``, ``section_token_caps``) still
+# drive the background ``_maybe_compact()`` path that fires after each reply.
+#
+# PR-N6 added weight dicts (``component_weights`` / ``section_weights``) for
+# fine-grained tuning. Use them when the default 10/5/15/10 split needs
+# adjusting for unusual workloads.
+# -----------------------------------------------------------------------------
+# chat:
+#   compaction:
+#     # PR-N3 ratio-based budget (sum must be ≤ 1.0):
+#     head_ratio: 0.10
+#     body_ratio: 0.05
+#     tail_ratio: 0.15
+#     new_msg_ratio: 0.10
+#     section_caps_spec_tokens: 100
+#     use_chars4_estimate: false        # true = len(text)//4 (latency opt-out)
+#     # Legacy / background-trigger path:
+#     trigger_total_tokens: 30000
+#     head_size: 12
+#     tail_size: 12
+#     body_token_cap: 1500
+#     min_compact_batch: 5
+#     section_token_caps:
+#       topic_arc: 200
+#       decisions: 400
+#       pending: 400
+#       session_user_facts: 200
+#       artifacts_referenced: 300
+
+
+# -----------------------------------------------------------------------------
+# events (PR20): audit-log rotation policy. Chat events land under
+# ``.reyn/events/agents/<name>/chat/<YYYY-MM>/`` and rotate when EITHER the
+# active file exceeds ``max_bytes`` OR the file's age (or local date) exceeds
+# ``max_age_seconds``.
+#
+# ``cleanup_period_days``: how long closed files should be kept before
+# ``reyn events purge`` may delete them. ``null`` (default) disables
+# automatic deletion. Setting ``0`` is rejected (= footgun: would silently
+# discard transcript writes).
+# -----------------------------------------------------------------------------
+# events:
+#   max_bytes: 10485760              # 10 MB
+#   max_age_seconds: 86400           # 1 day
+#   cleanup_period_days: null        # null = never auto-delete
+
+
+# -----------------------------------------------------------------------------
+# cost (PR22): budget / rate-limit policy. Each ``CostLimitConfig`` has a
+# ``hard_limit`` (null = unlimited), ``warn_ratio`` (= warn when usage hits
+# this fraction), ``ask_on_exceed`` (= prompt the user via intervention bus),
+# and ``extension_calls`` (= how many one-shot extensions are granted before
+# the next ask).
+#
+# ``rate_limit_per_minute`` maps model-class → cap on calls per rolling minute.
+# ``rate_limit_warn_ratio`` (default 0.8) controls when the warning fires.
+# -----------------------------------------------------------------------------
+# cost:
+#   per_agent_tokens:
+#     hard_limit: null
+#     warn_ratio: 0.8
+#     ask_on_exceed: false
+#     extension_calls: 0
+#   per_agent_cost_usd:
+#     hard_limit: null
+#   daily_tokens:
+#     hard_limit: 2000000
+#     ask_on_exceed: true
+#     extension_calls: 1
+#   daily_cost_usd:
+#     hard_limit: 25.0
+#   monthly_tokens:
+#     hard_limit: null
+#   monthly_cost_usd:
+#     hard_limit: 500.0
+#   rate_limit_per_minute:
+#     standard: 60
+#     strong:   20
+#   rate_limit_warn_ratio: 0.8
+
+
+# -----------------------------------------------------------------------------
+# skill_resume (PR-skill-resume): policy for handling steps that have a
+# ``step_started`` WAL event but no matching ``step_completed`` / ``step_failed``
+# (= the op may have committed externally and only the operator can decide).
+#
+# Policies: ``retry`` (default; safe for read-only / idempotent ops),
+# ``skip`` (synthesize empty completion), ``discard_skill`` (abort + drop the
+# checkpoint), ``prompt`` (legacy/no-op under auto-resume, treated as retry).
+# -----------------------------------------------------------------------------
+# skill_resume:
+#   default: retry
+#   per_skill:
+#     fragile_external_writer: discard_skill
+#     idempotent_indexer:      retry
+
+
+# -----------------------------------------------------------------------------
+# plan_resume_raw (ADR-0023 Phase 2): how the resume coordinator treats
+# interrupted plan-mode runs on restart. Parsed lazily by the coordinator,
+# so the shape lives in ``reyn.plan`` rather than here. Set to a dict only
+# when the plan coordinator's docs explicitly direct it.
+# -----------------------------------------------------------------------------
+# plan_resume_raw: {}
+
+
+# -----------------------------------------------------------------------------
+# voice (chat TUI Whisper input, optional ``reyn[voice]`` extras): lazy-loaded
+# only when Ctrl+R is pressed. Default ``language: "ja"`` reflects Reyn's
+# Japanese-enterprise focus; set to empty string or null to auto-detect.
+#
+# Apple Silicon note: ``cpu_threads: 4`` avoids the OpenMP / Python-threading
+# deadlock observed at high core counts.
+# -----------------------------------------------------------------------------
+# voice:
+#   enabled: true
+#   model: small                # tiny | base | small | medium | large-v3
+#   language: ja                # "" or null = auto-detect
+#   device: cpu                 # cpu | cuda
+#   compute_type: int8          # int8 | float16 | float32
+#   sample_rate: 16000
+#   cpu_threads: 4
+#   num_workers: 1
+#   max_duration_s: 300.0       # auto-cancel recordings longer than this
+
+
+# -----------------------------------------------------------------------------
+# prompt_cache_enabled: when true (default), attach Anthropic-style
+# ``cache_control`` markers to the system prompt so providers that support
+# prompt caching (Anthropic, AWS Bedrock Claude) can reuse the prefix
+# across calls. Ignored by providers that don't recognize the marker.
+# -----------------------------------------------------------------------------
+# prompt_cache_enabled: true
+
+
+# -----------------------------------------------------------------------------
+# project_context_path: path (relative to project root) of a markdown file
+# whose content is injected into the system prompt for every phase. Default
+# ``"REYN.md"``. Users sharing the project with Claude Code may set this to
+# ``"CLAUDE.md"`` to reuse the same source. Set ``""`` or point at a missing
+# file to disable.
+# -----------------------------------------------------------------------------
+# project_context_path: REYN.md
+
+
+# -----------------------------------------------------------------------------
+# embedding (ADR-0033 Phase 1): RAG embedding settings. Built-in defaults
+# cover the common OpenAI path so users can start indexing after
+# ``pip install reyn`` + ``OPENAI_API_KEY`` with no edits required.
+#
+# Built-in classes:
+#   light, standard → openai/text-embedding-3-small
+#   strong          → openai/text-embedding-3-large
+#   local-mini      → sentence-transformers/all-MiniLM-L6-v2     (FP-0043)
+#   local-e5        → sentence-transformers/intfloat/multilingual-e5-small (FP-0043)
+#
+# ``local-*`` classes require ``pip install 'reyn[local-embed]'``; without
+# the extras they raise ImportError at first ``embed()`` call (= the
+# ``search_actions`` visibility gate falls back to hidden gracefully).
+# -----------------------------------------------------------------------------
 # embedding:
-#   default_class: standard       # which class callers use when unspecified
+#   default_class: standard
 #   classes:
 #     light:    openai/text-embedding-3-small
 #     standard: openai/text-embedding-3-small
 #     strong:   openai/text-embedding-3-large
+#     local-mini:
+#       model: sentence-transformers/all-MiniLM-L6-v2
+#     local-e5:
+#       model: sentence-transformers/intfloat/multilingual-e5-small
+#     # ``extends`` resolves against another entry in the same dict — one
+#     # level deep only (no chained / cyclic resolution):
+#     standard-with-prefix:
+#       extends: standard
+#       extra_body:
+#         dimensions: 1536
 #   batch_size: 100               # 1–2048
 #   max_concurrent_batches: 1     # 1–10 (phase 2 will raise this)
 #   max_retries: 3                # 0–10
 #   retry_backoff: exponential    # exponential | linear
 #   tokenizer: cl100k_base        # tiktoken encoding for chunk-size estimation
 #   cost_warn_threshold: 10000    # ask-user gate fires above this chunk count
+
+
+# -----------------------------------------------------------------------------
+# safety (FP-0004 / FP-0005): unified namespace for stop conditions.
+# **Replaces the legacy ``limits:`` / ``multi_agent:`` /
+# ``cost.router_invocations_per_turn`` keys**. ``safety:`` is the single source
+# of truth.
+#
+#   loop:    loop-detection caps (= "agent doing the same thing over and over")
+#   timeout: wall-clock budgets (= "this is taking too long")
+#   on_limit: what happens when a loop / timeout limit fires
+#             (interactive | unattended | auto_extend)
+# -----------------------------------------------------------------------------
+# safety:
+#   loop:
+#     max_act_turns_per_phase: 10
+#     max_phase_visits: 25
+#     max_router_calls_per_turn: 3
+#     max_agent_hops: 3
+#     # plan() tool call parse-error self-correction (B51 NF-W6-3). 0 = disable.
+#     plan_invalid_retries: 1
+#     # Per-(chain, skill) spawn / token caps (= CostLimitConfig shape):
+#     skill_calls_per_chain:
+#       hard_limit: null
+#       warn_ratio: 0.8
+#       ask_on_exceed: false
+#       extension_calls: 0
+#     skill_tokens_per_chain:
+#       hard_limit: null
+#   timeout:
+#     llm_call_seconds: 60.0
+#     llm_max_retries: 3
+#     phase_seconds: 0.0            # 0 = unlimited
+#     chain_seconds: 60.0           # ≤0 = disable delegate-reply wait
+#   on_limit:
+#     mode: interactive             # interactive | unattended | auto_extend
+#     auto_extend_times: 1          # used when mode = auto_extend
+#     ask_timeout_seconds: 0.0      # 0 = wait forever for user response
+
+
+# -----------------------------------------------------------------------------
+# web.fetch (FP-0022 follow-up): SSL verification for ``web_fetch`` + MCP
+# registry. Priority: ``ca_bundle`` > ``verify_ssl`` > ``SSL_VERIFY`` env >
+# ``litellm.ssl_verify`` > ``SSL_CERT_FILE`` > true.
+#
+# Set ``ca_bundle`` for corporate MITM / custom PKI; set
+# ``verify_ssl: false`` only in controlled test environments.
+# -----------------------------------------------------------------------------
+# web:
+#   fetch:
+#     verify_ssl: null              # null = delegate to env / litellm fallback
+#     ca_bundle: null               # absolute / cwd-relative PEM path
+
+
+# -----------------------------------------------------------------------------
+# multimodal (issue #364 cluster + issue #383 follow-ups): caps binary media
+# size and chooses where multimodal artefacts live on disk.
+#
+#   max_bytes:        decoded-payload byte cap (default 5MB = Anthropic limit)
+#   on_oversize:      ask  → prompt user (default)
+#                     allow → silently accept (trusted pipelines)
+#                     deny  → silently reject (cost-sensitive contexts)
+#   media_dir:        project-relative dir for image binary storage
+#   tool_results_dir: project-relative dir for text-y tool-result dumps
+#   base_url:         optional URL prefix for cross-host ``path_ref`` consumption
+#                     (#385 β; set when running ``reyn web`` so A2A peers / MCP
+#                     clients can fetch artefacts via the resources router)
+# -----------------------------------------------------------------------------
+# multimodal:
+#   max_bytes: 5000000
+#   on_oversize: ask
+#   media_dir: .reyn/media
+#   tool_results_dir: .reyn/tool-results
+#   base_url: null
+
+
+# -----------------------------------------------------------------------------
+# plan (FP-0029 / FP-0031-C): plan-mode execution tuning.
+#
+#   step_max_iterations: RouterLoop iterations per plan step before the OS
+#                        records a step failure. Default 5.
+#   retry_limit:         automatic retries per step on transient errors.
+#                        Default 3. 0 = disable. Permission/budget exceptions
+#                        are always excluded from retry.
+#   step_compaction:     PR-N4 prior-step ``step_results`` compaction policy
+#                        (sibling to ``chat.compaction``).
+# -----------------------------------------------------------------------------
+# plan:
+#   step_max_iterations: 5
+#   retry_limit: 3
+#   step_compaction:
+#     recent_step_results_raw: 3
+#     summarize_older_threshold_tokens: null   # null = derive from main_pool
+#     step_results_ratio: 0.50
+#     use_chars4_estimate: false
+
+
+# -----------------------------------------------------------------------------
+# eval (FP-0007 Component A): trace export adapters. Empty list (default) =
+# no export. Supported types:
+#   - file        : local JSONL dumps under ``path``
+#   - langfuse    : push to a Langfuse instance (public_key / secret_key / host)
+#   - otlp        : push to an OTLP collector (endpoint)
+#   - ietf_audit  : IETF-shaped audit trail under ``path``
+# -----------------------------------------------------------------------------
+# eval:
+#   exporters:
+#     - type: file
+#       path: .reyn/traces/
+#     - type: langfuse
+#       public_key: ${LANGFUSE_PUBLIC_KEY}
+#       secret_key: ${LANGFUSE_SECRET_KEY}
+#       host: https://your-langfuse.example.com
+#     - type: otlp
+#       endpoint: http://localhost:4317
+#     - type: ietf_audit
+#       path: .reyn/audit-trail/
+
+
+# -----------------------------------------------------------------------------
+# sandbox (FP-0017): which enforcement backend to use + what to do when the
+# requested backend isn't available on the host platform.
+#
+#   backend:        auto | seatbelt | landlock | noop
+#                   ``auto`` (default) picks: macOS <26 → seatbelt,
+#                   Linux 5.13+ → landlock, else → noop.
+#   on_unsupported: warn (default, log + fall back to noop)
+#                   error (raise; useful in enforced production)
+#                   ignore (silent fallback)
+# -----------------------------------------------------------------------------
+# sandbox:
+#   backend: auto
+#   on_unsupported: warn
+
+
+# -----------------------------------------------------------------------------
+# self_improvement (FP-0006 B+D): skill_improver behavior knobs.
+#
+#   on_propose:   ask_user (default; pause + prompt before applying)
+#                 auto      (skip prompt; for CI / unattended)
+#                 disabled  (do not apply; log dry-run event)
+#   max_versions: cap on ``.reyn/skill-versions/<name>/v<N>.md`` snapshots
+#                 (default 10; oldest deleted when exceeded; 0 = disable pruning)
+# -----------------------------------------------------------------------------
+# self_improvement:
+#   on_propose: ask_user
+#   max_versions: 10
+
+
+# -----------------------------------------------------------------------------
+# action_retrieval (FP-0034 + FP-0043 Phase 4): universal catalog + retrieval.
+#
+#   universal_wrappers_enabled:
+#       True (default since PR-3b-iv) → ``build_tools()`` appends the 3
+#       universal wrappers (list_actions / describe_action / invoke_action).
+#       ``search_actions`` is gated separately via ``embedding_class``.
+#   embedding_class:
+#       Name of an entry under ``embedding.classes`` used for semantic
+#       ``search_actions``. Default ``"local-mini"`` (FP-0043 Phase 4) —
+#       activates the moment ``pip install 'reyn[local-embed]'`` succeeds;
+#       silently no-ops otherwise (= ``list_actions`` surfaces a hint).
+#       Set ``null`` to disable ``search_actions`` entirely.
+#   hot_list_n:
+#       Top-N freq+recency projection size (§D2). Default 20 — must be
+#       ≥ ``DEFAULT_HOT_LIST_SEED`` length (= 17) so the seed isn't truncated.
+#   mode:
+#       Free-form mode label (§D24): ``minimal`` / ``default`` / ``performance``.
+#   hot_list_seed:
+#       Initial hot-list seed before usage data accumulates. ``"default"`` =
+#       OS-supplied 10-item seed. ``[]`` = no seed. An explicit list overrides.
+# -----------------------------------------------------------------------------
+# action_retrieval:
+#   universal_wrappers_enabled: true
+#   embedding_class: local-mini       # null disables search_actions
+#   hot_list_n: 20
+#   mode: default
+#   hot_list_seed: default            # "default" | [] | [qualified-name, ...]
+
+
+# -----------------------------------------------------------------------------
+# cron (FP-0009 Component B + FP-0041 #489 PR-B): scheduled execution. Two
+# shapes coexist; pick exactly one per entry:
+#
+#   Message-based (recommended): ``to`` + ``message``. Cron dispatches the
+#     message to the target agent's inbox with ``sender="cron:<name>"``.
+#   Skill-based  (legacy): ``skill``. Cron runs the skill directly via
+#     ``Agent.run``.
+#
+# Runtime-registered cron entries land in ``.reyn/cron.yaml`` and override
+# matching ``name`` here on collision.
+# -----------------------------------------------------------------------------
+# cron:
+#   jobs:
+#     - name: morning_news
+#       to: news_agent
+#       message: "今日の主要ニュースをまとめて"
+#       schedule: "0 9 * * *"
+#       enabled: true
+#     - name: index_events_hourly
+#       skill: index_events
+#       schedule: "0 */6 * * *"
+#       input: {}
+#       enabled: true
+
+
+# -----------------------------------------------------------------------------
+# external_transports (FP-0041 #489 PR-D2): map external transport names
+# (Slack / LINE / Discord / ...) to the MCP tool that delivers replies, plus
+# an ``args_template`` describing how router output is shaped into the tool's
+# arguments. Empty by default; see ``reyn.chat.external_routing`` for the
+# full shape and the per-transport contract.
+# -----------------------------------------------------------------------------
+# external_transports:
+#   transports:
+#     slack:
+#       mcp_tool: slack__post_message
+#       args_template:
+#         channel: "${TRANSPORT_DEST}"
+#         text: "${ROUTER_REPLY}"
+#     line:
+#       mcp_tool: line__push_message
+#       args_template:
+#         to: "${TRANSPORT_DEST}"
+#         messages:
+#           - type: text
+#             text: "${ROUTER_REPLY}"
