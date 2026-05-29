@@ -72,10 +72,12 @@
 # operator pre-approve specific tools so the router doesn't gate them at
 # runtime.
 #
-# Shape: nested dict where leaves are ``allow``. Categories:
+# Shape: a dotted kind key mapped to the flat string ``allow`` (or the
+# nested ``file: {write: allow}`` form). The config permission layer is
+# NON-glob — it does not accept path-glob dicts. Categories:
 #   shell             — pre-approve all shell ops
 #   file.delete       — pre-approve file-delete ops
-#   file.write        — pre-approve file-write ops (path-glob keyed)
+#   file.write        — pre-approve all file-write ops (flat kind grant, non-glob)
 #   python.safe       — pre-approve the python preprocessor's safe mode
 #                       (stdlib skill_router uses this — already set in reyn.yaml)
 #   mcp.<server>      — pre-approve a specific MCP server's tool surface
@@ -87,20 +89,30 @@
 #   mcp:
 #     github: allow
 #
-# Headless / benchmark pre-approval (PR-N9 / PR-N11): benchmark Agents are
-# constructed with ``intervention_bus=None`` (= ``reyn eval benchmark ...``),
-# so any permission the skill declares (e.g. swe_bench's ``file.write: "*"``)
-# raises a RuntimeError on the first control_ir op instead of asking the
-# user. Pre-approve the same surface here to clear the prompt — main
+# Headless / benchmark pre-approval (PR-N9 / PR-N11 / PR-N12): benchmark
+# Agents are constructed with ``intervention_bus=None`` (= ``reyn eval
+# benchmark ...``), so any permission the skill declares (e.g. swe_bench's
+# ``file.write``) raises a RuntimeError on the first control_ir op instead
+# of asking the user. Pre-approve the kind here to clear the prompt — main
 # ``reyn.yaml`` is intentionally left alone (= chat sessions have a bus and
 # CAN ask interactively, so this stays a local / headless-only concern):
 #
 # permissions:
-#   file.write:
-#     "*": allow
+#   file.write: allow
 #
-# Narrow the glob (e.g. ``"workspace/**"``) for a tighter scope. Without
-# this entry, benchmark runs fail at the first ``file.write`` control_ir op.
+# The value MUST be the flat string ``allow`` (= same shape as the
+# checked-in ``reyn.yaml``'s ``python.safe: allow``). The config
+# permission layer is NON-glob: it only recognises a dotted key mapped
+# to ``allow`` / ``deny`` (or the nested ``file: {write: allow}`` form).
+# A glob dict like ``file.write: {"*": allow}`` is NEVER matched by the
+# loader (``_is_config_approved``) and silently fails closed — the
+# benchmark would still hit a permission RuntimeError at the first
+# ``file.write`` op.
+#
+# ``file.write: allow`` grants the whole write-class kind (write / edit
+# / delete) for all skills. If you need a tighter, path-scoped grant,
+# that lives in a different layer (the startup-approval / saved-approval
+# mechanism that records specific paths), not in this config block.
 
 
 # -----------------------------------------------------------------------------
