@@ -354,6 +354,19 @@ def render_keys(
             group_keys["PANEL"].append(key.lower())
             seen.add(key)
 
+    # Wave Round 2 finding N2 (2026-05-29): Tab / Shift+Tab are
+    # _INPUT_OWNED_KEYS so the loops above surfaced them under INPUT
+    # (= "Confirm" / "Previous"). Their dual role as the panel-focused
+    # tab switcher was invisible — the only documented switchers in the
+    # PANEL group were ⌃W / ⌃⇧W / ⌃⇧O, even though Tab actually drives
+    # the panel-side switch when focus is on the tabs widget. Surface
+    # them as PANEL-context rows so the discoverability gap closes
+    # without disturbing the InputBar-context description.
+    groups["PANEL"].append((_pretty_key("tab"), "Next tab (panel focused)"))
+    group_keys["PANEL"].append("tab")
+    groups["PANEL"].append((_pretty_key("shift+tab"), "Previous tab (panel focused)"))
+    group_keys["PANEL"].append("shift+tab")
+
     # MOUSE group (T1-4, Wave-12): explicit click-interaction rows.
     # These have no key semantics so raw_key is "" for all of them.
     for display, desc in _MOUSE_EXPLICIT:

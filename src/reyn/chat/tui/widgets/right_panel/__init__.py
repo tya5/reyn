@@ -2440,9 +2440,13 @@ class RightPanel(Widget):
                 f"  [#555555]j↓ k↑ space=open c=copy a=attach[/]"
             )
         if self._panel_type == "memory":
+            # Wave Round 2 finding F3 (2026-05-29): the [t] type filter
+            # cycle was discoverable only via the Keys tab or by trial
+            # and error — the per-tab header should advertise it the
+            # same way the events tab advertises [f] / [t].
             return (
                 f"[bold {_CORAL}]Memory[/]"
-                f"  [#555555]j↓ k↑ space=open c=copy[/]"
+                f"  [#555555]j↓ k↑ space=open c=copy t=filter[/]"
             )
         if self._panel_type == "cost":
             return f"[bold {_CORAL}]Cost[/]  [#555555]j↓ k↑[/]"
@@ -2472,6 +2476,14 @@ class RightPanel(Widget):
             rbr = "[#555555]][/]"
             kf = f"{lbr}[{_CORAL}]f[/]{rbr}"
             kt = f"{lbr}[{_CORAL}]t[/]{rbr}"
+            # Wave Round 2 finding F1 (2026-05-29): when [v] verbose mode
+            # is ON, surface that state in the header so the user can
+            # tell at a glance — the prior version only flashed a
+            # transient status line on the press, so a user returning
+            # to the tab after a tab-switch had no way to know whether
+            # compaction_check noise was suppressed or not without
+            # re-toggling.
+            v_marker = f"  {lbr}[{_CORAL}]v[/]{rbr}" if self._events_verbose else ""
             # Compact form (~36 cells with "all" filter, 8 more for the
             # longest "internal" filter). Previous text was ~54 cells and
             # truncated past ``[t`` at the new 36-col minimum panel width
@@ -2486,6 +2498,7 @@ class RightPanel(Widget):
                 f"[bold {_CORAL}]Events[/]"
                 f"  {kf}[#555555]:[/]{filter_label}"
                 f"  {kt}[#555555]:[/][#aaaaaa]{tail}[/]"
+                f"{v_marker}"
                 f"  [#555555]j/k sp=open[/]"
             )
         return ""
