@@ -38,6 +38,21 @@
 #   phase:
 #     max_visits: 5
 
+# Permissions pre-approval — required when running headless / benchmark
+# dispatch (= ``reyn eval benchmark ...``). Benchmark Agents are
+# constructed with ``intervention_bus=None`` so any permission prompt
+# the skill declares (e.g. ``file.write: "*"`` in swe_bench) raises
+# immediately instead of asking the user. Pre-approve the same surface
+# in your ``reyn.local.yaml`` to clear the prompt:
+#
+# permissions:
+#   file.write:
+#     "*": allow
+#
+# Narrow the glob (e.g. ``"workspace/**"``) if you want a tighter scope.
+# Without this entry, benchmark runs fail at the first ``file.write``
+# control_ir op with a permission RuntimeError.
+
 # RAG embedding settings (ADR-0033). Defaults work out of the box with
 # OPENAI_API_KEY — no edits required for the standard case.
 #
