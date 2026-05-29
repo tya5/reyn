@@ -5027,6 +5027,8 @@ class ChatSession:
         # keep _maybe_force_compact_for_router unchanged (= pre-frame guard).
         from reyn.chat.services.chat_compaction_engine import (
             ContextOverflowError as _ContextOverflowError,
+        )
+        from reyn.chat.services.chat_compaction_engine import (
             UnrecoveredError as _UnrecoveredError,
         )
 

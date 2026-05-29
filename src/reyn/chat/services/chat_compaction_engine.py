@@ -318,8 +318,8 @@ def assert_static_bounds(cfg: "CompactionConfig", budgets: ComputedBudgets) -> N
     # PR-N6 weight-based assertions (replaces the ratio_sum <= 1.0 check).
     cw = cfg.component_weights
     assert sum(cw.values()) > 0, (
-        f"CompactionConfig.component_weights sum = 0 — "
-        f"at least one component weight must be > 0"
+        "CompactionConfig.component_weights sum = 0 — "
+        "at least one component weight must be > 0"
     )
     assert all(w >= 0 for w in cw.values()), (
         f"CompactionConfig.component_weights has negative values: "
@@ -327,8 +327,8 @@ def assert_static_bounds(cfg: "CompactionConfig", budgets: ComputedBudgets) -> N
     )
     sw = cfg.section_weights
     assert sum(sw.values()) > 0, (
-        f"CompactionConfig.section_weights sum = 0 — "
-        f"at least one section weight must be > 0"
+        "CompactionConfig.section_weights sum = 0 — "
+        "at least one section weight must be > 0"
     )
     assert all(w >= 0 for w in sw.values()), (
         f"CompactionConfig.section_weights has negative values: "
