@@ -52,8 +52,8 @@ from reyn.chat.router_loop import RouterLoop, RouterLoopHost
 from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
-    from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
     from reyn.config import PlannerStepCompactionConfig
+    from reyn.services.compaction.engine import CompactionEngine
 
 logger = logging.getLogger(__name__)
 
@@ -793,7 +793,7 @@ async def execute_plan(
     retry_limit: int | None = None,
     on_limit: Any = None,
     intervention_bus: Any = None,
-    compaction_engine: "ChatCompactionEngine | None" = None,
+    compaction_engine: "CompactionEngine | None" = None,
     step_compaction_cfg: "PlannerStepCompactionConfig | None" = None,
 ) -> PlanExecutionResult:
     """Run a plan step-by-step in topological order, return the aggregated text.
@@ -829,7 +829,7 @@ async def execute_plan(
     # RouterCallerState → PlanRuntime → execute_plan would require touching
     # router_loop.py and session.py (outside the ALLOWED file list for this
     # PR). Path (b) constructs a minimal engine per-plan-run from router_model.
-    # Cost: one extra ChatCompactionEngine.__init__ per plan run (= a few
+    # Cost: one extra CompactionEngine.__init__ per plan run (= a few
     # token_counter calls at init time, cached afterwards). The engine is
     # never shared across parallel plan runs, which is safe.
     #
@@ -853,11 +853,11 @@ async def execute_plan(
     _effective_engine = compaction_engine
     if _effective_engine is None and _effective_step_compaction_cfg is not None:
         try:
-            from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
+            from reyn.services.compaction.engine import CompactionEngine
             # T_SP=0: step-results context is not the main session SP;
             # main_pool = T_max - 0 = T_max, so threshold =
             # step_results_ratio * T_max (conservative large-window default).
-            _effective_engine = ChatCompactionEngine(
+            _effective_engine = CompactionEngine(
                 model=router_model,
                 events=parent_host.events,
                 T_SP=0,
@@ -982,7 +982,7 @@ async def execute_plan(
             # older entries into a summary before building the prompt.
             # Best-effort: compact_step_results never raises on LLM error.
             if _effective_engine is not None and _effective_step_compaction_cfg is not None:
-                from reyn.chat.services.chat_compaction_engine import (
+                from reyn.services.compaction.engine import (
                     compact_step_results,
                 )
                 step_results = await compact_step_results(

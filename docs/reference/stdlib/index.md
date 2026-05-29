@@ -24,7 +24,7 @@ Bundled skills shipped with reyn. Resolved last in name lookup (after `reyn/proj
 > async-dispatch flow that landed alongside.
 >
 > The `chat_compactor` stdlib skill was retired in FP-0008 PR-N3. Chat history
-> compaction is now handled by OS-internal Python (`ChatCompactionEngine`) with
-> no phase-frame overhead.
+> compaction is now handled by OS-internal Python (`CompactionEngine` at
+> `reyn.services.compaction.engine`) with no phase-frame overhead.
 
 Run `reyn skills <name>` for the full description and entry instructions of any skill.

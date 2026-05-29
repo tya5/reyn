@@ -36,7 +36,6 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
 from reyn.config import CompactionConfig, PhaseActResultsCompactionConfig
 from reyn.events.events import EventLog
 from reyn.kernel.phase_executor import PhaseExecutor
@@ -48,6 +47,7 @@ from reyn.schemas.models import (
     Skill,
     SkillGraph,
 )
+from reyn.services.compaction.engine import CompactionEngine
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,10 +81,10 @@ def _make_skill(
     )
 
 
-def _make_engine(events: EventLog | None = None) -> ChatCompactionEngine:
-    """Build a minimal ChatCompactionEngine with use_chars4=True for determinism."""
+def _make_engine(events: EventLog | None = None) -> CompactionEngine:
+    """Build a minimal CompactionEngine with use_chars4=True for determinism."""
     cfg = CompactionConfig(use_chars4_estimate=True)
-    return ChatCompactionEngine(
+    return CompactionEngine(
         model="gpt-3.5-turbo",
         events=events or EventLog(),
         cfg=cfg,

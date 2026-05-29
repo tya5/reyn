@@ -26,15 +26,15 @@ from typing import Any
 
 import pytest
 
-from reyn.chat.services.chat_compaction_engine import (
+from reyn.config import PlannerStepCompactionConfig
+from reyn.events.events import EventLog
+from reyn.services.compaction.engine import (
     STEP_RESULTS_COMPACTED_KEY,
-    ChatCompactionEngine,
+    CompactionEngine,
     compact_step_results,
     estimate_tokens,
     hard_truncate_summary,
 )
-from reyn.config import PlannerStepCompactionConfig
-from reyn.events.events import EventLog
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,12 +49,12 @@ def _events_of_type(events: EventLog, kind: str) -> list[dict]:
     return [e.data for e in events.all() if e.type == kind]
 
 
-def _make_engine(model: str = "gpt-3.5-turbo") -> ChatCompactionEngine:
-    """Build a minimal ChatCompactionEngine with use_chars4=True for determinism."""
+def _make_engine(model: str = "gpt-3.5-turbo") -> CompactionEngine:
+    """Build a minimal CompactionEngine with use_chars4=True for determinism."""
     from reyn.config import CompactionConfig
     # use_chars4=True → deterministic, no network calls for token counting
     cfg = CompactionConfig(use_chars4_estimate=True)
-    return ChatCompactionEngine(
+    return CompactionEngine(
         model=model,
         events=_make_events(),
         cfg=cfg,
@@ -203,13 +203,13 @@ async def test_compact_step_results_identity_when_all_recent() -> None:
 
 
 class _FakeEngine:
-    """A real-enough ChatCompactionEngine drop-in for tests that need the
+    """A real-enough CompactionEngine drop-in for tests that need the
     compaction LLM to fire.
 
     Uses use_chars4=True so token estimation is deterministic.  The
     ``compact_step_results`` function uses the engine's ``_model`` attribute
     and ``budgets`` property internally; we expose both via a real
-    ChatCompactionEngine instance but override the ``acompletion`` call by
+    CompactionEngine instance but override the ``acompletion`` call by
     patching litellm at the test level using the engine's own model string.
     """
 
@@ -242,7 +242,7 @@ async def _compact_with_fake_llm(
 
     from reyn.config import CompactionConfig
     cfg_compact = CompactionConfig(use_chars4_estimate=True)
-    engine = ChatCompactionEngine(
+    engine = CompactionEngine(
         model="gpt-3.5-turbo",
         events=events,
         cfg=cfg_compact,
@@ -361,7 +361,7 @@ async def test_compact_step_results_summary_bounded_by_body_budget() -> None:
 
     from reyn.config import CompactionConfig
     cfg_compact = CompactionConfig(use_chars4_estimate=True)
-    engine = ChatCompactionEngine(
+    engine = CompactionEngine(
         model="gpt-3.5-turbo",
         events=_make_events(),
         cfg=cfg_compact,
@@ -405,7 +405,7 @@ async def test_compact_step_results_returns_input_on_llm_error() -> None:
 
     from reyn.config import CompactionConfig
     cfg_compact = CompactionConfig(use_chars4_estimate=True)
-    engine = ChatCompactionEngine(
+    engine = CompactionEngine(
         model="gpt-3.5-turbo",
         events=events,
         cfg=cfg_compact,
@@ -538,7 +538,7 @@ async def test_execute_plan_compact_fires_when_engine_and_cfg_explicit() -> None
 
     compact_calls: list[dict] = []
 
-    from reyn.chat.services import chat_compaction_engine as cce_mod
+    from reyn.services.compaction import engine as cce_mod
     original_compact = cce_mod.compact_step_results
 
     async def _spy_compact(sr: dict, *, engine: Any, cfg: Any, events: Any) -> dict:
@@ -567,7 +567,7 @@ async def test_execute_plan_compact_fires_when_engine_and_cfg_explicit() -> None
 
         # Build an explicit engine with use_chars4 for determinism.
         cfg_compact = CompactionConfig(use_chars4_estimate=True)
-        engine = ChatCompactionEngine(
+        engine = CompactionEngine(
             model="gpt-3.5-turbo",
             events=_make_events(),
             cfg=cfg_compact,

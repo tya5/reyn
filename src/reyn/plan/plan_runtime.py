@@ -36,8 +36,8 @@ from reyn.plan.plan_resume_analyzer import PlanResumePlan
 
 if TYPE_CHECKING:
     from reyn.chat.router_loop import RouterLoopHost
-    from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
     from reyn.config import PlannerStepCompactionConfig
+    from reyn.services.compaction.engine import CompactionEngine
 
 
 class PlanRuntime:
@@ -62,7 +62,7 @@ class PlanRuntime:
         retry_limit: int | None = None,
         on_limit: Any = None,
         intervention_bus: Any = None,
-        compaction_engine: "ChatCompactionEngine | None" = None,
+        compaction_engine: "CompactionEngine | None" = None,
         step_compaction_cfg: "PlannerStepCompactionConfig | None" = None,
     ) -> None:
         self._plan = plan

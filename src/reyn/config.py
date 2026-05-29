@@ -1038,7 +1038,7 @@ class PlannerStepCompactionConfig:
     prior-step output accumulation that feeds each plan step's sub-loop
     system prompt.  When accumulated step_results would balloon the next
     step's sys_prompt, older entries are summarised using
-    ChatCompactionEngine and replaced with a single
+    CompactionEngine and replaced with a single
     ``__compacted_step_summary__`` entry.
 
     Fields
@@ -1047,7 +1047,7 @@ class PlannerStepCompactionConfig:
         Keep the last N step_results verbatim; compact older ones.
     summarize_older_threshold_tokens:
         Total token threshold above which older step_results are compacted.
-        ``None`` uses the ChatCompactionEngine's ``effective_trigger`` from
+        ``None`` uses the CompactionEngine's ``effective_trigger`` from
         ``ComputedBudgets`` (= derived from the router model context window).
     step_results_ratio:
         Fraction of ``main_pool`` (= T_max - T_SP) allocated for the
@@ -1072,7 +1072,7 @@ class PhaseActResultsCompactionConfig:
     When accumulated ``control_ir_results`` in a phase's act loop would push
     the next prompt over the model's effective context budget, older results
     (outside the ``recent_act_turns_raw`` window) are summarised by
-    ``ChatCompactionEngine`` using a phase-specific system prompt that preserves
+    ``CompactionEngine`` using a phase-specific system prompt that preserves
     op-kind structured data (paths, line numbers, exit codes, etc.).
 
     Fields
@@ -1115,7 +1115,7 @@ class PlanConfig:
 
     ``step_compaction``: prior step_results compaction policy (PR-N4).
     When accumulated step outputs would exceed the threshold, older entries
-    are summarised by ChatCompactionEngine before the next step's sys_prompt
+    are summarised by CompactionEngine before the next step's sys_prompt
     is built.  Default-enabled with conservative thresholds.
     """
     step_max_iterations: int = 5

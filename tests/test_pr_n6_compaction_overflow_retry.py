@@ -28,7 +28,13 @@ from pathlib import Path
 
 import pytest
 
-from reyn.chat.services.chat_compaction_engine import (
+from reyn.chat.services.token_multiplier_learner import (
+    TokenMultiplierLearner,
+    detect_content_type,
+)
+from reyn.config import CompactionConfig
+from reyn.events.events import EventLog
+from reyn.services.compaction.engine import (
     CompactionOverflowError,
     ContextOverflowError,
     HistoryChunkToCompact,
@@ -37,12 +43,6 @@ from reyn.chat.services.chat_compaction_engine import (
     compute_budgets,
     retry_loop,
 )
-from reyn.chat.services.token_multiplier_learner import (
-    TokenMultiplierLearner,
-    detect_content_type,
-)
-from reyn.config import CompactionConfig
-from reyn.events.events import EventLog
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -335,7 +335,7 @@ def test_section_caps_derived_from_section_weights() -> None:
 
 def test_assert_static_bounds_zero_component_sum_raises() -> None:
     """Tier 2: assert_static_bounds raises when all component weights are 0."""
-    from reyn.chat.services.chat_compaction_engine import ComputedBudgets
+    from reyn.services.compaction.engine import ComputedBudgets
     cfg = _make_cfg(component_weights={"head": 0, "body": 0, "tail": 0, "new_msg": 0, "compaction_batch": 0})
     budgets = ComputedBudgets(
         main_pool=10_000, head_budget=0, body_budget=0,
@@ -348,7 +348,7 @@ def test_assert_static_bounds_zero_component_sum_raises() -> None:
 
 def test_assert_static_bounds_negative_component_weight_raises() -> None:
     """Tier 2: assert_static_bounds raises when any component weight is negative."""
-    from reyn.chat.services.chat_compaction_engine import ComputedBudgets
+    from reyn.services.compaction.engine import ComputedBudgets
     cfg = _make_cfg(component_weights={"head": -1, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60})
     budgets = ComputedBudgets(
         main_pool=10_000, head_budget=0, body_budget=500,
@@ -361,7 +361,7 @@ def test_assert_static_bounds_negative_component_weight_raises() -> None:
 
 def test_assert_static_bounds_zero_section_sum_raises() -> None:
     """Tier 2: assert_static_bounds raises when all section weights are 0."""
-    from reyn.chat.services.chat_compaction_engine import ComputedBudgets
+    from reyn.services.compaction.engine import ComputedBudgets
     cfg = _make_cfg(section_weights={"topic_arc": 0, "decisions": 0, "pending": 0, "session_user_facts": 0, "artifacts_referenced": 0})
     budgets = ComputedBudgets(
         main_pool=10_000, head_budget=1000, body_budget=500,
@@ -381,7 +381,7 @@ class _OverflowingEngine:
     """Minimal engine stub that raises on compact() calls for retry_loop tests."""
 
     def __init__(self, fail_compact: bool = False) -> None:
-        from reyn.chat.services.chat_compaction_engine import ComputedBudgets
+        from reyn.services.compaction.engine import ComputedBudgets
         self.budgets = ComputedBudgets(
             main_pool=10_000, head_budget=1_000, body_budget=500,
             tail_budget=1_500, new_msg_budget=1_000,
@@ -394,7 +394,7 @@ class _OverflowingEngine:
     async def compact(self, input_chunk: HistoryChunkToCompact):
         if self._fail_compact:
             raise CompactionOverflowError("test: compaction overflow")
-        from reyn.chat.services.chat_compaction_engine import ChatSummary
+        from reyn.services.compaction.engine import ChatSummary
         return ChatSummary(
             topic_arc="stub summary",
             covers_through_seq=max(
@@ -437,7 +437,7 @@ def test_retry_loop_shrinks_tail_on_overflow() -> None:
     Uses a custom engine with small head_min / tail_min budgets so that tail
     shrinking is triggered before UnrecoveredError.
     """
-    from reyn.chat.services.chat_compaction_engine import ComputedBudgets
+    from reyn.services.compaction.engine import ComputedBudgets
 
     class _SmallMinEngine(_OverflowingEngine):
         def __init__(self) -> None:
@@ -452,7 +452,7 @@ def test_retry_loop_shrinks_tail_on_overflow() -> None:
             )
 
         async def compact(self, input_chunk):
-            from reyn.chat.services.chat_compaction_engine import ChatSummary
+            from reyn.services.compaction.engine import ChatSummary
             return ChatSummary(topic_arc="stub", covers_through_seq=0)
 
     cfg = _make_cfg()

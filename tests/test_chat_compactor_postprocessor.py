@@ -2,7 +2,7 @@
 
 PR-N3: `compute_covers_through_seq` moved from the retired
 `chat_compactor` skill postprocessor to
-`reyn.chat.services.chat_compaction_engine`. The function signature
+`reyn.services.compaction.engine`. The function signature
 changed: it now takes ``new_turn_seqs: list`` directly instead of
 an ``artifact`` dict wrapper.
 
@@ -18,7 +18,7 @@ Contract:
 """
 from __future__ import annotations
 
-from reyn.chat.services.chat_compaction_engine import compute_covers_through_seq
+from reyn.services.compaction.engine import compute_covers_through_seq
 
 
 def test_max_of_normal_list() -> None:

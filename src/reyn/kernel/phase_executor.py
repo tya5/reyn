@@ -39,11 +39,11 @@ from reyn.schemas.models import ActOutput, CandidateOutput, LLMOutput
 from reyn.workspace.artifact_validator import validate_artifact_data
 
 if TYPE_CHECKING:
-    from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
     from reyn.config import PhaseActResultsCompactionConfig
     from reyn.kernel.llm_call_recorder import LLMCallRecorder
     from reyn.kernel.run_state import RunState
     from reyn.schemas.models import Skill
+    from reyn.services.compaction.engine import CompactionEngine
     from reyn.user_intervention import RequestBus
 
 _log = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ class PhaseExecutor:
         run_id: str | None = None,
         strict: bool = False,
         build_frame_fn,
-        phase_compaction_engine: "ChatCompactionEngine | None" = None,
+        phase_compaction_engine: "CompactionEngine | None" = None,
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
     ) -> None:
         self._llm_caller = llm_caller
@@ -98,7 +98,7 @@ class PhaseExecutor:
         # Path (b): lazy construction — PhaseExecutor holds references directly
         # rather than threading through OSRuntime constructor, keeping all PR-N5
         # wiring within the strictly-listed ALLOWED files.
-        self._phase_compaction_engine: "ChatCompactionEngine | None" = phase_compaction_engine
+        self._phase_compaction_engine: "CompactionEngine | None" = phase_compaction_engine
         self._phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = phase_compaction_cfg
         # PR-N5: last phase's final control_ir_results, set at end of
         # _run_act_loop so RunOrchestrator can snapshot them at A → B
@@ -343,7 +343,7 @@ class PhaseExecutor:
                 and self._phase_compaction_cfg is not None
                 and len(control_ir_results) > self._phase_compaction_cfg.recent_act_turns_raw
             ):
-                from reyn.chat.services.chat_compaction_engine import (
+                from reyn.services.compaction.engine import (
                     compact_control_ir_results,
                 )
                 n_recent = self._phase_compaction_cfg.recent_act_turns_raw

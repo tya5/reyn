@@ -11,10 +11,10 @@ from reyn.schemas.models import CandidateOutput, ContextFrame, Skill
 
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
-    from reyn.chat.services.chat_compaction_engine import ChatCompactionEngine
     from reyn.config import MultimodalConfig, PhaseActResultsCompactionConfig, SandboxConfig
     from reyn.events.state_log import StateLog
     from reyn.secrets.store import ScopedSecretStore
+    from reyn.services.compaction.engine import CompactionEngine
     from reyn.skill.skill_registry import SkillRegistry
     from reyn.workspace.media_store import MediaStore
 from reyn.config import SafetyConfig
@@ -81,7 +81,7 @@ class OSRuntime:
         secret_store: "ScopedSecretStore | None" = None,
         plan_step: dict | None = None,
         workspace_base_dir: "Path | None" = None,
-        phase_compaction_engine: "ChatCompactionEngine | None" = None,
+        phase_compaction_engine: "CompactionEngine | None" = None,
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
     ) -> None:
         self.skill = skill
@@ -206,7 +206,7 @@ class OSRuntime:
         # PR-N8: phase axis compaction wiring.  Engine + cfg are optional kwargs
         # so tests can inject real instances; production constructs them lazily
         # here (= Path b, same pattern as planner.execute_plan).  When no
-        # injection is provided, a default ChatCompactionEngine is constructed
+        # injection is provided, a default CompactionEngine is constructed
         # using this OSRuntime's model + events.  T_SP=0 is the conservative
         # non-chat default (= no session SP measured; main_pool = T_max, same
         # as planner step axis Path b).  The cfg default fires at
@@ -215,8 +215,8 @@ class OSRuntime:
         # Both attrs are set unconditionally so PhaseExecutor always gets them.
         if phase_compaction_engine is None:
             try:
-                from reyn.chat.services.chat_compaction_engine import (
-                    ChatCompactionEngine as _CCE,
+                from reyn.services.compaction.engine import (
+                    CompactionEngine as _CCE,
                 )
                 phase_compaction_engine = _CCE(
                     model=model,
@@ -229,7 +229,7 @@ class OSRuntime:
         if phase_compaction_cfg is None:
             from reyn.config import PhaseActResultsCompactionConfig as _PARCC
             phase_compaction_cfg = _PARCC()
-        self._phase_compaction_engine: "ChatCompactionEngine | None" = phase_compaction_engine
+        self._phase_compaction_engine: "CompactionEngine | None" = phase_compaction_engine
         self._phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = phase_compaction_cfg
         # FP-0020 Component C: act/decide loops + phase-budget check extracted to
         # PhaseExecutor. build_frame is passed as a callable to avoid pulling the
@@ -313,7 +313,7 @@ class OSRuntime:
         return self._preprocessor
 
     @property
-    def phase_compaction_engine(self) -> "ChatCompactionEngine | None":
+    def phase_compaction_engine(self) -> "CompactionEngine | None":
         """PR-N8: read-only accessor for wiring-verification tests.
 
         Callers (tests) can assert that the injected engine is the exact object
