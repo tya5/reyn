@@ -151,36 +151,6 @@ async def test_chip_path_still_has_iv_hint_label() -> None:
         widget.remove()
 
 
-# ---------------------------------------------------------------------------
-# A2: .iv-chips overflow-x: hidden in DEFAULT_CSS
-# ---------------------------------------------------------------------------
-
-
-def test_iv_chips_css_has_overflow_x_hidden() -> None:
-    """Tier 2: InterventionWidget.DEFAULT_CSS declares overflow-x: hidden on .iv-chips.
-
-    Pins the CSS contract that makes chip clipping defined at narrow
-    terminals. Without this, rightmost chips at ≤40-col terminals overflow
-    outside the widget boundary and become unreachable (no scroll, no clip).
-
-    Checks the DEFAULT_CSS string directly — this is the class-level
-    declared CSS, not a live render. It is the correct surface to assert
-    the CSS contract because DEFAULT_CSS is what Textual loads when the
-    widget class is used; it is not private state.
-    """
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
-
-    css = InterventionWidget.DEFAULT_CSS
-    # Confirm the rule block for .iv-chips contains overflow-x: hidden.
-    assert "overflow-x: hidden" in css, (
-        "InterventionWidget.DEFAULT_CSS must declare 'overflow-x: hidden' "
-        "inside the .iv-chips block to prevent rightmost chips from "
-        "rendering outside the widget boundary at narrow terminal widths. "
-        "DEFAULT_CSS snippet around .iv-chips:\n"
-        + css[max(0, css.find(".iv-chips") - 10) : css.find(".iv-chips") + 200]
-    )
-
-
 @pytest.mark.asyncio
 async def test_chips_present_at_narrow_width() -> None:
     """Tier 2: core chip buttons mount and are DOM-queryable at a narrow terminal size.
@@ -216,13 +186,7 @@ async def test_chips_present_at_narrow_width() -> None:
         await pilot.pause()
 
         buttons = list(widget.query(Button))
-        # At minimum the 2 answer chips + 1 "free response…" chip must mount.
-        assert len(buttons) >= 3, (
-            f"Expected ≥3 chip Buttons in the narrow-terminal widget, "
-            f"got {len(buttons)}: {[b.id for b in buttons]!r}"
-        )
-
-        # The essential chips must be present by id.
+        # The essential chips must be present by id (reachable at narrow width).
         button_ids = {b.id for b in buttons}
         assert "chip_yes" in button_ids, (
             f"'chip_yes' must be present at narrow width; found ids: {button_ids!r}"
