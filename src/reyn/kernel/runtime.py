@@ -419,6 +419,14 @@ class OSRuntime:
         # When the act budget is exhausted, strip available ops so the LLM has
         # no ops to call and is structurally forced into a decide turn.
         effective_ops = [] if force_decide else filtered_ops
+        # C5 (FP-0008): per-result offload directory — workspace scratch path so
+        # oversized control_ir_results can be written + referenced by the LLM
+        # via a file.read op. Scoped by run_id to avoid cross-run collisions.
+        offload_dir = (
+            self.workspace.state_dir
+            / "control_ir_offload"
+            / (self.run_id or "_default")
+        )
         return build_frame(
             phase_name=current_phase,
             phase=phase_def,
@@ -437,6 +445,7 @@ class OSRuntime:
             control_ir_results=control_ir_results,
             artifact_path=artifact_path,
             remaining_act_turns=remaining_act_turns,
+            offload_dir=offload_dir,
         )
 
     # ── Phase entry + phase execution ─────────────────────────────────────────
