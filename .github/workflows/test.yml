@@ -33,7 +33,7 @@ jobs:
         run: pip install -e ".[dev,mcp,web]"
 
       - name: Run tests
-        run: python -m pytest -q
+        run: python -m pytest -q -n auto
 
   lint:
     name: ruff
