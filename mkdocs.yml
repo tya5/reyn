@@ -24,6 +24,7 @@ theme:
   name: material
   custom_dir: overrides
   features:
+    - navigation.sections
     - navigation.indexes
     - navigation.top
     - search.suggest
