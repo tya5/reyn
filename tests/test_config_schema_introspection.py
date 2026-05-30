@@ -81,15 +81,61 @@ def test_walk_includes_free_form_dict_leaves() -> None:
         assert expected in dict_keys, f"{expected!r} not in dict_leaf keys: {sorted(dict_keys)}"
 
 
-def test_walk_total_nodes_covers_all_top_level_fields() -> None:
-    """Tier 2: walk produces at least as many nodes as top-level ReynConfig fields."""
+def test_walk_covers_every_top_level_field_no_silent_skip() -> None:
+    """Tier 2: every ReynConfig top-level field is represented in the walk
+    (= no section silently skipped by the forward-ref empty-hints fallback).
+
+    Drift-proof invariant (the framework's whole point): adding a config
+    field auto-reflects in ``reyn config set/get/fields``. But
+    ``_get_hints_safe`` returns ``{}`` on a forward-ref resolution failure,
+    which makes ``_walk`` emit ZERO nodes for that class — silently dropping
+    the section and re-creating the old allowlist-reject bug for a future
+    field, with NO error (the original bug, but invisible).
+
+    This test makes the drift loud: a dropped section → its field name
+    absent from the walk's top-level keys → CI fail. If a new forward-ref
+    dataclass field is added and its section disappears, this fails until
+    the type is injected in ``config_schema._patch_localns`` (PR2 will
+    auto-resolve and retire the manual injection).
+    """
     nodes = walk_config_schema()
-    top_level_count = len(dataclasses.fields(ReynConfig))
-    # Walk recurses into nested DCs, so total > top-level count
-    assert len(nodes) >= top_level_count, (
-        f"Only {len(nodes)} nodes for {top_level_count} top-level fields; "
-        "recursion may have stopped prematurely"
+    top_level = {n.key.split(".", 1)[0] for n in nodes}
+    field_names = {f.name for f in dataclasses.fields(ReynConfig)}
+    missing = field_names - top_level
+    assert not missing, (
+        f"ReynConfig fields with NO node in the schema walk (silently "
+        f"skipped — the section produced zero dotted keys): {sorted(missing)}. "
+        f"Most likely a forward-ref resolution failure dropped the section; "
+        f"inject the type in config_schema._patch_localns."
     )
+
+
+def test_walk_forward_ref_sections_produce_nested_keys() -> None:
+    """Tier 2: the forward-ref-bearing dataclass sections produce their nested
+    keys (targeted regression guard for the _patch_localns injection).
+
+    ``external_transports`` (ExternalTransportRouting) and ``auth``
+    (OAuthProviderConfig) annotate forward refs that naive get_type_hints
+    cannot resolve. If their injection in ``_patch_localns`` is dropped or a
+    new forward-ref section is added without injection, the section silently
+    yields zero nodes. This asserts each forward-ref section contributes at
+    least one dotted key under its own prefix.
+    """
+    nodes = walk_config_schema()
+    by_prefix: dict[str, int] = {}
+    for n in nodes:
+        by_prefix[n.key.split(".", 1)[0]] = by_prefix.get(n.key.split(".", 1)[0], 0) + 1
+    # Each forward-ref section must contribute >= 1 node (key under its prefix).
+    for section in ("external_transports", "auth"):
+        # Only assert if the section is a real ReynConfig field (guards against
+        # a future rename making the test silently vacuous).
+        assert section in {f.name for f in dataclasses.fields(ReynConfig)}, (
+            f"{section!r} is no longer a ReynConfig field — update this guard"
+        )
+        assert by_prefix.get(section, 0) >= 1, (
+            f"forward-ref section {section!r} produced 0 nodes — its type "
+            f"likely failed to resolve (check config_schema._patch_localns)"
+        )
 
 
 # ---------------------------------------------------------------------------
