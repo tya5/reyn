@@ -55,6 +55,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 import litellm
 
+from reyn.llm.json_parse import loads_lenient
+
 if TYPE_CHECKING:
     from reyn.chat.services.token_multiplier_learner import TokenMultiplierLearner
     from reyn.config import (
@@ -772,14 +774,15 @@ class CompactionEngine:
         if not raw:
             raise ValueError("compaction LLM returned empty response")
 
-        parsed: dict = {}
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            # Attempt JSON repair (remove trailing commas — most common LLM mistake).
-            import re
-            repaired = re.sub(r",(\s*[}\]])", r"\1", raw)
-            parsed = json.loads(repaired)
+        parsed: dict = loads_lenient(
+            raw,
+            on_raw_decode=lambda discarded_len, head: logger.warning(
+                "compaction_json_raw_decode_recovered: discarded %d bytes of "
+                "trailing garbage after valid JSON object. head=%r",
+                discarded_len,
+                head,
+            ),
+        )
 
         new_turn_seqs = parsed.get("new_turn_seqs") or []
         covers = compute_covers_through_seq(new_turn_seqs)
