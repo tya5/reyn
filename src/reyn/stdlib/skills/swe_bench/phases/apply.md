@@ -10,6 +10,13 @@ max_act_turns: 30
 
 Implement the edit plan by modifying the repository files.
 
+## Domain rule — edit SOURCE files only
+
+Edit SOURCE files only.  The SWE-bench harness owns the test files: it applies
+the test_patch itself after the skill run.  The verify preprocessor reverts any
+test-file edits before running `git apply test_patch`, so apply-phase test edits
+do not count and will not survive into the final diff.
+
 ## Step 1 — Read each file before editing
 
 For every file listed in the plan's edits, issue a file read op to retrieve
