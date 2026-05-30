@@ -80,7 +80,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _AMBER, _CORAL
+from reyn.chat.tui._palette import _AMBER, _CORAL, _TEXT_MUTED, _STATUS_ERROR, _BG_HEADER
 
 from ._renderable_cache import RenderableCacheMixin
 
@@ -648,13 +648,13 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
                 if i == self._cursor:
                     t.append("▌ ", style=_CORAL)
                 else:
-                    t.append("  ", style="#1a1a1a")
+                    t.append("  ", style=_BG_HEADER)
             self._append_row(t, agent_id, entry, glyph, body_budget)
         overflow = len(self._entries) - len(visible)
         if overflow > 0:
             t.append("\n")
             tail = f"… +{overflow} more (panel for all)"
-            t.append(self._truncate_to_cells(tail, body_budget), style="dim #888888")
+            t.append(self._truncate_to_cells(tail, body_budget), style="dim " + _TEXT_MUTED)
         return t
 
     def _append_row(
@@ -680,7 +680,7 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         if entry.flashing:
             id_short = _middle_elide_id(agent_id, min(16, body_budget - 24))
             flash_text = f"✗ async: {id_short} (interrupted)"
-            t.append(self._truncate_to_cells(flash_text, body_budget), style="bold #ff6644")
+            t.append(self._truncate_to_cells(flash_text, body_budget), style="bold " + _STATUS_ERROR)
             return
 
         if entry.frozen_elapsed_s is not None:
@@ -690,7 +690,7 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         elapsed_str = _fmt_elapsed(elapsed_s)
         if entry.pending_count > 0:
             elapsed_segment = f"  ({entry.pending_count} pending)"
-            elapsed_style = "bold #ffaa44"
+            elapsed_style = "bold #ffaa44"  # palette-candidate: pending-warning amber (no foundation token yet)
             glyph_style = _AMBER
         else:
             elapsed_segment = f"  · {elapsed_str}"
@@ -735,7 +735,7 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         summary_display = self._truncate_to_cells(entry.summary, summary_budget)
 
         t.append(f"{glyph} ", style=glyph_style)
-        t.append("async: ", style="dim #888888")
+        t.append("async: ", style="dim " + _TEXT_MUTED)
         t.append(agent_id, style="bold")
         if summary_display:
             t.append(sep, style="dim")

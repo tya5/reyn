@@ -47,7 +47,7 @@ class ErrorBox(Widget):
            is right at the WCAG AA threshold for large text and below for
            small text. The vertical bar gives the eye a shape / position
            cue that survives quick scrolling and color-blind users. */
-        border-left: solid #cc5555;
+        border-left: solid #cc5555;  /* palette-candidate: error-high severity ramp (distinct from _STATUS_ERROR) */
     }
     /* W13 A#3: severity-tier border-left overrides (3 colors).
        HIGH (default / ``.-sev-high``) keeps the existing #cc5555 red —
@@ -55,44 +55,44 @@ class ErrorBox(Widget):
        MED  (``.-sev-med``) → amber to signal recoverable / transient.
        LOW  (``.-sev-low``) → grey to signal user-input mistake. */
     ErrorBox.-sev-med {
-        border-left: solid #cc9955;
+        border-left: solid #cc9955;  /* palette-candidate: error-med severity ramp */
     }
     ErrorBox.-sev-low {
-        border-left: solid #666666;
+        border-left: solid #666666;  /* palette-candidate: error-low severity ramp */
     }
     /* Header line — always visible */
     ErrorBox Label.eb-header {
-        color: #cc5555;
+        color: #cc5555;  /* palette-candidate: error-high severity ramp */
         height: 1;
         width: 1fr;
         padding: 0 1;
     }
     ErrorBox.-sev-med Label.eb-header {
-        color: #cc9955;
+        color: #cc9955;  /* palette-candidate: error-med severity ramp */
     }
     ErrorBox.-sev-low Label.eb-header {
-        color: #888888;
+        color: #888888;  /* _TEXT_MUTED (CSS string — cannot use Python variable) */
     }
     ErrorBox:hover Label.eb-header {
-        color: #ff7777;
+        color: #ff7777;  /* palette-candidate: error-high hover (lighter sibling of #cc5555) */
     }
     ErrorBox.-sev-med:hover Label.eb-header {
-        color: #ffbb77;
+        color: #ffbb77;  /* palette-candidate: error-med hover */
     }
     ErrorBox.-sev-low:hover Label.eb-header {
-        color: #aaaaaa;
+        color: #aaaaaa;  /* _TEXT_BODY (CSS string — cannot use Python variable) */
     }
     /* Detail block — hidden until expanded */
     ErrorBox Static.eb-details {
         display: none;
-        color: #777777;
+        color: #777777;  /* palette-candidate: error-detail body (between _TEXT_NEUTRAL and _TEXT_MUTED) */
         height: auto;
         width: 1fr;
         padding: 0 2;
     }
     ErrorBox Label.eb-hint {
         display: none;
-        color: #555555;
+        color: #555555;  /* _TEXT_DIM (CSS string — cannot use Python variable) */
         height: 1;
         width: 1fr;
         padding: 0 2;
@@ -107,7 +107,7 @@ class ErrorBox(Widget):
        reads as actionable, not just metadata. */
     ErrorBox Label.eb-inline-hint {
         display: none;
-        color: #8a7a4a;
+        color: #8a7a4a;  /* palette-candidate: inline-hint actionable (distinct from metadata) */
         height: 1;
         width: 1fr;
         padding: 0 2;

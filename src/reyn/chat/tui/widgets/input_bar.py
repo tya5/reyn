@@ -83,8 +83,8 @@ class InputBar(Widget):
         dock: bottom;
         height: auto;
         max-height: 22;
-        background: #111111;
-        border-top: solid #2a2a2a;
+        background: #111111;  /* _BG_PANEL */
+        border-top: solid #2a2a2a;  /* _BORDER_DIM */
     }
     InputBar TextArea {
         background: transparent;
@@ -96,11 +96,11 @@ class InputBar(Widget):
     }
     InputBar #hints {
         height: 1;
-        color: #555555;
+        color: #555555;  /* _TEXT_DIM */
         padding: 0 2;
     }
     InputBar.in-flight TextArea {
-        color: #666666;
+        color: #666666;  /* _TEXT_NEUTRAL */
     }
     InputBar.in-flight #hints {
         color: #886633;
@@ -109,7 +109,7 @@ class InputBar(Widget):
         border-top: solid #553333;
     }
     InputBar.disconnected TextArea {
-        color: #555555;
+        color: #555555;  /* _TEXT_DIM */
     }
     InputBar.disconnected #hints {
         color: #553333;

@@ -35,7 +35,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _CORAL
+from reyn.chat.tui._palette import _CORAL, _TEXT_NEUTRAL, _TEXT_MUTED, _TEXT_BODY, _STATUS_ERROR
 
 from ._renderable_cache import RenderableCacheMixin
 
@@ -395,9 +395,9 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
 
         # ── Elapsed segment (always kept) ─────────────────────────────────
         if secs >= _ELAPSED_RED_S:
-            elapsed_style = "bold #ff6644"
+            elapsed_style = "bold " + _STATUS_ERROR
         elif secs >= _ELAPSED_AMBER_S:
-            elapsed_style = "bold #ffaa44"
+            elapsed_style = "bold #ffaa44"  # palette-candidate: elapsed-warning amber (no foundation token yet)
         else:
             elapsed_style = "dim"
         elapsed_str = f"  {secs:.1f}s"
@@ -482,7 +482,7 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         # ── Assemble the Text object ───────────────────────────────────────
         t = Text()
         if self._label_prefix:
-            t.append(self._label_prefix, style="dim #666666")
+            t.append(self._label_prefix, style="dim " + _TEXT_NEUTRAL)
         t.append(glyph_str, style=_CORAL)
         # skill_name#abcd — normal weight
         t.append(skill_id_display, style="bold")
@@ -522,7 +522,7 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
 
         t = Text()
         if self._label_prefix:
-            t.append(self._label_prefix, style="dim #666666")
+            t.append(self._label_prefix, style="dim " + _TEXT_NEUTRAL)
 
         if self._success:
             glyph_str = "✓ "
@@ -599,7 +599,7 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
                 skill_budget = max(4, total_width - _RIGHT_MARGIN_CELLS - prefix_cells - glyph_cells - sep_cells)
                 skill_id = self._truncate_to_cells(skill_id, skill_budget)
 
-            t.append(glyph_str, style="dim #888888")
+            t.append(glyph_str, style="dim " + _TEXT_MUTED)
             t.append(skill_id, style="dim")
             t.append("  · ", style="dim")
             t.append(cancel_msg, style="dim")
@@ -651,10 +651,10 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         if self._label_prefix:
             # Indent the history line under the same prefix so a sub-
             # skill's drill-down nests visually with its parent.
-            t.append(" " * len(self._label_prefix), style="dim #666666")
+            t.append(" " * len(self._label_prefix), style="dim " + _TEXT_NEUTRAL)
         t.append("  ↳ phases: ", style="dim")
         if not self._phase_history:
-            t.append("(none yet)", style="dim #666666")
+            t.append("(none yet)", style="dim " + _TEXT_NEUTRAL)
             return t
         # The history is "(phase, visit, elapsed_at_entry)" for each
         # entry. Render each as "name(elapsed_at_entry)", with the
@@ -671,7 +671,7 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
                 t.append(label, style=f"italic {_CORAL}")
                 t.append("(now)", style="dim")
             else:
-                t.append(label, style="dim #aaaaaa")
+                t.append(label, style="dim " + _TEXT_BODY)
                 t.append(f"({entered_at:.1f}s)", style="dim")
         return t
 
@@ -691,23 +691,23 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         if self._label_prefix:
             # Indent under the same prefix as the head/history lines
             # so a sub-skill's tool list nests visually with its parent.
-            t.append(" " * len(self._label_prefix), style="dim #666666")
+            t.append(" " * len(self._label_prefix), style="dim " + _TEXT_NEUTRAL)
         t.append(f"  ↳ tools ({len(self._tool_calls)}): ", style="dim")
         for i, (tool_name, args) in enumerate(
             self._tool_calls[:_TOOL_DRILL_MAX_RENDER]
         ):
             if i > 0:
                 t.append(", ", style="dim")
-            t.append(tool_name, style="dim #aaaaaa")
+            t.append(tool_name, style="dim " + _TEXT_BODY)
             if args:
                 # Compress args to a short hint so the tools-line
                 # stays readable. Full args live on the
                 # ToolCallRow (= ``_tool_call_rows[op_id]``).
                 snippet = args if len(args) <= 14 else args[:13] + "…"
-                t.append(f"({snippet})", style="dim #888888")
+                t.append(f"({snippet})", style="dim " + _TEXT_MUTED)
         hidden = len(self._tool_calls) - _TOOL_DRILL_MAX_RENDER
         if hidden > 0:
-            t.append(f", +{hidden} more", style="dim #666666")
+            t.append(f", +{hidden} more", style="dim " + _TEXT_NEUTRAL)
         return t
 
     def _refresh(self) -> None:

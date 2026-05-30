@@ -35,7 +35,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _CORAL
+from reyn.chat.tui._palette import _CORAL, _TEXT_NEUTRAL, _TEXT_MUTED, _STATUS_ERROR
 
 from ._renderable_cache import RenderableCacheMixin
 
@@ -317,9 +317,9 @@ class ToolCallRow(RenderableCacheMixin, Widget):
     def _elapsed_style(self) -> str:
         secs = self._elapsed_s()
         if secs >= _ELAPSED_RED_S:
-            return "bold #ff6644"
+            return "bold " + _STATUS_ERROR
         if secs >= _ELAPSED_AMBER_S:
-            return "bold #ffaa44"
+            return "bold #ffaa44"  # palette-candidate: elapsed-warning amber (no foundation token yet)
         return "dim"
 
     def _state_glyph(self) -> tuple[str, str]:
@@ -329,7 +329,7 @@ class ToolCallRow(RenderableCacheMixin, Widget):
         if self._success:
             return ("✓", "bold green")
         if self._aborted:
-            return ("⊘", "dim #888888")
+            return ("⊘", "dim " + _TEXT_MUTED)
         return ("✗", "bold red")
 
     def _truncate_to_cells(self, text: str, max_cells: int) -> str:
@@ -425,7 +425,7 @@ class ToolCallRow(RenderableCacheMixin, Widget):
             args_display = self._args_repr
 
         if self._label_prefix:
-            t.append(self._label_prefix, style="dim #666666")
+            t.append(self._label_prefix, style="dim " + _TEXT_NEUTRAL)
         t.append(glyph_with_space, style=glyph_style)
         t.append(tool_open, style="bold" if not self._finished else "dim")
         t.append(args_display, style="dim")
@@ -470,7 +470,7 @@ class ToolCallRow(RenderableCacheMixin, Widget):
             body, body_budget,
         )
         t = Text()
-        t.append(_RESULT_INDENT, style="dim #666666")
+        t.append(_RESULT_INDENT, style="dim " + _TEXT_NEUTRAL)
         t.append(snippet, style=body_style)
         return t
 
@@ -486,8 +486,8 @@ class ToolCallRow(RenderableCacheMixin, Widget):
             return self._result_snippet, "dim"
         if self._finished and not self._success and self._reason:
             if self._aborted:
-                return f"⊘ {self._reason}", "dim #888888"
-            return f"✗ {self._reason}", "dim #ff6644"
+                return f"⊘ {self._reason}", "dim " + _TEXT_MUTED
+            return f"✗ {self._reason}", "dim " + _STATUS_ERROR
         return "", "dim"
 
     def _refresh(self) -> None:

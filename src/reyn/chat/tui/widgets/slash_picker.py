@@ -20,7 +20,15 @@ from textual.message import Message
 from textual.widgets import Static
 
 from reyn.chat.slash import SlashCommand
-from reyn.chat.tui._palette import _CORAL
+from reyn.chat.tui._palette import (
+    _CORAL,
+    _BG_HEADER,
+    _TEXT_BRIGHT,
+    _TEXT_MUTED,
+    _TEXT_BODY,
+    _TEXT_DIM,
+    _TEXT_NEUTRAL,
+)
 
 from ._renderable_cache import RenderableCacheMixin
 
@@ -44,7 +52,7 @@ class SlashPicker(RenderableCacheMixin, Static):
         height: auto;
         /* 8 command rows + 1 "+N more" footer + 2 border rows = 11. */
         max-height: 11;
-        background: #1a1a1a;
+        background: #1a1a1a;  /* _BG_HEADER */
         border: solid $primary;
         padding: 0 1;
         display: none;
@@ -302,10 +310,10 @@ class SlashPicker(RenderableCacheMixin, Static):
             row = Text()
             # Selection caret
             row.append("▌ " if is_sel else "  ",
-                       style=_CORAL if is_sel else "#1a1a1a")
+                       style=_CORAL if is_sel else _BG_HEADER)
             # Command name
             name = f"/{cmd.name}".ljust(name_col)
-            row.append(name, style=f"bold {_CORAL}" if is_sel else "#dddddd")
+            row.append(name, style=f"bold {_CORAL}" if is_sel else _TEXT_BRIGHT)
             row.append("  ")
             # Summary (truncated to fit the row)
             summary = cmd.summary
@@ -313,7 +321,7 @@ class SlashPicker(RenderableCacheMixin, Static):
                 summary = summary[: max(1, summary_budget - 1)] + "…"
             row.append(
                 summary,
-                style="#bbbbbb" if is_sel else "dim #888888",
+                style="#bbbbbb" if is_sel else "dim " + _TEXT_MUTED,
             )
             if i > 0:
                 body.append("\n")
@@ -326,7 +334,7 @@ class SlashPicker(RenderableCacheMixin, Static):
             body.append("\n")
             body.append(
                 f"  +{hidden} more — keep typing to filter",
-                style="dim #888888",
+                style="dim " + _TEXT_MUTED,
             )
         self.update(body)
         self._set_rendered_cache(body)
@@ -356,10 +364,10 @@ class SlashPicker(RenderableCacheMixin, Static):
         if len(summary) > summary_budget:
             summary = summary[: max(1, summary_budget - 1)] + "…"
         t = Text()
-        t.append("  ", style="#1a1a1a")
-        t.append(name, style="dim #888888")
+        t.append("  ", style=_BG_HEADER)
+        t.append(name, style="dim " + _TEXT_MUTED)
         t.append("  ")
-        t.append(summary, style="dim #888888")
+        t.append(summary, style="dim " + _TEXT_MUTED)
         # Structured usage line — surfaced as a second hint row when
         # the command opts in via ``SlashCommand.usage``. Indented
         # under the summary with a ``↳`` connector so the eye groups
@@ -381,8 +389,8 @@ class SlashPicker(RenderableCacheMixin, Static):
             if len(usage_text) > usage_budget:
                 usage_text = usage_text[: max(1, usage_budget - 1)] + "…"
             t.append("\n")
-            t.append(indent + "↳ usage: ", style="dim #666666")
-            t.append(usage_text, style="dim #aaaaaa")
+            t.append(indent + "↳ usage: ", style="dim " + _TEXT_NEUTRAL)
+            t.append(usage_text, style="dim " + _TEXT_BODY)
         # Completion rows (if the command supplied a CompleterFn — e.g.
         # /attach surfacing agent names). Indented under the hint row,
         # one per line, dim, informational only.
@@ -390,13 +398,13 @@ class SlashPicker(RenderableCacheMixin, Static):
             indent = " " * (2 + len(name) + 2)
             for c in self._completions:
                 t.append("\n")
-                t.append(indent + c, style="dim #888888")
+                t.append(indent + c, style="dim " + _TEXT_MUTED)
             hidden = self._total_completions - len(self._completions)
             if hidden > 0:
                 t.append("\n")
                 t.append(
                     indent + f"+{hidden} more — keep typing to filter",
-                    style="dim #555555",
+                    style="dim " + _TEXT_DIM,
                 )
         # Tab-recall discovery footer — only for /find, only when history
         # is non-empty. Surfaces the affordance ("Tab inserts a recent
@@ -408,7 +416,7 @@ class SlashPicker(RenderableCacheMixin, Static):
             if find_history_has_entries():
                 indent = " " * (2 + len(name) + 2)
                 t.append("\n")
-                t.append(indent + "↳ Tab inserts a recent query", style="dim #666666")
+                t.append(indent + "↳ Tab inserts a recent query", style="dim " + _TEXT_NEUTRAL)
         self.update(t)
         self._set_rendered_cache(t)
 
@@ -428,15 +436,15 @@ class SlashPicker(RenderableCacheMixin, Static):
         typed = self._unknown_token
         suggestions = self._unknown_suggestions
         t = Text()
-        t.append("  ", style="#1a1a1a")
+        t.append("  ", style=_BG_HEADER)
         t.append("unknown ", style="dim #d4756a")
         t.append(f"/{typed}", style="dim #d4756a")
         if suggestions:
-            t.append("  — did you mean ", style="dim #888888")
+            t.append("  — did you mean ", style="dim " + _TEXT_MUTED)
             for i, sug in enumerate(suggestions):
                 if i > 0:
-                    t.append(" ", style="dim #888888")
-                t.append(f"/{sug}", style="dim #aaaaaa")
-            t.append("?", style="dim #888888")
+                    t.append(" ", style="dim " + _TEXT_MUTED)
+                t.append(f"/{sug}", style="dim " + _TEXT_BODY)
+            t.append("?", style="dim " + _TEXT_MUTED)
         self.update(t)
         self._set_rendered_cache(t)
