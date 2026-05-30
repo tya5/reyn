@@ -259,7 +259,6 @@ All ops are documented in the single reference page: **[Control IR](reference/ru
 | `index_events` | Index P6 event log with incremental cursor tracking | [Reference](reference/stdlib/index_events.md) |
 | `judge_phase` | Score one phase artifact against quality criteria | [Reference](reference/stdlib/judge_phase.md) |
 | `ops_report` | Execution summary from indexed events for a period | [Reference](reference/stdlib/ops_report.md) |
-| `read_local_files` | Read project files via MCP and synthesise answers | [Reference](reference/stdlib/read_local_files.md) |
 | `skill_builder` | Scaffold a new skill from a natural-language description | [Reference](reference/stdlib/skill_builder.md) |
 | `skill_importer` | Find and import an external skill with DSL conversion | [Reference](reference/stdlib/skill_importer.md) |
 | `skill_improver` | Iterative skill improvement via eval-plan-apply loop | [Reference](reference/stdlib/skill_improver.md) |

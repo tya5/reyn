@@ -166,6 +166,5 @@ permissions:
 - [コンセプト: シークレット管理](../../concepts/secret-handling.md) — 認証情報のストレージと `${VAR}` interpolation
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install`、`set-secret` などのサブコマンド
 - [Reference: `reyn secret`](../../reference/cli/secret.md) — 認証情報の管理
-- [Reference: `read_local_files`](../../reference/stdlib/read_local_files.md) — サンプル Skill の詳細
 - [Reference: `reyn.yaml` § MCP servers](../../reference/config/reyn-yaml.md#mcp-servers) — 完全なスキーマ
 - [How-to: manage permissions](../for-users/manage-permissions.md) — 事前承認、取り消し、eval モード

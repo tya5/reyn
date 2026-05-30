@@ -206,6 +206,6 @@ python scripts/swe_bench_runner.py --input instance.json --timeout 1200
 
 ## Related
 
-- [`src/reyn/stdlib/skills/swe_bench/skill.md`](../../../src/reyn/stdlib/skills/swe_bench/skill.md) — skill definition, phase graph, permissions
+- [`src/reyn/stdlib/skills/swe_bench/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/swe_bench/skill.md) — skill definition, phase graph, permissions
 - [`reyn eval benchmark` reference](../../reference/cli/eval.md) — all flags for the batch runner
 - [SWE-bench harness](https://github.com/princeton-nlp/SWE-bench) — official evaluation infrastructure

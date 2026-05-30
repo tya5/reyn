@@ -166,6 +166,5 @@ permissions:
 - [Concepts: secret handling](../../concepts/secret-handling.md) — credential storage and `${VAR}` interpolation
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install`, `set-secret`, and other subcommands
 - [Reference: `reyn secret`](../../reference/cli/secret.md) — managing credentials
-- [Reference: `read_local_files`](../../reference/stdlib/read_local_files.md) — the example skill in detail
 - [Reference: `reyn.yaml` § MCP servers](../../reference/config/reyn-yaml.md#mcp-servers) — full schema
 - [How-to: manage permissions](../for-users/manage-permissions.md) — pre-approval, revoke, eval mode
