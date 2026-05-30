@@ -11,6 +11,27 @@ preview differs per use-site (LLM cognition context, output format, etc.).
 
 Content hash format: ``"sha256:<hex>"`` — matches MediaStore (media_store.py)
 so Phase 2 can unify the two implementations without a format migration.
+
+★ Three-party preview-bound contract
+=====================================
+When ``preview_strategy=None`` (= the chat/MediaStore axis), the service
+stores the content and computes the hash, but does **NOT** apply any preview
+bound.  Responsibility for bounding the inline preview lies with the CALLER:
+
+- **phase axis** (``preview_strategy`` is a real Callable):
+  The injected strategy holds the hard size-bound (e.g. the #1100 bound).
+  The service delegates entirely to the strategy — it neither caps nor expands
+  the result.
+
+- **chat axis** (``preview_strategy=None``, used by ``MediaStore``):
+  ``OffloadResult.preview`` is ``None``.  The calling code (e.g.
+  ``web.py`` ``_generate_web_fetch_preview``, first 10 lines) is responsible
+  for constructing and bounding the preview before returning it to the LLM.
+  The service does NOT bound anything on this axis.
+
+- **service**:  Holds **no** preview bound when ``preview_strategy=None``.
+  A future axis must NOT assume "the service bounds for me" — it must either
+  supply a strategy or bound externally.
 """
 from __future__ import annotations
 
@@ -27,7 +48,9 @@ class OffloadResult:
     """Returned by :func:`offload_value` after writing the full content to disk.
 
     Attributes:
-        preview:      The inline preview produced by the injected strategy.
+        preview:      The inline preview produced by the injected strategy, or
+                      ``None`` when ``preview_strategy=None`` was passed (= chat
+                      axis; the caller builds the preview externally).
                       Shape is strategy-dependent — callers may attach it to
                       the inline slot as-is.
         path_ref:     Absolute path string pointing at the file containing the
@@ -45,7 +68,7 @@ def offload_value(
     value: Any,
     *,
     store_dir: Path,
-    preview_strategy: Callable[[Any, str], Any],
+    preview_strategy: Callable[[Any, str], Any] | None = None,
     filename: str | None = None,
 ) -> OffloadResult:
     """Write *value* to *store_dir* and return preview + path_ref + content_hash.
@@ -58,14 +81,21 @@ def offload_value(
         value:            The value to offload (dict or str; other types via json).
         store_dir:        Directory to write the full content into. Created if
                           absent (parents included).
-        preview_strategy: Callable ``(value, path_ref) -> preview``. Invoked
-                          after the file is written so ``path_ref`` is available
-                          for embedding in the preview (e.g. truncation markers).
+        preview_strategy: Callable ``(value, path_ref) -> preview``, or ``None``.
+                          When provided, invoked after the file is written so
+                          ``path_ref`` is available for embedding in the preview
+                          (e.g. truncation markers); the result lands in
+                          ``OffloadResult.preview``.
+                          When ``None`` (= chat axis / MediaStore), the service
+                          performs NO preview generation; ``OffloadResult.preview``
+                          is ``None`` and the CALLER is responsible for bounding
+                          the inline preview externally.  See the module-level
+                          ★ three-party preview-bound contract for details.
         filename:         Optional explicit filename. When omitted a unique name
                           is derived from a UUID fragment.
 
     Returns:
-        :class:`OffloadResult` with preview, path_ref, content_hash.
+        :class:`OffloadResult` with preview (or ``None``), path_ref, content_hash.
     """
     store_dir.mkdir(parents=True, exist_ok=True)
 
@@ -79,7 +109,7 @@ def offload_value(
 
     path_ref = str(dest)
     content_hash = "sha256:" + hashlib.sha256(serialized.encode()).hexdigest()
-    preview = preview_strategy(value, path_ref)
+    preview = preview_strategy(value, path_ref) if preview_strategy is not None else None
 
     return OffloadResult(preview=preview, path_ref=path_ref, content_hash=content_hash)
 
