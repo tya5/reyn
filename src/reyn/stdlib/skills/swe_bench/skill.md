@@ -50,6 +50,14 @@ permissions:
       function: sanitize_test_patch
       mode: safe
       timeout: 5
+    # FP-0008 C6 v2: pure string parser — extracts +++ b/<path> targets from
+    # test_patch and returns git checkout command strings.  Mode: safe because
+    # the function uses only re + json (both in PURE_STDLIB_ALLOWLIST) and
+    # performs no filesystem access, subprocess calls, or environment reads.
+    - module: ./parse_test_targets.py
+      function: parse_test_targets
+      mode: safe
+      timeout: 5
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---
