@@ -40,8 +40,32 @@ _DIVIDER_DIM = "#333333"  # _PanelHeader bottom + #content top divider
 _TEXT_DIMMEST = "#444444"   # timestamps, dim hints
 _TEXT_DIM = "#555555"       # secondary labels
 _TEXT_NEUTRAL = "#666666"   # neutral
+_TEXT_MUTED = "#888888"     # mid-dim labels (web events etc.) — between neutral and body
 _TEXT_BODY = "#aaaaaa"      # body / status
 _TEXT_BRIGHT = "#dddddd"    # primary content
+
+# ── Semantic status / event accents ────────────────────────────────────────
+# Centralised from ~475 hardcoded hex across widgets (events_tab carried the
+# densest taxonomy). These PRESERVE intentional distinctions verified against
+# usage — they are NOT duplicates to collapse:
+#   - ``_STATUS_ERROR`` (recoverable: tool/mcp/validation/retry failures) vs
+#     ``_STATUS_CRITICAL`` (hard stop: permission_denied / phase_failed /
+#     budget·loop exceeded / interrupted) are distinct severity tiers.
+#   - the plan-event oranges are deliberately a separate hue family from the
+#     skill-event blue so a plan's forensic trail reads as its own category.
+# Re-theme = edit here, not the widgets.
+_STATUS_SUCCESS = "#44cc88"      # phase/step completed, ✓ ok, granted
+_STATUS_SUCCESS_DIM = "#88ddaa"  # control_decided / extension granted (lighter sibling)
+_STATUS_ERROR = "#ff6644"        # recoverable failure
+_STATUS_CRITICAL = "#ff4444"     # hard stop / critical (distinct tier from _STATUS_ERROR)
+_EVENT_SKILL = "#88aaff"         # skill_run / workflow / artifact / index activity (blue)
+_EVENT_TOOL = "#cc88ff"          # tool / mcp invocation (purple)
+_EVENT_LLM = "#ffcc66"           # llm call / budget warn (warm yellow)
+_EVENT_INTERVENTION = "#ffcc88"  # user intervention / safety checkpoint / routing (amber)
+_EVENT_PLAN = "#ff9944"          # plan emitted / aggregated / timeout (orange — distinct from skill blue)
+_EVENT_PLAN_STEP = "#ffaa66"     # plan step lifecycle
+_EVENT_PLAN_MEMO = "#cc8855"     # plan step memoization
+_GREEN_DIMMEST = "#335544"       # context_built (very dim green)
 
 __all__ = [
     "_CORAL",
@@ -53,6 +77,19 @@ __all__ = [
     "_TEXT_DIMMEST",
     "_TEXT_DIM",
     "_TEXT_NEUTRAL",
+    "_TEXT_MUTED",
     "_TEXT_BODY",
     "_TEXT_BRIGHT",
+    "_STATUS_SUCCESS",
+    "_STATUS_SUCCESS_DIM",
+    "_STATUS_ERROR",
+    "_STATUS_CRITICAL",
+    "_EVENT_SKILL",
+    "_EVENT_TOOL",
+    "_EVENT_LLM",
+    "_EVENT_INTERVENTION",
+    "_EVENT_PLAN",
+    "_EVENT_PLAN_STEP",
+    "_EVENT_PLAN_MEMO",
+    "_GREEN_DIMMEST",
 ]
