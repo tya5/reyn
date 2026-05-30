@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import glob as _glob
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from reyn.environment.host_backend import HostBackend
 from reyn.events.events import EventLog
 
 if TYPE_CHECKING:
+    from reyn.environment.backend import EnvironmentBackend, GrepResult
     from reyn.permissions.permissions import PermissionResolver
 
 
@@ -31,7 +33,16 @@ class Workspace:
         skill_name: str = "",
         base_dir: "Path | None" = None,
         state_dir: "Path | None" = None,
+        environment_backend: "EnvironmentBackend | None" = None,
     ) -> None:
+        # FP-0008 #1115 Stage 1: the repo working tree is accessed through a
+        # pluggable EnvironmentBackend. Default = HostBackend (identity over the
+        # local filesystem = legacy behavior). Stage 2 supplies a container
+        # backend so the repo FS can live in a container while this OS layer +
+        # the permission gate stay host-side. The permission gate, relative-path
+        # resolution, and event emission stay here; the backend does only IO on
+        # the absolute paths this class resolves.
+        self._backend: "EnvironmentBackend" = environment_backend or HostBackend()
         self.base_dir = base_dir.resolve() if base_dir is not None else Path.cwd()
         # FP-0008 #1115 Stage 0: state_dir is host-side and decoupled from
         # base_dir. Default = base_dir/.reyn (backward-compat). A caller that
@@ -93,9 +104,10 @@ class Workspace:
     def read_file(self, path_str: str) -> tuple[str, bool]:
         """Read a file. Returns (content, found). Raises PermissionError if denied."""
         path = self._resolve_read(path_str)
-        if path.exists():
-            return path.read_text(encoding="utf-8"), True
-        return "", False
+        data = self._backend.read_bytes(path)
+        if data is None:
+            return "", False
+        return data.decode("utf-8"), True
 
     def read_file_bytes(self, path_str: str) -> tuple[bytes, bool]:
         """Read a file as raw bytes (issue #365).
@@ -106,25 +118,24 @@ class Workspace:
         denied by the workspace policy.
         """
         path = self._resolve_read(path_str)
-        if path.exists():
-            return path.read_bytes(), True
-        return b"", False
+        data = self._backend.read_bytes(path)
+        if data is None:
+            return b"", False
+        return data, True
 
     def write_file(self, path_str: str, content: str) -> None:
         """Write a file into the project. Raises PermissionError if denied."""
         path = self._resolve_write(path_str)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        self._backend.write_bytes(path, content.encode("utf-8"))
         self._events.emit("workspace_updated", path=str(path))
 
     def delete_file(self, path_str: str) -> bool:
         """Delete a file from the project. Returns True if deleted, False if not found."""
         path = self._resolve_write(path_str)
-        if path.exists() and path.is_file():
-            path.unlink()
+        deleted = self._backend.delete(path)
+        if deleted:
             self._events.emit("workspace_updated", path=str(path))
-            return True
-        return False
+        return deleted
 
     def make_directory(self, path_str: str, *, parents: bool = True) -> bool:
         """Create a directory under the project (issue #356).
@@ -136,15 +147,16 @@ class Workspace:
         explicitly approved.
         """
         path = self._resolve_write(path_str)
-        if path.exists():
-            if path.is_dir():
-                return False
+        try:
+            created = self._backend.mkdir(path, parents=parents)
+        except FileExistsError:
+            # Preserve the legacy message which embeds the caller's path_str.
             raise FileExistsError(
                 f"path exists but is not a directory: {path_str!r}"
-            )
-        path.mkdir(parents=parents, exist_ok=False)
-        self._events.emit("workspace_updated", path=str(path))
-        return True
+            ) from None
+        if created:
+            self._events.emit("workspace_updated", path=str(path))
+        return created
 
     def move_path(self, src_str: str, dst_str: str) -> bool:
         """Move / rename a file or directory (issue #356).
@@ -155,12 +167,10 @@ class Workspace:
         """
         src = self._resolve_write(src_str)
         dst = self._resolve_write(dst_str)
-        if not src.exists():
-            return False
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        src.rename(dst)
-        self._events.emit("workspace_updated", path=str(dst))
-        return True
+        moved = self._backend.move(src, dst)
+        if moved:
+            self._events.emit("workspace_updated", path=str(dst))
+        return moved
 
     def stat_path(self, path_str: str) -> dict | None:
         """Filesystem metadata for a file / directory (issue #356).
@@ -171,17 +181,7 @@ class Workspace:
         string, e.g. ``"0o644"``). Gated by ``_resolve_read``.
         """
         path = self._resolve_read(path_str)
-        if not path.exists():
-            return None
-        st = path.stat()
-        return {
-            "size": st.st_size,
-            "mtime": st.st_mtime,
-            "ctime": st.st_ctime,
-            "is_dir": path.is_dir(),
-            "is_file": path.is_file(),
-            "mode": oct(st.st_mode & 0o777),
-        }
+        return self._backend.stat(path)
 
     def glob_files(self, pattern: str, max_results: int = 50) -> list[str]:
         """
@@ -222,13 +222,13 @@ class Workspace:
             # whose first max_results matches are directories (common at the
             # project root: .claude, .git, .github, .reyn, .venv, ...) silently
             # truncates the file list to ~zero.
-            raw = sorted(_glob.glob(pattern, recursive=True))
+            raw = sorted(str(m) for m in self._backend.glob(pattern))
             files = [m for m in raw if Path(m).is_file()]
             return files[:max_results]
 
         # Same fix for the relative-path branch: filter to files first, then
         # cap at max_results.
-        ws_matches = sorted(self.base_dir.glob(pattern))
+        ws_matches = sorted(self._backend.glob(pattern, root=self.base_dir))
         files_only = [m for m in ws_matches if m.is_file()]
         result = []
         for m in files_only[:max_results]:
@@ -237,6 +237,38 @@ class Workspace:
             except ValueError:
                 pass
         return result
+
+    def grep(
+        self,
+        path_str: str,
+        regex: "re.Pattern[str]",
+        *,
+        glob: str | None = None,
+        file_type: str | None = None,
+        output_mode: str = "content",
+        head_limit: int | None = None,
+        context_before: int = 0,
+        context_after: int = 0,
+    ) -> "GrepResult":
+        """Permission-resolve the search root and run the backend's scan.
+
+        FP-0008 #1115 Stage 1: ``grep`` is an environment-internal scan
+        primitive — the Workspace gates the root via ``_resolve_read`` (raising
+        PermissionError when denied) and delegates the glob+read+regex scan to
+        the backend, which returns absolute Paths. The caller (file op handler)
+        relativizes for presentation. See [[environment.backend]] module docs.
+        """
+        root = self._resolve_read(path_str)
+        return self._backend.grep(
+            root,
+            regex,
+            glob=glob,
+            file_type=file_type,
+            output_mode=output_mode,
+            head_limit=head_limit,
+            context_before=context_before,
+            context_after=context_after,
+        )
 
     def store_artifact(
         self,

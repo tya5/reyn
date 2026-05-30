@@ -277,20 +277,22 @@ def _execute_grep(op: FileIROp, ctx: OpContext) -> dict:
     except re.error as exc:
         return {"kind": "file", "op": "grep", "status": "error", "error": f"invalid regex: {exc}"}
 
-    search_root = Path(op.path) if op.path else Path(".")
+    # FP-0008 #1115 Stage 1: the glob+read+regex scan is an environment-internal
+    # primitive run by the backend (Workspace.grep gates the root + delegates).
+    # The handler keeps presentation: regex compile / error envelopes / relativize.
     try:
-        resolved_root = ctx.workspace._resolve_read(str(search_root))
+        result = ctx.workspace.grep(
+            op.path or ".",
+            regex,
+            glob=op.glob,
+            file_type=op.file_type,
+            output_mode=op.output_mode,
+            head_limit=op.head_limit,
+            context_before=op.context_before,
+            context_after=op.context_after,
+        )
     except PermissionError as exc:
         return {"kind": "file", "op": "grep", "status": "denied", "error": str(exc)}
-
-    if resolved_root.is_file():
-        candidates = [resolved_root]
-    else:
-        glob_pattern = op.glob or "**/*"
-        candidates = sorted(f for f in resolved_root.glob(glob_pattern) if f.is_file())
-    if op.file_type:
-        ext = op.file_type.lstrip(".")
-        candidates = [f for f in candidates if f.suffix.lstrip(".") == ext]
 
     def _rel(p: Path) -> str:
         try:
@@ -298,55 +300,27 @@ def _execute_grep(op: FileIROp, ctx: OpContext) -> dict:
         except ValueError:
             return str(p)
 
-    if op.output_mode == "files_with_matches":
-        matched: list[str] = []
-        for f in candidates:
-            try:
-                if regex.search(f.read_text(encoding="utf-8", errors="replace")):
-                    matched.append(_rel(f))
-            except OSError:
-                continue
+    if result.output_mode == "files_with_matches":
+        matched = [_rel(f) for f in result.files]
         ctx.events.emit("tool_executed", op="grep", pattern=op.pattern, match_count=len(matched))
         return {"kind": "file", "op": "grep", "status": "ok",
                 "output_mode": "files_with_matches", "files": matched, "count": len(matched)}
 
-    if op.output_mode == "count":
-        total = 0
-        for f in candidates:
-            try:
-                total += len(regex.findall(f.read_text(encoding="utf-8", errors="replace")))
-            except OSError:
-                continue
-        ctx.events.emit("tool_executed", op="grep", pattern=op.pattern, match_count=total)
+    if result.output_mode == "count":
+        ctx.events.emit("tool_executed", op="grep", pattern=op.pattern, match_count=result.count)
         return {"kind": "file", "op": "grep", "status": "ok",
-                "output_mode": "count", "count": total}
+                "output_mode": "count", "count": result.count}
 
     matches: list[dict] = []
-    head_limit = op.head_limit
-    done = False
-    for f in candidates:
-        if done:
-            break
-        try:
-            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        rel = _rel(f)
-        for i, line in enumerate(lines):
-            if not regex.search(line):
-                continue
-            entry: dict[str, Any] = {"path": rel, "line_number": i + 1, "content": line}
-            if op.context_before or op.context_after:
-                start = max(0, i - op.context_before)
-                end = min(len(lines), i + op.context_after + 1)
-                entry["context"] = [
-                    {"line_number": j + 1, "content": lines[j], "is_match": j == i}
-                    for j in range(start, end)
-                ]
-            matches.append(entry)
-            if head_limit is not None and len(matches) >= head_limit:
-                done = True
-                break
+    for hit in result.matches:
+        entry: dict[str, Any] = {
+            "path": _rel(hit["path"]),
+            "line_number": hit["line_number"],
+            "content": hit["content"],
+        }
+        if "context" in hit:
+            entry["context"] = hit["context"]
+        matches.append(entry)
 
     ctx.events.emit("tool_executed", op="grep", pattern=op.pattern, match_count=len(matches))
     return {"kind": "file", "op": "grep", "status": "ok",
