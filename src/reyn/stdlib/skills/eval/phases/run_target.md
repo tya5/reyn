@@ -79,7 +79,7 @@ For each match, build a phase_eval_request item:
 }
 ```
 
-Use `entry.path` (the CWD-relative file path returned in `phase_artifacts`) as `artifact_path`. Do NOT inline `entry.artifact.data` — the judge reads the file directly.
+Use `entry.path` (the absolute, OS-resolved artifact file path returned in `phase_artifacts`) verbatim as `artifact_path`. Do NOT inline `entry.artifact.data` — the judge reads the file directly (this keeps large artifact data out of the prompt). Do NOT rewrite or relativize the path.
 
 Skip any phase in `phase_criteria` that has no matching entry in `phase_artifacts`.
 

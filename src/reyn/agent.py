@@ -192,13 +192,31 @@ class Agent:
 
     @property
     def phase_artifacts(self) -> list[dict]:
-        """Return all artifacts stored during the run, excluding the initial input."""
+        """Return all artifacts stored during the run, excluding the initial input.
+
+        FP-0008 #1115 Stage 0 Part B: ``store_artifact`` returns a state_dir-
+        relative handle (decoupled from base_dir). These artifacts cross a
+        workspace boundary — a parent skill (e.g. ``eval``) hands ``path`` to a
+        sub-skill judge that ``file.read``s it from a *different* workspace. So
+        the handle is resolved here, via this run's own workspace, to an
+        absolute path the consumer can resolve regardless of its own base_dir
+        (consistent with the LLM-facing artifact_ref resolution in
+        ``runtime.build_frame``). Stage 2 (container backend) swaps the
+        resolution for a host/container-served read without touching skills.
+        """
         if self._runtime is None:
             return []
-        return [
-            a for a in self._runtime.workspace.artifacts
-            if a["phase"] != "_input" and not a["phase"].endswith("_preprocessed")
-        ]
+        ws = self._runtime.workspace
+        out: list[dict] = []
+        for a in ws.artifacts:
+            if a["phase"] == "_input" or a["phase"].endswith("_preprocessed"):
+                continue
+            try:
+                abs_path = str(ws.resolve_artifact_handle(a["path"]))
+            except (PermissionError, KeyError, TypeError):
+                abs_path = a["path"]
+            out.append({**a, "path": abs_path})
+        return out
 
     def get_events(self) -> list:
         return self._runtime.events.all() if self._runtime else []
