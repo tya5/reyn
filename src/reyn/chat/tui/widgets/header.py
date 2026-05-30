@@ -25,6 +25,7 @@ from reyn.chat.tui._palette import (
     _BG_HEADER,
     _STATUS_CRITICAL,
     _STATUS_ERROR,
+    _STATUS_WARN,
     _TEXT_BODY,
     _TEXT_DIM,
     _TEXT_MUTED,
@@ -70,7 +71,7 @@ def _cap_proximity_color(used: float | int, cap: float | int | None) -> str | No
     if ratio >= 0.90:
         return _STATUS_CRITICAL
     if ratio >= 0.75:
-        return "#ffaa44"  # palette-candidate: cap-proximity warning amber (no foundation token yet)
+        return _STATUS_WARN
     return None
 
 
@@ -492,7 +493,7 @@ class ReynHeader(RenderableCacheMixin, Widget):
         # unchanged.
         if self._stalled_count > 0:
             parts.append(
-                (f"[{self._stalled_count} pending]", "#ffaa44"),  # palette-candidate: pending-warning amber (no foundation token yet)
+                (f"[{self._stalled_count} pending]", _STATUS_WARN),
             )
         # ``/find`` active-state badge — placed alongside [N pending]
         # as a sibling "active state" indicator. Subtle blue
@@ -518,7 +519,7 @@ class ReynHeader(RenderableCacheMixin, Widget):
         if self._voice_state == "recording":
             parts.append(("🔴 voice · Enter→send Esc→cancel", "bold " + _STATUS_ERROR))
         elif self._voice_state == "transcribing":
-            parts.append(("⏳ voice", "bold #ffaa44"))  # palette-candidate: transcribing-warning amber (no foundation token yet)
+            parts.append(("⏳ voice", "bold " + _STATUS_WARN))
         # Clock always present, last — the canary for "is the UI frozen?"
         parts.append((self._now_text(), None))
 

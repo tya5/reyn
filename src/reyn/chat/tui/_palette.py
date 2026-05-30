@@ -40,7 +40,9 @@ _DIVIDER_DIM = "#333333"  # _PanelHeader bottom + #content top divider
 _TEXT_DIMMEST = "#444444"   # timestamps, dim hints
 _TEXT_DIM = "#555555"       # secondary labels
 _TEXT_NEUTRAL = "#666666"   # neutral
-_TEXT_MUTED = "#888888"     # mid-dim labels (web events etc.) — between neutral and body
+_TEXT_MID = "#777777"       # mid-dim labels (cost call-counts, reply previews) — between neutral and muted
+_TEXT_MUTED = "#888888"     # mid-dim labels (web events etc.) — between mid and body
+_TEXT_SELECTED = "#bbbbbb"  # selected / highlighted row text (slash picker) — between body and bright
 _TEXT_BODY = "#aaaaaa"      # body / status
 _TEXT_BRIGHT = "#dddddd"    # primary content
 
@@ -67,6 +69,14 @@ _EVENT_PLAN_STEP = "#ffaa66"     # plan step lifecycle
 _EVENT_PLAN_MEMO = "#cc8855"     # plan step memoization
 _GREEN_DIMMEST = "#335544"       # context_built (very dim green)
 
+# Warning accent — "taking a while / pending / stalled / cap-proximity". Recurring
+# across header (cap≥0.75, pending, transcribing), streaming_row / tool_call_row /
+# async_stack_panel / skill_activity (elapsed-time stall). Distinct from the event
+# ambers (_EVENT_LLM / _EVENT_INTERVENTION / _EVENT_PLAN*) which name event categories.
+# (ErrorBox's own severity ramp — #cc5555/#cc9955 etc. — is a separate follow-up:
+# it lives in DEFAULT_CSS strings + needs an f-string conversion to consume tokens.)
+_STATUS_WARN = "#ffaa44"
+
 __all__ = [
     "_CORAL",
     "_AMBER",
@@ -77,13 +87,16 @@ __all__ = [
     "_TEXT_DIMMEST",
     "_TEXT_DIM",
     "_TEXT_NEUTRAL",
+    "_TEXT_MID",
     "_TEXT_MUTED",
+    "_TEXT_SELECTED",
     "_TEXT_BODY",
     "_TEXT_BRIGHT",
     "_STATUS_SUCCESS",
     "_STATUS_SUCCESS_DIM",
     "_STATUS_ERROR",
     "_STATUS_CRITICAL",
+    "_STATUS_WARN",
     "_EVENT_SKILL",
     "_EVENT_TOOL",
     "_EVENT_LLM",

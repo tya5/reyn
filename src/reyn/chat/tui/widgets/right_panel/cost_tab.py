@@ -17,6 +17,7 @@ from .base import (
     _TEXT_BODY,
     _TEXT_BRIGHT,
     _TEXT_DIM,
+    _TEXT_MID,
     _TEXT_NEUTRAL,
     _esc,
     logger,
@@ -396,8 +397,7 @@ def render_cost(
                 if ag["has_cost"] and show_extra else ""
             )
             ag_calls = (
-                f"  [#777777]{ag['calls']}c[/]"  # palette-candidate: mid-dim label — no foundation token yet
-                if show_extra else ""
+                f"  [{_TEXT_MID}]{ag['calls']}c[/]"                if show_extra else ""
             )
             # name col width adapts to content_width (see _col_widths)
             lines.append(
@@ -447,8 +447,7 @@ def render_cost(
                 if pb["has_cost"] and show_extra else ""
             )
             calls_part = (
-                f"  [#777777]{pb['calls']}c[/]"  # palette-candidate: mid-dim label — no foundation token yet
-                if show_extra else ""
+                f"  [{_TEXT_MID}]{pb['calls']}c[/]"                if show_extra else ""
             )
             short_pid = plan_id[:8]
             goal = plan_goals.get(plan_id, "")
@@ -498,8 +497,7 @@ def render_cost(
                 if mb["has_cost"] and show_extra else ""
             )
             calls_part = (
-                f"  [#777777]{mb['calls']}c[/]"  # palette-candidate: mid-dim label — no foundation token yet
-                if show_extra else ""
+                f"  [{_TEXT_MID}]{mb['calls']}c[/]"                if show_extra else ""
             )
             lines.append(
                 f"[{_TEXT_BODY}]  {_esc(model_name):<{model_name_w}}[/]"

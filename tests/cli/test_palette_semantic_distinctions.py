@@ -40,11 +40,13 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.tui._palette import (
     _EVENT_PLAN,
+    _EVENT_PLAN_STEP,
     _EVENT_SKILL,
     _EVENT_TOOL,
     _STATUS_CRITICAL,
     _STATUS_ERROR,
     _STATUS_SUCCESS,
+    _STATUS_WARN,
 )
 
 
@@ -107,3 +109,22 @@ def test_event_tool_distinct_from_event_skill() -> None:
         f"got both = {_EVENT_TOOL!r}. "
         "Tool purple vs skill blue is a designed forensic separation."
     )
+
+
+def test_status_warn_distinct_from_near_ambers() -> None:
+    """Tier 2: warning amber must stay distinct from the near-collision amber tokens.
+
+    _STATUS_WARN (#ffaa44 — "taking a while / pending / stalled / cap-proximity")
+    sits one hue-step from _EVENT_PLAN_STEP (#ffaa66, plan-step lifecycle): two
+    chars apart in hex. They name different concepts (a transient warning vs a
+    plan-step event category) and a careless "merge the ambers" cleanup would
+    erase that. Also assert it stays off the error tiers — a warning is not an
+    error.
+    """
+    assert _STATUS_WARN != _EVENT_PLAN_STEP, (
+        f"_STATUS_WARN and _EVENT_PLAN_STEP must be distinct (near collision); "
+        f"got _STATUS_WARN={_STATUS_WARN!r}, _EVENT_PLAN_STEP={_EVENT_PLAN_STEP!r}. "
+        "Warning amber vs plan-step amber are different concepts."
+    )
+    assert _STATUS_WARN != _STATUS_ERROR, "warning is not a (recoverable) error"
+    assert _STATUS_WARN != _STATUS_CRITICAL, "warning is not a hard-stop"

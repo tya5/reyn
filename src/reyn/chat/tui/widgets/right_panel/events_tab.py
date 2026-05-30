@@ -26,6 +26,7 @@ from .base import (
     _TEXT_BODY,
     _TEXT_BRIGHT,
     _TEXT_DIM,
+    _TEXT_MID,
     _TEXT_MUTED,
     _TEXT_NEUTRAL,
     _esc,
@@ -759,7 +760,7 @@ def render_events(
                         _oneline(reply), 40,
                     )
                     short = _esc(truncated) + ("…" if was_truncated else "")
-                    lines.append(f"[{_TEXT_DIMMEST}]       ↳ [/][#777777]{short}[/]")  # palette-candidate: mid-dim reply preview — no foundation token yet
+                    lines.append(f"[{_TEXT_DIMMEST}]       ↳ [/][{_TEXT_MID}]{short}[/]")
 
     del filter_name
     # Dim footer hint — always appended after the event rows so the user

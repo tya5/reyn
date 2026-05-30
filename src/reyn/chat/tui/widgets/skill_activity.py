@@ -35,7 +35,14 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _CORAL, _STATUS_ERROR, _TEXT_BODY, _TEXT_MUTED, _TEXT_NEUTRAL
+from reyn.chat.tui._palette import (
+    _CORAL,
+    _STATUS_ERROR,
+    _STATUS_WARN,
+    _TEXT_BODY,
+    _TEXT_MUTED,
+    _TEXT_NEUTRAL,
+)
 
 from ._renderable_cache import RenderableCacheMixin
 
@@ -397,7 +404,7 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         if secs >= _ELAPSED_RED_S:
             elapsed_style = "bold " + _STATUS_ERROR
         elif secs >= _ELAPSED_AMBER_S:
-            elapsed_style = "bold #ffaa44"  # palette-candidate: elapsed-warning amber (no foundation token yet)
+            elapsed_style = "bold " + _STATUS_WARN
         else:
             elapsed_style = "dim"
         elapsed_str = f"  {secs:.1f}s"

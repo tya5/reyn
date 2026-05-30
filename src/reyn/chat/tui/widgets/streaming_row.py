@@ -34,7 +34,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _AMBER, _STATUS_ERROR
+from reyn.chat.tui._palette import _AMBER, _STATUS_ERROR, _STATUS_WARN
 
 _RENDER_INTERVAL_MS = 16  # ~60 fps max
 _RENDER_INTERVAL_S = _RENDER_INTERVAL_MS / 1000
@@ -256,7 +256,7 @@ class StreamingRow(Widget):
             elif idle >= _STALL_TIER_2_S:
                 t.append(
                     f" … (stalled {_fmt_idle(idle)})",
-                    style="bold #ffaa44",  # palette-candidate: stall-warning amber (no foundation token yet)
+                    style=f"bold {_STATUS_WARN}",
                 )
             elif idle > _STALL_TIER_1_S:
                 t.append(" …", style="dim")
