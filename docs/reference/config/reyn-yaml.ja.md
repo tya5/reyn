@@ -578,12 +578,21 @@ api_base: ${LITELLM_API_BASE}    # または直接書く: http://localhost:4000
 
 ## 解決順序
 
-各設定について、Reyn は（優先度が低い方から）マージします:
+各設定について、Reyn は（優先度が低い方から、後の層が前を上書き）マージします:
 
-1. `~/.reyn/config.yaml`（ユーザーグローバル）
-2. `reyn.yaml`（プロジェクト）
-3. `reyn.local.yaml`（プロジェクト、gitignored）
-4. CLI フラグ
+1. **組み込みデフォルト** — reyn 同梱の値（例: `model: standard`）。
+2. `~/.reyn/config.yaml`（ユーザーグローバル）
+3. `reyn.yaml`（プロジェクト、コミット対象）
+4. `reyn.local.yaml`（プロジェクト、gitignored — マシンローカルの上書き + `reyn config set` が書いた値）
+5. `<project>/.reyn/mcp.yaml`（動的 MCP server レジストリ）— **`mcp.servers` セクションについて最後にマージ**。`reyn mcp install` が追加した server が、`reyn.yaml` / `reyn.local.yaml` で手書きした `mcp.servers` を上書きします。
+6. `<project>/.reyn/cron.yaml`（動的 cron レジストリ）— **`cron.jobs` セクションについて最後にマージ**。ランタイム登録 job が name 衝突時に `reyn.yaml` の `cron.jobs` を上書きします。
+7. CLI フラグ — 最後に、呼び出しごとに適用。
+
+層 5・6 はスコープ付きで、それぞれのセクション（`mcp.servers` / `cron.jobs`）のみを持ち、セクション単位でマージされるため、無関係な設定には触れません。`${VAR}` interpolation は全 YAML 層マージ後に 1 回、CLI フラグの前に適用されます。
+
+> **なぜ `.reyn/mcp.yaml` / `.reyn/cron.yaml` が勝つか**: これらは編集して再起動する静的ファイルと違い、ランタイム可変なレジストリ（`reyn mcp install` やランタイム cron 登録が書く）です。最後に置くことで、新規インストールした server / 登録した job が、operator が `reyn.yaml` も触らずに有効エントリになります。
+
+`<project>/.reyn/config.yaml` はロードされません — これは廃止された汎用 config ファイルであり、上記の現役 `.reyn/mcp.yaml` / `.reyn/cron.yaml` レジストリとは別物です。ディスクに残っている場合、reyn は警告を出してスキップします。内容を `reyn.local.yaml` に移行して削除してください。
 
 ## `cost` ブロック
 

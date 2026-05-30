@@ -616,16 +616,21 @@ api_base: ${LITELLM_API_BASE}    # or literal: http://localhost:4000
 
 ## Resolution order
 
-For each setting, reyn merges (lowest priority first):
+For each setting, reyn merges these sources, lowest priority first — later layers override earlier:
 
-1. `~/.reyn/config.yaml` (user-global)
-2. `reyn.yaml` (project, committed)
-3. `reyn.local.yaml` (project, gitignored — human edits + tool writes)
-4. CLI flags
+1. **Built-in defaults** — the values shipped with reyn (e.g. `model: standard`).
+2. `~/.reyn/config.yaml` — user-global.
+3. `reyn.yaml` — project, committed.
+4. `reyn.local.yaml` — project, gitignored (machine-local overrides + values written by `reyn config set`).
+5. `<project>/.reyn/mcp.yaml` — the dynamic MCP server registry. Merged **last for the `mcp.servers` section**, so servers added by `reyn mcp install` override any `mcp.servers` you hand-edit in `reyn.yaml` / `reyn.local.yaml`.
+6. `<project>/.reyn/cron.yaml` — the dynamic cron registry. Merged **last for the `cron.jobs` section**, so jobs registered at runtime override `cron.jobs` in `reyn.yaml` on a name collision.
+7. CLI flags — applied last, per invocation.
 
-**`<project>/.reyn/config.yaml` was removed in ADR-0031.** If that file still exists
-on disk, Reyn emits a deprecation warning and does **not** load it. Move its contents
-to `reyn.local.yaml`, then delete the file.
+Layers 5 and 6 are scoped: each carries only its own section (`mcp.servers` / `cron.jobs`) and is merged section-by-section, so it never touches unrelated settings. `${VAR}` interpolation is applied once after all YAML layers are merged, before CLI flags.
+
+> **Why `.reyn/mcp.yaml` and `.reyn/cron.yaml` win**: these are the runtime-mutable registries (written by `reyn mcp install` and runtime cron registration) rather than the edit-and-restart static files. Putting them last means a freshly installed server or registered job is the effective entry without the operator also having to touch `reyn.yaml`.
+
+`<project>/.reyn/config.yaml` is no longer loaded — it is a deprecated general-config file, not the active `.reyn/mcp.yaml` / `.reyn/cron.yaml` registries above. If it still exists on disk, reyn prints a warning and skips it. Move its contents to `reyn.local.yaml`, then delete it.
 
 ## `cost` block
 
