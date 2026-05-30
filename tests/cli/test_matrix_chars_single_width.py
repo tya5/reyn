@@ -29,7 +29,8 @@ from reyn.chat.tui.widgets.matrix import _CHARS  # noqa: E402
 
 def test_all_chars_are_single_cell_width() -> None:
     """Tier 2: Every char in _CHARS must have cell_len == 1 (no East-Asian-Wide glyphs)."""
-    wide = [(ch, cell_len(ch)) for ch in _CHARS if cell_len(ch) != 1]
+    widths = [(ch, cell_len(ch)) for ch in _CHARS]
+    wide = [(ch, w) for ch, w in widths if w != 1]
     assert wide == [], (
         f"_CHARS contains {len(wide)} double-width character(s) that would cause "
         f"column bleed in the Matrix rain render loop: {wide}"
