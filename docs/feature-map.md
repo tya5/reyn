@@ -46,6 +46,20 @@ mindmap
         113+ event types
         Append-only JSONL
         Replay
+      Chat Compaction
+        Head+tail+body budget
+        Overflow retry loop
+        Adaptive token estimation
+        Multimodal token estimation
+      Plan Mode
+        LLM decomposition
+        Persistent plan artifact
+        Async dispatch
+        PlanRuntime
+        Step iteration + retry
+        Plan resume
+        Per-step compaction
+        Multi-plan concurrency
     Control IR Ops
       file
       ask_user
@@ -74,7 +88,6 @@ mindmap
       index_events
       judge_phase
       ops_report
-      read_local_files
       skill_builder
       skill_importer
       skill_improver
@@ -206,6 +219,34 @@ mindmap
 | 113+ event types | Complete taxonomy: workflow / phase / LLM / tool / budget / permission / etc. | [Events reference](reference/runtime/events.md) · [Concepts: Events](concepts/events.md) |
 | Append-only JSONL | `.reyn/events/` per-run files with size/age-based rotation | [Events reference](reference/runtime/events.md) |
 | Replay | `reyn events <path>` streams events for audit and debug | [reyn events CLI](reference/cli/events.md) |
+
+---
+
+### Chat Engine
+
+#### Chat Compaction
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| Head+tail+body budget | Keeps the most-recent turns (tail) and earliest context (head) within per-component token budgets; turns between them are replaced by an LLM-generated summary | [Chat Compaction](concepts/chat-compaction.md) |
+| Overflow retry loop | When the compacted context still exceeds the model limit, budgets for head / tail / summary shrink monotonically per iteration until the prompt fits; fails fast with a structured error when no further reduction is possible | [Chat Compaction](concepts/chat-compaction.md) |
+| Adaptive token estimation | Learns a per-model token-count multiplier over time, reducing estimation drift across sessions | [Chat Compaction](concepts/chat-compaction.md) |
+| Multimodal token estimation | Estimates tokens for text and image content; image parts use a fixed per-part cost | [Chat Compaction](concepts/chat-compaction.md) |
+| Compaction lock | Async mutex prevents concurrent turn appends from racing with an in-flight compaction call | [Chat Compaction](concepts/chat-compaction.md) |
+
+#### Plan Mode
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| LLM plan decomposition | The router LLM decomposes a user goal into an ordered list of named steps with declared dependencies; each step runs in a narrow sub-loop call with a focused prompt and reduced tool catalog | [Plan Mode](concepts/plan-mode.md) |
+| Async dispatch | The `plan` tool returns immediately; execution runs as a background task while the user can issue new messages | [Plan Mode](concepts/plan-mode.md) |
+| Persistent plan artifact | The decomposed plan is written to the workspace; resume and step replay use the original structure rather than re-decomposing | [Plan Mode](concepts/plan-mode.md) |
+| PlanRuntime | Dedicated execution engine for plan-mode, peer to the OS phase runtime | [Plan Mode](concepts/plan-mode.md) |
+| Step iteration | Each step runs the router sub-loop up to `step_max_iterations` turns; `retry_limit` caps automatic retries on transient failure with user-approval escalation when the budget is exhausted | [Plan Mode](concepts/plan-mode.md) · [Config: plan block](reference/config/reyn-yaml.md#plan-block) |
+| Plan resume | Persisted decomposition and per-step result memos allow a plan to resume after crash; completed steps replay without LLM cost | [Plan Mode](concepts/plan-mode.md) |
+| Per-step compaction | Each plan step runs its own context compaction budget, independent of the main session | [Plan Mode](concepts/plan-mode.md) · [Chat Compaction](concepts/chat-compaction.md) |
+| Multi-plan concurrency | Multiple plans can be in flight simultaneously; each has its own `plan_id` with results delivered in completion order | [Plan Mode](concepts/plan-mode.md) |
+| Operator slash commands | `/plan list` / `/plan discard` / `/plan resume --from <step>` for plan lifecycle management | [Plan Mode](concepts/plan-mode.md) |
 
 ---
 
@@ -350,16 +391,15 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | LiteLLM embedding backend | Any provider via named model class config | [RAG concepts](concepts/rag.md) |
-| Local embedding backend | sentence-transformers via `pip install 'reyn[local-embed]'` — `local-mini` / `local-e5` classes, credential-free, GPU-optional via `REYN_EMBED_DEVICE` (FP-0043) | [RAG concepts § Local embedding backend](concepts/rag.md#local-embedding-backend-fp-0043) · [Guide](guide/for-users/enable-semantic-search.md) |
-| Provider-prefix routing | `sentence-transformers/` → local backend; anything else → LiteLLM (FP-0043) | [RAG concepts § Embedding configuration](concepts/rag.md#embedding-configuration) |
+| Local embedding backend | sentence-transformers via `pip install 'reyn[local-embed]'` — `local-mini` / `local-e5` classes, credential-free, GPU-optional via `REYN_EMBED_DEVICE` | [RAG concepts § Local embedding backend](concepts/rag.md#local-embedding-backend-fp-0043) · [Guide](guide/for-users/enable-semantic-search.md) |
+| Provider-prefix routing | `sentence-transformers/` → local backend; anything else → LiteLLM | [RAG concepts § Embedding configuration](concepts/rag.md#embedding-configuration) |
 | Batch embed | Configurable `batch_size` with concurrency semaphore | [RAG concepts](concepts/rag.md) |
 | Dimension table | Static lookup for OpenAI / Voyage / Cohere | [RAG concepts](concepts/rag.md) |
 | SQLite index per source | `.reyn/index/<source>/index.db` with WAL mode | [RAG concepts](concepts/rag.md) |
 | Chunk dedup | `content_hash` upsert prevents re-indexing | [RAG concepts](concepts/rag.md) |
 | `recall` op | embed → `index_query` per source → merge top-K globally | [Control IR](reference/runtime/control-ir.md) |
-| Action embedding index | `ActionEmbeddingIndex` (SQLite-WAL, class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses (FP-0043) | [Universal catalog § search_actions](concepts/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
+| Action embedding index | `ActionEmbeddingIndex` (SQLite-WAL, class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses | [Universal catalog § search_actions](concepts/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
 | Memory CRUD | `list` / `read` / `remember_shared` / `remember_agent` / `forget` | [Memory concepts](concepts/memory.md) · [reyn memory CLI](reference/cli/memory.md) |
-| Chat compaction | head+tail preservation + rolling LLM summary within token budget (OS-internal since PR-N3) | [Chat Compaction](concepts/chat-compaction.md) |
 
 ---
 
