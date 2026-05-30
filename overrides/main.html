@@ -21,7 +21,7 @@
           {% for child in item.children %}
             {% if child.children %}
               {% set first = child.children[0] %}
-              {% set has_index = not first.children %}
+              {% set has_index = (not first.children) and (first.file.name == "index") %}
               <li class="reyn-sidebar-group">
                 {% if has_index %}
                   <a class="reyn-sidebar-group-label{% if first.active %} active{% endif %}"
