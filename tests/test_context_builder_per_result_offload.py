@@ -1,8 +1,8 @@
-"""Tier 2: control_ir_results per-result offload invariants (C5 — FP-0008).
+"""Tier 2: control_ir_results per-result offload invariants (C5 — FP-0008, v9-IN).
 
 When a single control_ir_result's JSON serialisation exceeds
 MAX_CONTROL_IR_RESULT_INLINE_BYTES (~8KB), the OS offloads the full content
-to a workspace scratch file and replaces the inline slot with a head+tail
+to a workspace scratch file and replaces the inline slot with a bounded
 preview + a ref path. The LLM can file.read the full content when needed.
 No information is lost.
 
@@ -16,6 +16,16 @@ Covered invariants:
 6. Observability: control_ir_result_offloaded event emitted with idx + original size.
 7. build_frame integration: oversized result in control_ir_results is bounded in
    the resulting ContextFrame's control_ir_results field.
+
+C5-completeness additions (v9-IN):
+8. LIST-bulk invariant: result with huge list field → inline ≤ MAX_OFFLOADED_INLINE_BYTES;
+   ref reads back to original (THE regression guard).
+9. dict-bulk invariant: result with huge dict field → same bound.
+10. string-bulk regression: existing string behavior preserved (head+tail+ref).
+11. many-medium-fields: many fields each just under per-field threshold → hard-bound
+    fallback triggers → inline ≤ MAX_OFFLOADED_INLINE_BYTES.
+12. build_frame integration with list-bulk: multi-MB list result → bound holds via
+    the real build_frame path.
 
 Policy compliance:
 - No unittest.mock / MagicMock / AsyncMock / patch.
@@ -31,6 +41,7 @@ import pytest
 
 from reyn.context_builder import (
     MAX_CONTROL_IR_RESULT_INLINE_BYTES,
+    MAX_OFFLOADED_INLINE_BYTES,
     OFFLOAD_HEAD_CHARS,
     OFFLOAD_TAIL_CHARS,
     maybe_offload_control_ir_results,
@@ -331,3 +342,256 @@ def test_build_frame_oversized_control_ir_result_is_bounded(tmp_path: Path) -> N
     assert ref_path is not None, "Offloaded result must carry _offload_ref"
     stored = json.loads(Path(ref_path).read_text(encoding="utf-8"))
     assert stored == big_result, "Ref file must contain the full original result"
+
+
+# ---------------------------------------------------------------------------
+# C5-completeness: list-bulk invariant (THE regression guard — FP-0008 v9-IN)
+# ---------------------------------------------------------------------------
+
+
+def test_list_bulk_inline_bounded_and_ref_complete(tmp_path: Path) -> None:
+    """Tier 2: LIST-bulk result inline is bounded by MAX_OFFLOADED_INLINE_BYTES.
+
+    A result whose bulk is a large LIST (e.g. grep matches with content) MUST
+    produce an inline whose serialised size is ≤ MAX_OFFLOADED_INLINE_BYTES,
+    AND the ref file must contain the full original result (no info loss).
+
+    This is the direct regression guard for the C5-completeness bug: before
+    the fix, list/dict fields were left full-size in the inline, causing
+    multi-MB prompt balloons (observed: 3.4M chars, 987K tokens).
+    """
+    # Build a result with a large list field (~multi-MB).
+    # 20,000 items × ~210 chars each ≈ 4.2MB — well above any inline threshold.
+    big_list_result = {
+        "kind": "file",
+        "op": "grep",
+        "status": "ok",
+        "matches": [{"path": f"p{i}", "line": "x" * 200} for i in range(20_000)],
+    }
+
+    offload_dir = tmp_path / "offload"
+    offloaded = offload_control_ir_result(big_list_result, 0, offload_dir)
+
+    # THE invariant: inline must be bounded regardless of list bulk
+    inline_size = len(json.dumps(offloaded, ensure_ascii=False))
+    assert inline_size <= MAX_OFFLOADED_INLINE_BYTES, (
+        f"LIST-bulk inline_size={inline_size:,} exceeds MAX_OFFLOADED_INLINE_BYTES="
+        f"{MAX_OFFLOADED_INLINE_BYTES:,}; list bulk was NOT bounded"
+    )
+
+    # No info loss: ref reads back to original
+    ref_path = offloaded.get("_offload_ref")
+    assert ref_path is not None, "Offloaded result must carry _offload_ref"
+    stored = json.loads(Path(ref_path).read_text(encoding="utf-8"))
+    assert stored == big_list_result, (
+        "Ref file must contain the full original list-bulk result (no info loss)"
+    )
+
+
+def test_list_bulk_head_preview_present(tmp_path: Path) -> None:
+    """Tier 2: offloaded list-bulk result contains a partial list preview in the inline.
+
+    The LLM must see the start of the list without a round-trip file.read.
+    The first element of the original list must appear somewhere in the inline.
+    """
+    big_list_result = {
+        "kind": "grep",
+        "status": "ok",
+        "matches": [{"path": f"file_{i}.py", "line": f"match line {i}"} for i in range(5_000)],
+    }
+
+    offload_dir = tmp_path / "offload"
+    offloaded = offload_control_ir_result(big_list_result, 0, offload_dir)
+
+    inline_json = json.dumps(offloaded, ensure_ascii=False)
+    # First element path "file_0.py" must appear in inline (head preview)
+    assert "file_0.py" in inline_json, (
+        "Inline must contain the first list element (head preview for LLM utility)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# C5-completeness: dict-bulk invariant
+# ---------------------------------------------------------------------------
+
+
+def test_dict_bulk_inline_bounded_and_ref_complete(tmp_path: Path) -> None:
+    """Tier 2: dict-bulk result inline is bounded by MAX_OFFLOADED_INLINE_BYTES.
+
+    A result with a large DICT field must produce a bounded inline AND a
+    complete ref file. Same guarantee as the list-bulk test.
+    """
+    big_dict = {str(i): "value_" + "y" * 500 for i in range(5_000)}
+    result = {
+        "kind": "env",
+        "status": "ok",
+        "variables": big_dict,
+    }
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert len(serialized) > MAX_CONTROL_IR_RESULT_INLINE_BYTES, (
+        "Precondition: result must exceed inline threshold"
+    )
+
+    offload_dir = tmp_path / "offload"
+    offloaded = offload_control_ir_result(result, 0, offload_dir)
+
+    inline_size = len(json.dumps(offloaded, ensure_ascii=False))
+    assert inline_size <= MAX_OFFLOADED_INLINE_BYTES, (
+        f"dict-bulk inline_size={inline_size:,} exceeds MAX_OFFLOADED_INLINE_BYTES="
+        f"{MAX_OFFLOADED_INLINE_BYTES:,}"
+    )
+
+    ref_path = offloaded.get("_offload_ref")
+    assert ref_path is not None, "dict-bulk: must carry _offload_ref"
+    stored = json.loads(Path(ref_path).read_text(encoding="utf-8"))
+    assert stored == result, "Ref file must contain full original dict-bulk result"
+
+
+# ---------------------------------------------------------------------------
+# C5-completeness: string-bulk regression (existing behavior preserved)
+# ---------------------------------------------------------------------------
+
+
+def test_string_bulk_inline_bounded_head_tail_preserved(tmp_path: Path) -> None:
+    """Tier 2: string-bulk result still gets head+tail preview after C5-completeness fix.
+
+    Regression guard: the new type-aware code must preserve existing str behavior —
+    head (OFFLOAD_HEAD_CHARS) + marker + tail (OFFLOAD_TAIL_CHARS) and bounded.
+    """
+    original_content = "S" * 300_000
+    result = {"kind": "file.read", "status": "ok", "content": original_content}
+
+    offload_dir = tmp_path / "offload"
+    offloaded = offload_control_ir_result(result, 0, offload_dir)
+
+    inline_size = len(json.dumps(offloaded, ensure_ascii=False))
+    assert inline_size <= MAX_OFFLOADED_INLINE_BYTES, (
+        f"string-bulk inline_size={inline_size:,} exceeds bound"
+    )
+
+    # Head is present in the content field
+    content_inline = offloaded.get("content", "")
+    assert isinstance(content_inline, str), "String field preview must remain a string"
+    expected_head = original_content[:OFFLOAD_HEAD_CHARS]
+    assert content_inline.startswith(expected_head), (
+        "String field must start with OFFLOAD_HEAD_CHARS preview"
+    )
+
+    # Ref reachable
+    ref_path = offloaded.get("_offload_ref")
+    assert ref_path is not None
+    stored = json.loads(Path(ref_path).read_text(encoding="utf-8"))
+    assert stored == result, "Ref must contain full original string-bulk result"
+
+
+# ---------------------------------------------------------------------------
+# C5-completeness: many-medium-fields hard-bound fallback
+# ---------------------------------------------------------------------------
+
+
+def test_many_medium_fields_hard_bound_fallback(tmp_path: Path) -> None:
+    """Tier 2: many-medium-fields result triggers hard-bound fallback → inline ≤ bound.
+
+    A result with many fields each just under _FIELD_KEEP_THRESHOLD can sum
+    to an inline well above MAX_OFFLOADED_INLINE_BYTES after per-field previews.
+    The hard-bound fallback must catch this and replace the whole inline with a
+    compact head+tail representation that fits within MAX_OFFLOADED_INLINE_BYTES.
+
+    This tests the correctness of the whole-inline-replace fallback (step 3 of
+    the bounded-by-construction design).
+    """
+    from reyn.context_builder import _FIELD_KEEP_THRESHOLD
+
+    # Build a result with many fields each slightly under the per-field threshold
+    # so per-field preview logic keeps them all, but the total blows up.
+    # Each field value: just under _FIELD_KEEP_THRESHOLD chars of string
+    field_value_size = _FIELD_KEEP_THRESHOLD - 100  # just under per-field keep threshold
+    # Number of fields to exceed MAX_OFFLOADED_INLINE_BYTES after small-field pass
+    n_fields = (MAX_OFFLOADED_INLINE_BYTES // field_value_size) + 20
+    result = {f"field_{i}": "M" * field_value_size for i in range(n_fields)}
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert len(serialized) > MAX_OFFLOADED_INLINE_BYTES, (
+        f"Precondition: result must exceed MAX_OFFLOADED_INLINE_BYTES; "
+        f"got {len(serialized):,}"
+    )
+    assert len(serialized) > MAX_CONTROL_IR_RESULT_INLINE_BYTES, (
+        "Precondition: result must also exceed the basic inline threshold"
+    )
+
+    offload_dir = tmp_path / "offload"
+    offloaded = offload_control_ir_result(result, 0, offload_dir)
+
+    inline_size = len(json.dumps(offloaded, ensure_ascii=False))
+    assert inline_size <= MAX_OFFLOADED_INLINE_BYTES, (
+        f"many-medium-fields fallback did not fire: inline_size={inline_size:,} "
+        f"exceeds MAX_OFFLOADED_INLINE_BYTES={MAX_OFFLOADED_INLINE_BYTES:,}"
+    )
+
+    # Ref reachable and complete
+    ref_path = offloaded.get("_offload_ref")
+    assert ref_path is not None, "Fallback inline must carry _offload_ref"
+    stored = json.loads(Path(ref_path).read_text(encoding="utf-8"))
+    assert stored == result, "Ref must contain full original many-medium-fields result"
+
+
+# ---------------------------------------------------------------------------
+# C5-completeness: build_frame integration with list-bulk
+# ---------------------------------------------------------------------------
+
+
+def test_build_frame_list_bulk_control_ir_result_bounded(tmp_path: Path) -> None:
+    """Tier 2: build_frame with list-bulk control_ir_result produces bounded inline.
+
+    Integration path: the real build_frame (via OSRuntime) must apply the
+    bounded offload to a multi-MB list-bulk result, producing an inline that
+    fits within MAX_OFFLOADED_INLINE_BYTES. The ref file must contain the full
+    original result.
+
+    This is the integration-path regression guard (the C6 regression missed
+    a similar integration path test).
+    """
+    pytest.importorskip("litellm")
+
+    import os
+    os.chdir(tmp_path)
+
+    rt = OSRuntime(
+        _one_phase_skill(),
+        model="stub/model",
+        run_id="list_bulk_integration_test",
+        workspace_base_dir=tmp_path,
+    )
+
+    # 20,000 items × ~210 chars each ≈ 4.2MB — deterministically multi-MB
+    big_list_result = {
+        "kind": "file",
+        "op": "grep",
+        "status": "ok",
+        "matches": [{"path": f"p{i}", "line": "x" * 200} for i in range(20_000)],
+    }
+
+    frame = rt.build_frame(
+        "draft",
+        {"type": "input", "data": {}},
+        [],
+        "en",
+        control_ir_results=[big_list_result],
+    )
+
+    (inline,) = frame.control_ir_results
+    inline_size = len(json.dumps(inline, ensure_ascii=False))
+
+    # THE invariant: inline bounded regardless of list bulk
+    assert inline_size <= MAX_OFFLOADED_INLINE_BYTES, (
+        f"build_frame list-bulk inline_size={inline_size:,} exceeds "
+        f"MAX_OFFLOADED_INLINE_BYTES={MAX_OFFLOADED_INLINE_BYTES:,}"
+    )
+
+    # No info loss via ref
+    ref_path = inline.get("_offload_ref")
+    assert ref_path is not None, "build_frame offloaded inline must carry _offload_ref"
+    stored = json.loads(Path(ref_path).read_text(encoding="utf-8"))
+    assert stored == big_list_result, (
+        "build_frame ref file must contain the full original list-bulk result"
+    )
