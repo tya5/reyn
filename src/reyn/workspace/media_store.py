@@ -62,6 +62,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from reyn.services.offload.store import offload_value, read_offloaded
+
 # Conservative mapping from MIME type to file extension; unknown types
 # fall back to ``""`` so the storage layer still writes a file (= user
 # can rename / inspect with their preferred tool). Extension is purely
@@ -303,23 +305,37 @@ class MediaStore:
         return a path-ref block (= ``{"type": "tool_result_ref", "path":
         ..., "mime_type": ..., "content_hash": ...}``).
 
-        PR-C lands this writer alongside ``save_image`` so the
-        abstraction is uniform across multimodal axes. The CONSUMER
-        side (= web_fetch / file_read text-path rework to actually
-        emit path-refs + preview) is deferred to PR-D per #385.
+        The LOCAL store + hash is delegated to :func:`offload_value` from
+        ``services/offload/store.py`` (Phase 2 of the offload-dedup effort,
+        FP-0008 C5 #223).  The return block shape is IDENTICAL to the
+        pre-migration contract — callers are unaffected.
+
+        Preview-bound note: ``preview_strategy=None`` is passed so the
+        common service performs no preview bounding.  The preview is built
+        externally by the caller (e.g. ``web.py`` ``_generate_web_fetch_preview``).
+        See the ★ three-party bound contract in
+        ``services/offload/store.py`` module docstring.
         """
-        self._tool_results_dir.mkdir(parents=True, exist_ok=True)
         chain_short = _safe_token(chain_id)[:6] if chain_id else ""
         tool_token = _safe_token(tool) or "tool"
         ext = _ext_for_mime(mime_type)
         filename = f"{_timestamp()}-{chain_short}-{tool_token}-{seq}{ext}"
-        path = self._tool_results_dir / filename
-        path.write_text(content, encoding="utf-8")
+
+        result = offload_value(
+            content,
+            store_dir=self._tool_results_dir,
+            preview_strategy=None,
+            filename=filename,
+        )
+
+        # Convert absolute path_ref to project-relative path for the block.
+        abs_path = Path(result.path_ref)
+        rel_path = str(abs_path.relative_to(self._project_root))
         block: dict = {
             "type": "tool_result_ref",
-            "path": str(path.relative_to(self._project_root)),
+            "path": rel_path,
             "mime_type": mime_type,
-            "content_hash": "sha256:" + hashlib.sha256(content.encode()).hexdigest(),
+            "content_hash": result.content_hash,
         }
         self._attach_cross_host_fields(block, filename=filename, chain_id=chain_id)
         return block
@@ -329,18 +345,31 @@ class MediaStore:
 
         Validates the resolved path lives inside ``tool_results_dir``.
         Returns ``(text, found)``.
+
+        The LOCAL read is delegated to :func:`read_offloaded` from
+        ``services/offload/store.py`` (Phase 2 of the offload-dedup effort).
+        The ``(text, found)`` contract and ``PermissionError`` boundary are
+        preserved identically — callers are unaffected.
+
+        Path resolution: ``path_str`` is project-relative; we resolve it
+        under ``self._project_root`` to an absolute path before passing
+        to ``read_offloaded`` (which expects an absolute path_str).
+        The boundary ``base_dir=self._tool_results_dir`` ensures the
+        ``PermissionError`` fires for any path outside ``tool_results_dir``.
         """
-        full = (self._project_root / path_str).resolve()
+        # Resolve project-relative → absolute before calling read_offloaded,
+        # which validates against base_dir (= tool_results_dir).
+        abs_path = str((self._project_root / path_str).resolve())
         try:
-            full.relative_to(self._tool_results_dir)
-        except ValueError as exc:
+            return read_offloaded(abs_path, base_dir=self._tool_results_dir)
+        except PermissionError:
+            # Re-raise with the original MediaStore error message shape so
+            # existing consumers that match on "outside tool_results_dir"
+            # continue to work.
             raise PermissionError(
                 f"path {path_str!r} is outside tool_results_dir "
                 f"{self._tool_results_dir} — refusing to read"
-            ) from exc
-        if not full.exists():
-            return "", False
-        return full.read_text(encoding="utf-8"), True
+            )
 
     # ── Cross-host routing (#385 β core impl sub-task 1) ──────────────
 
