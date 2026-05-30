@@ -220,8 +220,6 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
     # window. A skill with no http.get declaration falls back to the
     # legacy ``web.fetch`` prompt with a DeprecationWarning.
     if ctx.permission_resolver is not None:
-        if ctx.intervention_bus is None:
-            raise RuntimeError("web_fetch op requires intervention_bus on OpContext")
         from urllib.parse import urlparse
         host = urlparse(op.url).hostname or ""
         if not host:

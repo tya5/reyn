@@ -1224,7 +1224,7 @@ class PermissionResolver:
         return False
 
     async def require_shell(
-        self, decl: PermissionDecl, cmd: str, bus: RequestBus,
+        self, decl: PermissionDecl, cmd: str, bus: "RequestBus | None",
     ) -> None:
         if not decl.shell:
             raise PermissionError(
