@@ -17,6 +17,8 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label
 
+from reyn.chat.tui._palette import _AMBER
+
 _FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # 10-frame Braille cycle
 _INTERVAL_S = 0.10  # ~10 fps
 
@@ -32,12 +34,12 @@ class InlineThinkingRow(Widget):
     unmount via ``ConversationView.stop_thinking()``.
     """
 
-    DEFAULT_CSS = """
-    InlineThinkingRow {
+    DEFAULT_CSS = f"""
+    InlineThinkingRow {{
         height: 1;
         padding: 0 2;
-        color: #d4945a;
-    }
+        color: {_AMBER};
+    }}
     """
 
     can_focus = False
