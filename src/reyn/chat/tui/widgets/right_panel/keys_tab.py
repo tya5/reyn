@@ -33,11 +33,13 @@ _KEY_DETAILS: dict[str, str] = {
         "more horizontal space for content. Persists via tui_prefs.json."
     ),
     "f3": (
-        "Drill-down expands the cursor's skill row to show phase history,\n"
-        "tool calls, and per-phase events. Mouse-click on the row does\n"
-        "the same. No-op when no skill row has cursor focus."
+        "Bulk-toggle expand on all in-flight skill + tool-call rows at once\n"
+        "(mouse-click does the same per-row). One keypress aligns every row\n"
+        "to a single convergence state — mixed sets (one expanded, one\n"
+        "collapsed) flip to match the first row. Shows a 'no active rows'\n"
+        "hint when nothing is in flight."
     ),
-    "esc": (
+    "escape": (
         "Context-aware back/cancel:\n"
         "  • voice mode → cancel recording\n"
         "  • error box → dismiss\n"
@@ -326,14 +328,6 @@ def render_keys(
         # Same "per-tab action" idiom as the pending-tab ``d`` / ``c``
         # discard / claim shortcuts.
         ("a", "Attach to cursor agent (agents tab)"),
-        # Wave-11 A#2: ``i`` on the Events tab isolates the cursor's
-        # chain_id so the user can read one chain's lifecycle without
-        # interleaving noise from other concurrent chains. T2-3: added
-        # "(events tab)" suffix so the gating is visible without Space-expand.
-        ("i", "Isolate cursor's chain (events tab only)"),
-        # Events tab ``v`` = toggle verbose mode. Default-off hides
-        # compaction_check noise; verbose-on shows everything.
-        ("v", "Toggle verbose (events tab)"),
         # Lang toggle: each doc concept appears once; ``g`` switches the
         # preferred language (ja ↔ en). Only active on the Docs tab.
         ("g", "Toggle docs language preference (ja ↔ en, docs tab only)"),
@@ -370,6 +364,23 @@ def render_keys(
     group_keys["PANEL"].append("tab")
     groups["PANEL"].append((_pretty_key("shift+tab"), "Previous tab (panel focused)"))
     group_keys["PANEL"].append("shift+tab")
+
+    # Wave-11 A#2 / fix/tui-keys-tab-correctness: ``i`` and ``v`` are events-tab
+    # keys handled via RightPanel.on_key and routed through ``_EVENTS_KEYS``.
+    # They were previously surfaced via ``_PANEL_EXPLICIT`` (= rendered under
+    # [PANEL]) which misrepresented their gating. Surface them here as synthetic
+    # rows under [EVENTS (gated)] — the correct group per ``_key_group_for``.
+    # Only emit if not already surfaced from app/InputBar BINDINGS.
+    if "i" not in binding_seen:
+        groups["EVENTS (gated)"].append(
+            (_pretty_key("i"), "Isolate cursor's chain (events tab only)")
+        )
+        group_keys["EVENTS (gated)"].append("i")
+    if "v" not in binding_seen:
+        groups["EVENTS (gated)"].append(
+            (_pretty_key("v"), "Toggle verbose (events tab)")
+        )
+        group_keys["EVENTS (gated)"].append("v")
 
     # MOUSE group (T1-4, Wave-12): explicit click-interaction rows.
     # These have no key semantics so raw_key is "" for all of them.
