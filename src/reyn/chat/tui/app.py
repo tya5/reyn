@@ -36,7 +36,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.theme import Theme
 
-from .widgets import ConversationView, InputBar, InterventionWidget, ReynHeader, RightPanel
 from reyn.chat.tui._palette import (
     _BORDER_DIM,
     _CORAL,
@@ -44,6 +43,8 @@ from reyn.chat.tui._palette import (
     _TEXT_BRIGHT,
     _TEXT_DIM,
 )
+
+from .widgets import ConversationView, InputBar, InterventionWidget, ReynHeader, RightPanel
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
