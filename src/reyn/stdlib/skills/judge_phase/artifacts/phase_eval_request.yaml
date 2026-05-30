@@ -11,7 +11,7 @@ schema:
       description: Type name of the artifact being evaluated.
     artifact_path:
       type: string
-      description: CWD-relative path to the artifact JSON file (e.g. ".reyn/invoke/.../v01_skill_structure.json"). Judge reads this file to get the artifact data.
+      description: Absolute, OS-resolved path to the artifact JSON file (resolved by the OS from the producing run's state_dir handle; #1115 Stage 0). Judge reads this file to get the artifact data. Passed through verbatim — do not relativize.
     criteria:
       type: array
       description: Quality criteria to evaluate the artifact against.
