@@ -36,6 +36,14 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.theme import Theme
 
+from reyn.chat.tui._palette import (
+    _BORDER_DIM,
+    _CORAL,
+    _TEXT_BODY,
+    _TEXT_BRIGHT,
+    _TEXT_DIM,
+)
+
 from .widgets import ConversationView, InputBar, InterventionWidget, ReynHeader, RightPanel
 
 if TYPE_CHECKING:
@@ -193,12 +201,12 @@ class ReynTUIApp(App):
 
     _REYN_THEME = Theme(
         name="reyn",
-        primary="#C8553D",
-        accent="#C8553D",
+        primary=_CORAL,
+        accent=_CORAL,
         dark=True,
         variables={
-            "block-cursor-background": "#C8553D",
-            "block-cursor-foreground": "#ffffff",
+            "block-cursor-background": _CORAL,
+            "block-cursor-foreground": "#ffffff",  # palette-candidate: white foreground on coral cursor
         },
     )
 
@@ -400,11 +408,11 @@ class ReynTUIApp(App):
                 if info:
                     key, val = info
                     rt.append("    ")
-                    rt.append(f"{key}  ", style="dim #555555")
-                    rt.append(val, style="#dddddd")
+                    rt.append(f"{key}  ", style=f"dim {_TEXT_DIM}")
+                    rt.append(val, style=_TEXT_BRIGHT)
                 conv._write_log(rt)
-            conv._write_log(Text("  Gives you the reins.", style="dim #555555"))
-            conv._write_log(Text("─" * 38, style="#2a2a2a"))
+            conv._write_log(Text("  Gives you the reins.", style=f"dim {_TEXT_DIM}"))
+            conv._write_log(Text("─" * 38, style=_BORDER_DIM))
 
         # ``--no-restore`` was previously surfaced only via a stderr print
         # from the CLI entry point, which the TUI overlay completely hides.
@@ -418,7 +426,7 @@ class ReynTUIApp(App):
             conv._write_log(_RichText(
                 "⚠ --no-restore: in-flight skill state was NOT loaded this run. "
                 "Restart without --no-restore to resume.",
-                style="#d4a017",
+                style="#d4a017",  # palette-candidate: advisory-warning amber (no-restore notice)
             ))
 
         # Start outbox subscription if registry is available
@@ -522,7 +530,7 @@ class ReynTUIApp(App):
             breadcrumb = _RichText()
             breadcrumb.append(
                 f"  ✗ {cancelled} {label} skipped (see /pending list)",
-                style="dim #aa6666",
+                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
             )
             try:
                 conv = self.query_one("#conversation", ConversationView)
@@ -1200,12 +1208,12 @@ class ReynTUIApp(App):
                 self._voice_status(
                     f"✗ cancelled {cancelled_interventions} "
                     f"intervention{'s' if cancelled_interventions != 1 else ''}",
-                    style="bold #aa6666",
+                    style="bold #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
                 )
             else:
                 self._voice_status(
                     "(nothing to cancel — no session attached)",
-                    style="dim #aa6666",
+                    style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
                 )
             return
 
@@ -1230,7 +1238,7 @@ class ReynTUIApp(App):
             # arrives as a ``status`` outbox frame from the server.
             self._voice_status(
                 "cancel sent to remote — awaiting confirmation",
-                style="dim #aa6666",
+                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
             )
             # Seal any locally-tracked skill-activity rows so their
             # spinners stop immediately (the remote will send
@@ -1386,7 +1394,7 @@ class ReynTUIApp(App):
                 # like an unimportant aside.
                 self._voice_status(
                     "✗ nothing in-flight to cancel — try /list to see active runs",
-                    style="dim #555555",
+                    style="dim " + _TEXT_DIM,
                 )
                 self._last_idle_cancel_ts = now
             return
@@ -1414,7 +1422,7 @@ class ReynTUIApp(App):
                 f"{'s' if cancelled_tool_calls != 1 else ''}"
             )
         self._voice_status(
-            f"✗ cancelled {' + '.join(parts)}", style="bold #aa6666",
+            f"✗ cancelled {' + '.join(parts)}", style="bold #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
         )
 
     def action_toggle_panel(self) -> None:
@@ -1910,7 +1918,7 @@ class ReynTUIApp(App):
 
     # ── voice input (F2 / Esc) ─────────────────────────────────────────────
 
-    def _voice_status(self, text: str, *, style: str = "dim #aaaaaa") -> None:
+    def _voice_status(self, text: str, *, style: str = "dim " + _TEXT_BODY) -> None:
         """Write a short status line into the conversation pane."""
         try:
             from rich.text import Text as RichText
@@ -2051,7 +2059,7 @@ class ReynTUIApp(App):
             preview = text if len(text) <= 60 else text[:57] + "…"
             dur = diag.get("duration_s", 0.0)
             self._voice_status(
-                f"✓ inserted ({dur:.1f}s): {preview}", style="dim #aaaaaa"
+                f"✓ inserted ({dur:.1f}s): {preview}", style="dim " + _TEXT_BODY
             )
 
     async def action_voice_stop_and_submit(self) -> None:
@@ -2106,7 +2114,7 @@ class ReynTUIApp(App):
         preview = text if len(text) <= 60 else text[:57] + "…"
         dur = diag.get("duration_s", 0.0)
         self._voice_status(
-            f"✓ sent ({dur:.1f}s): {preview}", style="dim #aaaaaa"
+            f"✓ sent ({dur:.1f}s): {preview}", style="dim " + _TEXT_BODY
         )
         await self._yield_for_render()
         _voice_vlog("action_voice_stop_and_submit: about to append + submit")
@@ -2211,19 +2219,19 @@ class ReynTUIApp(App):
         if reason == "no_audio" or dur < 0.3:
             self._voice_status(
                 "(no audio captured — mic permission? wrong device?)",
-                style="dim #aa6666",
+                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
             )
         elif reason == "silent" or peak < 0.01:
             self._voice_status(
                 f"(silent capture: {dur:.1f}s, peak={peak:.3f}) — "
                 "check mic gain / system input device",
-                style="dim #aa6666",
+                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
             )
         else:
             self._voice_status(
                 f"(no speech recognised in {dur:.1f}s, peak={peak:.3f}) — "
                 "try speaking closer / louder, or set a larger model",
-                style="dim #aa6666",
+                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
             )
 
     def _voice_watchdog_tick(self) -> None:
@@ -2257,7 +2265,7 @@ class ReynTUIApp(App):
         self._voice_busy = True
         self._voice_status(
             f"⏰ recording cap reached ({cap:.0f}s) — transcribing & inserting…",
-            style="dim #aa6666",
+            style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
         )
         asyncio.create_task(self._voice_auto_stop_and_insert())
 
@@ -2298,7 +2306,7 @@ class ReynTUIApp(App):
         self._voice_status(
             f"✓ inserted ({dur:.1f}s, auto-stopped): {preview}  — "
             "Ctrl+R to continue dictating, Enter to send",
-            style="dim #aaaaaa",
+            style="dim " + _TEXT_BODY,
         )
 
     def action_voice_cancel(self) -> None:
@@ -2325,7 +2333,7 @@ class ReynTUIApp(App):
             self._voice_input.cancel()
             self._voice_set_input_locked(False)
             self._voice_set_header_state(None)
-            self._voice_status("✗ recording cancelled", style="dim #555555")
+            self._voice_status("✗ recording cancelled", style="dim " + _TEXT_DIM)
             return
         try:
             input_bar = self.query_one("#inputbar", InputBar)

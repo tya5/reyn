@@ -96,6 +96,7 @@ class MatrixScreen(ModalScreen):
                 if 0 <= dist < col.trail_len:
                     if dist == 0:
                         # Bright head
+                        # Decorative: matrix rain greens intentionally not tokenised (easter egg, not semantic).
                         out.append(ch, style="bold #d8ffd8")
                     elif dist < 3:
                         out.append(ch, style="#88ff88")

@@ -170,6 +170,8 @@ class DonutScreen(ModalScreen):
 
 
 # Coral gradient — dim → bright, matching the 12-step shade ramp.
+# Decorative: these 12 gradient stops are intentionally not tokenised — they
+# are an easter egg visual effect, not semantic palette values.
 _COLOURS = (
     "#3a1a14",
     "#5a2820",
