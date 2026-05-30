@@ -102,6 +102,18 @@ class OSRuntime:
             skill_name=skill.name,
             base_dir=workspace_base_dir,
         )
+        # C5 follow-up (#224): bound the growth of per-run control_ir offload
+        # scratch dirs. Prune stale ones (TTL by mtime) once at top-level run
+        # start — sub-runs (parent_run_id set) skip it to avoid redundant
+        # sweeps; the TTL preserves active + recently-completed (resume-reachable)
+        # runs. Best-effort: the helper swallows FS errors so GC never breaks a run.
+        if parent_run_id is None:
+            from reyn.services.offload import prune_stale_offload_dirs
+            pruned = prune_stale_offload_dirs(
+                self.workspace.state_dir / "control_ir_offload"
+            )
+            if pruned:
+                self.events.emit("control_ir_offload_pruned", count=pruned)
         # Populate internal limit attributes from SafetyConfig.
         _safety = safety or SafetyConfig()
         self._safety = _safety

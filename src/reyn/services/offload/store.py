@@ -37,10 +37,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+# Default time-to-live for per-run offload scratch directories (24h). Offload
+# files are only needed during the producing run (incl. its resume window) for
+# the LLM to file.read the full content of an offloaded result; once a run is
+# well past, its scratch dir is dead weight. Pruning is TTL-based (by mtime) so
+# active + recently-completed runs (resume-reachable) are preserved.
+DEFAULT_OFFLOAD_TTL_SECONDS = 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -176,3 +185,40 @@ def read_offloaded(
         return "".join(sliced), True
 
     return raw, True
+
+
+def prune_stale_offload_dirs(
+    offload_root: Path,
+    *,
+    ttl_seconds: float = DEFAULT_OFFLOAD_TTL_SECONDS,
+    now: float | None = None,
+) -> int:
+    """Remove per-run offload subdirectories older than ``ttl_seconds``.
+
+    ``offload_root`` is the parent that holds one subdirectory per run (keyed
+    by run_id), e.g. ``{state_dir}/control_ir_offload/``. A subdirectory is
+    removed when its mtime is older than ``now - ttl_seconds`` — so active and
+    recently-completed runs (still resume-reachable, see
+    :data:`DEFAULT_OFFLOAD_TTL_SECONDS`) are preserved.
+
+    Axis-agnostic + P7-clean: no skill / phase / artifact-type strings; the
+    caller supplies the concrete root. Fully defensive — a missing root or any
+    filesystem error is swallowed so scratch GC can never break a run. Returns
+    the number of subdirectories removed.
+
+    ``now`` is injectable for deterministic testing (defaults to wall-clock).
+    """
+    cutoff = (time.time() if now is None else now) - ttl_seconds
+    removed = 0
+    try:
+        children = list(offload_root.iterdir())
+    except OSError:
+        return 0
+    for child in children:
+        try:
+            if child.is_dir() and child.stat().st_mtime < cutoff:
+                shutil.rmtree(child, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    return removed
