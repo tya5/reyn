@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections import deque
 
+from rich.cells import cell_len
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -829,11 +830,40 @@ class InputBar(Widget):
 
     # ── hint rendering ────────────────────────────────────────────────────────
 
-    def _build_hint(self) -> str:
-        # Fits in 80 cols (= ≤72 cells incl. 2-space left margin) so the
-        # tail key doesn't get clipped on default terminals. Ctrl+O /
-        # Ctrl+R / Ctrl+\ / Ctrl+P/N remain discoverable via the Keys
-        # tab (Ctrl+B).
+    # Progressive drop thresholds (cell widths).  Mirrors the header's
+    # _choose_included_fields pattern: we pick the longest variant that
+    # still fits the available width, dropping low-priority items first.
+    #
+    # Three tiers (width measured as full widget cell width):
+    #
+    #   ≥ 55 cols → full: Enter send │ Ctrl+J nl │ Ctrl+C cancel │ Ctrl+L clear │ Ctrl+B panel
+    #   ≥ 40 cols → mid:  Enter send │ Ctrl+J nl │ Ctrl+C cancel
+    #   <  40 cols → min: Enter │ Ctrl+C
+    #
+    # Ctrl+C cancel is kept in the mid tier because cancel-in-flight is
+    # the highest-frequency interactive key during active skill runs.
+    # Ctrl+B panel and Ctrl+L clear are dropped first (power-user /
+    # recovery keys that don't need instant discoverability on small
+    # terminals). Ctrl+J nl stays through mid so new users on narrow
+    # terms still see the multi-line affordance.
+
+    _HINT_FULL = (
+        "  Enter send │ Ctrl+J nl │ Ctrl+C cancel │ "
+        "Ctrl+L clear │ Ctrl+B panel"
+    )
+    _HINT_MID = "  Enter send │ Ctrl+J nl │ Ctrl+C cancel"
+    _HINT_MIN = "  Enter │ Ctrl+C"
+
+    # Cell width below which _HINT_MID is used instead of _HINT_FULL.
+    _HINT_FULL_MIN_WIDTH = 55
+    # Cell width below which _HINT_MIN is used instead of _HINT_MID.
+    _HINT_MID_MIN_WIDTH = 40
+
+    def _build_hint(self, width: int = 0) -> str:
+        # ``width`` is the cell-width of the InputBar widget (= the
+        # terminal column count minus any surrounding chrome). When 0
+        # (= pre-mount default, pure-unit call without a live DOM) the
+        # full hint is returned so existing behaviour is preserved.
         #
         # Wave-2 K4: ``Ctrl+C cancel`` swapped in for ``Ctrl+D quit`` —
         # cancel is the highest-frequency interactive key during active
@@ -852,7 +882,41 @@ class InputBar(Widget):
         # dropped from the footer — turn navigation is a power-user
         # convenience, multi-line entry is a daily first-encounter
         # need.
-        return (
-            "  Enter send │ Ctrl+J nl │ Ctrl+C cancel │ "
-            "Ctrl+L clear │ Ctrl+B panel"
-        )
+        #
+        # A4: progressive field drop at narrow widths. See class-level
+        # _HINT_* constants for rationale and threshold values.
+        if width > 0 and width < self._HINT_MID_MIN_WIDTH:
+            return self._HINT_MIN
+        if width > 0 and width < self._HINT_FULL_MIN_WIDTH:
+            return self._HINT_MID
+        return self._HINT_FULL
+
+    def _update_hint(self) -> None:
+        """Recompute and push the hint label text from the current widget width.
+
+        Called from on_resize (= terminal resize) so the footer degrades
+        gracefully instead of silently clipping keys at narrow widths.
+        Width is read from ``self.size.width`` after layout; falls back
+        to 0 (= full hint) when the size is not yet known.
+        """
+        try:
+            w = self.size.width
+        except Exception:
+            w = 0
+        try:
+            label = self.query_one("#hints", Label)
+            label.update(self._build_hint(w))
+        except Exception:
+            pass
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Recompute the footer hint whenever the terminal is resized.
+
+        A4: without this hook the hint is only computed once in
+        ``compose`` (via ``_build_hint()`` with no width argument = full
+        hint). On narrow terminals the fixed CSS ``height: 1`` then clips
+        the tail silently. This handler recomputes the correct tier and
+        pushes it to the Label so the footer always shows a hint that
+        fits the available width.
+        """
+        self._update_hint()

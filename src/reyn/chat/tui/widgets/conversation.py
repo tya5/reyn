@@ -476,7 +476,7 @@ class ConversationView(Widget):
             # making each line short enough that wrap is at worst 2
             # clean lines per stanza on any terminal we expect.
             "  Type [bold]/[/] for commands  ·  [bold]/help[/] for a guide\n"
-            "  [bold]Ctrl+B[/] side panel ·  [bold]Ctrl+L[/] clear  ·  [bold]Ctrl+P/N[/] turn\n"
+            "  [bold]Ctrl+B[/] side panel ·  [bold]Ctrl+L[/] clear  ·  [bold]Ctrl+P/N[/] turn  ·  [bold]Ctrl+R[/] voice\n"
             "  [dim]panel tabs: keys · events · agents · memory · cost · docs · pending"
             "  ([bold]Tab[/]/[bold]Ctrl+W[/] cycle)[/]",
             id="empty-hint",
