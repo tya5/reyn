@@ -84,7 +84,7 @@ Aborts the plan, cancels its asyncio task, cleans up state (decomposition artifa
 /plan resume abc1 --from step_2
 ```
 
-Surgical escape hatch (ADR-0023 §3.7). Clears recorded results from `step_id` onward, preserves earlier steps, and re-launches. Steps before the target memo-replay at no LLM cost; the target step and everything after re-execute fresh. Use when a specific step produced wrong output and you want to redo it without restarting the whole plan.
+Surgical escape hatch. Clears recorded results from `step_id` onward, preserves earlier steps, and re-launches. Steps before the target memo-replay at no LLM cost; the target step and everything after re-execute fresh. Use when a specific step produced wrong output and you want to redo it without restarting the whole plan.
 
 The command rejects:
 - Unknown plan IDs.
@@ -100,10 +100,10 @@ If the `reyn chat` process dies mid-plan, restart and the agent automatically re
 | Plan decomposition (step shape) | yes |
 | Per-step progress and results | yes |
 | Step output ≤ 32 KB | yes — stored inline in the snapshot |
-| Step output > 32 KB | yes — spilled to a per-plan workspace file (ADR-0024) |
+| Step output > 32 KB | yes — spilled to a per-plan workspace file |
 | Active asyncio.Task | no — recreated on restart |
 
-On next startup, `AgentRegistry.restore_all` replays the WAL, classifies each step as completed or pending, and spawns a `PlanRuntime` task. Completed steps memo-replay (no LLM cost per ADR-0025); only pending steps re-execute.
+On next startup, `AgentRegistry.restore_all` replays the WAL, classifies each step as completed or pending, and spawns a `PlanRuntime` task. Completed steps memo-replay (no LLM cost); only pending steps re-execute.
 
 The decomposition artifact is never re-derived via the planner LLM — re-decomposition is non-deterministic and would shuffle step IDs, breaking memoization. If the artifact is missing or corrupt, the coordinator auto-discards and surfaces an outbox notice.
 
@@ -129,7 +129,7 @@ Each `plan_step_completed` event carries the `step_id`, duration, and whether th
 
 **"Why isn't my plan auto-resuming?"** Check `reyn.yaml`. The `plan_resume.default` key controls behavior: `retry_pending` (default) resumes pending steps; `discard` aborts and surfaces a notice asking the user to re-issue. If the key is set to `discard`, auto-resume is intentionally disabled.
 
-**"Step output looks truncated."** Inline output is capped at 32 KB; larger results spill to a file in the per-plan workspace directory (ADR-0024). This is not data loss — the full output is available in `agents/<name>/state/plans/<plan_id>/step_results/<step_id>.txt`. The `get_step_result` accessor resolves inline vs. spilled transparently.
+**"Step output looks truncated."** Inline output is capped at 32 KB; larger results spill to a file in the per-plan workspace directory. This is not data loss — the full output is available in `agents/<name>/state/plans/<plan_id>/step_results/<step_id>.txt`. The `get_step_result` accessor resolves inline vs. spilled transparently.
 
 **"I see `plan_aborted` events on restart."** A plan that was in-flight when the process died surfaces as an outbox notice on the next startup if `plan_resume.default` is `discard`. With the default `retry_pending` policy, you see `plan_resumed` instead.
 

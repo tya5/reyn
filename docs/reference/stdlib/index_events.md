@@ -7,7 +7,7 @@ applies_to: [index_events]
 
 # `index_events`
 
-Index the P6 event log at run granularity into the RAG infrastructure for operational intelligence queries (FP-0009 Component A).
+Index the P6 event log at run granularity into the RAG infrastructure for operational intelligence queries.
 
 ## Entry
 

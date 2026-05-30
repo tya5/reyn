@@ -7,7 +7,7 @@ applies_to: [reyn cron]
 
 # `reyn cron`
 
-Run and inspect cron-scheduled skill jobs (FP-0009 Component B). Jobs are declared under `cron.jobs` in `reyn.yaml`; the scheduler dispatches each enabled job at its cron expression using the same headless `Agent.run` path as `reyn run`.
+Run and inspect cron-scheduled skill jobs. Jobs are declared under `cron.jobs` in `reyn.yaml`; the scheduler dispatches each enabled job at its cron expression using the same headless `Agent.run` path as `reyn run`.
 
 ## Synopsis
 

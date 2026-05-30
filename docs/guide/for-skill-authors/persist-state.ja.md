@@ -25,7 +25,7 @@ applies_to: [.reyn/, reyn.yaml]
 `reyn.yaml`（プロジェクト設定）はチェックインします。個人設定のオーバーライドは
 `reyn.local.yaml`（gitignored、プロジェクトルート）に置いてください — `.reyn/config.yaml` ではありません。
 
-**注意:** `.reyn/config.yaml` は廃止されました（ADR-0031）。存在する場合、Reyn は警告を表示して無視します。
+**注意:** `.reyn/config.yaml` は廃止されました。存在する場合、Reyn は警告を表示して無視します。
 内容を `reyn.local.yaml` に移行してください。
 
 ## 推奨される `.gitignore`

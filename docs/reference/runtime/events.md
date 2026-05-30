@@ -108,7 +108,7 @@ See also: [Concepts: secret handling](../../concepts/secret-handling.md) — OAu
 
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
-| `routing_decided` | Emitted by the universal action catalog dispatch path when an action wrapper (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) routes a request (FP-0034 Phase 1–3). | `action_name: str`; `source: str` — `"catalog"` \| `"hot_alias"` \| `"direct"`; `outcome: str` — `"dispatched"` \| `"deflected"` \| `"error"`; `chain_id: str` — request chain identifier for cross-call correlation. |
+| `routing_decided` | Emitted by the universal action catalog dispatch path when an action wrapper (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) routes a request. | `action_name: str`; `source: str` — `"catalog"` \| `"hot_alias"` \| `"direct"`; `outcome: str` — `"dispatched"` \| `"deflected"` \| `"error"`; `chain_id: str` — request chain identifier for cross-call correlation. |
 
 **Notes:** enables auditing the wrapper-only routing path. Cross-correlate with `chain_id` across the action's downstream events.
 

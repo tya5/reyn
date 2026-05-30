@@ -104,7 +104,7 @@ permissions:
 ## `required_credentials:` (省略可能)
 
 - **型**: `list[str]`
-- **デフォルト**: `["*"]`（完全委譲 — FP-0016 以前のサブスキルが親のクレデンシャルをすべて継承する動作を維持）
+- **デフォルト**: `["*"]`（完全委譲 — サブスキルが親のクレデンシャルをすべて継承）
 - **目的**: このスキル（およびそれが呼び出すサブスキル）が `~/.reyn/secrets.env` および `~/.reyn/oauth_tokens.json` から読み取れるキーを宣言します。
 - **適用**: `run_skill` の境界で OS がこのリストから `ScopedSecretStore` を構築し、親スキルのスコープと交差させます（parent-cap セマンティクス）。許可セット外の読み取りは `CredentialScopeError` を発生させます。
 

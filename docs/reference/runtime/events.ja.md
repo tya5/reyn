@@ -87,7 +87,7 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 
 | 種類 | トリガー | 主要なペイロード |
 |------|---------|-------------|
-| `routing_decided` | アクションラッパー（`list_actions` / `search_actions` / `describe_action` / `invoke_action`）がリクエストをルーティングするとき、ユニバーサルアクションカタログのディスパッチパスから発行されます（FP-0034 Phase 1–3）。 | `action_name: str`; `source: str` — `"catalog"` \| `"hot_alias"` \| `"direct"`; `outcome: str` — `"dispatched"` \| `"deflected"` \| `"error"`; `chain_id: str` — クロスコール相関用リクエストチェーン識別子。 |
+| `routing_decided` | アクションラッパー（`list_actions` / `search_actions` / `describe_action` / `invoke_action`）がリクエストをルーティングするとき、ユニバーサルアクションカタログのディスパッチパスから発行されます。 | `action_name: str`; `source: str` — `"catalog"` \| `"hot_alias"` \| `"direct"`; `outcome: str` — `"dispatched"` \| `"deflected"` \| `"error"`; `chain_id: str` — クロスコール相関用リクエストチェーン識別子。 |
 
 **注記:** ラッパーオンリーのルーティングパスの監査が可能です。`chain_id` を使って、アクションのダウンストリームイベントとのクロスコリレーションが行えます。
 

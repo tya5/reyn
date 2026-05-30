@@ -7,7 +7,7 @@ applies_to: [reyn auth]
 
 # `reyn auth`
 
-RFC 8628 デバイス認可グラントフロー（FP-0016 Component C）を通じて OAuth トークンを管理します。トークンは `~/.reyn/oauth_tokens.json`（chmod 600）に保存され、スキルから使用される際に `reyn.secrets.get_valid_token` によって自動更新されます（FP-0016 Component B）。
+RFC 8628 デバイス認可グラントフローを通じて OAuth トークンを管理します。トークンは `~/.reyn/oauth_tokens.json`（chmod 600）に保存され、スキルから使用される際に `reyn.secrets.get_valid_token` によって自動更新されます。
 
 ## 概要
 
@@ -182,7 +182,7 @@ No token under key 'nonexistent'.
 
 ## トークンの自動更新
 
-`reyn.secrets.get_valid_token(key)` を呼び出すスキル（FP-0016 Component B）は、有効なアクセストークンを自動的に受け取ります。トークンの有効期限まで 60 秒以内の場合、Reyn は返却前に RFC 6749 §6 のリフレッシュ POST を発行します。リフレッシュに失敗した場合（例: リフレッシュトークンの失効）、Reyn は `token_refresh_failed` を発行し、`re_auth_required=True` を持つ `OAuthRefreshError` を送出します。この場合、オペレーターは `reyn auth login <provider>` を再実行する必要があります。
+`reyn.secrets.get_valid_token(key)` を呼び出すスキルは、有効なアクセストークンを自動的に受け取ります。トークンの有効期限まで 60 秒以内の場合、Reyn は返却前に RFC 6749 §6 のリフレッシュ POST を発行します。リフレッシュに失敗した場合（例: リフレッシュトークンの失効）、Reyn は `token_refresh_failed` を発行し、`re_auth_required=True` を持つ `OAuthRefreshError` を送出します。この場合、オペレーターは `reyn auth login <provider>` を再実行する必要があります。
 
 ## 関連情報
 

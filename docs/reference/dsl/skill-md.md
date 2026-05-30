@@ -104,7 +104,7 @@ The `permissions` block is the upper-bound gate: even if a phase's `allowed_ops`
 ## `required_credentials:` (optional)
 
 - **Type**: `list[str]`
-- **Default**: `["*"]` (full delegation — preserves pre-FP-0016 behaviour where sub-skills inherited every parent credential)
+- **Default**: `["*"]` (full delegation — sub-skills inherit every parent credential)
 - **Purpose**: declares which keys from `~/.reyn/secrets.env` and `~/.reyn/oauth_tokens.json` this skill (and any sub-skill it invokes) is permitted to read.
 - **Enforcement**: at `run_skill` boundaries the OS constructs a `ScopedSecretStore` from this list and intersects it with the parent skill's scope (parent-cap semantics). Reads outside the allowed set raise `CredentialScopeError`.
 

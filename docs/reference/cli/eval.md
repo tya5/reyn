@@ -14,7 +14,7 @@ Evaluate a skill. Subcommands:
 | `run` | Run a skill against a golden JSONL dataset; gate CI on pass rate |
 | `report` | Summarise past `reyn eval run` results for a skill |
 | `compare` | Compare pass rate across two skill versions using P6 event log |
-| `benchmark` | Run a skill across a JSONL task file with concurrent dispatch (FP-0008 PR-B); used by SWE-bench harness |
+| `benchmark` | Run a skill across a JSONL task file with concurrent dispatch; used by SWE-bench harness |
 | `spec` | Legacy: run an `eval.md` spec file non-interactively (backward compat) |
 
 ## Synopsis
@@ -159,7 +159,7 @@ reyn eval run my_skill --dataset eval/golden.jsonl --model light
 
 ---
 
-## `reyn eval report` — result summary (FP-0007)
+## `reyn eval report` — result summary
 
 Summarise past `reyn eval run` results for a skill.
 
@@ -224,7 +224,7 @@ reyn eval report my_skill --dataset eval/golden.jsonl --limit 5
 
 ---
 
-## `reyn eval compare` — version regression comparison (FP-0006 A + FP-0007 C)
+## `reyn eval compare` — version regression comparison
 
 Compare a skill's pass rate across two versions using the P6 event log. No additional skill executions are required — results are aggregated from existing `run_skill_started` events whose `skill_version_hash` field matches the specified versions.
 
@@ -309,7 +309,7 @@ reyn eval compare my_skill --format json
 
 ### Cross-reference: `skill_version_hash`
 
-`reyn eval compare` relies on the `skill_version_hash` field in every `run_skill_started` event — the sha256 of the skill's `skill.md` at the time of execution. See [FP-0006 Component A](../../deep-dives/proposals/0006-skill-self-improvement.md) for the field contract and [Reference: events](../runtime/events.md) for the event envelope.
+`reyn eval compare` relies on the `skill_version_hash` field in every `run_skill_started` event — the sha256 of the skill's `skill.md` at the time of execution. See [skill self-improvement](../../deep-dives/proposals/0006-skill-self-improvement.md) for the field contract and [Reference: events](../runtime/events.md) for the event envelope.
 
 ### Examples
 

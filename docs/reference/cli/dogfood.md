@@ -7,7 +7,7 @@ applies_to: [reyn dogfood]
 
 # `reyn dogfood`
 
-Scenario-based regression testing for the chat router (FP-0036). Declare expected behaviour in YAML scenario sets, run them against the real system, and track pass/fail across releases.
+Scenario-based regression testing for the chat router. Declare expected behaviour in YAML scenario sets, run them against the real system, and track pass/fail across releases.
 
 ## Synopsis
 
@@ -473,4 +473,4 @@ reyn dogfood publish .reyn/dogfood/runs/a1b2c3d4-... --dry-run
 - [Concepts: events](../../concepts/events.md) — P6 event log
 - [Deep dive: dogfood discipline](../../deep-dives/contributing/dogfood-discipline.md) — 4-band outcome + 9-principle framework
 - [Deep dive: dogfood reporting](../../deep-dives/contributing/dogfood-reporting.md) — Discussion format + issue filing guide
-- [Proposal: FP-0036](../../deep-dives/proposals/0036-dogfood-scenario-framework.md) — full design spec
+- [Dogfood scenario framework](../../deep-dives/proposals/0036-dogfood-scenario-framework.md) — full design spec

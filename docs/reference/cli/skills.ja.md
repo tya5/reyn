@@ -24,7 +24,7 @@ reyn skills validate --all
 |------|------|
 | `reyn skills` | インストール済みの全 Skill を一覧表示（project → local → stdlib）。 |
 | `reyn skills <SKILL_NAME>` | 1 つの Skill の使用方法の詳細を表示 — 説明、entry Phase、final output、本文。 |
-| `reyn skills validate <SKILL_NAME>` | 1 つの Skill の op/permission クロスレイヤー整合性を検証（FP-0026）。 |
+| `reyn skills validate <SKILL_NAME>` | 1 つの Skill の op/permission クロスレイヤー整合性を検証。 |
 | `reyn skills validate --all` | インストール済みのすべての Skill を検証してサマリーを表示。 |
 
 ## `reyn skills` — 一覧表示
@@ -51,7 +51,7 @@ final_output: article
 
 解決順序: `reyn/project/` → `reyn/local/` → stdlib。
 
-## `reyn skills validate` — op/permission 整合性チェック（FP-0026）
+## `reyn skills validate` — op/permission 整合性チェック
 
 Skill の各 Phase が `allowed_ops` で宣言する **Tier 2-3 op** に対応する `skill.permissions` エントリーが存在するか、またその逆（宣言された permission がどの Phase でも参照されていないか）を確認します。
 

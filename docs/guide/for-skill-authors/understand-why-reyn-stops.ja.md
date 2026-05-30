@@ -107,7 +107,7 @@ safety:
 `safety.loop.skill_calls_per_chain` / `safety.loop.skill_tokens_per_chain`
 を参照してください — 上記 §① 参照。)
 
-### 上限到達時のユーザー承認フロー (FP-0003)
+### 上限到達時のユーザー承認フロー
 
 (chain, skill) ごとの起動回数キャップは、即時拒否ではなく*対話的な承認*に
 切り替えできます:
@@ -159,7 +159,7 @@ safety:
 | `unattended` | CI / cron / スクリプト実行で human を待てない用途のオプトイン、 fail fast |
 | `auto_extend` | 信頼済みの長時間タスクで「N 回までは自動延長して良い」と分かっているとき |
 
-**各 limit がどの site で wiring されているか (FP-0005 Phase 2 — landing 完了):**
+**各 limit がどの site で wiring されているか:**
 
 | Limit | Site | モード挙動 |
 |---|---|---|
@@ -169,7 +169,7 @@ safety:
 | `safety.loop.max_router_calls_per_turn` | `ChatSession._check_and_increment_router_cap` | interactive / auto_extend |
 | `safety.loop.max_agent_hops` | `ChatSession._send_to_agent` | interactive / auto_extend |
 | `safety.timeout.chain_seconds` | chain timeout watchdog | interactive / auto_extend (再 arm) |
-| `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive (= FP-0003 `ask_on_exceed`) |
+| `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive (= `ask_on_exceed`) |
 
 `safety.timeout.llm_call_seconds` は設計上対象外です — litellm が
 `safety.timeout.llm_max_retries` 内で自動再試行するため、 追加の

@@ -50,7 +50,7 @@ cost:
     hard_limit: 50.00    # refuse after $50.00 this month
 ```
 
-> **Migration note**: `per_chain_skill_calls`, `per_chain_skill_tokens`, and `router_invocations_per_turn` were moved from `cost:` to `safety.loop` in FP-0004/0005. Use `safety.loop.skill_calls_per_chain`, `safety.loop.skill_tokens_per_chain`, and `safety.loop.max_router_calls_per_turn` instead. See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block).
+> **Migration note**: `per_chain_skill_calls`, `per_chain_skill_tokens`, and `router_invocations_per_turn` were moved from `cost:` to `safety.loop`. Use `safety.loop.skill_calls_per_chain`, `safety.loop.skill_tokens_per_chain`, and `safety.loop.max_router_calls_per_turn` instead. See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block).
 
 ### Field reference
 

@@ -43,7 +43,7 @@ cost:
     hard_limit: 50.00    # 今月 $50.00 を超えたら拒否
 ```
 
-> **移行案内**: `per_chain_skill_calls`、`per_chain_skill_tokens`、`router_invocations_per_turn` は FP-0004/0005 で `cost:` から `safety.loop` に移動しました。代わりに `safety.loop.skill_calls_per_chain`、`safety.loop.skill_tokens_per_chain`、`safety.loop.max_router_calls_per_turn` を使用してください。[リファレンス: `reyn.yaml` — `safety` ブロック](reyn-yaml.ja.md#safety-ブロック) を参照。
+> **移行案内**: `per_chain_skill_calls`、`per_chain_skill_tokens`、`router_invocations_per_turn` は `cost:` から `safety.loop` に移動しました。代わりに `safety.loop.skill_calls_per_chain`、`safety.loop.skill_tokens_per_chain`、`safety.loop.max_router_calls_per_turn` を使用してください。[リファレンス: `reyn.yaml` — `safety` ブロック](reyn-yaml.ja.md#safety-ブロック) を参照。
 
 ### フィールドリファレンス
 

@@ -7,7 +7,7 @@ applies_to: [reyn.yaml]
 
 # Multi-agent config
 
-> **Migration note**: The `multi_agent:` top-level YAML key was removed in FP-0004/0005. Both settings now live under the unified `safety:` block in `reyn.yaml`. Update any existing `multi_agent:` entries:
+> **Migration note**: The `multi_agent:` top-level YAML key has been removed. Both settings now live under the unified `safety:` block in `reyn.yaml`. Update any existing `multi_agent:` entries:
 >
 > | Old (`multi_agent:`) | New (`safety:`) |
 > |---|---|

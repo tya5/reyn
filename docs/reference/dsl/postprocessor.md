@@ -135,7 +135,7 @@ Postprocessor steps run through the same `dispatch_tool` as preprocessor and pha
 
 1. The per-skill snapshot records `current_phase = "__post__"` (reserved pseudo-phase).
 2. Auto-resume replays the postprocessor from the first uncommitted step, skipping already-committed steps via memo lookup.
-3. World-purity ops re-execute on resume (see ADR-0011).
+3. World-purity ops re-execute on resume.
 
 The LLM's finish artifact is persisted to workspace before postprocessor starts, so resume has a durable input artifact regardless of in-process state. Op invocation IDs for postprocessor steps follow the pattern `__post__.<step_idx>` (e.g. `__post__.0`, `__post__.1`). See [skill-resume.md](../../concepts/skill-resume.md) for the broader resume machinery.
 

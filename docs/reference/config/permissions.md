@@ -80,7 +80,7 @@ Per-(module, function) declarations for `python` preprocessor steps. See [`refer
 - `mode` — `safe` (sandboxed) or `unsafe` (no AST sandbox; needs `--allow-unsafe-python` at runtime).
 - `timeout` — wall-clock seconds before the parent SIGKILLs the child. Default `30`.
 
-### `http.get` (#571 Phase 7)
+### `http.get`
 
 Per-host HTTP allowlist for `reyn.safe.http.*` (skill-internal) AND for `web_fetch` (LLM-driven) — both surfaces share one axis.
 
@@ -90,7 +90,7 @@ Per-host HTTP allowlist for `reyn.safe.http.*` (skill-internal) AND for `web_fet
 
 `reyn.safe.http` (subprocess path) accepts only specific hosts; wildcard requires the async `web_fetch` op route.
 
-### `secret.write` (#571 Phase 6)
+### `secret.write`
 
 Per-key allowlist for `~/.reyn/secrets.env` writes (= called by the `mcp_install` op handler when persisting `isSecret` env vars).
 
@@ -101,7 +101,7 @@ Per-key allowlist for `~/.reyn/secrets.env` writes (= called by the `mcp_install
 
 `web_search` is **Tier 1**: passes through by default without any declaration. Restrict project-wide via `permissions.web.search: deny`.
 
-`web_fetch` is unified under the `http.get` axis post-#571 Phase 7 (= same per-host gate as `safe.http`). The chat router injects `http.get: [{host: "*"}]` so LLM-driven fetches keep working with per-host prompts replacing the old per-URL prompts. Legacy `permissions.web.fetch: allow / deny` config keys remain honored as backward-compat aliases during the migration window.
+`web_fetch` is unified under the `http.get` axis (same per-host gate as `safe.http`). The chat router injects `http.get: [{host: "*"}]` so LLM-driven fetches keep working with per-host prompts replacing the old per-URL prompts. Legacy `permissions.web.fetch: allow / deny` config keys remain honored as backward-compat aliases during the migration window.
 
 ```yaml
 permissions:

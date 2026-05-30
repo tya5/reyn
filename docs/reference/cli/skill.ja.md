@@ -8,7 +8,7 @@ applies_to: [reyn skill]
 # `reyn skill`
 
 スキル定義のバージョン履歴管理とロールバックを行います。`skill_improver` の
-finalize ステップ（FP-0006 Component B）が `.reyn/skill-versions/<name>/` に
+finalize ステップが `.reyn/skill-versions/<name>/` に
 保存したスナップショットを読み取ります。
 
 ## 概要
@@ -147,12 +147,12 @@ reyn skill rollback my_skill --to v1
     current    # "3" が書かれたプレーンテキストファイル
 ```
 
-スナップショットは `skill_improver`（FP-0006 Component B）が作成します。
+スナップショットは `skill_improver` が作成します。
 このコマンドはスナップショットを読み取るだけで、新たに作成することはありません。
 
 ## 関連情報
 
 - `reyn skills` — インストール済みスキルの一覧表示と詳細確認
 - [リファレンス: stdlib/skill_improver](../stdlib/skill_improver.md) — スナップショットを作成する
-- [提案: FP-0006 スキル自己改善](../../deep-dives/proposals/0006-skill-self-improvement.ja.md) — Component B（バージョン管理）と Component E（CLI）
+- [スキル自己改善](../../deep-dives/proposals/0006-skill-self-improvement.ja.md) — バージョン管理と CLI コマンド
 - [リファレンス: events — `skill_rolled_back`](../runtime/events.md#skill-management) — P6 イベントペイロード

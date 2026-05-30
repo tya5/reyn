@@ -3,14 +3,13 @@
 A copy-paste-runnable procedure for 5 popular local MCP servers with
 Reyn. Each section shows:
 
-1. **Install** — one `reyn mcp install` command. Post-PR #331 the
-   install produces a loader-ready config with no manual edits.
+1. **Install** — one `reyn mcp install` command.
+   Produces a loader-ready config with no manual edits.
 2. **Direct smoke** — connectivity / tool-discovery / one tool call
    via the `scripts/mcp_smoke.py` runner. Useful for "is the server
    alive".
 3. **Usage from chat** — a real `reyn chat` conversation that
-   exercises the server through the chat router. Post-PR #342 the
-   router signals catalog partiality so the LLM proactively calls
+   exercises the server through the chat router. The router signals catalog partiality so the LLM proactively calls
    `list_actions` (or `search_actions` for keyword / semantic
    queries) to discover capabilities it doesn't see in its hot-list.
 
@@ -34,15 +33,15 @@ Servers covered:
 > 2026-05-21). The MCP servers don't get exercised through the
 > agent path.
 >
-> **Extraction parity (post-#355)**: install `pip install reyn[fetch]`
+> **Extraction parity**: install `pip install reyn[fetch]`
 > to add trafilatura as the `web__fetch` HTML extractor — at that
 > point, the Reyn op matches `mcp-server-fetch`'s extraction quality
 > for content-dense pages. The MCP server's remaining advantages are
-> `start_index` pagination (= tracked in #357) and robots.txt
+> `start_index` pagination and robots.txt
 > awareness. Use direct calls (`scripts/mcp_smoke.py`) or the MCP
 > server itself only if you specifically need those.
 
-> **Chat-history pollution caveat (= issue #352).** If your agent
+> **Chat-history pollution caveat.** If your agent
 > has previously refused a capability (= the LLM said "I cannot
 > ..."), in-context learning may continue the refusal pattern on
 > subsequent turns even though the SP signal directs otherwise. If
@@ -56,8 +55,7 @@ Servers covered:
 > Fresh-history clean-state success rate for the natural-prompt
 > usage examples below is ~90% (measured 2026-05-21 against
 > `gemini-2.5-flash-lite`). Polluted-history rate degrades sharply.
-> See [#352](https://github.com/tya5/reyn/issues/352) for the
-> structural mitigation discussion.
+> If the issue persists across sessions, check whether the agent's system prompt correctly exposes the tool.
 
 ## Prerequisites
 
@@ -258,10 +256,8 @@ reyn chat
 
 The agent chains three `mcp__call_tool` calls (= `sqlite__create_table`
 → `sqlite__write_query` → `sqlite__read_query`) within one turn.
-Post-PR #342 success
-rate ≈ 90% on clean history; if the agent says "I cannot list
-tables...", wipe the history (line above) and retry — see #352 for
-why.
+Success rate ≈ 90% on clean history; if the agent says "I cannot list
+tables...", wipe the history (line above) and retry.
 
 ### Tools surfaced
 
@@ -303,8 +299,7 @@ reyn chat
 ```
 
 The agent calls `mcp__call_tool({tool: "everything__get-sum", args:
-{a: 17, b: 25}})` and reports the result. Post-PR #342 success rate ≈
-90% on clean history.
+{a: 17, b: 25}})` and reports the result. Success rate ≈ 90% on clean history.
 
 > Note: explicitly mentioning "the everything MCP server" in the
 > prompt helps the router disambiguate; with a generic "compute 17
@@ -320,8 +315,7 @@ The agent calls `mcp__call_tool({tool: "everything__get-sum", args:
 `simulate-research-query`.
 
 `trigger-long-running-operation` is especially useful for testing
-[PR #266](https://github.com/tya5/reyn/pull/266)'s MCP progress
-callback wire — it emits `notifications/progress` during execution.
+MCP progress callback wiring — it emits `notifications/progress` during execution.
 
 ---
 
@@ -335,8 +329,7 @@ echo "mcp.<server-name>: true" >> .reyn/approvals.yaml
 reyn chat
 ```
 
-The install command writes a loader-ready config automatically (= PR
-\#331 fixed the install-flow UX issues #318 / #319 / #320). Servers
+The install command writes a loader-ready config automatically Servers
 requiring credentials: `reyn mcp set-secret <name> <KEY>` + reference
 `${KEY}` in the YAML `env:` block — see
 [Reference: `reyn.yaml` § MCP servers](../../reference/config/reyn-yaml.md#mcp-servers).
@@ -345,8 +338,8 @@ requiring credentials: `reyn mcp set-secret <name> <KEY>` + reference
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Agent says "I cannot ..." even though the server is installed | History pollution (= prior refusal turn) | `echo -n > .reyn/agents/<name>/history.jsonl` then retry. See [#352](https://github.com/tya5/reyn/issues/352) |
+| Agent says "I cannot ..." even though the server is installed | History pollution (= prior refusal turn) | `echo -n > .reyn/agents/<name>/history.jsonl` then retry. See the history-pollution caveat above |
 | `MCP server <name> access denied` | Permission not pre-approved | `echo 'mcp.<name>: true' >> .reyn/approvals.yaml` |
 | `not found` errors after install | Server uses uvx (Python) but `uv` not installed | `brew install uv` |
-| Server config in YAML missing `type: stdio` or has `server-` prefix | Pre-PR #331 install path | Re-install via `reyn mcp install` post-#331 |
+| Server config in YAML missing `type: stdio` or has `server-` prefix | Outdated install path | Re-install via `reyn mcp install` |
 | MCP fetch / filesystem / memory installed but agent uses Reyn op instead | Reyn internal op (`web__fetch` / `file__*` / `memory.operation__*`) wins on natural prompts | Use `scripts/mcp_smoke.py` direct call; the MCP server isn't exercised through the chat router |

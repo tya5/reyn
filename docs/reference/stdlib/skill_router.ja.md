@@ -28,7 +28,7 @@ ChatSession が毎ターン構築します。主なフィールド:
 | `chat_id` | session | agent 自身の名前（classify がメモリパス構築時に使用） |
 | `history_path` | session | `history.jsonl` へのパス。classify preprocessor がスライスします |
 | `compaction` | config | ヒストリースライスの head/tail サイズ |
-| `available_skills` | session | プロジェクト + stdlib カタログ（router/compactor を除外。FP-0011 で `skill_narrator` を削除）。`profile.allowed_skills` が設定されている場合はフィルタリング済み |
+| `available_skills` | session | プロジェクト + stdlib カタログ（router/compactor を除外）。`profile.allowed_skills` が設定されている場合はフィルタリング済み |
 | `available_agents` | registry | Topology ルールで到達可能な他の agent — `[{name, role}, ...]` |
 | `memory_index` | session | 共有 + agent レイヤーをマージ済み（`{status, content}`）。`content` は `(shared)` と `(agent: <name>)` セクションを含む Markdown |
 

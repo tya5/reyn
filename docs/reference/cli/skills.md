@@ -24,7 +24,7 @@ reyn skills validate --all
 |------|-------------|
 | `reyn skills` | List all installed skills (project → local → stdlib). |
 | `reyn skills <SKILL_NAME>` | Print usage details for one skill — description, entry phase, final output, and body. |
-| `reyn skills validate <SKILL_NAME>` | Validate op/permission cross-layer consistency for one skill (FP-0026). |
+| `reyn skills validate <SKILL_NAME>` | Validate op/permission cross-layer consistency for one skill. |
 | `reyn skills validate --all` | Validate all installed skills and print a summary. |
 
 ## `reyn skills` — listing
@@ -51,7 +51,7 @@ final_output: article
 
 Resolution order: `reyn/project/` → `reyn/local/` → stdlib.
 
-## `reyn skills validate` — op/permission consistency check (FP-0026)
+## `reyn skills validate` — op/permission consistency check
 
 Checks that every **Tier 2-3 op** a skill's phases declare in `allowed_ops` has a matching entry in `skill.permissions`, and conversely that every declared permission is actually referenced by at least one phase.
 

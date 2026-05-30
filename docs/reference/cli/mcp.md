@@ -24,7 +24,7 @@ reyn mcp clear-secret  <SERVER> [<KEY>]
 
 ### `refresh` quick reference
 
-`reyn mcp refresh` (= FP-0037-S1) re-probes all configured MCP servers and writes results to the persistent cache file (`.reyn/state/mcp_tools_cache.json`). Active `reyn chat` sessions pick up the new cache on their next turn boundary — **no restart required**.
+`reyn mcp refresh` re-probes all configured MCP servers and writes results to the persistent cache file (`.reyn/state/mcp_tools_cache.json`). Active `reyn chat` sessions pick up the new cache on their next turn boundary — **no restart required**.
 
 ```
 reyn mcp refresh [--project PATH]
@@ -39,7 +39,7 @@ Use cases:
 - After editing `.reyn/mcp.yaml` by hand, push the change into the active cache.
 - As a periodic operator command to refresh tool availability without restarting chat sessions.
 
-**Passive auto-refresh** (= FP-0037-S2、 PR #1003): active chat sessions also watch `reyn.yaml` mtime + `.reyn/mcp.yaml` mtime on each turn boundary; an edit to either is picked up without the explicit `reyn mcp refresh` invocation. The explicit CLI subcommand remains useful for the use cases above (= operator-driven re-probe / scripted refresh).
+**Passive auto-refresh**: active chat sessions also watch `reyn.yaml` mtime + `.reyn/mcp.yaml` mtime on each turn boundary; an edit to either is picked up without the explicit `reyn mcp refresh` invocation. The explicit CLI subcommand remains useful for the use cases above (= operator-driven re-probe / scripted refresh).
 
 ## Overview
 
@@ -172,7 +172,7 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 
 ### Permission interaction: `mcp_install`
 
-Before writing anything to disk, `install` checks the `mcp_install` permission gate (ADR-0029). The default behaviour is `ask` — a prompt appears on first install:
+Before writing anything to disk, `install` checks the `mcp_install` permission gate. The default behaviour is `ask` — a prompt appears on first install:
 
 ```
 [approval] install MCP server 'io.github.modelcontextprotocol/server-github'?

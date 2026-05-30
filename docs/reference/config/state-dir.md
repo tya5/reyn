@@ -31,7 +31,7 @@ Per-project state. Location: `<project_root>/.reyn/` — fixed. (There is no `st
 │   │   └── <name>.md
 │   └── state/                              # WAL skill-run snapshots
 │       └── skills/<run_id>.snapshot.json
-├── skill-versions/<name>/                  # skill version snapshots (FP-0006)
+├── skill-versions/<name>/                  # skill version snapshots
 │   └── v<N>.md
 ├── eval-results/<skill>/                   # `reyn eval run` result files
 │   └── <timestamp>.jsonl
@@ -42,7 +42,7 @@ Per-project state. Location: `<project_root>/.reyn/` — fixed. (There is no `st
     └── <name>.md
 ```
 
-**Note:** `.reyn/config.yaml` was removed in ADR-0031 (3-layer config cascade).
+**Note:** `.reyn/config.yaml` has been removed.
 Personal config overrides now live in `reyn.local.yaml` (gitignored, project root).
 If you have an existing `.reyn/config.yaml`, move its contents to `reyn.local.yaml`
 and delete the old file. Reyn will print a warning until it is removed.
@@ -79,7 +79,7 @@ Per-agent workspace. One directory per named agent (created by `reyn agent new`)
 
 ### `skill-versions/<name>/`
 
-Skill version snapshots written by `skill_improver` (FP-0006). Each `v<N>.md` is a timestamped snapshot of `skill.md` at the time a proposal was applied. Pruned to `self_improvement.max_versions` snapshots. Inspect with `reyn skill versions <name>`.
+Skill version snapshots written by `skill_improver`. Each `v<N>.md` is a timestamped snapshot of `skill.md` at the time a proposal was applied. Pruned to `self_improvement.max_versions` snapshots. Inspect with `reyn skill versions <name>`.
 
 ### `eval-results/<skill>/`
 

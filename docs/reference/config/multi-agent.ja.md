@@ -7,7 +7,7 @@ applies_to: [reyn.yaml]
 
 # マルチエージェント設定
 
-> **移行案内**: `multi_agent:` トップレベル YAML キーは FP-0004/0005 で削除されました。両設定は `reyn.yaml` の統合 `safety:` ブロックに移動しました。既存の `multi_agent:` エントリーを更新してください:
+> **移行案内**: `multi_agent:` トップレベル YAML キーは廃止されました。両設定は `reyn.yaml` の統合 `safety:` ブロックに移動しました。既存の `multi_agent:` エントリーを更新してください:
 >
 > | 旧（`multi_agent:`） | 新（`safety:`） |
 > |---|---|

@@ -156,6 +156,6 @@ See [Debug with events](debug-with-events.md) for a step-by-step walkthrough.
 ## See also
 
 - [concepts/skill-resume](../../concepts/skill-resume.md) — deeper explanation of the WAL + forward-replay mechanism
-- [ADR-0002](../../deep-dives/decisions/0002-forward-replay-resume.md) — why forward-replay, not phase-head re-execution
-- [ADR-0012](../../deep-dives/decisions/0012-auto-resume-default.md) — why auto-resume is the default
+- [Forward-replay design](../../deep-dives/decisions/0002-forward-replay-resume.md) — why forward-replay, not phase-head re-execution
+- [Auto-resume design](../../deep-dives/decisions/0012-auto-resume-default.md) — why auto-resume is the default
 - [Debug with events](debug-with-events.md) — reading the JSONL log

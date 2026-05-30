@@ -135,7 +135,7 @@ Postprocessor のステップは Preprocessor および Phase の op と同じ `
 
 1. Skill ごとの snapshot が `current_phase = "__post__"` を記録します（予約済みの擬似 Phase）。
 2. 自動再開は最初の未コミットステップから Postprocessor をリプレイし、メモ参照によって既にコミット済みのステップをスキップします。
-3. World-purity op は再開時に再実行されます（ADR-0011 参照）。
+3. World-purity op は再開時に再実行されます。
 
 LLM の finish artifact は Postprocessor 開始前に Workspace に永続化されるため、インプロセス状態が失われても再開時に耐久性のある入力 artifact が確保されます。Postprocessor ステップの op 呼び出し ID は `__post__.<step_idx>` のパターンに従います（例: `__post__.0`、`__post__.1`）。より広い再開の仕組みについては [skill-resume.md](../../concepts/skill-resume.md) を参照してください。
 

@@ -7,7 +7,7 @@ applies_to: [reyn auth]
 
 # `reyn auth`
 
-Manage OAuth tokens via the RFC 8628 Device Authorization Grant flow (FP-0016 Component C). Tokens are stored in `~/.reyn/oauth_tokens.json` (chmod 600) and automatically refreshed via `reyn.secrets.get_valid_token` when used by skills (FP-0016 Component B).
+Manage OAuth tokens via the RFC 8628 Device Authorization Grant flow. Tokens are stored in `~/.reyn/oauth_tokens.json` (chmod 600) and automatically refreshed via `reyn.secrets.get_valid_token` when used by skills.
 
 ## Synopsis
 
@@ -182,7 +182,7 @@ You can override the store path with the `REYN_OAUTH_TOKENS_PATH` environment va
 
 ## Automatic token refresh
 
-Skills that call `reyn.secrets.get_valid_token(key)` (FP-0016 Component B) receive a valid access token automatically. If the token is within 60 seconds of expiry, Reyn issues a RFC 6749 §6 refresh POST before returning. On refresh failure (e.g. revoked refresh token), Reyn emits `token_refresh_failed` and raises `OAuthRefreshError` with `re_auth_required=True` — the operator must run `reyn auth login <provider>` again.
+Skills that call `reyn.secrets.get_valid_token(key)` receive a valid access token automatically. If the token is within 60 seconds of expiry, Reyn issues a RFC 6749 §6 refresh POST before returning. On refresh failure (e.g. revoked refresh token), Reyn emits `token_refresh_failed` and raises `OAuthRefreshError` with `re_auth_required=True` — the operator must run `reyn auth login <provider>` again.
 
 ## See also
 

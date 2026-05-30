@@ -109,7 +109,7 @@ trigger an investigation or an explicit user approval.
 live under `safety.loop.skill_calls_per_chain` /
 `safety.loop.skill_tokens_per_chain` — see §① above.)
 
-### User-approval flow on hit (FP-0003)
+### User-approval flow on hit
 
 For per-(chain, skill) call caps, you can opt into an interactive
 approval flow instead of a hard refusal:
@@ -160,7 +160,7 @@ safety:
 | `unattended` | CI / cron / scripted invocations that genuinely cannot pause for a human; opt-in to skip the prompt and fail fast |
 | `auto_extend` | Trusted long-running tasks where the operator knows up front that N extensions are acceptable |
 
-**Where each mode is wired (FP-0005 Phase 2 — fully landed):**
+**Where each mode is wired:**
 
 | Limit | Site | Mode behaviour |
 |---|---|---|
@@ -170,7 +170,7 @@ safety:
 | `safety.loop.max_router_calls_per_turn` | `ChatSession._check_and_increment_router_cap` | interactive / auto_extend |
 | `safety.loop.max_agent_hops` | `ChatSession._send_to_agent` | interactive / auto_extend |
 | `safety.timeout.chain_seconds` | chain timeout watchdog | interactive / auto_extend (re-arm) |
-| `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive (= FP-0003 `ask_on_exceed`) |
+| `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive (= `ask_on_exceed`) |
 
 `safety.timeout.llm_call_seconds` is excluded by design — litellm
 already auto-retries within `safety.timeout.llm_max_retries`, so an

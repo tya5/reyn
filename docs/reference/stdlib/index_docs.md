@@ -7,7 +7,7 @@ applies_to: [index_docs]
 
 # `index_docs`
 
-Build a searchable semantic index over a path glob (ADR-0033 §2.1).
+Build a searchable semantic index over a path glob.
 
 ## Entry
 

@@ -135,7 +135,7 @@ reyn eval run my_skill --dataset eval/golden.jsonl --model light
 
 ---
 
-## `reyn eval report` — 結果サマリー（FP-0007）
+## `reyn eval report` — 結果サマリー
 
 スキルの過去の `reyn eval run` 結果をサマリー表示します。
 
@@ -200,7 +200,7 @@ reyn eval report my_skill --dataset eval/golden.jsonl --limit 5
 
 ---
 
-## `reyn eval compare` — バージョン回帰比較（FP-0006 A + FP-0007 C）
+## `reyn eval compare` — バージョン回帰比較
 
 P6 イベントログを使用して、2 つのバージョン間でスキルの pass rate を比較します。`run_skill_started` イベントの `skill_version_hash` フィールドで集計するため、追加のスキル実行は不要です。
 
@@ -285,7 +285,7 @@ reyn eval compare my_skill --format json
 
 ### 参照: `skill_version_hash`
 
-`reyn eval compare` は実行時のスキル `skill.md` の sha256 を持つ `skill_version_hash` フィールドに依存します。フィールドの契約は [FP-0006 Component A](../../deep-dives/proposals/0006-skill-self-improvement.ja.md)、イベントエンベロープは [リファレンス: events](../runtime/events.md) を参照してください。
+`reyn eval compare` は実行時のスキル `skill.md` の sha256 を持つ `skill_version_hash` フィールドに依存します。フィールドの契約は [スキル自己改善](../../deep-dives/proposals/0006-skill-self-improvement.ja.md)、イベントエンベロープは [リファレンス: events](../runtime/events.md) を参照してください。
 
 ### 例
 

@@ -8,7 +8,7 @@ applies_to: [reyn skill]
 # `reyn skill`
 
 Manage version history and roll back skill definitions. Reads snapshots
-created by the `skill_improver` finalize step (FP-0006 Component B), stored
+created by the `skill_improver` finalize step, stored
 under `.reyn/skill-versions/<name>/`.
 
 ## Synopsis
@@ -147,12 +147,12 @@ reyn skill rollback my_skill --to v1
     current    # plain-text file containing "3"
 ```
 
-Snapshots are written by `skill_improver` (FP-0006 Component B). This command
+Snapshots are written by `skill_improver`. This command
 reads them; it never creates new snapshots.
 
 ## See also
 
 - `reyn skills` — list and inspect all installed skills
 - [Reference: stdlib/skill_improver](../stdlib/skill_improver.md) — creates snapshots
-- [Proposal: FP-0006 skill self-improvement](../../deep-dives/proposals/0006-skill-self-improvement.md) — Component B (versioning) and Component E (CLI)
+- [Skill self-improvement](../../deep-dives/proposals/0006-skill-self-improvement.md) — versioning and CLI commands
 - [Reference: events — `skill_rolled_back`](../runtime/events.md#skill-management) — P6 event payload

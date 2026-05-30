@@ -7,7 +7,7 @@ applies_to: [reyn cron]
 
 # `reyn cron`
 
-cron スケジュール駆動のスキル実行を管理します（FP-0009 Component B）。ジョブは `reyn.yaml` の `cron.jobs` に宣言し、スケジューラーは各有効ジョブを cron 式のタイミングで `reyn run` と同じヘッドレス `Agent.run` パスで実行します。
+cron スケジュール駆動のスキル実行を管理します。ジョブは `reyn.yaml` の `cron.jobs` に宣言し、スケジューラーは各有効ジョブを cron 式のタイミングで `reyn run` と同じヘッドレス `Agent.run` パスで実行します。
 
 ## 概要
 

@@ -152,7 +152,7 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 
 ### パーミッションとの連動: mcp_install {#permission-interaction}
 
-ディスクに書き込む前に、`install` は `mcp_install` パーミッションゲートをチェックします（ADR-0029）。デフォルトの動作は `ask` です。初回インストール時にプロンプトが表示されます：
+ディスクに書き込む前に、`install` は `mcp_install` パーミッションゲートをチェックします。デフォルトの動作は `ask` です。初回インストール時にプロンプトが表示されます：
 
 ```
 [approval] MCP サーバー 'io.github.modelcontextprotocol/server-github' をインストールしますか？

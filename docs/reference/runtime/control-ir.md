@@ -16,13 +16,13 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
 | `run_skill` | Run another skill as a sub-workflow | none (skill-level decision) |
 | `lint` | Run the DSL linter on a skill directory | none |
-| `shell` | Run a shell command (**deprecated** — use `sandboxed_exec`, FP-0017) | `shell` (off by default; needs `--allow-shell`) |
-| `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (FP-0017) | enforced by backend (`SandboxPolicy`) |
+| `shell` | Run a shell command (**deprecated** — use `sandboxed_exec`) | `shell` (off by default; needs `--allow-shell`) |
+| `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` | enforced by backend (`SandboxPolicy`) |
 | `web_search` | Search the public web via DuckDuckGo | Tier 1 — default allow; `web.search: deny` in `reyn.yaml` blocks |
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
-| `mcp_drop_server` | Remove an MCP server from project/local/user config (FP-0034 §D23, inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
+| `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
 | `embed` | Embed texts or artifact chunks via a LiteLLM embedding model | none (embedding API cost) |
 | `index_write` | Write embedded chunks to an index backend (SQLite) | none |
 | `index_query` | Semantic vector search over one indexed source | none |
@@ -145,11 +145,11 @@ Executes a shell command. **Off by default.** The runtime must be started with `
 
 If shell is denied, the OS emits `shell_not_allowed` and returns a denial result rather than failing the phase.
 
-**Deprecated by FP-0017.** Will be removed in 1.0. Use `sandboxed_exec` (below) — it routes through a `SandboxBackend` that enforces the declared `SandboxPolicy`. A `DeprecationWarning` is emitted on first `shell` invocation per skill.
+**Deprecated.** Will be removed in 1.0. Use `sandboxed_exec` (below) — it routes through a `SandboxBackend` that enforces the declared `SandboxPolicy`. A `DeprecationWarning` is emitted on first `shell` invocation per skill.
 
 ## `sandboxed_exec`
 
-Executes `argv` under a declared `SandboxPolicy` via the OS's selected `SandboxBackend` (FP-0017). Replaces `shell` for cases that need (or will need, once `SeatbeltBackend` / `LandlockBackend` land) real isolation enforcement.
+Executes `argv` under a declared `SandboxPolicy` via the OS's selected `SandboxBackend`. Replaces `shell` for cases that need (or will need, once `SeatbeltBackend` / `LandlockBackend` land) real isolation enforcement.
 
 ```json
 {
@@ -204,7 +204,7 @@ Use operators when the user's intent is site-specific or phrase-anchored; plain 
 
 ## `web_fetch`
 
-Fetches a single URL and returns its text-extracted content. **Tier 1** — default allow; no permission declaration required (FP-0022). Typically used after `web_search` to read a result page in detail. Block with `web.fetch: deny` in `reyn.yaml`; pre-approve silently with `web.fetch: allow`.
+Fetches a single URL and returns its text-extracted content. **Tier 1** — default allow; no permission declaration required. Typically used after `web_search` to read a result page in detail. Block with `web.fetch: deny` in `reyn.yaml`; pre-approve silently with `web.fetch: allow`.
 
 ```json
 {
@@ -242,7 +242,7 @@ See [concepts/mcp.md](../../concepts/mcp.md) for server configuration, transport
 
 Installs an MCP server from `registry.modelcontextprotocol.io` into the project's config.
 **Phase-only** (not available from the router). Requires `permissions.mcp_install: true`
-in the skill's frontmatter **and** user approval (ADR-0029).
+in the skill's frontmatter **and** user approval.
 
 ```json
 {
@@ -265,14 +265,14 @@ Fields:
 Handler lifecycle:
 1. Fetches `server.json` via `RegistryClient`
 2. Checks runtime command availability (`npx` / `uvx` / `docker` / `dnx`)
-3. Gates via `PermissionResolver.require_file_write` (= `.reyn/mcp.yaml`) + `require_http_get` (= registry host); the legacy `require_mcp_install` bool-axis gate was removed in #571 collapse arc Phase 5
+3. Gates via `PermissionResolver.require_file_write` (= `.reyn/mcp.yaml`) + `require_http_get` (= registry host); the legacy `require_mcp_install` bool-axis gate has been removed
 4. Prompts for `isSecret=true` env vars via `intervention_bus`; each `save_secret` routes through `PermissionResolver.require_secret_write` (= Phase 6 wildcard `"*"` covers the runtime-determined key set)
 5. Writes `mcp.servers.<name>` to the target scope config file
 6. Emits `mcp_server_installed` event (P6) — key names only, no values
 
 ## `embed`
 
-Embeds texts (or a JSONL artifact) into vectors using a LiteLLM-backed embedding model (ADR-0033). Two input forms:
+Embeds texts (or a JSONL artifact) into vectors using a LiteLLM-backed embedding model. Two input forms:
 
 **Form A — inline** (small payload, e.g. recall query):
 ```json
@@ -308,7 +308,7 @@ Events: `embed_progress` (Form B only, per batch — `embedded`, `skipped` cumul
 
 ## `index_write`
 
-Writes embedded chunks to a named SQLite index backend (ADR-0033). Two input forms:
+Writes embedded chunks to a named SQLite index backend. Two input forms:
 
 **Form A — inline**:
 ```json
@@ -348,7 +348,7 @@ Returns: `{"kind": "index_write", "source": str, "chunks_written": int, "chunks_
 
 ## `index_query`
 
-Semantic similarity search over a single indexed source (ADR-0033).
+Semantic similarity search over a single indexed source.
 
 ```json
 {
@@ -372,7 +372,7 @@ Returns: `{"kind": "index_query", "source": str, "results": [{"text": str, "scor
 
 ## `recall`
 
-Macro op: embed a query → call `index_query` per source → merge and return top-K results globally (ADR-0033). The preferred high-level op for RAG retrieval.
+Macro op: embed a query → call `index_query` per source → merge and return top-K results globally. The preferred high-level op for RAG retrieval.
 
 ```json
 {
@@ -398,7 +398,7 @@ Events: `recall_embed_failed` if the embed sub-op fails (query, error).
 
 ## `index_drop`
 
-Removes an indexed source entirely — deletes its SQLite backend and manifest entry. **Destructive and irreversible.** Requires `permissions.index_drop: ask` (or explicit `allow`) in skill frontmatter, and triggers a user-approval gate by default (ADR-0029).
+Removes an indexed source entirely — deletes its SQLite backend and manifest entry. **Destructive and irreversible.** Requires `permissions.index_drop: ask` (or explicit `allow`) in skill frontmatter, and triggers a user-approval gate by default.
 
 ```json
 {
@@ -417,7 +417,7 @@ Events: `index_dropped` (`source`, `chunks_dropped`).
 
 ## `judge_output`
 
-LLM-based output scorer for in-phase evaluation loops (FP-0007 Component D). Resolves a `target` dot-path to a value, calls an LLM with the caller-supplied `rubric`, and returns a score (0.0–1.0) plus a pass/fail flag.
+LLM-based output scorer for in-phase evaluation loops. Resolves a `target` dot-path to a value, calls an LLM with the caller-supplied `rubric`, and returns a score (0.0–1.0) plus a pass/fail flag.
 
 ```json
 {

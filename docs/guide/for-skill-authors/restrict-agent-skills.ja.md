@@ -19,7 +19,7 @@ applies_to: [profile.yaml, allowed_skills]
 
 `allowed_skills` は以下には**影響しません**:
 
-- **stdlib システム Skill** — `skill_router`。常に利用可能で、`allowed_skills: []` の agent でも chat ができます。（FP-0011 で `skill_narrator` は削除、PR-N3 で `chat_compactor` は OS-internal サービスとして撤収 — どちらも Skill カタログには表示されません。）
+- **stdlib システム Skill** — `skill_router`。常に利用可能で、`allowed_skills: []` の agent でも chat ができます。（どちらも Skill カタログには表示されません。）
 - **agent 間の委任** — `messages_to_agents` は Topology ルールによって管理され、Skill の allowlist によらない。Skill がない agent でも Skill を持つピアに委任できます。
 - **Memory アクセス** — 共有と agent スコープの両方の Memory レイヤーは読み書き可能です。
 

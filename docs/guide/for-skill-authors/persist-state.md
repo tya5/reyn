@@ -25,7 +25,7 @@ applies_to: [.reyn/, reyn.yaml]
 `reyn.yaml` (the project config) is checked in. Personal overrides go in
 `reyn.local.yaml` (gitignored, project root) — not in `.reyn/config.yaml`.
 
-**Note:** `.reyn/config.yaml` is deprecated (ADR-0031). If it exists, Reyn warns
+**Note:** `.reyn/config.yaml` has been deprecated. If it exists, Reyn warns
 and ignores it. Move its contents to `reyn.local.yaml`.
 
 ## Recommended `.gitignore`

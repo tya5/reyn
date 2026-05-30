@@ -19,7 +19,7 @@
 #   export GEMINI_API_KEY=...
 #
 # Secrets that don't fit the per-provider env-var pattern (= ``GITHUB_TOKEN``,
-# ``LANGFUSE_SECRET_KEY``, etc.) can live in ``~/.reyn/secrets.env`` (= ADR-0030);
+# ``LANGFUSE_SECRET_KEY``, etc.) can live in ``~/.reyn/secrets.env``;
 # they are auto-loaded into ``os.environ`` before YAML is parsed, so any
 # ``${VAR}`` reference below resolves transparently.
 # =============================================================================
@@ -89,13 +89,13 @@
 #   mcp:
 #     github: allow
 #
-# Headless / benchmark pre-approval (PR-N9 / PR-N11 / PR-N12): benchmark
-# Agents are constructed with ``intervention_bus=None`` (= ``reyn eval
-# benchmark ...``), so any permission the skill declares (e.g. swe_bench's
-# ``file.write``) raises a RuntimeError on the first control_ir op instead
-# of asking the user. Pre-approve the kind here to clear the prompt — main
-# ``reyn.yaml`` is intentionally left alone (= chat sessions have a bus and
-# CAN ask interactively, so this stays a local / headless-only concern):
+# Headless / benchmark pre-approval: benchmark Agents are constructed with
+# ``intervention_bus=None`` (= ``reyn eval benchmark ...``), so any permission
+# the skill declares (e.g. swe_bench's ``file.write``) raises a RuntimeError on
+# the first control_ir op instead of asking the user. Pre-approve the kind here
+# to clear the prompt — main ``reyn.yaml`` is intentionally left alone (= chat
+# sessions have a bus and CAN ask interactively, so this stays a local /
+# headless-only concern):
 #
 # permissions:
 #   file.write: allow
@@ -116,11 +116,11 @@
 
 
 # -----------------------------------------------------------------------------
-# mcp: Model Context Protocol server registry (FP-0016 Component A).
+# mcp: Model Context Protocol server registry.
 #
 # Two locations write to this section:
 #   - ``reyn.yaml`` / ``reyn.local.yaml`` — operator hand-edited entries
-#   - ``.reyn/mcp.yaml``                  — runtime-managed entries (issue #470)
+#   - ``.reyn/mcp.yaml``                  — runtime-managed entries
 #                                           merged LAST; new installs win.
 #
 # Per-server entry (kept as a raw dict so new transport options can be added
@@ -131,12 +131,12 @@
 #
 # ``headers`` supports ``${VAR}`` interpolation so secrets stay out of YAML.
 #
-# ``mcp.search_threshold`` (FP-0024 Component D): number of MCP tools at or
+# ``mcp.search_threshold``: number of MCP tools at or
 # above which ``build_tools()`` switches from inlining every tool schema to
 # Anthropic's ``tool_search_tool`` (deferred-loading mode). Default 30 (= Spring AI
 # experiment shows 63–64% token reduction at 40+ tools). Set 0 to disable.
 #
-# ``mcp.registries`` (issue #571): a list of external registry URLs. Propagated
+# ``mcp.registries``: a list of external registry URLs. Propagated
 # into ``REYN_MCP_REGISTRY_URLS`` so the subprocess-side safe registry resolver
 # inherits it. URLs may be discovery endpoints for fetching server manifests.
 # -----------------------------------------------------------------------------
@@ -160,7 +160,7 @@
 
 
 # -----------------------------------------------------------------------------
-# skill_search (FP-0024 Component A): BM25 skill pre-filter.
+# skill_search: BM25 skill pre-filter.
 # When the catalog has more than ``threshold`` skills, the router narrows
 # ``invoke_skill.name`` enum to the top-``top_k`` BM25 keyword matches before
 # building the tools list. Defaults: threshold 20 / top_k 5 / backend "bm25".
@@ -185,7 +185,7 @@
 
 
 # -----------------------------------------------------------------------------
-# agent (FP-0016 Component E): runtime identity used in audit events and the
+# agent: runtime identity used in audit events and the
 # ``X-Reyn-Agent-Id`` outbound HTTP header.
 # Default: ``reyn/<hostname>``. Set explicitly for multi-agent fleets.
 # -----------------------------------------------------------------------------
@@ -194,7 +194,7 @@
 
 
 # -----------------------------------------------------------------------------
-# auth (FP-0016 Component C): OAuth provider configurations consumed by
+# auth: OAuth provider configurations consumed by
 # ``reyn auth login``. Each entry maps a provider name to its OAuth 2.0
 # device authorization grant parameters. ``client_secret`` is optional for
 # public clients (= PKCE flow); ``audience`` is Auth0-specific.
@@ -217,21 +217,21 @@
 # -----------------------------------------------------------------------------
 # chat.compaction: Head/Body/Tail chat-history compaction policy.
 #
-# PR-N3 introduced **ratio-based** budget allocation: each ratio is a fraction
-# of the model's main context pool (= T_max - T_SP). The four ratios must sum
-# to ≤ 1.0; this is asserted at engine init.
+# Ratio-based budget allocation: each ratio is a fraction of the model's main
+# context pool (= T_max - T_SP). The four ratios must sum to ≤ 1.0; this is
+# asserted at engine init.
 #
 # Legacy fields (``trigger_total_tokens``, ``head_size``, ``tail_size``,
 # ``body_token_cap``, ``min_compact_batch``, ``section_token_caps``) still
 # drive the background ``_maybe_compact()`` path that fires after each reply.
 #
-# PR-N6 added weight dicts (``component_weights`` / ``section_weights``) for
-# fine-grained tuning. Use them when the default 10/5/15/10 split needs
-# adjusting for unusual workloads.
+# Weight dicts (``component_weights`` / ``section_weights``) enable fine-grained
+# tuning. Use them when the default 10/5/15/10 split needs adjusting for
+# unusual workloads.
 # -----------------------------------------------------------------------------
 # chat:
 #   compaction:
-#     # PR-N3 ratio-based budget (sum must be ≤ 1.0):
+#     # ratio-based budget (sum must be ≤ 1.0):
 #     head_ratio: 0.10
 #     body_ratio: 0.05
 #     tail_ratio: 0.15
@@ -253,7 +253,7 @@
 
 
 # -----------------------------------------------------------------------------
-# events (PR20): audit-log rotation policy. Chat events land under
+# events: audit-log rotation policy. Chat events land under
 # ``.reyn/events/agents/<name>/chat/<YYYY-MM>/`` and rotate when EITHER the
 # active file exceeds ``max_bytes`` OR the file's age (or local date) exceeds
 # ``max_age_seconds``.
@@ -270,7 +270,7 @@
 
 
 # -----------------------------------------------------------------------------
-# cost (PR22): budget / rate-limit policy. Each ``CostLimitConfig`` has a
+# cost: budget / rate-limit policy. Each ``CostLimitConfig`` has a
 # ``hard_limit`` (null = unlimited), ``warn_ratio`` (= warn when usage hits
 # this fraction), ``ask_on_exceed`` (= prompt the user via intervention bus),
 # and ``extension_calls`` (= how many one-shot extensions are granted before
@@ -304,7 +304,7 @@
 
 
 # -----------------------------------------------------------------------------
-# skill_resume (PR-skill-resume): policy for handling steps that have a
+# skill_resume: policy for handling steps that have a
 # ``step_started`` WAL event but no matching ``step_completed`` / ``step_failed``
 # (= the op may have committed externally and only the operator can decide).
 #
@@ -320,7 +320,7 @@
 
 
 # -----------------------------------------------------------------------------
-# plan_resume_raw (ADR-0023 Phase 2): how the resume coordinator treats
+# plan_resume_raw: how the resume coordinator treats
 # interrupted plan-mode runs on restart. Parsed lazily by the coordinator,
 # so the shape lives in ``reyn.plan`` rather than here. Set to a dict only
 # when the plan coordinator's docs explicitly direct it.
@@ -368,15 +368,15 @@
 
 
 # -----------------------------------------------------------------------------
-# embedding (ADR-0033 Phase 1): RAG embedding settings. Built-in defaults
+# embedding: RAG embedding settings. Built-in defaults
 # cover the common OpenAI path so users can start indexing after
 # ``pip install reyn`` + ``OPENAI_API_KEY`` with no edits required.
 #
 # Built-in classes:
 #   light, standard → openai/text-embedding-3-small
 #   strong          → openai/text-embedding-3-large
-#   local-mini      → sentence-transformers/all-MiniLM-L6-v2     (FP-0043)
-#   local-e5        → sentence-transformers/intfloat/multilingual-e5-small (FP-0043)
+#   local-mini      → sentence-transformers/all-MiniLM-L6-v2
+#   local-e5        → sentence-transformers/intfloat/multilingual-e5-small
 #
 # ``local-*`` classes require ``pip install 'reyn[local-embed]'``; without
 # the extras they raise ImportError at first ``embed()`` call (= the
@@ -407,7 +407,7 @@
 
 
 # -----------------------------------------------------------------------------
-# safety (FP-0004 / FP-0005): unified namespace for stop conditions.
+# safety: unified namespace for stop conditions.
 # **Replaces the legacy ``limits:`` / ``multi_agent:`` /
 # ``cost.router_invocations_per_turn`` keys**. ``safety:`` is the single source
 # of truth.
@@ -445,7 +445,7 @@
 
 
 # -----------------------------------------------------------------------------
-# web.fetch (FP-0022 follow-up): SSL verification for ``web_fetch`` + MCP
+# web.fetch: SSL verification for ``web_fetch`` + MCP
 # registry. Priority: ``ca_bundle`` > ``verify_ssl`` > ``SSL_VERIFY`` env >
 # ``litellm.ssl_verify`` > ``SSL_CERT_FILE`` > true.
 #
@@ -459,7 +459,7 @@
 
 
 # -----------------------------------------------------------------------------
-# multimodal (issue #364 cluster + issue #383 follow-ups): caps binary media
+# multimodal: caps binary media
 # size and chooses where multimodal artefacts live on disk.
 #
 #   max_bytes:        decoded-payload byte cap (default 5MB = Anthropic limit)
@@ -469,8 +469,8 @@
 #   media_dir:        project-relative dir for image binary storage
 #   tool_results_dir: project-relative dir for text-y tool-result dumps
 #   base_url:         optional URL prefix for cross-host ``path_ref`` consumption
-#                     (#385 β; set when running ``reyn web`` so A2A peers / MCP
-#                     clients can fetch artefacts via the resources router)
+#                     (set when running ``reyn web`` so A2A peers / MCP clients
+#                     can fetch artefacts via the resources router)
 # -----------------------------------------------------------------------------
 # multimodal:
 #   max_bytes: 5000000
@@ -481,14 +481,14 @@
 
 
 # -----------------------------------------------------------------------------
-# plan (FP-0029 / FP-0031-C): plan-mode execution tuning.
+# plan: plan-mode execution tuning.
 #
 #   step_max_iterations: RouterLoop iterations per plan step before the OS
 #                        records a step failure. Default 5.
 #   retry_limit:         automatic retries per step on transient errors.
 #                        Default 3. 0 = disable. Permission/budget exceptions
 #                        are always excluded from retry.
-#   step_compaction:     PR-N4 prior-step ``step_results`` compaction policy
+#   step_compaction:     prior-step ``step_results`` compaction policy
 #                        (sibling to ``chat.compaction``).
 # -----------------------------------------------------------------------------
 # plan:
@@ -502,7 +502,7 @@
 
 
 # -----------------------------------------------------------------------------
-# eval (FP-0007 Component A): trace export adapters. Empty list (default) =
+# eval: trace export adapters. Empty list (default) =
 # no export. Supported types:
 #   - file        : local JSONL dumps under ``path``
 #   - langfuse    : push to a Langfuse instance (public_key / secret_key / host)
@@ -524,7 +524,7 @@
 
 
 # -----------------------------------------------------------------------------
-# sandbox (FP-0017): which enforcement backend to use + what to do when the
+# sandbox: which enforcement backend to use + what to do when the
 # requested backend isn't available on the host platform.
 #
 #   backend:        auto | seatbelt | landlock | noop
@@ -540,7 +540,7 @@
 
 
 # -----------------------------------------------------------------------------
-# self_improvement (FP-0006 B+D): skill_improver behavior knobs.
+# self_improvement: skill_improver behavior knobs.
 #
 #   on_propose:   ask_user (default; pause + prompt before applying)
 #                 auto      (skip prompt; for CI / unattended)
@@ -554,23 +554,23 @@
 
 
 # -----------------------------------------------------------------------------
-# action_retrieval (FP-0034 + FP-0043 Phase 4): universal catalog + retrieval.
+# action_retrieval: universal catalog visibility and action retrieval settings.
 #
 #   universal_wrappers_enabled:
-#       True (default since PR-3b-iv) → ``build_tools()`` appends the 3
-#       universal wrappers (list_actions / describe_action / invoke_action).
+#       True (default) → ``build_tools()`` exposes the universal catalog wrappers
+#       (list_actions / describe_action / invoke_action / search_actions).
 #       ``search_actions`` is gated separately via ``embedding_class``.
 #   embedding_class:
 #       Name of an entry under ``embedding.classes`` used for semantic
-#       ``search_actions``. Default ``"local-mini"`` (FP-0043 Phase 4) —
-#       activates the moment ``pip install 'reyn[local-embed]'`` succeeds;
-#       silently no-ops otherwise (= ``list_actions`` surfaces a hint).
-#       Set ``null`` to disable ``search_actions`` entirely.
+#       ``search_actions``. Default ``"local-mini"`` — activates when
+#       ``pip install 'reyn[local-embed]'`` succeeds; silently no-ops otherwise
+#       (= ``list_actions`` surfaces a hint). Set ``null`` to disable
+#       ``search_actions`` entirely.
 #   hot_list_n:
-#       Top-N freq+recency projection size (§D2). Default 20 — must be
-#       ≥ ``DEFAULT_HOT_LIST_SEED`` length (= 17) so the seed isn't truncated.
+#       Top-N freq+recency projection size. Default 20 — must be ≥
+#       ``DEFAULT_HOT_LIST_SEED`` length (= 17) so the seed isn't truncated.
 #   mode:
-#       Free-form mode label (§D24): ``minimal`` / ``default`` / ``performance``.
+#       Operational mode label: ``minimal`` / ``default`` / ``performance``.
 #   hot_list_seed:
 #       Initial hot-list seed before usage data accumulates. ``"default"`` =
 #       OS-supplied 10-item seed. ``[]`` = no seed. An explicit list overrides.
@@ -584,7 +584,7 @@
 
 
 # -----------------------------------------------------------------------------
-# cron (FP-0009 Component B + FP-0041 #489 PR-B): scheduled execution. Two
+# cron: scheduled execution. Two
 # shapes coexist; pick exactly one per entry:
 #
 #   Message-based (recommended): ``to`` + ``message``. Cron dispatches the
@@ -610,7 +610,7 @@
 
 
 # -----------------------------------------------------------------------------
-# external_transports (FP-0041 #489 PR-D2): map external transport names
+# external_transports: map external transport names
 # (Slack / LINE / Discord / ...) to the MCP tool that delivers replies, plus
 # an ``args_template`` describing how router output is shaped into the tool's
 # arguments. Empty by default; see ``reyn.chat.external_routing`` for the

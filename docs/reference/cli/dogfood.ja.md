@@ -7,7 +7,7 @@ applies_to: [reyn dogfood]
 
 # `reyn dogfood`
 
-チャットルーターのシナリオベース回帰テスト（FP-0036）。YAML シナリオセットで期待動作を宣言し、実システムに対して実行し、リリースをまたいで合否を追跡します。
+チャットルーターのシナリオベース回帰テスト。YAML シナリオセットで期待動作を宣言し、実システムに対して実行し、リリースをまたいで合否を追跡します。
 
 ## 概要
 
@@ -456,4 +456,4 @@ reyn dogfood publish a1b2c3d4-... --template path/to/my-template.md
 - [Concepts: events](../../concepts/events.md) — P6 イベントログ
 - [Deep dive: dogfood discipline](../../deep-dives/contributing/dogfood-discipline.ja.md) — 4 段階アウトカム + 9 原則フレームワーク
 - [Deep dive: dogfood reporting](../../deep-dives/contributing/dogfood-reporting.ja.md) — Discussion 形式 + Issue 起票ガイド
-- [Proposal: FP-0036](../../deep-dives/proposals/0036-dogfood-scenario-framework.md) — 完全設計仕様
+- [Dogfood シナリオフレームワーク](../../deep-dives/proposals/0036-dogfood-scenario-framework.md) — 完全設計仕様

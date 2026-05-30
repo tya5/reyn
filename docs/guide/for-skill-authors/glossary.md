@@ -31,7 +31,7 @@ Authoritative names for reyn concepts. Use these terms verbatim in skill DSL fil
 | Chain | チェイン | One logical request path from a top-level user submission, possibly spanning multiple agents and hops. Identified by `chain_id`. |
 | `chain_id` | チェイン ID | uuid4 hex minted by `submit_user_text`; propagated through every inbox payload, history meta, and event in the same chain. |
 | Pending Chain | ペンディングチェイン | State held in a delegating agent while it waits for delegate responses (deferred reply). Cleared when `waiting_on` becomes empty. |
-| `allowed_skills` | 許可スキル一覧 | Optional `list[str] \| None` in profile.yaml. `None` = unrestricted, `[]` = router-only, `[a, b]` = allowlist. stdlib router/compactor are not subject. (FP-0011 removed `skill_narrator`; the router LLM narrates inline.) |
+| `allowed_skills` | 許可スキル一覧 | Optional `list[str] \| None` in profile.yaml. `None` = unrestricted, `[]` = router-only, `[a, b]` = allowlist. stdlib router/compactor are not subject. (the router LLM narrates inline.) |
 | Hop Depth | ホップ深度 | Number of agent-to-agent forwards from the original user request. Bounded by `safety.loop.max_agent_hops`. |
 
 ## Execution
