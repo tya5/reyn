@@ -8,32 +8,22 @@ allowed_ops: [file, shell]
 max_retries: 3
 max_act_turns: 30
 preprocessor:
-  # FP-0008 PR-N15 Step 1: deterministic workspace passthrough — read the
-  # original swe_bench_input artifact from the workspace (stored at skill
-  # start by the OS as the `_input` artifact). This is the P5-correct
-  # source of truth for test_patch — it never passes through the apply
-  # LLM, so it can never be dropped or nulled by a weak model.
+  # FP-0008 PR-N15 / #1115 Stage 0: deterministic entry-input passthrough.
+  # The OS injects the skill's original entry artifact (the `swe_bench_input`)
+  # at the reserved `_skill_input` binding before this preprocessor runs. This
+  # is the P5-correct source of truth for test_patch — it is the OS-held entry
+  # input and never passes through the apply LLM, so it can never be dropped or
+  # nulled by a weak model. No workspace file.read is needed (the prior
+  # `.reyn/artifacts/...` magic-path read was removed in #1115 Stage 0 — that
+  # path coupled the read to base_dir, which breaks once the repo FS routes
+  # through a backend). sanitize_test_patch / parse_test_targets read
+  # `_skill_input.data.test_patch` directly, falling back to `data.test_patch`
+  # for unit tests that inject the verify input directly.
   #
-  # The file path `.reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json`
-  # is deterministic: the OS always stores the entry-phase artifact at
-  # `{state_dir}/artifacts/{skill_name}/{_input}/v01_{artifact_type}.json`.
-  #
-  # on_error: empty — if the workspace file is absent (e.g. in unit tests
-  # that inject verify input directly), the python step falls back to
-  # reading data.test_patch from the artifact directly (see Step 2).
-  - type: run_op
-    op:
-      kind: file
-      op: read
-      path: ".reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json"
-    into: data._input_raw
-    on_error: empty
-  # FP-0008 PR-N15 Step 2 / PR-O v8: sanitize_test_patch reads test_patch
-  # from data._input_raw.content (workspace JSON) and falls back to
-  # data.test_patch (direct injection for tests). Normalizes line endings
-  # (CRLF → LF), strips BOM, ensures trailing newline. Runs BEFORE the
-  # LLM enters this phase. The sanitized string is written into
-  # `data.test_patch` so `git apply` operates on a clean diff.
+  # FP-0008 PR-O v8: sanitize_test_patch normalizes line endings (CRLF → LF),
+  # strips BOM, ensures a trailing newline. Runs BEFORE the LLM enters this
+  # phase. The sanitized string is written into `data.test_patch` so
+  # `git apply` operates on a clean diff.
   - type: python
     module: ./sanitize_test_patch.py
     function: sanitize_test_patch

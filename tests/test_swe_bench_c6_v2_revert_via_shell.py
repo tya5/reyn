@@ -452,12 +452,34 @@ def test_report_md_has_parse_step_and_iterate_step() -> None:
     )
 
 
-def test_report_md_reads_workspace_input() -> None:
-    """Tier 2: report.md preprocessor reads the workspace swe_bench _input artifact."""
+def test_report_md_uses_os_injected_skill_input_not_basedir_path() -> None:
+    """Tier 2: report.md derives test_patch from the OS-injected _skill_input.
+
+    #1115 Stage 0 removed report.md's ``run_op: file.read`` of the base_dir-
+    coupled ``.reyn/artifacts/swe_bench/_input/...`` path. parse_test_targets
+    now reads ``_skill_input.data.test_patch`` (Priority 0) — verified
+    behaviorally here so the claim matches the test content.
+    """
+    from reyn.stdlib.skills.swe_bench.parse_test_targets import parse_test_targets
+
     report_md = (_SKILL_ROOT / "phases" / "report.md").read_text(encoding="utf-8")
-    assert "swe_bench/_input/v01_swe_bench_input.json" in report_md, (
-        "report.md must read the workspace _input artifact to get test_patch"
+    assert "swe_bench/_input/v01_swe_bench_input.json" not in report_md, (
+        "report.md must NOT reference the base_dir-coupled _input magic path "
+        "after #1115 Stage 0"
     )
+    patch = (
+        "diff --git a/tests/test_x.py b/tests/test_x.py\n"
+        "--- a/tests/test_x.py\n+++ b/tests/test_x.py\n@@\n-old\n+new\n"
+    )
+    artifact = {
+        "type": "verify_state",
+        "data": {"instance_id": "i"},
+        "_skill_input": {
+            "type": "swe_bench_input",
+            "data": {"instance_id": "i", "test_patch": patch},
+        },
+    }
+    assert parse_test_targets(artifact) == ["git checkout HEAD -- tests/test_x.py"]
 
 
 def test_apply_md_has_source_only_rule() -> None:

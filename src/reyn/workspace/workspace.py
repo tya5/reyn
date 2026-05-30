@@ -30,15 +30,40 @@ class Workspace:
         permission_resolver: "PermissionResolver | None" = None,
         skill_name: str = "",
         base_dir: "Path | None" = None,
+        state_dir: "Path | None" = None,
     ) -> None:
         self.base_dir = base_dir.resolve() if base_dir is not None else Path.cwd()
-        self.state_dir = (self.base_dir / ".reyn").resolve()
+        # FP-0008 #1115 Stage 0: state_dir is host-side and decoupled from
+        # base_dir. Default = base_dir/.reyn (backward-compat). A caller that
+        # routes the repo FS through a backend (e.g. a container base_dir)
+        # passes an explicit host-side state_dir, so artifacts + events survive
+        # independently of the repo working tree (container-death recoverable).
+        self.state_dir = (
+            state_dir.resolve()
+            if state_dir is not None
+            else (self.base_dir / ".reyn").resolve()
+        )
         self._events = events
         self.artifacts: list[dict] = []
         self.state_dir.mkdir(parents=True, exist_ok=True)
         (self.state_dir / "artifacts").mkdir(exist_ok=True)
         self._perm = permission_resolver
         self._skill_name = skill_name
+
+    def resolve_artifact_handle(self, handle: str) -> Path:
+        """Resolve a state_dir-relative artifact handle to an absolute path.
+
+        FP-0008 #1115 Stage 0: artifact handles returned by ``store_artifact``
+        are relative to ``state_dir`` (host-side), not ``base_dir``. The OS uses
+        this to serve artifact reads (read-by-ref) without exposing a base_dir
+        FS path. Raises :class:`PermissionError` if the handle escapes state_dir.
+        """
+        resolved = (self.state_dir / handle).resolve()
+        if not resolved.is_relative_to(self.state_dir):
+            raise PermissionError(
+                f"artifact handle {handle!r} escapes state_dir {self.state_dir}"
+            )
+        return resolved
 
     def _resolve_read(self, path_str: str) -> Path:
         p = Path(path_str).expanduser()
@@ -240,9 +265,13 @@ class Workspace:
             json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-        # Return path relative to base_dir so the LLM can read it via file ops
-        base_rel = str(abs_path.relative_to(self.base_dir))
-        self.artifacts.append({"phase": phase, "artifact": artifact, "path": base_rel})
+        # FP-0008 #1115 Stage 0: store the state_dir-relative handle (NOT a
+        # base_dir-relative FS path). state_dir is host-side and may be
+        # decoupled from base_dir, so `relative_to(base_dir)` would be invalid.
+        # The OS resolves this handle against state_dir when serving reads
+        # (see resolve_artifact_handle); consumers no longer file.read it.
+        handle = rel  # already state_dir-relative: "artifacts/.../v01_*.json"
+        self.artifacts.append({"phase": phase, "artifact": artifact, "path": handle})
         inner = artifact.get("data", artifact)
         keys = list(inner.keys()) if isinstance(inner, dict) else []
         self._events.emit(
@@ -250,6 +279,6 @@ class Workspace:
             phase=phase,
             artifact_type=artifact_type,
             keys=keys,
-            path=base_rel,
+            path=handle,
         )
-        return base_rel
+        return handle

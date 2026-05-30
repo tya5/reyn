@@ -505,7 +505,11 @@ def test_postprocessor_mid_run_crash_resume_delivers_to_upstream(
     }
     art_path = art_dir / "v01_post_draft.json"
     art_path.write_text(json.dumps(finish_artifact), encoding="utf-8")
-    rel_art_path = str(art_path.relative_to(tmp_path))
+    # #1115 Stage 0: last_phase_artifact_path is a state_dir-relative handle
+    # (state_dir defaults to base_dir/.reyn), resolved via
+    # Workspace.resolve_artifact_handle on resume — matching store_artifact's
+    # new return format.
+    rel_art_path = str(art_path.relative_to(tmp_path / ".reyn"))
 
     run_id = "run_post_chain_003"
 

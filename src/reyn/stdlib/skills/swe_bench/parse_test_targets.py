@@ -31,10 +31,13 @@ command string.
 ## Input shape
 
 Called with the full runtime artifact dict. Source priority mirrors
-``sanitize_test_patch.py`` (P5 workspace passthrough):
+``sanitize_test_patch.py`` (P5 deterministic entry-input passthrough):
 
+0. ``_skill_input.data.test_patch`` — the OS-injected original entry artifact
+   (#1115 Stage 0), placed at the top-level ``_skill_input`` binding before the
+   preprocessor runs.  Deterministic, never LLM-mutated.
 1. ``data._input_raw.content`` — JSON of the original ``swe_bench_input``
-   artifact, injected by the preceding ``run_op: file.read`` step.
+   artifact from a ``run_op: file.read`` step (retained for back-compat).
 2. ``data.test_patch`` — set by the sanitize_test_patch step that precedes
    this one in the preprocessor chain.
 3. Top-level ``test_patch`` — flat unit-test direct-call shape.
@@ -55,7 +58,8 @@ def _extract_test_patch(data: Mapping[str, Any]) -> str:
     """Extract the test_patch string from the artifact, following priority chain.
 
     Priority:
-    1. data._input_raw.content (workspace JSON via file.read run_op)
+    0. _skill_input.data.test_patch (OS-injected entry artifact, #1115 Stage 0)
+    1. data._input_raw.content (workspace JSON via file.read run_op — back-compat)
     2. data.test_patch (inner data dict — set by sanitize_test_patch)
     3. top-level test_patch (flat unit-test shape)
 
@@ -64,9 +68,18 @@ def _extract_test_patch(data: Mapping[str, Any]) -> str:
     inner: Any = data.get("data") or {}
     test_patch: Any = None
 
-    # Priority 1: workspace passthrough
-    if isinstance(inner, dict):
-        input_raw = inner.get("_input_raw")
+    # Priority 0 (#1115 Stage 0): OS-injected entry input. The skill's original
+    # entry artifact is placed at the top-level `_skill_input` binding before
+    # the preprocessor runs — deterministic P5 source, never LLM-mutated.
+    skill_input = data.get("_skill_input")
+    if isinstance(skill_input, dict):
+        si_data = skill_input.get("data")
+        if isinstance(si_data, dict):
+            test_patch = si_data.get("test_patch")
+
+    # Priority 1 (back-compat): workspace passthrough — file.read run_op result.
+    if not isinstance(test_patch, str) or not test_patch:
+        input_raw = inner.get("_input_raw") if isinstance(inner, dict) else None
         if isinstance(input_raw, dict):
             content = input_raw.get("content")
             if isinstance(content, str) and content.strip():
