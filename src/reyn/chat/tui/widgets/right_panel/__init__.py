@@ -2555,7 +2555,7 @@ class RightPanel(Widget):
             )
         return ""
 
-    def _panel_markup(self) -> Any:
+    def _panel_markup(self, content_width: int = 0) -> Any:
         try:
             if self._panel_type == "keys":
                 markup, _, key_ys = render_keys(
@@ -2607,7 +2607,11 @@ class RightPanel(Widget):
                 return rendered
             if self._panel_type == "cost":
                 budget_tracker = getattr(self.app, "_budget_tracker", None)
-                return render_cost(self._project_root, budget_tracker)
+                return render_cost(
+                    self._project_root,
+                    budget_tracker,
+                    content_width=content_width,
+                )
             if self._panel_type == "docs":
                 groups, ordered = build_docs_index(
                     self._project_root, self._docs_filter,

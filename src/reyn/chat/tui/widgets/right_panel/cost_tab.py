@@ -9,10 +9,50 @@ from typing import Any
 
 from .base import _CORAL, _esc, logger
 
-# Budget progress-bar geometry
+# Budget progress-bar geometry (default / wide-panel values)
 _BAR_FILL = "█"
 _BAR_EMPTY = "░"
 _BAR_WIDTH = 24
+
+# Width thresholds for adaptive layout.
+# These are *content* widths (after panel padding is removed — padding
+# is 2 cols total, 1 each side per CSS ``padding: 0 1``).
+#
+#   ≥ _WIDE_THRESHOLD   — full layout (current behaviour unchanged)
+#   ≥ _MEDIUM_THRESHOLD — narrow the NAME column; keep tok + cost + calls
+#   < _MEDIUM_THRESHOLD — NAME narrowed further; drop cost + calls;
+#                         ALWAYS keep token total
+#
+# Budget bar:
+#   ≥ _BAR_THRESHOLD    — full bar + percentage label
+#   < _BAR_THRESHOLD    — suppress bar, keep percentage label only
+_WIDE_THRESHOLD   = 54  # full layout: name :<24 / :<22 / :<28
+_MEDIUM_THRESHOLD = 42  # narrow name: :<18 / :<16 / :<22; still show cost
+_BAR_THRESHOLD    = 44  # bar suppressed below this; pct label kept
+
+
+def _col_widths(content_width: int) -> tuple[int, int, int, int]:
+    """Return (agent_name_w, skill_name_w, model_name_w, budget_label_w).
+
+    Degrade order as width shrinks:
+      - wide  (≥ _WIDE_THRESHOLD):   24, 22, 28, 22
+      - medium (≥ _MEDIUM_THRESHOLD): 18, 16, 22, 18
+      - narrow (< _MEDIUM_THRESHOLD): 14, 12, 18, 14
+    """
+    if content_width >= _WIDE_THRESHOLD:
+        return 24, 22, 28, 22
+    if content_width >= _MEDIUM_THRESHOLD:
+        return 18, 16, 22, 18
+    return 14, 12, 18, 14
+
+
+def _show_cost_calls(content_width: int) -> bool:
+    """Return True when the content is wide enough to show cost + call count.
+
+    Below _MEDIUM_THRESHOLD these fields are clipped by _PanelContent and
+    add noise without being readable — suppress them proactively.
+    """
+    return content_width >= _MEDIUM_THRESHOLD
 
 
 def _new_bucket() -> dict:
@@ -53,13 +93,14 @@ def _sparkline(values: list[float], width: int = 32) -> str:
     return f"[{_CORAL}]{bar}[/]"
 
 
-def _budget_bar(used: float, cap: float) -> str:
-    """Render a 24-cell `█░` progress bar with colour thresholds.
+def _budget_bar(used: float, cap: float, *, bar_width: int = _BAR_WIDTH) -> str:
+    """Render a `█░` progress bar with colour thresholds.
 
+    ``bar_width`` controls the cell count of the bar segment; pass 0 to
+    suppress the bar entirely and emit only the ``[nnn%]`` readout.
     Green below 75 %, coral 75–90 %, red above 90 %. Returns Rich markup.
     """
     ratio = min(1.0, used / cap) if cap > 0 else 0.0
-    filled = round(ratio * _BAR_WIDTH)
     pct = int(ratio * 100)
     if ratio >= 0.9:
         colour = "#ff4444"
@@ -67,16 +108,29 @@ def _budget_bar(used: float, cap: float) -> str:
         colour = _CORAL
     else:
         colour = "#44cc88"
-    bar = _BAR_FILL * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
-    return f"[{colour}]\\[{bar}][/] [{colour}]{pct:3d}%[/]"
+    if bar_width > 0:
+        filled = round(ratio * bar_width)
+        bar = _BAR_FILL * filled + _BAR_EMPTY * (bar_width - filled)
+        return f"[{colour}]\\[{bar}][/] [{colour}]{pct:3d}%[/]"
+    # No bar — emit percentage only (keeps the readout visible at narrow widths)
+    return f"[{colour}]{pct:3d}%[/]"
 
 
-def _render_budget_caps(lines: list[str], budget_tracker: Any) -> None:
+def _render_budget_caps(
+    lines: list[str],
+    budget_tracker: Any,
+    *,
+    content_width: int = 0,
+) -> None:
     """Append daily token / cost progress bars when caps are configured.
 
     Reads `daily_tokens.hard_limit` and `daily_cost_usd.hard_limit` from
     ``budget_tracker.snapshot()["config"]``. Skips silently when caps are
     unset or the snapshot shape changes.
+
+    ``content_width`` controls adaptive rendering: below ``_BAR_THRESHOLD``
+    the bar segment is suppressed (= only the ``[nnn%]`` readout is shown)
+    to avoid clipping the percentage label at narrow panel widths.
     """
     try:
         snap = budget_tracker.snapshot()
@@ -89,17 +143,19 @@ def _render_budget_caps(lines: list[str], budget_tracker: Any) -> None:
         cost_cap_cfg = getattr(cfg, "daily_cost_usd", None)
         tok_hard = getattr(tok_cap_cfg, "hard_limit", None) if tok_cap_cfg else None
         cost_hard = getattr(cost_cap_cfg, "hard_limit", None) if cost_cap_cfg else None
+        _, _, _, budget_label_w = _col_widths(content_width)
+        bar_w = _BAR_WIDTH if content_width >= _BAR_THRESHOLD else 0
         if tok_hard and tok_hard > 0:
             label = f"{daily_tok_used:,} / {int(tok_hard):,}"
-            bar = _budget_bar(daily_tok_used, tok_hard)
+            bar = _budget_bar(daily_tok_used, tok_hard, bar_width=bar_w)
             lines.append(
-                f"[#555555]    tokens  [/][#aaaaaa]{label:<22}[/]  {bar}"
+                f"[#555555]    tokens  [/][#aaaaaa]{label:<{budget_label_w}}[/]  {bar}"
             )
         if cost_hard and cost_hard > 0:
             label = f"${daily_cost_used:.4f} / ${cost_hard:.4f}"
-            bar = _budget_bar(daily_cost_used, cost_hard)
+            bar = _budget_bar(daily_cost_used, cost_hard, bar_width=bar_w)
             lines.append(
-                f"[#555555]    cost    [/][#aaaaaa]{label:<22}[/]  {bar}"
+                f"[#555555]    cost    [/][#aaaaaa]{label:<{budget_label_w}}[/]  {bar}"
             )
     except Exception as exc:
         logger.warning("right_panel cost: budget cap render failed: %s", exc)
@@ -108,9 +164,24 @@ def _render_budget_caps(lines: list[str], budget_tracker: Any) -> None:
 def render_cost(
     project_root: Path | None,
     budget_tracker: Any = None,
+    *,
+    content_width: int = 0,
 ) -> str:
-    """Render the cost tab, summarising LLM usage from .reyn/events/*.jsonl."""
+    """Render the cost tab, summarising LLM usage from .reyn/events/*.jsonl.
+
+    ``content_width`` is the available content-area width in columns (i.e.
+    the panel width minus horizontal padding). When 0 or unknown the full
+    wide-panel layout is used. As the width shrinks the renderer degrades:
+    first the name columns narrow, then cost + call-count fields are
+    suppressed, while the token total is always kept visible on its own
+    line. The budget bar is replaced by a percentage-only readout below
+    ``_BAR_THRESHOLD`` content columns.
+    """
     lines: list[str] = []
+    agent_name_w, skill_name_w, model_name_w, _budget_label_w = _col_widths(
+        content_width
+    )
+    show_extra = _show_cost_calls(content_width)
 
     if project_root is None:
         lines.append("[#555555]  (no project root)[/]")
@@ -282,7 +353,9 @@ def render_cost(
             lines.append(f"[#555555]    trend   [/]{spark}")
         # Budget cap progress bars (only when caps are configured)
         if budget_tracker is not None:
-            _render_budget_caps(lines, budget_tracker)
+            _render_budget_caps(
+                lines, budget_tracker, content_width=content_width
+            )
     lines.append("")
 
     # ── ALL TIME ──────────────────────────────────────────────────────
@@ -307,14 +380,18 @@ def render_cost(
             # agent total: name bold white, tok light gray, cost bright green
             ag_cost = (
                 f"  [bold #44cc88]${ag['cost']:.4f}[/]"
-                if ag["has_cost"] else ""
+                if ag["has_cost"] and show_extra else ""
             )
-            # name col = 26 chars (2 indent + 24) to align with skill rows (4 + 22)
+            ag_calls = (
+                f"  [#777777]{ag['calls']}c[/]"
+                if show_extra else ""
+            )
+            # name col width adapts to content_width (see _col_widths)
             lines.append(
-                f"[bold #dddddd]  {_esc(agent):<24}[/]"
+                f"[bold #dddddd]  {_esc(agent):<{agent_name_w}}[/]"
                 f"[#aaaaaa]{ag_tok:>7,} tok[/]"
                 f"{ag_cost}"
-                f"  [#777777]{ag['calls']}c[/]"
+                f"{ag_calls}"
             )
             skills = by_agent_skill[agent]
             for skill in sorted(skills):
@@ -323,13 +400,17 @@ def render_cost(
                 # skill rows: dim name, muted green for cost — clearly subordinate
                 cost_part = (
                     f"  [#2d7a4f]${m['cost']:.4f}[/]"
-                    if m["has_cost"] else ""
+                    if m["has_cost"] and show_extra else ""
+                )
+                calls_part = (
+                    f"  [#444444]{m['calls']}c[/]"
+                    if show_extra else ""
                 )
                 lines.append(
-                    f"[#555555]    {_esc(skill):<22}[/]"
+                    f"[#555555]    {_esc(skill):<{skill_name_w}}[/]"
                     f"[#555555]{tok_total:>7,} tok[/]"
                     f"{cost_part}"
-                    f"  [#444444]{m['calls']}c[/]"
+                    f"{calls_part}"
                 )
             lines.append("")
     else:
@@ -350,19 +431,23 @@ def render_cost(
             tok_total = pb["p"] + pb["c"]
             cost_part = (
                 f"  [bold #44cc88]${pb['cost']:.4f}[/]"
-                if pb["has_cost"] else ""
+                if pb["has_cost"] and show_extra else ""
+            )
+            calls_part = (
+                f"  [#777777]{pb['calls']}c[/]"
+                if show_extra else ""
             )
             short_pid = plan_id[:8]
             goal = plan_goals.get(plan_id, "")
             goal_part = (
                 f"  [#666666]{_esc(goal[:32] + ('…' if len(goal) > 32 else ''))}[/]"
-                if goal else ""
+                if goal and show_extra else ""
             )
             lines.append(
                 f"[bold #ff9944]  {short_pid:<8}[/]"
                 f"  [#aaaaaa]{tok_total:>7,} tok[/]"
                 f"{cost_part}"
-                f"  [#777777]{pb['calls']}c[/]"
+                f"{calls_part}"
                 f"{goal_part}"
             )
             steps = by_plan_step.get(plan_id, {})
@@ -371,13 +456,17 @@ def render_cost(
                 step_tok = sb["p"] + sb["c"]
                 step_cost_part = (
                     f"  [#2d7a4f]${sb['cost']:.4f}[/]"
-                    if sb["has_cost"] else ""
+                    if sb["has_cost"] and show_extra else ""
+                )
+                step_calls_part = (
+                    f"  [#444444]{sb['calls']}c[/]"
+                    if show_extra else ""
                 )
                 lines.append(
-                    f"[#555555]    {_esc(step_id):<22}[/]"
+                    f"[#555555]    {_esc(step_id):<{skill_name_w}}[/]"
                     f"[#555555]{step_tok:>7,} tok[/]"
                     f"{step_cost_part}"
-                    f"  [#444444]{sb['calls']}c[/]"
+                    f"{step_calls_part}"
                 )
             lines.append("")
         lines.append("")
@@ -393,13 +482,17 @@ def render_cost(
             tok_total = mb["p"] + mb["c"]
             cost_part = (
                 f"  [#44cc88]${mb['cost']:.4f}[/]"
-                if mb["has_cost"] else ""
+                if mb["has_cost"] and show_extra else ""
+            )
+            calls_part = (
+                f"  [#777777]{mb['calls']}c[/]"
+                if show_extra else ""
             )
             lines.append(
-                f"[#aaaaaa]  {_esc(model_name):<28}[/]"
+                f"[#aaaaaa]  {_esc(model_name):<{model_name_w}}[/]"
                 f"[#555555]{tok_total:>7,} tok[/]"
                 f"{cost_part}"
-                f"  [#777777]{mb['calls']}c[/]"
+                f"{calls_part}"
             )
     else:
         lines.append("[#555555]    (no model data yet)[/]")

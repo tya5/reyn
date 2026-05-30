@@ -71,10 +71,10 @@ class _PanelContent(Static):
 
     def render(self) -> RenderResult:
         try:
-            markup = self._panel._panel_markup()
+            width = self.content_region.width
+            markup = self._panel._panel_markup(content_width=width)
             if not isinstance(markup, str):
                 return markup
-            width = self.content_region.width
             if width <= 0:
                 return Text.from_markup(markup)
             # Truncate each line independently so long values
