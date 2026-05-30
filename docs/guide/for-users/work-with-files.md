@@ -144,6 +144,5 @@ The `filesystem` server may not be running or may be misconfigured. Check that `
 
 ## See also
 
-- [Reference: `read_local_files`](../../reference/stdlib/read_local_files.md) — skill internals, full output schema, edge cases
 - [How-to: Manage permissions](manage-permissions.md) — approve, persist, and revoke filesystem access
 - [Getting started: Chat mode](../getting-started/02-chat-mode.md) — the basics of `reyn chat`
