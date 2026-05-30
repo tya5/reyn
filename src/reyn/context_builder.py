@@ -19,6 +19,7 @@ from reyn.schemas.models import (
     Phase,
     PhaseConstraints,
 )
+from reyn.services.offload.store import offload_value
 
 ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref in ContextFrame
 MAX_INLINE_BOOST = 65_536  # characters; artifacts up to 64KB are still inlined (inline-boost range)
@@ -115,47 +116,23 @@ def _oversized_fields(result: dict) -> list[str]:
     ]
 
 
-def offload_control_ir_result(
-    result: dict,
-    result_idx: int,
-    offload_dir: Path,
-    *,
-    events: Any = None,
-    phase: str | None = None,
-) -> dict:
-    """Offload an oversized control_ir_result to a workspace scratch file.
+def _phase_preview_strategy(result: dict, ref_path: str) -> dict:
+    """Phase-axis preview strategy: type-aware per-field previews + hard-bound fallback.
 
-    If the JSON-serialised *result* exceeds MAX_CONTROL_IR_RESULT_INLINE_BYTES:
-      - Full content is written to *offload_dir*/<idx>_<uid>.json (no info loss).
-      - Each oversized field (str/list/dict) is replaced inline with a type-aware
-        preview: str→head+tail, list→first K elements + count, dict→first N pairs.
-      - A top-level ``_offload_ref`` key carries the absolute path for direct
-        file.read access.
-      - Hard-bound guarantee: if the per-field previews still exceed
-        MAX_OFFLOADED_INLINE_BYTES (e.g. many medium-sized fields), a whole-inline
-        fallback replaces the entire inline with a compact head+tail of the
-        serialised result. This guarantees the inline is bounded regardless of
-        field types, counts, or nesting depth.
-      - A ``control_ir_result_offloaded`` event is emitted for audit visibility.
+    This is the phase-specific policy for what a bounded inline looks like.
+    It is injected into the common offload infrastructure via ``offload_value``.
 
-    Small results (at or below threshold) are returned unchanged (identity).
-    No information is lost: the full content is retrievable via the ref path.
+    Logic:
+      - Small fields (≤ _FIELD_KEEP_THRESHOLD) are kept as-is.
+      - Oversized fields get type-aware previews via ``_preview_field``.
+      - A top-level ``_offload_ref`` is added.
+      - Hard-bound guarantee: if the result still exceeds MAX_OFFLOADED_INLINE_BYTES
+        (many medium-sized fields, deeply nested structures), a whole-inline fallback
+        replaces the entire inline with a compact head+tail of the serialised result.
     """
     serialized = json.dumps(result, ensure_ascii=False)
     size_chars = len(serialized)
-    if size_chars <= MAX_CONTROL_IR_RESULT_INLINE_BYTES:
-        return result
 
-    # Write full content to workspace scratch — no information loss.
-    offload_dir.mkdir(parents=True, exist_ok=True)
-    uid = uuid.uuid4().hex[:8]
-    offload_filename = f"{result_idx:04d}_{uid}.json"
-    offload_path = offload_dir / offload_filename
-    offload_path.write_text(serialized, encoding="utf-8")
-    ref_path = str(offload_path)
-
-    # Build inline preview: keep small fields as-is; replace oversized fields
-    # with type-aware previews (str→head+tail, list→first K, dict→first N pairs).
     inline: dict = {}
     large_fields = _oversized_fields(result)
     large_fields_set = set(large_fields)
@@ -183,6 +160,57 @@ def offload_control_ir_result(
                 f"({size_chars:,} chars); full content at {ref_path}"
             ),
         }
+
+    return inline
+
+
+def offload_control_ir_result(
+    result: dict,
+    result_idx: int,
+    offload_dir: Path,
+    *,
+    events: Any = None,
+    phase: str | None = None,
+) -> dict:
+    """Offload an oversized control_ir_result to a workspace scratch file.
+
+    Thin wrapper around the common offload infrastructure
+    (``services.offload.offload_value``) with the phase-axis preview strategy
+    injected. The preview strategy applies type-aware per-field previews
+    (str→head+tail, list→first K elements + count, dict→first N pairs) plus a
+    hard-bound whole-inline fallback to guarantee ≤ MAX_OFFLOADED_INLINE_BYTES.
+
+    If the JSON-serialised *result* exceeds MAX_CONTROL_IR_RESULT_INLINE_BYTES:
+      - Full content is written to *offload_dir*/<idx>_<uid>.json (no info loss).
+      - Each oversized field (str/list/dict) is replaced inline with a type-aware
+        preview; a top-level ``_offload_ref`` key carries the absolute path.
+      - ``_offload_content_hash`` is added to the inline (new: allows verified
+        read-back via ``read_offloaded``).
+      - Hard-bound guarantee: inline is always ≤ MAX_OFFLOADED_INLINE_BYTES.
+      - A ``control_ir_result_offloaded`` event is emitted for audit visibility.
+
+    Small results (at or below threshold) are returned unchanged (identity).
+    No information is lost: the full content is retrievable via the ref path.
+    """
+    serialized = json.dumps(result, ensure_ascii=False)
+    size_chars = len(serialized)
+    if size_chars <= MAX_CONTROL_IR_RESULT_INLINE_BYTES:
+        return result
+
+    offload_filename = f"{result_idx:04d}_{uuid.uuid4().hex[:8]}.json"
+    offload_result = offload_value(
+        result,
+        store_dir=offload_dir,
+        preview_strategy=_phase_preview_strategy,
+        filename=offload_filename,
+    )
+
+    # The preview dict produced by _phase_preview_strategy is our inline.
+    inline: dict = offload_result.preview
+    # Attach content_hash for verified read-back (new in Phase 1).
+    inline["_offload_content_hash"] = offload_result.content_hash
+    ref_path = offload_result.path_ref
+    large_fields = _oversized_fields(result)
 
     if events is not None:
         events.emit(
