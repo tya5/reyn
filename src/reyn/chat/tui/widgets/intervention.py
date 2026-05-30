@@ -56,6 +56,7 @@ class InterventionWidget(Widget):
         layout: horizontal;
         height: auto;
         margin-top: 0;
+        overflow-x: hidden;
     }
     InterventionWidget Button {
         /* Wave-6 IV4: tight chip sizing so all 5 buttons fit on a single
@@ -325,6 +326,15 @@ class InterventionWidget(Widget):
             )
         else:
             yield Input(placeholder="type your answer…", id="iv_input")
+            # C5: free-text-only path had no keyboard hint — unlike the chip
+            # path (which renders an iv-hint). New users couldn't tell how to
+            # submit or cancel; Ctrl+C cancellation was invisible. Reuses the
+            # existing iv-hint CSS (already styled and WCAG-compliant).
+            yield Label(
+                "Enter to submit · Ctrl+C cancels",
+                classes="iv-hint",
+                markup=False,
+            )
 
     def on_mount(self) -> None:
         """Auto-focus the first chip so chip hotkeys fire without Ctrl+O.
