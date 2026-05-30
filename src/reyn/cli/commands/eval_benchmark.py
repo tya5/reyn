@@ -12,6 +12,17 @@ reyn eval benchmark <skill_name> \\
     --concurrency <N>           # default 4
     [--limit <N>]               # subset for quick try
     [--resume]                  # continue from prior run
+
+Capability tiers (C7 — honest verification accounting)
+-------------------------------------------------------
+Tier 1 (docker):         Docker daemon reachable — official SWE-bench image eval (PR2).
+Tier 2 (linux_host):     Linux host without Docker — uv-based faithful build (PR3).
+Tier 3 (no_faithful_env): macOS/Windows or no Docker — skip verification; never emit
+                          a non-faithful PASS/FAIL.
+
+THE INVARIANT: NEVER count a verify_skipped result as pass or fail.
+pass_rate is computed over the faithful-verified subset ONLY.  When that
+subset is empty, pass_rate is null.
 """
 from __future__ import annotations
 
@@ -19,6 +30,7 @@ import argparse
 import asyncio
 import json
 import logging
+import platform
 import subprocess
 import sys
 import tempfile
@@ -26,6 +38,81 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
+
+# ── capability detection (C7 — honest-skip foundation) ───────────────────────
+
+_TIER_DOCKER = "docker"
+_TIER_LINUX_HOST = "linux_host"
+_TIER_NO_FAITHFUL_ENV = "no_faithful_env"
+
+# Human-readable skip reason injected into every Tier 3 result record.
+_NO_FAITHFUL_ENV_REASON = (
+    "no faithful verification environment (requires Docker or a Linux host); "
+    "SWE-bench specs need the official Linux build toolchain"
+)
+
+# Stub reason for Tier 1/2 — faithful eval not yet implemented (PR2/PR3).
+_TIER1_STUB_REASON = (
+    "faithful eval not yet implemented (Tier1 docker / Tier2 uv — PR2/PR3)"
+)
+
+
+def classify_verification_tier(
+    *,
+    docker_available: bool,
+    platform_system: str,
+) -> str:
+    """Pure classifier: return the verification tier string from explicit inputs.
+
+    Tier 1 (docker):         Docker daemon is reachable.
+    Tier 2 (linux_host):     Linux host, no Docker.
+    Tier 3 (no_faithful_env): macOS / Windows / any other platform without Docker.
+
+    Intentionally pure (no I/O) so it can be unit-tested without any
+    subprocess or platform probing.  The probe that gathers the real
+    inputs is ``detect_verification_tier()``.
+    """
+    if docker_available:
+        return _TIER_DOCKER
+    if platform_system == "Linux":
+        return _TIER_LINUX_HOST
+    return _TIER_NO_FAITHFUL_ENV
+
+
+def detect_verification_tier() -> str:
+    """Probe real environment and return the verification tier string.
+
+    Calls ``classify_verification_tier`` with:
+    - docker_available: True iff ``docker info`` exits 0 within 5 s.
+    - platform_system: ``platform.system()`` (= "Linux" / "Darwin" / "Windows" …).
+
+    Keep this thin — all classification logic lives in the pure classifier.
+    """
+    docker_ok = False
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=5,
+        )
+        docker_ok = result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        docker_ok = False
+
+    return classify_verification_tier(
+        docker_available=docker_ok,
+        platform_system=platform.system(),
+    )
+
+
+def _make_verify_skip_record(tier: str, reason: str) -> dict:
+    """Return the three fields added to every verify-skipped result record."""
+    return {
+        "verify_tier": tier,
+        "verify_skipped": True,
+        "verify_skip_reason": reason,
+    }
+
 
 # ── public entry points (called from eval.py) ─────────────────────────────────
 
@@ -178,6 +265,44 @@ def _load_completed_ids(run_dir: Path) -> set[str]:
 # ── summary.json helpers ──────────────────────────────────────────────────────
 
 
+def compute_faithful_accounting(results: list[dict]) -> dict:
+    """Compute faithful PASS-rate accounting from a list of result records.
+
+    THE INVARIANT: pass_rate is computed over the faithful-verified subset
+    ONLY (results where verify_skipped is not True).  A verify_skipped result
+    is NEVER counted as pass or fail.
+
+    Returns a dict with:
+      - faithful_verified_count: int — number of results where verify_skipped is falsy
+      - faithful_passed: int | None — pass count over faithful subset (None if no
+        faithful result has a tests_passed field)
+      - faithful_pass_rate: float | None — pass_rate over faithful subset (None if
+        faithful_verified_count == 0 or no tests_passed field present)
+      - skip_count: int — number of results with verify_skipped == True
+    """
+    faithful = [r for r in results if not r.get("verify_skipped")]
+    skipped = [r for r in results if r.get("verify_skipped")]
+
+    faithful_count = len(faithful)
+    skip_count = len(skipped)
+
+    # tests_passed: only computed if ANY faithful result has the field
+    has_tests_passed = any("tests_passed" in r for r in faithful)
+    if has_tests_passed and faithful_count > 0:
+        passed = sum(1 for r in faithful if r.get("tests_passed") is True)
+        pass_rate: float | None = passed / faithful_count
+    else:
+        passed = None
+        pass_rate = None
+
+    return {
+        "faithful_verified_count": faithful_count,
+        "faithful_passed": passed,
+        "faithful_pass_rate": pass_rate,
+        "skip_count": skip_count,
+    }
+
+
 def _write_summary(
     run_dir: Path,
     run_id: str,
@@ -185,16 +310,24 @@ def _write_summary(
     results: list[dict],
     total_tasks: int,
 ) -> None:
-    """Write (or overwrite) summary.json from current results list."""
+    """Write (or overwrite) summary.json from current results list.
+
+    The ``pass_rate`` field is the FAITHFUL pass_rate — computed over
+    verify-skipped=false results only.  When the faithful subset is empty,
+    pass_rate is null.  The ``passed`` field likewise counts only faithful
+    results.  verify-skipped counts are shown prominently under
+    ``verify_accounting``.
+    """
     completed = len(results)
     total_cost = sum(r.get("cost_usd") or 0.0 for r in results)
     avg_cost = total_cost / completed if completed else 0.0
 
-    # tests_passed: only computed if ANY result has the field
-    has_tests_passed = any("tests_passed" in r for r in results)
-    passed = sum(1 for r in results if r.get("tests_passed") is True) if has_tests_passed else None
-    pass_rate = (passed / completed) if (has_tests_passed and completed) else None
+    # Faithful PASS-rate accounting (C7 invariant)
+    acct = compute_faithful_accounting(results)
+    passed = acct["faithful_passed"]
+    pass_rate = acct["faithful_pass_rate"]
 
+    # Backward compat: also keep the old has_tests_passed path for completed_ids
     # attempts: only if field present
     has_attempts = any("attempts" in r for r in results)
     if has_attempts:
@@ -213,6 +346,15 @@ def _write_summary(
         "completed": completed,
         "passed": passed,
         "pass_rate": pass_rate,
+        # Prominent faithful-verification accounting block (C7 invariant).
+        # Never bury the skip count — it must be visible at a glance.
+        "verify_accounting": {
+            "faithful_verified": acct["faithful_verified_count"],
+            "faithful_passed": acct["faithful_passed"],
+            "faithful_pass_rate": acct["faithful_pass_rate"],
+            "verify_skipped": acct["skip_count"],
+            "total": completed,
+        },
         "total_cost_usd": total_cost,
         "avg_cost_per_instance": avg_cost,
         "avg_attempts": avg_attempts,
@@ -308,6 +450,7 @@ async def _run_single_task(
     permission_resolver=None,
     python_allowed_modules: list[str] | None = None,
     clone_task_repo: bool = False,
+    verify_tier: str = _TIER_NO_FAITHFUL_ENV,
 ) -> dict:
     """Run a single task under the semaphore; return a result record.
 
@@ -320,6 +463,12 @@ async def _run_single_task(
     ``{kind: "shell", cmd: ...}``), every retry hits the validator, the
     batch reports $0.00 cost + 100% error rate. See PR-D follow-up to PR-B
     (= FP-0008 sandbox_2 calibration block 2026-05-28).
+
+    ``verify_tier`` is detected ONCE at batch start via
+    ``detect_verification_tier()`` and passed through to every task.  It
+    drives the honest-skip decision (C7 invariant): when there is no
+    faithful verification environment, the result is marked verify_skipped
+    instead of emitting a non-faithful PASS/FAIL.
     """
     from reyn.agent import Agent
     from reyn.config import _find_project_root, load_project_context
@@ -385,7 +534,38 @@ async def _run_single_task(
             "error": error_msg,
         }
 
-        # Lift well-known optional fields from result_data generically
+        # ── C7: Verification tier dispatch ────────────────────────────────────
+        # Dispatch on verify_tier to determine whether this result is
+        # faithfully verified or should be marked as skipped.
+        #
+        # Tier 1 (docker): PR2 will implement Docker-based official-image eval.
+        #   Until then, stub — mark skipped with PR2/PR3 pending reason.
+        # Tier 2 (linux_host): PR3 will implement uv-based build eval.
+        #   Until then, stub — mark skipped with PR2/PR3 pending reason.
+        # Tier 3 (no_faithful_env): ALWAYS skip — no faithful env available.
+        #   On macOS/Windows, the AI's self-check (tests_passed from the skill)
+        #   MUST NOT be promoted to an authoritative pass/fail.
+        #
+        # The structure here is the dispatch skeleton that PR2/PR3 will fill in.
+        # When a tier is fully implemented, replace the stub block with real eval.
+        if verify_tier == _TIER_DOCKER:
+            # PR2: implement Docker-based official-image eval here.
+            # For now: stub — skip with pending reason.
+            record.update(_make_verify_skip_record(_TIER_DOCKER, _TIER1_STUB_REASON))
+        elif verify_tier == _TIER_LINUX_HOST:
+            # PR3: implement uv-based Linux build eval here.
+            # For now: stub — skip with pending reason.
+            record.update(_make_verify_skip_record(_TIER_LINUX_HOST, _TIER1_STUB_REASON))
+        else:
+            # Tier 3 (no_faithful_env) — always skip.
+            # The AI's self-check result (tests_passed from skill output) is
+            # NOT promoted to an authoritative pass/fail when verify_skipped.
+            record.update(_make_verify_skip_record(_TIER_NO_FAITHFUL_ENV, _NO_FAITHFUL_ENV_REASON))
+
+        # Lift well-known optional fields from result_data generically.
+        # tests_passed is still recorded for debugging/analysis, but it is
+        # excluded from pass_rate computation when verify_skipped is True
+        # (enforced in compute_faithful_accounting via the faithful subset filter).
         if "tests_passed" in result_data:
             record["tests_passed"] = result_data["tests_passed"]
         if "attempts" in result_data:
@@ -436,6 +616,11 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
     perm_resolver = _build_permission_resolver(
         session.config, shell_allowed, unsafe_python=unsafe_python,
     )
+
+    # C7: Detect verification tier ONCE at batch start.
+    # All tasks in this run share the same host environment, so detecting
+    # once and threading through is correct and efficient.
+    verify_tier = detect_verification_tier()
 
     # Load tasks
     tasks_path = Path(args.tasks)
@@ -492,6 +677,10 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
     print(f"  tasks:       {tasks_path}  ({total_tasks} total, {len(pending)} to run)")
     print(f"  concurrency: {args.concurrency}")
     print(f"  output:      {run_dir}")
+    print(f"  verify_tier: {verify_tier}")
+    if verify_tier == _TIER_NO_FAITHFUL_ENV:
+        print("  NOTE: no faithful verification env — all results will be verify_skipped=true")
+        print("        pass_rate will be null (0 faithful-verified tasks)")
     print()
 
     results: list[dict] = []
@@ -513,6 +702,7 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
                 shell_allowed=shell_allowed,
                 permission_resolver=perm_resolver,
                 clone_task_repo=clone_task_repo,
+                verify_tier=verify_tier,
             )
         except Exception as exc:
             # A task failure never aborts the batch — log and record the error.
@@ -527,17 +717,34 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
 
     await asyncio.gather(*(_task_with_progress(i, t) for i, t in pending))
 
-    # Final summary
+    # Final summary — C7 invariant: always show the prominent accounting line.
     print()
     completed = len(results)
     errors = sum(1 for r in results if r.get("error"))
+    acct = compute_faithful_accounting(results)
+    faithful_n = acct["faithful_verified_count"]
+    skip_k = acct["skip_count"]
+    faithful_passed = acct["faithful_passed"]
+    faithful_rate = acct["faithful_pass_rate"]
+
     print(f"benchmark complete: {args.skill_name}")
     print(f"  completed: {completed}/{len(pending)}")
     if errors:
         print(f"  errors:    {errors}")
-    has_tests_passed = any("tests_passed" in r for r in results)
-    if has_tests_passed:
-        passed = sum(1 for r in results if r.get("tests_passed") is True)
-        rate = passed / completed if completed else 0.0
-        print(f"  passed:    {passed}/{completed} ({rate:.1%})")
+    # Prominent accounting line — required by C7 invariant.  Never bury the
+    # skip count.  This line appears in stdout AND summary.json.
+    if faithful_passed is not None:
+        rate_str = f"  ({faithful_rate:.1%})" if faithful_rate is not None else ""
+        print(
+            f"  faithful verified: {faithful_n}/{completed}"
+            f"  |  passed: {faithful_passed}/{faithful_n}{rate_str}"
+            f"  |  skipped (no faithful env): {skip_k}"
+        )
+    else:
+        print(
+            f"  faithful verified: {faithful_n}/{completed}"
+            f"  |  skipped (no faithful env): {skip_k}"
+        )
+    if faithful_n == 0:
+        print("  pass_rate: n/a (0 faithful verified)")
     print(f"  summary → {run_dir / 'summary.json'}")

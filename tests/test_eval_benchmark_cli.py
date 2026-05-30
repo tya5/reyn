@@ -429,7 +429,8 @@ def test_single_task_failure_no_abort(
 
     async def _stub_run_single_task(
         task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
-        shell_allowed=False, permission_resolver=None, python_allowed_modules=None, clone_task_repo=False,
+        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
+        clone_task_repo=False, verify_tier="no_faithful_env",
     ):
         nonlocal call_count
         async with semaphore:
@@ -529,7 +530,8 @@ def test_allow_shell_propagates_to_single_task(
 
     async def _capture_shell_allowed(
         task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
-        shell_allowed=False, permission_resolver=None, python_allowed_modules=None, clone_task_repo=False,
+        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
+        clone_task_repo=False, verify_tier="no_faithful_env",
     ):
         async with semaphore:
             captured["shell_allowed"] = shell_allowed
@@ -619,7 +621,7 @@ def test_clone_task_repo_propagates_to_single_task(
     async def _capture_clone_flag(
         task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
         shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
-        clone_task_repo=False,
+        clone_task_repo=False, verify_tier="no_faithful_env",
     ):
         async with semaphore:
             captured["clone_task_repo"] = clone_task_repo
