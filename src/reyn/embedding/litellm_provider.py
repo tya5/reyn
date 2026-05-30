@@ -20,8 +20,6 @@ import logging
 import os
 from typing import Any
 
-import litellm
-
 from reyn.embedding.provider import EmbedBatchResult
 
 logger = logging.getLogger(__name__)
@@ -296,6 +294,7 @@ class LiteLLMEmbeddingProvider:
                 wait = self._retry_backoff ** attempt
                 await asyncio.sleep(wait)
             try:
+                import litellm
                 response = await litellm.aembedding(
                     model=effective_model,
                     input=batch,

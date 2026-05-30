@@ -18,8 +18,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import litellm
-
 if TYPE_CHECKING:
     from reyn.events.events import EventLog
 
@@ -68,6 +66,7 @@ def get_max_input_tokens(
         Positive integer token count. Always > 0.
     """
     try:
+        import litellm
         info = litellm.get_model_info(model)
         max_input = info.get("max_input_tokens")
         if max_input and int(max_input) > 0:

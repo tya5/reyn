@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Coroutine, TypeVar, Union
 
 import httpx
-import litellm
 
 logger = logging.getLogger(__name__)
 from reyn.llm.json_parse import loads_lenient
@@ -417,17 +416,30 @@ class LLMToolCallResult:
 
 # Retryable: infrastructure / transient errors where the same call may succeed.
 # Non-retryable: semantic / auth / quota errors (4xx) where retry won't help.
-_RETRYABLE_LITELLM_EXCEPTIONS = (
-    litellm.exceptions.Timeout,           # request timed out
-    litellm.exceptions.APIConnectionError, # network-level connection failure
-    litellm.exceptions.ServiceUnavailableError,  # 503
-    litellm.exceptions.BadGatewayError,    # 502
-    litellm.exceptions.InternalServerError, # 500
-)
+# Resolved lazily so importing this module does not trigger `import litellm`.
+_RETRYABLE_LITELLM_EXCEPTIONS: tuple | None = None
 
 _LLM_RETRY_MAX_ATTEMPTS: int = 3   # total attempts = 1 initial + 2 retries
 _LLM_RETRY_BASE_S: float = 2.0     # first backoff: 2s → 4s → 8s (capped at 16s)
 _LLM_RETRY_MAX_BACKOFF_S: float = 16.0
+
+
+def _get_retryable_litellm_exceptions() -> tuple:
+    """Return the tuple of retryable litellm exceptions, loading litellm lazily.
+
+    Cached in _RETRYABLE_LITELLM_EXCEPTIONS after first call.
+    """
+    global _RETRYABLE_LITELLM_EXCEPTIONS
+    if _RETRYABLE_LITELLM_EXCEPTIONS is None:
+        import litellm
+        _RETRYABLE_LITELLM_EXCEPTIONS = (
+            litellm.exceptions.Timeout,           # request timed out
+            litellm.exceptions.APIConnectionError, # network-level connection failure
+            litellm.exceptions.ServiceUnavailableError,  # 503
+            litellm.exceptions.BadGatewayError,    # 502
+            litellm.exceptions.InternalServerError, # 500
+        )
+    return _RETRYABLE_LITELLM_EXCEPTIONS
 
 
 def _is_retryable_exc(exc: BaseException) -> bool:
@@ -437,7 +449,7 @@ def _is_retryable_exc(exc: BaseException) -> bool:
     Also catches httpx transport-level errors that LiteLLM may not wrap when
     the request fails before reaching the provider's HTTP response logic.
     """
-    if isinstance(exc, _RETRYABLE_LITELLM_EXCEPTIONS):
+    if isinstance(exc, _get_retryable_litellm_exceptions()):
         return True
     if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout)):
         return True
@@ -834,6 +846,7 @@ async def call_llm(
             })
 
         async def _do_call() -> object:
+            import litellm
             try:
                 return await litellm.acompletion(
                     model=effective_model,
@@ -1056,9 +1069,11 @@ async def call_llm_tools(
         },
     })
 
-    response = await _llm_call_with_retry(
-        lambda: litellm.acompletion(**call_kwargs), effective_model, event_log
-    )
+    async def _tools_call() -> object:
+        import litellm
+        return await litellm.acompletion(**call_kwargs)
+
+    response = await _llm_call_with_retry(_tools_call, effective_model, event_log)
 
     msg = response.choices[0].message
     usage = _extract_usage(response) or TokenUsage()

@@ -53,8 +53,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-import litellm
-
 from reyn.llm.json_parse import loads_lenient
 
 if TYPE_CHECKING:
@@ -101,6 +99,7 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
     if cache_key in _token_cache:
         return _token_cache[cache_key]
     try:
+        import litellm
         m = model or "gpt-3.5-turbo"
         count = litellm.token_counter(model=m, text=text or "")
         if count and count > 0:
@@ -763,6 +762,7 @@ class CompactionEngine:
             if len(parts) == 2:
                 effective_model = parts[1]
 
+        import litellm
         response = await litellm.acompletion(
             model=effective_model,
             messages=messages,
@@ -1136,6 +1136,7 @@ async def compact_step_results(
             if len(parts) == 2:
                 effective_model = parts[1]
 
+        import litellm
         response = await litellm.acompletion(
             model=effective_model,
             messages=[
@@ -1310,6 +1311,7 @@ async def compact_control_ir_results(
             if len(parts) == 2:
                 effective_model = parts[1]
 
+        import litellm
         response = await litellm.acompletion(
             model=effective_model,
             messages=[

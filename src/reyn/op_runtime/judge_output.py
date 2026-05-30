@@ -18,8 +18,6 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-import litellm
-
 from reyn.schemas.models import JudgeOutputIROp
 
 from . import register
@@ -136,6 +134,7 @@ async def handle(
         resolved_model.split("/", 1)[1] if extra and "/" in resolved_model else resolved_model
     )
 
+    import litellm
     try:
         response = await litellm.acompletion(
             model=effective_model,
