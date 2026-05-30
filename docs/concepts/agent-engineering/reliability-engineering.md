@@ -81,6 +81,6 @@ A few reliability primitives are intentionally simple today and on the roadmap t
 - [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md)
 - [Reference: common-flags](../../reference/cli/common-flags.md) — `--max-phase-visits`, `--phase-budget`, `--llm-timeout`, `--llm-max-retries`
 - [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `limits` block
-- [How-to: debug with events](../../guide/for-skill-authors/debug-with-events.md)
+- [How-to: debug with events](../../guide/for-skill-authors/operations/debug-with-events.md)
 - [evaluation-and-observability.md](evaluation-and-observability.md) — measuring failure rates
 - [tool-contract-design.md](tool-contract-design.md) — what gets validated

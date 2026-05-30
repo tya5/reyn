@@ -83,7 +83,7 @@ reyn events .reyn/events/<run_id>.jsonl --filter validation_error
 2. モデルが返したものについて、一致する `llm_called` イベントを確認します。
 3. `validation_error` が見つかった場合、モデルの出力が次のターゲットのスキーマに合いませんでした。通常は Phase の指示の問題です。
 
-[debug-with-events](../for-skill-authors/debug-with-events.md) ハウツーでこのフローを詳しく説明します。
+[debug-with-events](../for-skill-authors/operations/debug-with-events.md) ハウツーでこのフローを詳しく説明します。
 
 ## 学んだこと
 
@@ -94,5 +94,5 @@ reyn events .reyn/events/<run_id>.jsonl --filter validation_error
 ## 次へ
 
 - [チュートリアル 05 — eval を書く](05-writing-an-eval.md)
-- [ハウツー: events によるデバッグ](../for-skill-authors/debug-with-events.md)
+- [ハウツー: events によるデバッグ](../for-skill-authors/operations/debug-with-events.md)
 - [リファレンス: run](../../reference/cli/run.md)

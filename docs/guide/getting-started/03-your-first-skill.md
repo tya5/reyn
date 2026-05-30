@@ -80,5 +80,5 @@ It reads your skill, plans changes, and proposes diffs. You approve before any f
 
 - [Tutorial 04 — Running a skill](04-running-a-skill.md) — input formats, common flags, reading the event log.
 - [Tutorial 05 — Writing an eval](05-writing-an-eval.md) — pin behaviour with a rubric.
-- [How-to: Write your first custom skill](../for-skill-authors/write-your-first-custom-skill.md) — build the same shape by hand, knowing what each file does.
+- [How-to: Write your first custom skill](../for-skill-authors/foundation/write-your-first-custom-skill.md) — build the same shape by hand, knowing what each file does.
 - [Reference: skill.md frontmatter](../../reference/dsl/skill-md.md)

@@ -7,7 +7,7 @@ audience: [human, agent]
 # Skill design patterns — three shapes most skills take
 
 After you've built your first skill (see
-[Write your first custom skill](../guide/for-skill-authors/write-your-first-custom-skill.md)),
+[Write your first custom skill](../guide/for-skill-authors/foundation/write-your-first-custom-skill.md)),
 the next question is: when I design my second one, what shape should it take?
 Most Reyn skills fall into one of three patterns. Pick by what the skill needs
 to do, not by complexity for its own sake.
@@ -122,7 +122,7 @@ prepare --> execute --(run_skill)--> [sub-skill runs] --> execute --> aggregate 
 ```
 
 Sub-skills can also be declared as graph nodes using the `@sub_skill` prefix.
-See [Compose skills with run_skill](../guide/for-skill-authors/compose-skills-with-run-skill.md)
+See [Compose skills with run_skill](../guide/for-skill-authors/composition/compose-skills-with-run-skill.md)
 for both flavors.
 
 **When to use:** the work has a self-contained sub-task that is already a
@@ -142,7 +142,7 @@ existing artifact schema before the parent proceeds.
 - Preprocessor `run_skill` — a phase can also call a sub-skill deterministically
   before the LLM, in the preprocessor block. This is the form used by
   `recall_memory` in the chat router (see
-  [Compose skills with run_skill](../guide/for-skill-authors/compose-skills-with-run-skill.md)).
+  [Compose skills with run_skill](../guide/for-skill-authors/composition/compose-skills-with-run-skill.md)).
 
 **Trade-off:** composition keeps each skill's graph simple and promotes reuse
 of well-tested sub-skills. The cost is a runtime dependency: if the sub-skill
@@ -195,9 +195,9 @@ the skill is doing too much.
 - [architecture.md](architecture.md) — overall component layering.
 - [multi-agent.md](multi-agent.md) — Layers 3 and 4, orthogonal to these
   three patterns.
-- [Write your first custom skill](../guide/for-skill-authors/write-your-first-custom-skill.md)
+- [Write your first custom skill](../guide/for-skill-authors/foundation/write-your-first-custom-skill.md)
   — apply these patterns in practice.
-- [Compose skills with run_skill](../guide/for-skill-authors/compose-skills-with-run-skill.md)
+- [Compose skills with run_skill](../guide/for-skill-authors/composition/compose-skills-with-run-skill.md)
   — Pattern 3 in detail.
 - [reference/dsl/graph.md](../reference/dsl/graph.md) — graph syntax and cycle
   semantics.

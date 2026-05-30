@@ -367,4 +367,4 @@ Claude Code の `mcp.json` への組み込み（stdio transport）：
 - [Reference: `reyn secret`](secret.md) — ユニバーサルシークレット管理
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `mcp.servers:` スキーマと `permissions.mcp_install:`
 - [Reference: 共通フラグ](common-flags.md) — CLI コマンド共通フラグ
-- [How-to: MCP サーバーを使う](../../guide/for-skill-authors/use-an-mcp-server.md)
+- [How-to: MCP サーバーを使う](../../guide/for-skill-authors/operations/use-an-mcp-server.md)

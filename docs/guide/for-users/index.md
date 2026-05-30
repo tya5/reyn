@@ -46,7 +46,7 @@ No configuration required for any of these. Reyn has the skills for them out of 
 ### Files and tools
 
 - **[Work with local files](work-with-files.md)** — reference files and directories in your requests.
-- **[Use an MCP server](../for-skill-authors/use-an-mcp-server.md)** — add GitHub, Slack, a database, or any MCP-compatible tool.
+- **[Use an MCP server](../for-skill-authors/operations/use-an-mcp-server.md)** — add GitHub, Slack, a database, or any MCP-compatible tool.
 
 ### Control and safety
 
