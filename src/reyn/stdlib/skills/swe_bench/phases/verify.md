@@ -41,6 +41,52 @@ preprocessor:
     into: data.test_patch
     output_schema:
       type: string
+  #
+  # FP-0008 C6 Step 3: capture the repo working directory.
+  # Shell ops run with cwd=workspace.base_dir (FP-0008 PR-I), so `pwd`
+  # resolves to the actual SWE-bench repo checkout path — not the
+  # process-level CWD (which may differ in concurrent benchmark runs).
+  # The result is stored at data._repo_dir for the revert step below.
+  # on_error: empty — in unit tests or contexts where shell is unavailable,
+  # the next step gracefully no-ops (no repo_dir → nothing reverted).
+  - type: run_op
+    op:
+      kind: shell
+      cmd: pwd
+      timeout: 5
+    into: data._repo_dir
+    on_error: empty
+  #
+  # FP-0008 C6 Step 4: deterministic revert of test_patch-target files.
+  # Parses `+++ b/<path>` headers from the sanitized data.test_patch and
+  # runs `git checkout HEAD -- <path>` for each target, using the repo_dir
+  # captured in Step 3. This ensures the working tree at test_patch-target
+  # paths matches HEAD before the LLM issues `git apply`, so the apply
+  # never fails with "does not match index" due to apply-phase edits.
+  #
+  # The apply phase may have edited test files (no structural prohibition).
+  # When a test_patch target was already modified by the apply LLM,
+  # `git apply test_patch` fails with "patch failed: does not match index"
+  # → verify transitions back to apply → retry loop → loop_limit_exceeded.
+  # This step breaks the loop by reverting any such contamination.
+  #
+  # Returns {"reverted": [...], "errors": [...]} — informational only.
+  # on_error: empty — absent repo_dir or empty test_patch → no-op (safe).
+  - type: python
+    module: ./revert_test_targets.py
+    function: revert_test_targets
+    mode: safe
+    into: data._revert_result
+    output_schema:
+      type: object
+      properties:
+        reverted:
+          type: array
+          items: {type: string}
+        errors:
+          type: array
+          items: {type: object}
+      required: [reverted, errors]
 ---
 
 Run the SWE-bench test patch against the current codebase to determine whether
