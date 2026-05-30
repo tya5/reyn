@@ -58,13 +58,16 @@ jobs:
   audit:
     name: test-tier audit
     runs-on: ubuntu-latest
-    # Matches the `test` job ceiling — local runs at ~1 min but GitHub
-    # ubuntu-latest runners (2 vCPU, slow disk I/O) take ~5 min for
-    # the AST parse over 5663 tests. 15 min gives healthy margin.
+    # PR events: audit only changed test files — 0.194s/file vs 5-9min
+    # for the full 652-file corpus.  main push: full run is preserved
+    # as the invariant safety net.
     timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # git diff needs full history to resolve the base SHA on PRs.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -76,4 +79,26 @@ jobs:
       # / json / pathlib). No pip install needed — keeps the job fast
       # and decoupled from src/ install state.
       - name: Run test-tier audit
-        run: python scripts/test_tier_audit.py --strict tests/
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR event: audit only test files changed in this PR.
+            # Tier audit is per-file self-contained (Tier declaration /
+            # Tier-4 / mock detection are all in-file), so changed-files
+            # scope is sufficient.  Full invariant net is preserved on
+            # main push below.
+            CHANGED=$(git diff --name-only \
+              "${{ github.event.pull_request.base.sha }}"...HEAD \
+              -- 'tests/**.py')
+            if [ -z "$CHANGED" ]; then
+              echo "No test files changed — audit skipped."
+              exit 0
+            fi
+            echo "Auditing changed test files:"
+            echo "$CHANGED"
+            # shellcheck disable=SC2086
+            python scripts/test_tier_audit.py --strict $CHANGED
+          else
+            # push to main (or any non-PR trigger): full audit over the
+            # entire test suite — invariant safety net, unchanged.
+            python scripts/test_tier_audit.py --strict tests/
+          fi
