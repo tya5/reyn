@@ -35,7 +35,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _CORAL, _TEXT_NEUTRAL, _TEXT_MUTED, _TEXT_BODY, _STATUS_ERROR
+from reyn.chat.tui._palette import _CORAL, _STATUS_ERROR, _TEXT_BODY, _TEXT_MUTED, _TEXT_NEUTRAL
 
 from ._renderable_cache import RenderableCacheMixin
 

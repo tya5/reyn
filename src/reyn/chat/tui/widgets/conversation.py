@@ -57,10 +57,10 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.chat.tui._palette import (
     _AMBER,
     _CORAL,
-    _TEXT_NEUTRAL,
+    _EVENT_INTERVENTION,
     _TEXT_DIM,
     _TEXT_MUTED,
-    _EVENT_INTERVENTION,
+    _TEXT_NEUTRAL,
 )
 
 from .async_stack_panel import AsyncStackPanel

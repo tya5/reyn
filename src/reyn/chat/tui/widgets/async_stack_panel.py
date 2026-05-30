@@ -80,7 +80,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _AMBER, _CORAL, _TEXT_MUTED, _STATUS_ERROR, _BG_HEADER
+from reyn.chat.tui._palette import _AMBER, _BG_HEADER, _CORAL, _STATUS_ERROR, _TEXT_MUTED
 
 from ._renderable_cache import RenderableCacheMixin
 

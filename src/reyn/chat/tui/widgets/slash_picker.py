@@ -21,12 +21,12 @@ from textual.widgets import Static
 
 from reyn.chat.slash import SlashCommand
 from reyn.chat.tui._palette import (
-    _CORAL,
     _BG_HEADER,
-    _TEXT_BRIGHT,
-    _TEXT_MUTED,
+    _CORAL,
     _TEXT_BODY,
+    _TEXT_BRIGHT,
     _TEXT_DIM,
+    _TEXT_MUTED,
     _TEXT_NEUTRAL,
 )
 

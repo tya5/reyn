@@ -23,11 +23,11 @@ from textual.widgets import Label
 
 from reyn.chat.tui._palette import (
     _BG_HEADER,
-    _TEXT_BODY,
-    _TEXT_MUTED,
-    _TEXT_DIM,
     _STATUS_CRITICAL,
     _STATUS_ERROR,
+    _TEXT_BODY,
+    _TEXT_DIM,
+    _TEXT_MUTED,
 )
 
 from ._renderable_cache import RenderableCacheMixin
