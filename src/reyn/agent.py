@@ -11,6 +11,8 @@ from reyn.config import OnLimitConfig, SafetyConfig
 
 if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig
+    from reyn.environment.backend import EnvironmentBackend
+    from reyn.sandbox.backend import SandboxBackend
     from reyn.secrets.store import ScopedSecretStore
     from reyn.workspace.media_store import MediaStore
 from reyn.events.event_store import EventStore
@@ -61,6 +63,8 @@ class Agent:
         secret_store: "ScopedSecretStore | None" = None,
         workspace_base_dir: "Path | None" = None,
         run_id: str | None = None,
+        environment_backend: "EnvironmentBackend | None" = None,
+        sandbox_backend: "SandboxBackend | None" = None,
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -88,6 +92,12 @@ class Agent:
         self._media_store = media_store
         self._secret_store = secret_store
         self._workspace_base_dir = workspace_base_dir
+        # FP-0008 #1115 Stage 2: per-run backend injection. The SAME instance
+        # (a dual-Protocol DockerEnvironmentBackend) is passed as BOTH so repo
+        # FS + exec hit one container target; defaults None → host (HostBackend
+        # for FS, get_default_backend for exec) = behavior-preserving.
+        self._environment_backend = environment_backend
+        self._sandbox_backend = sandbox_backend
         self._runtime: OSRuntime | None = None
         # FP-0008 PR-R (= tui-coder finding #1 propagation): run_id from
         # construction site preserves the canonical run_id set by the
@@ -182,6 +192,8 @@ class Agent:
             resume_plan=resume_plan,
             parent_run_id=parent_run_id,
             sandbox_config=self._sandbox_config,
+            environment_backend=self._environment_backend,
+            sandbox_backend=self._sandbox_backend,
             multimodal_config=self._multimodal_config,
             media_store=self._media_store,
             secret_store=self._secret_store,
