@@ -20,11 +20,20 @@
         <ul class="reyn-sidebar-list">
           {% for child in item.children %}
             {% if child.children %}
+              {% set first = child.children[0] %}
+              {% set has_index = not first.children %}
               <li class="reyn-sidebar-group">
-                <span class="reyn-sidebar-group-label">{{ child.title }}</span>
+                {% if has_index %}
+                  <a class="reyn-sidebar-group-label{% if first.active %} active{% endif %}"
+                     href="{{ first.url | url }}">{{ child.title }}</a>
+                {% else %}
+                  <span class="reyn-sidebar-group-label">{{ child.title }}</span>
+                {% endif %}
                 <ul class="reyn-sidebar-list reyn-sidebar-list--nested">
                   {% for grandchild in child.children %}
-                    {% if grandchild.children %}
+                    {% if loop.first and has_index %}
+                      {# index page used as label link above — skip #}
+                    {% elif grandchild.children %}
                       <li class="reyn-sidebar-subgroup-item">
                         <details class="reyn-sidebar-subgroup"{% if grandchild.active %} open{% endif %}>
                           <summary>{{ grandchild.title }}</summary>

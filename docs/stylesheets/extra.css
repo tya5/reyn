@@ -416,6 +416,13 @@ kbd {
   font-size: 12px;
   font-weight: 500;
   color: #807B74;
+  text-decoration: none;
+}
+a.reyn-sidebar-group-label:hover {
+  color: #131211;
+}
+a.reyn-sidebar-group-label.active {
+  color: #C8553D;
 }
 .reyn-sidebar-list--nested {
   margin-left: 8px;
