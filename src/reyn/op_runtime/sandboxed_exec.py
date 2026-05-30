@@ -23,7 +23,11 @@ async def handle(
     ctx: OpContext,
     caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
-    backend = get_default_backend(ctx.sandbox_config)
+    # A runtime backend instance injected on the OpContext takes precedence over
+    # name-based platform auto-selection (FP-0008 C7 #2). This lets a caller
+    # route exec into a stateful backend (e.g. a Docker container) that the
+    # name-based factory cannot build, without the handler knowing the caller.
+    backend = ctx.sandbox_backend or get_default_backend(ctx.sandbox_config)
     policy = SandboxPolicy(
         network=op.network,
         read_paths=list(op.read_paths),

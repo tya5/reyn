@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+    from reyn.sandbox import SandboxBackend
     from reyn.schemas.models import Skill
     from reyn.secrets.store import ScopedSecretStore
     from reyn.user_intervention import RequestBus
@@ -99,6 +100,15 @@ class OpContext:
     # When None, sandboxed_exec falls back to platform auto-detection
     # (= same as no-config-loaded behavior).
     sandbox_config: "SandboxConfig | None" = None
+
+    # FP-0008 C7 #2: runtime backend-instance override for sandboxed_exec.
+    # When set, the sandboxed_exec handler uses this backend INSTANCE verbatim
+    # instead of resolving one by name from sandbox_config. This is the seam for
+    # *stateful* backends bound to a runtime resource (e.g. DockerSandboxBackend
+    # bound to a specific container + host workspace) that a name-based factory
+    # cannot construct. Generic: any caller owning such a resource may inject
+    # one; None preserves the default name-based platform auto-selection.
+    sandbox_backend: "SandboxBackend | None" = None
 
     # Issue #364: declarative cap on binary media size (= images from
     # web__fetch / file__read / MCP / user input). When None, the gate
