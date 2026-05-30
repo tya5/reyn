@@ -19,7 +19,7 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _CORAL
+from reyn.chat.tui._palette import _CORAL, _RED_MUTED
 
 _TICK_INTERVAL_S = 0.1  # elapsed timer refresh rate
 
@@ -223,11 +223,11 @@ class StickyStatus(Static):
     def _repaint(self) -> None:
         # On 8-color terminals, hex _CORAL (#C8553D) degrades to ANSI bright
         # red — confusable with error indicators. The error kind WANTS to
-        # read as alert, so bold red (#aa6666). General keeps _CORAL since
-        # it's a transient flash. (The ``"thinking"`` kind is no longer
+        # read as alert, so bold muted red (_RED_MUTED). General keeps _CORAL
+        # since it's a transient flash. (The ``"thinking"`` kind is no longer
         # handled here — the inline Braille spinner replaced it.)
         if self._kind == "error":
-            glyph_color = "bold #aa6666"
+            glyph_color = f"bold {_RED_MUTED}"
         else:
             glyph_color = _CORAL
         # Chrome budget: glyph + 1 space + padding 0 1 (= 2 cells) + 1 margin.

@@ -25,6 +25,7 @@ from .base import (
     _CORAL,
     _EVENT_PLAN,
     _STATUS_ERROR,
+    _STATUS_READY,
     _STATUS_SUCCESS,
     _TEXT_BODY,
     _TEXT_BRIGHT,
@@ -1508,7 +1509,7 @@ class RightPanel(Widget):
             )
         elif is_loaded:
             status_glyph, status_text, status_style = (
-                "◐ ", "ready", "#aaaa55",  # palette-candidate: status_ready
+                "◐ ", "ready", _STATUS_READY,
             )
         else:
             status_glyph, status_text, status_style = (
@@ -1585,7 +1586,7 @@ class RightPanel(Widget):
         head.append(item.get("plan_id", "?"), style="bold " + _EVENT_PLAN)
         head.append("  ")
         head.append(item.get("status", "?"),
-                    style=_STATUS_SUCCESS if item.get("status") == "running" else "#aaaa55")  # palette-candidate: status_ready
+                    style=_STATUS_SUCCESS if item.get("status") == "running" else _STATUS_READY)
         head.append("\n")
         head.append("agent: ", style="dim")
         head.append(item.get("agent", "?"), style=_TEXT_BRIGHT)

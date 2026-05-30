@@ -58,6 +58,7 @@ from reyn.chat.tui._palette import (
     _AMBER,
     _CORAL,
     _EVENT_INTERVENTION,
+    _RED_MUTED,
     _TEXT_DIM,
     _TEXT_MUTED,
     _TEXT_NEUTRAL,
@@ -1524,7 +1525,7 @@ class ConversationView(Widget):
                 self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
             try:
                 self._log().write(
-                    Text("✗ cancelled (partial reply):", style="bold #aa6666"),
+                    Text("✗ cancelled (partial reply):", style=f"bold {_RED_MUTED}"),
                 )
                 self._write_body(Text(full, style="dim italic " + _TEXT_MUTED))
             except Exception:

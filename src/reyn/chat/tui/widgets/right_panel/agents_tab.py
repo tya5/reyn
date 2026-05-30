@@ -17,6 +17,7 @@ from .base import (
     _CORAL,
     _EVENT_PLAN,
     _STATUS_ERROR,
+    _STATUS_READY,
     _STATUS_SUCCESS,
     _TEXT_BRIGHT,
     _TEXT_DIM,
@@ -523,7 +524,7 @@ def render_agents(
             )
         elif in_loaded:
             status_glyph, status_text, status_style = (
-                "◐ ", "ready", "#aaaa55",  # palette-candidate: agent ready (olive) — no foundation token yet
+                "◐ ", "ready", _STATUS_READY,
             )
         else:
             status_glyph, status_text, status_style = (
@@ -708,7 +709,7 @@ def render_agents(
                     )
                 plan_label.append(
                     f"  {p['status']}",
-                    style=_STATUS_SUCCESS if p["status"] == "running" else "#aaaa55",  # palette-candidate: agent ready (olive) — no foundation token yet
+                    style=_STATUS_SUCCESS if p["status"] == "running" else _STATUS_READY,
                 )
                 plan_node = tree.add(plan_label)
                 item_ys.append(y_counter)

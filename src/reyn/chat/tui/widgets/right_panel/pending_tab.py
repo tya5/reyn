@@ -22,6 +22,7 @@ from rich.text import Text as RichText
 from .base import (
     _CORAL,
     _EVENT_SKILL,
+    _RED_MUTED,
     _TEXT_BODY,
     _TEXT_BRIGHT,
     _TEXT_DIM,
@@ -167,7 +168,7 @@ def render_pending(
 
     if remote_mode:
         return (
-            "[#aa6666]  remote — limited[/]\n"  # palette-candidate: remote mode muted red — no foundation token yet
+            f"[{_RED_MUTED}]  remote — limited[/]\n"
             f"[{_TEXT_NEUTRAL}]    Pending operations require local session state[/]\n"
             f"[{_TEXT_NEUTRAL}]    (v1 ``--connect`` scoped disable per #277 / #276 Phase C-(b))[/]",
             flat_items,

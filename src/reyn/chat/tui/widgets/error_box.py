@@ -23,6 +23,7 @@ from textual.widget import Widget
 from textual.widgets import Label, Static
 
 from reyn.chat.tui._palette import (
+    _HINT_ACTION,
     _SEV_HIGH,
     _SEV_HIGH_HOVER,
     _SEV_MED,
@@ -119,7 +120,7 @@ class ErrorBox(Widget):
        reads as actionable, not just metadata. */
     ErrorBox Label.eb-inline-hint {{
         display: none;
-        color: #8a7a4a;  /* palette-candidate: inline-hint actionable (distinct from metadata) */
+        color: {_HINT_ACTION};
         height: 1;
         width: 1fr;
         padding: 0 2;
