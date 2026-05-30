@@ -62,6 +62,7 @@ class Agent:
         media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
         workspace_base_dir: "Path | None" = None,
+        workspace_state_dir: "Path | None" = None,
         run_id: str | None = None,
         environment_backend: "EnvironmentBackend | None" = None,
         sandbox_backend: "SandboxBackend | None" = None,
@@ -92,6 +93,12 @@ class Agent:
         self._media_store = media_store
         self._secret_store = secret_store
         self._workspace_base_dir = workspace_base_dir
+        # FP-0008 #1115 Stage 2: host-side workspace state_dir (artifacts +
+        # events), decoupled from base_dir. For an in-container run base_dir is
+        # the container repo (e.g. /testbed) while state_dir stays on the host
+        # so artifacts/events survive container teardown (Stage 0 decouple).
+        # None → Workspace default (base_dir/.reyn = unchanged host behavior).
+        self._workspace_state_dir = workspace_state_dir
         # FP-0008 #1115 Stage 2: per-run backend injection. The SAME instance
         # (a dual-Protocol DockerEnvironmentBackend) is passed as BOTH so repo
         # FS + exec hit one container target; defaults None → host (HostBackend
@@ -199,6 +206,7 @@ class Agent:
             secret_store=self._secret_store,
             plan_step=plan_step,
             workspace_base_dir=self._workspace_base_dir,
+            workspace_state_dir=self._workspace_state_dir,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 
