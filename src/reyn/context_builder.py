@@ -33,12 +33,85 @@ MAX_CONTROL_IR_RESULT_INLINE_BYTES: int = 8_192   # ~8KB threshold
 OFFLOAD_HEAD_CHARS: int = 2_048                    # first 2KB kept inline
 OFFLOAD_TAIL_CHARS: int = 512                      # last 0.5KB kept inline
 
+# Hard-bound guarantee (C5-completeness — FP-0008 v9-IN):
+# After per-field type-aware previews, the offloaded inline dict MUST NOT exceed
+# this limit regardless of field types (list/dict/str/nested). The whole-inline-
+# replace fallback enforces this ceiling unconditionally. Value is set well above
+# head+tail+small-fields overhead (~3KB) but well below any model context limit.
+MAX_OFFLOADED_INLINE_BYTES: int = 16_384  # 16KB absolute ceiling for offloaded inline
 
-def _oversized_string_fields(result: dict) -> list[str]:
-    """Return field names whose string value alone exceeds the inline limit."""
+# Per-field keep threshold: fields whose serialised size is below this are kept
+# as-is (they're small enough not to contribute meaningfully to bloat).
+_FIELD_KEEP_THRESHOLD: int = MAX_CONTROL_IR_RESULT_INLINE_BYTES
+
+
+def _preview_field(value: Any, ref_path: str) -> Any:
+    """Return a bounded preview of *value* for the offloaded inline dict.
+
+    Type-aware strategy:
+      - str  → head (OFFLOAD_HEAD_CHARS) + truncation marker + tail (OFFLOAD_TAIL_CHARS)
+      - list → first K elements (until serialized size ~ OFFLOAD_HEAD_CHARS) +
+               a sentinel string describing remaining count + ref
+      - dict → first N key-value pairs (until serialized size ~ OFFLOAD_HEAD_CHARS) +
+               a sentinel string describing omitted keys + ref
+      - number/bool/None → returned as-is (tiny)
+    """
+    if isinstance(value, str):
+        head = value[:OFFLOAD_HEAD_CHARS]
+        has_tail = len(value) > OFFLOAD_HEAD_CHARS + OFFLOAD_TAIL_CHARS
+        tail = value[-OFFLOAD_TAIL_CHARS:] if has_tail else ""
+        marker = (
+            f"\n... [TRUNCATED — {len(value):,} chars total; "
+            f"full content at {ref_path}] ..."
+        )
+        return head + marker + (f"\n[TAIL PREVIEW]\n{tail}" if tail else "")
+
+    if isinstance(value, list):
+        preview_items: list = []
+        accumulated = 0
+        for item in value:
+            item_size = len(json.dumps(item, ensure_ascii=False))
+            if accumulated + item_size > OFFLOAD_HEAD_CHARS and preview_items:
+                break
+            preview_items.append(item)
+            accumulated += item_size
+        remaining = len(value) - len(preview_items)
+        if remaining > 0:
+            preview_items.append(
+                f"...({remaining} more elements omitted; full list at {ref_path})"
+            )
+        return preview_items
+
+    if isinstance(value, dict):
+        preview_dict: dict = {}
+        accumulated = 0
+        all_keys = list(value.keys())
+        for k in all_keys:
+            v = value[k]
+            pair_size = len(json.dumps({k: v}, ensure_ascii=False))
+            if accumulated + pair_size > OFFLOAD_HEAD_CHARS and preview_dict:
+                break
+            preview_dict[k] = v
+            accumulated += pair_size
+        omitted = len(all_keys) - len(preview_dict)
+        if omitted > 0:
+            preview_dict["_omitted_keys"] = (
+                f"({omitted} keys omitted; full dict at {ref_path})"
+            )
+        return preview_dict
+
+    # number / bool / None — tiny, keep as-is
+    return value
+
+
+def _oversized_fields(result: dict) -> list[str]:
+    """Return field names whose individual serialised size exceeds the per-field threshold.
+
+    Covers all field types (str, list, dict, etc.) — not just strings.
+    """
     return [
         k for k, v in result.items()
-        if isinstance(v, str) and len(v) > MAX_CONTROL_IR_RESULT_INLINE_BYTES
+        if len(json.dumps(v, ensure_ascii=False)) > _FIELD_KEEP_THRESHOLD
     ]
 
 
@@ -53,11 +126,16 @@ def offload_control_ir_result(
     """Offload an oversized control_ir_result to a workspace scratch file.
 
     If the JSON-serialised *result* exceeds MAX_CONTROL_IR_RESULT_INLINE_BYTES:
-      - Full content is written to *offload_dir*/<idx>_<uid>.json.
-      - Each string field larger than the threshold is replaced inline with
-        a head+tail preview and a truncation marker referencing the offload file.
+      - Full content is written to *offload_dir*/<idx>_<uid>.json (no info loss).
+      - Each oversized field (str/list/dict) is replaced inline with a type-aware
+        preview: str→head+tail, list→first K elements + count, dict→first N pairs.
       - A top-level ``_offload_ref`` key carries the absolute path for direct
         file.read access.
+      - Hard-bound guarantee: if the per-field previews still exceed
+        MAX_OFFLOADED_INLINE_BYTES (e.g. many medium-sized fields), a whole-inline
+        fallback replaces the entire inline with a compact head+tail of the
+        serialised result. This guarantees the inline is bounded regardless of
+        field types, counts, or nesting depth.
       - A ``control_ir_result_offloaded`` event is emitted for audit visibility.
 
     Small results (at or below threshold) are returned unchanged (identity).
@@ -76,23 +154,35 @@ def offload_control_ir_result(
     offload_path.write_text(serialized, encoding="utf-8")
     ref_path = str(offload_path)
 
-    # Build inline preview: copy result, replace oversized string fields
-    # with head + tail preview + truncation marker + ref path.
-    inline = dict(result)
-    large_fields = _oversized_string_fields(result)
-    for field in large_fields:
-        original = result[field]
-        head = original[:OFFLOAD_HEAD_CHARS]
-        has_tail = len(original) > OFFLOAD_HEAD_CHARS + OFFLOAD_TAIL_CHARS
-        tail = original[-OFFLOAD_TAIL_CHARS:] if has_tail else ""
-        marker = (
-            f"\n... [TRUNCATED — {len(original):,} chars total; "
-            f"full content at {ref_path}] ..."
-        )
-        inline[field] = head + marker + (f"\n[TAIL PREVIEW]\n{tail}" if tail else "")
+    # Build inline preview: keep small fields as-is; replace oversized fields
+    # with type-aware previews (str→head+tail, list→first K, dict→first N pairs).
+    inline: dict = {}
+    large_fields = _oversized_fields(result)
+    large_fields_set = set(large_fields)
+    for k, v in result.items():
+        if k in large_fields_set:
+            inline[k] = _preview_field(v, ref_path)
+        else:
+            inline[k] = v
 
     # Top-level ref so the LLM can locate the full result with a single key.
     inline["_offload_ref"] = ref_path
+
+    # Hard-bound guarantee: if per-field previews still exceed the ceiling
+    # (many medium-sized fields, deeply nested structures, etc.), fall back to
+    # a compact whole-inline representation that is guaranteed to fit.
+    inline_serialized = json.dumps(inline, ensure_ascii=False)
+    if len(inline_serialized) > MAX_OFFLOADED_INLINE_BYTES:
+        inline = {
+            "_offload_preview": serialized[:OFFLOAD_HEAD_CHARS],
+            "_offload_tail": serialized[-OFFLOAD_TAIL_CHARS:],
+            "_offload_total_chars": size_chars,
+            "_offload_ref": ref_path,
+            "_offload_note": (
+                f"Result too large for field-level preview "
+                f"({size_chars:,} chars); full content at {ref_path}"
+            ),
+        }
 
     if events is not None:
         events.emit(
