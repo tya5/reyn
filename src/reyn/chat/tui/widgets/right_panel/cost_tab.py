@@ -7,7 +7,20 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from .base import _CORAL, _esc, logger
+from reyn.chat.tui._palette import _TEXT_DIMMEST
+
+from .base import (
+    _CORAL,
+    _EVENT_PLAN,
+    _STATUS_CRITICAL,
+    _STATUS_SUCCESS,
+    _TEXT_BODY,
+    _TEXT_BRIGHT,
+    _TEXT_DIM,
+    _TEXT_NEUTRAL,
+    _esc,
+    logger,
+)
 
 # Budget progress-bar geometry (default / wide-panel values)
 _BAR_FILL = "█"
@@ -62,8 +75,8 @@ def _new_bucket() -> dict:
 
 def _cost_str(bucket: dict) -> str:
     if not bucket["has_cost"]:
-        return "[#555555]N/A[/]"
-    return f"[#44cc88]${bucket['cost']:.4f}[/]"
+        return f"[{_TEXT_DIM}]N/A[/]"
+    return f"[{_STATUS_SUCCESS}]${bucket['cost']:.4f}[/]"
 
 
 def _tok(p: int, c: int) -> str:
@@ -78,8 +91,8 @@ def _tok(p: int, c: int) -> str:
     load-bearing number and stays visible on line 1.
     """
     return (
-        f"[#dddddd]{p + c:,}[/]\n"
-        f"[#555555]      ({p:,}p + {c:,}c)[/]"
+        f"[{_TEXT_BRIGHT}]{p + c:,}[/]\n"
+        f"[{_TEXT_DIM}]      ({p:,}p + {c:,}c)[/]"
     )
 
 
@@ -103,11 +116,11 @@ def _budget_bar(used: float, cap: float, *, bar_width: int = _BAR_WIDTH) -> str:
     ratio = min(1.0, used / cap) if cap > 0 else 0.0
     pct = int(ratio * 100)
     if ratio >= 0.9:
-        colour = "#ff4444"
+        colour = _STATUS_CRITICAL
     elif ratio >= 0.75:
         colour = _CORAL
     else:
-        colour = "#44cc88"
+        colour = _STATUS_SUCCESS
     if bar_width > 0:
         filled = round(ratio * bar_width)
         bar = _BAR_FILL * filled + _BAR_EMPTY * (bar_width - filled)
@@ -149,13 +162,13 @@ def _render_budget_caps(
             label = f"{daily_tok_used:,} / {int(tok_hard):,}"
             bar = _budget_bar(daily_tok_used, tok_hard, bar_width=bar_w)
             lines.append(
-                f"[#555555]    tokens  [/][#aaaaaa]{label:<{budget_label_w}}[/]  {bar}"
+                f"[{_TEXT_DIM}]    tokens  [/][{_TEXT_BODY}]{label:<{budget_label_w}}[/]  {bar}"
             )
         if cost_hard and cost_hard > 0:
             label = f"${daily_cost_used:.4f} / ${cost_hard:.4f}"
             bar = _budget_bar(daily_cost_used, cost_hard, bar_width=bar_w)
             lines.append(
-                f"[#555555]    cost    [/][#aaaaaa]{label:<{budget_label_w}}[/]  {bar}"
+                f"[{_TEXT_DIM}]    cost    [/][{_TEXT_BODY}]{label:<{budget_label_w}}[/]  {bar}"
             )
     except Exception as exc:
         logger.warning("right_panel cost: budget cap render failed: %s", exc)
@@ -184,12 +197,12 @@ def render_cost(
     show_extra = _show_cost_calls(content_width)
 
     if project_root is None:
-        lines.append("[#555555]  (no project root)[/]")
+        lines.append(f"[{_TEXT_DIM}]  (no project root)[/]")
         return "\n".join(lines)
 
     events_root = project_root / ".reyn" / "events"
     if not events_root.is_dir():
-        lines.append("[#555555]  (no events yet)[/]")
+        lines.append(f"[{_TEXT_DIM}]  (no events yet)[/]")
         return "\n".join(lines)
 
     today_str = datetime.date.today().isoformat()
@@ -336,21 +349,21 @@ def render_cost(
     # line clipped to ``(litellm estimate — may differ from …)`` and
     # the actionable half ("from actual provider billing") never
     # reached the user.
-    lines.append("[#555555]  (litellm estimate —[/]")
-    lines.append("[#555555]   may differ from actual billing)[/]")
+    lines.append(f"[{_TEXT_DIM}]  (litellm estimate —[/]")
+    lines.append(f"[{_TEXT_DIM}]   may differ from actual billing)[/]")
     lines.append("")
 
     # ── TODAY ────────────────────────────────────────────────────────
-    lines.append("[bold #aaaaaa]  TODAY[/]")
+    lines.append(f"[bold {_TEXT_BODY}]  TODAY[/]")
     if today["calls"] == 0:
-        lines.append("[#555555]    (no calls today)[/]")
+        lines.append(f"[{_TEXT_DIM}]    (no calls today)[/]")
     else:
-        lines.append(f"[#555555]    tokens  [/]{_tok(today['p'], today['c'])}")
-        lines.append(f"[#555555]    cost    [/]{_cost_str(today)}")
-        lines.append(f"[#555555]    calls   [/][#dddddd]{today['calls']}[/]")
+        lines.append(f"[{_TEXT_DIM}]    tokens  [/]{_tok(today['p'], today['c'])}")
+        lines.append(f"[{_TEXT_DIM}]    cost    [/]{_cost_str(today)}")
+        lines.append(f"[{_TEXT_DIM}]    calls   [/][{_TEXT_BRIGHT}]{today['calls']}[/]")
         spark = _sparkline(today["call_costs"])
         if spark:
-            lines.append(f"[#555555]    trend   [/]{spark}")
+            lines.append(f"[{_TEXT_DIM}]    trend   [/]{spark}")
         # Budget cap progress bars (only when caps are configured)
         if budget_tracker is not None:
             _render_budget_caps(
@@ -359,37 +372,37 @@ def render_cost(
     lines.append("")
 
     # ── ALL TIME ──────────────────────────────────────────────────────
-    lines.append("[bold #aaaaaa]  ALL TIME[/]")
+    lines.append(f"[bold {_TEXT_BODY}]  ALL TIME[/]")
     if total["calls"] == 0:
-        lines.append("[#555555]    (no LLM calls)[/]")
+        lines.append(f"[{_TEXT_DIM}]    (no LLM calls)[/]")
     else:
-        lines.append(f"[#555555]    tokens  [/]{_tok(total['p'], total['c'])}")
-        lines.append(f"[#555555]    cost    [/]{_cost_str(total)}")
-        lines.append(f"[#555555]    calls   [/][#dddddd]{total['calls']}[/]")
+        lines.append(f"[{_TEXT_DIM}]    tokens  [/]{_tok(total['p'], total['c'])}")
+        lines.append(f"[{_TEXT_DIM}]    cost    [/]{_cost_str(total)}")
+        lines.append(f"[{_TEXT_DIM}]    calls   [/][{_TEXT_BRIGHT}]{total['calls']}[/]")
         spark = _sparkline(total["call_costs"])
         if spark:
-            lines.append(f"[#555555]    trend   [/]{spark}")
+            lines.append(f"[{_TEXT_DIM}]    trend   [/]{spark}")
     lines.append("")
 
     # ── BY AGENT / SKILL ──────────────────────────────────────────────
-    lines.append("[bold #aaaaaa]  BY AGENT / SKILL[/]")
+    lines.append(f"[bold {_TEXT_BODY}]  BY AGENT / SKILL[/]")
     if by_agent_skill:
         for agent in sorted(by_agent_skill):
             ag = by_agent[agent]
             ag_tok = ag["p"] + ag["c"]
             # agent total: name bold white, tok light gray, cost bright green
             ag_cost = (
-                f"  [bold #44cc88]${ag['cost']:.4f}[/]"
+                f"  [bold {_STATUS_SUCCESS}]${ag['cost']:.4f}[/]"
                 if ag["has_cost"] and show_extra else ""
             )
             ag_calls = (
-                f"  [#777777]{ag['calls']}c[/]"
+                f"  [#777777]{ag['calls']}c[/]"  # palette-candidate: mid-dim label — no foundation token yet
                 if show_extra else ""
             )
             # name col width adapts to content_width (see _col_widths)
             lines.append(
-                f"[bold #dddddd]  {_esc(agent):<{agent_name_w}}[/]"
-                f"[#aaaaaa]{ag_tok:>7,} tok[/]"
+                f"[bold {_TEXT_BRIGHT}]  {_esc(agent):<{agent_name_w}}[/]"
+                f"[{_TEXT_BODY}]{ag_tok:>7,} tok[/]"
                 f"{ag_cost}"
                 f"{ag_calls}"
             )
@@ -399,22 +412,22 @@ def render_cost(
                 tok_total = m["p"] + m["c"]
                 # skill rows: dim name, muted green for cost — clearly subordinate
                 cost_part = (
-                    f"  [#2d7a4f]${m['cost']:.4f}[/]"
+                    f"  [#2d7a4f]${m['cost']:.4f}[/]"  # palette-candidate: dim success green — no foundation token yet
                     if m["has_cost"] and show_extra else ""
                 )
                 calls_part = (
-                    f"  [#444444]{m['calls']}c[/]"
+                    f"  [{_TEXT_DIMMEST}]{m['calls']}c[/]"
                     if show_extra else ""
                 )
                 lines.append(
-                    f"[#555555]    {_esc(skill):<{skill_name_w}}[/]"
-                    f"[#555555]{tok_total:>7,} tok[/]"
+                    f"[{_TEXT_DIM}]    {_esc(skill):<{skill_name_w}}[/]"
+                    f"[{_TEXT_DIM}]{tok_total:>7,} tok[/]"
                     f"{cost_part}"
                     f"{calls_part}"
                 )
             lines.append("")
     else:
-        lines.append("[#555555]    (no skill runs yet)[/]")
+        lines.append(f"[{_TEXT_DIM}]    (no skill runs yet)[/]")
     lines.append("")
 
     # ── BY PLAN ──────────────────────────────────────────────────────
@@ -422,7 +435,7 @@ def render_cost(
     # using plan-mode). Sort plans by descending cost so the expensive
     # ones surface first.
     if by_plan:
-        lines.append("[bold #aaaaaa]  BY PLAN[/]")
+        lines.append(f"[bold {_TEXT_BODY}]  BY PLAN[/]")
         sorted_plans = sorted(
             by_plan.items(),
             key=lambda kv: (-kv[1]["cost"], -(kv[1]["p"] + kv[1]["c"])),
@@ -430,22 +443,22 @@ def render_cost(
         for plan_id, pb in sorted_plans:
             tok_total = pb["p"] + pb["c"]
             cost_part = (
-                f"  [bold #44cc88]${pb['cost']:.4f}[/]"
+                f"  [bold {_STATUS_SUCCESS}]${pb['cost']:.4f}[/]"
                 if pb["has_cost"] and show_extra else ""
             )
             calls_part = (
-                f"  [#777777]{pb['calls']}c[/]"
+                f"  [#777777]{pb['calls']}c[/]"  # palette-candidate: mid-dim label — no foundation token yet
                 if show_extra else ""
             )
             short_pid = plan_id[:8]
             goal = plan_goals.get(plan_id, "")
             goal_part = (
-                f"  [#666666]{_esc(goal[:32] + ('…' if len(goal) > 32 else ''))}[/]"
+                f"  [{_TEXT_NEUTRAL}]{_esc(goal[:32] + ('…' if len(goal) > 32 else ''))}[/]"
                 if goal and show_extra else ""
             )
             lines.append(
-                f"[bold #ff9944]  {short_pid:<8}[/]"
-                f"  [#aaaaaa]{tok_total:>7,} tok[/]"
+                f"[bold {_EVENT_PLAN}]  {short_pid:<8}[/]"
+                f"  [{_TEXT_BODY}]{tok_total:>7,} tok[/]"
                 f"{cost_part}"
                 f"{calls_part}"
                 f"{goal_part}"
@@ -455,16 +468,16 @@ def render_cost(
                 sb = steps[step_id]
                 step_tok = sb["p"] + sb["c"]
                 step_cost_part = (
-                    f"  [#2d7a4f]${sb['cost']:.4f}[/]"
+                    f"  [#2d7a4f]${sb['cost']:.4f}[/]"  # palette-candidate: dim success green — no foundation token yet
                     if sb["has_cost"] and show_extra else ""
                 )
                 step_calls_part = (
-                    f"  [#444444]{sb['calls']}c[/]"
+                    f"  [{_TEXT_DIMMEST}]{sb['calls']}c[/]"
                     if show_extra else ""
                 )
                 lines.append(
-                    f"[#555555]    {_esc(step_id):<{skill_name_w}}[/]"
-                    f"[#555555]{step_tok:>7,} tok[/]"
+                    f"[{_TEXT_DIM}]    {_esc(step_id):<{skill_name_w}}[/]"
+                    f"[{_TEXT_DIM}]{step_tok:>7,} tok[/]"
                     f"{step_cost_part}"
                     f"{step_calls_part}"
                 )
@@ -472,7 +485,7 @@ def render_cost(
         lines.append("")
 
     # ── BY MODEL ─────────────────────────────────────────────────────
-    lines.append("[bold #aaaaaa]  BY MODEL[/]")
+    lines.append(f"[bold {_TEXT_BODY}]  BY MODEL[/]")
     if by_model:
         sorted_models = sorted(
             by_model.items(),
@@ -481,21 +494,21 @@ def render_cost(
         for model_name, mb in sorted_models:
             tok_total = mb["p"] + mb["c"]
             cost_part = (
-                f"  [#44cc88]${mb['cost']:.4f}[/]"
+                f"  [{_STATUS_SUCCESS}]${mb['cost']:.4f}[/]"
                 if mb["has_cost"] and show_extra else ""
             )
             calls_part = (
-                f"  [#777777]{mb['calls']}c[/]"
+                f"  [#777777]{mb['calls']}c[/]"  # palette-candidate: mid-dim label — no foundation token yet
                 if show_extra else ""
             )
             lines.append(
-                f"[#aaaaaa]  {_esc(model_name):<{model_name_w}}[/]"
-                f"[#555555]{tok_total:>7,} tok[/]"
+                f"[{_TEXT_BODY}]  {_esc(model_name):<{model_name_w}}[/]"
+                f"[{_TEXT_DIM}]{tok_total:>7,} tok[/]"
                 f"{cost_part}"
                 f"{calls_part}"
             )
     else:
-        lines.append("[#555555]    (no model data yet)[/]")
+        lines.append(f"[{_TEXT_DIM}]    (no model data yet)[/]")
 
     # Footer hint: ``/budget reset`` only clears per-agent + per-chain
     # counters used by the safety hard-stop rate limiter. The TODAY /
@@ -505,7 +518,7 @@ def render_cost(
     # this distinction surfaced once, where they can see it.
     lines.append("")
     lines.append(
-        "[#555555]  /budget reset clears per-agent counters "
+        f"[{_TEXT_DIM}]  /budget reset clears per-agent counters "
         "(daily totals persist — they come from the event log)[/]"
     )
 

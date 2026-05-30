@@ -11,7 +11,18 @@ from rich.console import Group as RichGroup
 from rich.text import Text as RichText
 from rich.tree import Tree as RichTree
 
-from .base import _CORAL, logger
+from reyn.chat.tui._palette import _DIVIDER_DIM, _TEXT_DIMMEST
+
+from .base import (
+    _CORAL,
+    _EVENT_PLAN,
+    _STATUS_ERROR,
+    _STATUS_SUCCESS,
+    _TEXT_BRIGHT,
+    _TEXT_DIM,
+    _TEXT_MUTED,
+    logger,
+)
 
 
 def _compact_ts(ts: str) -> str:
@@ -435,16 +446,16 @@ def render_agents(
     y_counter = 0
 
     if registry is None:
-        return "[#555555]  (no registry)[/]", flat_items, item_ys
+        return f"[{_TEXT_DIM}]  (no registry)[/]", flat_items, item_ys
 
     try:
         names = registry.list_names()
     except Exception as exc:
         logger.warning("right_panel agents: registry.list_names() failed: %s", exc)
-        return "[#555555]  (registry unavailable)[/]", flat_items, item_ys
+        return f"[{_TEXT_DIM}]  (registry unavailable)[/]", flat_items, item_ys
 
     if not names:
-        return "[#555555]  (no agents)[/]", flat_items, item_ys
+        return f"[{_TEXT_DIM}]  (no agents)[/]", flat_items, item_ys
 
     try:
         attached = registry.attached_name
@@ -508,15 +519,15 @@ def render_agents(
         has_work = bool(agent_skills) or bool(agent_plans)
         if has_work:
             status_glyph, status_text, status_style = (
-                "● ", "running", "#44cc88",
+                "● ", "running", _STATUS_SUCCESS,
             )
         elif in_loaded:
             status_glyph, status_text, status_style = (
-                "◐ ", "ready", "#aaaa55",
+                "◐ ", "ready", "#aaaa55",  # palette-candidate: agent ready (olive) — no foundation token yet
             )
         else:
             status_glyph, status_text, status_style = (
-                "○ ", "idle", "#555555",
+                "○ ", "idle", _TEXT_DIM,
             )
         # Apply ``reverse`` text-style on the cursor row so it stands out
         # without adding a column-prefix shift (= the attached ``▶ ``
@@ -527,11 +538,11 @@ def render_agents(
         label = RichText()
         label.append(
             "▶ " if is_attached else "  ",
-            style="#555555" + cursor_suffix,
+            style=_TEXT_DIM + cursor_suffix,
         )
         label.append(
             name,
-            style=("bold " + _CORAL if is_attached else "#dddddd") + cursor_suffix,
+            style=("bold " + _CORAL if is_attached else _TEXT_BRIGHT) + cursor_suffix,
         )
         label.append("  ", style="" + cursor_suffix)
         label.append(
@@ -545,7 +556,7 @@ def render_agents(
         })
         item_ys.append(agent_label_y)
 
-        tree = RichTree(label, guide_style="#333333")
+        tree = RichTree(label, guide_style=_DIVIDER_DIM)
 
         def _cursor_prefix(idx: int) -> tuple[str, str]:
             """Return (prefix, name_style) for selectable item ``idx``.
@@ -582,15 +593,15 @@ def render_agents(
                 # SkillActivityRow does (≥30s amber, ≥60s red) so a
                 # slow / stuck skill stands out at a glance.
                 if elapsed >= 60:
-                    elapsed_style = "bold #ff6644"
+                    elapsed_style = f"bold {_STATUS_ERROR}"
                 elif elapsed >= 30:
-                    elapsed_style = "bold #ffaa44"
+                    elapsed_style = "bold #ffaa44"  # palette-candidate: warning amber — no foundation token yet
                 else:
-                    elapsed_style = "#888888"
+                    elapsed_style = _TEXT_MUTED
                 skill_label.append(f"{elapsed:3d}s  ", style=elapsed_style)
                 skill_label.append(
                     info.get("skill_name", "?"),
-                    style=name_style or "#dddddd",
+                    style=name_style or _TEXT_BRIGHT,
                 )
                 # Wave-7 Topic C-F2: surface plan-step attribution as a
                 # ``[plan N/M]`` badge after the skill name so the
@@ -630,9 +641,9 @@ def render_agents(
                 if phase:
                     visits = info.get("phase_visits", 1)
                     phase_label = RichText()
-                    phase_label.append(phase, style="#555555")
+                    phase_label.append(phase, style=_TEXT_DIM)
                     if visits > 1:
-                        phase_label.append(f"  v{visits}", style="#444444")
+                        phase_label.append(f"  v{visits}", style=_TEXT_DIMMEST)
                     skill_node.add(phase_label)
                     y_counter += 1
                 flat_items.append({
@@ -685,26 +696,26 @@ def render_agents(
                 pfx, _ = _cursor_prefix(len(flat_items))
                 plan_label = RichText()
                 plan_label.append(pfx, style=_CORAL)
-                plan_label.append("plan ", style="#888888")
-                plan_label.append(p["plan_id"], style="#ff9944")
+                plan_label.append("plan ", style=_TEXT_MUTED)
+                plan_label.append(p["plan_id"], style=_EVENT_PLAN)
                 plan_label.append(
                     f"  {p['done']}/{p['total']}",
-                    style="#dddddd",
+                    style=_TEXT_BRIGHT,
                 )
                 if p["failed"]:
                     plan_label.append(
-                        f"  ({p['failed']} failed)", style="#ff6644",
+                        f"  ({p['failed']} failed)", style=_STATUS_ERROR,
                     )
                 plan_label.append(
                     f"  {p['status']}",
-                    style="#44cc88" if p["status"] == "running" else "#aaaa55",
+                    style=_STATUS_SUCCESS if p["status"] == "running" else "#aaaa55",  # palette-candidate: agent ready (olive) — no foundation token yet
                 )
                 plan_node = tree.add(plan_label)
                 item_ys.append(y_counter)
                 y_counter += 1
                 if p["goal"]:
                     goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
-                    plan_node.add(RichText(goal, style="#555555"))
+                    plan_node.add(RichText(goal, style=_TEXT_DIM))
                     y_counter += 1
                 flat_items.append({
                     "kind": "running_plan",
@@ -754,7 +765,7 @@ def render_agents(
         )
         if recent_skills or recent_plans:
             recent_node = tree.add(
-                RichText("recent", style="#777777")
+                RichText("recent", style="#777777")  # palette-candidate: mid-dim label — no foundation token yet
             )
             # The "recent" header occupies its own line.
             y_counter += 1
@@ -769,24 +780,24 @@ def render_agents(
                 #                       crashed / killed prior session)
                 status = s["status"]
                 if status == "ok":
-                    glyph, glyph_style = "✓ ", "#44cc88"
+                    glyph, glyph_style = "✓ ", _STATUS_SUCCESS
                 elif status == "stuck":
-                    glyph, glyph_style = "⊘ ", "#ffaa44"
+                    glyph, glyph_style = "⊘ ", "#ffaa44"  # palette-candidate: warning amber — no foundation token yet
                 else:
-                    glyph, glyph_style = "✗ ", "#ff6644"
+                    glyph, glyph_style = "✗ ", _STATUS_ERROR
                 line.append(glyph, style=glyph_style)
-                line.append(s["skill_name"], style="#bbbbbb")
+                line.append(s["skill_name"], style="#bbbbbb")  # palette-candidate: near-bright label — no foundation token yet
                 if s["duration_s"] > 0:
-                    line.append(f"  {s['duration_s']:.1f}s", style="#555555")
+                    line.append(f"  {s['duration_s']:.1f}s", style=_TEXT_DIM)
                 if status == "stuck":
                     line.append(
                         f"  (stuck @ {s.get('stuck_at', '?')})",
-                        style="#aa8844",
+                        style="#aa8844",  # palette-candidate: warning ochre — no foundation token yet
                     )
                 elif status != "ok":
-                    line.append(f"  ({status})", style="#aa6655")
+                    line.append(f"  ({status})", style="#aa6655")  # palette-candidate: muted error — no foundation token yet
                 if s["ts"]:
-                    line.append(f"  {_compact_ts(s['ts'])}", style="#444444")
+                    line.append(f"  {_compact_ts(s['ts'])}", style=_TEXT_DIMMEST)
                 recent_node.add(line)
                 item_ys.append(y_counter)
                 y_counter += 1
@@ -800,25 +811,25 @@ def render_agents(
                 line = RichText()
                 line.append(pfx, style=_CORAL)
                 ok = p["status"] == "ok"
-                line.append("✓ " if ok else "✗ ", style="#44cc88" if ok else "#ff6644")
-                line.append("plan ", style="#888888")
-                line.append(p["plan_id"], style="#ff9944")
+                line.append("✓ " if ok else "✗ ", style=_STATUS_SUCCESS if ok else _STATUS_ERROR)
+                line.append("plan ", style=_TEXT_MUTED)
+                line.append(p["plan_id"], style=_EVENT_PLAN)
                 line.append(
                     f"  {p['n_completed']}/{p['n_completed'] + p['n_failed']}",
-                    style="#bbbbbb",
+                    style="#bbbbbb",  # palette-candidate: near-bright label — no foundation token yet
                 )
                 if p["status"] == "interrupted" and p["exc_type"]:
-                    line.append(f"  {p['exc_type']}", style="#aa6655")
+                    line.append(f"  {p['exc_type']}", style="#aa6655")  # palette-candidate: muted error — no foundation token yet
                 elif p["status"] == "partial":
-                    line.append(f"  ({p['n_failed']} failed)", style="#aa6655")
+                    line.append(f"  ({p['n_failed']} failed)", style="#aa6655")  # palette-candidate: muted error — no foundation token yet
                 if p["ts"]:
-                    line.append(f"  {_compact_ts(p['ts'])}", style="#444444")
+                    line.append(f"  {_compact_ts(p['ts'])}", style=_TEXT_DIMMEST)
                 node = recent_node.add(line)
                 item_ys.append(y_counter)
                 y_counter += 1
                 if p["goal"]:
                     goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
-                    node.add(RichText(goal, style="#555555"))
+                    node.add(RichText(goal, style=_TEXT_DIM))
                     y_counter += 1
                 flat_items.append({
                     "kind": "recent_plan",
@@ -851,7 +862,7 @@ def render_agents(
                     if msg_count > 0 else ""
                 )
                 tree.add(RichText(
-                    f"last: {ts_str}{count_part}", style="#555555",
+                    f"last: {ts_str}{count_part}", style=_TEXT_DIM,
                 ))
                 y_counter += 1
                 if snippet:
@@ -869,8 +880,8 @@ def render_agents(
                         else flattened[:_max - 1] + "…"
                     )
                     line2 = RichText()
-                    line2.append("↳ ", style="#555555")
-                    line2.append(short, style="#444444")
+                    line2.append("↳ ", style=_TEXT_DIM)
+                    line2.append(short, style=_TEXT_DIMMEST)
                     tree.add(line2)
                     y_counter += 1
 

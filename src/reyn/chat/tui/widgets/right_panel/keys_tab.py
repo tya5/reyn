@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from textual.binding import Binding
 
-from .base import _CORAL, _esc
+from .base import _CORAL, _TEXT_BODY, _TEXT_BRIGHT, _TEXT_DIM, _esc
 
 if TYPE_CHECKING:
     from textual.app import App
@@ -415,7 +415,7 @@ def render_keys(
         raw_keys = group_keys.get(group_name, [])
         if not entries:
             continue
-        lines.append(f"[bold #aaaaaa]  \\[{_esc(group_name)}][/]")
+        lines.append(f"[bold {_TEXT_BODY}]  \\[{_esc(group_name)}][/]")
         # MOUSE rows can be much longer than 6 chars — use a wider cap for
         # the MOUSE group so the descriptions don't collide with the key col.
         if group_name == "MOUSE":
@@ -433,7 +433,7 @@ def render_keys(
             cursor_prefix = f"[bold {_CORAL}]▶[/] " if is_cursor else "  "
             key_col = f"{_esc(key_display):<{key_width}}"
             lines.append(
-                f"{cursor_prefix}[{_CORAL}]{key_col}[/]  [#dddddd]{_esc(desc)}[/]"
+                f"{cursor_prefix}[{_CORAL}]{key_col}[/]  [{_TEXT_BRIGHT}]{_esc(desc)}[/]"
             )
 
             # Inline detail block when this row is expanded.
@@ -442,13 +442,13 @@ def render_keys(
                 if detail:
                     for detail_line in detail.splitlines():
                         lines.append(
-                            f"  [dim #aaaaaa]    {_esc(detail_line)}[/]"
+                            f"  [dim {_TEXT_BODY}]    {_esc(detail_line)}[/]"
                         )
 
             row_idx += 1
         lines.append("")
     if not lines:
-        lines.append("[#555555]  (no bindings)[/]")
+        lines.append(f"[{_TEXT_DIM}]  (no bindings)[/]")
     return "\n".join(lines), flat_key_list, key_ys
 
 
