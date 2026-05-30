@@ -54,7 +54,14 @@ from textual.widgets import RichLog, Static
 logger = logging.getLogger(__name__)
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui._palette import _AMBER, _CORAL
+from reyn.chat.tui._palette import (
+    _AMBER,
+    _CORAL,
+    _EVENT_INTERVENTION,
+    _TEXT_DIM,
+    _TEXT_MUTED,
+    _TEXT_NEUTRAL,
+)
 
 from .async_stack_panel import AsyncStackPanel
 from .error_box import ErrorBox
@@ -162,7 +169,7 @@ def _msg_header(symbol: str, name_style: str, show_ts: bool = True) -> Text:
     """
     t = Text()
     if show_ts:
-        t.append(time.strftime("%H:%M"), style="dim #666666")
+        t.append(time.strftime("%H:%M"), style="dim " + _TEXT_NEUTRAL)
         t.append(" ")
     t.append(symbol, style=name_style)
     return t
@@ -182,7 +189,7 @@ def _build_header_prefix(symbol: str, name_style: str, show_ts: bool = True) -> 
     """
     t = Text()
     if show_ts:
-        t.append(time.strftime("%H:%M"), style="dim #666666")
+        t.append(time.strftime("%H:%M"), style="dim " + _TEXT_NEUTRAL)
         t.append(" ")
     t.append(symbol, style=name_style)
     t.append(" ")  # trailing space so body starts immediately after symbol
@@ -218,9 +225,9 @@ def _render_lifecycle_marker(text: str) -> Text:
     lead_dashes = 2
     label_cells = cell_len(label)
     trail_dashes = max(1, _DASH_TOTAL - lead_dashes - label_cells)
-    t.append("─" * lead_dashes, style="dim #666666")
-    t.append(label, style="dim #666666")
-    t.append("─" * trail_dashes, style="dim #666666")
+    t.append("─" * lead_dashes, style="dim " + _TEXT_NEUTRAL)
+    t.append(label, style="dim " + _TEXT_NEUTRAL)
+    t.append("─" * trail_dashes, style="dim " + _TEXT_NEUTRAL)
     return t
 
 
@@ -239,9 +246,9 @@ def _date_separator(date_str: str) -> Text:
     lead_dashes = 2
     label_cells = cell_len(label)
     trail_dashes = max(1, _DASH_TOTAL - lead_dashes - label_cells)
-    t.append("─" * lead_dashes, style="dim #666666")
-    t.append(label, style="dim #666666")
-    t.append("─" * trail_dashes, style="dim #666666")
+    t.append("─" * lead_dashes, style="dim " + _TEXT_NEUTRAL)
+    t.append(label, style="dim " + _TEXT_NEUTRAL)
+    t.append("─" * trail_dashes, style="dim " + _TEXT_NEUTRAL)
     return t
 
 
@@ -334,7 +341,7 @@ class ConversationView(Widget):
         /* Dim by default; only the active/hover scrollbar uses the coral
            highlight. Avoids the full-track coral block when content fits
            in one viewport. */
-        scrollbar-color: #2a2a2a;
+        scrollbar-color: #2a2a2a;  /* _BORDER_DIM */
         scrollbar-color-hover: $primary;
         scrollbar-color-active: $primary;
         scrollbar-background: transparent;
@@ -346,7 +353,7 @@ class ConversationView(Widget):
         padding: 0 1;
     }
     ConversationView #empty-hint {
-        color: #555555;
+        color: #555555;  /* _TEXT_DIM */
         padding: 0 1;
         height: auto;
     }
@@ -1115,7 +1122,7 @@ class ConversationView(Widget):
         if _is_lifecycle_marker(text):
             self._write_log(_render_lifecycle_marker(text))
             return
-        self._maybe_write_header("system", _GLYPH_SYSTEM, "bold #888888")
+        self._maybe_write_header("system", _GLYPH_SYSTEM, "bold " + _TEXT_MUTED)
         for line in text.splitlines() or [""]:
             self._write_body(Text(line))
         self._write_log(Text(""))
@@ -1164,7 +1171,7 @@ class ConversationView(Widget):
         else:
             first_line_plain = ""
 
-        inline_body = Text(first_line_plain, style="dim #888888" if meta_pfx else "")
+        inline_body = Text(first_line_plain, style="dim " + _TEXT_MUTED if meta_pfx else "")
 
         # _AMBER for agent identity — distinct from _CORAL (interactive
         # affordances).
@@ -1519,7 +1526,7 @@ class ConversationView(Widget):
                 self._log().write(
                     Text("✗ cancelled (partial reply):", style="bold #aa6666"),
                 )
-                self._write_body(Text(full, style="dim italic #888888"))
+                self._write_body(Text(full, style="dim italic " + _TEXT_MUTED))
             except Exception:
                 self._log().write(Text(full))
         self._log().write(Text(""))
@@ -1931,7 +1938,7 @@ class ConversationView(Widget):
             old_trailer = " (see events)" if old_has_trace else ""
             self._write_log(_RichText(
                 f"  ✗ {old_summary} (rolled to log){old_trailer}",
-                style="dim #555555",
+                style="dim " + _TEXT_DIM,
             ))
         # Stop the inline thinking spinner — the turn is over (it failed).
         # When the user is at the tail, a bare ``stop_thinking`` + ``hide_status``
@@ -2097,7 +2104,7 @@ class ConversationView(Widget):
         # secondary cleanup.
         self._write_log(_RichText(
             f"  ✗ {summary} (dismissed){trailer}",
-            style="dim #555555",
+            style="dim " + _TEXT_DIM,
         ))
         try:
             box.remove()
@@ -2155,7 +2162,7 @@ class ConversationView(Widget):
         noun = "error" if n == 1 else "errors"
         self._write_log(_RichText(
             f"  ✗ {n} {noun} dismissed (see events)",
-            style="dim #555555",
+            style="dim " + _TEXT_DIM,
         ))
         # C[1] fix: zero out session._error_box_count.  Defensive guard.
         try:
@@ -2285,7 +2292,7 @@ class ConversationView(Widget):
             body = f"⌁ {tokens}t │ ${cost_usd:.4f} │ {elapsed_s:.1f}s"
         t = Text(
             body,
-            style="dim #666666",
+            style="dim " + _TEXT_NEUTRAL,
             justify="right",
         )
         # ``(top=0, right=6, bottom=0, left=0)`` — reserve 6 cells on
@@ -2395,7 +2402,7 @@ class ConversationView(Widget):
         warning_text = f"↑ earlier history trimmed ({start:,} lines)"
         # Permanent log line — survives the turn-flash sticky overwrite.
         try:
-            self._write_log(Text(f"  {warning_text}", style="dim italic #888888"))
+            self._write_log(Text(f"  {warning_text}", style="dim italic " + _TEXT_MUTED))
         except Exception:
             pass
         # Sticky glance-cue — may be overwritten by the next status
@@ -2694,7 +2701,7 @@ class ConversationView(Widget):
             self._write_log(_RichText(
                 f"  ✗ {_error_count_before_clear} {_noun} cleared"
                 " (see events tab, filter=error)",
-                style="dim #555555",
+                style="dim " + _TEXT_DIM,
             ))
         # Wave-10 G-F1: sweep in-flight ToolCallRow widgets too. They
         # share the same "child of ConversationView, not a RichLog
@@ -2834,5 +2841,5 @@ def _format_intervention_line(msg: OutboxMessage) -> Text:
     # Intervention prefix is agent-identity (= the agent asking a question),
     # so it matches the agent header colour (_AMBER), not the action colour.
     t.append("  Aria asks  ", style="bold " + _AMBER)
-    t.append(msg.text, style="#ffcc88")
+    t.append(msg.text, style=_EVENT_INTERVENTION)
     return t
