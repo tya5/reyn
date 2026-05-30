@@ -498,7 +498,10 @@ class RunOrchestrator:
             if artifact_path:
                 try:
                     import json as _json
-                    p = Path(artifact_path)
+                    # FP-0008 #1115 Stage 0: last_phase_artifact_path is a
+                    # state_dir-relative handle; resolve it via the OS so resume
+                    # works regardless of base_dir/state_dir coupling.
+                    p = self._workspace.resolve_artifact_handle(artifact_path)
                     if p.is_file():
                         artifact = _json.loads(p.read_text(encoding="utf-8"))
                 except Exception as e:  # noqa: BLE001 — defensive
@@ -536,7 +539,9 @@ class RunOrchestrator:
             if artifact_path_post:
                 try:
                     import json as _json
-                    p = Path(artifact_path_post)
+                    # FP-0008 #1115 Stage 0: resolve the state_dir-relative
+                    # handle via the OS (see the in-flight resume branch above).
+                    p = self._workspace.resolve_artifact_handle(artifact_path_post)
                     if p.is_file():
                         finish_artifact_post = _json.loads(
                             p.read_text(encoding="utf-8")
@@ -608,7 +613,8 @@ class RunOrchestrator:
                 phase_def = self._skill.phases[current_phase]
                 if phase_def.preprocessor:
                     enriched_artifact, pre_usage = await self._preprocessor.run(
-                        phase_def, artifact, output_language
+                        phase_def, artifact, output_language,
+                        skill_input=self._state.skill_input,
                     )
                     self._state.add_usage(pre_usage, None)
                     # Update artifact_path to the enriched file so maybe_ref_artifact

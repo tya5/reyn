@@ -288,8 +288,12 @@ def test_resume_skips_phase_loop_when_post_phase(tmp_path, monkeypatch):
     art_path.write_text(json.dumps(finish_artifact), encoding="utf-8")
 
     # Build a ResumePlan with current_phase="__post__" pointing to this file.
-    # Path must be relative to cwd (= tmp_path) to match store_artifact's format.
-    rel_path = str(art_path.relative_to(tmp_path))
+    # #1115 Stage 0: last_phase_artifact_path is now a state_dir-relative handle
+    # (resolved via Workspace.resolve_artifact_handle on resume), where
+    # state_dir defaults to base_dir/.reyn. So the handle is relative to
+    # tmp_path/.reyn (= "artifacts/post_skill/__post__/v01_result.json"),
+    # matching store_artifact's new return format.
+    rel_path = str(art_path.relative_to(tmp_path / ".reyn"))
     plan = ResumePlan(
         run_id="run_post_001",
         skill_name="post_skill",

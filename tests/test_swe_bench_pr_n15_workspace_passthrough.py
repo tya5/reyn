@@ -5,37 +5,44 @@ verbatim from the plan input into the `apply_state` output artifact.  Weak
 models (gemini-flash-lite) dropped or nulled the field, causing schema
 validation failure at the verify-phase entry.
 
-Fix shape (PR-N15):
+Fix shape (PR-N15, as evolved by #1115 Stage 0):
   - `test_patch` removed from `apply_state` schema (no more LLM echo).
   - `apply.md` "Carry test_patch" instruction removed.
-  - `verify.md` preprocessor gains a `run_op: file.read` step that reads
-    the workspace-stored ``_input`` artifact (= the original swe_bench_input)
-    before the python sanitizer step.
-  - `sanitize_test_patch.py` updated to read from the workspace-injected
-    ``data._input_raw.content`` (Priority 1), falling back to
-    ``data.test_patch`` in the artifact's data dict (Priority 2) or top-level
-    flat dict (Priority 3, unit-test compat).
+  - The OS injects the skill's original entry artifact at the reserved
+    top-level ``_skill_input`` binding before each preprocessor runs.
+    ``verify.md`` / ``report.md`` read ``_skill_input.data.test_patch`` from
+    there — no workspace ``file.read`` of a base_dir-coupled magic path.
+    (#1115 Stage 0 removed the prior
+    ``.reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json`` file.read,
+    which coupled the read to base_dir and breaks once the repo FS routes
+    through a backend.)
+  - `sanitize_test_patch.py` reads from ``_skill_input.data.test_patch``
+    (Priority 0), falling back to the legacy ``data._input_raw.content``
+    (Priority 1, retained for unit tests), then ``data.test_patch`` (Priority
+    2) or top-level flat dict (Priority 3, unit-test compat).
 
 This file pins:
   (a) `apply_state` schema does NOT include `test_patch` as a required field.
   (b) `apply.md` does NOT contain the "Carry test_patch" instruction.
-  (c) `verify.md` preprocessor contains a `run_op` step before the python
-      step that reads the workspace input file.
-  (d) `sanitize_test_patch` extracts test_patch from the workspace-injected
-      ``_input_raw.content`` payload (Priority 1 path = the fix for 13977).
+  (c) `verify.md` / `report.md` no longer reference the base_dir-coupled
+      magic path, and `verify.md`'s first preprocessor step is the python
+      sanitizer; `sanitize_test_patch` reads test_patch from the OS-injected
+      ``_skill_input`` binding (Priority 0 = the #1115 Stage 0 mechanism).
+  (d) `sanitize_test_patch` extracts test_patch from the legacy workspace
+      ``_input_raw.content`` payload (Priority 1, back-compat).
   (e) `sanitize_test_patch` handles the full runtime artifact shape
       ``{"type": "apply_state", "data": {"test_patch": "..."}}`` correctly
       (Priority 2 path).
-  (f) `sanitize_test_patch` returns empty string when workspace payload is
-      absent and test_patch is missing (existing behavior preserved).
-  (g) Regression guard: LLM-null test_patch in artifact + workspace content
-      present → workspace value wins (= the 13977 failure mode is fixed).
+  (f) `sanitize_test_patch` returns empty string when all sources are absent.
+  (g) Regression guard: LLM-null test_patch in artifact + entry input present
+      → entry-input value wins (= the 13977 failure mode stays fixed).
 
 Tier rule discipline: every test docstring opens with Tier 2; no mocks; no
 private-state assertions; no format-pinning.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -106,58 +113,131 @@ def test_apply_md_no_carry_test_patch_instruction() -> None:
     )
 
 
-# ── (c) verify.md preprocessor: run_op step reads workspace input ────────────
+# ── (c) #1115 Stage 0: OS-injected _skill_input replaces base_dir file.read ──
 
 
-def test_verify_md_preprocessor_has_run_op_before_python() -> None:
-    """Tier 2: verify.md preprocessor must contain a run_op step before python.
+def test_verify_and_report_md_drop_basedir_coupled_magic_path() -> None:
+    """Tier 2: verify.md / report.md no longer reference the base_dir magic path.
 
-    PR-N15 adds a run_op: file.read step as the FIRST preprocessor step to
-    read the workspace _input artifact.  This must appear BEFORE the python
-    sanitizer step so the sanitizer can consume it.
+    #1115 Stage 0 removed the ``run_op: file.read`` of
+    ``.reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json``.  That path
+    coupled the deterministic test_patch read to ``base_dir``, which breaks
+    once the repo filesystem routes through a backend.  The OS-injected
+    ``_skill_input`` binding is base_dir-independent.  This guards against the
+    coupling being reintroduced.
+    """
+    for phase in ("verify", "report"):
+        md = (_SKILL_ROOT / "phases" / f"{phase}.md").read_text(encoding="utf-8")
+        assert "swe_bench/_input/v01_swe_bench_input.json" not in md, (
+            f"{phase}.md must NOT reference the base_dir-coupled _input magic "
+            "path after #1115 Stage 0 — the OS injects _skill_input instead"
+        )
+        assert "into: data._input_raw" not in md, (
+            f"{phase}.md must NOT contain the file.read 'into: data._input_raw' "
+            "step after #1115 Stage 0"
+        )
+
+
+def test_verify_md_first_preprocessor_step_is_python_sanitizer() -> None:
+    """Tier 2: verify.md's first preprocessor step is the python sanitizer.
+
+    With the file.read run_op removed (#1115 Stage 0), the sanitizer no longer
+    depends on a preceding read step — it consumes the OS-injected
+    ``_skill_input`` directly.  So the python step is now first; any ``run_op``
+    that remains (the iterate's inner shell op) must come AFTER it.
     """
     verify_md = (_SKILL_ROOT / "phases" / "verify.md").read_text(encoding="utf-8")
-    run_op_pos = verify_md.find("type: run_op")
     python_pos = verify_md.find("type: python")
-    assert run_op_pos != -1, (
-        "verify.md preprocessor must contain a 'type: run_op' step after PR-N15"
-    )
-    assert python_pos != -1, (
-        "verify.md preprocessor must still contain a 'type: python' step"
-    )
-    assert run_op_pos < python_pos, (
-        "The run_op step must appear BEFORE the python step in verify.md "
-        "so the workspace _input is injected before sanitize_test_patch runs"
+    run_op_pos = verify_md.find("type: run_op")
+    assert python_pos != -1, "verify.md must contain a 'type: python' step"
+    assert run_op_pos == -1 or python_pos < run_op_pos, (
+        "The python sanitizer must precede any run_op step in verify.md after "
+        "#1115 Stage 0 (no file.read run_op precedes it anymore)"
     )
 
 
-def test_verify_md_preprocessor_reads_workspace_input_file() -> None:
-    """Tier 2: verify.md run_op step must target the workspace _input artifact.
+def _make_skill_input_artifact(test_patch, *, inner_test_patch=...) -> dict:
+    """Build the working artifact as the preprocessor sees it under #1115 Stage 0.
 
-    The workspace-stored path for the swe_bench entry-phase input is
-    deterministic: `.reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json`.
-    PR-N15 pins this path in the run_op so test_patch is always read from
-    the workspace rather than being LLM-echoed.
+    The OS injects the entry ``swe_bench_input`` artifact at the top-level
+    ``_skill_input`` binding (sibling of ``data``).  ``inner_test_patch`` (when
+    given) sets ``data.test_patch`` to simulate a weak-model apply output;
+    default (``...``) leaves it absent.
     """
-    verify_md = (_SKILL_ROOT / "phases" / "verify.md").read_text(encoding="utf-8")
-    assert "swe_bench/_input/v01_swe_bench_input.json" in verify_md, (
-        "verify.md must reference the workspace _input artifact path "
-        "'.reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json' in the "
-        "run_op preprocessor step"
-    )
+    inner_data: dict = {
+        "instance_id": "test__test-1",
+        "files_edited": ["foo.py"],
+        "attempt": 1,
+    }
+    if inner_test_patch is not ...:
+        inner_data["test_patch"] = inner_test_patch
+    return {
+        "type": "apply_state",
+        "data": inner_data,
+        "_skill_input": {
+            "type": "swe_bench_input",
+            "data": {
+                "instance_id": "test__test-1",
+                "repo": "test/test",
+                "base_commit": "abc123",
+                "problem_statement": "Fix a bug",
+                "test_patch": test_patch,
+            },
+        },
+    }
 
 
-def test_verify_md_run_op_injects_into_input_raw() -> None:
-    """Tier 2: verify.md run_op step must inject result into data._input_raw.
+def test_sanitizer_reads_from_skill_input_binding() -> None:
+    """Tier 2: sanitizer extracts test_patch from the OS-injected _skill_input.
 
-    The sanitize_test_patch function reads from data._input_raw.content
-    (Priority 1).  The run_op's into: field must target data._input_raw.
+    This is the #1115 Stage 0 primary path (Priority 0).  The OS injects the
+    entry artifact at ``_skill_input``; the sanitizer reads
+    ``_skill_input.data.test_patch`` — not from the apply LLM output.
     """
-    verify_md = (_SKILL_ROOT / "phases" / "verify.md").read_text(encoding="utf-8")
-    assert "into: data._input_raw" in verify_md, (
-        "verify.md run_op step must use 'into: data._input_raw' so the "
-        "sanitize_test_patch function can read the workspace artifact content"
+    from reyn.stdlib.skills.swe_bench.sanitize_test_patch import sanitize_test_patch
+
+    patch_str = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-old\n+new\n"
+    artifact = _make_skill_input_artifact(patch_str)
+    assert sanitize_test_patch(artifact) == patch_str
+
+
+def test_sanitizer_skill_input_normalizes_crlf() -> None:
+    """Tier 2: sanitizer normalizes CRLF when reading from _skill_input."""
+    from reyn.stdlib.skills.swe_bench.sanitize_test_patch import sanitize_test_patch
+
+    raw = "diff --git a/x b/x\r\n--- a/x\r\n+++ b/x\r\n@@\r\n-a\r\n+b\r\n"
+    result = sanitize_test_patch(_make_skill_input_artifact(raw))
+    assert "\r" not in result
+
+
+def test_sanitizer_skill_input_wins_over_null_inner_test_patch() -> None:
+    """Tier 2: regression guard — _skill_input wins over null data.test_patch.
+
+    Simulates a weak-model apply output where ``data.test_patch`` is null.
+    The OS-injected ``_skill_input`` must take priority (= the 13977 failure
+    mode stays fixed under the #1115 Stage 0 mechanism).
+    """
+    from reyn.stdlib.skills.swe_bench.sanitize_test_patch import sanitize_test_patch
+
+    real_patch = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-old\n+new\n"
+    artifact = _make_skill_input_artifact(real_patch, inner_test_patch=None)
+    assert sanitize_test_patch(artifact) == real_patch
+
+
+def test_parse_test_targets_reads_from_skill_input_binding() -> None:
+    """Tier 2: parse_test_targets derives revert commands from _skill_input.
+
+    report.md has no sanitize step, so it relies on parse_test_targets reading
+    test_patch directly from the OS-injected ``_skill_input`` (Priority 0).
+    """
+    from reyn.stdlib.skills.swe_bench.parse_test_targets import parse_test_targets
+
+    patch = (
+        "diff --git a/tests/test_x.py b/tests/test_x.py\n"
+        "--- a/tests/test_x.py\n+++ b/tests/test_x.py\n@@\n-old\n+new\n"
     )
+    artifact = _make_skill_input_artifact(patch)
+    assert parse_test_targets(artifact) == ["git checkout HEAD -- tests/test_x.py"]
 
 
 # ── (d) sanitizer: Priority 1 — workspace _input_raw path ───────────────────
@@ -342,4 +422,67 @@ def test_sanitizer_workspace_wins_over_null_artifact_test_patch() -> None:
     assert result == real_patch, (
         "Workspace _input_raw must win over null test_patch in artifact. "
         f"Expected workspace value: {real_patch!r}, got: {result!r}"
+    )
+
+
+# ── (h) #1115 Stage 0: OS-inject round-trip through the real preprocessor ────
+
+
+def test_preprocessor_injects_skill_input_and_strips_it(tmp_path: Path) -> None:
+    """Tier 2: E2E — OS-injected _skill_input drives the deterministic read.
+
+    Runs the real verify-phase preprocessor (real Workspace + real skill loaded
+    from disk + real safe-mode python subprocess) with the entry test_patch
+    supplied ONLY via ``skill_input`` (= what the OS holds at
+    ``run_state.skill_input``), NOT in the phase input artifact's data.
+
+    Asserts the full #1115 Stage 0 contract:
+      - ``data.test_patch`` is populated from ``_skill_input`` (the OS injected
+        it at the top-level binding → sanitize_test_patch read it).
+      - ``_skill_input`` is stripped from the enriched artifact (no leak into
+        the LLM-facing frame / stored artifact).
+    """
+    from reyn.compiler.loader import load_dsl_skill
+    from reyn.events.events import EventLog
+    from reyn.kernel.preprocessor_executor import PreprocessorExecutor
+    from reyn.workspace.workspace import Workspace
+
+    skill = load_dsl_skill(_SKILL_ROOT / "skill.md")
+    verify_phase = skill.phases["verify"]
+    events = EventLog()
+    ws = Workspace(events=events, base_dir=tmp_path)
+    executor = PreprocessorExecutor(
+        skill=skill,
+        workspace=ws,
+        model="standard",
+        events=events,
+        subscribers=[],
+        resolver=None,
+        permission_resolver=None,
+    )
+
+    patch = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-old\n+new\n"
+    # Phase input carries NO test_patch; the entry input does (OS-held).
+    artifact = {
+        "type": "apply_state",
+        "data": {"instance_id": "i", "files_edited": ["x"], "attempt": 1},
+    }
+    skill_input = {
+        "type": "swe_bench_input",
+        "data": {"instance_id": "i", "test_patch": patch},
+    }
+
+    enriched, _usage = asyncio.run(
+        executor.run(
+            verify_phase, artifact, output_language=None, skill_input=skill_input,
+        )
+    )
+
+    assert enriched["data"].get("test_patch") == patch, (
+        "data.test_patch must be derived from the OS-injected _skill_input "
+        f"(got {enriched['data'].get('test_patch')!r})"
+    )
+    assert "_skill_input" not in enriched, (
+        "_skill_input must be stripped from the enriched artifact so it does "
+        "not leak into the LLM frame or the stored artifact"
     )

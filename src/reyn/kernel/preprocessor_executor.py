@@ -172,12 +172,28 @@ class PreprocessorExecutor:
 
     async def run(
         self, phase: "Phase", artifact: dict, output_language: str | None,
+        skill_input: dict | None = None,
     ) -> tuple[dict, TokenUsage]:
-        """Apply all preprocessor steps; return (enriched_artifact, accumulated_token_usage)."""
+        """Apply all preprocessor steps; return (enriched_artifact, accumulated_token_usage).
+
+        FP-0008 #1115 Stage 0: when ``skill_input`` (the skill's entry-phase
+        input artifact, held by the OS at ``run_state.skill_input``) is supplied,
+        it is injected at the reserved OS key ``_skill_input`` for the duration
+        of the preprocessor chain, then stripped before the enriched artifact is
+        returned. This gives deterministic preprocessor steps an OS-served,
+        P5-correct view of the entry input (= never LLM-mutated) without a
+        workspace ``file.read`` of a base_dir-coupled artifact path. The key is
+        generic — every skill has an entry input — so it is P7-clean, analogous
+        to the ``_iter`` binding injected by ``_apply_iterate``. Stripping on
+        return keeps it out of the LLM-facing frame and the stored
+        ``*_preprocessed`` artifact (no bloat for skills that don't consume it).
+        """
         if not phase.preprocessor:
             return artifact, TokenUsage()
 
         result = copy.deepcopy(artifact)
+        if skill_input is not None:
+            result["_skill_input"] = copy.deepcopy(skill_input)
         total_usage = TokenUsage()
 
         for i, step in enumerate(phase.preprocessor):
@@ -210,6 +226,10 @@ class PreprocessorExecutor:
                 phase=phase.name, step_index=i, step_type=step.type,
             )
 
+        # FP-0008 #1115 Stage 0: strip the OS-injected entry-input binding so it
+        # never leaks into the LLM-facing frame or the stored artifact. Steps
+        # that needed it have already derived their values into `data.*`.
+        result.pop("_skill_input", None)
         return result, total_usage
 
     # ── Step dispatch ─────────────────────────────────────────────────────────

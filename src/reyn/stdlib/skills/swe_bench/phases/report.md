@@ -14,17 +14,11 @@ preprocessor:
   # this guard ensures the report diff is clean even if verify's revert ran
   # against a different working-tree state or was skipped.
   #
-  # Step 1: read the original swe_bench_input artifact from the workspace to
-  # obtain test_patch (same path as verify.md Step 1).
-  - type: run_op
-    op:
-      kind: file
-      op: read
-      path: ".reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json"
-    into: data._input_raw
-    on_error: empty
-  # Step 2: parse test_patch → list of git checkout command strings.
-  # The function returns [] gracefully on absent/empty test_patch.
+  # #1115 Stage 0: parse_test_targets obtains test_patch from the OS-injected
+  # `_skill_input` (the original swe_bench_input entry artifact), same as
+  # verify.md. The prior `.reyn/artifacts/...` file.read step was removed —
+  # that base_dir-coupled magic path breaks once the repo FS routes through a
+  # backend; the OS-held entry input is the deterministic P5 source.
   - type: python
     module: ./parse_test_targets.py
     function: parse_test_targets

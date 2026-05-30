@@ -427,6 +427,19 @@ class OSRuntime:
             / "control_ir_offload"
             / (self.run_id or "_default")
         )
+        # FP-0008 #1115 Stage 0: store_artifact returns a state_dir-relative
+        # handle (decoupled from base_dir). The LLM-facing artifact_ref produced
+        # by maybe_ref_artifact needs a path the file op can resolve, so the OS
+        # resolves the handle to an absolute path here — consistent with the C5
+        # control_ir offload refs, which are also absolute and pass the workspace
+        # read check (under base_dir in the co-located default). Stage 2
+        # (container backend) swaps this resolution for a container-served read
+        # without touching skills.
+        resolved_artifact_path = (
+            str(self.workspace.resolve_artifact_handle(artifact_path))
+            if artifact_path is not None
+            else None
+        )
         return build_frame(
             phase_name=current_phase,
             phase=phase_def,
@@ -443,7 +456,7 @@ class OSRuntime:
             model_resolved=self._resolver.resolve(effective_model).model,
             events=self.events,
             control_ir_results=control_ir_results,
-            artifact_path=artifact_path,
+            artifact_path=resolved_artifact_path,
             remaining_act_turns=remaining_act_turns,
             offload_dir=offload_dir,
         )

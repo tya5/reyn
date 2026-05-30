@@ -3,29 +3,27 @@
 FP-0008 PR-N15 (= workspace passthrough) + PR-O v8 (= line-ending / BOM /
 trailing-newline normalization).
 
-## Workspace-passthrough design (PR-N15)
+## Deterministic entry-input passthrough (PR-N15 + #1115 Stage 0)
 
-The verify phase preprocessor runs this function AFTER a ``run_op: file.read``
-step that reads the original ``swe_bench_input`` artifact from the workspace:
+The OS injects the skill's original entry artifact (the ``swe_bench_input``)
+at the reserved top-level ``_skill_input`` binding before the verify
+preprocessor runs.  This function reads ``test_patch`` from
+``_skill_input.data.test_patch`` and sanitizes it.  The apply-phase LLM no
+longer echoes ``test_patch`` — the OS-held entry input is the deterministic
+source (P5: Workspace is the single source of truth) and is never LLM-mutated.
 
-    ``.reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json``
-
-The read result lands at ``data._input_raw`` (inside the full artifact dict)
-as::
-
-    {"status": "ok", "content": "<JSON string>", ...}
-
-This function reads ``test_patch`` from that JSON string, parses it, and
-sanitizes it.  The apply-phase LLM no longer echoes ``test_patch`` — the
-workspace file is the deterministic source (P5: Workspace is the single
-source of truth).
+#1115 Stage 0 removed the prior ``run_op: file.read`` of
+``.reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json`` — that magic path
+coupled the read to ``base_dir``, which breaks once the repo filesystem routes
+through a backend.  The ``_skill_input`` binding is base_dir-independent.
 
 ## Fallback
 
-When ``data._input_raw`` is absent or its ``content`` is not valid JSON (e.g.
-in unit tests that inject the verify phase input directly), the function
-falls back to reading ``test_patch`` from the artifact in two structural
-shapes:
+When ``_skill_input`` is absent, the function falls back to the legacy
+``data._input_raw`` shape (a ``run_op: file.read`` result —
+``{"status": "ok", "content": "<JSON string>", ...}`` — retained for unit
+tests that inject it), then to reading ``test_patch`` from the artifact in two
+structural shapes:
 
 - **Full artifact** (runtime shape):
   ``{"type": "...", "data": {"test_patch": "..."}}``
@@ -58,11 +56,14 @@ from typing import Any, Mapping
 def sanitize_test_patch(data: Mapping[str, Any]) -> str:
     """Return a normalized ``test_patch`` string.
 
-    Source priority (P5 workspace passthrough):
+    Source priority (P5 deterministic entry-input passthrough):
+      0. ``_skill_input.data.test_patch`` — the OS-injected original entry
+         artifact (#1115 Stage 0), placed at the top-level ``_skill_input``
+         binding before the preprocessor runs.  Deterministic, never
+         LLM-mutated; replaces the prior base_dir-coupled file.read.
       1. ``data._input_raw.content`` (via artifact's data dict) — JSON of the
-         original swe_bench_input artifact, injected by the preceding
-         ``run_op: file.read`` step.  Parsed to extract ``test_patch`` from
-         the artifact's ``data`` field.
+         original swe_bench_input artifact, from a ``run_op: file.read`` step.
+         Retained for back-compat with unit tests injecting ``_input_raw``.
       2. ``data.test_patch`` from the artifact's ``data`` dict (full runtime
          artifact shape: ``{"type": "...", "data": {"test_patch": "..."}}``)
       3. Top-level ``test_patch`` on the passed-in dict (flat unit-test shape:
@@ -82,11 +83,26 @@ def sanitize_test_patch(data: Mapping[str, Any]) -> str:
     # Extract the inner data dict from the full artifact (runtime shape).
     inner_data: Any = data.get("data") or {}
 
-    # Priority 1: workspace passthrough — run_op file.read result
-    # The preceding run_op step reads the workspace _input artifact and places
-    # its result at data._input_raw. The result shape is:
+    # Priority 0 (#1115 Stage 0): OS-injected entry input. The OS places the
+    # skill's original entry artifact at the top-level `_skill_input` binding
+    # (sibling of `data`) before the preprocessor runs. Shape:
+    # {"type": "swe_bench_input", "data": {"test_patch": "..."}}. This is the
+    # deterministic P5 source — never LLM-mutated — replacing the prior
+    # `.reyn/artifacts/...` file.read (which coupled the read to base_dir).
+    skill_input = data.get("_skill_input")
+    if isinstance(skill_input, dict):
+        si_data = skill_input.get("data")
+        if isinstance(si_data, dict):
+            raw = si_data.get("test_patch")
+
+    # Priority 1 (back-compat): workspace passthrough — run_op file.read result.
+    # Retained so unit tests that inject `data._input_raw` directly still work.
+    # The result shape is:
     # {"status": "ok", "content": "<JSON of swe_bench_input artifact>", ...}
-    input_raw = inner_data.get("_input_raw") if isinstance(inner_data, dict) else None
+    if not isinstance(raw, str) or not raw:
+        input_raw = inner_data.get("_input_raw") if isinstance(inner_data, dict) else None
+    else:
+        input_raw = None
     if isinstance(input_raw, dict):
         content = input_raw.get("content")
         if isinstance(content, str) and content.strip():
