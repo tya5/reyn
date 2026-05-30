@@ -11,10 +11,6 @@ max_act_turns: 15
 Produce a concrete edit plan: a list of files to change and a description of
 what to change in each, sufficient for the apply phase to implement the fix.
 
-**Plan SOURCE files only.** The SWE-bench harness owns the test files via its
-own test patch — any edits the apply phase makes to test files are reverted
-before verification and will not count. Do not include test files in the plan.
-
 ## Context
 
 The input is either:

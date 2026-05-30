@@ -10,11 +10,6 @@ max_act_turns: 30
 
 Implement the edit plan by modifying the repository files.
 
-**Edit SOURCE files only.** The SWE-bench harness owns the test files via
-its own test patch — any edits you make to test files are automatically
-reverted before verification and will NOT count toward the solution. If the
-plan lists a test file, skip it.
-
 ## Step 1 — Read each file before editing
 
 For every file listed in the plan's edits, issue a file read op to retrieve
