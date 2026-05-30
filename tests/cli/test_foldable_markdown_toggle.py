@@ -8,7 +8,7 @@ Tests pin the contract introduced by the B3 toggle refactor:
   - ConversationView mounts FoldableMarkdown for long replies.
   - toggle_last_foldable() toggles latest widget, returns True.
   - toggle_last_foldable() with no foldables returns False.
-  - on_click triggers toggle.
+  - clicking hint bar (Label.fm-hint) triggers toggle; body click does not.
   - /expand slash path (= _on_expand_last_reply) calls toggle_last_foldable().
 """
 from __future__ import annotations
@@ -220,11 +220,18 @@ async def test_toggle_last_foldable_returns_false_when_none() -> None:
         assert result is False, "returns False when no foldables"
 
 
-# ── 8. on_click triggers toggle ──────────────────────────────────────────────
+# ── 8. hint-bar click triggers toggle; body click does not ───────────────────
 
 @pytest.mark.asyncio
-async def test_foldable_on_click_triggers_toggle() -> None:
-    """Tier 2: clicking FoldableMarkdown toggles is_expanded state."""
+async def test_foldable_hint_click_triggers_toggle() -> None:
+    """Tier 2: clicking the fm-hint Label toggles is_expanded (C4 scoped click).
+
+    Exercises the full Textual pilot.click path so event.widget routing
+    is exercised: clicking the hint bar expands/collapses; clicking the
+    body Static leaves the state unchanged.
+    """
+    from textual.widgets import Label, Static
+
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
     from reyn.chat.tui.widgets.foldable_markdown import FoldableMarkdown
@@ -237,16 +244,24 @@ async def test_foldable_on_click_triggers_toggle() -> None:
         await pilot.pause()
 
         fm = list(conv.query(FoldableMarkdown))[-1]
+        hint = fm.query_one(".fm-hint", Label)
+        body = fm.query_one(".fm-body", Static)
         assert not fm.is_expanded()
 
-        # Simulate click event
-        fm.on_click()
+        # Click hint bar → expands
+        await pilot.click(hint)
         await pilot.pause()
-        assert fm.is_expanded(), "on_click() should expand the widget"
+        assert fm.is_expanded(), "clicking hint bar should expand the widget"
 
-        fm.on_click()
+        # Click hint bar again → collapses
+        await pilot.click(hint)
         await pilot.pause()
-        assert not fm.is_expanded(), "second on_click() should collapse"
+        assert not fm.is_expanded(), "second hint click should collapse"
+
+        # Click the body Static → state unchanged (body click does not toggle)
+        await pilot.click(body)
+        await pilot.pause()
+        assert not fm.is_expanded(), "clicking body should NOT toggle expanded state"
 
 
 # ── 9. /expand path calls toggle_last_foldable ───────────────────────────────

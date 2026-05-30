@@ -4,13 +4,14 @@ Collapsed (default): renders the preview (first N rendered lines) and a
 dim "▶ N more lines · click or F8 / /expand to show" hint footer.
 Expanded: renders full Markdown and a dim "▼ collapse" footer.
 
-Toggle via on_click, the public toggle() method, or external lookup
-(= ConversationView.toggle_last_foldable()).
+Toggle via clicking the hint bar, the public toggle() method, or external
+lookup (= ConversationView.toggle_last_foldable()).
 """
 from __future__ import annotations
 
 from rich.markdown import Markdown as RichMarkdown
 from rich.padding import Padding
+from textual import events
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label, Static
@@ -27,8 +28,8 @@ class FoldableMarkdown(Widget):
     dim "▶ N more lines · click or F8 / /expand to show" hint footer.
     Expanded: renders full Markdown + a dim "▼ collapse" footer.
 
-    Toggle via on_click, public toggle() method, or external lookup
-    (= ConversationView.toggle_last_foldable()).
+    Toggle via clicking the hint bar, public toggle() method, or external
+    lookup (= ConversationView.toggle_last_foldable()).
     """
 
     DEFAULT_CSS = f"""
@@ -40,7 +41,7 @@ class FoldableMarkdown(Widget):
         color: #cc9955;
     }}
     FoldableMarkdown Label.fm-hint {{
-        color: #886633;
+        color: {_CORAL};
         height: 1;
         padding: 0 {_BODY_INDENT_COLS};
     }}
@@ -86,9 +87,21 @@ class FoldableMarkdown(Widget):
         self._expanded = not self._expanded
         self._refresh_display()
 
-    def on_click(self) -> None:
-        """Mouse click toggles expanded state."""
-        self.toggle()
+    def on_click(self, event: events.Click) -> None:
+        """Toggle only when the hint bar (Label.fm-hint) is clicked.
+
+        Clicks on the Markdown body (code blocks, URLs) are silently
+        ignored so they don't unexpectedly collapse/expand the widget.
+        ``event.stop()`` prevents the click from bubbling to parent
+        scroll handlers once a toggle fires.
+        """
+        try:
+            hint = self.query_one(".fm-hint", Label)
+        except Exception:
+            return
+        if event.widget is hint:
+            event.stop()
+            self.toggle()
 
     def is_expanded(self) -> bool:
         """Return True when the widget is currently in expanded state."""
