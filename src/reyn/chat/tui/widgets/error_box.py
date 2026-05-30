@@ -22,6 +22,18 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label, Static
 
+from reyn.chat.tui._palette import (
+    _SEV_HIGH,
+    _SEV_HIGH_HOVER,
+    _SEV_MED,
+    _SEV_MED_HOVER,
+    _TEXT_BODY,
+    _TEXT_DIM,
+    _TEXT_MID,
+    _TEXT_MUTED,
+    _TEXT_NEUTRAL,
+)
+
 
 class ErrorBox(Widget):
     """Collapsible single-line error indicator.
@@ -37,66 +49,66 @@ class ErrorBox(Widget):
         id:            Optional Textual widget ID.
     """
 
-    DEFAULT_CSS = """
-    ErrorBox {
+    DEFAULT_CSS = f"""
+    ErrorBox {{
         height: auto;
         margin: 0;
         padding: 0;
-        /* Left bar — a non-color channel for "this is an error". Color alone
-           (``#cc5555`` on a dark pane, ~3.5:1 contrast vs the surroundings)
-           is right at the WCAG AA threshold for large text and below for
-           small text. The vertical bar gives the eye a shape / position
-           cue that survives quick scrolling and color-blind users. */
-        border-left: solid #cc5555;  /* palette-candidate: error-high severity ramp (distinct from _STATUS_ERROR) */
-    }
+        /* Left bar — a non-color channel for "this is an error". The severity
+           red alone (~3.5:1 contrast vs the surroundings) is right at the WCAG
+           AA threshold for large text and below for small text. The vertical
+           bar gives the eye a shape / position cue that survives quick
+           scrolling and color-blind users. */
+        border-left: solid {_SEV_HIGH};
+    }}
     /* W13 A#3: severity-tier border-left overrides (3 colors).
-       HIGH (default / ``.-sev-high``) keeps the existing #cc5555 red —
+       HIGH (default / ``.-sev-high``) keeps the existing red —
        no change to existing rendering when severity is omitted.
        MED  (``.-sev-med``) → amber to signal recoverable / transient.
        LOW  (``.-sev-low``) → grey to signal user-input mistake. */
-    ErrorBox.-sev-med {
-        border-left: solid #cc9955;  /* palette-candidate: error-med severity ramp */
-    }
-    ErrorBox.-sev-low {
-        border-left: solid #666666;  /* palette-candidate: error-low severity ramp */
-    }
+    ErrorBox.-sev-med {{
+        border-left: solid {_SEV_MED};
+    }}
+    ErrorBox.-sev-low {{
+        border-left: solid {_TEXT_NEUTRAL};
+    }}
     /* Header line — always visible */
-    ErrorBox Label.eb-header {
-        color: #cc5555;  /* palette-candidate: error-high severity ramp */
+    ErrorBox Label.eb-header {{
+        color: {_SEV_HIGH};
         height: 1;
         width: 1fr;
         padding: 0 1;
-    }
-    ErrorBox.-sev-med Label.eb-header {
-        color: #cc9955;  /* palette-candidate: error-med severity ramp */
-    }
-    ErrorBox.-sev-low Label.eb-header {
-        color: #888888;  /* _TEXT_MUTED (CSS string — cannot use Python variable) */
-    }
-    ErrorBox:hover Label.eb-header {
-        color: #ff7777;  /* palette-candidate: error-high hover (lighter sibling of #cc5555) */
-    }
-    ErrorBox.-sev-med:hover Label.eb-header {
-        color: #ffbb77;  /* palette-candidate: error-med hover */
-    }
-    ErrorBox.-sev-low:hover Label.eb-header {
-        color: #aaaaaa;  /* _TEXT_BODY (CSS string — cannot use Python variable) */
-    }
+    }}
+    ErrorBox.-sev-med Label.eb-header {{
+        color: {_SEV_MED};
+    }}
+    ErrorBox.-sev-low Label.eb-header {{
+        color: {_TEXT_MUTED};
+    }}
+    ErrorBox:hover Label.eb-header {{
+        color: {_SEV_HIGH_HOVER};
+    }}
+    ErrorBox.-sev-med:hover Label.eb-header {{
+        color: {_SEV_MED_HOVER};
+    }}
+    ErrorBox.-sev-low:hover Label.eb-header {{
+        color: {_TEXT_BODY};
+    }}
     /* Detail block — hidden until expanded */
-    ErrorBox Static.eb-details {
+    ErrorBox Static.eb-details {{
         display: none;
-        color: #777777;  /* palette-candidate: error-detail body (between _TEXT_NEUTRAL and _TEXT_MUTED) */
+        color: {_TEXT_MID};
         height: auto;
         width: 1fr;
         padding: 0 2;
-    }
-    ErrorBox Label.eb-hint {
+    }}
+    ErrorBox Label.eb-hint {{
         display: none;
-        color: #555555;  /* _TEXT_DIM (CSS string — cannot use Python variable) */
+        color: {_TEXT_DIM};
         height: 1;
         width: 1fr;
         padding: 0 2;
-    }
+    }}
     /* Inline recovery hint extracted from the message. Default
        `display: none` (= matches `.eb-hint` symmetry, wave-10
        follow-up I-F12) so an accidentally-yielded empty hint
@@ -105,23 +117,23 @@ class ErrorBox(Widget):
        contract is "the Label was created WITH content, not just
        attached to the DOM". Distinct color from `.eb-hint` so it
        reads as actionable, not just metadata. */
-    ErrorBox Label.eb-inline-hint {
+    ErrorBox Label.eb-inline-hint {{
         display: none;
         color: #8a7a4a;  /* palette-candidate: inline-hint actionable (distinct from metadata) */
         height: 1;
         width: 1fr;
         padding: 0 2;
-    }
-    ErrorBox Label.eb-inline-hint.-has-content {
+    }}
+    ErrorBox Label.eb-inline-hint.-has-content {{
         display: block;
-    }
+    }}
     /* Expanded state — reveal details */
-    ErrorBox.-expanded Static.eb-details {
+    ErrorBox.-expanded Static.eb-details {{
         display: block;
-    }
-    ErrorBox.-expanded Label.eb-hint {
+    }}
+    ErrorBox.-expanded Label.eb-hint {{
         display: block;
-    }
+    }}
     """
 
     def __init__(

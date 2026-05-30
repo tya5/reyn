@@ -73,9 +73,17 @@ _GREEN_DIMMEST = "#335544"       # context_built (very dim green)
 # across header (cap≥0.75, pending, transcribing), streaming_row / tool_call_row /
 # async_stack_panel / skill_activity (elapsed-time stall). Distinct from the event
 # ambers (_EVENT_LLM / _EVENT_INTERVENTION / _EVENT_PLAN*) which name event categories.
-# (ErrorBox's own severity ramp — #cc5555/#cc9955 etc. — is a separate follow-up:
-# it lives in DEFAULT_CSS strings + needs an f-string conversion to consume tokens.)
+# (ErrorBox's own severity ramp is the _SEV_* family below — a separate concept.)
 _STATUS_WARN = "#ffaa44"
+
+# ErrorBox severity ramp (W13 3-tier border + header). HIGH/MED carry distinct
+# rest + hover shades; LOW reuses the neutral text ramp (no dedicated token).
+# This is the ErrorBox card's own severity system — distinct from _STATUS_ERROR
+# (event-failure colour); the two reds name different concepts.
+_SEV_HIGH = "#cc5555"            # high severity (rest)
+_SEV_MED = "#cc9955"             # medium severity (rest)
+_SEV_HIGH_HOVER = "#ff7777"      # high severity (hover — lighter sibling of _SEV_HIGH)
+_SEV_MED_HOVER = "#ffbb77"       # medium severity (hover)
 
 __all__ = [
     "_CORAL",
@@ -105,4 +113,8 @@ __all__ = [
     "_EVENT_PLAN_STEP",
     "_EVENT_PLAN_MEMO",
     "_GREEN_DIMMEST",
+    "_SEV_HIGH",
+    "_SEV_MED",
+    "_SEV_HIGH_HOVER",
+    "_SEV_MED_HOVER",
 ]
