@@ -1,4 +1,4 @@
-"""Tier 2: control_ir_results per-result offload invariants (C5 — FP-0008, v9-IN).
+"""Tier 2: control_ir_results per-result offload invariants (C5 — FP-0008, v9-IN + Phase 1 migration).
 
 When a single control_ir_result's JSON serialisation exceeds
 MAX_CONTROL_IR_RESULT_INLINE_BYTES (~8KB), the OS offloads the full content
@@ -27,6 +27,11 @@ C5-completeness additions (v9-IN):
 12. build_frame integration with list-bulk: multi-MB list result → bound holds via
     the real build_frame path.
 
+Phase 1 migration additions:
+13. Offloaded result now carries ``_offload_content_hash`` (new: Phase 1 common core wires content hash).
+14. Content hash read-back: read_offloaded(path_ref, content_hash=hash) == original full result.
+15. build_frame list-bulk: inline ≤ MAX_OFFLOADED_INLINE_BYTES + content_hash present (integration via real build_frame).
+
 Policy compliance:
 - No unittest.mock / MagicMock / AsyncMock / patch.
 - No private-state assertions.
@@ -50,6 +55,7 @@ from reyn.context_builder import (
 from reyn.events.events import EventLog
 from reyn.kernel.runtime import OSRuntime
 from reyn.schemas.models import Phase, Skill, SkillGraph
+from reyn.services.offload.store import read_offloaded
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -594,4 +600,121 @@ def test_build_frame_list_bulk_control_ir_result_bounded(tmp_path: Path) -> None
     stored = json.loads(Path(ref_path).read_text(encoding="utf-8"))
     assert stored == big_list_result, (
         "build_frame ref file must contain the full original list-bulk result"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 migration: content_hash present in offloaded inline
+# ---------------------------------------------------------------------------
+
+
+def test_offloaded_result_carries_content_hash(tmp_path: Path) -> None:
+    """Tier 2: Phase 1 — offloaded inline now carries _offload_content_hash.
+
+    After the common-core migration, every offloaded result must include
+    ``_offload_content_hash`` in the inline dict so callers can verify
+    integrity via read_offloaded(path_ref, content_hash=...).
+    """
+    result = _make_big_result(200_000)
+    offload_dir = tmp_path / "offload"
+    inline = offload_control_ir_result(result, 0, offload_dir)
+
+    assert "_offload_content_hash" in inline, (
+        "Phase 1: offloaded inline must carry _offload_content_hash key"
+    )
+    content_hash = inline["_offload_content_hash"]
+    assert content_hash.startswith("sha256:"), (
+        f"content_hash must start with 'sha256:', got {content_hash!r}"
+    )
+
+
+def test_offloaded_content_hash_read_back_matches_original(tmp_path: Path) -> None:
+    """Tier 2: Phase 1 — content_hash from inline enables verified read-back == original.
+
+    Using the content_hash from the inline, read_offloaded must return the
+    full original result without raising, and the parsed result must equal
+    the original dict.
+    """
+    original_content = "E" * 200_000
+    result = {"kind": "file.read", "status": "ok", "content": original_content}
+    offload_dir = tmp_path / "offload"
+    inline = offload_control_ir_result(result, 0, offload_dir)
+
+    ref_path = inline["_offload_ref"]
+    content_hash = inline["_offload_content_hash"]
+
+    # Verified read-back using the hash from the inline
+    raw, found = read_offloaded(ref_path, base_dir=offload_dir, content_hash=content_hash)
+    assert found is True, "read_offloaded must find the offloaded file"
+    stored = json.loads(raw)
+    assert stored == result, (
+        "Verified read-back via content_hash must yield the full original result"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 migration: build_frame list-bulk — inline bounded + content_hash present
+# ---------------------------------------------------------------------------
+
+
+def test_build_frame_list_bulk_bounded_and_content_hash_present(tmp_path: Path) -> None:
+    """Tier 2: Phase 1 — build_frame list-bulk: inline ≤ MAX_OFFLOADED_INLINE_BYTES + hash present.
+
+    Integration path via real build_frame (OSRuntime): list-bulk result must
+    produce a bounded inline AND the inline must carry _offload_content_hash
+    so callers can do verified read-back.
+
+    This is the integration-path guard for Phase 1 migration: both C5-completeness
+    (the bound invariant) and the new content_hash addition must hold simultaneously.
+    """
+    pytest.importorskip("litellm")
+
+    import os
+    os.chdir(tmp_path)
+
+    rt = OSRuntime(
+        _one_phase_skill(),
+        model="stub/model",
+        run_id="list_bulk_hash_integration_test",
+        workspace_base_dir=tmp_path,
+    )
+
+    big_list_result = {
+        "kind": "file",
+        "op": "grep",
+        "status": "ok",
+        "matches": [{"path": f"p{i}", "line": "x" * 200} for i in range(20_000)],
+    }
+
+    frame = rt.build_frame(
+        "draft",
+        {"type": "input", "data": {}},
+        [],
+        "en",
+        control_ir_results=[big_list_result],
+    )
+
+    (inline,) = frame.control_ir_results
+    inline_size = len(json.dumps(inline, ensure_ascii=False))
+
+    # C5-completeness invariant still holds
+    assert inline_size <= MAX_OFFLOADED_INLINE_BYTES, (
+        f"build_frame list-bulk inline_size={inline_size:,} exceeds "
+        f"MAX_OFFLOADED_INLINE_BYTES={MAX_OFFLOADED_INLINE_BYTES:,}"
+    )
+
+    # Phase 1: content_hash is present
+    assert "_offload_content_hash" in inline, (
+        "Phase 1: build_frame offloaded inline must carry _offload_content_hash"
+    )
+
+    # Verified read-back == original
+    ref_path = inline["_offload_ref"]
+    content_hash = inline["_offload_content_hash"]
+    # offload_dir is inside tmp_path; use tmp_path as base_dir for boundary check
+    raw, found = read_offloaded(ref_path, base_dir=tmp_path, content_hash=content_hash)
+    assert found is True
+    stored = json.loads(raw)
+    assert stored == big_list_result, (
+        "Phase 1: verified read-back via build_frame content_hash must yield full original"
     )
