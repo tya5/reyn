@@ -51,7 +51,7 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 |---|---|---|
 | `skill` | Project / stdlib skills | run the skill with `input` artifact |
 | `agent.peer` | Peer agents in the topology | delegate a message to that peer |
-| `mcp` | MCP server management + tool dispatch (issue #879) | six verb_object actions — see below |
+| `mcp` | MCP server management + tool dispatch | six verb_object actions — see below |
 | `file` | Workspace file ops | read / write / delete / list |
 | `web` | Web search + fetch | search or fetch |
 | `memory.entry` | Persistent memory records | read the entry's body |
@@ -61,9 +61,7 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 | `rag.operation` | RAG management ops | multi-source recall / drop source |
 | `exec` | Sandboxed argv execution | run argv under the sandbox backend |
 
-Issue #879 collapsed the previous `mcp.server` / `mcp.tool` /
-`mcp.operation` sub-categories into a single `mcp` category whose six
-verb_object actions cover the LLM-visible surface:
+The `mcp` category provides six verb_object actions that cover the LLM-visible surface:
 
 | Action | Purpose |
 |---|---|
@@ -124,7 +122,7 @@ middle), you'll need either:
     Reyn default), OR
   - migrate qualified names to use `_` everywhere (= breaking change
     across catalog enumerators / dispatch tables / hot-list / fixtures /
-    scenarios; tracked at FP-0034 §D18 / #54 should it become real).
+    scenarios; tracked at FP-0034 §D18 should it become real).
 
 The migration is out of scope today because no direct-OpenAI-native
 path exists in the Reyn project and the LiteLLM proxy is the canonical
@@ -173,9 +171,7 @@ resource runs the *canonical default operation* for that kind:
 | `memory.entry` | read the body |
 | `rag.corpus` | single-source recall |
 
-Issue #879 removed the previous `mcp.server` / `mcp.tool` resource
-entries; per-MCP-server / per-MCP-tool dispatch now flows through the
-verb actions in the `mcp` category (= `mcp__list_tools` →
+The previous `mcp.server` / `mcp.tool` resource entries are removed; per-MCP-server / per-MCP-tool dispatch now flows through the verb actions in the `mcp` category (= `mcp__list_tools` →
 `mcp__call_tool({tool: "<server>__<tool>", args})`).
 
 This means an LLM can say `invoke_action("rag.corpus__meetings",
@@ -277,7 +273,7 @@ action_retrieval:
 
 ## `embedding_class` default + graceful degrade (FP-0043 Phase 4)
 
-Since **FP-0043 Phase 4 (2026-05-27)**,
+Since **FP-0043 Phase 4**,
 `ActionRetrievalConfig.embedding_class` defaults to `"local-mini"`
 (= `sentence-transformers/all-MiniLM-L6-v2`). This makes
 `search_actions` automatically available for any fresh installation
@@ -313,7 +309,7 @@ deferred:
 **Landed post-1.0:**
 
 - **`search_actions`** — semantic, embedding-backed search **shipped
-  in FP-0043 (2026-05)**. `ActionEmbeddingIndex` (= SQLite-WAL
+  in FP-0043**. `ActionEmbeddingIndex` (= SQLite-WAL
   persistence + class-swap detection + cross-process build lock)
   backs the handler; visibility is gated by §D14 (= tool appears only
   once the index has built ≥1 vector). When the gate fails, the

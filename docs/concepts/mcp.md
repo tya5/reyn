@@ -56,7 +56,7 @@ For the full `reyn mcp` CLI reference, see [Reference: `reyn mcp`](../reference/
 
 ## Quick start: try MCP from `reyn chat` (manual config path)
 
-If you prefer to configure a server manually (or are adding a server not in the public registry), add it directly to `reyn.yaml`. `reyn chat` exposes verb actions under the `mcp` category (issue #879 collapsed the previous `mcp.server` / `mcp.tool` / `mcp.operation` sub-categories; the 2026-05-25 install 3-verb split further separates install paths along the source axis):
+If you prefer to configure a server manually (or are adding a server not in the public registry), add it directly to `reyn.yaml`. `reyn chat` exposes verb actions under the `mcp` category:
 
 | Action | What it does |
 |------|--------------|
@@ -169,7 +169,7 @@ MCP operations are gated at two points:
 
 ### Install-time gate: `file.write` + `http.get`
 
-Before any MCP server can be added to the configuration, the install op's writes go through the OS's standard list-axis gates. The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed in the #571 collapse arc (Phase 5, 2026-05-23) — install gating now flows through:
+Before any MCP server can be added to the configuration, the install op's writes go through the OS's standard list-axis gates. The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed in the collapse arc — install gating now flows through:
 
 - `file.write` on `.reyn/mcp.yaml` (= the canonical mutation target). `startup_guard` prompts the operator once per skill+path; runtime is silent after approval.
 - `http.get` on `registry.modelcontextprotocol.io` (= the registry fetch). Same prompt model.

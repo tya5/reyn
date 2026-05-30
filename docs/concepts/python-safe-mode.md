@@ -224,7 +224,7 @@ and enforced by `tests/test_fp0042_stdlib_safe_only.py`:
 
 ### No grandfathered exemptions
 
-Post-FP-0042 Phase 2.8 (2026-05-23) the `GRANDFATHERED_UNSAFE` set is
+After FP-0042, the `GRANDFATHERED_UNSAFE` set is
 **empty** — stdlib has zero `mode: unsafe` python steps. The last
 holdout (`index_docs.apply_strategy`, a deprecated monolithic compat
 path) was retired in that phase; its surveyed project-override

@@ -55,7 +55,7 @@ a run context (e.g. `chat_started`).
 
 ### Events with audit fields (FP-0021)
 
-FP-0021 has landed.  Eight event kinds are now required to carry specific
+Eight event kinds are now required to carry specific
 audit fields in their `data` dict.  The authoritative registry lives in
 `src/reyn/events/event_schema.py` (`EVENT_AUDIT_REQUIREMENTS`).  A Tier 2
 invariant test (`tests/test_event_audit_invariants.py`) verifies that each
