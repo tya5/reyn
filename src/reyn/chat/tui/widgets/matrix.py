@@ -1,11 +1,17 @@
 """MatrixScreen — easter egg invoked via the hidden `/matrix` slash command.
 
-Cascading green katakana / ASCII rain à la 1999 Wachowski. Press any key
-(or click) to dismiss and return to the chat.
+Cascading green ASCII rain à la 1999 Wachowski. Press any key (or click)
+to dismiss and return to the chat.
 
 Performance note: re-renders the whole grid each tick (~14 fps). Cheap
 enough for typical terminal sizes; not optimised because it's an easter
 egg, not a production widget.
+
+Note: katakana characters (East Asian Wide, cell_len == 2) were removed from
+_CHARS.  Each render column is allocated exactly one terminal cell; emitting
+a double-width glyph overwrites the adjacent column's cell and produces a
+visual smear on most terminals.  The ASCII/symbol set preserves the green-
+rain aesthetic with no cell-width mismatch.
 """
 from __future__ import annotations
 
@@ -16,12 +22,8 @@ from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-_KATAKANA = (
-    "アイウエオカキクケコサシスセソタチツテトナニヌネノ"
-    "ハヒフヘホマミムメモヤユヨラリルレロワヲン"
-)
 _SYMBOLS = "01:.\"=*+-<>?|/\\~$#@&"
-_CHARS = _KATAKANA + _SYMBOLS
+_CHARS = _SYMBOLS
 
 
 class _Column:
