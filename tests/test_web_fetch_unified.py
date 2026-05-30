@@ -497,9 +497,17 @@ def test_phase_dispatch_without_op_context_falls_back_to_minimal(
 ) -> None:
     """Tier 2: When ``phase_state`` lacks an ``op_context`` (= narrow test
     sites, future surfaces), the handler still falls back to building a
-    minimal OpContext. Only ``intervention_bus`` is None on that fallback
-    path — which is fine because the handler raises the explicit
-    "requires intervention_bus" RuntimeError if a resolver is also present.
+    minimal OpContext with ``intervention_bus=None``.
+
+    PR-N14 (C3): the handler no longer raises a "requires intervention_bus"
+    RuntimeError on that fallback path. It delegates to
+    ``require_http_get``, which honors the established design intent
+    (permissions.py:741-754) of branching on actual prompt necessity
+    rather than failing closed on a missing bus. With a config-allow
+    (``web.fetch: allow``) the gate short-circuits before the bus is
+    ever needed, so the fetch proceeds and the unreachable URL becomes
+    the visible failure shape (a web_fetch error dict) — NOT a
+    bus-missing RuntimeError.
     """
     from reyn.events.events import EventLog
     from reyn.permissions.permissions import PermissionResolver
@@ -526,13 +534,13 @@ def test_phase_dispatch_without_op_context_falls_back_to_minimal(
         phase_state=phase_state,
     )
 
-    # With a real PermissionResolver + no bus, the handler must raise the
-    # explicit RuntimeError rather than silently letting the fetch
-    # proceed without an approval surface.
-    with pytest.raises(
-        RuntimeError, match="web_fetch op requires intervention_bus",
-    ):
-        asyncio.run(WEB_FETCH.handler(
-            {"url": "http://127.0.0.1:1/never-listens"},
-            tool_ctx,
-        ))
+    # Post-PR-N14: config-allow short-circuits the permission gate before
+    # the bus is consulted, so the handler proceeds past permissions and
+    # returns a web_fetch result dict (the unreachable URL surfaces as an
+    # error status) — no "requires intervention_bus" RuntimeError.
+    result = asyncio.run(WEB_FETCH.handler(
+        {"url": "http://127.0.0.1:1/never-listens"},
+        tool_ctx,
+    ))
+    assert isinstance(result, dict)
+    assert result.get("kind") == "web_fetch"
