@@ -12,7 +12,9 @@ from reyn.schemas.models import CandidateOutput, ContextFrame, Skill
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
     from reyn.config import MultimodalConfig, PhaseActResultsCompactionConfig, SandboxConfig
+    from reyn.environment.backend import EnvironmentBackend
     from reyn.events.state_log import StateLog
+    from reyn.sandbox.backend import SandboxBackend
     from reyn.secrets.store import ScopedSecretStore
     from reyn.services.compaction.engine import CompactionEngine
     from reyn.skill.skill_registry import SkillRegistry
@@ -76,6 +78,8 @@ class OSRuntime:
         resume_plan: Any = None,
         parent_run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        environment_backend: "EnvironmentBackend | None" = None,
+        sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
@@ -101,6 +105,7 @@ class OSRuntime:
             permission_resolver=permission_resolver,
             skill_name=skill.name,
             base_dir=workspace_base_dir,
+            environment_backend=environment_backend,
         )
         # C5 follow-up (#224): bound the growth of per-run control_ir offload
         # scratch dirs. Prune stale ones (TTL by mtime) once at top-level run
@@ -173,6 +178,7 @@ class OSRuntime:
             resume_plan=resume_plan,
             run_id=run_id,
             sandbox_config=sandbox_config,
+            sandbox_backend=sandbox_backend,
             multimodal_config=multimodal_config,
             media_store=media_store,
             secret_store=secret_store,
@@ -191,6 +197,7 @@ class OSRuntime:
             caller=caller,
             run_id=run_id,
             secret_store=secret_store,
+            sandbox_backend=sandbox_backend,
         )
         # FP-0020 Component A: all mutable run-scope state encapsulated in RunState.
         self._state = RunState()

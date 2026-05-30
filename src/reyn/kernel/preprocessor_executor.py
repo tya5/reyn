@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionResolver
+    from reyn.sandbox.backend import SandboxBackend
     from reyn.schemas.models import Phase, PreprocessorStep, Skill
     from reyn.secrets.store import ScopedSecretStore
     from reyn.user_intervention import RequestBus
@@ -109,6 +110,7 @@ class PreprocessorExecutor:
         caller: str = "direct",
         run_id: str | None = None,
         secret_store: "ScopedSecretStore | None" = None,
+        sandbox_backend: "SandboxBackend | None" = None,
     ) -> None:
         self._skill = skill
         self._workspace = workspace
@@ -128,6 +130,10 @@ class PreprocessorExecutor:
         # FP-0016 D: per-skill credential scoping. None = unrestricted
         # (= preserves backward compat for callers that don't supply a store).
         self._secret_store = secret_store
+        # FP-0008 #1115 Stage 2: per-run injected exec backend instance, so a
+        # preprocessor sandboxed_exec runs in the same (container) target as the
+        # rest of the run. None → platform auto-detect (unchanged host behavior).
+        self._sandbox_backend = sandbox_backend
 
     @property
     def secret_store(self):
@@ -168,6 +174,8 @@ class PreprocessorExecutor:
             agent_id=getattr(self._events, "agent_id", None),
             # FP-0016 D: per-skill credential scoping.
             secret_store=self._secret_store,
+            # FP-0008 #1115 Stage 2: per-run injected exec backend instance.
+            sandbox_backend=self._sandbox_backend,
         )
 
     async def run(

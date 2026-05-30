@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from reyn.config import MultimodalConfig, SandboxConfig
+    from reyn.sandbox.backend import SandboxBackend
     from reyn.secrets.store import ScopedSecretStore
     from reyn.workspace.media_store import MediaStore
 
@@ -91,6 +92,7 @@ class ControlIRExecutor:
         resume_plan: Any = None,
         run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
@@ -130,6 +132,12 @@ class ControlIRExecutor:
         # policy. ``None`` means the factory falls through to platform
         # auto-detection (= unchanged behavior pre-wiring).
         self._sandbox_config = sandbox_config
+        # FP-0008 #1115 Stage 2: per-run injected exec backend instance. When
+        # set (a dual-Protocol container backend), it takes precedence over
+        # name-based platform selection in the sandboxed_exec handler
+        # (``ctx.sandbox_backend or get_default_backend(...)``). ``None`` =
+        # platform auto-detect (unchanged host behavior).
+        self._sandbox_backend = sandbox_backend
         # Issue #364 — multi-modal media-size gate config (= reyn.yaml
         # ``multimodal:`` section). Threaded into OpContext so binary paths
         # (web__fetch / file__read / MCP / user input) can consult the cap
@@ -318,6 +326,9 @@ class ControlIRExecutor:
             agent_id=getattr(self.events, "agent_id", None),
             # FP-0017 follow-up: declarative sandbox config (reyn.yaml).
             sandbox_config=self._sandbox_config,
+            # FP-0008 #1115 Stage 2: per-run injected exec backend instance
+            # (dual-Protocol container backend); None → platform auto-detect.
+            sandbox_backend=self._sandbox_backend,
             # Issue #364 — multi-modal cluster media-size gate.
             multimodal_config=self._multimodal_config,
             # Issue #383 PR-C — media + tool-result file storage.
