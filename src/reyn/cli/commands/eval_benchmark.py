@@ -15,14 +15,24 @@ reyn eval benchmark <skill_name> \\
 
 Capability tiers (C7 — honest verification accounting)
 -------------------------------------------------------
-Tier 1 (docker):         Docker daemon reachable — official SWE-bench image eval (PR2).
-Tier 2 (linux_host):     Linux host without Docker — uv-based faithful build (PR3).
+Tier 1 (docker):         Docker daemon reachable — official SWE-bench image eval (PR3).
+                         Delegates authoritative scoring to swebench.harness.run_evaluation.main,
+                         which pulls the official pre-built image and runs the test_cmd via Docker.
+                         swebench is a Tier1-ONLY lazy optional dependency — NOT imported at
+                         module top, NOT part of reyn's core install.
+                         Install separately: pip install swebench
+Tier 2 (linux_host):     Linux host without Docker — uv-based faithful build (future PR).
 Tier 3 (no_faithful_env): macOS/Windows or no Docker — skip verification; never emit
                           a non-faithful PASS/FAIL.
 
 THE INVARIANT: NEVER count a verify_skipped result as pass or fail.
 pass_rate is computed over the faithful-verified subset ONLY.  When that
 subset is empty, pass_rate is null.
+
+Binary-sharpening (C7): For Tier-1 evaluated results, the authoritative C7
+pass/fail is the harness verdict (harness_resolved) from swebench's official
+eval — NOT the skill's self-check (tests_passed).  compute_faithful_accounting
+uses harness_resolved when present; tests_passed is recorded as informational only.
 """
 from __future__ import annotations
 
@@ -51,9 +61,14 @@ _NO_FAITHFUL_ENV_REASON = (
     "SWE-bench specs need the official Linux build toolchain"
 )
 
-# Stub reason for Tier 1/2 — faithful eval not yet implemented (PR2/PR3).
-_TIER1_STUB_REASON = (
-    "faithful eval not yet implemented (Tier1 docker / Tier2 uv — PR2/PR3)"
+# Stub reason for Tier 2 (linux_host) — faithful eval not yet implemented.
+_TIER2_STUB_REASON = (
+    "faithful eval not yet implemented (Tier2 uv-based Linux build — future PR)"
+)
+
+# Reason emitted when Tier 1 is selected but swebench is not installed.
+_TIER1_SWEBENCH_MISSING_REASON = (
+    "Tier1 requires swebench (pip install swebench) — not installed"
 )
 
 
@@ -112,6 +127,197 @@ def _make_verify_skip_record(tier: str, reason: str) -> dict:
         "verify_skipped": True,
         "verify_skip_reason": reason,
     }
+
+
+# ── Tier-1: model_patch extraction ──────────────────────────────────────────────
+
+
+def extract_model_patch(workspace: "Path") -> str:
+    """Extract ``git diff HEAD`` from the skill's workspace directory.
+
+    This is the AI's solution: the cumulative diff of all changes made
+    by the skill relative to the base commit checked out in the workspace.
+
+    Returns the diff string (may be empty if no changes were made).
+    Raises ``subprocess.CalledProcessError`` if git is not available or the
+    workspace is not a git repository.
+    """
+    result = subprocess.run(
+        ["git", "diff", "HEAD"],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    # git diff HEAD exits 0 whether or not there are changes
+    result.check_returncode()
+    return result.stdout
+
+
+def build_swebench_prediction(instance_id: str, model_patch: str) -> dict:
+    """Build the swebench prediction dict for one instance.
+
+    swebench's run_evaluation.main loads the full instance (repo/base_commit/
+    test_patch/version) from the official HuggingFace dataset by instance_id,
+    so the prediction only needs the model_patch (the AI's solution diff).
+
+    Constants mirror swebench.harness.run_evaluation:
+      KEY_INSTANCE_ID = "instance_id"
+      KEY_MODEL       = "model_name_or_path"
+      KEY_PREDICTION  = "model_patch"
+    """
+    return {
+        "instance_id": instance_id,
+        "model_name_or_path": "reyn",
+        "model_patch": model_patch,
+    }
+
+
+# ── Tier-1: swebench delegation (LAZY IMPORT — swebench is NOT a reyn core dep) ──
+#
+# swebench is a Tier1-only optional benchmark extra.  It is intentionally NOT
+# imported at module top so that:
+#   (a) reyn's runtime and all non-Tier1 code paths never import swebench, and
+#   (b) the import error on missing swebench is surfaced as an honest-skip,
+#       not a module-level ImportError that breaks every `reyn eval benchmark` run.
+#
+# Install separately when running Tier1 evals on a Docker host:
+#   pip install swebench
+#
+# DO NOT add swebench to reyn's core install_requires / pyproject.toml deps.
+
+
+def run_tier1_swebench_eval(
+    instance_id: str,
+    model_patch: str,
+    dataset_name: str = "princeton-nlp/SWE-bench_Verified",
+    split: str = "test",
+    run_id: str | None = None,
+    timeout: int = 1800,
+    working_dir: "Path | None" = None,
+) -> dict:
+    """Delegate authoritative scoring to swebench's official run_evaluation.main.
+
+    This is the Tier-1 faithful eval path.  It pulls the official pre-built
+    SWE-bench Docker image (namespace="swebench"), applies model_patch +
+    test_patch in the container, runs the test_cmd, and parses the result
+    via swebench's official logic.
+
+    Returns a dict with:
+      - "resolved":  bool — authoritative pass/fail verdict from swebench
+      - "run_id":    str  — the swebench run_id used
+      - "report_path": str — path to the per-instance report.json
+
+    Raises:
+      - ``RuntimeError("swebench_missing")`` if swebench is not installed
+        (caller should convert to honest-skip with _TIER1_SWEBENCH_MISSING_REASON).
+      - ``RuntimeError("eval_error:<msg>")`` on any other evaluation failure.
+
+    IMPORTANT: swebench writes its logs relative to cwd.
+    ``working_dir`` must be set to a temp directory so logs are isolated and
+    don't pollute the reyn project tree.
+
+    Architecture note:
+    - swebench.harness.run_evaluation.main is used (not run_instances directly)
+      because main handles the full flow: predictions file → dataset load →
+      run_instances → clean → make_run_report.
+    - The predictions are written to a temp JSON file as a JSON array (one dict
+      per line in swebench format) and passed via predictions_path.
+    - Per-instance report.json path:
+        logs/run_evaluation/<run_id>/reyn/<instance_id>/report.json
+      (relative to working_dir; LOG_REPORT="report.json";
+       model_name_or_path="reyn" with "/" → "__" replacement = "reyn")
+    """
+    # Lazy import — Tier1 ONLY.  swebench is NOT a reyn core dependency.
+    try:
+        from swebench.harness.run_evaluation import (  # type: ignore[import]
+            LOG_REPORT,
+            RUN_EVALUATION_LOG_DIR,
+        )
+        from swebench.harness.run_evaluation import (
+            main as swebench_run_evaluation_main,
+        )
+    except ImportError:
+        raise RuntimeError("swebench_missing")
+
+    import os
+    import uuid
+
+    effective_run_id = run_id or ("reyn_tier1_" + uuid.uuid4().hex[:8])
+    prediction = build_swebench_prediction(instance_id, model_patch)
+
+    with tempfile.TemporaryDirectory(prefix="reyn-tier1-") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Write predictions to a JSON file (swebench expects a JSON array)
+        predictions_path = tmp_path / "predictions.json"
+        predictions_path.write_text(
+            json.dumps([prediction], ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        # swebench writes logs relative to cwd — we run from working_dir (or
+        # a temp subdir) so logs don't land in reyn's project tree.
+        run_cwd = working_dir if working_dir is not None else tmp_path
+        run_cwd = Path(run_cwd)
+
+        try:
+            orig_cwd = Path.cwd()
+            os.chdir(run_cwd)
+            try:
+                swebench_run_evaluation_main(
+                    dataset_name=dataset_name,
+                    split=split,
+                    instance_ids=[instance_id],
+                    predictions_path=str(predictions_path),
+                    run_id=effective_run_id,
+                    max_workers=1,
+                    force_rebuild=False,
+                    cache_level="env",
+                    clean=False,
+                    open_file_limit=4096,
+                    timeout=timeout,
+                    namespace="swebench",
+                    rewrite_reports=False,
+                    modal=False,
+                    instance_image_tag="latest",
+                    env_image_tag="latest",
+                    report_dir=str(run_cwd),
+                )
+            finally:
+                os.chdir(orig_cwd)
+        except Exception as exc:
+            raise RuntimeError(f"eval_error:{exc}") from exc
+
+        # Read the per-instance report.json.
+        # swebench writes it at:
+        #   <cwd>/logs/run_evaluation/<run_id>/reyn/<instance_id>/report.json
+        # model_name_or_path="reyn" → no "/" so no "__" substitution needed.
+        report_path = (
+            run_cwd
+            / RUN_EVALUATION_LOG_DIR
+            / effective_run_id
+            / "reyn"
+            / instance_id
+            / LOG_REPORT
+        )
+
+        if not report_path.exists():
+            raise RuntimeError(
+                f"eval_error:swebench report.json not found at {report_path}"
+            )
+
+        try:
+            report_data = json.loads(report_path.read_text(encoding="utf-8"))
+            resolved: bool = bool(report_data[instance_id]["resolved"])
+        except (KeyError, json.JSONDecodeError, TypeError) as exc:
+            raise RuntimeError(f"eval_error:failed to parse report.json: {exc}") from exc
+
+        return {
+            "resolved": resolved,
+            "run_id": effective_run_id,
+            "report_path": str(report_path),
+        }
 
 
 # ── public entry points (called from eval.py) ─────────────────────────────────
@@ -272,12 +478,26 @@ def compute_faithful_accounting(results: list[dict]) -> dict:
     ONLY (results where verify_skipped is not True).  A verify_skipped result
     is NEVER counted as pass or fail.
 
+    Binary-sharpening (C7 PR3): For Tier-1 evaluated results, the authoritative
+    C7 verdict is harness_resolved (the swebench official eval result), NOT the
+    skill's self-check (tests_passed).  The pass-source priority is:
+
+      1. harness_resolved  — present on Tier-1 (Docker) results; authoritative.
+      2. tests_passed      — present on Tier-2/3 results; informational only
+                             when harness_resolved is also present.
+
+    When a faithful result has harness_resolved, it is used exclusively.
+    When it only has tests_passed (no harness_resolved), tests_passed is used.
+    A faithful result with neither field contributes to faithful_verified_count
+    but not to faithful_passed (it neither increments nor decrements the count).
+
     Returns a dict with:
       - faithful_verified_count: int — number of results where verify_skipped is falsy
-      - faithful_passed: int | None — pass count over faithful subset (None if no
-        faithful result has a tests_passed field)
+      - faithful_passed: int | None — pass count over faithful subset using
+        harness_resolved (authoritative) if present, else tests_passed; None if
+        no faithful result has either field
       - faithful_pass_rate: float | None — pass_rate over faithful subset (None if
-        faithful_verified_count == 0 or no tests_passed field present)
+        faithful_verified_count == 0 or no verdict field present)
       - skip_count: int — number of results with verify_skipped == True
     """
     faithful = [r for r in results if not r.get("verify_skipped")]
@@ -286,10 +506,22 @@ def compute_faithful_accounting(results: list[dict]) -> dict:
     faithful_count = len(faithful)
     skip_count = len(skipped)
 
-    # tests_passed: only computed if ANY faithful result has the field
-    has_tests_passed = any("tests_passed" in r for r in faithful)
-    if has_tests_passed and faithful_count > 0:
-        passed = sum(1 for r in faithful if r.get("tests_passed") is True)
+    # Determine pass count using the binary-sharpened priority:
+    # harness_resolved (authoritative Tier-1 verdict) > tests_passed (self-check)
+    has_any_verdict = any(
+        "harness_resolved" in r or "tests_passed" in r for r in faithful
+    )
+    if has_any_verdict and faithful_count > 0:
+        passed = 0
+        for r in faithful:
+            if "harness_resolved" in r:
+                # Tier-1 path: use the harness verdict exclusively
+                if r["harness_resolved"] is True:
+                    passed += 1
+            elif "tests_passed" in r:
+                # Tier-2/3 path: use the skill self-check
+                if r["tests_passed"] is True:
+                    passed += 1
         pass_rate: float | None = passed / faithful_count
     else:
         passed = None
@@ -487,6 +719,9 @@ async def _run_single_task(
         result_data: dict = {}
         error_msg: str | None = None
         cost_usd: float | None = None
+        # For Tier-1: extract the model_patch while the workspace is still live.
+        # Stored here so it's accessible after the workspace context manager exits.
+        _tier1_model_patch: str | None = None
 
         try:
             with _benchmark_isolated_workspace(
@@ -514,6 +749,16 @@ async def _run_single_task(
                 )
                 run_result = await agent.run(skill, input_artifact)
 
+                # Tier-1: extract model_patch while workspace is still live.
+                # The workspace directory is deleted when the context manager exits,
+                # so git diff HEAD must be captured here.
+                if verify_tier == _TIER_DOCKER:
+                    try:
+                        _tier1_model_patch = extract_model_patch(workspace_path)
+                    except Exception:
+                        # Extraction failure is handled in the dispatch block below.
+                        _tier1_model_patch = None
+
             if run_result.ok:
                 result_data = run_result.data
             else:
@@ -538,24 +783,56 @@ async def _run_single_task(
         # Dispatch on verify_tier to determine whether this result is
         # faithfully verified or should be marked as skipped.
         #
-        # Tier 1 (docker): PR2 will implement Docker-based official-image eval.
-        #   Until then, stub — mark skipped with PR2/PR3 pending reason.
-        # Tier 2 (linux_host): PR3 will implement uv-based build eval.
-        #   Until then, stub — mark skipped with PR2/PR3 pending reason.
+        # Tier 1 (docker): Delegate authoritative scoring to swebench's
+        #   official run_evaluation.main.  Extracts model_patch (captured above
+        #   while the workspace was live) then calls swebench with the official
+        #   pre-built image.  On success, sets harness_resolved (bool) as the
+        #   authoritative C7 pass/fail.  On error (missing swebench, docker
+        #   failure, patch-extraction failure, etc.) → honest-skip with a clear
+        #   reason; NEVER fake PASS/FAIL.
+        # Tier 2 (linux_host): uv-based build eval (future PR).
+        #   Until then, stub — mark skipped with pending reason.
         # Tier 3 (no_faithful_env): ALWAYS skip — no faithful env available.
         #   On macOS/Windows, the AI's self-check (tests_passed from the skill)
         #   MUST NOT be promoted to an authoritative pass/fail.
-        #
-        # The structure here is the dispatch skeleton that PR2/PR3 will fill in.
-        # When a tier is fully implemented, replace the stub block with real eval.
         if verify_tier == _TIER_DOCKER:
-            # PR2: implement Docker-based official-image eval here.
-            # For now: stub — skip with pending reason.
-            record.update(_make_verify_skip_record(_TIER_DOCKER, _TIER1_STUB_REASON))
+            # Tier 1: Docker-based official SWE-bench image eval (C7 PR3).
+            # model_patch was captured inside the workspace context above.
+            task_data = task.get("data", task) if isinstance(task, dict) else {}
+            dataset_name = (
+                task_data.get("dataset_name", "princeton-nlp/SWE-bench_Verified")
+                if isinstance(task_data, dict)
+                else "princeton-nlp/SWE-bench_Verified"
+            )
+            tier1_skip_reason: str | None = None
+            if _tier1_model_patch is None:
+                tier1_skip_reason = "Tier1 eval error: failed to extract model_patch (git diff HEAD)"
+            else:
+                try:
+                    tier1_result = run_tier1_swebench_eval(
+                        instance_id=instance_id,
+                        model_patch=_tier1_model_patch,
+                        dataset_name=dataset_name,
+                    )
+                    record["verify_tier"] = _TIER_DOCKER
+                    record["verify_skipped"] = False
+                    record["harness_resolved"] = tier1_result["resolved"]
+                except RuntimeError as rte:
+                    msg = str(rte)
+                    if msg == "swebench_missing":
+                        tier1_skip_reason = _TIER1_SWEBENCH_MISSING_REASON
+                    else:
+                        # eval_error:<msg> or other runtime failure
+                        clean_msg = msg.removeprefix("eval_error:") if msg.startswith("eval_error:") else msg
+                        tier1_skip_reason = f"Tier1 eval error: {clean_msg}"
+                except Exception as exc:
+                    tier1_skip_reason = f"Tier1 eval error: {exc}"
+            if tier1_skip_reason is not None:
+                record.update(_make_verify_skip_record(_TIER_DOCKER, tier1_skip_reason))
         elif verify_tier == _TIER_LINUX_HOST:
-            # PR3: implement uv-based Linux build eval here.
-            # For now: stub — skip with pending reason.
-            record.update(_make_verify_skip_record(_TIER_LINUX_HOST, _TIER1_STUB_REASON))
+            # Tier 2 (linux_host) — uv-based build eval (future PR).
+            # Until then, stub — mark skipped with pending reason.
+            record.update(_make_verify_skip_record(_TIER_LINUX_HOST, _TIER2_STUB_REASON))
         else:
             # Tier 3 (no_faithful_env) — always skip.
             # The AI's self-check result (tests_passed from skill output) is
