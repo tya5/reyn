@@ -39,6 +39,7 @@ from textual.theme import Theme
 from reyn.chat.tui._palette import (
     _BORDER_DIM,
     _CORAL,
+    _RED_MUTED,
     _TEXT_BODY,
     _TEXT_BRIGHT,
     _TEXT_DIM,
@@ -530,7 +531,7 @@ class ReynTUIApp(App):
             breadcrumb = _RichText()
             breadcrumb.append(
                 f"  ✗ {cancelled} {label} skipped (see /pending list)",
-                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
+                style=f"dim {_RED_MUTED}",
             )
             try:
                 conv = self.query_one("#conversation", ConversationView)
@@ -1208,12 +1209,12 @@ class ReynTUIApp(App):
                 self._voice_status(
                     f"✗ cancelled {cancelled_interventions} "
                     f"intervention{'s' if cancelled_interventions != 1 else ''}",
-                    style="bold #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
+                    style=f"bold {_RED_MUTED}",
                 )
             else:
                 self._voice_status(
                     "(nothing to cancel — no session attached)",
-                    style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
+                    style=f"dim {_RED_MUTED}",
                 )
             return
 
@@ -1238,7 +1239,7 @@ class ReynTUIApp(App):
             # arrives as a ``status`` outbox frame from the server.
             self._voice_status(
                 "cancel sent to remote — awaiting confirmation",
-                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
+                style=f"dim {_RED_MUTED}",
             )
             # Seal any locally-tracked skill-activity rows so their
             # spinners stop immediately (the remote will send
@@ -1422,7 +1423,7 @@ class ReynTUIApp(App):
                 f"{'s' if cancelled_tool_calls != 1 else ''}"
             )
         self._voice_status(
-            f"✗ cancelled {' + '.join(parts)}", style="bold #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
+            f"✗ cancelled {' + '.join(parts)}", style=f"bold {_RED_MUTED}",
         )
 
     def action_toggle_panel(self) -> None:
@@ -2219,19 +2220,19 @@ class ReynTUIApp(App):
         if reason == "no_audio" or dur < 0.3:
             self._voice_status(
                 "(no audio captured — mic permission? wrong device?)",
-                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
+                style=f"dim {_RED_MUTED}",
             )
         elif reason == "silent" or peak < 0.01:
             self._voice_status(
                 f"(silent capture: {dur:.1f}s, peak={peak:.3f}) — "
                 "check mic gain / system input device",
-                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
+                style=f"dim {_RED_MUTED}",
             )
         else:
             self._voice_status(
                 f"(no speech recognised in {dur:.1f}s, peak={peak:.3f}) — "
                 "try speaking closer / louder, or set a larger model",
-                style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
+                style=f"dim {_RED_MUTED}",
             )
 
     def _voice_watchdog_tick(self) -> None:
@@ -2265,7 +2266,7 @@ class ReynTUIApp(App):
         self._voice_busy = True
         self._voice_status(
             f"⏰ recording cap reached ({cap:.0f}s) — transcribing & inserting…",
-            style="dim #aa6666",  # palette-candidate: muted-error/cancel (no exact palette token)
+            style=f"dim {_RED_MUTED}",
         )
         asyncio.create_task(self._voice_auto_stop_and_insert())
 

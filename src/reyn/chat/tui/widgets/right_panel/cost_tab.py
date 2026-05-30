@@ -14,6 +14,7 @@ from .base import (
     _EVENT_PLAN,
     _STATUS_CRITICAL,
     _STATUS_SUCCESS,
+    _STATUS_SUCCESS_DARK,
     _TEXT_BODY,
     _TEXT_BRIGHT,
     _TEXT_DIM,
@@ -412,7 +413,7 @@ def render_cost(
                 tok_total = m["p"] + m["c"]
                 # skill rows: dim name, muted green for cost — clearly subordinate
                 cost_part = (
-                    f"  [#2d7a4f]${m['cost']:.4f}[/]"  # palette-candidate: dim success green — no foundation token yet
+                    f"  [{_STATUS_SUCCESS_DARK}]${m['cost']:.4f}[/]"
                     if m["has_cost"] and show_extra else ""
                 )
                 calls_part = (
@@ -467,7 +468,7 @@ def render_cost(
                 sb = steps[step_id]
                 step_tok = sb["p"] + sb["c"]
                 step_cost_part = (
-                    f"  [#2d7a4f]${sb['cost']:.4f}[/]"  # palette-candidate: dim success green — no foundation token yet
+                    f"  [{_STATUS_SUCCESS_DARK}]${sb['cost']:.4f}[/]"
                     if sb["has_cost"] and show_extra else ""
                 )
                 step_calls_part = (

@@ -85,6 +85,26 @@ _SEV_MED = "#cc9955"             # medium severity (rest)
 _SEV_HIGH_HOVER = "#ff7777"      # high severity (hover — lighter sibling of _SEV_HIGH)
 _SEV_MED_HOVER = "#ffbb77"       # medium severity (hover)
 
+# ── Phase-2c semantic accents (promoted from hardcoded hex) ─────────────────
+# Muted red — a desaturated red for "soft negative" states where the full
+# _STATUS_ERROR (#ff6644) red would be too loud: cancelled / partial-reply
+# aborted (app.py, conversation), the 8-colour-terminal error glyph fallback
+# (sticky_status), and the remote-limited mode marker (pending_tab). Distinct
+# shade from _STATUS_ERROR (active failure) and _SEV_HIGH (ErrorBox severity).
+_RED_MUTED = "#aa6666"
+# "ready / idle-but-available" agent/process state (olive). Orthogonal to
+# _STATUS_SUCCESS (running/done green) — the agents + pending panels show
+# ready ◐ in olive vs running in green so the two states stay scannable.
+_STATUS_READY = "#aaaa55"
+# Dark success green — low-emphasis success tone for cost figures (cost_tab).
+# Darker sibling of _STATUS_SUCCESS (#44cc88) / _STATUS_SUCCESS_DIM (#88ddaa,
+# lighter); reads as "nominal" without competing with the brighter greens.
+_STATUS_SUCCESS_DARK = "#2d7a4f"
+# Actionable inline recovery hint (ErrorBox eb-inline-hint, muted gold).
+# Distinct from _TEXT_DIM (the metadata eb-hint) so the extracted recovery
+# action reads as "do this", not just dim metadata.
+_HINT_ACTION = "#8a7a4a"
+
 __all__ = [
     "_CORAL",
     "_AMBER",
@@ -117,4 +137,8 @@ __all__ = [
     "_SEV_MED",
     "_SEV_HIGH_HOVER",
     "_SEV_MED_HOVER",
+    "_RED_MUTED",
+    "_STATUS_READY",
+    "_STATUS_SUCCESS_DARK",
+    "_HINT_ACTION",
 ]
