@@ -103,11 +103,18 @@ def test_workspace_routes_every_fs_op_through_backend(tmp_path: Path) -> None:
 
 
 def test_default_backend_is_host_identity(tmp_path: Path) -> None:
-    """Tier 2: (c) with the default HostBackend, FS ops round-trip identically."""
+    """Tier 2: (c) with the default backend, FS ops round-trip identically.
+
+    The write→read→stat→glob→delete round-trip below runs against the REAL
+    local filesystem under tmp_path — pinning the host-identity property
+    behaviorally (no private-state inspection of the backend).
+    """
     ws = Workspace(events=EventLog(), base_dir=tmp_path)
-    assert ws._backend.name == "host"  # noqa: SLF001 — documents the default wiring
 
     ws.write_file("dir/x.txt", "data-本文")
+    # Host identity: the default backend wrote through to the REAL local FS.
+    assert (tmp_path / "dir" / "x.txt").read_text(encoding="utf-8") == "data-本文"
+
     content, found = ws.read_file("dir/x.txt")
     assert (content, found) == ("data-本文", True)
 
@@ -133,8 +140,11 @@ def test_grep_primitive_via_backend(tmp_path: Path) -> None:
 
     content_res = ws.grep(".", re.compile("NEEDLE"))
     assert content_res.output_mode == "content"
-    assert len(content_res.matches) == 1
-    assert content_res.matches[0]["line_number"] == 2
+    # Unpack-enforcement: exactly the one matching line, with correct content
+    # (= the grep-returns-the-right-match invariant, not a count format-pin).
+    [hit] = content_res.matches
+    assert hit["line_number"] == 2
+    assert "NEEDLE" in hit["content"]
 
     count_res = ws.grep(".", re.compile("a"), output_mode="count")
     assert count_res.count >= 1
