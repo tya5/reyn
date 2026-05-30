@@ -96,8 +96,9 @@ def test_hint_min_tier_at_20_cols() -> None:
     """Tier 2: at 20 cols the minimum hint is returned (not clipped full hint)."""
     hint = _hint(20)
     # Minimum hint must fit comfortably in 20 cols.
-    assert cell_len(hint) <= 20, (
-        f"min hint is {cell_len(hint)} cells, must fit ≤20 cols: {hint!r}"
+    width = cell_len(hint)
+    assert width <= 20, (
+        f"min hint is {width} cells, must fit ≤20 cols: {hint!r}"
     )
     assert "Enter" in hint
     assert "Ctrl+C" in hint
