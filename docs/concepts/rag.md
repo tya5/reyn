@@ -236,7 +236,7 @@ For chat-side action retrieval specifically (= `search_actions`), see [Guide: en
 
 **Landed post-1.0:**
 
-- Local embedding models via sentence-transformers (FP-0043, 2026-05) — see [§Local embedding backend](#local-embedding-backend-fp-0043). The chat-side `search_actions` surface is the first consumer; the same `local-mini` / `local-e5` classes are reachable from `embedding.default_class` for document indexing too.
+- Local embedding models via sentence-transformers (FP-0043) — see [§Local embedding backend](#local-embedding-backend-fp-0043). The chat-side `search_actions` surface is the first consumer; the same `local-mini` / `local-e5` classes are reachable from `embedding.default_class` for document indexing too.
 
 **Deferred to Phase 2 (post-1.1):**
 

@@ -56,7 +56,7 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 
 ## クイックスタート: `reyn chat` から MCP を試す（手動設定パス）
 
-手動でサーバーを設定したい場合や、公開レジストリにないサーバーを追加する場合は、`reyn.yaml` に直接追加します。 サーバーを設定すると、 `reyn chat` は `mcp` category の verb actions を自動的に使えます (issue #879 で旧 `mcp.server` / `mcp.tool` / `mcp.operation` 3 sub-category を collapse、 2026-05-25 で install を source 軸で 3 verb に分割):
+手動でサーバーを設定したい場合や、公開レジストリにないサーバーを追加する場合は、`reyn.yaml` に直接追加します。 サーバーを設定すると、 `reyn chat` は `mcp` category の verb actions を自動的に使えます:
 
 | Action | 何をするか |
 |------|-----------|
@@ -169,7 +169,7 @@ MCP の操作は 2 つのポイントでゲートされます：
 
 ### インストール時ゲート: `file.write` + `http.get`
 
-MCP サーバーを設定に追加する際、install op の書き込みは OS の標準 list-axis gate を通ります。 旧 `permissions.mcp_install: ask | allow | deny` bool 軸は #571 collapse arc (Phase 5、 2026-05-23) で撤去され、 install 制御は以下の経路に統一されました:
+MCP サーバーを設定に追加する際、install op の書き込みは OS の標準 list-axis gate を通ります。 旧 `permissions.mcp_install: ask | allow | deny` bool 軸は collapse arc で撤去され、 install 制御は以下の経路に統一されました:
 
 - `.reyn/mcp.yaml` への `file.write` (= canonical mutation target)。 `startup_guard` が skill+path ごとに 1 回 operator に prompt、 承認後の runtime は silent。
 - `registry.modelcontextprotocol.io` への `http.get` (= registry fetch)。 同じ prompt model。

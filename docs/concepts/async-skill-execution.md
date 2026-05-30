@@ -34,7 +34,7 @@ skill's result inline to feed the next step's LLM).
 
 ## How chat-mode action dispatch works
 
-Since FP-0034 Phase 6 (2026-05-16), the LLM-visible surface is
+Since FP-0034 Phase 6, the LLM-visible surface is
 `invoke_action(action_name="skill__<name>", args={"input": ...})`.
 `universal_dispatch.py` routes the wrapper call to the same internal
 `invoke_skill` handler — the spawn-ack mechanism is unchanged.

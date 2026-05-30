@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Skill Self-Improvement
 
-Reyn skills can improve themselves from execution traces — automatically, with full version archiving and one-command rollback. The entire process runs as a governed skill (`skill_improver`) rather than as a side effect outside the OS, which means every improvement passes through the [permission model](permission-model.md), is subject to user-approval gating, and is linked to the execution history via `skill_version_hash`. Five components landed together as FP-0006 on 2026-05-15.
+Reyn skills can improve themselves from execution traces — automatically, with full version archiving and one-command rollback. The entire process runs as a governed skill (`skill_improver`) rather than as a side effect outside the OS, which means every improvement passes through the [permission model](permission-model.md), is subject to user-approval gating, and is linked to the execution history via `skill_version_hash`. Five components landed together as FP-0006.
 
 Unlike Hermes GEPA — which triggers self-improvement as an unrestricted side effect after 5+ tool calls — Reyn's design treats skill improvement as a first-class, operator-governed operation. See [Comparison with Hermes GEPA](#comparison-with-hermes-gepa) below.
 

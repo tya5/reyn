@@ -32,7 +32,7 @@ inline で必要)。
 
 ## chat-mode invoke_skill の現挙動
 
-> **FP-0034 Phase 6 (2026-05-16) routing note**: wrapper-only path が
+> **FP-0034 Phase 6 routing note**: wrapper-only path が
 > 既定。 LLM は `invoke_action(action_name="skill__<name>",
 > args={"input": ...})` で skill を呼ぶ (= legacy `invoke_skill(name,
 > input)` 直接ではない)。 `universal_dispatch.py` が wrapper call を

@@ -329,7 +329,7 @@ Reyn deviates from the iOS / Android "capability + first-use prompt" pattern on 
 
 ## Collapse arc (#571)
 
-The axis taxonomy above is the target state. The 2026-05-23 audit (#571) identified that the prior design carried four bool axes (`mcp_install`, `mcp_drop_server`, `cron_register`, `index_drop`) which were redundant with `file.write` — the side effects all reduced to a canonical `.reyn/*.yaml` write reachable through `reyn.safe.file.write`, so the bool axes were duplicating coverage rather than gating new capability. The collapse arc removes them in stages:
+The axis taxonomy above is the target state. The permissions audit identified that the prior design carried four bool axes (`mcp_install`, `mcp_drop_server`, `cron_register`, `index_drop`) which were redundant with `file.write` — the side effects all reduced to a canonical `.reyn/*.yaml` write reachable through `reyn.safe.file.write`, so the bool axes were duplicating coverage rather than gating new capability. The collapse arc removes them in stages:
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -343,7 +343,7 @@ During Phases 1–4 the bool form (= `mcp_install: true`) is accepted as a compa
 
 ### Phase 7 — prompt-timing model unification + `safe.http`/`web_fetch` collapse
 
-Phase 7 (PR-7 in the arc, post-#631 follow-up) finishes the alignment by giving the `http.get` axis the same prompt model as `file.write`:
+Phase 7 finishes the alignment by giving the `http.get` axis the same prompt model as `file.write`:
 
 - **Specific declared host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts the operator once per `<skill, host>` and persists the decision to approvals.yaml under `<skill>/http.get/<host>`. Runtime is then silent. Mirrors `file.write` for paths outside the default zone.
 - **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime, e.g. `web_fetch` follow-up of `web_search` results), so the prompt fires at the actual host gate inside `require_http_get`. Same `<skill>/http.get/<host>` persistence; ALWAYS / NEVER choices apply per host.

@@ -235,16 +235,13 @@ layers, each owning one depth-level of skill execution:
 `OSRuntime.__init__` wires these layers (state → recorder → executor →
 orchestrator) and `OSRuntime.run()` delegates to the orchestrator.
 
-ChatSession is similarly decomposed into services under `chat/services/`
-(FP-0019 — landed):
+ChatSession is similarly decomposed into services under `chat/services/`:
 
-- `compaction_controller.py` (FP-0019 Wave 1a, landed)
-- `skill_runner.py` (FP-0019 Wave 1b, landed)
+- `compaction_controller.py`
+- `skill_runner.py`
 - `budget_gateway.py`, `chain_manager.py`, `intervention_registry.py`,
   `memory_service.py`, `router_host_adapter.py`, `snapshot_journal.py`
-  (pre-FP-0019 extractions)
 - `a2a_handler.py`, `intervention_handler.py`, `auto_resume_handler.py`
-  (FP-0019 Wave 2/3, landed)
 
 ## See also
 
