@@ -6,8 +6,7 @@ import sys
 from pathlib import Path
 
 from reyn.config import load_config
-
-from ..templates import CONFIG_FIELDS
+from reyn.config_schema import is_valid_config_key, resolve_config_value, walk_config_schema
 
 
 def register(sub) -> None:
@@ -56,17 +55,18 @@ def run(args: argparse.Namespace) -> None:
 
 
 def _fields() -> None:
-    W_KEY, W_DEF, W_SCOPE = 18, 10, 34
-    header = f"{'Field':<{W_KEY}}  {'Default':<{W_DEF}}  {'Scope':<{W_SCOPE}}  Description"
+    """List all config fields derived from the live ReynConfig schema."""
+    import dataclasses as _dc
+    W_KEY, W_TYPE, W_DEF = 46, 14, 20
+    header = f"{'Field':<{W_KEY}}  {'Type':<{W_TYPE}}  {'Default':<{W_DEF}}  Description"
     print(header)
     print("─" * len(header))
-    for f in CONFIG_FIELDS:
-        print(f"{f['key']:<{W_KEY}}  {f['default']:<{W_DEF}}  {f['scope']:<{W_SCOPE}}  {f['desc']}")
-        print(f"{'':>{W_KEY}}  {'':>{W_DEF}}  {'':>{W_SCOPE}}  Values:  {f['values']}")
-        print(f"{'':>{W_KEY}}  {'':>{W_DEF}}  {'':>{W_SCOPE}}  Example: {f['example'].splitlines()[0]}")
-        for extra_line in f['example'].splitlines()[1:]:
-            print(f"{'':>{W_KEY}}  {'':>{W_DEF}}  {'':>{W_SCOPE}}           {extra_line}")
-        print()
+    for node in walk_config_schema():
+        default_str = repr(node.default) if node.default is not _dc.MISSING else "(required)"
+        if len(default_str) > W_DEF:
+            default_str = default_str[:W_DEF - 1] + "…"
+        kind = "(free-form dict)" if node.is_dict_leaf else node.type_repr
+        print(f"{node.key:<{W_KEY}}  {kind:<{W_TYPE}}  {default_str:<{W_DEF}}  {node.desc}")
 
 
 def _show() -> None:
@@ -86,14 +86,21 @@ def _show() -> None:
 
 
 def _get(key: str) -> None:
+    """Get a config value by dotted key.
+
+    Distinguishes "key exists with value None" from "key does not exist
+    in the schema" — the old ``getattr(config, key, None)`` conflated them.
+    """
     import yaml
     config = load_config()
-    value = getattr(config, key, None)
-    if value is None:
+    found, value = resolve_config_value(config, key)
+    if not found:
         print(f"Error: unknown config key '{key}'", file=sys.stderr)
         print("Run 'reyn config fields' to see available keys.", file=sys.stderr)
         sys.exit(1)
-    if isinstance(value, (dict, list)):
+    if value is None:
+        print("(not set)")
+    elif isinstance(value, (dict, list)):
         print(yaml.dump(value, allow_unicode=True, default_flow_style=False), end="")
     else:
         print(value)
@@ -248,10 +255,20 @@ def _migrate_mcp(*, dry_run: bool = False) -> None:
 
 
 def _set(key: str, value: str) -> None:
+    """Set a config key in reyn.local.yaml.
+
+    Validates *key* against the full ReynConfig schema (including nested
+    keys like ``safety.loop.max_phase_visits`` and free-form dict sub-keys
+    like ``mcp.servers.github.url``).
+
+    Writes the correct nested YAML structure — ``safety.loop.max_phase_visits``
+    becomes ``{safety: {loop: {max_phase_visits: <value>}}}`` rather than
+    the flat ``{safety: {'loop.max_phase_visits': <value>}}`` the old 1-level
+    split produced.
+    """
     import yaml
-    valid_keys = {f["key"] for f in CONFIG_FIELDS}
-    check_key = key.split(".")[0] if "." in key else key
-    if check_key not in valid_keys:
+
+    if not is_valid_config_key(key):
         print(f"Error: unknown config key '{key}'", file=sys.stderr)
         print("Run 'reyn config fields' to see available keys.", file=sys.stderr)
         sys.exit(1)
@@ -268,11 +285,18 @@ def _set(key: str, value: str) -> None:
     except Exception:
         parsed = value
 
-    if "." in key:
-        parent, child = key.split(".", 1)
-        current.setdefault(parent, {})[child] = parsed
-    else:
-        current[key] = parsed
+    # Recurse the dotted path through nested dicts via setdefault so that
+    # ``safety.loop.max_phase_visits`` writes {safety: {loop: {max_phase_visits: v}}}
+    # instead of {safety: {'loop.max_phase_visits': v}}.
+    parts = key.split(".")
+    node: dict = current
+    for part in parts[:-1]:
+        existing = node.get(part)
+        if not isinstance(existing, dict):
+            existing = {}
+            node[part] = existing
+        node = existing
+    node[parts[-1]] = parsed
 
     local_cfg.write_text(yaml.dump(current, allow_unicode=True, default_flow_style=False),
                          encoding="utf-8")
