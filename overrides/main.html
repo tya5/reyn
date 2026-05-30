@@ -24,7 +24,21 @@
                 <span class="reyn-sidebar-group-label">{{ child.title }}</span>
                 <ul class="reyn-sidebar-list reyn-sidebar-list--nested">
                   {% for grandchild in child.children %}
-                    {% if not grandchild.children %}
+                    {% if grandchild.children %}
+                      <li class="reyn-sidebar-subgroup-item">
+                        <details class="reyn-sidebar-subgroup"{% if grandchild.active %} open{% endif %}>
+                          <summary>{{ grandchild.title }}</summary>
+                          <ul class="reyn-sidebar-list reyn-sidebar-list--deep">
+                            {% for ggchild in grandchild.children %}
+                              <li>
+                                <a href="{{ ggchild.url | url }}"
+                                  {% if ggchild.active %}class="active"{% endif %}>{{ ggchild.title }}</a>
+                              </li>
+                            {% endfor %}
+                          </ul>
+                        </details>
+                      </li>
+                    {% else %}
                       <li>
                         <a href="{{ grandchild.url | url }}"
                           {% if grandchild.active %}class="active"{% endif %}>{{ grandchild.title }}</a>

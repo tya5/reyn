@@ -423,6 +423,38 @@ kbd {
 .reyn-sidebar-list--top {
   margin-bottom: 12px;
 }
+.reyn-sidebar-subgroup-item {
+  margin-top: 4px;
+}
+.reyn-sidebar-subgroup > summary {
+  display: block;
+  padding: 3px 0 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #807B74;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.reyn-sidebar-subgroup > summary::-webkit-details-marker {
+  display: none;
+}
+.reyn-sidebar-subgroup > summary::marker {
+  display: none;
+}
+.reyn-sidebar-subgroup > summary::before {
+  content: '› ';
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 400;
+  transition: transform 150ms;
+}
+.reyn-sidebar-subgroup[open] > summary::before {
+  transform: rotate(90deg);
+}
+.reyn-sidebar-list--deep {
+  margin-left: 14px;
+}
 
 /* ---- TOC rail (reyn) ---- */
 .reyn-toc-inner {
