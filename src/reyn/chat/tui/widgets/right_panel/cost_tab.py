@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from reyn.chat.tui._palette import _TEXT_DIMMEST
+
 from .base import (
     _CORAL,
     _EVENT_PLAN,

@@ -12,6 +12,7 @@ from rich.text import Text as RichText
 from rich.tree import Tree as RichTree
 
 from reyn.chat.tui._palette import _DIVIDER_DIM, _TEXT_DIMMEST
+
 from .base import (
     _CORAL,
     _EVENT_PLAN,

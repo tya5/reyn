@@ -7,6 +7,7 @@ from pathlib import Path
 from rich.cells import cell_len
 
 from reyn.chat.tui._palette import _TEXT_DIMMEST
+
 from .base import (
     _BORDER_DIM,
     _CORAL,
