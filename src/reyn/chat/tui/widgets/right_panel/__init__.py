@@ -18,6 +18,8 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Tab, Tabs
 
+from reyn.chat.tui._palette import _BG_PANEL, _BORDER_DIM
+
 from .agents_tab import render_agents
 from .base import (
     _CORAL,
@@ -32,7 +34,6 @@ from .base import (
     _esc,
     logger,
 )
-from reyn.chat.tui._palette import _BG_PANEL, _BORDER_DIM
 from .cost_tab import render_cost
 from .docs_tab import build_docs_index, render_docs
 from .events_tab import _FILTER_GROUPS, _TAIL_CYCLE, render_events
