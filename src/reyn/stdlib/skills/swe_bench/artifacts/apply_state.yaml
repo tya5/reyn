@@ -15,11 +15,7 @@ schema:
       type: integer
       minimum: 1
       description: Which attempt number this is (matches the plan.attempt that was executed).
-    test_patch:
-      type: string
-      description: The test_patch string from the input, carried forward so verify can apply it.
   required:
     - instance_id
     - files_edited
     - attempt
-    - test_patch

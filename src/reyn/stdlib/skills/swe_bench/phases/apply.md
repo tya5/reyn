@@ -37,8 +37,7 @@ For non-Python files, skip this step.
 
 ## Step 4 — Record what was changed
 
-Collect the repository-relative paths of all files that were modified.  Carry
-`test_patch` from the input so the verify phase can access it.
+Collect the repository-relative paths of all files that were modified.
 
 ## When to transition
 
