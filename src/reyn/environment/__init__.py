@@ -6,6 +6,12 @@ local Python filesystem; a container backend (Stage 2) lets the repo FS live in
 a container while the OS + permission layer stay host-side.
 """
 from reyn.environment.backend import EnvironmentBackend, GrepResult
+from reyn.environment.container_backend import DockerEnvironmentBackend
 from reyn.environment.host_backend import HostBackend
 
-__all__ = ["EnvironmentBackend", "GrepResult", "HostBackend"]
+__all__ = [
+    "DockerEnvironmentBackend",
+    "EnvironmentBackend",
+    "GrepResult",
+    "HostBackend",
+]
