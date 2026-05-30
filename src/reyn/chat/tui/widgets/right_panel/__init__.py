@@ -18,8 +18,22 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Tab, Tabs
 
+from reyn.chat.tui._palette import _BG_PANEL, _BORDER_DIM
+
 from .agents_tab import render_agents
-from .base import _CORAL, _esc, logger
+from .base import (
+    _CORAL,
+    _EVENT_PLAN,
+    _STATUS_ERROR,
+    _STATUS_SUCCESS,
+    _TEXT_BODY,
+    _TEXT_BRIGHT,
+    _TEXT_DIM,
+    _TEXT_MUTED,
+    _TEXT_NEUTRAL,
+    _esc,
+    logger,
+)
 from .cost_tab import render_cost
 from .docs_tab import build_docs_index, render_docs
 from .events_tab import _FILTER_GROUPS, _TAIL_CYCLE, render_events
@@ -84,48 +98,48 @@ class RightPanel(Widget):
     Tab cycling: ctrl+o (next) / ctrl+shift+o (prev, terminal-dependent).
     """
 
-    DEFAULT_CSS = """
-    RightPanel {
+    DEFAULT_CSS = f"""
+    RightPanel {{
         display: none;
         width: 33%;
         min-width: 44;
-        background: #111111;
+        background: {_BG_PANEL};
         layout: vertical;
         height: 100%;
-    }
+    }}
 
     /* Tabs at the top of the panel via compose-order. Background uses the
-       panel's `#111111` (vs the screen header's `#1a1a1a`) so the boundary
+       panel's `{_BG_PANEL}` (vs the screen header's `#1a1a1a`) so the boundary
        between header and tabs is visible from colour delta alone. */
-    RightPanel Tabs {
-        background: #111111;
-        border-left: solid #2a2a2a;
-    }
+    RightPanel Tabs {{
+        background: {_BG_PANEL};
+        border-left: solid {_BORDER_DIM};
+    }}
 
-    RightPanel Tab {
-        color: #666666;
+    RightPanel Tab {{
+        color: {_TEXT_NEUTRAL};
         padding: 0 0;
         margin: 0 1 0 0;
-    }
+    }}
 
-    RightPanel Tab.-active {
+    RightPanel Tab.-active {{
         color: $primary;
         text-style: bold;
-    }
+    }}
 
-    RightPanel Tab:hover {
-        color: #aaaaaa;
-    }
+    RightPanel Tab:hover {{
+        color: {_TEXT_BODY};
+    }}
 
-    RightPanel #panel-scroll {
+    RightPanel #panel-scroll {{
         height: 1fr;
-    }
+    }}
 
-    RightPanel #panel-content {
+    RightPanel #panel-content {{
         height: auto;
-        color: #666666;
+        color: {_TEXT_NEUTRAL};
         padding: 0 1;
-    }
+    }}
     """
 
     def __init__(
@@ -1219,18 +1233,18 @@ class RightPanel(Widget):
         head.append("\n")
         origin = str(item.get("origin_channel_id") or "")
         if origin:
-            head.append("origin: ", style="dim #888888")
-            head.append(origin, style="#aaaaaa")
+            head.append("origin: ", style="dim " + _TEXT_MUTED)
+            head.append(origin, style=_TEXT_BODY)
             head.append("\n")
         created = str(item.get("created_at") or "")
         if created:
-            head.append("created_at: ", style="dim #888888")
-            head.append(created, style="#aaaaaa")
+            head.append("created_at: ", style="dim " + _TEXT_MUTED)
+            head.append(created, style=_TEXT_BODY)
             head.append("\n")
         summary = str(item.get("summary") or "")
         if summary:
             head.append("\n")
-            head.append(summary, style="#dddddd")
+            head.append(summary, style=_TEXT_BRIGHT)
             head.append("\n")
         detail = str(item.get("detail") or "")
         body = RichText(detail, style="dim") if detail else RichText("")
@@ -1254,7 +1268,7 @@ class RightPanel(Widget):
             head.append(f"[{entry.type}]", style="dim")
         if getattr(entry, "description", ""):
             head.append("\n")
-            head.append(entry.description, style="#aaaaaa")
+            head.append(entry.description, style=_TEXT_BODY)
         head.append("\n")
         body_md = RichMarkdown(getattr(entry, "body", "") or "")
         title = getattr(entry, "slug", "") or getattr(entry, "name", "") or "memory"
@@ -1490,35 +1504,35 @@ class RightPanel(Widget):
         has_work = bool(running_skills)
         if has_work:
             status_glyph, status_text, status_style = (
-                "● ", "running", "#44cc88",
+                "● ", "running", _STATUS_SUCCESS,
             )
         elif is_loaded:
             status_glyph, status_text, status_style = (
-                "◐ ", "ready", "#aaaa55",
+                "◐ ", "ready", "#aaaa55",  # palette-candidate: status_ready
             )
         else:
             status_glyph, status_text, status_style = (
-                "○ ", "idle", "#555555",
+                "○ ", "idle", _TEXT_DIM,
             )
         head = RichText()
-        head.append(name, style=("bold " + _CORAL) if is_attached else "#dddddd")
+        head.append(name, style=("bold " + _CORAL) if is_attached else _TEXT_BRIGHT)
         head.append("  ")
         head.append(status_glyph + status_text, style=status_style)
         head.append("\n")
         head.append("attached: ", style="dim")
-        head.append("yes" if is_attached else "no", style="#dddddd")
+        head.append("yes" if is_attached else "no", style=_TEXT_BRIGHT)
         head.append("\n")
         head.append("loaded: ", style="dim")
-        head.append("yes" if is_loaded else "no", style="#dddddd")
+        head.append("yes" if is_loaded else "no", style=_TEXT_BRIGHT)
         head.append("\n")
         head.append("running skills: ", style="dim")
-        head.append(str(len(running_skills)), style="#dddddd")
+        head.append(str(len(running_skills)), style=_TEXT_BRIGHT)
         if running_skills:
             head.append("\n")
             head.append("  ", style="dim")
             head.append(
                 ", ".join(rid[:8] for rid in running_skills[:4]),
-                style="dim #aaaaaa",
+                style="dim " + _TEXT_BODY,
             )
             if len(running_skills) > 4:
                 head.append(f", +{len(running_skills) - 4} more", style="dim")
@@ -1531,21 +1545,21 @@ class RightPanel(Widget):
         head = RichText()
         head.append(item.get("skill_name", "?"), style="bold " + _CORAL)
         head.append("  ")
-        head.append("(running)", style="#44cc88")
+        head.append("(running)", style=_STATUS_SUCCESS)
         head.append("\n")
         head.append("agent: ", style="dim")
-        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append(item.get("agent", "?"), style=_TEXT_BRIGHT)
         head.append("\n")
         head.append("run_id: ", style="dim")
-        head.append(item.get("run_id", "?"), style="#dddddd")
+        head.append(item.get("run_id", "?"), style=_TEXT_BRIGHT)
         head.append("\n")
         head.append("elapsed: ", style="dim")
-        head.append(f"{item.get('elapsed_s', 0)}s", style="#dddddd")
+        head.append(f"{item.get('elapsed_s', 0)}s", style=_TEXT_BRIGHT)
         head.append("\n")
         head.append("phase: ", style="dim")
-        head.append(item.get("phase", "—") or "—", style="#dddddd")
+        head.append(item.get("phase", "—") or "—", style=_TEXT_BRIGHT)
         if item.get("phase_visits", 0) > 1:
-            head.append(f"  (visit #{item['phase_visits']})", style="#888888")
+            head.append(f"  (visit #{item['phase_visits']})", style=_TEXT_MUTED)
         # The user message that kicked off this run. Lets the user
         # disambiguate same-named skills triggered by different turns —
         # the typical "why is web_search_display still running, didn't
@@ -1558,7 +1572,7 @@ class RightPanel(Widget):
             # blow up the preview, but keep enough to identify which
             # turn it came from.
             short = trig if len(trig) <= 240 else trig[:237] + "…"
-            head.append(short, style="#aaaaaa")
+            head.append(short, style=_TEXT_BODY)
         title = f"running · {item.get('skill_name', '?')}"
         pane.show_text(title, RichGroup(head))
 
@@ -1568,23 +1582,23 @@ class RightPanel(Widget):
         from rich.text import Text as RichText
         head = RichText()
         head.append("plan ", style="dim")
-        head.append(item.get("plan_id", "?"), style="bold #ff9944")
+        head.append(item.get("plan_id", "?"), style="bold " + _EVENT_PLAN)
         head.append("  ")
         head.append(item.get("status", "?"),
-                    style="#44cc88" if item.get("status") == "running" else "#aaaa55")
+                    style=_STATUS_SUCCESS if item.get("status") == "running" else "#aaaa55")  # palette-candidate: status_ready
         head.append("\n")
         head.append("agent: ", style="dim")
-        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append(item.get("agent", "?"), style=_TEXT_BRIGHT)
         head.append("\n")
         head.append("progress: ", style="dim")
         head.append(
-            f"{item.get('done', 0)}/{item.get('total', 0)}", style="#dddddd",
+            f"{item.get('done', 0)}/{item.get('total', 0)}", style=_TEXT_BRIGHT,
         )
         if item.get("failed"):
-            head.append(f"  ({item['failed']} failed)", style="#ff6644")
+            head.append(f"  ({item['failed']} failed)", style=_STATUS_ERROR)
         if item.get("goal"):
             head.append("\n\ngoal:\n", style="dim")
-            head.append(item["goal"], style="#aaaaaa")
+            head.append(item["goal"], style=_TEXT_BODY)
         title = f"running · plan {item.get('plan_id', '?')}"
         pane.show_text(title, RichGroup(head))
 
@@ -1598,35 +1612,35 @@ class RightPanel(Widget):
         head = RichText()
         status = item.get("status", "?")
         if status == "ok":
-            head_glyph, head_style = "✓ ", "#44cc88"
+            head_glyph, head_style = "✓ ", _STATUS_SUCCESS
         elif status == "stuck":
-            head_glyph, head_style = "⊘ ", "#ffaa44"
+            head_glyph, head_style = "⊘ ", "#ffaa44"  # palette-candidate: status_stuck
         else:
-            head_glyph, head_style = "✗ ", "#ff6644"
+            head_glyph, head_style = "✗ ", _STATUS_ERROR
         head.append(head_glyph, style="bold " + head_style)
-        head.append(item.get("skill_name", "?"), style="bold #dddddd")
+        head.append(item.get("skill_name", "?"), style="bold " + _TEXT_BRIGHT)
         head.append("\n")
         head.append("agent: ", style="dim")
-        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append(item.get("agent", "?"), style=_TEXT_BRIGHT)
         head.append("\n")
         head.append("status: ", style="dim")
         if status == "stuck":
             head.append(
                 f"stuck (last event: {item.get('stuck_at', '?')})",
-                style="bold #ffaa44",
+                style="bold #ffaa44",  # palette-candidate: status_stuck
             )
             head.append(
                 "\n           "
                 "no workflow_finished / workflow_aborted in the log — "
                 "the run was likely killed mid-execution "
                 "(SIGKILL / crash / abandoned session)",
-                style="dim #aa8844",
+                style="dim #aa8844",  # palette-candidate: status_stuck_dim
             )
         else:
             head.append(status, style=head_style)
         head.append("\n")
         head.append("duration: ", style="dim")
-        head.append(f"{item.get('duration_s', 0):.1f}s", style="#dddddd")
+        head.append(f"{item.get('duration_s', 0):.1f}s", style=_TEXT_BRIGHT)
 
         # Event log + LLM-usage rollup + phase-path reconstruction.
         # Single pass: keep running totals for LLM calls / tokens / cost
@@ -1692,18 +1706,18 @@ class RightPanel(Widget):
         if llm_calls > 0:
             head.append("\n")
             head.append("llm calls: ", style="dim")
-            head.append(str(llm_calls), style="#dddddd")
+            head.append(str(llm_calls), style=_TEXT_BRIGHT)
             head.append("\n")
             head.append("tokens: ", style="dim")
             total_tokens = prompt_tokens_total + completion_tokens_total
             head.append(
                 f"{total_tokens:,} (prompt {prompt_tokens_total:,} + "
                 f"completion {completion_tokens_total:,})",
-                style="#dddddd",
+                style=_TEXT_BRIGHT,
             )
             head.append("\n")
             head.append("cost: ", style="dim")
-            head.append(f"${cost_usd_total:.4f}", style="#dddddd")
+            head.append(f"${cost_usd_total:.4f}", style=_TEXT_BRIGHT)
 
         # Phase graph — the sequence of phases the OS actually executed,
         # rendered with arrows. Visit counts > 1 surface as `(v2)` /
@@ -1727,17 +1741,17 @@ class RightPanel(Widget):
                     head.append("\n  ")
                     line_chars = 2
                 if arrow:
-                    head.append(arrow, style="dim #555555")
+                    head.append(arrow, style="dim " + _TEXT_DIM)
                     line_chars += len(arrow)
-                head.append(node, style="#dddddd")
+                head.append(node, style=_TEXT_BRIGHT)
                 line_chars += len(node)
             # Terminal marker
             if terminal_kind == "finished":
                 tail_text = " → ✓ end"
-                tail_style = "#44cc88"
+                tail_style = _STATUS_SUCCESS
             elif terminal_kind == "aborted":
                 tail_text = " → ✗ aborted"
-                tail_style = "#ff6644"
+                tail_style = _STATUS_ERROR
             else:
                 tail_text = ""
                 tail_style = ""
@@ -1748,7 +1762,7 @@ class RightPanel(Widget):
 
         head.append("\n")
         head.append("finished: ", style="dim")
-        head.append(item.get("ts", "?"), style="#dddddd")
+        head.append(item.get("ts", "?"), style=_TEXT_BRIGHT)
 
         # triggered_by — looked up by full run_id from the session-local
         # map populated when the skill first emitted a trace event. Empty
@@ -1758,7 +1772,7 @@ class RightPanel(Widget):
         if trig:
             head.append("\n\ntriggered by:\n", style="dim")
             short = trig if len(trig) <= 240 else trig[:237] + "…"
-            head.append(short, style="#aaaaaa")
+            head.append(short, style=_TEXT_BODY)
 
         head.append("\n\n")
 
@@ -1767,7 +1781,7 @@ class RightPanel(Widget):
             title = f"{item.get('skill_name', '?')} · {len(events)} events"
             pane.show_text(title, RichGroup(head, event_block))
         else:
-            head.append("(no events found)", style="dim #555555")
+            head.append("(no events found)", style="dim " + _TEXT_DIM)
             title = f"{item.get('skill_name', '?')} · 0 events"
             pane.show_text(title, RichGroup(head))
 
@@ -2299,31 +2313,31 @@ class RightPanel(Widget):
         head = RichText()
         ok = item.get("status") == "ok"
         head.append("✓ " if ok else "✗ ",
-                    style="bold " + ("#44cc88" if ok else "#ff6644"))
+                    style="bold " + (_STATUS_SUCCESS if ok else _STATUS_ERROR))
         head.append("plan ", style="dim")
-        head.append(item.get("plan_id", "?"), style="bold #ff9944")
+        head.append(item.get("plan_id", "?"), style="bold " + _EVENT_PLAN)
         head.append("\n")
         head.append("agent: ", style="dim")
-        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append(item.get("agent", "?"), style=_TEXT_BRIGHT)
         head.append("\n")
         head.append("status: ", style="dim")
         head.append(item.get("status", "?"),
-                    style="#44cc88" if ok else "#ff6644")
+                    style=_STATUS_SUCCESS if ok else _STATUS_ERROR)
         head.append("\n")
         head.append("steps: ", style="dim")
         head.append(
             f"{item.get('n_completed', 0)} ok / {item.get('n_failed', 0)} failed",
-            style="#dddddd",
+            style=_TEXT_BRIGHT,
         )
         head.append("\n")
         head.append("finished: ", style="dim")
-        head.append(item.get("ts", "?"), style="#dddddd")
+        head.append(item.get("ts", "?"), style=_TEXT_BRIGHT)
         if item.get("exc_type"):
             head.append("\n\nexception:\n", style="dim")
-            head.append(item["exc_type"], style="#ff6644")
+            head.append(item["exc_type"], style=_STATUS_ERROR)
         if item.get("goal"):
             head.append("\n\ngoal:\n", style="dim")
-            head.append(item["goal"], style="#aaaaaa")
+            head.append(item["goal"], style=_TEXT_BODY)
         title = f"plan {item.get('plan_id', '?')}"
         pane.show_text(title, RichGroup(head))
 
@@ -2466,7 +2480,7 @@ class RightPanel(Widget):
         if self._panel_type == "keys":
             # B4: surface ``sp=expand`` — the Keys tab supports Space to
             # expand a per-key detail block, but nothing hinted it.
-            return f"[bold {_CORAL}]Key Bindings[/]  [#555555]j↓ k↑ sp=expand[/]"
+            return f"[bold {_CORAL}]Key Bindings[/]  [{_TEXT_DIM}]j↓ k↑ sp=expand[/]"
         if self._panel_type == "agents":
             # Wave-10 H-F2: surface ``space=open c=copy`` so the cursor's
             # most useful actions are discoverable from the header.
@@ -2476,7 +2490,7 @@ class RightPanel(Widget):
             # Pending tab's ``d=discard c=claim`` per-tab hint shape.
             return (
                 f"[bold {_CORAL}]Agents[/]"
-                f"  [#555555]j↓ k↑ space=open c=copy a=attach[/]"
+                f"  [{_TEXT_DIM}]j↓ k↑ space=open c=copy a=attach[/]"
             )
         if self._panel_type == "memory":
             # Wave Round 2 finding F3 (2026-05-29): the [t] type filter
@@ -2485,14 +2499,14 @@ class RightPanel(Widget):
             # same way the events tab advertises [f] / [t].
             return (
                 f"[bold {_CORAL}]Memory[/]"
-                f"  [#555555]j↓ k↑ space=open c=copy t=filter[/]"
+                f"  [{_TEXT_DIM}]j↓ k↑ space=open c=copy t=filter[/]"
             )
         if self._panel_type == "cost":
-            return f"[bold {_CORAL}]Cost[/]  [#555555]j↓ k↑[/]"
+            return f"[bold {_CORAL}]Cost[/]  [{_TEXT_DIM}]j↓ k↑[/]"
         if self._panel_type == "docs":
             return (
                 f"[bold {_CORAL}]Docs[/]"
-                f"  [#555555]j↓ k↑ space=open /=filter g=lang[/]"
+                f"  [{_TEXT_DIM}]j↓ k↑ space=open /=filter g=lang[/]"
             )
         if self._panel_type == "pending":
             # Issue #277 — Pending tab keybinds: j/k cursor +
@@ -2502,17 +2516,17 @@ class RightPanel(Widget):
             # detail in the preview pane, same idiom as events / memory.
             return (
                 f"[bold {_CORAL}]Pending[/]"
-                f"  [#555555]j↓ k↑ sp=open d=discard c=claim[/]"
+                f"  [{_TEXT_DIM}]j↓ k↑ sp=open d=discard c=claim[/]"
             )
         if self._panel_type == "events":
             filter_name, _ = _FILTER_GROUPS[self._event_filter_idx]
             tail = _TAIL_CYCLE[self._event_tail_idx]
             filter_label = (
                 f"[bold {_CORAL}]{filter_name}[/]" if filter_name != "all"
-                else "[#555555]all[/]"
+                else f"[{_TEXT_DIM}]all[/]"
             )
-            lbr = "[#555555]\\[[/]"
-            rbr = "[#555555]][/]"
+            lbr = f"[{_TEXT_DIM}]\\[[/]"
+            rbr = f"[{_TEXT_DIM}]][/]"
             kf = f"{lbr}[{_CORAL}]f[/]{rbr}"
             kt = f"{lbr}[{_CORAL}]t[/]{rbr}"
             # Wave Round 2 finding F1 (2026-05-29): when [v] verbose mode
@@ -2547,11 +2561,11 @@ class RightPanel(Widget):
             #     cells which overflows padding at minimum panel width
             return (
                 f"[bold {_CORAL}]Events[/]"
-                f"  {kf}[#555555]:[/]{filter_label}"
-                f"  {kt}[#555555]:[/][#aaaaaa]{tail}[/]"
+                f"  {kf}[{_TEXT_DIM}]:[/]{filter_label}"
+                f"  {kt}[{_TEXT_DIM}]:[/][{_TEXT_BODY}]{tail}[/]"
                 f"{v_marker}"
                 f"{i_marker}"
-                f"  [#555555]j/k sp i=iso[/]"
+                f"  [{_TEXT_DIM}]j/k sp i=iso[/]"
             )
         return ""
 
