@@ -81,6 +81,9 @@ nav:
           - guide/for-users/ask-user-mid-phase.md
           - guide/for-users/chat-and-web-ui.md
           - guide/for-users/work-with-files.md
+          - guide/for-users/enable-semantic-search.md
+          - guide/for-users/run-swe-bench.md
+          - guide/for-users/popular-mcp-servers.md
       - For skill authors:
           - guide/for-skill-authors/index.md
           - Foundation:
@@ -192,37 +195,44 @@ nav:
       - Other:
           - reference/upgrade-policy.md
   - Concepts:
-      - concepts/principles.md
-      - concepts/care-boundary.md
-      - concepts/architecture.md
-      - concepts/phase-vs-skill-vs-os.md
-      - concepts/llm-invocation-surfaces.md
-      - concepts/llm-as-decision-engine.md
-      - concepts/workspace.md
-      - concepts/events.md
-      - concepts/permission-model.md
-      - concepts/sandbox.md
-      - concepts/secret-handling.md
-      - concepts/mcp.md
-      - concepts/universal-catalog.md
-      - concepts/chat-compaction.md
-      - concepts/rag.md
-      - concepts/dogfood-scenarios.md
-      - concepts/operational-intelligence.md
-      - concepts/skill-self-improvement.md
-      - concepts/a2a.md
-      - concepts/memory.md
-      - concepts/multi-agent.md
-      - concepts/topology.md
-      - concepts/plan-mode.md
-      - concepts/async-skill-execution.md
-      - concepts/preprocessor.md
-      - concepts/postprocessor.md
-      - concepts/python-safe-mode.md
-      - concepts/skill-design-patterns.md
-      - concepts/evaluation.md
-      - concepts/skill-resume.md
-      - concepts/voice.md
+      - Architecture:
+          - concepts/principles.md
+          - concepts/architecture.md
+          - concepts/care-boundary.md
+          - concepts/phase-vs-skill-vs-os.md
+          - concepts/llm-invocation-surfaces.md
+          - concepts/llm-as-decision-engine.md
+      - Runtime:
+          - concepts/workspace.md
+          - concepts/events.md
+          - concepts/permission-model.md
+          - concepts/sandbox.md
+          - concepts/secret-handling.md
+      - Skills:
+          - concepts/skill-design-patterns.md
+          - concepts/skill-self-improvement.md
+          - concepts/skill-resume.md
+          - concepts/async-skill-execution.md
+          - concepts/preprocessor.md
+          - concepts/postprocessor.md
+          - concepts/python-safe-mode.md
+      - Multi-agent:
+          - concepts/multi-agent.md
+          - concepts/a2a.md
+          - concepts/topology.md
+          - concepts/plan-mode.md
+      - Data & retrieval:
+          - concepts/rag.md
+          - concepts/memory.md
+          - concepts/operational-intelligence.md
+          - concepts/chat-compaction.md
+      - Tools & integrations:
+          - concepts/mcp.md
+          - concepts/universal-catalog.md
+          - concepts/voice.md
+      - Observability:
+          - concepts/dogfood-scenarios.md
+          - concepts/evaluation.md
       - Agent engineering — seven lenses:
           - concepts/agent-engineering/index.md
           - concepts/agent-engineering/system-design.md
