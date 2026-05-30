@@ -7,6 +7,46 @@ model_class: standard
 can_finish: true
 allowed_ops: [shell]
 max_act_turns: 10
+preprocessor:
+  # FP-0008 C6 v2 — belt-and-suspenders: revert test_patch-target files before
+  # git diff HEAD so the final solution patch is source-only regardless of
+  # verify-phase state.  The verify preprocessor already reverts targets, but
+  # this guard ensures the report diff is clean even if verify's revert ran
+  # against a different working-tree state or was skipped.
+  #
+  # Step 1: read the original swe_bench_input artifact from the workspace to
+  # obtain test_patch (same path as verify.md Step 1).
+  - type: run_op
+    op:
+      kind: file
+      op: read
+      path: ".reyn/artifacts/swe_bench/_input/v01_swe_bench_input.json"
+    into: data._input_raw
+    on_error: empty
+  # Step 2: parse test_patch → list of git checkout command strings.
+  # The function returns [] gracefully on absent/empty test_patch.
+  - type: python
+    module: ./parse_test_targets.py
+    function: parse_test_targets
+    mode: safe
+    into: data._revert_cmds
+    output_schema:
+      type: array
+      items: {type: string}
+  # Step 3: run each git checkout command to revert test_patch-target files.
+  - type: iterate
+    over: data._revert_cmds
+    apply:
+      type: run_op
+      op:
+        kind: shell
+        cmd: "git checkout HEAD -- __placeholder__"
+        timeout: 10
+      args_from:
+        cmd: "_iter.item"
+      on_error: skip
+    into: data._revert_results
+    on_error: skip
 ---
 
 Produce the final output by capturing the git diff of all changes made during

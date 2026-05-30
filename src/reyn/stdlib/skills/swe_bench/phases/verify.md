@@ -41,6 +41,46 @@ preprocessor:
     into: data.test_patch
     output_schema:
       type: string
+  #
+  # FP-0008 C6 v2 Step 3: parse test_patch targets → list of git-checkout
+  # command strings.  Pure string transform (re + json only, mode: safe).
+  # Output: ["git checkout HEAD -- tests/test_x.py", ...] — zero or more.
+  # The function itself returns [] on absent/empty test_patch (graceful no-op).
+  - type: python
+    module: ./parse_test_targets.py
+    function: parse_test_targets
+    mode: safe
+    into: data._revert_cmds
+    output_schema:
+      type: array
+      items: {type: string}
+  #
+  # FP-0008 C6 v2 Step 4: iterate over command strings and run each via shell
+  # run_op.  Shell ops execute with cwd=workspace.base_dir (FP-0008 PR-I) =
+  # the SWE-bench repo root, so git checkout operates on the correct working
+  # tree even in concurrent benchmark runs.
+  #
+  # args_from {cmd: "_iter.item"} is resolved by _materialize_op:
+  # the IterateStep injects {_iter: {item: <cmd_string>}} into iter_artifact
+  # before calling _materialize_op, which resolves the dot-path "_iter.item"
+  # to the current command string and replaces ShellIROp.cmd via
+  # model_copy(update={"cmd": item_string}).
+  #
+  # on_error: skip — a path not in HEAD (= new test file) returns non-zero
+  # from git checkout; skip it rather than aborting the whole preprocessor.
+  - type: iterate
+    over: data._revert_cmds
+    apply:
+      type: run_op
+      op:
+        kind: shell
+        cmd: "git checkout HEAD -- __placeholder__"
+        timeout: 10
+      args_from:
+        cmd: "_iter.item"
+      on_error: skip
+    into: data._revert_results
+    on_error: skip
 ---
 
 Run the SWE-bench test patch against the current codebase to determine whether
