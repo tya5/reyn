@@ -28,14 +28,21 @@ async def handle(
     # route exec into a stateful backend (e.g. a Docker container) that the
     # name-based factory cannot build, without the handler knowing the caller.
     backend = ctx.sandbox_backend or get_default_backend(ctx.sandbox_config)
-    policy = SandboxPolicy(
-        network=op.network,
-        read_paths=list(op.read_paths),
-        write_paths=list(op.write_paths),
-        allow_subprocess=op.allow_subprocess,
-        env_passthrough=list(op.env_passthrough),
-        timeout_seconds=op.timeout_seconds,
-    )
+    # FP-0008 #1115 Stage 2 (D): a phase-level default_sandbox_policy (declared
+    # in the phase frontmatter, P8-clean) WINS over the op's own fields — so the
+    # policy is deterministic and the LLM cannot override it. Falls back to the
+    # op-level fields when no phase default is set (unchanged behavior).
+    if ctx.default_sandbox_policy is not None:
+        policy = SandboxPolicy(**ctx.default_sandbox_policy)
+    else:
+        policy = SandboxPolicy(
+            network=op.network,
+            read_paths=list(op.read_paths),
+            write_paths=list(op.write_paths),
+            allow_subprocess=op.allow_subprocess,
+            env_passthrough=list(op.env_passthrough),
+            timeout_seconds=op.timeout_seconds,
+        )
 
     ctx.events.emit(
         "sandboxed_exec_started",

@@ -291,7 +291,12 @@ class ControlIRExecutor:
             ),
         ]
 
-    def _build_ctx(self, decl: PermissionDecl, current_phase: str) -> OpContext:
+    def _build_ctx(
+        self,
+        decl: PermissionDecl,
+        current_phase: str,
+        default_sandbox_policy: dict | None = None,
+    ) -> OpContext:
         """Construct the OpContext for a single dispatch iteration."""
         return OpContext(
             workspace=self.workspace,
@@ -329,6 +334,9 @@ class ControlIRExecutor:
             # FP-0008 #1115 Stage 2: per-run injected exec backend instance
             # (dual-Protocol container backend); None → platform auto-detect.
             sandbox_backend=self._sandbox_backend,
+            # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy
+            # (frontmatter); sandboxed_exec applies it phase-default-wins.
+            default_sandbox_policy=default_sandbox_policy,
             # Issue #364 — multi-modal cluster media-size gate.
             multimodal_config=self._multimodal_config,
             # Issue #383 PR-C — media + tool-result file storage.
@@ -363,6 +371,7 @@ class ControlIRExecutor:
         phase: str = "",
         decl: PermissionDecl | None = None,
         allowed_ops: set[str] | None = None,
+        default_sandbox_policy: dict | None = None,
     ) -> list[dict[str, Any]]:
         """Execute a list of Control IR operations.
 
@@ -376,7 +385,7 @@ class ControlIRExecutor:
         the existing tool_executed events emitted by op_runtime handlers.
         """
         effective_decl = decl or PermissionDecl()
-        ctx = self._build_ctx(effective_decl, phase)
+        ctx = self._build_ctx(effective_decl, phase, default_sandbox_policy)
         results: list[dict[str, Any]] = []
 
         # Build a tool catalog for dispatch_tool name/arg validation.

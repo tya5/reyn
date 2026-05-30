@@ -176,6 +176,9 @@ class PreprocessorExecutor:
             secret_store=self._secret_store,
             # FP-0008 #1115 Stage 2: per-run injected exec backend instance.
             sandbox_backend=self._sandbox_backend,
+            # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy so a
+            # preprocessor sandboxed_exec uses the phase's declared policy.
+            default_sandbox_policy=phase.default_sandbox_policy,
         )
 
     async def run(

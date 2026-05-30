@@ -640,6 +640,9 @@ class RunOrchestrator:
                 decide_results = await self._phase_executor._control_ir_executor.execute(
                     output.ops, phase=current_phase, decl=current_decl,
                     allowed_ops=current_allowed,
+                    default_sandbox_policy=(
+                        current_def.default_sandbox_policy if current_def is not None else None
+                    ),
                 )
                 if decide_results:
                     self._events.emit(
