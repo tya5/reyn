@@ -110,6 +110,13 @@ class OpContext:
     # one; None preserves the default name-based platform auto-selection.
     sandbox_backend: "SandboxBackend | None" = None
 
+    # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy (dict of
+    # SandboxPolicy kwargs) declared in the phase frontmatter. When set, the
+    # sandboxed_exec handler builds the policy from this (phase-default WINS over
+    # the op's own fields) so a skill declares the policy once + the LLM cannot
+    # override it (deterministic + P8-clean). None → use the op-level fields.
+    default_sandbox_policy: dict | None = None
+
     # Issue #364: declarative cap on binary media size (= images from
     # web__fetch / file__read / MCP / user input). When None, the gate
     # is skipped — direct-OpContext constructions in tests stay

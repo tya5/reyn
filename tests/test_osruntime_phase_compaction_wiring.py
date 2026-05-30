@@ -257,6 +257,7 @@ class _FakeIRExecutor:
         phase: str = "",
         decl: Any = None,
         allowed_ops: Any = None,
+        default_sandbox_policy: Any = None,
     ) -> list[dict]:
         """Return one synthetic grep result regardless of the ops list."""
         return [

@@ -465,6 +465,9 @@ class PhaseExecutor:
             allowed_ops = set(phase_def.allowed_ops) if phase_def is not None else None
             ir_results = await self._control_ir_executor.execute(
                 act.ops, phase=phase, decl=phase_decl, allowed_ops=allowed_ops,
+                default_sandbox_policy=(
+                    phase_def.default_sandbox_policy if phase_def is not None else None
+                ),
             )
             control_ir_results = control_ir_results + ir_results
             prior_attempts = []
