@@ -63,6 +63,6 @@ Phase をキーとした構造が重要です: 「要約がフレンドリーで
 - [リファレンス: stdlib/eval](../../reference/stdlib/eval.md)
 - [リファレンス: stdlib/eval_builder](../../reference/stdlib/eval_builder.md)
 - [リファレンス: cli/eval](../../reference/cli/eval.md)
-- [ハウツー: events によるデバッグ](../../guide/for-skill-authors/debug-with-events.md)
+- [ハウツー: events によるデバッグ](../../guide/for-skill-authors/operations/debug-with-events.md)
 - [reliability-engineering.md](reliability-engineering.md) — 障害のための Events
 - [product-think.md](product-think.md) — CLI アフォーダンスを通じた Observability の表面化

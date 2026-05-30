@@ -65,6 +65,6 @@ These are addressable without changing the OS — they're product polish on top 
 - [Reference: cli/eval](../../reference/cli/eval.md)
 - [Reference: cli/chat](../../reference/cli/chat.md)
 - [Reference: cli/common-flags](../../reference/cli/common-flags.md)
-- [How-to: localize output](../../guide/for-skill-authors/localize-output.md)
+- [How-to: localize output](../../guide/for-skill-authors/ux-polish/localize-output.md)
 - [evaluation-and-observability.md](evaluation-and-observability.md) — what cost data is collected
 - [retrieval-engineering.md](retrieval-engineering.md) — chat memory affects UX directly

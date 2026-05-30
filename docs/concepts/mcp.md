@@ -233,7 +233,7 @@ Filter for them with `reyn events tail | grep mcp_` or `grep '"mcp_called"' .rey
 
 ## Stdlib skills that use MCP
 
-Stdlib skills declare `permissions.mcp: [<server>]` in the phase, emit `mcp` ops with `tool: <name>` (or whatever the server advertises), and let the OS handle the rest. See the [how-to](../guide/for-skill-authors/use-an-mcp-server.md) for a full quickstart on authoring your own MCP-backed skill.
+Stdlib skills declare `permissions.mcp: [<server>]` in the phase, emit `mcp` ops with `tool: <name>` (or whatever the server advertises), and let the OS handle the rest. See the [how-to](../guide/for-skill-authors/operations/use-an-mcp-server.md) for a full quickstart on authoring your own MCP-backed skill.
 
 ## Role 2: MCP server — external clients call Reyn
 
@@ -279,7 +279,7 @@ If you find yourself wishing MCP could do one of these, you're at the wrong laye
 
 ## See also
 
-- [How-to: use an MCP server](../guide/for-skill-authors/use-an-mcp-server.md) — quickstart with the filesystem server
+- [How-to: use an MCP server](../guide/for-skill-authors/operations/use-an-mcp-server.md) — quickstart with the filesystem server
 - [Reference: `reyn mcp`](../reference/cli/mcp.md) — full CLI reference for `search`, `install`, `list`, `remove`, `set-secret`, `clear-secret`
 - [Reference: `reyn secret`](../reference/cli/secret.md) — universal secret management
 - [Concepts: secret handling](secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation

@@ -123,4 +123,4 @@ preprocessor:
 
 - [phase-md.md](phase-md.md) — Phase frontmatter
 - [リファレンス: permissions](../config/permissions.md) — `python` Permission の宣言
-- [ハウツー: Python preprocessor を追加する](../../guide/for-skill-authors/add-a-python-preprocessor.md)
+- [ハウツー: Python preprocessor を追加する](../../guide/for-skill-authors/phase-mechanics/add-a-python-preprocessor.md)

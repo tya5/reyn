@@ -15,11 +15,11 @@ reyn runs LLM workflows as a state machine. Phases are stateless and reusable; a
 |---|---|
 | Install and run your first skill | [Getting started](guide/getting-started/01-installation.md) |
 | Solve a specific problem (chat user) | [Guide / for users](guide/for-users/manage-permissions.md) |
-| Solve a specific problem (skill author) | [Guide / for skill authors](guide/for-skill-authors/validate-artifacts.md) |
+| Solve a specific problem (skill author) | [Guide / for skill authors](guide/for-skill-authors/phase-mechanics/validate-artifacts.md) |
 | Look up exact behavior | [Reference](reference/cli/run.md) |
 | Understand the design | [Concepts](concepts/principles.md) |
 | Read reyn through agent-engineering lenses | [Seven lenses](concepts/agent-engineering/index.md) |
-| Read LLM-targeted rubrics | [Skill-builder checklist](guide/for-skill-authors/skill-builder-checklist.md) |
+| Read LLM-targeted rubrics | [Skill-builder checklist](guide/for-skill-authors/stdlib-authoring-tools/skill-builder-checklist.md) |
 | Contribute | See `docs/deep-dives/contributing/` in the repository |
 
 ## The four reading modes (Diátaxis)

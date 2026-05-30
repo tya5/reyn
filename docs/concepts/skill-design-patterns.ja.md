@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Skill design patterns — ほとんどの Skill が取る 3 つの形
 
-最初の Skill を作り終えたら（[Write your first custom skill](../guide/for-skill-authors/write-your-first-custom-skill.md) 参照）、次の疑問は「2 つ目を設計するとき、どんな形にすべきか？」です。Reyn の Skill のほとんどは 3 つのパターンのいずれかに当てはまります。複雑さのためではなく、Skill がやるべきことで選んでください。
+最初の Skill を作り終えたら（[Write your first custom skill](../guide/for-skill-authors/foundation/write-your-first-custom-skill.md) 参照）、次の疑問は「2 つ目を設計するとき、どんな形にすべきか？」です。Reyn の Skill のほとんどは 3 つのパターンのいずれかに当てはまります。複雑さのためではなく、Skill がやるべきことで選んでください。
 
 ## Pattern 1: Linear (read → process → write)
 
@@ -78,7 +78,7 @@ graph:
 prepare --> execute --(run_skill)--> [サブスキルが実行される] --> execute --> aggregate --> end
 ```
 
-サブスキルはグラフノードとして `@sub_skill` プレフィックスを使って宣言することもできます。両方のフレーバーについては [Compose skills with run_skill](../guide/for-skill-authors/compose-skills-with-run-skill.md) を参照してください。
+サブスキルはグラフノードとして `@sub_skill` プレフィックスを使って宣言することもできます。両方のフレーバーについては [Compose skills with run_skill](../guide/for-skill-authors/composition/compose-skills-with-run-skill.md) を参照してください。
 
 **使い時:** 作業がすでに Skill として存在する（またはそうなり得る）自己完結したサブタスクを含み、親のグラフを小さく保ちたい場合。サブタスクの出力を既存の artifact スキーマに対して検証してから親が進む必要がある場合にも有効です。
 
@@ -86,7 +86,7 @@ prepare --> execute --(run_skill)--> [サブスキルが実行される] --> exe
 
 - `eval` — `run_target` Phase がテスト対象の Skill を呼び出すために `run_skill` Control IR op を発行します。Graph: `{ run_target: [evaluate] }`。`run_target` の `allowed_ops: [run_skill]` 宣言がこれを許可します。サブスキルの出力はその後、判定のために `evaluate` Phase へ渡されます。
 - `skill_improver` — `run_and_eval` Phase が `run_skill` を通じて `eval` Skill を呼び出します（`skill_improver/skill.md` に「`eval` および `eval_builder` スキルを `run_skill` Control IR op 経由で呼び出す」と記載）。
-- Preprocessor `run_skill` — Phase は LLM より前の preprocessor ブロックで、決定論的にサブスキルを呼び出すこともできます。チャットルーターでの `recall_memory` の利用がこの形です（[Compose skills with run_skill](../guide/for-skill-authors/compose-skills-with-run-skill.md) 参照）。
+- Preprocessor `run_skill` — Phase は LLM より前の preprocessor ブロックで、決定論的にサブスキルを呼び出すこともできます。チャットルーターでの `recall_memory` の利用がこの形です（[Compose skills with run_skill](../guide/for-skill-authors/composition/compose-skills-with-run-skill.md) 参照）。
 
 **トレードオフ:** Composition により各 Skill のグラフがシンプルになり、テスト済みサブスキルの再利用が促進されます。コストはランタイム依存性です。サブスキルが存在しないか、そのコントラクトが変わると、親が壊れます。`reyn lint` で検証してください。
 
@@ -115,6 +115,6 @@ prepare --> execute --(run_skill)--> [サブスキルが実行される] --> exe
 - [principles.md](principles.md) — P1 と P2: これらのパターンが体現する設計時の不変条件（Phase は input のみを宣言する; Skill がグラフを所有する）。
 - [architecture.md](architecture.md) — コンポーネント全体のレイヤー構造。
 - [multi-agent.md](multi-agent.md) — Layer 3 と 4、これらの 3 つのパターンと直交します。
-- [Write your first custom skill](../guide/for-skill-authors/write-your-first-custom-skill.md) — これらのパターンを実践で適用する。
-- [Compose skills with run_skill](../guide/for-skill-authors/compose-skills-with-run-skill.md) — Pattern 3 の詳細。
+- [Write your first custom skill](../guide/for-skill-authors/foundation/write-your-first-custom-skill.md) — これらのパターンを実践で適用する。
+- [Compose skills with run_skill](../guide/for-skill-authors/composition/compose-skills-with-run-skill.md) — Pattern 3 の詳細。
 - [reference/dsl/graph.md](../reference/dsl/graph.md) — グラフ構文とサイクルのセマンティクス。

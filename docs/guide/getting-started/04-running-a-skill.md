@@ -83,7 +83,7 @@ reyn events .reyn/events/<run_id>.jsonl --filter validation_error
 2. Look at the matching `llm_called` event for what the model returned.
 3. If you see `validation_error`, the model's output didn't fit the next target's schema — usually a phase-instruction issue.
 
-The [debug-with-events](../for-skill-authors/debug-with-events.md) how-to walks through this flow.
+The [debug-with-events](../for-skill-authors/operations/debug-with-events.md) how-to walks through this flow.
 
 ## What you learned
 
@@ -94,5 +94,5 @@ The [debug-with-events](../for-skill-authors/debug-with-events.md) how-to walks 
 ## Next
 
 - [Tutorial 05 — Writing an eval](05-writing-an-eval.md)
-- [How-to: debug with events](../for-skill-authors/debug-with-events.md)
+- [How-to: debug with events](../for-skill-authors/operations/debug-with-events.md)
 - [Reference: run](../../reference/cli/run.md)

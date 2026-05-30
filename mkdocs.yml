@@ -87,36 +87,36 @@ nav:
       - For skill authors:
           - guide/for-skill-authors/index.md
           - Foundation:
-              - guide/for-skill-authors/write-your-first-custom-skill.md
-              - guide/for-skill-authors/import-an-existing-skill.md
+              - guide/for-skill-authors/foundation/write-your-first-custom-skill.md
+              - guide/for-skill-authors/foundation/import-an-existing-skill.md
           - Composition & multi-agent:
-              - guide/for-skill-authors/compose-skills-with-run-skill.md
-              - guide/for-skill-authors/iterate-with-fan-out.md
-              - guide/for-skill-authors/build-an-agent-team.md
-              - guide/for-skill-authors/multi-hop-delegation.md
-              - guide/for-skill-authors/use-plan-mode.md
-              - guide/for-skill-authors/restrict-agent-skills.md
+              - guide/for-skill-authors/composition/compose-skills-with-run-skill.md
+              - guide/for-skill-authors/composition/iterate-with-fan-out.md
+              - guide/for-skill-authors/composition/build-an-agent-team.md
+              - guide/for-skill-authors/composition/multi-hop-delegation.md
+              - guide/for-skill-authors/composition/use-plan-mode.md
+              - guide/for-skill-authors/composition/restrict-agent-skills.md
           - Phase mechanics:
-              - guide/for-skill-authors/add-a-python-preprocessor.md
-              - guide/for-skill-authors/validate-artifacts.md
-              - guide/for-skill-authors/persist-state.md
+              - guide/for-skill-authors/phase-mechanics/add-a-python-preprocessor.md
+              - guide/for-skill-authors/phase-mechanics/validate-artifacts.md
+              - guide/for-skill-authors/phase-mechanics/persist-state.md
           - Operations:
-              - guide/for-skill-authors/debug-with-events.md
-              - guide/for-skill-authors/use-an-mcp-server.md
-              - guide/for-skill-authors/understand-why-reyn-stops.md
-              - guide/for-skill-authors/crash-recovery-and-resume.md
-              - guide/for-skill-authors/audit-and-explainability.md
+              - guide/for-skill-authors/operations/debug-with-events.md
+              - guide/for-skill-authors/operations/use-an-mcp-server.md
+              - guide/for-skill-authors/operations/understand-why-reyn-stops.md
+              - guide/for-skill-authors/operations/crash-recovery-and-resume.md
+              - guide/for-skill-authors/operations/audit-and-explainability.md
           - UX & polish:
-              - guide/for-skill-authors/author-a-design.md
-              - guide/for-skill-authors/localize-output.md
-              - guide/for-skill-authors/enable-voice-input.md
+              - guide/for-skill-authors/ux-polish/author-a-design.md
+              - guide/for-skill-authors/ux-polish/localize-output.md
+              - guide/for-skill-authors/ux-polish/enable-voice-input.md
           - Working with stdlib authoring tools:
-              - guide/for-skill-authors/skill-builder-checklist.md
-              - guide/for-skill-authors/eval-builder-rubric.md
-              - guide/for-skill-authors/skill-importer-mapping.md
-              - guide/for-skill-authors/skill-improver-criteria.md
-              - guide/for-skill-authors/glossary.md
-              - guide/for-skill-authors/production-checklist.md
+              - guide/for-skill-authors/stdlib-authoring-tools/skill-builder-checklist.md
+              - guide/for-skill-authors/stdlib-authoring-tools/eval-builder-rubric.md
+              - guide/for-skill-authors/stdlib-authoring-tools/skill-importer-mapping.md
+              - guide/for-skill-authors/stdlib-authoring-tools/skill-improver-criteria.md
+              - guide/for-skill-authors/stdlib-authoring-tools/glossary.md
+              - guide/for-skill-authors/stdlib-authoring-tools/production-checklist.md
       - For Reyn developers:
           - guide/for-reyn-developers/index.md
           - guide/for-reyn-developers/principles-and-code.md

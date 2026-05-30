@@ -387,4 +387,4 @@ Wire into Claude Code's `mcp.json` (stdio transport):
 - [Reference: `reyn secret`](secret.md) — universal secret management
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `mcp.servers:` schema and `permissions.mcp_install:`
 - [Reference: common flags](common-flags.md) — flags shared across CLI commands
-- [How-to: use an MCP server](../../guide/for-skill-authors/use-an-mcp-server.md)
+- [How-to: use an MCP server](../../guide/for-skill-authors/operations/use-an-mcp-server.md)

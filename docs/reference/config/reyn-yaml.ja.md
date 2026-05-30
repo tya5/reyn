@@ -683,7 +683,7 @@ mcp:
     ...
 ```
 
-[コンセプト: MCP](../../concepts/mcp.md) でプロトコル概要、[How-to: MCP サーバーを使う](../../guide/for-skill-authors/use-an-mcp-server.md) でエンドツーエンドのクイックスタートを参照してください。
+[コンセプト: MCP](../../concepts/mcp.md) でプロトコル概要、[How-to: MCP サーバーを使う](../../guide/for-skill-authors/operations/use-an-mcp-server.md) でエンドツーエンドのクイックスタートを参照してください。
 
 ## `embedding` ブロック
 

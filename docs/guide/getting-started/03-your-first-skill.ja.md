@@ -80,5 +80,5 @@ skill を読み、変更を計画し、diff を提示します。ファイル書
 
 - [チュートリアル 04 — Skill を実行する](04-running-a-skill.md) — 入力フォーマット、よく使うフラグ、イベントログの読み方
 - [チュートリアル 05 — eval を書く](05-writing-an-eval.md) — ルーブリックで挙動を固定する
-- [ハウツー: 自作 skill をゼロから書く](../for-skill-authors/write-your-first-custom-skill.md) — 同じ形を手書きで構築し、各ファイルの役割を理解する（英語版にフォールバック）
+- [ハウツー: 自作 skill をゼロから書く](../for-skill-authors/foundation/write-your-first-custom-skill.md) — 同じ形を手書きで構築し、各ファイルの役割を理解する（英語版にフォールバック）
 - [Reference: skill.md frontmatter](../../reference/dsl/skill-md.md)（英語版にフォールバック）
