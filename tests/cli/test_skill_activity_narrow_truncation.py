@@ -83,7 +83,8 @@ def test_running_fits_within_narrow_width() -> None:
     plain = text.plain
     # Right margin is reserved internally; the visible text must not
     # exceed the terminal width (wrapping line = cell_len > width).
-    assert cell_len(plain) <= 40, (
+    width = cell_len(plain)
+    assert width <= 40, (
         f"Expected cell_len ≤ 40, got {cell_len(plain)}: {plain!r}"
     )
 
@@ -143,7 +144,8 @@ def test_running_detail_dropped_at_narrow_width() -> None:
     plain = text.plain
     # Confirm detail excluded by checking the cell budget constraint:
     # if detail were present, the line would exceed 40 cells.
-    assert cell_len(plain) <= 40, (
+    width = cell_len(plain)
+    assert width <= 40, (
         f"cell_len should stay ≤ 40 (detail dropped): {plain!r}"
     )
 
@@ -179,7 +181,8 @@ def test_running_truncation_ellipsis_on_very_long_skill_name() -> None:
     assert "…" in plain, (
         f"Ellipsis must appear for very long skill name at 35 cols; got {plain!r}"
     )
-    assert cell_len(plain) <= 35, (
+    width = cell_len(plain)
+    assert width <= 35, (
         f"Expected cell_len ≤ 35, got {cell_len(plain)}: {plain!r}"
     )
 
@@ -206,7 +209,8 @@ def test_finished_success_ctrl_hint_dropped_at_narrow_width() -> None:
     assert "Ctrl+B" not in plain, (
         f"Ctrl+B hint must be dropped at 45 cols; got {plain!r}"
     )
-    assert cell_len(plain) <= 45, (
+    width = cell_len(plain)
+    assert width <= 45, (
         f"Expected cell_len ≤ 45, got {cell_len(plain)}: {plain!r}"
     )
 
@@ -240,7 +244,8 @@ def test_finished_failure_ctrl_hint_dropped_at_narrow_width() -> None:
     assert "Ctrl+B" not in plain, (
         f"Ctrl+B hint must be dropped at 45 cols; got {plain!r}"
     )
-    assert cell_len(plain) <= 45, (
+    width = cell_len(plain)
+    assert width <= 45, (
         f"Expected cell_len ≤ 45, got {cell_len(plain)}: {plain!r}"
     )
 
@@ -268,7 +273,8 @@ def test_finished_aborted_cancel_msg_truncated_at_narrow_width() -> None:
     _set_width(row, 40)
     finished_text = row._build_finished()
     plain = finished_text.plain
-    assert cell_len(plain) <= 40, (
+    width = cell_len(plain)
+    assert width <= 40, (
         f"Expected cell_len ≤ 40, got {cell_len(plain)}: {plain!r}"
     )
 
@@ -287,7 +293,8 @@ def test_truncate_to_cells_cjk_aware() -> None:
     # but we need to reserve 1 cell for the ellipsis, so result is 2 CJK
     # chars + "…" = 5 cells.
     result = row._truncate_to_cells(cjk, 6)
-    assert cell_len(result) <= 6, (
-        f"Expected cell_len ≤ 6, got {cell_len(result)}: {result!r}"
+    width = cell_len(result)
+    assert width <= 6, (
+        f"Expected cell_len ≤ 6, got {width}: {result!r}"
     )
     assert "…" in result, "Ellipsis must appear when truncation happened"
