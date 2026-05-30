@@ -124,7 +124,7 @@ def test_key_details_has_at_least_six_entries() -> None:
 
 @pytest.mark.asyncio
 async def test_toggle_expand_f3_row_shows_detail() -> None:
-    """Tier 2: toggle_expand_cursor() on the F3 row → detail block contains 'drill-down'."""
+    """Tier 2: toggle_expand_cursor() on the F3 row → detail block reflects bulk-toggle wording."""
     _reset_keys_state()
     app = _app()
     async with app.run_test(headless=True, size=(120, 40)) as pilot:
@@ -149,13 +149,15 @@ async def test_toggle_expand_f3_row_shows_detail() -> None:
         assert did_open, "toggle_expand_cursor should return True when opening"
 
         # Re-render with updated state and check for detail text.
+        # B2 fix: F3 now describes bulk-toggle behaviour (not cursor-based
+        # drill-down), so assert on the new wording sentinel.
         markup_after, _, _ = render_keys(
             app,
             cursor=get_keys_cursor(),
             expanded=get_keys_expanded(),
         )
-        assert "drill-down" in markup_after.lower(), (
-            f"After expand on F3 row, rendered output must contain 'drill-down'; "
+        assert "bulk-toggle" in markup_after.lower(), (
+            f"After expand on F3 row, rendered output must contain 'bulk-toggle'; "
             f"got:\n{markup_after}"
         )
 
@@ -181,8 +183,8 @@ async def test_toggle_expand_twice_hides_detail() -> None:
         markup_open, _, _ = render_keys(
             app, cursor=get_keys_cursor(), expanded=get_keys_expanded(),
         )
-        assert "drill-down" in markup_open.lower(), (
-            "Detail must be visible after first toggle"
+        assert "bulk-toggle" in markup_open.lower(), (
+            "Detail must be visible after first toggle (bulk-toggle wording)"
         )
 
         # Second toggle: close.
@@ -190,13 +192,12 @@ async def test_toggle_expand_twice_hides_detail() -> None:
         markup_closed, _, _ = render_keys(
             app, cursor=get_keys_cursor(), expanded=get_keys_expanded(),
         )
-        # The bare row description for F3 is "Drill-down …" per _PANEL_EXPLICIT
-        # / CONVERSATION group. The *inline detail block* lines are the ones
-        # emitted by the expand logic (prefixed with dim #aaaaaa). After
-        # close, those extra detail lines must be gone. We detect this by
-        # checking that the detail text from _KEY_DETAILS["f3"] is absent —
-        # the per-phase / tool-calls sentences are not in the row description.
-        detail_sentinel = "per-phase events"
+        # The *inline detail block* lines are emitted by the expand logic
+        # (prefixed with dim #aaaaaa). After close, those extra detail lines
+        # must be gone. We detect this by checking that distinctive text
+        # from _KEY_DETAILS["f3"] is absent — "convergence state" is not
+        # in the short row description, only in the expanded detail block.
+        detail_sentinel = "convergence state"
         assert detail_sentinel not in markup_closed, (
             f"After second toggle detail must be hidden; "
             f"sentinel {detail_sentinel!r} still present:\n{markup_closed}"
