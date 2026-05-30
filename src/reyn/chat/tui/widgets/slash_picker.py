@@ -28,6 +28,7 @@ from reyn.chat.tui._palette import (
     _TEXT_DIM,
     _TEXT_MUTED,
     _TEXT_NEUTRAL,
+    _TEXT_SELECTED,
 )
 
 from ._renderable_cache import RenderableCacheMixin
@@ -321,7 +322,7 @@ class SlashPicker(RenderableCacheMixin, Static):
                 summary = summary[: max(1, summary_budget - 1)] + "…"
             row.append(
                 summary,
-                style="#bbbbbb" if is_sel else "dim " + _TEXT_MUTED,
+                style=_TEXT_SELECTED if is_sel else "dim " + _TEXT_MUTED,
             )
             if i > 0:
                 body.append("\n")

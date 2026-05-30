@@ -27,6 +27,7 @@ from reyn.chat.tui._palette import (
     _TEXT_BODY,
     _TEXT_BRIGHT,
     _TEXT_DIM,
+    _TEXT_MID,
     _TEXT_MUTED,
     _TEXT_NEUTRAL,
 )
@@ -52,6 +53,7 @@ __all__ = [
     "_TEXT_BODY",
     "_TEXT_BRIGHT",
     "_TEXT_DIM",
+    "_TEXT_MID",
     "_TEXT_MUTED",
     "_TEXT_NEUTRAL",
     "_esc",

@@ -80,7 +80,14 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _AMBER, _BG_HEADER, _CORAL, _STATUS_ERROR, _TEXT_MUTED
+from reyn.chat.tui._palette import (
+    _AMBER,
+    _BG_HEADER,
+    _CORAL,
+    _STATUS_ERROR,
+    _STATUS_WARN,
+    _TEXT_MUTED,
+)
 
 from ._renderable_cache import RenderableCacheMixin
 
@@ -690,7 +697,7 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         elapsed_str = _fmt_elapsed(elapsed_s)
         if entry.pending_count > 0:
             elapsed_segment = f"  ({entry.pending_count} pending)"
-            elapsed_style = "bold #ffaa44"  # palette-candidate: pending-warning amber (no foundation token yet)
+            elapsed_style = "bold " + _STATUS_WARN
             glyph_style = _AMBER
         else:
             elapsed_segment = f"  · {elapsed_str}"

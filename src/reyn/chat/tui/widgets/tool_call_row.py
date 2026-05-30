@@ -35,7 +35,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _CORAL, _STATUS_ERROR, _TEXT_MUTED, _TEXT_NEUTRAL
+from reyn.chat.tui._palette import _CORAL, _STATUS_ERROR, _STATUS_WARN, _TEXT_MUTED, _TEXT_NEUTRAL
 
 from ._renderable_cache import RenderableCacheMixin
 
@@ -319,7 +319,7 @@ class ToolCallRow(RenderableCacheMixin, Widget):
         if secs >= _ELAPSED_RED_S:
             return "bold " + _STATUS_ERROR
         if secs >= _ELAPSED_AMBER_S:
-            return "bold #ffaa44"  # palette-candidate: elapsed-warning amber (no foundation token yet)
+            return "bold " + _STATUS_WARN
         return "dim"
 
     def _state_glyph(self) -> tuple[str, str]:
