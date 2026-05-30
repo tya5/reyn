@@ -13,6 +13,7 @@ import httpx
 import litellm
 
 logger = logging.getLogger(__name__)
+from reyn.llm.json_parse import loads_lenient
 from reyn.llm.model_resolver import ModelSpec
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import ContextFrame
@@ -647,11 +648,6 @@ def _extract_json(text: str) -> str:
     return stripped
 
 
-def _repair_json(text: str) -> str:
-    """Remove trailing commas — the most common LLM JSON mistake."""
-    return re.sub(r",(\s*[}\]])", r"\1", text)
-
-
 def _extract_usage(response) -> TokenUsage | None:
     """Extract token usage from a litellm response object."""
     try:
@@ -871,16 +867,18 @@ async def call_llm(
 
         parsed: dict | None = None
         try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        if parsed is None:
-            try:
-                parsed = json.loads(_repair_json(text))
-            except json.JSONDecodeError as exc:
-                last_exc = exc
-                continue  # retry
+            parsed = loads_lenient(
+                text,
+                on_raw_decode=lambda discarded_len, head: logger.warning(
+                    "llm_json_raw_decode_recovered: discarded %d bytes of trailing "
+                    "garbage after valid JSON object. head=%r",
+                    discarded_len,
+                    head,
+                ),
+            )
+        except json.JSONDecodeError as exc:
+            last_exc = exc
+            continue  # retry
 
         # Dump response before returning
         finish_reason: str | None = None
