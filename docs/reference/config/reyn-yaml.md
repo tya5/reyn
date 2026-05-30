@@ -32,23 +32,23 @@ models:
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection and unsupported-platform policy. See below. |
-| `action_retrieval` | map | FP-0034 universal catalog visibility + retrieval settings. See below. |
-| `embedding` | map | RAG embedding model classes and batch settings (ADR-0033). See below. |
+| `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
+| `embedding` | map | RAG embedding model classes and batch settings. See below. |
 | `chat` | map | Chat-session compaction (head/body/tail) settings. See below. |
 | `voice` | map | Voice input (Whisper) settings for the chat TUI. See below. |
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
-| `skill_search` | map | BM25 skill pre-filter settings (FP-0024 Component A). See below. |
+| `skill_search` | map | BM25 skill pre-filter settings. See below. |
 | `skill_resume` | map | Resume policy for ambiguous steps on restart. See below. |
-| `self_improvement` | map | `skill_improver` apply-gate and version cap (FP-0006). See below. |
+| `self_improvement` | map | `skill_improver` apply-gate and version cap. See below. |
 | `mcp` | map | MCP server definitions and `search_threshold`. See below. |
 | `python` | map | Python preprocessor additional allowed-modules. See below. |
 | `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
 | `auth` | map | OAuth provider configurations for `reyn auth login`. See below. |
-| `cron` | map | Scheduled skill executions (FP-0009 Component B). See below. |
-| `external_transports` | map | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.) (FP-0041 #489 PR-D2). See below. |
-| `multimodal` | map | Binary media (image/audio) size cap and on-oversize behaviour (#364 cluster + #383 storage paths). See below. |
+| `cron` | map | Scheduled skill executions. See below. |
+| `external_transports` | map | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
+| `multimodal` | map | Binary media (image/audio) size cap, on-oversize behaviour, and artefact storage paths. See below. |
 | `permissions` | map | Default permission policy. See below. |
-| `plan_resume_raw` | map | Raw resume-policy dict for plan-mode runs (ADR-0023 Phase 2). Parsed lazily by the plan coordinator. |
+| `plan_resume_raw` | map | Raw resume-policy dict for plan-mode runs. Parsed lazily by the plan coordinator. |
 | `prompt_cache_enabled` | bool | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
 | `project_context_path` | string | Markdown file injected into every phase system prompt. Default `REYN.md`. |
 | `shell_allowed` | bool | Pre-approve the `shell` op so it is not gated per-call. Default `false`. |
@@ -179,7 +179,7 @@ See [Reference: built-in models](../builtin-models.md) for per-entry details.
 
 ## `safety` block
 
-Unified stop-condition namespace. Each value can be overridden per-invocation by the matching CLI flag. (The old `limits:` key was removed in FP-0004/0005; `safety:` is the single source of truth.)
+Unified stop-condition namespace. Each value can be overridden per-invocation by the matching CLI flag. (The old top-level `limits:` key is gone; `safety:` is the single source of truth.)
 
 ```yaml
 safety:
@@ -207,7 +207,7 @@ safety:
 | `safety.loop.max_act_turns_per_phase` | int | `10` | — | LLM ↔ op volleys allowed inside one phase visit. `0` = unlimited. |
 | `safety.loop.max_router_calls_per_turn` | int | `3` | — | Chat-router invocations per user turn. `0` = unlimited. |
 | `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
-| `safety.loop.plan_invalid_retries` | int | `1` | — | When the router emits a malformed `plan()` tool call, append the error + an "escape inner quotes" hint and let the LLM re-emit. `0` disables; `1` (default) allows one directive-driven correction per chat turn. (B51 NF-W6-3.) |
+| `safety.loop.plan_invalid_retries` | int | `1` | — | When the router emits a malformed `plan()` tool call, append the error + an "escape inner quotes" hint and let the LLM re-emit. `0` disables; `1` (default) allows one directive-driven correction per chat turn. |
 | `safety.loop.skill_calls_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) spawn cap. `hard_limit` + `warn_ratio` sub-fields. Hybrid: loop-detection semantics, budget-style user approval on hit. |
 | `safety.loop.skill_tokens_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) token cap. `hard_limit` + `warn_ratio` sub-fields. |
 
@@ -247,7 +247,7 @@ plan:
 |-----|------|---------|-------------|
 | `step_max_iterations` | integer | `5` | Maximum RouterLoop iterations one plan step may consume before being recorded as failed. |
 | `retry_limit` | integer | `3` | Maximum automatic retries per step on transient errors. When exhausted, the user is prompted to extend the budget. Acts as a cost protection ceiling analogous to token limits. |
-| `step_compaction` | map | see defaults | PR-N4 prior `step_results` compaction policy. Sibling to `chat.compaction` — when accumulated step outputs would balloon the next step's sys_prompt, older entries are summarised by `ChatCompactionEngine`. |
+| `step_compaction` | map | see defaults | Prior `step_results` compaction policy. Sibling to `chat.compaction` — when accumulated step outputs would balloon the next step's system prompt, older entries are summarised. |
 
 ### `plan.step_compaction` fields
 
@@ -260,7 +260,7 @@ plan:
 
 ## `web` block
 
-SSL settings for `web_fetch` and the MCP package registry (FP-0022).
+SSL settings for `web_fetch` and the MCP package registry.
 
 ```yaml
 web:
@@ -282,7 +282,7 @@ Priority chain (highest first):
 
 ## `eval` block
 
-Trace exporter backends. When configured, reyn exports P6 event traces from every skill run to the listed backends (FP-0007).
+Trace exporter backends. When configured, reyn exports event traces from every skill run to the listed backends.
 
 ```yaml
 eval:
@@ -310,7 +310,7 @@ All exporters are fire-and-forget: export failures are logged but do not abort t
 
 ## `sandbox` block
 
-Backend selection and unsupported-platform policy for `sandboxed_exec` ops (FP-0017).
+Backend selection and unsupported-platform policy for `sandboxed_exec` ops.
 
 ```yaml
 sandbox:
@@ -327,62 +327,46 @@ See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandbo
 
 ## `action_retrieval` block
 
-FP-0034 universal catalog visibility + retrieval settings.  Provides the chat router with **universal catalog wrappers** (`list_actions` / `describe_action` / `invoke_action`) for uniform browse / describe / invoke across all skill / agent / MCP / file / memory / RAG categories.  Default ON since PR-3b-iv — operators who want the prior tools= shape can opt out with `universal_wrappers_enabled: false`.
+Universal catalog visibility + retrieval settings.  Provides the chat router with **universal catalog wrappers** (`list_actions` / `describe_action` / `invoke_action`) for uniform browse / describe / invoke across all skill / agent / MCP / file / memory / RAG categories.  On by default — operators who want the prior `tools=` shape can opt out with `universal_wrappers_enabled: false`.
 
 ```yaml
 action_retrieval:
-  universal_wrappers_enabled: true    # default since PR-3b-iv; set false to opt out
-  embedding_class: local-mini         # default since FP-0043 Phase 4
-  hot_list_n: 10                      # Phase 2 — top-N freq+recency projection
-  mode: default                       # default | minimal | performance (§D24)
+  universal_wrappers_enabled: true    # default; set false to opt out
+  embedding_class: local-mini         # default; null disables search_actions
+  hot_list_n: 10                      # top-N freq+recency direct aliases
+  mode: default                       # default | minimal | performance
 ```
-
-> **Phase 6 cleanup (2026-05-16)**: the `hide_legacy_tools` flag was
-> removed and the wrapper-only path is now the sole production
-> behaviour (universal wrappers + hot-list aliases, no legacy per-kind
-> tools in `tools=`). The flip was validated by dogfood batch 26 N=5
-> (verified 32/35 = 91.4%, Brier 0.177, hallucination 0/35). Legacy
-> handlers remain in the registry as backing implementations of the
-> 4 wrappers (`invoke_action` dispatches via `universal_dispatch.py`).
 
 ### `action_retrieval` fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `true` | When `true` (default since PR-3b-iv), the router's `tools=` exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM but remain in the registry as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class` (FP-0034 §D14).  Set `false` to disable the wrapper surface entirely (= no catalog routing; legacy tools become the only addressing path again — primarily for fixture-stability tests). |
-| `embedding_class` | string \| null | `"local-mini"` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search (FP-0034 §D13).  Default since FP-0043 Phase 4: `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  Setting this also enables [eager embedding build](#reyn-chat---eager-embedding-build) on cold-start sessions to avoid Turn-1 hallucinations.  **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, ChatSession silently treats this as `null` and the [`list_actions` hidden-state hint](../../concepts/universal-catalog.md#what-stays-out-of-phase-1) surfaces the install command to the LLM. Set explicitly to `standard` (= OpenAI) or `null` (= opt out) to override. |
-| `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases (FP-0034 §D2 / §D24). Must be ≥ 0. `0` opts out entirely (= §D24 minimal mode). |
-| `mode` | string | `"default"` | Operational mode label per §D24: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
+| `universal_wrappers_enabled` | bool | `true` | When `true` (default), the router's `tools=` exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM but remain available as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class`.  Set `false` to disable the wrapper surface entirely (= legacy tools become the only addressing path again). |
+| `embedding_class` | string \| null | `"local-mini"` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search.  Default `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations.  **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, reyn silently treats this as `null` and `list_actions` surfaces the install command to the LLM. Set explicitly to `standard` (= OpenAI) or `null` (= opt out) to override. |
+| `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases. Must be ≥ 0. `0` opts out entirely (= minimal mode). |
+| `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
 
 ### Quick-start — opt out
 
 ```yaml
-# reyn.yaml — preserve pre-FP-0034 tools= shape
+# reyn.yaml — preserve the legacy tools= shape
 action_retrieval:
   universal_wrappers_enabled: false
 ```
 
-After restart, the chat router's `tools=` includes the 3 wrappers at the tail (when enabled — default).  The LLM can call:
+When enabled (default), the chat router's `tools=` includes the wrappers at the tail.  The LLM can call:
 
 - `list_actions(category=["skill"])` → enumerate available skills as qualified names (e.g. `skill__index_docs`)
 - `describe_action(action_name="skill__index_docs")` → fetch the input schema
 - `invoke_action(action_name="skill__index_docs", args={...})` → execute via the existing handler
 
-Resource categories (`mcp.server`, `rag.corpus`, `memory.entry`, …) also support `invoke_action` with the canonical default semantic (FP-0034 §D19).
+Resource categories (`mcp.server`, `rag.corpus`, `memory.entry`, …) also support `invoke_action`.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
 
-Unknown action names return a structured error response with `suggestions` ranked by string similarity, so the LLM recovers in one turn (FP-0034 §D12).
-
-### Compatibility note
-
-Default `true` since PR-3b-iv. The test suite is structurally insulated from the flip (= LLMReplay tests use `FakeRouterHost` without the new accessor → `getattr` fallback returns False → recorded fixtures stay valid). The flip affects production runtime tools= shape only; operators can opt out with `universal_wrappers_enabled: false` to preserve the pre-FP-0034 byte-identical chat behaviour.
-
-Subsequent FP-0034 phases (= system-prompt refactor for category-only listing per §D9, embedding-driven hot list and `search_actions` activation, redundant tool pruning) land in separate releases — each opt-in until verified via dogfood.
-
-See [`docs/concepts/architecture.md`](../../concepts/architecture.md) for the tool registry / dispatch background.
+See [Concepts: architecture](../../concepts/architecture.md) for the tool registry / dispatch background.
 
 ## `agent` block
 
-Runtime agent identity for audit trail and HTTP header propagation (FP-0016 Component E).
+Runtime agent identity for audit trail and HTTP header propagation.
 
 ```yaml
 agent:
@@ -401,7 +385,7 @@ See [Concepts: multi-agent — Agent ID propagation](../../concepts/multi-agent.
 
 ## `auth` block
 
-OAuth provider configurations for `reyn auth login` (FP-0016 Component C). Each named entry under `auth.providers` defines an RFC 8628 Device Authorization Grant provider. Empty by default; the operator declares providers they want to authenticate against.
+OAuth provider configurations for `reyn auth login`. Each named entry under `auth.providers` defines an RFC 8628 Device Authorization Grant provider. Empty by default; the operator declares providers they want to authenticate against.
 
 ```yaml
 auth:
@@ -433,7 +417,7 @@ auth:
 | `client_secret` | no | For confidential clients. Omit for PKCE-only or public clients — RFC 6749 §2.3.1 permits this for installed apps. |
 | `audience` | no | API audience identifier required by some providers (e.g. Auth0). Omit for providers that do not use it (e.g. GitHub, Google). |
 
-`${secret:<key>}` values resolve at config-load time from `~/.reyn/secrets.env` (ADR-0030). Use `reyn secret set <key>` to store them.
+`${secret:<key>}` values resolve at config-load time from `~/.reyn/secrets.env`. Use `reyn secret set <key>` to store them.
 
 See also:
 
@@ -441,7 +425,7 @@ See also:
 - [Concepts: secret handling](../../concepts/secret-handling.md) — OAuth lifecycle and credential scoping
 - [Concepts: multi-agent](../../concepts/multi-agent.md) — agent identity propagation
 
-## `cron:` block (FP-0009 Component B)
+## `cron:` block
 
 Schedule recurring skill executions. The scheduler runs as part of
 `reyn web` (= started in the FastAPI lifespan) or as a foreground
@@ -503,9 +487,9 @@ permissions:
   file.write: allow
 ```
 
-### MCP install (post-#571 collapse arc)
+### MCP install
 
-The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed in the #571 collapse arc (Phase 5, 2026-05-23). MCP install is now gated by the same list axes the rest of the OS uses:
+The legacy `permissions.mcp_install: ask | allow | deny` bool axis was removed. MCP install is now gated by the same list axes the rest of the OS uses:
 
 ```yaml
 # reyn.yaml — install permissions express through file.write + http.get
@@ -650,7 +634,7 @@ cost:
     openai/gpt-4o: 60
   rate_limit_warn_ratio: 0.8   # warn at 80% of rate limit
 
-  # Daily / monthly quota (persistent across process restarts — PR25)
+  # Daily / monthly quota (persistent across process restarts)
   # Stored in .reyn/state/budget_ledger.jsonl; reset automatically at midnight / month boundary.
   daily_tokens:
     hard_limit: 100000   # refuse after 100k tokens today
@@ -663,7 +647,7 @@ cost:
     hard_limit: 50.00    # refuse after $50.00 this month
 ```
 
-> **Note**: Per-chain skill spawn and token caps (`skill_calls_per_chain`, `skill_tokens_per_chain`) and the router call cap (`max_router_calls_per_turn`) were moved to `safety.loop` in FP-0004/0005. See the [`safety` block](#safety-block) above.
+> **Note**: Per-chain skill spawn and token caps (`skill_calls_per_chain`, `skill_tokens_per_chain`) and the router call cap (`max_router_calls_per_turn`) live under `safety.loop`. See the [`safety` block](#safety-block) above.
 
 | Field | Scope | Persists | Reset |
 |---|---|---|---|
@@ -743,7 +727,7 @@ See [Concepts: MCP](../../concepts/mcp.md) for the protocol overview and [How-to
 
 ## `embedding` block
 
-RAG embedding model classes and batch settings (ADR-0033). Built-in defaults cover the OpenAI path — no `reyn.yaml` changes are required for a fresh install with `OPENAI_API_KEY`.
+RAG embedding model classes and batch settings. Built-in defaults cover the OpenAI path — no `reyn.yaml` changes are required for a fresh install with `OPENAI_API_KEY`.
 
 ```yaml
 embedding:
@@ -797,28 +781,28 @@ Built-in classes (active when `classes:` is empty or absent):
 | `light` | `openai/text-embedding-3-small` | Needs `OPENAI_API_KEY`. |
 | `standard` | `openai/text-embedding-3-small` | Needs `OPENAI_API_KEY`. |
 | `strong` | `openai/text-embedding-3-large` | Needs `OPENAI_API_KEY`. |
-| `local-mini` | `sentence-transformers/all-MiniLM-L6-v2` | FP-0043. Requires `pip install 'reyn[local-embed]'`; without the extras, instantiating raises at first `embed()` call (the `search_actions` visibility gate degrades to hidden gracefully). |
-| `local-e5` | `sentence-transformers/intfloat/multilingual-e5-small` | FP-0043. Same `local-embed` extras requirement; multilingual model (better recall on non-English corpora). |
+| `local-mini` | `sentence-transformers/all-MiniLM-L6-v2` | Requires `pip install 'reyn[local-embed]'`; without the extras, instantiating raises at first `embed()` call (the `search_actions` visibility gate degrades to hidden gracefully). |
+| `local-e5` | `sentence-transformers/intfloat/multilingual-e5-small` | Same `local-embed` extras requirement; multilingual model (better recall on non-English corpora). |
 
-See [Concepts: RAG — local embedding backend](../../concepts/rag.md#local-embedding-backend-fp-0043) for the full story on FP-0043, cache locations, and trade-offs.
+See [Concepts: RAG — local embedding backend](../../concepts/rag.md#local-embedding-backend-fp-0043) for cache locations and trade-offs.
 
 ## `chat` block
 
 Chat-session compaction — head/body/tail token budgets that keep context concise without losing recent turns.
 
-PR-N3 introduced **ratio-based** budget allocation: each of the four ratios is a fraction of the model's main context pool (= `T_max - T_SP`), and they must sum to ≤ 1.0 (asserted at engine init via `assert_static_bounds()`). PR-N6 added **weight dicts** for fine-grained tuning under the same ratio budget. The legacy `trigger_total_tokens` / `head_size` / `tail_size` / `body_token_cap` / `min_compact_batch` / `section_token_caps` fields drive the background `_maybe_compact()` path that fires after each reply.
+Budget allocation is **ratio-based**: each of the four ratios is a fraction of the model's main context pool (= `T_max - T_SP`), and they must sum to ≤ 1.0 (validated at startup). **Weight dicts** allow fine-grained tuning within the same ratio budget. The legacy `trigger_total_tokens` / `head_size` / `tail_size` / `body_token_cap` / `min_compact_batch` / `section_token_caps` fields drive the background path that fires after each reply.
 
 ```yaml
 chat:
   compaction:
-    # PR-N3 ratio-based budget (sum must be ≤ 1.0):
+    # Ratio-based budget (sum must be ≤ 1.0):
     head_ratio: 0.10
     body_ratio: 0.05
     tail_ratio: 0.15
     new_msg_ratio: 0.10
     section_caps_spec_tokens: 100
     use_chars4_estimate: false        # true = len(text)//4 (latency opt-out)
-    # PR-N6 weight dicts (integer weights, sum-arbitrary):
+    # Weight dicts (integer weights, sum-arbitrary):
     component_weights: {head: 10, body: 5, tail: 15, new_msg: 10}
     section_weights: {decisions: 40, pending: 40, topic_arc: 20, session_user_facts: 20, artifacts_referenced: 30}
     # Legacy / background-trigger path:
@@ -835,7 +819,7 @@ chat:
       artifacts_referenced: 300
 ```
 
-### `chat.compaction` ratio fields (PR-N3)
+### `chat.compaction` ratio fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -844,9 +828,9 @@ chat:
 | `tail_ratio` | float | `0.15` | Fraction of `main_pool` reserved for the TAIL slice (= most-recent verbatim turns). |
 | `new_msg_ratio` | float | `0.10` | Fraction of `main_pool` reserved for the incoming user message. |
 | `section_caps_spec_tokens` | int | `100` | Static overhead budget for `section_token_caps` serialisation in the compactor prompt. |
-| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out for large deployments). |
+| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of the litellm token counter (latency opt-out for large deployments). |
 
-### `chat.compaction` weight dicts (PR-N6)
+### `chat.compaction` weight dicts
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -857,7 +841,7 @@ chat:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `trigger_total_tokens` | int | `30000` | Background `_maybe_compact()` path: compact when the uncovered middle exceeds this token count. The synchronous pre-frame guard uses the ratio fields instead. |
+| `trigger_total_tokens` | int | `30000` | Background path: compact when the uncovered middle exceeds this token count. The synchronous pre-frame guard uses the ratio fields instead. |
 | `head_size` | int | `12` | Background path: number of earliest user/agent turns kept verbatim (turn-count gate). |
 | `tail_size` | int | `12` | Background path: number of most-recent user/agent turns kept verbatim (turn-count gate). |
 | `body_token_cap` | int | `1500` | Hard cap on summary body tokens after post-truncation (legacy ceiling). |
@@ -875,7 +859,7 @@ chat:
 
 ## `events` block
 
-Audit-log rotation policy for chat-session event files (PR20). Skill-run events use one file per run and are not affected by this setting.
+Audit-log rotation policy for chat-session event files. Skill-run events use one file per run and are not affected by this setting.
 
 ```yaml
 events:
@@ -923,7 +907,7 @@ voice:
 
 ## `skill_search` block
 
-BM25 skill pre-filter settings (FP-0024 Component A). When the catalogue exceeds `threshold` skills, the router narrows the available skill enum to the top `top_k` BM25 keyword matches before building `tools=`. Falls through to the full enum when BM25 returns zero results — no skill is ever silently hidden.
+BM25 skill pre-filter settings. When the catalogue exceeds `threshold` skills, the router narrows the available skill enum to the top `top_k` BM25 keyword matches before building `tools=`. Falls through to the full enum when BM25 returns zero results — no skill is ever silently hidden.
 
 ```yaml
 skill_search:
@@ -964,7 +948,7 @@ skill_resume:
 
 ## `self_improvement` block
 
-`skill_improver` behavior knobs (FP-0006). Controls how the skill improver applies proposed changes back to the skill source.
+`skill_improver` behavior knobs. Controls how the skill improver applies proposed changes back to the skill source.
 
 ```yaml
 self_improvement:
@@ -998,7 +982,7 @@ python:
 
 ## `multimodal` block
 
-Controls how Reyn handles binary media (images from `web__fetch` / `file__read` / MCP servers) and where multimodal artefacts live on disk (#364 cluster + #383 PR-C storage paths).
+Controls how Reyn handles binary media (images from `web__fetch` / `file__read` / MCP servers) and where multimodal artefacts live on disk.
 
 ```yaml
 multimodal:
@@ -1013,13 +997,13 @@ multimodal:
 |-------|------|---------|-------------|
 | `max_bytes` | int | `5000000` (5 MB) | Decoded-payload byte cap before the on-oversize gate fires. Counts the binary size (`len(response.content)` / `len(file_bytes)`), not the base64-encoded shape. |
 | `on_oversize` | string | `ask` | What to do when a piece of media exceeds `max_bytes`: `ask` (prompt the user via the intervention bus with size + source info; yes loads the media, no drops it), `allow` (silently accept; use in trusted non-interactive pipelines), `deny` (silently reject; the op returns `status="denied"` — use in cost-sensitive contexts). |
-| `media_dir` | string | `.reyn/media` | Project-relative directory for image binary storage (#383 PR-C). Files are flat-named with timestamp + chain-id + tool prefix so `ls -la` sorts chronologically. Operator-browseable and operator-deleteable. |
-| `tool_results_dir` | string | `.reyn/tool-results` | Project-relative directory for text-y tool result dumps (#385 PoC). PR-C lands the writer alongside `media_dir`; PR-D wires the consumer + preview. |
-| `base_url` | string \| null | `null` | Optional canonical URL prefix for cross-host `path_ref` consumption (#385 β cross-host sub-task). When set (e.g. `"https://reyn.example.com"` from a deployed `reyn web`), `MediaStore.save_*` augments the path_ref with a `url` field pointing at `<base_url>/agents/<agent>/tool-results/<artifact>` so A2A peers / MCP clients / browsers can fetch the body via the resources router. Unset → no `url` field minted (same-host fast-path only). |
+| `media_dir` | string | `.reyn/media` | Project-relative directory for image binary storage. Files are flat-named with timestamp + chain-id + tool prefix so `ls -la` sorts chronologically. Operator-browseable and operator-deleteable. |
+| `tool_results_dir` | string | `.reyn/tool-results` | Project-relative directory for text-y tool result dumps. |
+| `base_url` | string \| null | `null` | Optional canonical URL prefix for cross-host `path_ref` consumption. When set (e.g. `"https://reyn.example.com"` from a deployed `reyn web`), saved artefacts carry a `url` field pointing at `<base_url>/agents/<agent>/tool-results/<artifact>` so A2A peers / MCP clients / browsers can fetch the body via the resources router. Unset → no `url` field minted (same-host fast-path only). |
 
 ## `external_transports` block
 
-Inbound transport → MCP tool routing for chat (FP-0041 #489 PR-D2). Maps an external transport name (Slack / LINE / Discord / ...) to the MCP tool that delivers replies, plus an `args_template` describing how router output is shaped into the tool's arguments.
+Inbound transport → MCP tool routing for chat. Maps an external transport name (Slack / LINE / Discord / ...) to the MCP tool that delivers replies, plus an `args_template` describing how router output is shaped into the tool's arguments.
 
 ```yaml
 external_transports:
