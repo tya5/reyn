@@ -85,6 +85,7 @@ class OSRuntime:
         secret_store: "ScopedSecretStore | None" = None,
         plan_step: dict | None = None,
         workspace_base_dir: "Path | None" = None,
+        workspace_state_dir: "Path | None" = None,
         phase_compaction_engine: "CompactionEngine | None" = None,
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
     ) -> None:
@@ -105,6 +106,7 @@ class OSRuntime:
             permission_resolver=permission_resolver,
             skill_name=skill.name,
             base_dir=workspace_base_dir,
+            state_dir=workspace_state_dir,
             environment_backend=environment_backend,
         )
         # C5 follow-up (#224): bound the growth of per-run control_ir offload
