@@ -50,6 +50,17 @@ permissions:
       function: sanitize_test_patch
       mode: safe
       timeout: 5
+    # FP-0008 C6: deterministic revert of test_patch-target files to HEAD.
+    # Runs as a `safe`-mode python preprocessor step in the verify phase,
+    # AFTER the sanitizer (which guarantees data.test_patch is a clean string).
+    # Parses `+++ b/<path>` targets from the sanitized test_patch and runs
+    # `git checkout HEAD -- <path>` for each, using the repo_dir captured by
+    # the preceding `run_op: shell: cmd: pwd` step. Breaks the
+    # apply×verify loop caused by the LLM editing test files.
+    - module: ./revert_test_targets.py
+      function: revert_test_targets
+      mode: safe
+      timeout: 30
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---
