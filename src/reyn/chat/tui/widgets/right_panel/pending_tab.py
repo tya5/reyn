@@ -19,7 +19,15 @@ from typing import Any
 
 from rich.text import Text as RichText
 
-from .base import _CORAL
+from .base import (
+    _CORAL,
+    _EVENT_SKILL,
+    _TEXT_BODY,
+    _TEXT_BRIGHT,
+    _TEXT_DIM,
+    _TEXT_MUTED,
+    _TEXT_NEUTRAL,
+)
 
 # ── kind-specific row renderers ──────────────────────────────────────────────
 #
@@ -45,7 +53,7 @@ def _render_kind_intervention(
         ↳ <summary>
     """
     pfx = f"[bold {_CORAL}]▶ [/]" if is_cursor else "  "
-    name_style = f"bold {_CORAL}" if is_cursor else "#dddddd"
+    name_style = f"bold {_CORAL}" if is_cursor else _TEXT_BRIGHT
 
     iv_id_short = str(view.get("id", ""))[:8]
     origin = str(view.get("origin_channel_id", ""))
@@ -55,15 +63,15 @@ def _render_kind_intervention(
 
     head = (
         f"{pfx}[{name_style}]intervention[/]  "
-        f"[#888888]{iv_id_short}[/]  "
-        f"[#88aaff]{origin}[/]  "
-        f"[#666666]{age}[/]"
+        f"[{_TEXT_MUTED}]{iv_id_short}[/]  "
+        f"[{_EVENT_SKILL}]{origin}[/]  "
+        f"[{_TEXT_NEUTRAL}]{age}[/]"
     )
     lines = [head]
     if summary:
-        lines.append(f"    [#666666]↳[/] [#aaaaaa]{summary[:60]}[/]")
+        lines.append(f"    [{_TEXT_NEUTRAL}]↳[/] [{_TEXT_BODY}]{summary[:60]}[/]")
     if detail:
-        lines.append(f"      [#555555]{detail[:60]}[/]")
+        lines.append(f"      [{_TEXT_DIM}]{detail[:60]}[/]")
     return lines
 
 
@@ -80,13 +88,13 @@ def _render_kind_unknown(
     legible even in that transitional state.
     """
     pfx = f"[bold {_CORAL}]▶ [/]" if is_cursor else "  "
-    name_style = f"bold {_CORAL}" if is_cursor else "#dddddd"
+    name_style = f"bold {_CORAL}" if is_cursor else _TEXT_BRIGHT
     kind = str(view.get("kind", "?"))
     iv_id_short = str(view.get("id", ""))[:8]
     summary = str(view.get("summary", ""))
     return [
-        f"{pfx}[{name_style}]{kind}[/]  [#888888]{iv_id_short}[/]  "
-        f"[#aaaaaa]{summary[:60]}[/]",
+        f"{pfx}[{name_style}]{kind}[/]  [{_TEXT_MUTED}]{iv_id_short}[/]  "
+        f"[{_TEXT_BODY}]{summary[:60]}[/]",
     ]
 
 
@@ -159,24 +167,24 @@ def render_pending(
 
     if remote_mode:
         return (
-            "[#aa6666]  remote — limited[/]\n"
-            "[#666666]    Pending operations require local session state[/]\n"
-            "[#666666]    (v1 ``--connect`` scoped disable per #277 / #276 Phase C-(b))[/]",
+            "[#aa6666]  remote — limited[/]\n"  # palette-candidate: remote mode muted red — no foundation token yet
+            f"[{_TEXT_NEUTRAL}]    Pending operations require local session state[/]\n"
+            f"[{_TEXT_NEUTRAL}]    (v1 ``--connect`` scoped disable per #277 / #276 Phase C-(b))[/]",
             flat_items,
             item_ys,
         )
 
     if not pending_ops:
         return (
-            "[#555555]  No pending operations[/]\n"
-            "[#555555]    (stalled / cross-channel ops surface here)[/]",
+            f"[{_TEXT_DIM}]  No pending operations[/]\n"
+            f"[{_TEXT_DIM}]    (stalled / cross-channel ops surface here)[/]",
             flat_items,
             item_ys,
         )
 
     lines: list[str] = [
         f"[bold {_CORAL}]  Pending operations[/] "
-        f"[#666666]({len(pending_ops)})[/]",
+        f"[{_TEXT_NEUTRAL}]({len(pending_ops)})[/]",
     ]
 
     for idx, view in enumerate(pending_ops):

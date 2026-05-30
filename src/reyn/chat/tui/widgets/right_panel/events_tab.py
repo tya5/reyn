@@ -6,6 +6,7 @@ from pathlib import Path
 
 from rich.cells import cell_len
 
+from reyn.chat.tui._palette import _TEXT_DIMMEST
 from .base import (
     _BORDER_DIM,
     _CORAL,
@@ -600,11 +601,11 @@ def render_events(
     restore the full unfiltered view.
     """
     if project_root is None:
-        return "[#555555]  (no project root)[/]", [], []
+        return f"[{_TEXT_DIM}]  (no project root)[/]", [], []
 
     events_root = project_root / ".reyn" / "events"
     if not events_root.is_dir():
-        return "[#555555]  (no events yet)[/]", [], []
+        return f"[{_TEXT_DIM}]  (no events yet)[/]", [], []
 
     if cache is None:
         cache = {}
@@ -665,19 +666,19 @@ def render_events(
         #      cycle to a different filter (the `[f]` header hint is only
         #      visible when the panel is wider than the filter name).
         if not all_events:
-            return "[#555555]  (no matching events)[/]", [], []
+            return f"[{_TEXT_DIM}]  (no matching events)[/]", [], []
         # Split the two hints across separate lines so each survives the
         # 44-cell minimum panel width independently. The single-line
         # form was ~47 cells and clipped to ``press [f] to cycle filter
         # · [t] for ta…`` at narrow widths, hiding the ``[t]`` tail-size
         # discoverability cue entirely.
         return (
-            f"[#555555]  (no events matching filter: [/]"
-            f"[bold #aaaaaa]{_esc(filter_name)}[/][#555555])[/]\n"
-            f"[#555555]  press [/][bold #aaaaaa]\\[f][/]"
-            f"[#555555] to cycle filter[/]\n"
-            f"[#555555]  press [/][bold #aaaaaa]\\[t][/]"
-            f"[#555555] for tail size[/]"
+            f"[{_TEXT_DIM}]  (no events matching filter: [/]"
+            f"[bold {_TEXT_BODY}]{_esc(filter_name)}[/][{_TEXT_DIM}])[/]\n"
+            f"[{_TEXT_DIM}]  press [/][bold {_TEXT_BODY}]\\[f][/]"
+            f"[{_TEXT_DIM}] to cycle filter[/]\n"
+            f"[{_TEXT_DIM}]  press [/][bold {_TEXT_BODY}]\\[t][/]"
+            f"[{_TEXT_DIM}] for tail size[/]"
         ), [], []
 
     # Newest-first window — also returned to the caller for cursor / preview
@@ -701,8 +702,8 @@ def render_events(
             f"  [#88aacc]⛓ chain isolated:[/] [bold {_CORAL}]{_esc(short)}[/]"
         )
         lines.append(
-            "  [#555555]  press [/][bold #aaaaaa]\\[i][/]"
-            "[#555555] to clear isolation[/]"
+            f"  [{_TEXT_DIM}]  press [/][bold {_TEXT_BODY}]\\[i][/]"
+            f"[{_TEXT_DIM}] to clear isolation[/]"
         )
     prev_chain: str | None = None
     for i, ev in enumerate(windowed):
@@ -723,7 +724,7 @@ def render_events(
         ts = _esc(raw_ts[11:19] if len(raw_ts) >= 19 else raw_ts)
         color = _EVENT_COLORS.get(ev_type, _DEFAULT_EVENT_COLOR)
         hint = _esc(_oneline(_event_hint(ev)))
-        hint_part = f"  [#555555]{hint}[/]" if hint else ""
+        hint_part = f"  [{_TEXT_DIM}]{hint}[/]" if hint else ""
         cursor_prefix = (
             f"[bold {_CORAL}]▶ [/]" if i == cursor else "  "
         )
@@ -734,14 +735,14 @@ def render_events(
         # memory_tab / agents_tab.
         event_ys.append(len(lines))
         lines.append(
-            f"{cursor_prefix}[#444444]{ts}[/]  [{color}]{_esc(ev_type)}[/]{hint_part}"
+            f"{cursor_prefix}[{_TEXT_DIMMEST}]{ts}[/]  [{color}]{_esc(ev_type)}[/]{hint_part}"
         )
         if ev_type == "user_message_received":
             cid = data.get("chain_id")
             if cid:
                 reply = chain_replies.get(cid)
                 if reply is None:
-                    lines.append("[#444444]       ↳ [/][#555555](awaiting…)[/]")
+                    lines.append(f"[{_TEXT_DIMMEST}]       ↳ [/][{_TEXT_DIM}](awaiting…)[/]")
                 else:
                     # Cell-width truncate (not ``[:72]``) so CJK / wide
                     # characters obey the 40-cell preview budget instead
@@ -757,17 +758,17 @@ def render_events(
                         _oneline(reply), 40,
                     )
                     short = _esc(truncated) + ("…" if was_truncated else "")
-                    lines.append(f"[#444444]       ↳ [/][#777777]{short}[/]")
+                    lines.append(f"[{_TEXT_DIMMEST}]       ↳ [/][#777777]{short}[/]")  # palette-candidate: mid-dim reply preview — no foundation token yet
 
     del filter_name
     # Dim footer hint — always appended after the event rows so the user
     # can discover the [d] docs shortcut from the events tab itself.
-    lines.append("[#555555]  ? press \\[d] for events.md reference[/]")
+    lines.append(f"[{_TEXT_DIM}]  ? press \\[d] for events.md reference[/]")
     # Compaction-check suppression footer: when at least 1 event was
     # hidden, surface a dim hint so the user can discover the [v] toggle.
     if n_compaction_check_hidden > 0:
         lines.append(
-            f"[#444444]  ↩ {n_compaction_check_hidden} compaction_check hidden"
+            f"[{_TEXT_DIMMEST}]  ↩ {n_compaction_check_hidden} compaction_check hidden"
             " (\\[v] to show)[/]"
         )
     return "\n".join(lines), windowed, event_ys

@@ -5,13 +5,24 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .base import _CORAL, _esc
+from .base import (
+    _CORAL,
+    _EVENT_SKILL,
+    _EVENT_TOOL,
+    _STATUS_SUCCESS,
+    _TEXT_BODY,
+    _TEXT_BRIGHT,
+    _TEXT_DIM,
+    _TEXT_MUTED,
+    _TEXT_NEUTRAL,
+    _esc,
+)
 
 _TYPE_COLORS: dict[str, str] = {
-    "user":      "#88aaff",
-    "feedback":  "#ffaa44",
-    "project":   "#44cc88",
-    "reference": "#cc88ff",
+    "user":      _EVENT_SKILL,
+    "feedback":  "#ffaa44",  # palette-candidate: feedback amber — no foundation token yet (near _EVENT_PLAN_STEP #ffaa66 but distinct)
+    "project":   _STATUS_SUCCESS,
+    "reference": _EVENT_TOOL,
 }
 
 
@@ -80,7 +91,7 @@ def render_memory(
     ``flat_entries`` (= metadata, not a navigable memory entry).
     """
     if project_root is None:
-        return "[#555555]  (no project root)[/]", [], []
+        return f"[{_TEXT_DIM}]  (no project root)[/]", [], []
 
     from reyn.memory.memory import list_entries
 
@@ -100,8 +111,8 @@ def render_memory(
             f"[bold {_CORAL}]{_esc(type_filter.upper())}[/]"
         )
         lines.append(
-            "  [#555555]  press [/][bold #aaaaaa]\\[t][/]"
-            "[#555555] to cycle filter[/]"
+            f"  [{_TEXT_DIM}]  press [/][bold {_TEXT_BODY}]\\[t][/]"
+            f"[{_TEXT_DIM}] to cycle filter[/]"
         )
 
     # Hot now section (issue #192). Always renders the header so the
@@ -113,7 +124,7 @@ def render_memory(
     # rows once the ARS forwarder emits ``hot_list_updated``.
     # Capped at _HOT_LIST_MAX_VISIBLE so a long ranking doesn't push
     # the SHARED / AGENT entries off the top of a narrow panel.
-    lines.append("[bold #ffaa44]  HOT NOW[/]")
+    lines.append("[bold #ffaa44]  HOT NOW[/]")  # palette-candidate: feedback amber — no foundation token yet
     if hot_list:
         for entry in hot_list[:_HOT_LIST_MAX_VISIBLE]:
             try:
@@ -126,18 +137,18 @@ def render_memory(
             if freq <= 0:
                 continue
             ago = _fmt_ago(entry.get("last_ts") if hasattr(entry, "get") else None)
-            ago_suffix = f"  [#555555]{ago}[/]" if ago else ""
+            ago_suffix = f"  [{_TEXT_DIM}]{ago}[/]" if ago else ""
             lines.append(
-                f"[#ffaa44]    🔥 [/][#dddddd]{_esc(name)}[/]  "
-                f"[#666666]×{freq}[/]{ago_suffix}"
+                f"[#ffaa44]    🔥 [/][{_TEXT_BRIGHT}]{_esc(name)}[/]  "  # palette-candidate: feedback amber — no foundation token yet
+                f"[{_TEXT_NEUTRAL}]×{freq}[/]{ago_suffix}"
             )
         overflow = len(hot_list) - _HOT_LIST_MAX_VISIBLE
         if overflow > 0:
             lines.append(
-                f"[#555555]    … {overflow} more[/]"
+                f"[{_TEXT_DIM}]    … {overflow} more[/]"
             )
     else:
-        lines.append("[#555555]    (no router activity yet)[/]")
+        lines.append(f"[{_TEXT_DIM}]    (no router activity yet)[/]")
     lines.append("")
 
     def _render_scope(entries: list, label: str, label_color: str) -> None:
@@ -149,9 +160,9 @@ def render_memory(
             # "re…`` at the default 33%-panel content width (~22 cells).
             # Splitting preserves both the "empty" signal and the
             # call-to-action and survives narrow panes.
-            lines.append("[#555555]    (empty)[/]")
+            lines.append(f"[{_TEXT_DIM}]    (empty)[/]")
             lines.append(
-                "[#555555]    try: \"remember <fact>\"[/]"
+                f"[{_TEXT_DIM}]    try: \"remember <fact>\"[/]"
             )
             lines.append("")
             return
@@ -185,21 +196,21 @@ def render_memory(
                 entry_ys.append(len(lines))
                 is_cursor = (len(flat_entries) - 1) == cursor
                 indent = f"[bold {_CORAL}]    ▶ [/]" if is_cursor else "      "
-                name_style = f"bold {_CORAL}" if is_cursor else "#dddddd"
+                name_style = f"bold {_CORAL}" if is_cursor else _TEXT_BRIGHT
                 lines.append(f"{indent}[{name_style}]{_esc(e.name)}[/]")
                 if e.description:
-                    lines.append(f"[#555555]        {_esc(e.description)}[/]")
+                    lines.append(f"[{_TEXT_DIM}]        {_esc(e.description)}[/]")
         if other:
-            lines.append("[bold #888888]    \\[OTHER][/]")
+            lines.append(f"[bold {_TEXT_MUTED}]    \\[OTHER][/]")
             for e in other:
                 flat_entries.append(e)
                 entry_ys.append(len(lines))
                 is_cursor = (len(flat_entries) - 1) == cursor
                 indent = f"[bold {_CORAL}]    ▶ [/]" if is_cursor else "      "
-                name_style = f"bold {_CORAL}" if is_cursor else "#dddddd"
+                name_style = f"bold {_CORAL}" if is_cursor else _TEXT_BRIGHT
                 lines.append(f"{indent}[{name_style}]{_esc(e.name)}[/]")
                 if e.description:
-                    lines.append(f"[#555555]        {_esc(e.description)}[/]")
+                    lines.append(f"[{_TEXT_DIM}]        {_esc(e.description)}[/]")
         lines.append("")
 
     # Shared memory
@@ -253,7 +264,7 @@ def _render_embedding_section(
         device_part = f" · {_esc(device)}" if device else ""
         model_part = f" · {_esc(model)}" if model else ""
         lines.append(
-            f"[#888888]    ⟳ loading…[/][#aaaaaa]{model_part}{device_part}[/]"
+            f"[{_TEXT_MUTED}]    ⟳ loading…[/][{_TEXT_BODY}]{model_part}{device_part}[/]"
         )
     elif kind == "embedding_skill_done":
         try:
@@ -263,7 +274,7 @@ def _render_embedding_section(
         dim_part = f" · {dim}d" if dim > 0 else ""
         model_part = f" · {_esc(model)}" if model else ""
         lines.append(
-            f"[#44cc88]    ✓ loaded[/][#cccccc]{model_part}{dim_part}[/]"
+            f"[{_STATUS_SUCCESS}]    ✓ loaded[/][#cccccc]{model_part}{dim_part}[/]"  # palette-candidate: near-bright — no foundation token yet
         )
     elif kind == "embedding_error":
         hint_raw = str(state.get("retry_hint", "") or "")
@@ -273,15 +284,15 @@ def _render_embedding_section(
         hint = hint_raw if len(hint_raw) <= max_hint else hint_raw[:max_hint - 1].rstrip() + "…"
         model_part = f" · {_esc(model)}" if model else ""
         lines.append(
-            f"[#ff6666]    ✗ error[/][#dddddd]{model_part}[/]"
+            f"[#ff6666]    ✗ error[/][{_TEXT_BRIGHT}]{model_part}[/]"  # palette-candidate: embedding error red — no foundation token yet (distinct from _STATUS_ERROR #ff6644)
         )
         if hint:
-            lines.append(f"[#aaaaaa]      {_esc(hint)}[/]")
+            lines.append(f"[{_TEXT_BODY}]      {_esc(hint)}[/]")
     else:
         # Unknown kind from a future emitter — show the raw text as a
         # graceful fallback rather than rendering nothing at all.
         text = str(state.get("text", "") or "(no detail)")
-        lines.append(f"[#888888]    {_esc(text)}[/]")
+        lines.append(f"[{_TEXT_MUTED}]    {_esc(text)}[/]")
     lines.append("")
 
 

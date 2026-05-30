@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .base import _CORAL, _esc
+from .base import _CORAL, _TEXT_BODY, _TEXT_DIM, _TEXT_NEUTRAL, _esc
 
 # ---------------------------------------------------------------------------
 # Language helpers
@@ -112,13 +112,13 @@ def render_docs(
     and which rows are annotated with a dim fallback suffix.
     """
     if project_root is None:
-        return "[#555555]  (no project root)[/]"
+        return f"[{_TEXT_DIM}]  (no project root)[/]"
     # Mirror the fallback logic in build_docs_index.
     docs_root = project_root / "docs" / "en"
     if not docs_root.is_dir():
         docs_root = project_root / "docs"
     if not docs_root.is_dir():
-        return "[#555555]  (docs/ not found)[/]"
+        return f"[{_TEXT_DIM}]  (docs/ not found)[/]"
 
     lines: list[str] = []
 
@@ -126,8 +126,8 @@ def render_docs(
     # setting without having to press ``g``.
     other_lang = "en" if lang == "ja" else "ja"
     lines.append(
-        f"[#aaaaaa]  lang: [/][{_CORAL}]{lang}[/]"
-        f"[#555555]  ({other_lang} fallback)  \\[g] to toggle[/]"
+        f"[{_TEXT_BODY}]  lang: [/][{_CORAL}]{lang}[/]"
+        f"[{_TEXT_DIM}]  ({other_lang} fallback)  \\[g] to toggle[/]"
     )
     lines.append("")
 
@@ -138,18 +138,18 @@ def render_docs(
         # filter UI requires. ``RightPanel.on_key`` now clears in place
         # on Esc when ``_docs_filter`` is non-empty.
         lines.append(
-            f"[#aaaaaa]  filter: [/][{_CORAL}]{_esc(docs_filter)}[/]"
-            f"[#555555]  (Esc to clear)[/]"
+            f"[{_TEXT_BODY}]  filter: [/][{_CORAL}]{_esc(docs_filter)}[/]"
+            f"[{_TEXT_DIM}]  (Esc to clear)[/]"
         )
         lines.append("")
     if not groups:
-        lines.append("[#555555]  (no matches)[/]")
+        lines.append(f"[{_TEXT_DIM}]  (no matches)[/]")
         return "\n".join(lines)
 
     file_idx = 0
     for section in sorted(groups):
         label = section.upper() if section else "ROOT"
-        lines.append(f"[bold #aaaaaa]  \\[{_esc(label)}][/]")
+        lines.append(f"[bold {_TEXT_BODY}]  \\[{_esc(label)}][/]")
         for md in groups[section]:
             indent = "    "
             base = _base_stem(md)
@@ -171,8 +171,8 @@ def render_docs(
                 )
             else:
                 lines.append(
-                    f"[#666666]{indent}  {_esc(base)}[/]"
-                    + (f"[dim #666666]{fallback_suffix}[/]" if fallback_suffix else "")
+                    f"[{_TEXT_NEUTRAL}]{indent}  {_esc(base)}[/]"
+                    + (f"[dim {_TEXT_NEUTRAL}]{fallback_suffix}[/]" if fallback_suffix else "")
                 )
             file_idx += 1
         lines.append("")
