@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import time
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
@@ -59,6 +60,17 @@ _SPINNER_FRAMES: tuple[str, ...] = (
 _ELAPSED_AMBER_S = 30.0
 _ELAPSED_RED_S = 60.0
 
+# Reserve cells on the right edge so long content doesn't clip behind
+# scrollbar / RichLog right-padding at 80-col widths. Same 6-cell
+# budget as ToolCallRow._RIGHT_MARGIN_CELLS so both rows degrade
+# consistently at narrow terminals.
+_RIGHT_MARGIN_CELLS = 6
+
+# Minimum cells kept for the elapsed segment (e.g. "  2.1s" = 7 cells).
+# Degrade order: drop detail → shorten phase → truncate skill_name#id.
+# The leading glyph + space (2 cells) + elapsed are ALWAYS preserved.
+_ELAPSED_MIN_CELLS = 7  # "  0.0s" at most
+
 
 class SkillActivityRow(RenderableCacheMixin, Widget):
     """One ambient skill-progress row that updates in-place.
@@ -72,10 +84,12 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
     SkillActivityRow {
         height: auto;
         padding: 0 0;
+        overflow: hidden;
     }
     SkillActivityRow Static {
         height: auto;
         padding: 0 0;
+        overflow: hidden;
     }
     """
 
@@ -167,6 +181,11 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
 
         # DOM ref
         self._static: Static | None = None
+        # Width override for testing — when non-zero, ``_available_width``
+        # returns this value instead of ``self.size.width``. Set by tests
+        # that need to exercise narrow-terminal truncation paths without
+        # mounting the widget in a full Textual app.
+        self._width_override: int = 0
         # ``RenderableCacheMixin`` provides the cache + ``rendered_text``
         # accessor; we just call ``self._set_rendered_cache(text)`` on
         # every ``Static.update`` so the cache stays in sync with what
@@ -323,40 +342,164 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         secs = time.monotonic() - self._start
         return f"{secs:.1f}s"
 
+    def _truncate_to_cells(self, text: str, max_cells: int) -> str:
+        """Truncate ``text`` to fit within ``max_cells`` display cells.
+
+        Cell-aware so CJK / emoji count as 2 cells per glyph. Appends
+        an ellipsis when truncation happened. Reserves the ellipsis cell
+        so the result always fits within the budget. Mirrors the same
+        helper in ToolCallRow for consistent truncation behaviour across
+        both widgets.
+        """
+        if max_cells <= 0:
+            return ""
+        if cell_len(text) <= max_cells:
+            return text
+        ellipsis = "…"
+        budget = max_cells - cell_len(ellipsis)
+        if budget <= 0:
+            return ellipsis
+        out: list[str] = []
+        used = 0
+        for ch in text:
+            w = cell_len(ch)
+            if used + w > budget:
+                break
+            out.append(ch)
+            used += w
+        return "".join(out) + ellipsis
+
+    def _available_width(self) -> int:
+        """Return the widget width, falling back to 80 when unmounted.
+
+        Mirrors the ToolCallRow / AsyncStackPanel pattern: pre-mount
+        ``self.size.width`` is 0 so we use 80 (typical terminal width)
+        to keep truncation arithmetic sensible before the widget is
+        laid out.
+
+        When ``_width_override`` is set (non-zero), that value is used
+        directly — this supports tests that exercise narrow-terminal
+        truncation without mounting the widget in a full Textual app.
+        """
+        if self._width_override:
+            return self._width_override
+        try:
+            w = int(getattr(self.size, "width", 0))
+        except Exception:
+            w = 0
+        return w if w > 0 else 80
+
     def _build_running(self) -> Text:
-        t = Text()
-        if self._label_prefix:
-            t.append(self._label_prefix, style="dim #666666")
-        # Animated braille spinner — replaces the static ▶ so "still
-        # alive" is obvious even when the response was streamed and the
-        # user is wondering "is this skill still doing things?".
-        spinner = _SPINNER_FRAMES[self._spin_idx % len(_SPINNER_FRAMES)]
-        t.append(f"{spinner} ", style=_CORAL)
-        # skill_name#abcd — normal weight
-        t.append(f"{self._skill_name}#{self._short_id}", style="bold")
-        t.append("  · ", style="dim")
-        # phase — italic coral
-        if self._phase:
-            t.append(self._phase, style=f"italic {_CORAL}")
-            if self._visit > 1:
-                t.append(f" v{self._visit}", style="dim")
-        # Elapsed — colour-coded so a slow / stuck skill stands out:
-        #   < 30 s → dim (= normal)
-        #   30–60s → amber (= "taking a while")
-        #   ≥ 60 s → red (= "this is unusual; might be blocked")
+        total_width = self._available_width()
         secs = time.monotonic() - self._start
+
+        # ── Elapsed segment (always kept) ─────────────────────────────────
         if secs >= _ELAPSED_RED_S:
             elapsed_style = "bold #ff6644"
         elif secs >= _ELAPSED_AMBER_S:
             elapsed_style = "bold #ffaa44"
         else:
             elapsed_style = "dim"
-        t.append(f"  {secs:.1f}s", style=elapsed_style)
+        elapsed_str = f"  {secs:.1f}s"
+        elapsed_cells = cell_len(elapsed_str)
+
+        # ── Glyph (always kept) ───────────────────────────────────────────
+        # Animated braille spinner — replaces the static ▶ so "still
+        # alive" is obvious even when the response was streamed and the
+        # user is wondering "is this skill still doing things?".
+        spinner = _SPINNER_FRAMES[self._spin_idx % len(_SPINNER_FRAMES)]
+        glyph_str = f"{spinner} "
+        glyph_cells = cell_len(glyph_str)
+
+        # ── Label prefix (always kept if present) ─────────────────────────
+        prefix_cells = cell_len(self._label_prefix)
+
+        # ── Budget arithmetic (right-to-left) ─────────────────────────────
+        # Always-kept = prefix + glyph + elapsed + right-margin.
+        # Remaining budget is distributed across: separator + skill_name#id
+        # + phase + detail.
+        always_cells = prefix_cells + glyph_cells + elapsed_cells + _RIGHT_MARGIN_CELLS
+        body_budget = max(0, total_width - always_cells)
+
+        # skill_name#id core segment: "  ·" prefix is 3 cells.
+        skill_id = f"{self._skill_name}#{self._short_id}"
+        skill_id_cells = cell_len(skill_id)
+        sep_cells = cell_len("  · ")  # separator before phase
+
+        # Phase segment: "phase_name" + optional " vN"
+        if self._phase:
+            phase_str = self._phase
+            if self._visit > 1:
+                phase_str += f" v{self._visit}"
+        else:
+            phase_str = ""
+        phase_cells = cell_len(phase_str)
+
+        # Detail segment: "  ⤷ " prefix (5 cells) + detail text.
+        detail_prefix_cells = cell_len("  ⤷ ")
+        detail_cells = cell_len(self._detail) if self._detail else 0
+
+        # Plan badge: "  [plan N/M]" — plan + 4 bracket/space cells.
+        plan_badge_cells = (
+            cell_len(f"  [{self._plan_step_label}]")
+            if self._plan_step_label
+            else 0
+        )
+
+        # Degrade order:
+        # 1. Full layout — everything fits.
+        # 2. Drop detail (most ephemeral).
+        # 3. Drop plan badge too.
+        # 4. Truncate phase to whatever remains after skill_name#id.
+        # 5. Truncate skill_name#id with ellipsis.
+
+        full_needed = (
+            skill_id_cells + sep_cells + phase_cells
+            + plan_badge_cells + detail_prefix_cells + detail_cells
+        )
+        no_detail_needed = skill_id_cells + sep_cells + phase_cells + plan_badge_cells
+
+        show_detail = full_needed <= body_budget
+        # Plan badge shown when dropping detail frees enough space.
+        show_plan_badge = no_detail_needed <= body_budget
+        # Budget remaining for phase after skill_name#id + separator:
+        after_skill_budget = max(0, body_budget - skill_id_cells - sep_cells)
+        if show_plan_badge:
+            after_skill_budget = max(0, after_skill_budget - plan_badge_cells)
+        # Truncate phase to remaining budget:
+        if phase_str and cell_len(phase_str) > after_skill_budget:
+            phase_display = self._truncate_to_cells(phase_str, after_skill_budget)
+        else:
+            phase_display = phase_str
+
+        # Truncate skill_name#id itself only when even skill+sep alone
+        # exceeds body_budget — last-resort fallback.
+        skill_id_display = skill_id
+        if skill_id_cells + sep_cells > body_budget:
+            skill_budget = max(4, body_budget - sep_cells)
+            skill_id_display = self._truncate_to_cells(skill_id, skill_budget)
+
+        # ── Assemble the Text object ───────────────────────────────────────
+        t = Text()
+        if self._label_prefix:
+            t.append(self._label_prefix, style="dim #666666")
+        t.append(glyph_str, style=_CORAL)
+        # skill_name#abcd — normal weight
+        t.append(skill_id_display, style="bold")
+        t.append("  · ", style="dim")
+        # phase — italic coral
+        if phase_display:
+            t.append(phase_display, style=f"italic {_CORAL}")
+        # Elapsed — colour-coded so a slow / stuck skill stands out:
+        #   < 30 s → dim (= normal)
+        #   30–60s → amber (= "taking a while")
+        #   ≥ 60 s → red (= "this is unusual; might be blocked")
+        t.append(elapsed_str, style=elapsed_style)
         # Persistent plan-step badge — appears between elapsed and detail
         # so the user always knows "this skill is plan step 2/5" even after
         # the in-phase detail has been overwritten by the next llm: / act:
         # signal or cleared by a phase advance.
-        if self._plan_step_label:
+        if show_plan_badge and self._plan_step_label:
             t.append("  [", style="dim")
             t.append(self._plan_step_label, style=f"dim {_CORAL}")
             t.append("]", style="dim")
@@ -364,25 +507,67 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
         # it doesn't compete with the phase name, separated from elapsed
         # by ``  ⤷`` so the eye can grok "this is the inner-most thing
         # happening right now".
-        if self._detail:
+        if show_detail and self._detail:
             t.append("  ⤷ ", style="dim")
             t.append(self._detail, style="dim")
         return t
 
     def _build_finished(self) -> Text:
+        total_width = self._available_width()
+
+        # ── Always-kept segments ──────────────────────────────────────────
+        prefix_cells = cell_len(self._label_prefix)
+        skill_id = f"{self._skill_name}#{self._short_id}"
+        skill_id_cells = cell_len(skill_id)
+
         t = Text()
         if self._label_prefix:
             t.append(self._label_prefix, style="dim #666666")
+
         if self._success:
-            t.append("✓ ", style="bold green")
-            t.append(
-                f"{self._skill_name}#{self._short_id}",
-                style="dim",
-            )
+            glyph_str = "✓ "
+            glyph_cells = cell_len(glyph_str)
+            elapsed_str = self._elapsed()
+            elapsed_cells = cell_len(elapsed_str)
+            # Ctrl+B hint: "  · Ctrl+B → agents" — ~20 cells; shown only
+            # when budget allows (it's always been the last to be dropped
+            # in the old layout too, just implicitly via wrap).
+            ctrl_hint = "  · Ctrl+B → agents"
+            ctrl_hint_cells = cell_len(ctrl_hint)
+            sep_cells = cell_len("  · ")
+
+            # Build the reason segment if present.
+            reason_str = f" · {self._reason}" if self._reason else ""
+            reason_cells = cell_len(reason_str)
+
+            # Budget for the ctrl-hint: total - always_kept - skill_id
+            # - sep - elapsed - reason - right_margin.
+            always_cells = prefix_cells + glyph_cells + skill_id_cells + sep_cells + elapsed_cells + _RIGHT_MARGIN_CELLS
+            remaining = total_width - always_cells - reason_cells
+
+            show_ctrl_hint = remaining >= ctrl_hint_cells
+            # When reason + hint won't fit, drop hint first; reason is
+            # more informative than the hint.
+            if not show_ctrl_hint and reason_str:
+                # Try showing reason without hint.
+                pass  # reason_str stays; hint is already False
+
+            # Truncate skill_name#id only as a last resort when the
+            # essential segments alone exceed total_width.
+            essential_cells = prefix_cells + glyph_cells + skill_id_cells + sep_cells + elapsed_cells
+            if essential_cells > total_width - _RIGHT_MARGIN_CELLS:
+                skill_budget = max(
+                    4,
+                    total_width - _RIGHT_MARGIN_CELLS - prefix_cells - glyph_cells - sep_cells - elapsed_cells,
+                )
+                skill_id = self._truncate_to_cells(skill_id, skill_budget)
+
+            t.append(glyph_str, style="bold green")
+            t.append(skill_id, style="dim")
             t.append("  · ", style="dim")
-            t.append(self._elapsed(), style="dim")
-            if self._reason:
-                t.append(f" · {self._reason}", style="dim")
+            t.append(elapsed_str, style="dim")
+            if reason_str:
+                t.append(reason_str, style="dim")
             # Use the same dot separator as the rest of the row rather
             # than a fixed 12-space gap — the gap pushed the line past
             # the conv pane width (~70 cols with the right panel open),
@@ -390,34 +575,63 @@ class SkillActivityRow(RenderableCacheMixin, Widget):
             # orphan hint. `B` alone isn't bound — Ctrl+B is the real
             # panel-toggle binding, and the panel remembers its last
             # focal tab so it lands on agents/events automatically.
-            t.append("  · ", style="dim")
-            t.append("Ctrl+B → agents", style="dim")
+            if show_ctrl_hint:
+                t.append(ctrl_hint, style="dim")
         elif self._aborted:
             # C-F5 (wave-8): user-initiated cancellation gets the ⊘
             # glyph in dim grey, distinguishing intent from a system
             # failure. Same shape design as ToolCallRow's aborted
             # state — color + glyph as a redundant cue.
-            t.append("⊘ ", style="dim #888888")
-            t.append(
-                f"{self._skill_name}#{self._short_id}",
-                style="dim",
-            )
-            t.append("  · ", style="dim")
+            glyph_str = "⊘ "
+            glyph_cells = cell_len(glyph_str)
             cancel_msg = (
                 f"cancelled: {self._reason}" if self._reason else "cancelled"
             )
+            sep_cells = cell_len("  · ")
+            msg_cells = cell_len(cancel_msg)
+
+            essential_cells = prefix_cells + glyph_cells + skill_id_cells + sep_cells
+            remaining_for_msg = max(0, total_width - essential_cells - _RIGHT_MARGIN_CELLS)
+            if msg_cells > remaining_for_msg:
+                cancel_msg = self._truncate_to_cells(cancel_msg, remaining_for_msg)
+
+            if essential_cells > total_width - _RIGHT_MARGIN_CELLS:
+                skill_budget = max(4, total_width - _RIGHT_MARGIN_CELLS - prefix_cells - glyph_cells - sep_cells)
+                skill_id = self._truncate_to_cells(skill_id, skill_budget)
+
+            t.append(glyph_str, style="dim #888888")
+            t.append(skill_id, style="dim")
+            t.append("  · ", style="dim")
             t.append(cancel_msg, style="dim")
         else:
-            t.append("✗ ", style="bold red")
-            t.append(
-                f"{self._skill_name}#{self._short_id}",
-                style="dim",
-            )
-            t.append("  · ", style="dim")
+            glyph_str = "✗ "
+            glyph_cells = cell_len(glyph_str)
             failed_msg = f"failed: {self._reason}" if self._reason else "failed"
-            t.append(failed_msg, style="dim")
+            ctrl_hint = "  · Ctrl+B → events"
+            ctrl_hint_cells = cell_len(ctrl_hint)
+            sep_cells = cell_len("  · ")
+            msg_cells = cell_len(failed_msg)
+
+            always_cells = prefix_cells + glyph_cells + skill_id_cells + sep_cells
+            remaining_for_msg = max(0, total_width - always_cells - _RIGHT_MARGIN_CELLS)
+            show_ctrl_hint = remaining_for_msg >= msg_cells + ctrl_hint_cells
+            if msg_cells > remaining_for_msg - (ctrl_hint_cells if show_ctrl_hint else 0):
+                msg_budget = max(
+                    4,
+                    remaining_for_msg - (ctrl_hint_cells if show_ctrl_hint else 0),
+                )
+                failed_msg = self._truncate_to_cells(failed_msg, msg_budget)
+
+            if always_cells > total_width - _RIGHT_MARGIN_CELLS:
+                skill_budget = max(4, total_width - _RIGHT_MARGIN_CELLS - prefix_cells - glyph_cells - sep_cells)
+                skill_id = self._truncate_to_cells(skill_id, skill_budget)
+
+            t.append(glyph_str, style="bold red")
+            t.append(skill_id, style="dim")
             t.append("  · ", style="dim")
-            t.append("Ctrl+B → events", style="dim")
+            t.append(failed_msg, style="dim")
+            if show_ctrl_hint:
+                t.append(ctrl_hint, style="dim")
         return t
 
     def _build_history_line(self) -> Text:
