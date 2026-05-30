@@ -205,6 +205,53 @@ async def test_dispatch_timeout_status():
     assert result["status"] == "timeout"
 
 
+# ─── 4b. Injected backend override (FP-0008 C7 #2) ───────────────────────────
+
+
+class _StubBackend:
+    """Real (non-mock) SandboxBackend stub for the injection-seam test."""
+
+    name = "stub-injected"
+
+    def available(self) -> bool:
+        return True
+
+    async def run(self, argv, policy, *, stdin=None) -> SandboxResult:
+        return SandboxResult(returncode=0, stdout=b"from-stub", stderr=b"")
+
+
+@pytest.mark.asyncio
+async def test_injected_sandbox_backend_takes_precedence():
+    """Tier 2: OpContext.sandbox_backend instance overrides name-based selection."""
+    ctx, _events = _make_ctx()
+    ctx.sandbox_backend = _StubBackend()
+    op = SandboxedExecIROp(
+        kind="sandboxed_exec",
+        argv=["/bin/echo", "x"],
+        env_passthrough=["PATH"],
+        timeout_seconds=10,
+    )
+    result = await execute_op(op, ctx, caller="control_ir")
+    # The injected instance ran — not the platform default (e.g. seatbelt here).
+    assert result["backend"] == "stub-injected"
+    assert result["stdout"] == "from-stub"
+
+
+@pytest.mark.asyncio
+async def test_no_injected_backend_falls_back_to_default():
+    """Tier 2: with no injected backend, sandboxed_exec uses the platform default."""
+    ctx, _events = _make_ctx()
+    assert ctx.sandbox_backend is None
+    op = SandboxedExecIROp(
+        kind="sandboxed_exec",
+        argv=["/bin/echo", "x"],
+        env_passthrough=["PATH"],
+        timeout_seconds=10,
+    )
+    result = await execute_op(op, ctx, caller="control_ir")
+    assert result["backend"] in {"noop", "seatbelt", "landlock"}
+
+
 # ─── 5. Noop one-shot warning ────────────────────────────────────────────────
 
 
