@@ -59,21 +59,16 @@ def _make_cron_runner():
         skill_dir, skill_root = resolve_skill_path(job.skill)
         skill = load_dsl_skill(skill_dir / "skill.md", skill_root=skill_root)
 
-        perm_resolver = PermissionResolver(
-            config_permissions=dict(cfg.permissions),
-            project_root=project_root,
+        # #997 dir2: config-derived permission/runtime bundle via from_config
+        # (the web cron path is non-interactive → interactive=False, matching the
+        # prior hand-built resolver). resolver now derives from cfg.models (was an
+        # empty ModelResolver() default) so class-name model resolution works.
+        agent = Agent.from_config(
+            cfg,
+            shell_allowed=False,
             interactive=False,
-        )
-
-        agent = Agent(
-            model=cfg.model,
-            permission_resolver=perm_resolver,
-            mcp_servers=cfg.mcp,
-            python_allowed_modules=list(cfg.python.allowed_modules),
-            prompt_cache_enabled=cfg.prompt_cache_enabled,
             project_context=project_context,
             caller="cron",
-            sandbox_config=cfg.sandbox,
         )
 
         result = await agent.run(skill, dict(job.input))

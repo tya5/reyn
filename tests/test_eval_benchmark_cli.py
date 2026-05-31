@@ -429,7 +429,7 @@ def test_single_task_failure_no_abort(
 
     async def _stub_run_single_task(
         task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
-        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
+        shell_allowed=False, unsafe_python=False, python_allowed_modules=None,
         clone_task_repo=False, verify_tier="no_faithful_env",
     ):
         nonlocal call_count
@@ -530,12 +530,11 @@ def test_allow_shell_propagates_to_single_task(
 
     async def _capture_shell_allowed(
         task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
-        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
+        shell_allowed=False, unsafe_python=False, python_allowed_modules=None,
         clone_task_repo=False, verify_tier="no_faithful_env",
     ):
         async with semaphore:
             captured["shell_allowed"] = shell_allowed
-            captured["permission_resolver_built"] = permission_resolver is not None
             return {"instance_id": instance_id, "cost_usd": 0.0}
 
     monkeypatch.setattr(bm, "_run_single_task", _capture_shell_allowed)
@@ -555,9 +554,10 @@ def test_allow_shell_propagates_to_single_task(
     assert captured["shell_allowed"] is True, (
         "Expected shell_allowed=True to reach _run_single_task when --allow-shell is set"
     )
-    assert captured["permission_resolver_built"] is True, (
-        "Expected a non-None permission_resolver to be built when --allow-shell is set"
-    )
+    # #997 dir2: the permission_resolver is no longer passed to _run_single_task
+    # — Agent.from_config derives it per task from shell_allowed (+ unsafe_python).
+    # That the bundle is wired (not omittable) is covered by the from_config
+    # factory tests + the AST omit-pin; here we pin the shell_allowed propagation.
 
     # Case B: --allow-shell absent → shell_allowed=False is the default
     captured.clear()
@@ -620,7 +620,7 @@ def test_clone_task_repo_propagates_to_single_task(
 
     async def _capture_clone_flag(
         task, instance_id, skill, skill_root, model, session, run_dir, semaphore,
-        shell_allowed=False, permission_resolver=None, python_allowed_modules=None,
+        shell_allowed=False, unsafe_python=False, python_allowed_modules=None,
         clone_task_repo=False, verify_tier="no_faithful_env",
     ):
         async with semaphore:
