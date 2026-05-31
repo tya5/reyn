@@ -159,6 +159,26 @@ def _emit_event(ctx: ToolContext, **fields: Any) -> None:
         pass
 
 
+# #272 media axis load-contract: image refs are not text-loadable. The per-image
+# prompt cost is fixed (mirrors services/compaction/engine._IMAGE_FIXED_TOKEN_COST
+# and router_loop._MEDIA_IMAGE_TOKEN_COST) — what the LLM needs to know is the
+# context cost, not the on-disk byte size.
+_MEDIA_REF_IMAGE_TOKEN_COST = 1024
+_IMAGE_REF_EXTENSIONS = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg",
+)
+
+
+def _is_image_ref(identifier: str) -> bool:
+    """True when *identifier* (path / url / resource_uri) names an image file.
+
+    Detection is extension-based on the final path segment — sufficient because
+    media refs are minted by MediaStore.save_* with the mime-derived extension.
+    """
+    tail = identifier.rstrip("/").rsplit("/", 1)[-1].split("?", 1)[0].lower()
+    return tail.endswith(_IMAGE_REF_EXTENSIONS)
+
+
 def _source_agent_from_uri(resource_uri: str) -> str | None:
     """Extract the source_agent from a resource_uri for event tagging."""
     from reyn.workspace.media_store import parse_resource_uri
@@ -369,6 +389,32 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             identifier_kind=identifier_kind, identifier=identifier, error=err,
         )
         return {"status": "error", "error": err}
+
+    # #272 media-axis load-contract (never ref→ref, never overflow): an image
+    # ref is NOT text-loadable here. Reading its raw bytes as text would return
+    # binary garbage and — if large — overflow the prompt; returning another ref
+    # would loop. So return a SMALL structured error carrying the context cost
+    # (never the binary, never a ref). The image itself re-enters the
+    # conversation through the per-turn-bounded media follow-up (#272 Part-1),
+    # not as text — this keeps media structurally unable to overflow the prompt.
+    if _is_image_ref(identifier):
+        err = (
+            f"'{identifier}' is an image ref — not loadable as text via "
+            f"read_tool_result (~{_MEDIA_REF_IMAGE_TOKEN_COST} tokens of image "
+            f"data in context). Images re-enter the conversation through the "
+            f"bounded media follow-up, not as text; do not inline the raw bytes."
+        )
+        _emit_event(
+            ctx, status="error", error_kind="media_not_text_loadable",
+            identifier_kind=identifier_kind, identifier=identifier, error=err,
+            media_size_tokens=_MEDIA_REF_IMAGE_TOKEN_COST,
+        )
+        return {
+            "status": "error",
+            "error_kind": "media_not_text_loadable",
+            "error": err,
+            "media_size_tokens": _MEDIA_REF_IMAGE_TOKEN_COST,
+        }
 
     # Dispatch by identifier kind (= #385 β core impl sub-task 3c).
     #

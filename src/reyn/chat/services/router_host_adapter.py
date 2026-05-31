@@ -204,6 +204,10 @@ class RouterHostAdapter:
         # serialised tool-result string and returns it unchanged (within cap) or
         # an offloaded bounded preview. ``None`` = no cap (identity).
         cap_tool_result: Any = None,
+        # #272 media axis: callable (tool_content_str) -> int giving the tokens
+        # left for the media follow-up after the (capped) tool text, so
+        # router_loop bounds media materialisation. ``None`` = unbounded (pre-#272).
+        media_followup_budget: Any = None,
         # FP-0037 S1: persistent MCP tools cache directory.
         # Default is Path(".reyn/state") which resolves relative to cwd
         # (= the project root in all production entry points). Tests pass
@@ -296,6 +300,8 @@ class RouterHostAdapter:
         self._media_store = media_store
         # #1128 size axis: per-turn tool-result cap/offload callable (or None).
         self._cap_tool_result = cap_tool_result
+        # #272 media axis: per-turn media-budget provider (or None).
+        self._media_followup_budget = media_followup_budget
 
     # --- RouterLoopHost identity attributes ---
 
@@ -308,6 +314,16 @@ class RouterHostAdapter:
         if self._cap_tool_result is None:
             return content_str
         return self._cap_tool_result(content_str)
+
+    def media_followup_budget(self, tool_content: str) -> int | None:
+        """#272 media axis: tokens left for a tool turn's media follow-up after
+        its (capped) text, or None when no media bound is wired (= pre-#272
+        unbounded). router_loop passes this to the media-followup builder so
+        overflow media stays a small lossless ref and the turn stays ≤ cap.
+        """
+        if self._media_followup_budget is None:
+            return None
+        return self._media_followup_budget(tool_content)
 
     @property
     def media_store(self) -> Any:

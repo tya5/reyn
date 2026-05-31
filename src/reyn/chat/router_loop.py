@@ -178,11 +178,18 @@ def _strip_frontmatter(content: str) -> str:
     return "\n".join(body_lines).rstrip("\n") + ("\n" if body_lines else "")
 
 
+# #272 media axis: per-image token estimate, mirroring the compaction engine's
+# ``_IMAGE_FIXED_TOKEN_COST`` (services/compaction/engine.py) so the per-turn
+# media bound is unit-consistent with how a turn's image cost is measured.
+_MEDIA_IMAGE_TOKEN_COST = 1024
+
+
 def _build_media_followup_message(
     *,
     tool_name: str,
     media_blocks: list[dict],
     media_store: Any = None,
+    budget_tokens: int | None = None,
 ) -> dict | None:
     """Build a multimodal follow-up user message for MCP tool results that
     include image / non-text content blocks (issue #362 → #383 PR-C).
@@ -209,6 +216,15 @@ def _build_media_followup_message(
         {"type": "text", "text": f"Tool `{tool_name}` returned the following image(s):"},
     ]
     rendered = 0
+    materialized = 0  # #272: images actually embedded (count against budget_tokens)
+
+    def _over_budget() -> bool:
+        # #272 per-turn media bound: materialise an image only while the running
+        # image cost stays within budget_tokens; overflow → small lossless ref.
+        if budget_tokens is None:
+            return False
+        return (materialized + 1) * _MEDIA_IMAGE_TOKEN_COST > budget_tokens
+
     for block in media_blocks:
         if not isinstance(block, dict):
             continue
@@ -224,6 +240,21 @@ def _build_media_followup_message(
                 # see path-refs in the first place, so this is defensive
                 # only.
                 continue
+            if _over_budget():
+                # #272: overflow media stays a small ref (lossless — the image
+                # remains on disk, materialisable later via the load-contract).
+                # NEVER materialise beyond the per-turn budget → result turn
+                # stays ≤ cap_tokens.
+                parts.append({
+                    "type": "text",
+                    "text": (
+                        f"[image not loaded — exceeds the per-turn media budget. "
+                        f"Stored at {path} ({mime}); load it with read_tool_result "
+                        f"when the context has room.]"
+                    ),
+                })
+                rendered += 1
+                continue
             try:
                 data_bytes, found = media_store.read_image(path)
             except PermissionError:
@@ -237,6 +268,7 @@ def _build_media_followup_message(
                 "image_url": {"url": f"data:{mime};base64,{data_b64}"},
             })
             rendered += 1
+            materialized += 1
             continue
         # Inline shape (pre-PR-C): use the base64 directly.
         data = block.get("data")
@@ -2182,10 +2214,20 @@ class RouterLoop:
                         # path-ref blocks are materialised to data URLs at
                         # the LLM wire boundary. ``getattr`` keeps tests
                         # that mock the host with bare attributes happy.
+                        # #272: bound the media follow-up to the budget left
+                        # after the (already-capped) tool text, so the whole
+                        # result turn stays ≤ the per-turn cap. Overflow media
+                        # stays a small lossless ref. getattr keeps partial/test
+                        # hosts unbounded (pre-#272 behaviour).
+                        _media_budget = getattr(host, "media_followup_budget", None)
+                        _budget_tokens = (
+                            _media_budget(content_str) if _media_budget is not None else None
+                        )
                         followup = _build_media_followup_message(
                             tool_name=tc.get("function", {}).get("name", "tool"),
                             media_blocks=media_blocks,
                             media_store=getattr(host, "media_store", None),
+                            budget_tokens=_budget_tokens,
                         )
                         if followup is not None:
                             messages.append(followup)

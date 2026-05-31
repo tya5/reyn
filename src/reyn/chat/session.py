@@ -1753,6 +1753,9 @@ class ChatSession:
             # Late-bound method — the engine budgets it reads are computed by
             # the time a tool result flows through router_loop at runtime.
             cap_tool_result=self._cap_tool_result,
+            # #272 media axis: per-turn media budget (= cap − tool text tokens)
+            # so router_loop bounds the media follow-up (overflow media → ref).
+            media_followup_budget=self._media_followup_budget,
             # B25-S5-1: thread eager-build flag so RouterLoop awaits build
             # before computing _search_visible on the first turn.
             eager_embedding_build=self._eager_embedding_build,
@@ -5026,10 +5029,28 @@ class ChatSession:
         store = self._media_store
         if store is None:
             return content_str
-        from reyn.chat.services.tool_result_cap import (
-            cap_tool_result_content,
-            compute_cap_tokens,
+        from reyn.chat.services.tool_result_cap import cap_tool_result_content
+
+        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+        return cap_tool_result_content(
+            content_str,
+            cap_tokens=self._per_turn_cap_tokens(),
+            model=self.model,
+            save_fn=store.save_tool_result,
+            use_chars4=use_chars4,
+            events=self._chat_events,
         )
+
+    def _per_turn_cap_tokens(self) -> int:
+        """The B_M-relative per-turn cap (#1128/#272), shared by the tool-result
+        text cap and the per-turn media bound.
+
+        ``compute_cap_tokens(effective_trigger)`` — derived from the engine
+        budgets (falls back to the model's max-input tokens before budgets are
+        computed). A whole result turn (capped text + materialised media) is
+        held ≤ this so it stays single-turn compactable.
+        """
+        from reyn.chat.services.tool_result_cap import compute_cap_tokens
 
         controller = getattr(self, "_compaction_controller", None)
         engine = getattr(controller, "_engine", None) if controller is not None else None
@@ -5039,17 +5060,23 @@ class ChatSession:
         else:
             from reyn.llm.model_budget import get_max_input_tokens
             effective_trigger = get_max_input_tokens(self.model, events=self._chat_events)
+        return compute_cap_tokens(effective_trigger)
 
-        cap_tokens = compute_cap_tokens(effective_trigger)
+    def _media_followup_budget(self, tool_content: str) -> int:
+        """#272 media axis: tokens left for a tool turn's media follow-up after
+        its (already-capped) text.
+
+        ``per-turn cap − estimate_tokens(tool_content)`` (floored at 0) — so the
+        whole result turn (capped text + materialised media) stays ≤ the per-turn
+        cap and remains single-turn compactable. router_loop passes this to
+        ``_build_media_followup_message`` to bound media materialisation; overflow
+        media stays a small lossless ref.
+        """
+        from reyn.services.compaction.engine import estimate_tokens
+
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-        return cap_tool_result_content(
-            content_str,
-            cap_tokens=cap_tokens,
-            model=self.model,
-            save_fn=store.save_tool_result,
-            use_chars4=use_chars4,
-            events=self._chat_events,
-        )
+        text_tokens = estimate_tokens(tool_content, self.model, use_chars4=use_chars4)
+        return max(0, self._per_turn_cap_tokens() - text_tokens)
 
     async def _maybe_force_compact_for_router(
         self,
