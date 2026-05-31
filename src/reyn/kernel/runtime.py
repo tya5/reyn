@@ -244,6 +244,10 @@ class OSRuntime:
                     events=self.events,
                     T_SP=0,
                     cfg=None,  # default CompactionConfig for budget derivation
+                    # #1172: phase axis — `model` is the raw runtime param (a
+                    # class); resolve via the same resolver the main phase LLM
+                    # call uses (runtime.py main-call: self._resolver.resolve).
+                    resolver=self._resolver,
                 )
             except Exception:  # noqa: BLE001 — best-effort; skip if unavailable
                 phase_compaction_engine = None
