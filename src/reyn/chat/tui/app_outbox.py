@@ -24,6 +24,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.chat.outbox import OutboxMessage
+from reyn.chat.tui._palette import _TEXT_DIM, _TEXT_MUTED
 
 from .widgets import ConversationView, ReynHeader, RightPanel
 
@@ -505,10 +506,10 @@ class OutboxRouter:
             conv.clear()
             from rich.text import Text as _RichText
             for line in interrupted:
-                conv._write_log(_RichText(line, style="dim #888888"))
+                conv._write_log(_RichText(line, style=f"dim {_TEXT_MUTED}"))
             conv._write_log(_RichText(
                 f"── attached to {new_name} ──",
-                style="dim #555555",
+                style=f"dim {_TEXT_DIM}",
             ))
 
     def _on_matrix(
