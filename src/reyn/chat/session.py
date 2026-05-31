@@ -712,6 +712,22 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class _RouterUsageShim:
+    """Wrap a RouterLoop ``TokenUsage`` as ``.usage`` for ``retry_loop`` (#1125).
+
+    ``retry_loop``'s learner-feedback path reads ``response.usage.prompt_tokens``
+    (the litellm response convention). RouterLoop.run returns the bare
+    ``TokenUsage`` instead, so this shim exposes it under ``.usage`` — letting
+    the adaptive estimator observe the chat axis's actual prompt size. The
+    overflow-recovery caller reads ``.usage`` back out to credit session usage.
+    """
+
+    __slots__ = ("usage",)
+
+    def __init__(self, usage: object) -> None:
+        self.usage = usage
+
+
 def _ts_iso_to_epoch(ts: str | None) -> float | None:
     """Best-effort ISO-8601 → epoch-seconds conversion.
 
@@ -4889,22 +4905,75 @@ class ChatSession:
         # message dict. Path-ref content parts (= ``{"type":"image","path":...}``)
         # are materialised to data URLs **at this boundary** so storage
         # stays light and the LLM sees the inline form it expects.
-        messages: list[dict] = []
+        return [self._serialise_turn(m) for m in selected]
+
+    def _serialise_turn(self, m: "ChatMessage") -> dict:
+        """Serialise one ChatMessage into a litellm-compatible wire dict.
+
+        Path-ref content parts (= ``{"type":"image","path":...}``) are
+        materialised to data URLs at this boundary so storage stays light
+        and the LLM sees the inline form it expects. Shared by
+        :meth:`_build_history_for_router` and
+        :meth:`_decompose_history_for_retry` so both produce identical wire
+        shapes (the retry_loop decomposition must rebuild the same prompt the
+        normal path would have sent).
+        """
         media_store = getattr(self, "_media_store", None)
-        for m in selected:
-            # Legacy "agent" stragglers (= migrated entries that somehow
-            # bypassed _migrate_legacy_chat_message) → normalise on read.
-            role = "assistant" if m.role == "agent" else m.role
-            content = _materialise_path_ref_content(m.content, media_store)
-            msg: dict = {"role": role, "content": content}
-            if m.tool_calls is not None:
-                msg["tool_calls"] = m.tool_calls
-            if m.tool_call_id is not None:
-                msg["tool_call_id"] = m.tool_call_id
-            if m.name is not None:
-                msg["name"] = m.name
-            messages.append(msg)
-        return messages
+        # Legacy "agent" stragglers (= migrated entries that somehow bypassed
+        # _migrate_legacy_chat_message) → normalise on read.
+        role = "assistant" if m.role == "agent" else m.role
+        content = _materialise_path_ref_content(m.content, media_store)
+        msg: dict = {"role": role, "content": content}
+        if m.tool_calls is not None:
+            msg["tool_calls"] = m.tool_calls
+        if m.tool_call_id is not None:
+            msg["tool_call_id"] = m.tool_call_id
+        if m.name is not None:
+            msg["name"] = m.name
+        return msg
+
+    def _decompose_history_for_retry(
+        self,
+    ) -> tuple[list[dict], list[dict], list[dict], dict | None]:
+        """Decompose current history into (head, raw_middle, tail, summary) for retry_loop.
+
+        Mirrors :meth:`_build_history_for_router`'s head/tail slicing but
+        exposes the elided ``raw_middle`` explicitly so the bounded
+        adaptive-shrink ``retry_loop`` (#1125 Item 2) can fold it into the
+        running summary under overflow — instead of the prior degraded
+        compact-once. ``summary`` is the structured dict from the latest
+        persisted summary turn (retry_loop treats it as an immutable base).
+
+        When ``len(turns) <= head_size + tail_size`` the head/tail would
+        overlap (the documented Q4-attractor duplication hazard), so the whole
+        history goes into ``head`` with empty ``raw_middle`` / ``tail`` — there
+        is nothing to elide, and retry_loop's shrink can still trim ``head``.
+        """
+        cfg = self._compaction
+        turns = [
+            m for m in self.history
+            if m.role in ("user", "assistant", "tool", "agent")
+        ]
+        if len(turns) <= cfg.head_size + cfg.tail_size:
+            head_msgs = turns
+            raw_middle_msgs: list = []
+            tail_msgs: list = []
+        else:
+            head_msgs = turns[:cfg.head_size]
+            tail_msgs = turns[-cfg.tail_size:] if cfg.tail_size else []
+            middle_end = len(turns) - cfg.tail_size if cfg.tail_size else len(turns)
+            raw_middle_msgs = turns[cfg.head_size:middle_end]
+
+        summary_msg = self._latest_summary()
+        summary_dict: dict | None = None
+        if summary_msg is not None:
+            structured = (summary_msg.meta or {}).get("structured")
+            if isinstance(structured, dict):
+                summary_dict = structured
+        head = [self._serialise_turn(m) for m in head_msgs]
+        raw_middle = [self._serialise_turn(m) for m in raw_middle_msgs]
+        tail = [self._serialise_turn(m) for m in tail_msgs]
+        return head, raw_middle, tail, summary_dict
 
     def _build_router_system_prompt(self) -> str:
         """Return the router system prompt for the current session state.
@@ -5081,36 +5150,80 @@ class ChatSession:
             )
             if not _is_overflow:
                 raise
-            # PR-N6: overflow detected — force compaction and retry once.
-            # For a full retry_loop, the session would need to expose
-            # head/summary/raw_middle/tail decomposition; that structural
-            # refactor is tracked as a follow-up.  This path covers the
-            # immediate fail-fast-with-recovery contract.
+            # PR-N6 / #1125 Item 2: overflow detected — recover via the bounded
+            # adaptive-shrink retry_loop (replaces the prior degraded
+            # compact-once). The session now exposes the
+            # head/summary/raw_middle/tail decomposition retry_loop needs
+            # (_decompose_history_for_retry), so it can fold raw_middle into the
+            # running summary and monotonically shrink head/tail until the call
+            # fits — the "never dead-end" continuity guarantee. The pre-frame
+            # guard (_maybe_force_compact_for_router) already ran and populated
+            # engine.budgets; retry_loop is the reactive safety net when the
+            # guard's estimate under-counted. UnrecoveredError (all shrink paths
+            # exhausted) is the chat axis's fail-fast surface.
             self._chat_events.emit(
                 "router_context_overflow_detected",
                 error=repr(_exc),
             )
+            from reyn.services.compaction.engine import retry_loop as _retry_loop
+            engine = self._compaction_controller._engine
+            _head, _raw_middle, _tail, _summary_dict = (
+                self._decompose_history_for_retry()
+            )
+            _new_msg = {"role": "user", "content": user_text}
+
+            async def _router_main_call(*, SP, head, summary, tail, new_msg):
+                # Rebuild the router prompt from the (possibly shrunk)
+                # decomposition retry_loop hands back each iteration.
+                _msgs = list(head)
+                if summary:
+                    # Render the structured summary via the SAME renderer that
+                    # produced the persisted summary.content (= the normal path's
+                    # bridge text), so the recovery prompt's summary bridge is
+                    # byte-identical to what _build_history_for_router would send.
+                    # retry_loop still folds raw_middle into the *structured*
+                    # dict (its immutable base); only the bridge text is rendered.
+                    _summary_text = _render_summary_for_storage(summary)
+                    _msgs.append({
+                        "role": "assistant",
+                        "content": (
+                            "[summary of earlier conversation]\n" + _summary_text
+                        ),
+                    })
+                _msgs.extend(tail)
+                try:
+                    _usage = await loop.run(user_text=user_text, history=_msgs)
+                except Exception as _call_exc:
+                    if any(kw in str(_call_exc).lower() for kw in (
+                        "context", "token", "length", "limit", "too long", "too large",
+                    )):
+                        raise _ContextOverflowError(str(_call_exc)) from _call_exc
+                    raise
+                return _RouterUsageShim(_usage)
+
             try:
-                await self._compaction_controller.force_compact_now()
-            except Exception:
-                pass
-            history = self._build_history_for_router()
-            try:
-                router_usage = await loop.run(user_text=user_text, history=history)
-            except Exception as _retry_exc:
-                _retry_str = str(_retry_exc).lower()
-                if any(
-                    kw in _retry_str
-                    for kw in ("context", "token", "length", "limit", "too long", "too large")
-                ):
-                    self._chat_events.emit(
-                        "router_context_overflow_unrecovered",
-                        error=repr(_retry_exc),
-                    )
-                    raise _ContextOverflowError(
-                        f"Router context overflow unrecovered after compaction: {_retry_exc}"
-                    ) from _retry_exc
-                raise
+                _shim = await _retry_loop(
+                    SP=self._build_router_system_prompt(),
+                    head=_head,
+                    summary=_summary_dict,
+                    raw_middle=_raw_middle,
+                    tail=_tail,
+                    new_msg=_new_msg,
+                    cfg=self._compaction,
+                    model=self.model,
+                    engine=engine,
+                    learner=self._token_learner,
+                    main_call=_router_main_call,
+                )
+                router_usage = _shim.usage
+            except (_ContextOverflowError, _UnrecoveredError) as _retry_exc:
+                self._chat_events.emit(
+                    "router_context_overflow_unrecovered",
+                    error=repr(_retry_exc),
+                )
+                raise _ContextOverflowError(
+                    f"Router context overflow unrecovered after bounded shrink: {_retry_exc}"
+                ) from _retry_exc
 
         # F4 Bug 2 / F4 Bug 1: accumulate router LLM usage (with proxy-prefix
         # stripping) into per-session totals via the gateway.
