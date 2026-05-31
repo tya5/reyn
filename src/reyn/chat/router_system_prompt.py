@@ -31,6 +31,7 @@ def build_system_prompt(
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-v
     cwd: str | None = None,
     search_actions_enabled: bool = True,  # FP-0034 §D14 — default True preserves byte-compat
+    context_size_signal: str | None = None,  # #272/#1128 — pre-rendered, appended LAST
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -470,6 +471,15 @@ def build_system_prompt(
             f"  - Always reply in language: {output_language}."
             "  Do NOT switch language even for error messages or clarifying questions."
         )
+
+    # ── 14. Context-size signal (#272/#1128) ─────────────────────────────────
+    # OS-injected, pre-rendered by the caller (router_loop / phase runtime) from
+    # the live free-window. Placed LAST because it is the most per-turn-volatile
+    # section — keeping it at the tail preserves the cached SP prefix above it.
+    # P8-clean: OS-level vocabulary, no skill-specific enumeration; the `compact`
+    # op format itself is advertised separately via the tool/control_ir catalog.
+    if context_size_signal:
+        parts.append(context_size_signal)
 
     return "\n".join(parts)
 

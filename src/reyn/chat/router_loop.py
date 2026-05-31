@@ -184,6 +184,27 @@ def _strip_frontmatter(content: str) -> str:
 _MEDIA_IMAGE_TOKEN_COST = 1024
 
 
+def _render_context_size_signal_for_host(host: "RouterLoopHost") -> "str | None":
+    """#272/#1128: render the OS-injected context-size header from the host's
+    live free-window, or None when the host exposes no status (test stubs).
+    Best-effort — never breaks a turn.
+    """
+    status_fn = getattr(host, "context_window_status", None)
+    if status_fn is None:
+        return None
+    try:
+        status = status_fn()
+        if not status:
+            return None
+        from reyn.services.compaction.context_signal import render_context_size_signal
+        return render_context_size_signal(
+            free_window=status["free_window"],
+            effective_trigger=status["effective_trigger"],
+        )
+    except Exception:  # noqa: BLE001 — signal is advisory; absence is harmless
+        return None
+
+
 def _build_media_followup_message(
     *,
     tool_name: str,
@@ -1628,6 +1649,11 @@ class RouterLoop:
                 # configured + index ready); False there means the SP and tools=
                 # both exclude search_actions, eliminating the N5 hallucination.
                 search_actions_enabled=_search_visible if _univ_enabled else True,
+                # #272/#1128: OS-injected context-size signal (header). Computed
+                # from the host's live free-window so the LLM can voluntarily
+                # `compact` before the backstop. Rendered LAST in the SP (most
+                # volatile section → preserves the cached prefix above it).
+                context_size_signal=_render_context_size_signal_for_host(host),
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the

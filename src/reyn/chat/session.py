@@ -1759,6 +1759,9 @@ class ChatSession:
             # #272/#1128 compact op: voluntary-compaction callback so the LLM-
             # emittable `compact` control_ir op can compact chat history.
             compact_now=self._compact_now_for_op,
+            # #272/#1128 context-size signal: live exact-token budget so the
+            # router SP can show the LLM the free window (header).
+            context_window_status=self._context_window_status,
             # B25-S5-1: thread eager-build flag so RouterLoop awaits build
             # before computing _search_visible on the first turn.
             eager_embedding_build=self._eager_embedding_build,
@@ -5114,6 +5117,18 @@ class ChatSession:
         except Exception:  # noqa: BLE001 — estimation best-effort
             estimated = 0
         return effective_trigger, estimated
+
+    def _context_window_status(self) -> dict:
+        """#272/#1128: live exact-token context budget for the context-size
+        signal (header). ``{free_window, effective_trigger}`` — free_window is
+        the headroom before the involuntary backstop, unit-aligned with the
+        compact op result + media load-contract error.
+        """
+        effective_trigger, used = self._free_window_now()
+        return {
+            "free_window": max(0, effective_trigger - used),
+            "effective_trigger": effective_trigger,
+        }
 
     async def _compact_now_for_op(self) -> dict:
         """#272/#1128: voluntary-compaction callback wired to the compact op.
