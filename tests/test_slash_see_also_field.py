@@ -43,14 +43,14 @@ def test_slash_decorator_stores_see_also_on_registered_command() -> None:
     @slash(
         "xtest_see_also_reg",
         summary="decorator see_also test",
-        see_also=("docs/concepts/plan-mode.md", "docs/concepts/memory.md"),
+        see_also=("docs/concepts/multi-agent/plan-mode.md", "docs/concepts/data-retrieval/memory.md"),
     )
     async def _xtest_cmd(session: object, args: str) -> None:
         pass
 
     cmd = REGISTRY.get("xtest_see_also_reg")
     assert cmd is not None
-    assert cmd.see_also == ("docs/concepts/plan-mode.md", "docs/concepts/memory.md")
+    assert cmd.see_also == ("docs/concepts/multi-agent/plan-mode.md", "docs/concepts/data-retrieval/memory.md")
 
 
 def test_render_command_focus_includes_see_also_line_when_non_empty() -> None:
@@ -65,11 +65,11 @@ def test_render_command_focus_includes_see_also_line_when_non_empty() -> None:
         name="xtest_see_also_render",
         summary="render see_also test",
         handler=_h,
-        see_also=("docs/concepts/plan-mode.md",),
+        see_also=("docs/concepts/multi-agent/plan-mode.md",),
     ))
     panel = _render_command_focus("xtest_see_also_render")
     assert "see also:" in panel
-    assert "docs/concepts/plan-mode.md" in panel
+    assert "docs/concepts/multi-agent/plan-mode.md" in panel
 
 
 def test_render_command_focus_omits_see_also_line_when_empty() -> None:
@@ -94,9 +94,9 @@ def test_render_command_focus_omits_see_also_line_when_empty() -> None:
 
 
 def test_plan_command_has_expected_see_also_at_import() -> None:
-    """Tier 2: /plan has see_also=('docs/concepts/plan-mode.md',) at import time."""
+    """Tier 2: /plan has see_also=('docs/concepts/multi-agent/plan-mode.md',) at import time."""
     from reyn.chat.slash import REGISTRY  # noqa: F401 — triggers registration
 
     cmd = REGISTRY.get("plan")
     assert cmd is not None
-    assert "docs/concepts/plan-mode.md" in cmd.see_also
+    assert "docs/concepts/multi-agent/plan-mode.md" in cmd.see_also
