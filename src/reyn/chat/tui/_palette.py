@@ -150,4 +150,36 @@ __all__ = [
     "_STATUS_READY",
     "_STATUS_SUCCESS_DARK",
     "_HINT_ACTION",
+    "css_variables",
 ]
+
+
+def css_variables() -> dict[str, str]:
+    """Palette as Textual CSS variables (``$reyn-<name>``).
+
+    ``theme.tcss`` (and any ``.tcss``) cannot ``import`` the Python tokens
+    above, so historically it mirrored their hex values as literals kept in
+    manual sync. The App's ``get_css_variables`` override injects this map so
+    ``.tcss`` can reference the palette directly — e.g. ``color: $reyn-text-body``
+    — making ``_palette.py`` the single source for CSS-side colours too (no
+    more hand-synced hex). Add a row here when a ``.tcss`` rule needs a token.
+    """
+    return {
+        "reyn-bg-panel": _BG_PANEL,
+        "reyn-bg-header": _BG_HEADER,
+        "reyn-border-dim": _BORDER_DIM,
+        "reyn-divider-dim": _DIVIDER_DIM,
+        "reyn-text-dimmest": _TEXT_DIMMEST,
+        "reyn-text-dim": _TEXT_DIM,
+        "reyn-text-neutral": _TEXT_NEUTRAL,
+        "reyn-text-mid": _TEXT_MID,
+        "reyn-text-muted": _TEXT_MUTED,
+        "reyn-text-selected": _TEXT_SELECTED,
+        "reyn-text-body": _TEXT_BODY,
+        "reyn-text-bright": _TEXT_BRIGHT,
+        "reyn-status-success": _STATUS_SUCCESS,
+        "reyn-status-error": _STATUS_ERROR,
+        "reyn-status-critical": _STATUS_CRITICAL,
+        "reyn-status-warn": _STATUS_WARN,
+        "reyn-event-intervention": _EVENT_INTERVENTION,
+    }

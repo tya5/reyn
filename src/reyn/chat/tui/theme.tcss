@@ -28,8 +28,8 @@ Screen {
 ReynHeader {
     dock: top;
     height: 1;
-    background: #1a1a1a;
-    color: #dddddd;
+    background: $reyn-bg-header;
+    color: $reyn-text-bright;
     layout: horizontal;
     padding: 0 2;
 }
@@ -41,7 +41,7 @@ ReynHeader #title {
 }
 
 ReynHeader #status {
-    color: #aaaaaa;
+    color: $reyn-text-body;
     text-align: right;
     width: 1fr;
     padding: 0 1;
@@ -52,7 +52,7 @@ ReynHeader #status {
     /* 1-row dim divider between the screen header and panel content.
        Without this, tabs (right panel) and the RichLog (conv pane)
        both touch the screen header and visually "intrude" on it. */
-    border-top: solid #333333;
+    border-top: solid $reyn-divider-dim;
 }
 
 ConversationView {
@@ -61,7 +61,7 @@ ConversationView {
     padding: 0 1;
     overflow-y: scroll;
     scrollbar-color: $primary;
-    scrollbar-background: #1a1a1a;
+    scrollbar-background: $reyn-bg-header;
 }
 
 ConversationView > RichLog {
@@ -73,8 +73,8 @@ InputBar {
     dock: bottom;
     height: auto;
     max-height: 20;
-    background: #111111;
-    border-top: solid #2a2a2a;
+    background: $reyn-bg-panel;
+    border-top: solid $reyn-border-dim;
     padding: 0 1;
 }
 
@@ -96,7 +96,7 @@ InputBar TextArea {
 
 InputBar #hints {
     height: 1;
-    color: #666666;
+    color: $reyn-text-neutral;
     padding: 0 1;
     dock: bottom;
 }
@@ -112,7 +112,7 @@ InterventionWidget {
 }
 
 InterventionWidget .iv-question {
-    color: #ffcc88;
+    color: $reyn-event-intervention;
     text-style: bold;
     margin-bottom: 1;
 }

@@ -43,6 +43,7 @@ from reyn.chat.tui._palette import (
     _TEXT_BODY,
     _TEXT_BRIGHT,
     _TEXT_DIM,
+    css_variables,
 )
 
 from .widgets import ConversationView, InputBar, InterventionWidget, ReynHeader, RightPanel
@@ -211,6 +212,16 @@ class ReynTUIApp(App):
             "block-cursor-foreground": "#ffffff",  # palette-candidate: white foreground on coral cursor
         },
     )
+
+    def get_css_variables(self) -> dict[str, str]:
+        """Inject the palette as ``$reyn-*`` CSS variables.
+
+        Lets ``theme.tcss`` (and any ``.tcss``) reference ``_palette.py``
+        directly instead of hand-syncing hex literals — ``_palette`` becomes
+        the single source for CSS-side colours too. Merges on top of
+        Textual's built-in theme variables ($primary, $surface, …).
+        """
+        return {**super().get_css_variables(), **css_variables()}
 
     def __init__(
         self,
