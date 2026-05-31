@@ -200,6 +200,10 @@ class RouterHostAdapter:
         multimodal_config: Any = None,
         # Issue #383 PR-C: media + tool-result file storage.
         media_store: Any = None,
+        # #1128 size axis: per-turn tool-result cap/offload callable. Takes the
+        # serialised tool-result string and returns it unchanged (within cap) or
+        # an offloaded bounded preview. ``None`` = no cap (identity).
+        cap_tool_result: Any = None,
         # FP-0037 S1: persistent MCP tools cache directory.
         # Default is Path(".reyn/state") which resolves relative to cwd
         # (= the project root in all production entry points). Tests pass
@@ -290,8 +294,20 @@ class RouterHostAdapter:
         self._multimodal_config = multimodal_config
         # Issue #383 PR-C: store the MediaStore for path-ref save/read.
         self._media_store = media_store
+        # #1128 size axis: per-turn tool-result cap/offload callable (or None).
+        self._cap_tool_result = cap_tool_result
 
     # --- RouterLoopHost identity attributes ---
+
+    def cap_tool_result(self, content_str: str) -> str:
+        """#1128 size axis: cap an oversized tool-result string at the
+        router_loop chokepoint. Delegates to the session-supplied callable
+        (which offloads the full body via the #385 store + returns a bounded
+        preview); identity when no capper was wired (= legacy / test paths).
+        """
+        if self._cap_tool_result is None:
+            return content_str
+        return self._cap_tool_result(content_str)
 
     @property
     def media_store(self) -> Any:

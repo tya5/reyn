@@ -1749,6 +1749,10 @@ class ChatSession:
             multimodal_config=self._multimodal_config,
             # Issue #383 PR-C: shared MediaStore for image + tool-result storage.
             media_store=self._media_store,
+            # #1128 size axis: per-turn tool-result cap/offload (dead-end #1).
+            # Late-bound method — the engine budgets it reads are computed by
+            # the time a tool result flows through router_loop at runtime.
+            cap_tool_result=self._cap_tool_result,
             # B25-S5-1: thread eager-build flag so RouterLoop awaits build
             # before computing _search_visible on the first turn.
             eager_embedding_build=self._eager_embedding_build,
@@ -5003,6 +5007,48 @@ class ChatSession:
             project_context=self._router_host.get_project_context(),
             indexed_sources_section=None,
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
+        )
+
+    def _cap_tool_result(self, content_str: str) -> str:
+        """#1128 size axis (dead-end #1): cap an oversized chat tool result.
+
+        Derives the B_M-relative per-turn cap from the engine budgets
+        (``effective_trigger``; falls back to the model's max-input tokens before
+        budgets are computed) and delegates to ``cap_tool_result_content``, which
+        OFFLOADS the full body via the #385 store (``MediaStore.save_tool_result``,
+        lossless + restorable via ``read_tool_result``) and returns a bounded
+        preview ``≤ cap_tokens``. Threaded into ``RouterHostAdapter`` so
+        router_loop caps every tool result at the single ``content_str``
+        chokepoint, making each tool turn individually compactable (so the chat
+        retry_loop's shrink can always fold it). No-op when no media_store is
+        configured (= nowhere to store the body losslessly).
+        """
+        store = self._media_store
+        if store is None:
+            return content_str
+        from reyn.chat.services.tool_result_cap import (
+            cap_tool_result_content,
+            compute_cap_tokens,
+        )
+
+        controller = getattr(self, "_compaction_controller", None)
+        engine = getattr(controller, "_engine", None) if controller is not None else None
+        budgets = getattr(engine, "budgets", None)
+        if budgets is not None:
+            effective_trigger = budgets.effective_trigger
+        else:
+            from reyn.llm.model_budget import get_max_input_tokens
+            effective_trigger = get_max_input_tokens(self.model, events=self._chat_events)
+
+        cap_tokens = compute_cap_tokens(effective_trigger)
+        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+        return cap_tool_result_content(
+            content_str,
+            cap_tokens=cap_tokens,
+            model=self.model,
+            save_fn=store.save_tool_result,
+            use_chars4=use_chars4,
+            events=self._chat_events,
         )
 
     async def _maybe_force_compact_for_router(
