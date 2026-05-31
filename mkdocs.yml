@@ -144,6 +144,7 @@ nav:
           - reference/cli/permissions.md
           - reference/cli/config.md
           - reference/cli/init.md
+          - reference/cli/embeddings.md
           - reference/cli/common-flags.md
       - DSL:
           - reference/dsl/skill-md.md
