@@ -707,6 +707,7 @@ class CompactionEngine:
         T_SP: int = 0,
         system_prompt_provider: Callable[[], str] | None = None,
         resolver: "ModelResolver | None" = None,
+        recorder: object | None = None,
     ) -> None:
         # #1172: resolve the model CLASS ("standard"/"light"/"strong") to its
         # LiteLLM string at construction — by-construction guarantee that no
@@ -722,6 +723,9 @@ class CompactionEngine:
             from reyn.llm.model_resolver import ModelResolver as _MR
             resolver = _MR({})
         self._model = resolver.resolve(model).model
+        # #1190 stage (ii): BudgetTracker for cost recording (purpose=compaction)
+        # via recorded_acompletion. None = unrecorded (e.g. ad-hoc/test engines).
+        self._recorder = recorder
         self._events = events
         # Axis 10: opt-out flag
         from reyn.config import CompactionConfig as _CC
@@ -779,25 +783,20 @@ class CompactionEngine:
         return self._budgets
 
     async def _acompletion(self, messages: list[dict], *, response_format: dict | None = None):
-        """Single litellm.acompletion call with proxy routing applied.
+        """Single LLM call via the cost-observability chokepoint (#1190).
 
         Shared by ``compact`` (JSON response) and ``_resummarize_topic_arc``
-        (text response) so the proxy_kwargs + provider-prefix-strip routing is
-        in one place.
+        (text response). The chokepoint owns proxy_kwargs + provider-prefix
+        strip + records usage (purpose="compaction") via the engine's recorder.
         """
-        from reyn.llm.llm import proxy_kwargs
-        extra = proxy_kwargs()
-        # Strip provider prefix for proxy routing.
-        effective_model = self._model
-        if extra.get("custom_llm_provider") == "openai":
-            parts = self._model.split("/", 1)
-            if len(parts) == 2:
-                effective_model = parts[1]
-        import litellm
-        kwargs: dict = {"model": effective_model, "messages": messages, **extra}
-        if response_format is not None:
-            kwargs["response_format"] = response_format
-        return await litellm.acompletion(**kwargs)
+        from reyn.llm.llm import recorded_acompletion
+        return await recorded_acompletion(
+            model=self._model,
+            messages=messages,
+            purpose="compaction",
+            recorder=self._recorder,
+            response_format=response_format,
+        )
 
     async def _resummarize_topic_arc(self, topic_arc: str, body_budget: int) -> str:
         """T2 (#271): LLM re-compression of an overshooting ``topic_arc``.
@@ -1232,22 +1231,15 @@ async def compact_step_results(
     # Step 5 + 6: call LLM summariser, then hard-truncate.
     summary_text: str
     try:
-        from reyn.llm.llm import proxy_kwargs
-        extra = proxy_kwargs()
-        effective_model = model
-        if extra.get("custom_llm_provider") == "openai":
-            parts = model.split("/", 1)
-            if len(parts) == 2:
-                effective_model = parts[1]
-
-        import litellm
-        response = await litellm.acompletion(
-            model=effective_model,
+        from reyn.llm.llm import recorded_acompletion
+        response = await recorded_acompletion(
+            model=model,
             messages=[
                 {"role": "system", "content": _STEP_RESULTS_SUMMARY_PROMPT},
                 {"role": "user", "content": older_text},
             ],
-            **extra,
+            purpose="compaction",
+            recorder=getattr(engine, "_recorder", None),
         )
         raw_summary = (response.choices[0].message.content or "").strip()
         if not raw_summary:
@@ -1407,22 +1399,15 @@ async def compact_control_ir_results(
     # Step 4 + 5: call LLM summariser, then hard-truncate.
     summary_text: str
     try:
-        from reyn.llm.llm import proxy_kwargs
-        extra = proxy_kwargs()
-        effective_model = model
-        if extra.get("custom_llm_provider") == "openai":
-            parts = model.split("/", 1)
-            if len(parts) == 2:
-                effective_model = parts[1]
-
-        import litellm
-        response = await litellm.acompletion(
-            model=effective_model,
+        from reyn.llm.llm import recorded_acompletion
+        response = await recorded_acompletion(
+            model=model,
             messages=[
                 {"role": "system", "content": _PHASE_COMPACTION_SYSTEM_PROMPT},
                 {"role": "user", "content": older_text},
             ],
-            **extra,
+            purpose="compaction",
+            recorder=getattr(engine, "_recorder", None),
         )
         raw_summary = (response.choices[0].message.content or "").strip()
         if not raw_summary:

@@ -79,6 +79,11 @@ class OpContext:
     # (same contract as ask_user without an intervention_bus).
     compact_now: "Callable[[], Awaitable[dict]] | None" = None
 
+    # #1190 stage (ii): BudgetTracker for cost recording from ops that make LLM
+    # calls (judge_output → purpose="judge"). Threaded by the OpContext builders
+    # (control_ir_executor / router_host_adapter); None = unrecorded.
+    budget_tracker: object | None = None
+
     # PR20: caller provenance threaded from the parent Agent so sub-skill
     # invocations land under the same `events/<caller>/skill_runs/...` tree.
     # Format: "direct" or "agents/<name>" (validated in Agent).

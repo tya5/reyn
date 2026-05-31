@@ -1816,6 +1816,8 @@ class ChatSession:
                 events=self._chat_events,
                 system_prompt_provider=self._build_router_system_prompt,
                 resolver=self._resolver,
+                # #1190 stage (ii): record chat compaction LLM spend (purpose=compaction).
+                recorder=self._budget_tracker,
             ),
             history_appender=self._append_history,
             make_summary_message=lambda rendered, structured, covers: ChatMessage(

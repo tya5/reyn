@@ -117,7 +117,9 @@ class RunOrchestrator:
         state_log: Any,
         caller: str,
         max_phase_visits: int,
+        budget_tracker: object | None = None,  # #1190 stage (ii): skill_node_adapt cost recording
     ) -> None:
+        self._budget_tracker = budget_tracker
         self._phase_executor = phase_executor
         self._skill = skill
         self._workspace = workspace
@@ -254,6 +256,7 @@ class RunOrchestrator:
             resolver=self._resolver,
             events=self._events,
             safety=self._safety,
+            recorder=self._budget_tracker,
         )
         self._state.add_usage(usage, None)
         return adapted
