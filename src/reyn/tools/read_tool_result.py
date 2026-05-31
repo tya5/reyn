@@ -42,6 +42,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _READ_TOOL_RESULT_DESCRIPTION = (
@@ -160,10 +161,10 @@ def _emit_event(ctx: ToolContext, **fields: Any) -> None:
 
 
 # #272 media axis load-contract: image refs are not text-loadable. The per-image
-# prompt cost is fixed (mirrors services/compaction/engine._IMAGE_FIXED_TOKEN_COST
-# and router_loop._MEDIA_IMAGE_TOKEN_COST) — what the LLM needs to know is the
-# context cost, not the on-disk byte size.
-_MEDIA_REF_IMAGE_TOKEN_COST = 1024
+# prompt cost is single-sourced from services/compaction/engine._IMAGE_FIXED_TOKEN_COST
+# (one constant, no drift across the 3 sites) — what the LLM needs to know is the
+# context cost, not the on-disk byte size. Name preserved for in-module use.
+_MEDIA_REF_IMAGE_TOKEN_COST = _IMAGE_FIXED_TOKEN_COST
 _IMAGE_REF_EXTENSIONS = (
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif", ".svg",
 )
