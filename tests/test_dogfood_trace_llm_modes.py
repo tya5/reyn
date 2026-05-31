@@ -419,6 +419,10 @@ def test_emitted_ops_reads_validation_fail_event_raw_output(tmp_path):
     Canonical contract (tya5/reyn#1135): a single NEW additive event
     `phase_output_validation_failed` carries inline raw_output + an explicit
     `failure_kind` enum field. Verifies the read-side parses it to kind+keys.
+
+    NOTE: the event uses the REAL on-disk shape — top-level ``"type"`` (what
+    EventLog.emit writes), NOT ``"kind"``. An earlier fixture used ``"kind"``
+    and masked a read-side filter that matched on the wrong field.
     """
     trace = tmp_path / "llm_trace.jsonl"
     _write_trace(trace, [
@@ -430,7 +434,7 @@ def test_emitted_ops_reads_validation_fail_event_raw_output(tmp_path):
     events.parent.mkdir(parents=True, exist_ok=True)
     raw = json.dumps({"type": "act", "ops": [{"kind": "file", "op": "write", "path": "x"}]})
     events.write_text(json.dumps({
-        "kind": "phase_output_validation_failed",
+        "type": "phase_output_validation_failed",
         "timestamp": "2026-05-31T00:00:00",
         "data": {"phase": "apply", "attempt": 2, "failure_kind": "artifact_data",
                  "error": "bad", "raw_output": raw},
@@ -465,7 +469,7 @@ def test_emitted_ops_reads_relative_offload_ref(tmp_path):
     events = tmp_path / "events" / "e.jsonl"
     events.parent.mkdir(parents=True, exist_ok=True)
     events.write_text(json.dumps({
-        "kind": "phase_output_validation_failed",
+        "type": "phase_output_validation_failed",
         "timestamp": "2026-05-31T00:00:00",
         "data": {"phase": "verify", "attempt": 1, "failure_kind": "ops_structure",
                  "error": "too big", "raw_output": None, "raw_output_ref": rel_ref},
@@ -474,3 +478,60 @@ def test_emitted_ops_reads_relative_offload_ref(tmp_path):
     assert rc == 0, out
     assert "failure_kind=ops_structure" in out
     assert "shell" in out and "cmd" in out  # deref'd + parsed from the relative offload file
+
+
+def test_emitted_ops_reads_real_type_field_not_kind(tmp_path):
+    """Tier 2: source-2 matches the REAL events-log type field (``type``), not ``kind``.
+
+    Regression guard for the #1136 read-side bug surfaced by the #1135 end-to-end
+    dispatch: EventLog.emit writes ``{"type": <name>, "data": {...}}``, so a filter
+    that matched ``kind`` found zero real events. This fixture is deliberately the
+    real shape; if the read-side reverts to matching ``kind`` it goes silent here.
+    """
+    trace = tmp_path / "t.jsonl"
+    _write_trace(trace, [
+        {"kind": "request", "request_id": REQUEST_ID_A, "messages": []},
+        {"kind": "response", "request_id": REQUEST_ID_A,
+         "content": json.dumps({"type": "act", "ops": []})},
+    ])
+    events = tmp_path / "events" / "e.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps({"type": "act", "ops": [{"kind": "shell", "cmd": "ls"}]})
+    events.write_text(json.dumps({
+        "type": "phase_output_validation_failed",  # REAL shape
+        "data": {"failure_kind": "control_ir", "phase": "decide", "raw_output": raw},
+    }) + "\n", encoding="utf-8")
+    out, rc = _run(["--mode", "llm-emitted-ops", REQUEST_ID_A, "--trace", str(trace), "--root", str(tmp_path)])
+    assert rc == 0, out
+    assert "phase_output_validation_failed events with raw model output (1)" in out
+    assert "failure_kind=control_ir" in out and "phase=decide" in out
+
+
+def test_emitted_ops_surfaces_json_decode_failure_event(tmp_path):
+    """Tier 2: source-3 surfaces a PRE-parse llm_output_json_decode_failed event.
+
+    #1141 sibling (opt A, #1135): the model emitted UNPARSEABLE JSON, so there
+    are no {kind,keys} — the read-side shows failure_kind + error + raw slice
+    verbatim (the weak-model-malformed vs OS-repairable classification signal).
+    """
+    trace = tmp_path / "t.jsonl"
+    _write_trace(trace, [
+        {"kind": "request", "request_id": REQUEST_ID_A, "messages": []},
+        {"kind": "response", "request_id": REQUEST_ID_A,
+         "content": json.dumps({"type": "act", "ops": []})},
+    ])
+    events = tmp_path / "events" / "e.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    bad_raw = '{"type": "act", "ops": [{"kind": "file", "old_string": "a\\xff"'  # invalid \escape
+    events.write_text(json.dumps({
+        "type": "llm_output_json_decode_failed",  # REAL shape, #1141
+        "data": {"failure_kind": "json_decode",
+                 "error": "Invalid \\escape: line 1 column 41",
+                 "raw_output": bad_raw},
+    }) + "\n", encoding="utf-8")
+    out, rc = _run(["--mode", "llm-emitted-ops", REQUEST_ID_A, "--trace", str(trace), "--root", str(tmp_path)])
+    assert rc == 0, out
+    assert "llm_output_json_decode_failed events (1)" in out
+    assert "failure_kind=json_decode" in out
+    assert "Invalid" in out and "escape" in out  # error surfaced
+    assert "old_string" in out                    # raw slice shown verbatim

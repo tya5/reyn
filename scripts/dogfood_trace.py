@@ -1248,6 +1248,19 @@ def mode_llm_advertised_ops(records: list[dict], request_id: str) -> None:
 # (existing validation_error/phase_failed etc. are UNCHANGED). failure_kind is
 # an explicit enum field on the event (not derived from the event name).
 _VALIDATION_FAIL_EVENT = "phase_output_validation_failed"
+_JSON_DECODE_FAIL_EVENT = "llm_output_json_decode_failed"
+
+
+def _event_type(e: dict) -> str:
+    """Return an event's type, tolerating both on-disk conventions.
+
+    The P6 events log writes the type under ``"type"`` (``EventLog.emit`` ->
+    ``Event(type=...)``); some WAL/legacy records use ``"kind"``. Match either
+    so the read-side finds real events (the events log) AND hand-written
+    fixtures. (Field is top-level — NOT under ``data``, which carries the
+    skill-level ``failure_kind`` enum, a different thing.)
+    """
+    return e.get("type") or e.get("kind") or ""
 
 
 def _op_kind_keys(op: dict) -> "tuple[str, list[str]]":
@@ -1283,16 +1296,23 @@ def _resolve_raw_output(ev: dict, state_dir: "Path | None") -> "str | None":
 
 
 def mode_llm_emitted_ops(records: list[dict], request_id: str, root: "Path | None") -> None:
-    """Structured summary of the control_ir ops the model EMITTED.
+    """Structured summary of the LLM output the model EMITTED, across 3 sources.
 
-    Two sources, both reduced to ``{kind, keys}``:
-      1. The LLM response for *request_id* — its ``ops`` array (the ops the
-         model emitted on a successful parse).
-      2. Validation-failure events (``control_ir_validation_error`` etc.) whose
-         ``raw_output`` / ``raw_output_ref`` carries the raw model output that
-         FAILED validation — so "emitted a valid-looking op but it was rejected"
-         is visible. (Requires FP-0008 #1135(b) write-side; until that lands the
-         events simply carry no raw_output and this half shows nothing.)
+      1. The LLM response for *request_id* — its ``ops`` array (the ops emitted
+         on a successful parse), reduced to ``{kind, keys}``.
+      2. ``phase_output_validation_failed`` events (POST-parse, #1137): the
+         model emitted parseable JSON whose ops were REJECTED by validation —
+         ``raw_output`` (inline) / ``raw_output_ref`` (state_dir-relative
+         offload) reduced to ``{kind, keys}`` + the explicit ``failure_kind``.
+      3. ``llm_output_json_decode_failed`` events (PRE-parse, #1141 sibling):
+         the model emitted UNPARSEABLE JSON — no ops to extract, so show
+         ``failure_kind`` + ``error`` + the (position-aware-truncated) raw
+         slice verbatim. This is the classification signal for "weak-model
+         malformed" vs "OS-repairable" decode failures.
+
+    Sources 2 & 3 come from the events log (``--root``); their on-disk type
+    field is ``type`` (matched via ``_event_type``), and they are NOT keyed by
+    request_id, so all such events under --root are listed.
 
     Pairs with ``llm-advertised-ops``: advertised (what the OS offered) vs
     emitted (what the model produced), for decide-turn failure classification.
@@ -1327,54 +1347,68 @@ def mode_llm_emitted_ops(records: list[dict], request_id: str, root: "Path | Non
                 else:
                     print(f"    (non-dict op: {op!r})")
 
-    # Source 2: phase_output_validation_failed events carrying raw model output.
-    # Events live in the events log (--root), not the LLM trace, and are
-    # phase-keyed (no request_id), so we list all such events. Per canonical
-    # contract (#1135) this is a single NEW event with an explicit failure_kind
-    # field and a state_dir-relative raw_output_ref (state_dir == --root here:
-    # the offload root the relative ref resolves under).
+    # Sources 2 & 3 live in the events log (--root), not the LLM trace, and are
+    # NOT request_id-keyed (events carry agent_id/run_id, not request_id), so we
+    # list all such events. The on-disk type field is "type" (EventLog.emit ->
+    # Event(type=...)); matching is via _event_type() which tolerates type/kind.
     if root is None:
         return
     state_dir = root
-    fail_events = [
-        e for e in _all_events(root)
-        if e.get("kind") == _VALIDATION_FAIL_EVENT
-        or (isinstance(e.get("data"), dict) and e["data"].get("kind") == _VALIDATION_FAIL_EVENT)
+    all_evs = _all_events(root)
+
+    # Source 2: phase_output_validation_failed (POST-parse, #1137). raw_output is
+    # parseable JSON whose ops were rejected by validation -> reduce to {kind,keys}.
+    fail_events = [e for e in all_evs if _event_type(e) == _VALIDATION_FAIL_EVENT]
+    raw_bearing = [
+        e for e in fail_events
+        if (d := e.get("data", e)).get("raw_output") or d.get("raw_output_ref")
     ]
-    raw_bearing = []
-    for e in fail_events:
-        d = e.get("data", e)
-        if d.get("raw_output") or d.get("raw_output_ref"):
-            raw_bearing.append(e)
-    if not raw_bearing:
-        print()
-        print(f"  {_VALIDATION_FAIL_EVENT} events with raw_output: none")
-        print("  (= no rejected-op records; or FP-0008 #1135(b) write-side not yet landed)")
-        return
     print()
-    print(f"  {_VALIDATION_FAIL_EVENT} events with raw model output ({len(raw_bearing)}):")
-    for e in raw_bearing:
+    if not raw_bearing:
+        print(f"  {_VALIDATION_FAIL_EVENT} events with raw_output: none")
+    else:
+        print(f"  {_VALIDATION_FAIL_EVENT} events with raw model output ({len(raw_bearing)}):")
+        for e in raw_bearing:
+            d = e.get("data", e)
+            failure_kind = d.get("failure_kind", "?")  # explicit enum field (canonical #1135)
+            phase = d.get("phase", "?")
+            raw = _resolve_raw_output(e, state_dir)
+            ops_summary = "?"
+            if raw:
+                try:
+                    parsed = json.loads(raw)
+                    ops = parsed.get("ops") if isinstance(parsed, dict) else None
+                    if isinstance(ops, list):
+                        ops_summary = ", ".join(
+                            f"{_op_kind_keys(o)[0]}{_op_kind_keys(o)[1]}"
+                            for o in ops if isinstance(o, dict)
+                        ) or "(no ops in raw)"
+                    else:
+                        ops_summary = "(raw not act-shaped)"
+                except (json.JSONDecodeError, AttributeError):
+                    ops_summary = "(raw unparseable)"
+            else:
+                ops_summary = "(raw_output_ref unresolved)"
+            print(f"    failure_kind={failure_kind}  phase={phase}  emitted={ops_summary}")
+
+    # Source 3: llm_output_json_decode_failed (PRE-parse, #1141 sibling). raw_output
+    # is by definition UNPARSEABLE JSON, so there are no {kind,keys} to extract —
+    # surface failure_kind + error + the (position-aware-truncated) raw slice
+    # verbatim, which is the diagnostic for weak-model-malformed vs OS-repairable.
+    decode_events = [e for e in all_evs if _event_type(e) == _JSON_DECODE_FAIL_EVENT]
+    print()
+    if not decode_events:
+        print(f"  {_JSON_DECODE_FAIL_EVENT} events: none")
+        return
+    print(f"  {_JSON_DECODE_FAIL_EVENT} events ({len(decode_events)}):")
+    for e in decode_events:
         d = e.get("data", e)
-        failure_kind = d.get("failure_kind", "?")  # explicit enum field (canonical #1135)
-        phase = d.get("phase", "?")
-        raw = _resolve_raw_output(e, state_dir)
-        ops_summary = "?"
-        if raw:
-            try:
-                parsed = json.loads(raw)
-                ops = parsed.get("ops") if isinstance(parsed, dict) else None
-                if isinstance(ops, list):
-                    ops_summary = ", ".join(
-                        f"{_op_kind_keys(o)[0]}{_op_kind_keys(o)[1]}"
-                        for o in ops if isinstance(o, dict)
-                    ) or "(no ops in raw)"
-                else:
-                    ops_summary = "(raw not act-shaped)"
-            except (json.JSONDecodeError, AttributeError):
-                ops_summary = "(raw unparseable)"
-        else:
-            ops_summary = "(raw_output_ref unresolved)"
-        print(f"    failure_kind={failure_kind}  phase={phase}  emitted={ops_summary}")
+        failure_kind = d.get("failure_kind", "?")
+        error = d.get("error", "?")
+        raw = d.get("raw_output")
+        raw_head = (raw[:200] + " …") if isinstance(raw, str) and len(raw) > 200 else raw
+        print(f"    failure_kind={failure_kind}  error={error}")
+        print(f"      raw_output: {raw_head!r}")
 
 
 # ---------------------------------------------------------------------------
