@@ -43,7 +43,6 @@ def _make_session(
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
     cfg = CompactionConfig(
-        trigger_total_tokens=100_000,  # never trigger compaction in unit tests
         head_size=head_size,
         tail_size=tail_size,
         body_token_cap=1500,

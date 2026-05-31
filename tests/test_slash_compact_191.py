@@ -46,8 +46,7 @@ def _make_session(tmp_path) -> ChatSession:
         budget_tracker=BudgetTracker(CostConfig()),
         state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
         compaction_config=CompactionConfig(
-            head_size=2, tail_size=2, min_compact_batch=1,
-            trigger_total_tokens=100_000,  # high → no auto-fire; /compact forces it
+            head_size=2, tail_size=2,
             use_chars4_estimate=True,      # deterministic offline token counts
         ),
         snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",

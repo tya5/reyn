@@ -156,27 +156,32 @@ def _mk_worker(wt: Path, *, compaction_grant: bool) -> WorkerSpec:
 
 def test_setup_worktree_injects_compaction_when_granted(tmp_path):
     """Tier 2: when ``compaction_grant=True``, the worker's
-    ``reyn.local.yaml`` contains the ``chat.compaction`` block with
-    ``trigger_total_tokens: 2000``."""
+    ``reyn.local.yaml`` contains the ``chat.compaction`` block lowering
+    ``head_size``/``tail_size`` to 1.
+
+    #1128 PR-a: the old ``trigger_total_tokens`` auto-fire knob was removed
+    (the background path it gated no longer exists); the grant now tunes only
+    head/tail for the synchronous/explicit compaction path."""
     repo, wt = _mk_repo_and_worktree(tmp_path)
     setup_worktree(_mk_worker(wt, compaction_grant=True), "HEAD", repo)
 
     yaml_text = (wt / "reyn.local.yaml").read_text()
     assert "chat:" in yaml_text
     assert "compaction:" in yaml_text
-    assert "trigger_total_tokens: 2000" in yaml_text
+    assert "head_size: 1" in yaml_text
+    assert "tail_size: 1" in yaml_text
+    assert "trigger_total_tokens" not in yaml_text  # removed field
 
 
 def test_setup_worktree_omits_compaction_without_grant(tmp_path):
     """Tier 2: when ``compaction_grant=False`` (= default), the worker's
     ``reyn.local.yaml`` does NOT contain the ``chat.compaction`` block
     so unrelated short-skill scenarios on the worker run with the
-    production-default ``trigger_total_tokens: 30000``."""
+    production-default head/tail sizes."""
     repo, wt = _mk_repo_and_worktree(tmp_path)
     setup_worktree(_mk_worker(wt, compaction_grant=False), "HEAD", repo)
 
     yaml_text = (wt / "reyn.local.yaml").read_text()
-    assert "trigger_total_tokens" not in yaml_text
     assert "chat:\n  compaction:" not in yaml_text
 
 

@@ -272,19 +272,23 @@ def setup_worktree(worker: WorkerSpec, head: str, repo_root: Path) -> None:
     # re-spawns the skill (= B55 W1-S4 R verdict — reply ends as a
     # spawn-ack instead of the actual stats). Only the worker hosting
     # chat_compactor_auto_trigger needs the grant.
+    # #1128 PR-a: the background auto-fire path (CompactionController
+    # ._maybe_compact, gated by trigger_total_tokens / min_compact_batch) was
+    # removed. Those config keys no longer exist, so the grant now only lowers
+    # head_size / tail_size = 1 — which makes the SYNCHRONOUS compaction path
+    # (force_compact_now) compact aggressively *once triggered*. In a short
+    # dogfood scenario the pre-frame guard's window-relative effective_trigger
+    # won't fire, so the scenario must drive compaction EXPLICITLY via
+    # `/compact` (or the compact op). The chat_compactor scenario YAML carries
+    # that explicit `/compact` turn (coordinate with the dogfood scenario
+    # owner). Opt-in per worker (B55 retro) to avoid cross-impacting
+    # short-skill scenarios on workers that do not host the chat_compactor
+    # scenario (head/tail=1 slicing in _build_history_for_router).
     compaction_block = (
-        "# B54 R-3 (2026-05-24): chat_compactor needs ~10s of turns to reach\n"
-        "# default trigger_total_tokens=30000 via head/tail=12 + min_batch=5.\n"
-        "# Lower thresholds so a 5-turn dogfood scenario can trigger the\n"
-        "# CompactionController auto-fire path. Opt-in per worker (B55 retro)\n"
-        "# to avoid cross-impacting short-skill scenarios on workers that do\n"
-        "# not host chat_compactor_auto_trigger.\n"
         "chat:\n"
         "  compaction:\n"
-        "    trigger_total_tokens: 2000\n"
         "    head_size: 1\n"
         "    tail_size: 1\n"
-        "    min_compact_batch: 2\n"
     )
     if worker.compaction_grant:
         runner_grants = runner_grants + compaction_block
