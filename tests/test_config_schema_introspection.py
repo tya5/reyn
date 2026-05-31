@@ -97,10 +97,20 @@ def test_walk_covers_every_top_level_field_no_silent_skip() -> None:
     dataclass field is added and its section disappears, this fails until
     the type is injected in ``config_schema._patch_localns`` (PR2 will
     auto-resolve and retire the manual injection).
+
+    Fields explicitly flagged ``field(metadata={'schema_internal': True})``
+    (#1146 — internal storage that is NOT an operator-settable key, e.g.
+    ``mcp_search_threshold`` which the loader derives from
+    ``mcp.search_threshold``) are intentionally omitted from the walk and so
+    excluded here — their omission is deliberate, not a silent forward-ref drop.
     """
     nodes = walk_config_schema()
     top_level = {n.key.split(".", 1)[0] for n in nodes}
-    field_names = {f.name for f in dataclasses.fields(ReynConfig)}
+    field_names = {
+        f.name
+        for f in dataclasses.fields(ReynConfig)
+        if not f.metadata.get("schema_internal", False)
+    }
     missing = field_names - top_level
     assert not missing, (
         f"ReynConfig fields with NO node in the schema walk (silently "
