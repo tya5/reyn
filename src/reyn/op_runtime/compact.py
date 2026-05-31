@@ -69,9 +69,13 @@ async def handle(
             "error": str(exc),
         }
 
-    # ``result`` carries exact-token fields from the caller's wrapper
-    # ({freed_tokens, free_window_after, ...}). Pass them through verbatim so
-    # the unit-alignment with the context-size signal is preserved.
+    # ``result`` carries the caller's wrapper fields, passed through verbatim.
+    # The meaningful metric is per-axis (#191): the CHAT wrapper reports the
+    # middle-compression (summarized_turns + compressed_tokens → bridge_tokens;
+    # router-view freed_tokens is ~0 because the router prompt is head+tail
+    # turn-bounded), while the PHASE wrapper reports a real control_ir
+    # freed_tokens shrink. The event surfaces all fields via .get() so each axis
+    # populates the ones that apply (the other side stays None).
     out: dict = {"kind": "compact", "status": "ok"}
     out.update(result or {})
     ctx.events.emit(
@@ -80,6 +84,10 @@ async def handle(
         phase=ctx.current_phase,
         freed_tokens=out.get("freed_tokens"),
         free_window_after=out.get("free_window_after"),
+        # #191 chat-axis compression metric (None on the phase axis):
+        summarized_turns=out.get("summarized_turns"),
+        compressed_tokens=out.get("compressed_tokens"),
+        bridge_tokens=out.get("bridge_tokens"),
     )
     return out
 
