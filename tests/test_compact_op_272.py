@@ -64,6 +64,28 @@ def test_compact_routes_to_capability_and_passes_exact_tokens() -> None:
     assert "compact_op_completed" in ctx.events.types()
 
 
+def test_compact_chat_compression_fields_pass_through_to_result_and_event() -> None:
+    """Tier 2: #191/#1177 — the chat-axis compression metric (summarized_turns +
+    compressed_tokens → bridge_tokens) flows through the op result AND the
+    compact_op_completed event, so chat compaction is reported by its real value
+    (not the ~0 router-view freed_tokens)."""
+    async def _chat_cap() -> dict:
+        return {
+            "freed_tokens": 0, "free_window_after": 90_000, "free_window_before": 90_000,
+            "summarized_turns": 4, "compressed_tokens": 1200, "bridge_tokens": 80,
+        }
+
+    ctx = _ctx(_chat_cap)
+    result = asyncio.run(execute_op(CompactIROp(kind="compact"), ctx, caller="control_ir"))
+    assert result["status"] == "ok"
+    assert result["summarized_turns"] == 4
+    assert result["compressed_tokens"] == 1200 and result["bridge_tokens"] == 80
+    # the completion event carries the compression fields too (per-axis report).
+    ev = next(kw for (t, kw) in ctx.events.emitted if t == "compact_op_completed")
+    assert ev["summarized_turns"] == 4
+    assert ev["compressed_tokens"] == 1200 and ev["bridge_tokens"] == 80
+
+
 def test_compact_fail_loud_when_unwired() -> None:
     """Tier 2: no compaction context → structured compaction_unavailable error,
     never a silent no-op (the model must not believe the window was freed)."""

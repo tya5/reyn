@@ -502,12 +502,12 @@ Fields:
 
 Returns:
 - `status: "ok" | "error"`
-- `freed_tokens: int` — tokens removed from the window by the compaction
-- `free_window_after: int` — exact-token headroom after compaction
-- `free_window_before: int` — headroom before (for delta reasoning)
+- `freed_tokens: int` — exact-token reduction. **Per-axis meaning (#191)**: on the **phase** axis this is the real `control_ir_results` shrink. On the **chat** axis it is **~0 by construction** — the router prompt is head+tail *turn*-count bounded (`_build_history_for_router`), so compaction does not shrink the bounded view; it compresses the already-elided middle into a summary bridge. Don't front `freed_tokens` for chat.
+- `free_window_after` / `free_window_before: int` — exact-token headroom after / before.
+- **Chat-axis compression metric** (the meaningful chat signal; `null` on the phase axis): `summarized_turns: int` (older turns folded into the bridge), `compressed_tokens: int` (their raw token cost), `bridge_tokens: int` (the summary's token cost). The chat value is the `compressed_tokens → bridge_tokens` compression, not `freed_tokens`.
 - On error: `error_kind` (`compaction_unavailable` when no compaction context is wired here; `compaction_failed`) + `error`.
 
-**Events**: `compact_op_requested` / `compact_op_completed` (`freed_tokens`, `free_window_after`) / `compact_op_failed` / `compact_op_unavailable` (P6). The inner compaction engine emits its own compaction events.
+**Events**: `compact_op_requested` / `compact_op_completed` (`freed_tokens`, `free_window_after`, + chat-axis `summarized_turns` / `compressed_tokens` / `bridge_tokens`) / `compact_op_failed` / `compact_op_unavailable` (P6). The inner compaction engine emits its own compaction events.
 
 **Permission**: none required (LLM cost only). Voluntary and independent of the involuntary `retry_loop` backstop, which always runs regardless.
 
