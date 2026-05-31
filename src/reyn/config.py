@@ -425,6 +425,11 @@ class CompactionConfig:
     trigger_total_tokens: int = 30000   # background trigger: compact when middle exceeds this
     body_token_cap: int = 1500          # hard cap on summary body tokens (post-truncation)
     min_compact_batch: int = 5          # skip compact when fewer than N turns to absorb
+    # #271 re-summarize (T2): max LLM re-compression passes when a produced
+    # topic_arc overshoots body_budget, before the deterministic T3
+    # hard_truncate floor. 1 = one judgment-based re-summary then floor; 0 =
+    # skip T2 (straight to the floor, = pre-#271 behaviour).
+    resummarize_passes: int = 1
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
     # head_size / tail_size:
     # DEPRECATED — retained only for the background `_maybe_compact()` legacy
@@ -1907,6 +1912,9 @@ def _build_chat_config(raw: object) -> ChatConfig:
         body_token_cap=int(compaction_raw.get("body_token_cap", defaults.body_token_cap)),
         min_compact_batch=int(
             compaction_raw.get("min_compact_batch", defaults.min_compact_batch)
+        ),
+        resummarize_passes=int(
+            compaction_raw.get("resummarize_passes", defaults.resummarize_passes)
         ),
         section_token_caps=section,
         head_size=int(compaction_raw.get("head_size", defaults.head_size)),
