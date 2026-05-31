@@ -18,6 +18,8 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label
 
+from reyn.chat.tui._palette import _EVENT_INTERVENTION, _TEXT_BODY, _TEXT_MUTED
+
 
 class InterventionWidget(Widget):
     """Inline intervention prompt with chip buttons.
@@ -36,29 +38,29 @@ class InterventionWidget(Widget):
                          has a persistent signal that more questions follow.
     """
 
-    DEFAULT_CSS = """
-    InterventionWidget {
+    DEFAULT_CSS = f"""
+    InterventionWidget {{
         background: #1e1510;
         border: solid $primary;
         padding: 1 2;
         height: auto;
         margin: 1 0;
         color: #eeddcc;
-    }
-    InterventionWidget Label.iv-question {
-        color: #ffcc88;
+    }}
+    InterventionWidget Label.iv-question {{
+        color: {_EVENT_INTERVENTION};
         text-style: bold;
         padding-bottom: 1;
         height: auto;
         width: 1fr;
-    }
-    InterventionWidget .iv-chips {
+    }}
+    InterventionWidget .iv-chips {{
         layout: horizontal;
         height: auto;
         margin-top: 0;
         overflow-x: hidden;
-    }
-    InterventionWidget Button {
+    }}
+    InterventionWidget Button {{
         /* Wave-6 IV4: tight chip sizing so all 5 buttons fit on a single
            row even when ``Ctrl+B`` opens the right panel and cuts the
            conv pane width roughly in half. ``min-width: 6`` is the
@@ -80,35 +82,35 @@ class InterventionWidget(Widget):
         height: 1;
         width: auto;
         min-width: 6;
-    }
-    InterventionWidget Button:hover {
+    }}
+    InterventionWidget Button:hover {{
         background: #e0664e;
-    }
-    InterventionWidget Input {
+    }}
+    InterventionWidget Input {{
         margin-top: 1;
         background: #2a1a10;
         border: solid $primary;
         color: #ffffff;
         height: 1;
-    }
-    InterventionWidget Label.iv-hint {
+    }}
+    InterventionWidget Label.iv-hint {{
         /* #888888 on the widget bg (#1e1510) is ~4.1:1, close to WCAG AA
            4.5:1 for normal text; the prior #555555 was 2.41:1 (clearly
            sub-AA). The hint is secondary copy but rendered at body size,
            so the AA floor applies. */
-        color: #888888;
+        color: {_TEXT_MUTED};
         padding-top: 1;
         height: auto;
         width: 1fr;
-    }
-    InterventionWidget Label.iv-queued {
-        color: #888888;
+    }}
+    InterventionWidget Label.iv-queued {{
+        color: {_TEXT_MUTED};
         text-style: dim;
         padding-bottom: 1;
         height: auto;
         width: 1fr;
-    }
-    InterventionWidget Button.iv-skip-rest {
+    }}
+    InterventionWidget Button.iv-skip-rest {{
         /* Dim amber — visually secondary to the answer chips (which use
            $primary / coral).  The user's eyes land on the answer chips
            first; the skip button is an escape hatch, not the main CTA. */
@@ -120,30 +122,30 @@ class InterventionWidget(Widget):
         width: auto;
         min-width: 6;
         margin: 0 0 0 1;
-    }
-    InterventionWidget Button.iv-skip-rest:hover {
+    }}
+    InterventionWidget Button.iv-skip-rest:hover {{
         background: #664433;
         color: #ddaa88;
-    }
-    InterventionWidget Label.iv-detail {
+    }}
+    InterventionWidget Label.iv-detail {{
         /* Issue #163: detail is secondary copy beneath the prompt.
            #aaaaaa on #1e1510 is ~6.3:1 (passes WCAG AA for body text).
            Italic + slightly muted color separates the "what is being
            asked" header from the "what specific resource" detail. */
-        color: #aaaaaa;
+        color: {_TEXT_BODY};
         text-style: italic;
         padding-bottom: 1;
         height: auto;
         width: 1fr;
-    }
-    InterventionWidget Label.iv-source-agent {
+    }}
+    InterventionWidget Label.iv-source-agent {{
         /* Issue #261: parent-delegation breadcrumb. Dim, no italic — the
            prompt itself is the load-bearing line; this is context. */
-        color: #888888;
+        color: {_TEXT_MUTED};
         text-style: dim;
         height: auto;
         width: 1fr;
-    }
+    }}
     """
 
     class Answered(Message):
