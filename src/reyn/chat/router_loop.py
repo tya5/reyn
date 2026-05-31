@@ -26,6 +26,7 @@ from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.index.source_manifest import get_source_manifest
 from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
+from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 
 if TYPE_CHECKING:
     from reyn.config import SkillSearchConfig
@@ -178,10 +179,11 @@ def _strip_frontmatter(content: str) -> str:
     return "\n".join(body_lines).rstrip("\n") + ("\n" if body_lines else "")
 
 
-# #272 media axis: per-image token estimate, mirroring the compaction engine's
-# ``_IMAGE_FIXED_TOKEN_COST`` (services/compaction/engine.py) so the per-turn
-# media bound is unit-consistent with how a turn's image cost is measured.
-_MEDIA_IMAGE_TOKEN_COST = 1024
+# #272 media axis: per-image token estimate. Single-sourced from the compaction
+# engine's ``_IMAGE_FIXED_TOKEN_COST`` (services/compaction/engine.py) so the
+# per-turn media bound is unit-consistent with how a turn's image cost is
+# measured — one constant, no drift. Name preserved for in-module + test use.
+_MEDIA_IMAGE_TOKEN_COST = _IMAGE_FIXED_TOKEN_COST
 
 
 def _render_context_size_signal_for_host(host: "RouterLoopHost") -> "str | None":
