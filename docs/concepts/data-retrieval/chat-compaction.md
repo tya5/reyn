@@ -53,10 +53,12 @@ See [`control-ir.md`](../../reference/runtime/control-ir.md) for the op contract
 
 When the pre-frame guard's token estimate under-counts and the router raises a
 context-length error, `retry_loop` takes over. It shrinks head, tail, and the
-raw middle in bounded iterations (max 8) until the prompt fits or all budgets
-are exhausted. If exhausted, it raises a structured `UnrecoveredError` — never
-a silent over-budget prompt. This is the dead-end-free guarantee: the
-conversation cannot overflow into an unrecoverable state.
+raw middle monotonically toward their minimum budgets — terminating by
+construction, because each iteration reduces some shrinkable budget — until the
+prompt fits. When all budgets reach their floor, it raises a structured
+`UnrecoveredError` rather than continuing over-budget. A safety cap bounds the
+iteration count but is rarely the limiting factor. This is the dead-end-free
+guarantee: the conversation cannot overflow into an unrecoverable state.
 
 ## What the compaction produces
 
