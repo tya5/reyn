@@ -334,3 +334,143 @@ class TestLlmToolsSchemaMode:
 
         out, rc = _run(["--mode", "llm-tools-schema", "--trace", str(trace)])
         assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# llm-advertised-ops / llm-emitted-ops (FP-0008 trace-infra read-side)
+# ---------------------------------------------------------------------------
+
+def _advertised_request(request_id: str) -> dict:
+    """A request whose message content embeds an available_control_ops block.
+
+    Mirrors the real ContextFrame serialisation: the op catalog is JSON inside
+    a message content string (not a top-level field).
+    """
+    frame = {
+        "current_phase": "apply",
+        "available_control_ops": [
+            {
+                "kind": "shell",
+                "description": "Execute a shell command.",
+                "example": {"kind": "shell", "cmd": "ls", "timeout": 120},
+            },
+            {
+                "kind": "sandboxed_exec",
+                "description": "Run argv in a sandbox.",
+                "example": {"kind": "sandboxed_exec", "argv": ["pytest"]},
+            },
+        ],
+    }
+    return {
+        "kind": "request",
+        "request_id": request_id,
+        "messages": [{"role": "user", "content": json.dumps(frame, ensure_ascii=False)}],
+    }
+
+
+def test_advertised_ops_lists_kinds_and_example_fields(tmp_path):
+    """Tier 2: llm-advertised-ops summarises each advertised op's kind + example fields."""
+    trace = tmp_path / "t.jsonl"
+    _write_trace(trace, [_advertised_request(REQUEST_ID_A)])
+    out, rc = _run(["--mode", "llm-advertised-ops", REQUEST_ID_A, "--trace", str(trace)])
+    assert rc == 0, out
+    assert "available_control_ops (2 entries)" in out
+    assert "kind=shell" in out
+    assert "kind=sandboxed_exec" in out
+    # fields derived from the example object's keys (op specs carry no JSON schema)
+    assert "cmd" in out and "timeout" in out      # shell example keys
+    assert "argv" in out                          # sandboxed_exec example key (the #1133 question)
+    assert "from example" in out
+
+
+def test_advertised_ops_absent_block_is_graceful(tmp_path):
+    """Tier 2: a request with no available_control_ops reports 'not present', no crash."""
+    trace = tmp_path / "t.jsonl"
+    _write_trace(trace, [{
+        "kind": "request", "request_id": REQUEST_ID_B,
+        "messages": [{"role": "user", "content": "plain prompt, no ops block"}],
+    }])
+    out, rc = _run(["--mode", "llm-advertised-ops", REQUEST_ID_B, "--trace", str(trace)])
+    assert rc == 0, out
+    assert "not present" in out
+
+
+def test_emitted_ops_summarises_response_ops(tmp_path):
+    """Tier 2: llm-emitted-ops reduces the response's emitted ops to kind+keys."""
+    trace = tmp_path / "t.jsonl"
+    _write_trace(trace, [
+        {"kind": "request", "request_id": REQUEST_ID_A, "messages": []},
+        {"kind": "response", "request_id": REQUEST_ID_A,
+         "content": json.dumps({"type": "act", "ops": [
+             {"kind": "shell", "cmd": "echo hi"},
+             {"kind": "file", "op": "write", "path": "x"},
+         ]})},
+    ])
+    out, rc = _run(["--mode", "llm-emitted-ops", REQUEST_ID_A, "--trace", str(trace), "--root", str(tmp_path / "noroot")])
+    assert rc == 0, out
+    assert "response: 2 op(s)" in out
+    assert "kind=shell" in out and "keys=['cmd']" in out
+    assert "kind=file" in out and "op" in out and "path" in out
+
+
+def test_emitted_ops_reads_validation_fail_event_raw_output(tmp_path):
+    """Tier 2: llm-emitted-ops surfaces rejected ops from phase_output_validation_failed raw_output.
+
+    Canonical contract (tya5/reyn#1135): a single NEW additive event
+    `phase_output_validation_failed` carries inline raw_output + an explicit
+    `failure_kind` enum field. Verifies the read-side parses it to kind+keys.
+    """
+    trace = tmp_path / "llm_trace.jsonl"
+    _write_trace(trace, [
+        {"kind": "request", "request_id": REQUEST_ID_A, "messages": []},
+        {"kind": "response", "request_id": REQUEST_ID_A,
+         "content": json.dumps({"type": "act", "ops": []})},
+    ])
+    events = tmp_path / "events" / "e.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps({"type": "act", "ops": [{"kind": "file", "op": "write", "path": "x"}]})
+    events.write_text(json.dumps({
+        "kind": "phase_output_validation_failed",
+        "timestamp": "2026-05-31T00:00:00",
+        "data": {"phase": "apply", "attempt": 2, "failure_kind": "artifact_data",
+                 "error": "bad", "raw_output": raw},
+    }) + "\n", encoding="utf-8")
+    out, rc = _run(["--mode", "llm-emitted-ops", REQUEST_ID_A, "--trace", str(trace), "--root", str(tmp_path)])
+    assert rc == 0, out
+    assert "phase_output_validation_failed events with raw model output (1)" in out
+    assert "failure_kind=artifact_data" in out
+    assert "phase=apply" in out
+    assert "file" in out and "op" in out and "path" in out
+
+
+def test_emitted_ops_reads_relative_offload_ref(tmp_path):
+    """Tier 2: llm-emitted-ops dereferences a state_dir-RELATIVE raw_output_ref.
+
+    Canonical contract (#1135): when raw_output > cap it is offloaded and the
+    event carries a state_dir-relative `raw_output_ref`; read-side resolves it
+    as `read_offloaded(str(state_dir / ref), base_dir=state_dir)`.
+    """
+    trace = tmp_path / "llm_trace.jsonl"
+    _write_trace(trace, [
+        {"kind": "request", "request_id": REQUEST_ID_A, "messages": []},
+        {"kind": "response", "request_id": REQUEST_ID_A,
+         "content": json.dumps({"type": "act", "ops": []})},
+    ])
+    # offloaded raw file under state_dir/control_ir_offload, ref is relative.
+    offload_dir = tmp_path / "control_ir_offload"
+    offload_dir.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps({"type": "act", "ops": [{"kind": "shell", "cmd": "pytest"}]})
+    (offload_dir / "raw1.txt").write_text(raw, encoding="utf-8")
+    rel_ref = "control_ir_offload/raw1.txt"  # state_dir-relative
+    events = tmp_path / "events" / "e.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(json.dumps({
+        "kind": "phase_output_validation_failed",
+        "timestamp": "2026-05-31T00:00:00",
+        "data": {"phase": "verify", "attempt": 1, "failure_kind": "ops_structure",
+                 "error": "too big", "raw_output": None, "raw_output_ref": rel_ref},
+    }) + "\n", encoding="utf-8")
+    out, rc = _run(["--mode", "llm-emitted-ops", REQUEST_ID_A, "--trace", str(trace), "--root", str(tmp_path)])
+    assert rc == 0, out
+    assert "failure_kind=ops_structure" in out
+    assert "shell" in out and "cmd" in out  # deref'd + parsed from the relative offload file
