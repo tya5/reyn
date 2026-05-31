@@ -126,33 +126,21 @@ async def handle(
     ]
 
     # ── 4. LLM call ──────────────────────────────────────────────────────────
-    from reyn.llm.llm import proxy_kwargs
+    # #1190 stage (ii): route through the cost chokepoint (purpose="judge",
+    # recorder from the OpContext). It owns proxy + prefix-strip + the
+    # response_format fallback + usage recording.
+    from reyn.llm.llm import recorded_acompletion
 
-    extra = proxy_kwargs()
-    # Strip provider prefix when routing via local proxy (same as call_llm).
-    effective_model = (
-        resolved_model.split("/", 1)[1] if extra and "/" in resolved_model else resolved_model
+    response = await recorded_acompletion(
+        model=resolved_model,
+        messages=messages,
+        purpose="judge",
+        recorder=getattr(ctx, "budget_tracker", None),
+        agent=getattr(ctx, "agent_id", None),
+        response_format={"type": "json_object"},
+        fallback_without_response_format=True,
+        extra_kwargs={"timeout": 30.0, "num_retries": 2},
     )
-
-    import litellm
-    try:
-        response = await litellm.acompletion(
-            model=effective_model,
-            messages=messages,
-            response_format={"type": "json_object"},
-            timeout=30.0,
-            num_retries=2,
-            **extra,
-        )
-    except Exception:
-        # Fallback: retry without response_format (for providers that don't support it)
-        response = await litellm.acompletion(
-            model=effective_model,
-            messages=messages,
-            timeout=30.0,
-            num_retries=2,
-            **extra,
-        )
 
     raw_content: str = (response.choices[0].message.content or "").strip()
 

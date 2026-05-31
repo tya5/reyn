@@ -872,6 +872,8 @@ async def execute_plan(
                 # via the host's resolver so the engine never hands an
                 # unresolved class to litellm.
                 resolver=parent_host.resolver,
+                # #1190 stage (ii): record planner step-results compaction spend.
+                recorder=budget,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort; skip if unavailable
             logger.warning(

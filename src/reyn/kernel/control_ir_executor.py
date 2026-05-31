@@ -96,9 +96,12 @@ class ControlIRExecutor:
         multimodal_config: "MultimodalConfig | None" = None,
         media_store: "MediaStore | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
+        budget_tracker: object | None = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
+        # #1190 stage (ii): cost recorder for LLM-calling ops (judge_output).
+        self._budget_tracker = budget_tracker
         self._intervention_bus = intervention_bus
         self._max_phase_visits = max_phase_visits
         self._shell_allowed = shell_allowed
@@ -339,6 +342,8 @@ class ControlIRExecutor:
             mcp_servers=self._mcp_servers,
             mcp_clients=self._mcp_clients,
             intervention_bus=self._intervention_bus,
+            # #1190 stage (ii): cost recorder for LLM-calling ops (judge_output).
+            budget_tracker=self._budget_tracker,
             # #1176 B1: phase on-demand voluntary compaction capability. None
             # for batches with no phase compaction engine wired (compact op
             # then fail-louds compaction_unavailable, same as chat).

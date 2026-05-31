@@ -184,6 +184,7 @@ class OSRuntime:
             multimodal_config=multimodal_config,
             media_store=media_store,
             secret_store=secret_store,
+            budget_tracker=budget_tracker,  # #1190 stage (ii): judge_output cost recording
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,
@@ -248,6 +249,8 @@ class OSRuntime:
                     # class); resolve via the same resolver the main phase LLM
                     # call uses (runtime.py main-call: self._resolver.resolve).
                     resolver=self._resolver,
+                    # #1190 stage (ii): record phase act-results compaction spend.
+                    recorder=budget_tracker,
                 )
             except Exception:  # noqa: BLE001 — best-effort; skip if unavailable
                 phase_compaction_engine = None
@@ -300,6 +303,7 @@ class OSRuntime:
             state_log=state_log,
             caller=caller,
             max_phase_visits=self._max_phase_visits,
+            budget_tracker=budget_tracker,  # #1190 stage (ii): skill_node_adapt cost recording
         )
 
     # ── Backward-compat properties (FP-0020 Component A) ───────────────────

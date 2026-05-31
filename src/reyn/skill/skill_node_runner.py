@@ -10,7 +10,6 @@ import json
 from typing import Any, Callable
 
 from reyn.events.events import EventLog
-from reyn.llm.llm import proxy_kwargs
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import SkillNodeSpec
@@ -29,13 +28,12 @@ async def _adapt_artifact(
     *,
     llm_timeout: float = 60.0,
     llm_max_retries: int = 3,
+    recorder: object | None = None,
 ) -> tuple[dict, TokenUsage]:
     """
     Call LLM to convert a sub-app's final_output data to the parent's target schema.
     Returns (adapted_artifact, token_usage).
     """
-    import litellm
-
     prompt_lines = [
         "Convert the following data to the target schema.\n",
         f"Source (type: {source_type}):",
@@ -54,13 +52,15 @@ async def _adapt_artifact(
     if output_language:
         prompt_lines.append(f"Output language: {output_language}")
     prompt = "\n".join(prompt_lines)
-    response = await litellm.acompletion(
+    # #1190 stage (ii): route through the cost chokepoint (purpose=skill_node_adapt).
+    from reyn.llm.llm import recorded_acompletion
+    response = await recorded_acompletion(
         model=resolver.resolve(model).model,
         messages=[{"role": "user", "content": prompt}],
+        purpose="skill_node_adapt",
+        recorder=recorder,
         response_format={"type": "json_object"},
-        timeout=llm_timeout,
-        num_retries=llm_max_retries,
-        **proxy_kwargs(),
+        extra_kwargs={"timeout": llm_timeout, "num_retries": llm_max_retries},
     )
     raw = json.loads(response.choices[0].message.content)
     usage = TokenUsage()
@@ -92,6 +92,7 @@ async def execute_skill_node(
     resolver: ModelResolver,
     events: EventLog,
     limits: Any = None,
+    recorder: object | None = None,  # #1190 stage (ii): skill_node_adapt cost recording
 ) -> tuple[dict, TokenUsage]:
     """
     Run a sub-app to completion and adapt its final_output to target_schema.
@@ -135,5 +136,6 @@ async def execute_skill_node(
         model=model, resolver=resolver, events=events,
         llm_timeout=llm_timeout,
         llm_max_retries=llm_max_retries,
+        recorder=recorder,
     )
     return adapted, token_usage + adapt_usage

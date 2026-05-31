@@ -145,25 +145,22 @@ async def generate_interpretation(
     ``"(interpretation unavailable: ...)"``.
     """
     try:
-        import litellm  # type: ignore[import]
-
-        from reyn.llm.llm import proxy_kwargs
+        # #1190 stage (ii): route through the cost chokepoint (purpose=dogfood,
+        # recorder=None — auxiliary trace surface, unrecorded). Stub-injection
+        # still works: recorded_acompletion calls litellm.acompletion underneath.
+        from reyn.llm.llm import recorded_acompletion
     except ImportError as exc:
         return f"(interpretation unavailable: {exc})"
 
     messages = build_prompt(scenario, scenario_result)
-    extra = proxy_kwargs()
-    effective_model = (
-        model.split("/", 1)[1] if extra and "/" in model else model
-    )
 
     try:
-        response = await litellm.acompletion(
-            model=effective_model,
+        response = await recorded_acompletion(
+            model=model,
             messages=messages,
-            timeout=timeout,
-            num_retries=1,
-            **extra,
+            purpose="dogfood",
+            recorder=None,
+            extra_kwargs={"timeout": timeout, "num_retries": 1},
         )
     except Exception as exc:  # noqa: BLE001 — auxiliary surface, must not bubble
         return f"(interpretation unavailable: {type(exc).__name__}: {exc})"

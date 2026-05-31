@@ -105,6 +105,35 @@ def test_recorded_acompletion_response_format_fallback(monkeypatch) -> None:
     assert [c["purpose"] for c in rec.calls] == ["judge"]
 
 
+def test_compaction_engine_records_compaction_purpose(monkeypatch) -> None:
+    """Tier 2: stage (ii) — a real CompactionEngine threaded with a recorder
+    records its compaction LLM call as purpose="compaction" (end-to-end through
+    recorded_acompletion), confirming the recorder threading."""
+    from reyn.config import CompactionConfig
+    from reyn.events.events import EventLog
+    from reyn.services.compaction.engine import CompactionEngine, HistoryChunkToCompact
+
+    async def _fake(model, messages, **kw):  # noqa: ANN001, ANN003
+        return _resp(content=json.dumps({
+            "topic_arc": "arc", "new_turn_seqs": [1],
+            "decisions": [], "pending": [],
+            "session_user_facts": [], "artifacts_referenced": [],
+        }))
+    monkeypatch.setattr(litellm, "acompletion", _fake)
+
+    rec = _Recorder()
+    engine = CompactionEngine(
+        model="gpt-4o", events=EventLog(),
+        cfg=CompactionConfig(use_chars4_estimate=True), recorder=rec,
+    )
+    asyncio.run(engine.compact(HistoryChunkToCompact(
+        previous_summary=None,
+        new_turns=[{"role": "user", "text": "hi", "seq": 1}],
+        section_token_caps={},
+    )))
+    assert [c["purpose"] for c in rec.calls] == ["compaction"]
+
+
 def test_ledger_persists_purpose_and_omits_when_none(tmp_path: Path) -> None:
     """Tier 2: the budget ledger persists `purpose` when given, and omits the
     field entirely when None (pre-#1190 lines stay byte-identical)."""

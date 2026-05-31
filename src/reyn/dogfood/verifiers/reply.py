@@ -33,8 +33,6 @@ async def _default_judge_fn(rubric: list[str], reply_text: str) -> dict:
     """
     import json
 
-    import litellm
-
     rubric_text = "\n".join(f"- {item}" for item in rubric)
     system_text = (
         "You are a strict evaluator. Score the following reply against the rubric.\n"
@@ -49,29 +47,21 @@ async def _default_judge_fn(rubric: list[str], reply_text: str) -> dict:
         {"role": "user", "content": user_text},
     ]
 
-    from reyn.llm.llm import proxy_kwargs
+    # #1190 stage (ii): route through the cost chokepoint (purpose=dogfood,
+    # recorder=None — eval verifier surface). The response_format fallback is
+    # absorbed by the chokepoint. Stub-injection still intercepts at
+    # litellm.acompletion underneath.
+    from reyn.llm.llm import recorded_acompletion
 
-    extra = proxy_kwargs()
-    model = "gemini-2.5-flash-lite"
-    effective_model = model.split("/", 1)[1] if extra and "/" in model else model
-
-    try:
-        response = await litellm.acompletion(
-            model=effective_model,
-            messages=messages,
-            response_format={"type": "json_object"},
-            timeout=30.0,
-            num_retries=2,
-            **extra,
-        )
-    except Exception:
-        response = await litellm.acompletion(
-            model=effective_model,
-            messages=messages,
-            timeout=30.0,
-            num_retries=2,
-            **extra,
-        )
+    response = await recorded_acompletion(
+        model="gemini-2.5-flash-lite",
+        messages=messages,
+        purpose="dogfood",
+        recorder=None,
+        response_format={"type": "json_object"},
+        fallback_without_response_format=True,
+        extra_kwargs={"timeout": 30.0, "num_retries": 2},
+    )
 
     raw: str = (response.choices[0].message.content or "").strip()
     if raw.startswith("```"):
