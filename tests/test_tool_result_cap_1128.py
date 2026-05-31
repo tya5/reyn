@@ -28,6 +28,7 @@ import pytest
 from reyn.chat.services.tool_result_cap import (
     MAX_TOOL_RESULT_INLINE_BYTES,
     cap_tool_result_content,
+    compute_cap_tokens,
 )
 from reyn.services.compaction.engine import estimate_tokens
 from reyn.workspace.media_store import MediaStore
@@ -100,3 +101,146 @@ def test_cap_disabled_when_zero(tmp_path: Path) -> None:
         save_fn=store.save_tool_result, use_chars4=True,
     )
     assert out == content
+
+
+# ── load-bearing integration: capped turn folds via retry_loop, uncapped dead-ends ──
+#
+# The dead-end-#1 proof (#1128): a single oversized tool result can never be
+# compacted away → retry_loop's shrink can't fold it → UnrecoveredError. Capping
+# it (≤ cap_tokens < B_M) makes the single turn fit a compaction call, so
+# retry_loop folds it WITHOUT CompactionOverflowError. This drives the REAL
+# retry_loop + real ComputedBudgets + real compute_cap_tokens + real cap helper;
+# engine.compact is gated to the real B_M overflow semantics (engine.py:930-934)
+# without a live LLM.
+
+def _budgets():
+    from reyn.services.compaction.engine import ComputedBudgets
+    return ComputedBudgets(
+        main_pool=10_000, head_budget=200, body_budget=500,
+        tail_budget=200, new_msg_budget=1_000,
+        B_M=8_000, main_M_room=7_000, effective_trigger=7_000,
+        section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
+                      "session_user_facts": 50, "artifacts_referenced": 175},
+    )
+
+
+class _BMGatedEngine:
+    """Real ComputedBudgets + a compact() gated on B_M, mirroring the real
+    engine's overflow semantics (engine.py:930-934) — no live LLM. A chunk whose
+    estimated tokens exceed B_M raises CompactionOverflowError (= the dead-end);
+    otherwise it folds into a stub summary."""
+
+    def __init__(self, budgets):
+        self.budgets = budgets
+
+    async def compact(self, input_chunk):
+        from reyn.services.compaction.engine import (
+            ChatSummary,
+            CompactionOverflowError,
+        )
+        prev = json.dumps(input_chunk.previous_summary or {}, ensure_ascii=False)
+        turns = json.dumps(input_chunk.new_turns, ensure_ascii=False, default=str)
+        total = estimate_tokens(prev + turns, _MODEL, use_chars4=True)
+        if total > self.budgets.B_M:
+            raise CompactionOverflowError(f"chunk {total} tok > B_M {self.budgets.B_M}")
+        seq = max(
+            (t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)),
+            default=0,
+        )
+        return ChatSummary(topic_arc="folded", covers_through_seq=seq)
+
+
+async def _size_aware_main_call(**kwargs):
+    """Main send that overflows when the assembled prompt exceeds main_M_room.
+
+    Needed to surface the dead-end: retry_loop *defers* an overflowing
+    raw_middle turn into the tail (it doesn't raise), so without a size-aware
+    main call a big-but-deferred turn would just pass. With this, the uncapped
+    big turn bounces raw_middle↔tail (compact overflows in middle, main overflows
+    in tail) until UnrecoveredError — exactly the dead-end the cap closes.
+    """
+    from types import SimpleNamespace
+
+    from reyn.services.compaction.engine import ContextOverflowError
+
+    head = kwargs.get("head") or []
+    summary = kwargs.get("summary")
+    tail = kwargs.get("tail") or []
+    new_msg = kwargs.get("new_msg") or {}
+    text = (
+        json.dumps(head, default=str)
+        + json.dumps(summary or {}, default=str)
+        + json.dumps(tail, default=str)
+        + json.dumps(new_msg, default=str)
+    )
+    if estimate_tokens(text, _MODEL, use_chars4=True) > _budgets().main_M_room:
+        raise ContextOverflowError("main prompt exceeds main_M_room")
+    return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=500), choices=[])
+
+
+def _retry_loop_with(raw_middle_turn: dict):
+    import asyncio
+    import tempfile
+
+    from reyn.chat.services.token_multiplier_learner import TokenMultiplierLearner
+    from reyn.config import CompactionConfig
+    from reyn.services.compaction.engine import retry_loop
+
+    learner = TokenMultiplierLearner(
+        storage_path=Path(tempfile.mkdtemp()) / "m.json"
+    )
+    return asyncio.run(retry_loop(
+        SP="system",
+        head=[],
+        summary=None,
+        raw_middle=[raw_middle_turn],
+        tail=[],
+        new_msg={"role": "user", "content": "hi", "seq": 99},
+        cfg=CompactionConfig(),
+        model=_MODEL,
+        engine=_BMGatedEngine(_budgets()),  # type: ignore[arg-type]
+        learner=learner,
+        main_call=_size_aware_main_call,
+        max_iterations=8,
+    ))
+
+
+def test_capped_tool_turn_folds_via_retry_loop_without_overflow(tmp_path: Path) -> None:
+    """Tier 2: load-bearing — a CAPPED oversized tool result folds via retry_loop.
+
+    The dead-end-#1 closure: cap an oversized tool result (≤ cap_tokens < B_M),
+    put it in raw_middle, run the real retry_loop — engine.compact succeeds (the
+    capped turn fits B_M), so it folds with NO CompactionOverflowError /
+    UnrecoveredError.
+    """
+    store = MediaStore(project_root=tmp_path)
+    cap_tokens = compute_cap_tokens(_budgets().effective_trigger)
+    capped = cap_tool_result_content(
+        "Z" * 80_000,  # ~20k tokens — far over B_M=8000, the dead-end shape
+        cap_tokens=cap_tokens, model=_MODEL,
+        save_fn=store.save_tool_result, use_chars4=True,
+    )
+    assert estimate_tokens(capped, _MODEL, use_chars4=True) < _budgets().B_M, (
+        "precondition: the capped turn must fit the compaction budget"
+    )
+    result = _retry_loop_with({"role": "tool", "content": capped, "seq": 5})
+    assert result is not None  # folded + main_call succeeded, no exception raised
+
+
+def test_uncapped_oversized_tool_turn_dead_ends(tmp_path: Path) -> None:
+    """Tier 2: contrast — the UNCAPPED oversized turn dead-ends, proving the cap is load-bearing.
+
+    Without the cap, the single oversized tool turn exceeds B_M, engine.compact
+    keeps raising CompactionOverflowError, retry_loop's shrink cannot fold a
+    single un-splittable turn → it terminates in error. This is exactly the
+    dead-end the cap closes.
+    """
+    from reyn.services.compaction.engine import (
+        CompactionOverflowError,
+        UnrecoveredError,
+    )
+
+    uncapped = "Z" * 80_000  # ~20k tokens > B_M=8000
+    assert estimate_tokens(uncapped, _MODEL, use_chars4=True) > _budgets().B_M
+    with pytest.raises((UnrecoveredError, CompactionOverflowError)):
+        _retry_loop_with({"role": "tool", "content": uncapped, "seq": 5})
