@@ -1836,15 +1836,21 @@ def _build_chat_config(raw: object) -> ChatConfig:
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig()
-    # #1128 step 3: head_size/tail_size removed — elide is now token-budget
-    # via component_weights.  Emit a deprecation warning so users know to
-    # clean up their YAML.
-    if "head_size" in compaction_raw or "tail_size" in compaction_raw:
+    # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
+    # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
+    # component_weights and auto-compaction is window-relative (no turn-count
+    # limit, no 30K-absolute background trigger). Warn on all four removed keys
+    # so operators clean up their YAML symmetrically.
+    _removed_compaction_keys = (
+        "head_size", "tail_size", "trigger_total_tokens", "min_compact_batch",
+    )
+    if any(k in compaction_raw for k in _removed_compaction_keys):
         import warnings
         warnings.warn(
-            "chat.compaction.head_size/tail_size are deprecated — the turn-count "
-            "limit was removed (#1128); head/tail are now token-budget via "
-            "component_weights. Remove these keys.",
+            "chat.compaction.head_size/tail_size/trigger_total_tokens/"
+            "min_compact_batch are deprecated and ignored — removed in #1128. "
+            "head/tail sizing is now token-budget via component_weights, and "
+            "auto-compaction is window-relative. Remove these keys.",
             DeprecationWarning, stacklevel=2,
         )
     section_raw = compaction_raw.get("section_token_caps") or {}
