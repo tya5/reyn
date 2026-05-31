@@ -51,7 +51,7 @@ Skill authors are nudged toward `safe`; reaching for `unsafe` is a deliberate ch
 
 ## See also
 
-- [permission-model.md](../permission-model.md) — concept
+- [../runtime/permission-model.md](../runtime/permission-model.md) — concept
 - [Reference: permissions](../../reference/config/permissions.md) — full schema
 - [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `permissions:` key
 - [How-to: manage permissions](../../guide/for-users/manage-permissions.md)
