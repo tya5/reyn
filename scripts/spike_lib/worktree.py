@@ -6,6 +6,10 @@ import subprocess
 import time
 from pathlib import Path
 
+# #268: scripts/ is on sys.path (g4_spike inserts it); _reyn_web_proc is the
+# shared managed-spawn helper that guarantees reyn web teardown on signals.
+from _reyn_web_proc import spawn_reyn_web, stop_reyn_web
+
 from spike_lib.http import get_url
 
 
@@ -218,7 +222,10 @@ def start_web_server(
     # tail them post-run for debugging.
     log_path = Path(f"/tmp/reyn-spike-server-{port}.log")
     log_fh = open(log_path, "w", buffering=1)  # noqa: SIM115
-    proc = subprocess.Popen(
+    # #268: spawn via the managed helper (own process group + atexit/signal
+    # teardown) so a signal-killed driver doesn't leak orphaned reyn web on
+    # ports across worktrees — the g4_spike loop spawns one per worktree/port.
+    proc = spawn_reyn_web(
         ["reyn", "web", "--port", str(port)],
         cwd=str(worktree),
         env=env,
@@ -241,10 +248,9 @@ def wait_for_server(port: int, timeout_s: float = 30.0) -> bool:
 
 
 def stop_web_server(proc: subprocess.Popen) -> None:  # type: ignore[type-arg]
-    if proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+    # #268: delegate to the managed helper so we group-kill (reap any children
+    # reyn web forked) and deregister from the atexit/signal cleanup list.
+    stop_reyn_web(proc)
+    log_fh = getattr(proc, "_spike_log_fh", None)
+    if log_fh is not None and not log_fh.closed:
+        log_fh.close()
