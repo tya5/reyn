@@ -19,8 +19,9 @@ Covers:
 - Axis 10 opt-out: use_chars4_estimate=True → chars//4 used, no litellm call needed.
 - ISSUE #4: recompute_budgets() with dynamic provider changes effective_trigger.
 - ISSUE #5: NewMsgExceedsBudgetError raised when new_msg exceeds new_msg_budget.
-- ISSUE #6: force_compact_now() race-recovery loop: N=2 passes when post-compaction
-  still over budget; force_compact_race_unrecovered event when race persists.
+- #1128 PR-c: force_compact_now() is a single synchronous pass (the Option-B
+  multi-pass race-recovery loop was removed — serialization is now structural
+  via the shared per-agent lock; retry_loop is the under-shoot floor).
 - PR-N6: weight normalization invariants.
 
 Policy compliance:
@@ -864,7 +865,7 @@ def test_new_msg_exceeds_budget_error_fields_and_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ISSUE #6: force_compact_now race-recovery loop (Option B)
+# #1128 PR-c: force_compact_now is a single synchronous pass
 # ---------------------------------------------------------------------------
 
 
@@ -895,32 +896,24 @@ class _CountingEngine(CompactionEngine):
         return ChatSummary(topic_arc="stub", covers_through_seq=0)
 
 
-def test_force_compact_now_emits_race_unrecovered_when_always_over_budget() -> None:
-    """Tier 2: force_compact_now emits event AND raises ForceCompactRaceUnrecoveredError
-    when the history remains over budget after max_passes compaction runs.
+def test_force_compact_now_single_pass_no_race_recovery() -> None:
+    """Tier 2: #1128 PR-c — force_compact_now runs exactly ONE compaction pass
+    and emits no force_compact_race_unrecovered event, even when the history
+    stays large.
 
-    Simulates the race by using a history_access callable that always returns
-    history with token count > effective_trigger, regardless of how many times
-    compaction runs (= race always wins).
-
-    Invariants verified via public API (= lead-coder accept condition 2026-05-29
-    pairing event emit with fail-fast raise — never silent-continue):
-    - force_compact_race_unrecovered event emitted with passes=max_passes.
-    - ForceCompactRaceUnrecoveredError raised with passes attribute.
-    - compact() was called exactly max_passes times before the raise.
+    The former Option-B multi-pass race-recovery loop was removed: cross-driver
+    turn serialization is now structural (the shared per-agent lock, PR-b), so a
+    single pass suffices and the retry_loop overflow backstop is the under-shoot
+    floor. Verified via the public surface — compact() is invoked once and no
+    race-unrecovered event is emitted.
     """
-    import pytest
-
     from reyn.chat.services.compaction_controller import CompactionController
-    from reyn.services.compaction.engine import (
-        ForceCompactRaceUnrecoveredError,
-    )
 
     events = EventLog()
     engine = _CountingEngine()
 
-    # 600 turns * 100 tokens/turn = 60_000 > effective_trigger=50_000.
-    # History never shrinks (simulating continuous concurrent appends).
+    # 600 large turns — stays well "over budget"; pre-#1128 this drove a 2nd
+    # pass + a race-unrecovered raise. Post-PR-c it is a single pass.
     def _big_history() -> list[_FakeMessage]:
         return [
             _FakeMessage(role="user" if i % 2 == 0 else "assistant",
@@ -930,11 +923,7 @@ def test_force_compact_now_emits_race_unrecovered_when_always_over_budget() -> N
 
     ctrl = CompactionController(
         event_log=events,
-        config=CompactionConfig(
-            head_size=2, tail_size=2, min_compact_batch=1,
-            trigger_total_tokens=1_000,
-            use_chars4_estimate=True,
-        ),
+        config=CompactionConfig(head_size=2, tail_size=2, use_chars4_estimate=True),
         history_access=_big_history,
         latest_summary=lambda: None,
         compaction_engine=engine,
@@ -946,77 +935,12 @@ def test_force_compact_now_emits_race_unrecovered_when_always_over_budget() -> N
         render_summary=lambda s: str(s),
     )
 
-    with pytest.raises(ForceCompactRaceUnrecoveredError) as exc_info:
-        asyncio.run(ctrl.force_compact_now(max_passes=2))
-    assert exc_info.value.passes == 2
+    asyncio.run(ctrl.force_compact_now())
 
-    unrecovered = [e for e in events.all() if e.type == "force_compact_race_unrecovered"]
-    assert unrecovered, (
-        "force_compact_race_unrecovered event must be emitted when race persists"
+    assert engine.compact_call_count == 1, (
+        f"force_compact_now must run exactly one pass, got {engine.compact_call_count}"
     )
-    assert unrecovered[0].data["passes"] == 2
-    assert engine.compact_call_count == 2, (
-        f"compact() should be called exactly 2 times, got {engine.compact_call_count}"
-    )
-
-
-def test_force_compact_now_returns_early_when_budget_recovered() -> None:
-    """Tier 2: force_compact_now returns without emitting force_compact_race_unrecovered
-    when the history is within budget after the first pass.
-
-    Uses a history_access callable that returns small history on the second call
-    (= simulates budget recovery after one compaction pass).
-    """
-    from reyn.chat.services.compaction_controller import CompactionController
-
-    events = EventLog()
-    engine = _CountingEngine()
-
-    call_count: list[int] = [0]
-
-    def _shrinking_history() -> list[_FakeMessage]:
-        """First call: big history (over budget). Second+: small history (within budget)."""
-        call_count[0] += 1
-        if call_count[0] == 1:
-            # 600 turns * 100 tokens = 60_000 > effective_trigger=50_000
-            return [
-                _FakeMessage(role="user" if i % 2 == 0 else "assistant",
-                             text="a" * 400, seq=i + 1)
-                for i in range(600)
-            ]
-        else:
-            # After compaction: small history = 5 turns * 100 tokens = 500 < 50_000
-            return [
-                _FakeMessage(role="user" if i % 2 == 0 else "assistant",
-                             text="a" * 400, seq=i + 1)
-                for i in range(5)
-            ]
-
-    ctrl = CompactionController(
-        event_log=events,
-        config=CompactionConfig(
-            head_size=1, tail_size=1, min_compact_batch=1,
-            trigger_total_tokens=1_000,
-            use_chars4_estimate=True,
-        ),
-        history_access=_shrinking_history,
-        latest_summary=lambda: None,
-        compaction_engine=engine,
-        history_appender=lambda m: None,
-        make_summary_message=lambda rendered, structured, covers: _FakeMessage(
-            role="summary", text=rendered, seq=0,
-            meta={"structured": structured, "covers_through_seq": covers},
-        ),
-        render_summary=lambda s: str(s),
-    )
-
-    asyncio.run(ctrl.force_compact_now(max_passes=2))
-
     unrecovered = [e for e in events.all() if e.type == "force_compact_race_unrecovered"]
     assert not unrecovered, (
-        "force_compact_race_unrecovered must NOT be emitted when budget was recovered"
-    )
-    assert engine.compact_call_count == 1, (
-        f"compact() should be called exactly 1 time when budget recovers after pass 1, "
-        f"got {engine.compact_call_count}"
+        "single-pass force_compact_now must not emit force_compact_race_unrecovered"
     )
