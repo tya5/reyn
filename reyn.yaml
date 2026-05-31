@@ -33,16 +33,16 @@ permissions:
   python.safe: allow
 
 # Chat session settings. The compaction policy implements the Head/Body/Tail
-# strategy: first head_size and last tail_size user/agent turns are kept raw,
-# the middle is folded into a structured rolling summary capped at body_token_cap.
-# See PR4 in plans/abstract-knitting-moonbeam.md for design rationale.
+# strategy: head + tail of the conversation are kept raw (sized by token budget
+# via component_weights), the middle is folded into a structured rolling summary
+# capped at body_token_cap. Compaction fires at the window-relative elide point
+# (effective_trigger); see PR4 in plans/abstract-knitting-moonbeam.md.
+# #1128: head_size/tail_size (turn-count) + trigger_total_tokens/min_compact_batch
+# were removed — head/tail sizing is now token-budget via component_weights, and
+# auto-compaction is window-relative (no 30K-absolute background trigger).
 chat:
   compaction:
-    trigger_total_tokens: 30000     # Compact when uncovered middle exceeds this (≈200-300 turns)
-    head_size: 12                   # First N user/agent turns kept raw
-    tail_size: 12                   # Last N user/agent turns kept raw
     body_token_cap: 1500            # Total cap across all summary sections
-    min_compact_batch: 5            # Skip compact when fewer than N turns to absorb
     section_token_caps:
       topic_arc: 200
       decisions: 400

@@ -154,30 +154,30 @@ def _mk_worker(wt: Path, *, compaction_grant: bool) -> WorkerSpec:
     )
 
 
-def test_setup_worktree_injects_compaction_when_granted(tmp_path):
-    """Tier 2: when ``compaction_grant=True``, the worker's
-    ``reyn.local.yaml`` contains the ``chat.compaction`` block with
-    ``trigger_total_tokens: 2000``."""
+def test_setup_worktree_injects_compaction_note_when_granted(tmp_path):
+    """Tier 2: when ``compaction_grant=True``, the worker's ``reyn.local.yaml``
+    carries the #1128 compaction note (config-forcing is now a no-op).
+
+    #1128 PR-a: the grant used to inject ``trigger_total_tokens: 2000`` +
+    head/tail=1 to force the removed background auto-fire path. Those config
+    keys no longer exist; the grant now injects only an explanatory note and
+    scenarios drive compaction explicitly via ``/compact``."""
     repo, wt = _mk_repo_and_worktree(tmp_path)
     setup_worktree(_mk_worker(wt, compaction_grant=True), "HEAD", repo)
 
     yaml_text = (wt / "reyn.local.yaml").read_text()
-    assert "chat:" in yaml_text
-    assert "compaction:" in yaml_text
-    assert "trigger_total_tokens: 2000" in yaml_text
+    assert "config-forcing removed" in yaml_text
+    assert "trigger_total_tokens" not in yaml_text  # removed key never injected
 
 
-def test_setup_worktree_omits_compaction_without_grant(tmp_path):
+def test_setup_worktree_omits_compaction_note_without_grant(tmp_path):
     """Tier 2: when ``compaction_grant=False`` (= default), the worker's
-    ``reyn.local.yaml`` does NOT contain the ``chat.compaction`` block
-    so unrelated short-skill scenarios on the worker run with the
-    production-default ``trigger_total_tokens: 30000``."""
+    ``reyn.local.yaml`` does NOT contain the #1128 compaction note."""
     repo, wt = _mk_repo_and_worktree(tmp_path)
     setup_worktree(_mk_worker(wt, compaction_grant=False), "HEAD", repo)
 
     yaml_text = (wt / "reyn.local.yaml").read_text()
-    assert "trigger_total_tokens" not in yaml_text
-    assert "chat:\n  compaction:" not in yaml_text
+    assert "config-forcing removed" not in yaml_text
 
 
 def test_setup_worktree_b52_grants_unconditional(tmp_path):

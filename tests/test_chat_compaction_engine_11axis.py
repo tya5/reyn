@@ -14,8 +14,8 @@ Covers:
   emitted, turn truncated and included.
 - new_msg_exceeds_budget abort (Axis 11): raises NewMsgExceedsBudgetError, event
   emitted.
-- B_M trigger race (Axis 8): synchronous force_compact_now() + concurrent
-  history-append attempt → ordering guarantee verified.
+- #1128 PR-a: the Axis-8 compaction_lock was removed (it was vestigial — no
+  history appender awaited it; cross-driver serialization is the per-agent lock).
 - Axis 10 opt-out: use_chars4_estimate=True → chars//4 used, no litellm call needed.
 - ISSUE #4: recompute_budgets() with dynamic provider changes effective_trigger.
 - ISSUE #5: NewMsgExceedsBudgetError raised when new_msg exceeds new_msg_budget.
@@ -512,7 +512,7 @@ def test_new_msg_exceeds_budget_is_exception_subclass() -> None:
 
 
 # ---------------------------------------------------------------------------
-# B_M trigger race (Axis 8) — compaction lock ordering
+# Shared ChatMessage substitute for controller tests
 # ---------------------------------------------------------------------------
 
 
@@ -528,123 +528,6 @@ class _FakeMessage:
     tool_calls: list | None = None
     tool_call_id: str | None = None
     name: str | None = None
-
-
-class _LockHoldingEngine(CompactionEngine):
-    """Engine stub that holds the compaction_lock and signals when running."""
-
-    def __init__(self, start_gate: asyncio.Event, release_gate: asyncio.Event) -> None:
-        # Minimal init without model_budget lookup.
-        self._model = "stub"
-        self._events = EventLog()
-        from reyn.config import CompactionConfig as _CC
-        self._cfg = _CC(use_chars4_estimate=True)
-        self._use_chars4 = True
-        self._T_comp_SP = 10
-        # Synthetic budgets — small head/tail so 11 turns of "x"*200
-        # (50 tokens each via chars4) produce non-empty middle candidates.
-        # head=tail=50 → each budget fits exactly 1 turn; middle=[t2..t10].
-        self._budgets = ComputedBudgets(
-            main_pool=100_000, head_budget=50, body_budget=5_000,
-            tail_budget=50, new_msg_budget=10_000,
-            B_M=80_000, main_M_room=65_000, effective_trigger=65_000,
-        )
-        self.compaction_lock = asyncio.Lock()
-        self._start_gate = start_gate
-        self._release_gate = release_gate
-        self.call_count = 0
-
-    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
-        self.call_count += 1
-        self._start_gate.set()
-        await self._release_gate.wait()
-        return ChatSummary(topic_arc="stub", covers_through_seq=0)
-
-
-def test_compaction_lock_blocks_concurrent_append() -> None:
-    """Tier 2: when force_compact_now() is in progress, a concurrent task that
-    awaits the compaction_lock is blocked until compaction completes.
-
-    Verified via behavior: the append task observes that the lock is held
-    during compaction, and completes AFTER the lock is released.
-
-    Axis 8: mathematical race gap = 0.
-    """
-    from reyn.chat.services.compaction_controller import CompactionController
-
-    start_gate: asyncio.Event = asyncio.Event()
-    release_gate: asyncio.Event = asyncio.Event()
-    engine = _LockHoldingEngine(start_gate=start_gate, release_gate=release_gate)
-
-    history: list[_FakeMessage] = []
-    for i in range(1, 12):
-        role = "user" if i % 2 == 1 else "assistant"
-        history.append(_FakeMessage(role=role, text="x" * 200, seq=i))
-
-    def _latest_summary():
-        return None
-
-    appended_while_locked: list[bool] = []
-
-    async def _locking_append(msg: _FakeMessage) -> None:
-        """Append that must wait for the compaction lock."""
-        async with engine.compaction_lock:
-            history.append(msg)
-            appended_while_locked.append(True)
-
-    ctrl = CompactionController(
-        event_log=EventLog(),
-        config=CompactionConfig(
-            min_compact_batch=1,
-            use_chars4_estimate=True,
-        ),
-        history_access=lambda: list(history),
-        latest_summary=_latest_summary,
-        compaction_engine=engine,
-        history_appender=lambda m: history.append(m),
-        make_summary_message=lambda rendered, structured, covers: _FakeMessage(
-            role="summary", text=rendered, seq=0,
-            meta={"structured": structured, "covers_through_seq": covers},
-        ),
-        render_summary=lambda s: str(s),
-    )
-
-    ordering: list[str] = []
-
-    async def _run():
-        # Start force_compact_now in background.
-        compact_task = asyncio.create_task(ctrl.force_compact_now())
-        # Wait for the engine to start (= lock is held).
-        await start_gate.wait()
-        ordering.append("compact_started")
-
-        # Now try to append — must block on the lock.
-        append_task = asyncio.create_task(
-            _locking_append(
-                _FakeMessage(role="user", text="new turn", seq=100)
-            )
-        )
-        # Give the append task a chance to start and block.
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-
-        # Lock is still held — append has NOT completed yet.
-        ordering.append("checking_append_blocked")
-        assert not appended_while_locked, (
-            "append should not have completed while compaction lock is held"
-        )
-
-        # Release the engine.
-        release_gate.set()
-        await compact_task
-        await append_task
-        ordering.append("both_done")
-
-    asyncio.run(_run())
-
-    assert "compact_started" in ordering
-    assert "both_done" in ordering
-    assert appended_while_locked, "append should have completed after lock was released"
 
 
 # ---------------------------------------------------------------------------
@@ -889,7 +772,6 @@ class _CountingEngine(CompactionEngine):
             tail_budget=15_000, new_msg_budget=10_000,
             B_M=80_000, main_M_room=65_000, effective_trigger=50_000,
         )
-        self.compaction_lock = asyncio.Lock()
         self.compact_call_count = 0
 
     async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:

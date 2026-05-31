@@ -61,7 +61,6 @@ def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> ChatSession:
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
     cfg = CompactionConfig(
-        trigger_total_tokens=100_000,  # never auto-trigger in unit tests
         body_token_cap=1500,
         use_chars4_estimate=True,  # deterministic offline token counts
         section_caps_spec_tokens=0,  # keeps B_M positive for small T_max

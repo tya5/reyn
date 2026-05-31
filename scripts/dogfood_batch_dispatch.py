@@ -258,33 +258,19 @@ def setup_worktree(worker: WorkerSpec, head: str, repo_root: Path) -> None:
         "sandbox:\n"
         "  backend: noop\n"
     )
-    # B55 retro fix (2026-05-27): chat.compaction config lowering is opt-in
-    # per worker via ``compaction_grant: true`` in the batch yaml. Previously
-    # it was injected unconditionally — that cross-impacted unrelated
-    # short-skill scenarios on other workers because the lowered
-    # head_size/tail_size (= 1/1) is consumed by
-    # ``_build_history_for_router`` (session.py:4454), which slices history
-    # to ``head + tail`` whenever ``len(turns) > head + tail``. A normal
-    # skill spawn turn has 4 history entries (user request + assistant
-    # tool_call + tool response + ``[task_completed]``); 1/1 slicing keeps
-    # only the first + last, dropping the assistant turn. The LLM at the
-    # next router call sees only ``[user_request, task_completed]`` and
-    # re-spawns the skill (= B55 W1-S4 R verdict — reply ends as a
-    # spawn-ack instead of the actual stats). Only the worker hosting
-    # chat_compactor_auto_trigger needs the grant.
+    # #1128 PR-a: the chat.compaction config-forcing grant is now a no-op.
+    # It used to inject head_size/tail_size=1 + trigger_total_tokens=2000 to
+    # force the background CompactionController auto-fire path in a short
+    # dogfood scenario. That path (axis-1) was removed, and head_size/tail_size
+    # / trigger_total_tokens / min_compact_batch no longer exist — auto-
+    # compaction is window-relative (effective_trigger) and won't fire in a
+    # 5-turn scenario. A scenario that needs compaction now drives it
+    # EXPLICITLY via `/compact` (the chat_compactor scenario carries that turn;
+    # coordinate with the dogfood scenario owner). The ``compaction_grant``
+    # flag is retained (batch-yaml compatibility) but injects only this note.
     compaction_block = (
-        "# B54 R-3 (2026-05-24): chat_compactor needs ~10s of turns to reach\n"
-        "# default trigger_total_tokens=30000 via head/tail=12 + min_batch=5.\n"
-        "# Lower thresholds so a 5-turn dogfood scenario can trigger the\n"
-        "# CompactionController auto-fire path. Opt-in per worker (B55 retro)\n"
-        "# to avoid cross-impacting short-skill scenarios on workers that do\n"
-        "# not host chat_compactor_auto_trigger.\n"
-        "chat:\n"
-        "  compaction:\n"
-        "    trigger_total_tokens: 2000\n"
-        "    head_size: 1\n"
-        "    tail_size: 1\n"
-        "    min_compact_batch: 2\n"
+        "# #1128: chat.compaction config-forcing removed — scenarios drive\n"
+        "# compaction explicitly via /compact (auto-compaction is window-relative).\n"
     )
     if worker.compaction_grant:
         runner_grants = runner_grants + compaction_block

@@ -1780,9 +1780,10 @@ class ChatSession:
             project_root=getattr(self._registry, "_project_root", None),
         )
 
-        # FP-0019 Wave 1: background head/body/tail compaction service.
-        # Owns the asyncio.Task lifecycle; session delegates via spawn_maybe()
-        # and cancel().  All callbacks resolve against self at call time.
+        # FP-0019 Wave 1: synchronous head/body/tail compaction service.
+        # #1128 PR-a: background task lifecycle removed; the session drives
+        # compaction via force_compact_now() (pre-frame guard). All callbacks
+        # resolve against self at call time.
         def _merge_action_usage_from_candidates(
             candidates: "list[ChatMessage]",
         ) -> None:
@@ -2868,8 +2869,9 @@ class ChatSession:
         # PR-refactor-session-1 wave 2: cancellation delegated to ChainManager.
         await self._chains.shutdown()
 
-        # FP-0019 Wave 1: delegated to CompactionController.
-        await self._compaction_controller.cancel()
+        # #1128 PR-a: the background compaction task was removed; compaction
+        # now runs synchronously inside the router handler, so there is no
+        # in-flight task to drain at shutdown.
 
     async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
         # Slash commands (`/list`, `/cancel <id>`, `/answer <id> <text>`) take
@@ -2964,10 +2966,12 @@ class ChatSession:
             ))
             return
 
-        # FP-0019 Wave 1: fire-and-forget compaction check after the user has
-        # the reply.  CompactionController owns the single-flight lock and the
-        # background asyncio.Task.  _drain_on_shutdown awaits it via cancel().
-        self._compaction_controller.spawn_maybe()
+        # #1128 PR-a: the post-reply fire-and-forget compaction check
+        # (spawn_maybe → _maybe_compact, 30K-absolute trigger) was removed.
+        # Auto-compaction is driven synchronously by the pre-frame guard
+        # (_maybe_force_compact_for_router → force_compact_now, window-relative
+        # effective_trigger) before each router call, plus on-demand (/compact,
+        # compact op) and the retry_loop overflow backstop.
 
     # ── skill invocation helpers ────────────────────────────────────────────────
 
@@ -5270,7 +5274,8 @@ class ChatSession:
         raises NewMsgExceedsBudgetError if not.  A minimal ``{"role": "user",
         "content": new_msg_text}`` dict is built internally for token estimation.
 
-        The existing background spawn_maybe() path is separate and unaffected.
+        #1128 PR-a: this synchronous guard is now the sole auto-compaction
+        trigger (the background spawn_maybe path was removed).
         """
         from reyn.services.compaction.engine import (
             NewMsgExceedsBudgetError,

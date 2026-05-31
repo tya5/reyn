@@ -395,10 +395,6 @@ class CompactionConfig:
     Tokeniser:
         use_chars4_estimate=False (default) -> litellm.token_counter per turn.
         use_chars4_estimate=True  -> len(text)//4 (latency-opt for large deploys).
-
-    Legacy/background trigger:
-        trigger_total_tokens is kept for the background _maybe_compact() path
-        that fires after each reply (not the synchronous pre-frame guard).
     """
     # Integer weight-based budget allocation (PR-N6). Sum-arbitrary; normalised
     # at compute_budgets() time.
@@ -421,10 +417,7 @@ class CompactionConfig:
     section_caps_spec_tokens: int = 100
     # Tokeniser opt-out (Axis 10): set True for latency-sensitive deployments.
     use_chars4_estimate: bool = False
-    # Legacy fields kept for background trigger path and section caps.
-    trigger_total_tokens: int = 30000   # background trigger: compact when middle exceeds this
     body_token_cap: int = 1500          # hard cap on summary body tokens (post-truncation)
-    min_compact_batch: int = 5          # skip compact when fewer than N turns to absorb
     # #271 re-summarize (T2): max LLM re-compression passes when a produced
     # topic_arc overshoots body_budget, before the deterministic T3
     # hard_truncate floor. 1 = one judgment-based re-summary then floor; 0 =
@@ -1843,15 +1836,21 @@ def _build_chat_config(raw: object) -> ChatConfig:
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig()
-    # #1128 step 3: head_size/tail_size removed — elide is now token-budget
-    # via component_weights.  Emit a deprecation warning so users know to
-    # clean up their YAML.
-    if "head_size" in compaction_raw or "tail_size" in compaction_raw:
+    # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
+    # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
+    # component_weights and auto-compaction is window-relative (no turn-count
+    # limit, no 30K-absolute background trigger). Warn on all four removed keys
+    # so operators clean up their YAML symmetrically.
+    _removed_compaction_keys = (
+        "head_size", "tail_size", "trigger_total_tokens", "min_compact_batch",
+    )
+    if any(k in compaction_raw for k in _removed_compaction_keys):
         import warnings
         warnings.warn(
-            "chat.compaction.head_size/tail_size are deprecated — the turn-count "
-            "limit was removed (#1128); head/tail are now token-budget via "
-            "component_weights. Remove these keys.",
+            "chat.compaction.head_size/tail_size/trigger_total_tokens/"
+            "min_compact_batch are deprecated and ignored — removed in #1128. "
+            "head/tail sizing is now token-budget via component_weights, and "
+            "auto-compaction is window-relative. Remove these keys.",
             DeprecationWarning, stacklevel=2,
         )
     section_raw = compaction_raw.get("section_token_caps") or {}
@@ -1907,13 +1906,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
         use_chars4_estimate=bool(
             compaction_raw.get("use_chars4_estimate", defaults.use_chars4_estimate)
         ),
-        trigger_total_tokens=int(
-            compaction_raw.get("trigger_total_tokens", defaults.trigger_total_tokens)
-        ),
         body_token_cap=int(compaction_raw.get("body_token_cap", defaults.body_token_cap)),
-        min_compact_batch=int(
-            compaction_raw.get("min_compact_batch", defaults.min_compact_batch)
-        ),
         resummarize_passes=int(
             compaction_raw.get("resummarize_passes", defaults.resummarize_passes)
         ),
