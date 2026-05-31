@@ -755,6 +755,17 @@ class RouterHostAdapter:
 
     # --- Model resolution ---
 
+    @property
+    def resolver(self) -> Any:
+        """The bound ``ModelResolver``.
+
+        Exposed (#1172) so components that construct their own LLM callers —
+        e.g. the planner's lazy ``CompactionEngine`` — can resolve model
+        classes through the same chain as the router. ``resolve_model`` is the
+        scalar convenience wrapper; this is the full resolver object.
+        """
+        return self._resolver
+
     def resolve_model(self, name: str) -> str:
         """Resolve config model name (e.g. 'router') to actual model id."""
         return self._resolver.resolve(name).model

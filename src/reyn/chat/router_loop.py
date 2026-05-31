@@ -506,6 +506,11 @@ class RouterLoopHost(Protocol):
     # Resolve router model (config "router" → real model id)
     def resolve_model(self, name: str) -> str: ...
 
+    # The bound ModelResolver (#1172) — components that build their own LLM
+    # callers (e.g. the planner's lazy CompactionEngine) resolve through it.
+    @property
+    def resolver(self) -> Any: ...
+
     # Plan-mode lifecycle persistence (ADR-0022 Phase 1).
     # Optional — implementations that don't support plan-mode crash
     # recovery (e.g. test stubs) leave these as no-ops. Real chat

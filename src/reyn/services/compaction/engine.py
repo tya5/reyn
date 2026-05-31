@@ -63,6 +63,7 @@ if TYPE_CHECKING:
         PlannerStepCompactionConfig,
     )
     from reyn.events.events import EventLog
+    from reyn.llm.model_resolver import ModelResolver
 
 logger = logging.getLogger(__name__)
 
@@ -667,9 +668,20 @@ class CompactionEngine:
     Parameters
     ----------
     model:
-        LiteLLM model string (e.g. ``"gemini/gemini-2.5-flash-lite"``).
+        Model CLASS name (``"standard"`` / ``"light"`` / ``"strong"``) OR a
+        literal LiteLLM string.  It is resolved to a LiteLLM string via
+        ``resolver`` at construction (#1172) — the engine NEVER hands an
+        unresolved class to ``litellm.acompletion`` (which rejects it with
+        ``BadRequestError model=standard``, failing every compaction trigger).
     events:
         Session-scoped EventLog for observability.
+    resolver:
+        Required ``ModelResolver`` used to resolve ``model`` to its LiteLLM
+        string in ``__init__`` (same chain the router/main LLM call uses).
+        By-construction guarantee (#1172): because resolution happens inside
+        the engine, no construction site (chat / planner / phase) can leak an
+        unresolved model class to litellm.  Pass ``ModelResolver({})`` for an
+        already-resolved literal string (passthrough).
     cfg:
         CompactionConfig; used for use_chars4_estimate. When None a default
         config is used (for backward-compat test construction).
@@ -694,8 +706,22 @@ class CompactionEngine:
         *,
         T_SP: int = 0,
         system_prompt_provider: Callable[[], str] | None = None,
+        resolver: "ModelResolver | None" = None,
     ) -> None:
-        self._model = model
+        # #1172: resolve the model CLASS ("standard"/"light"/"strong") to its
+        # LiteLLM string at construction — by-construction guarantee that no
+        # downstream litellm.acompletion call (or estimate_tokens below) ever
+        # receives an unresolved class (litellm rejects "standard" with
+        # BadRequestError, failing every compaction trigger). A literal string
+        # passes through unchanged. resolver defaults to an empty passthrough
+        # ModelResolver so already-resolved callers/tests need not pass one;
+        # every PRODUCTION construction site MUST pass its real resolver
+        # (enforced by tests/test_compaction_resolver_aware_1172.py so a future
+        # caller cannot reintroduce the unresolved-class leak).
+        if resolver is None:
+            from reyn.llm.model_resolver import ModelResolver as _MR
+            resolver = _MR({})
+        self._model = resolver.resolve(model).model
         self._events = events
         # Axis 10: opt-out flag
         from reyn.config import CompactionConfig as _CC

@@ -521,6 +521,12 @@ class _PlanStepHost:
     def events(self) -> Any:
         return self._parent.events
 
+    @property
+    def resolver(self) -> Any:
+        # #1172: delegate to parent so a nested CompactionEngine resolves
+        # model classes through the same chain.
+        return self._parent.resolver
+
     # ── Catalog narrowing — what tools / skills / agents are visible ──────
 
     def list_available_skills(self) -> list[dict]:
@@ -862,6 +868,10 @@ async def execute_plan(
                 events=parent_host.events,
                 T_SP=0,
                 cfg=None,  # use default CompactionConfig for budget derivation
+                # #1172: router_model defaults to the class "light" — resolve
+                # via the host's resolver so the engine never hands an
+                # unresolved class to litellm.
+                resolver=parent_host.resolver,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort; skip if unavailable
             logger.warning(
