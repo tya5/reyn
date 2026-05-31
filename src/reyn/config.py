@@ -431,16 +431,6 @@ class CompactionConfig:
     # skip T2 (straight to the floor, = pre-#271 behaviour).
     resummarize_passes: int = 1
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
-    # head_size / tail_size:
-    # DEPRECATED — retained only for the background `_maybe_compact()` legacy
-    # path which still uses turn-count gates to identify HEAD / TAIL
-    # boundaries. The new synchronous force-trigger path (= pre-frame guard
-    # in `_maybe_force_compact_for_router`) uses token-budget only via
-    # component_weights (= PR-N6). Background-path removal is a separate
-    # root-fix wave; until then these fields exist to keep the legacy lifecycle
-    # working without scope-creeping PR-N3/N6.
-    head_size: int = 12                 # First N user/agent turns = HEAD (background path)
-    tail_size: int = 12                 # Last N user/agent turns = TAIL (background path)
 
 
 @dataclass
@@ -1853,6 +1843,17 @@ def _build_chat_config(raw: object) -> ChatConfig:
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig()
+    # #1128 step 3: head_size/tail_size removed — elide is now token-budget
+    # via component_weights.  Emit a deprecation warning so users know to
+    # clean up their YAML.
+    if "head_size" in compaction_raw or "tail_size" in compaction_raw:
+        import warnings
+        warnings.warn(
+            "chat.compaction.head_size/tail_size are deprecated — the turn-count "
+            "limit was removed (#1128); head/tail are now token-budget via "
+            "component_weights. Remove these keys.",
+            DeprecationWarning, stacklevel=2,
+        )
     section_raw = compaction_raw.get("section_token_caps") or {}
     if not isinstance(section_raw, dict):
         section_raw = {}
@@ -1917,8 +1918,6 @@ def _build_chat_config(raw: object) -> ChatConfig:
             compaction_raw.get("resummarize_passes", defaults.resummarize_passes)
         ),
         section_token_caps=section,
-        head_size=int(compaction_raw.get("head_size", defaults.head_size)),
-        tail_size=int(compaction_raw.get("tail_size", defaults.tail_size)),
     )
     return ChatConfig(compaction=compaction)
 

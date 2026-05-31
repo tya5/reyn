@@ -1,28 +1,26 @@
-"""Tier 2: ChatSession._build_history_for_router slicing correctness.
+"""Tier 2: ChatSession._build_history_for_router token-budget slicing correctness.
 
-Pins the contract that the messages array fed to the chat router LLM
-mirrors session.history exactly when the history fits within the head
-+ tail window (= no duplication), and applies head/tail slicing only
-when the history exceeds the window.
+#1128 step 3 (Fork B): elide threshold now coincides with effective_trigger
+(the existing pre-frame compaction trigger) instead of the old turn-count
+head_size/tail_size.  The router view returns ALL turns when total token
+estimate <= effective_trigger (window-utilization-first), and elides the
+middle only when the conversation exceeds the budget.
 
-Discovered as the ROOT CAUSE of the Q4 ``list_skills`` empty-stop
-attractor in dogfood trace v6: the prior implementation
-unconditionally concatenated ``turns[:head_size] + turns[-tail_size:]``,
-so any history with ``len(turns) <= head_size + tail_size`` produced a
-fully-duplicated messages array. The LLM saw the same user query twice
-with history reset between them and silently exited.
-
-Tests also pin the per-turn invariant Reyn relies on for pathological
-inputs: even if a user sends two messages in quick succession, each
-turn's messages array reflects the snapshot of session.history at that
-point, with no extra duplication.
+Tests pin:
+- Small conversation (total < effective_trigger): all turns returned, no
+  duplication (the Q4 attractor root cause was exactly this duplication).
+- Large conversation (total > effective_trigger): head + tail with the middle
+  elided; deduplication guard so no turn appears twice.
+- Empty history: empty result.
+- Summary bridge inserted when a summary exists and elide fires.
 """
 from __future__ import annotations
 
+import contextlib
+from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
+import reyn.llm.model_budget as _mb
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.session import ChatMessage, ChatSession
 from reyn.config import CompactionConfig
@@ -30,130 +28,174 @@ from reyn.events.state_log import StateLog
 
 
 def _now() -> str:
-    from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
 
 
-def _make_session(
-    tmp_path: Path,
-    *,
-    head_size: int = 12,
-    tail_size: int = 12,
-) -> ChatSession:
+@contextlib.contextmanager
+def _synthetic_t_max(t_max: int):
+    """Monkeypatch get_max_input_tokens for the duration of the with-block.
+
+    Uses direct module-level replacement (the same pattern used in
+    test_chat_compaction_engine_11axis.py) — no unittest.mock.
+    """
+    original = _mb.get_max_input_tokens
+    _mb.get_max_input_tokens = lambda model, **kw: t_max  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        _mb.get_max_input_tokens = original
+
+
+def _make_session(tmp_path: Path, *, t_max: int = 1_000_000) -> ChatSession:
+    """Create a ChatSession whose compaction engine uses a synthetic T_max.
+
+    ``use_chars4_estimate=True`` makes token estimation deterministic:
+    each character counts as 1/4 token.
+
+    ``t_max`` is injected via monkeypatch so effective_trigger is
+    predictable in tests.  The default (1_000_000) is large enough that
+    any realistic test conversation fits and no elide fires, unless a
+    smaller t_max is passed.
+    """
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
     cfg = CompactionConfig(
-        trigger_total_tokens=100_000,  # never trigger compaction in unit tests
-        head_size=head_size,
-        tail_size=tail_size,
+        trigger_total_tokens=100_000,  # never trigger background compaction
         body_token_cap=1500,
+        use_chars4_estimate=True,  # deterministic: chars // 4
+        section_caps_spec_tokens=0,  # keeps B_M positive for small T_max values
     )
-    return ChatSession(
-        agent_name="default",
-        agent_role="",
-        output_language="en",
-        budget_tracker=bt,
-        state_log=state_log,
-        compaction_config=cfg,
-        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
-    )
+    # Monkeypatch covers the engine's compute_budgets() call at ChatSession init.
+    with _synthetic_t_max(t_max):
+        return ChatSession(
+            agent_name="default",
+            agent_role="",
+            output_language="en",
+            budget_tracker=bt,
+            state_log=state_log,
+            compaction_config=cfg,
+            snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+        )
 
 
-def _push_turn(session, role: str, text: str) -> None:
-    # Issue #383: ChatMessage uses ``content`` field; legacy "agent" role
-    # → "assistant" for new construction.
+def _push(session: ChatSession, role: str, text: str) -> None:
     if role == "agent":
         role = "assistant"
     session.history.append(ChatMessage(role=role, content=text, ts=_now()))
 
 
-# ── No-overlap branch (= len(turns) <= head_size + tail_size) ────────────────
+# ── No-elide branch (total <= effective_trigger) ─────────────────────────────
 
 
-def test_history_fits_in_window_returns_unique_turns(tmp_path):
-    """Tier 2: when history.length <= head_size + tail_size, the
-    messages array equals the history one-for-one — no head+tail
-    overlap duplication.
+def test_history_fits_in_window_returns_all_turns(tmp_path):
+    """Tier 2: when total tokens <= effective_trigger, all turns are returned
+    in order — no elide, no duplication.
 
-    This is the contract that Q4 dogfood violated pre-fix.
+    This pins the window-utilization contract: Fork B shows the full raw
+    conversation until it exceeds the trigger.  The Q4 attractor root cause
+    was duplicate turns from the old turn-count head+tail overlap — this
+    branch can never produce duplicates.
     """
-    session = _make_session(tmp_path, head_size=12, tail_size=12)
-    # 7 turns (= 4 user + 3 agent), well under head+tail=24
-    _push_turn(session, "user", "hello")
-    _push_turn(session, "agent", "Hi there!")
-    _push_turn(session, "user", "what can you do?")
-    _push_turn(session, "agent", "I can help with...")
-    _push_turn(session, "user", "tell me about yourself")
-    _push_turn(session, "agent", "I am a Reyn agent.")
-    _push_turn(session, "user", "list available skills")
+    # Large t_max → effective_trigger large → 7 short turns easily fit.
+    session = _make_session(tmp_path, t_max=1_000_000)
+    pushed = ["hello", "Hi there!", "what can you do?", "I can help...",
+              "tell me about yourself", "I am a Reyn agent.", "list available skills"]
+    for text in pushed:
+        _push(session, "user", text)
 
     msgs = session._build_history_for_router()
-    # No duplicates by content: each unique user turn appears exactly once.
-    user_texts = [m["content"] for m in msgs if m["role"] == "user"]
-    assert user_texts == ["hello", "what can you do?", "tell me about yourself", "list available skills"], (
-        "head+tail overlap duplication regression: user turns duplicated or missing"
+    contents = [m["content"] for m in msgs]
+    # All pushed turns returned — no drops, no duplicates.
+    assert set(contents) == set(pushed), (
+        "window-utilization branch must return all pushed turns"
     )
-    all_texts = [m["content"] for m in msgs]
-    assert len(set(all_texts)) == len(all_texts), (
-        "duplicate messages detected; pre-fix head+tail concat regression"
+    assert len(contents) == len(set(contents)), (
+        "duplicate messages detected — window-utilization branch must return unique turns"
     )
 
 
 def test_empty_history_returns_empty_messages(tmp_path):
-    """Tier 2: empty history → empty messages, no spurious duplication."""
+    """Tier 2: empty history → empty result."""
     session = _make_session(tmp_path)
     msgs = session._build_history_for_router()
-    assert msgs == []
+    assert msgs == [], f"expected empty result for empty history, got {msgs!r}"
 
 
 def test_single_turn_returns_single_message(tmp_path):
-    """Tier 2: 1 turn → 1 message, not 2."""
+    """Tier 2: single turn → exactly one message, no duplication."""
     session = _make_session(tmp_path)
-    _push_turn(session, "user", "hello")
+    _push(session, "user", "hello")
     msgs = session._build_history_for_router()
     assert msgs == [{"role": "user", "content": "hello"}]
 
 
-# ── Boundary: exactly at head + tail ────────────────────────────────────────
+# ── Elide branch (total > effective_trigger) ─────────────────────────────────
+
+# Each "XXXXXXXXXXX...X" text is 320 chars → 80 tokens (chars4).
+# With t_max=2000, section_caps_spec_tokens=0, T_SP≈1125 (real router SP),
+# T_comp_SP≈481 (real compaction SP):
+#   head_budget ≈ 87 tokens
+#   tail_budget ≈ 131 tokens
+#   effective_trigger ≈ 570 tokens
+# 8 turns × 80 tokens = 640 > 570 → elide fires.
+# head=[t0] (87 tokens budget, single 80-tok turn exactly fits).
+# tail=[t7] (131 tokens budget, single 80-tok turn fits).
+# middle=[t1..t6] → 6 turns absent from the router view.
+
+_LONG_TEXT = "X" * 320  # 80 tokens via chars4; use with t_max=2000
 
 
-def test_exactly_head_plus_tail_no_duplication(tmp_path):
-    """Tier 2: len(turns) == head_size + tail_size is the boundary case.
-    Both branches would produce the same result (= all turns, no
-    duplication). Pre-fix would also have worked here because
-    head[:N] + tail[-N:] of a 2N-list IS the full list. Pinning this
-    boundary case explicitly so a future refactor that flips the
-    inequality (= ``<`` vs ``<=``) doesn't silently regress.
+def test_history_exceeds_trigger_elides_middle(tmp_path):
+    """Tier 2: when total tokens > effective_trigger, the middle turns are
+    elided and head + tail are returned without duplication.
+
+    Uses a synthetic T_max=2000 (section_caps_spec_tokens=0) which yields
+    effective_trigger≈570.  8 turns of 80-token text total 640 > 570, so
+    the elide branch fires.
     """
-    session = _make_session(tmp_path, head_size=2, tail_size=2)
-    for i in range(4):
-        _push_turn(session, "user" if i % 2 == 0 else "agent", f"msg-{i}")
+    session = _make_session(tmp_path, t_max=2000)
+    texts = [f"turn-{i}:" + _LONG_TEXT for i in range(8)]
+    for i, text in enumerate(texts):
+        _push(session, "user" if i % 2 == 0 else "assistant", text)
+
     msgs = session._build_history_for_router()
-    assert [m["content"] for m in msgs] == ["msg-0", "msg-1", "msg-2", "msg-3"]
+    contents = [m["content"] for m in msgs]
+
+    # The middle turn(s) must be absent.
+    present = set(contents)
+    assert texts[0] in present, "head turn must be present"
+    assert texts[-1] in present, "tail turn must be present"
+    # At least one middle turn must be absent (= elide occurred).
+    middle_texts = set(texts[1:-1])
+    assert not middle_texts.issubset(present), (
+        "expected at least one middle turn to be elided, but all middle turns present"
+    )
+    # No duplicates.
+    assert len(contents) == len(set(contents)), (
+        "duplicate messages in elide branch — overlap deduplication failed"
+    )
 
 
-# ── Compaction branch (= len(turns) > head + tail) ──────────────────────────
-
-
-def test_history_exceeds_window_applies_head_tail_slice(tmp_path):
-    """Tier 2: when history exceeds head+tail, slicing kicks in and the
-    middle turns are elided. With NO summary bridge, head+tail are
-    concatenated directly.
+def test_elide_inserts_summary_bridge_when_summary_present(tmp_path):
+    """Tier 2: when a summary exists and elide fires, a bridge message is
+    inserted between head and tail.
     """
-    session = _make_session(tmp_path, head_size=2, tail_size=2)
-    for i in range(8):
-        _push_turn(session, "user" if i % 2 == 0 else "agent", f"msg-{i}")
-    # 8 turns > 2+2=4 → head=msg-0..1, tail=msg-6..7
-    msgs = session._build_history_for_router()
-    assert [m["content"] for m in msgs] == ["msg-0", "msg-1", "msg-6", "msg-7"]
+    session = _make_session(tmp_path, t_max=2000)
+    # Inject a summary before the turns.
+    session.history.append(ChatMessage(
+        role="summary",
+        content="summary of earlier",
+        ts=_now(),
+        meta={"structured": {"topic_arc": "test"}, "covers_through_seq": 0},
+    ))
+    # 8 turns × 80 tokens = 640 > effective_trigger≈570 → elide fires.
+    texts = [f"turn-{i}:" + _LONG_TEXT for i in range(8)]
+    for i, text in enumerate(texts):
+        _push(session, "user" if i % 2 == 0 else "assistant", text)
 
-
-def test_zero_tail_size_no_overlap_in_unfit_branch(tmp_path):
-    """Tier 2: tail_size=0 in the unfit branch yields head only, no
-    spurious empty tail to cause off-by-one.
-    """
-    session = _make_session(tmp_path, head_size=2, tail_size=0)
-    for i in range(5):
-        _push_turn(session, "user", f"msg-{i}")
     msgs = session._build_history_for_router()
-    assert [m["content"] for m in msgs] == ["msg-0", "msg-1"]
+    bridge_msgs = [m for m in msgs if isinstance(m.get("content"), str)
+                   and m["content"].startswith("[summary")]
+    assert bridge_msgs, (
+        "expected a summary bridge message when summary exists and elide fires"
+    )

@@ -107,7 +107,6 @@ def test_parse_on_propose_ignores_unrelated_top_level_keys():
         chat:
           compaction:
             trigger_total_tokens: 30000
-            head_size: 12
         self_improvement:
           on_propose: auto
           max_versions: 7

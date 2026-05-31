@@ -4871,27 +4871,33 @@ class ChatSession:
     def _build_history_for_router(self) -> list[dict]:
         """Slice self.history into OpenAI-style messages for RouterLoop.
 
-        Mirrors the head/tail compaction config so the LLM sees the same
-        context window the old skill_router preprocessor produced.
+        #1128 step 3 (Fork B — window-utilization-first): the elide point now
+        coincides with ``effective_trigger`` (the existing pre-frame compaction
+        trigger) instead of the old turn-count head_size/tail_size.
+
+        - If total token estimate <= effective_trigger: return ALL turns raw
+          (no elide, no duplication).  The LLM sees the full conversation up
+          to the compaction trigger.
+        - Else: elide the middle — head (trim_head) + optional summary bridge
+          + tail (trim_tail).  The pre-frame guard
+          ``_maybe_force_compact_for_router`` has already compacted the middle
+          before this runs, so the elide point is structurally aligned.
+
+        Overlap guard: if trim_head and trim_tail collectively cover all turns
+        (the chat is small relative to budgets but total > trigger — unlikely
+        but possible with large single turns), deduplication by identity
+        ensures no turn appears twice.
+
         Returns [{role: 'user'|'assistant', content: str}, ...] ordered
         chronologically. The system prompt is prepended by RouterLoop itself.
-
-        Only user/agent conversational turns are included. The compaction
-        head_size + tail_size governs which turns to keep.
-
-        Slicing correctness: when ``len(turns) <= head_size + tail_size``,
-        ``head`` and ``tail`` overlap (= the same turns appear at both
-        slice ends). Concatenating ``head + tail`` in that regime
-        produces a fully-duplicated history — observed via dogfood
-        trace v6 as the ROOT CAUSE of the Q4 ``list_skills`` empty-stop
-        attractor (= the LLM saw the same user query twice with the
-        history reset between them, got confused, exited silently).
-        Pre-fix had no overlap guard; this branch returns the full
-        ``turns`` unchanged when no slicing is needed and only takes
-        the head+tail (with optional summary bridge) when the history
-        actually exceeds the window.
+        Only user/agent conversational turns are included; ``summary`` /
+        ``skill_event`` remain Reyn-internal and are filtered out.
         """
-        cfg = self._compaction
+        from reyn.services.compaction.engine import (
+            estimate_tokens_for_turn,
+            trim_head,
+            trim_tail,
+        )
         # E-full (#383): include tool-turn entries (= assistant w/ tool_calls,
         # tool responses) in the slice. The wire-shape builder below
         # forwards them as-is to the LLM. ``summary`` / ``skill_event``
@@ -4901,13 +4907,38 @@ class ChatSession:
             if m.role in ("user", "assistant", "tool", "agent")
         ]
 
-        if len(turns) <= cfg.head_size + cfg.tail_size:
-            # No compaction needed — head+tail would overlap and duplicate.
+        # Resolve token budgets from the compaction engine.
+        _ctrl = getattr(self, "_compaction_controller", None)
+        engine = getattr(_ctrl, "_engine", None)
+        budgets = getattr(engine, "budgets", None)
+        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+        model = getattr(self, "model", "")
+        if budgets is not None:
+            effective_trigger = budgets.effective_trigger
+            head_budget = budgets.head_budget
+            tail_budget = budgets.tail_budget
+        else:
+            from reyn.llm.model_budget import get_max_input_tokens
+            effective_trigger = get_max_input_tokens(
+                model, events=getattr(self, "_chat_events", None)
+            )
+            head_budget = tail_budget = effective_trigger // 4
+
+        total = sum(
+            estimate_tokens_for_turn(m, model, use_chars4=use_chars4)
+            for m in turns
+        )
+
+        if total <= effective_trigger:
+            # Window-utilization: full raw conversation fits — no elide.
             selected = turns
         else:
-            # Head+tail with optional summary bridge for the elided middle.
-            head = turns[:cfg.head_size]
-            tail = turns[-cfg.tail_size:] if cfg.tail_size else []
+            # Elide the middle: head + optional summary bridge + tail.
+            head = trim_head(turns, head_budget, model, use_chars4=use_chars4)
+            tail = trim_tail(turns, tail_budget, model, use_chars4=use_chars4)
+            # Overlap guard: dedupe by identity so no turn appears twice.
+            head_ids = {id(t) for t in head}
+            tail_deduped = [t for t in tail if id(t) not in head_ids]
             summary = self._latest_summary()
             if summary:
                 summary_text = (
@@ -4919,9 +4950,9 @@ class ChatSession:
                     content=f"[summary of earlier conversation]\n{summary_text}",
                     ts=summary.ts,
                 )]
-                selected = head + bridge + tail
+                selected = head + bridge + tail_deduped
             else:
-                selected = head + tail
+                selected = head + tail_deduped
 
         # E-full (#383) pass-through: ChatMessage IS the wire shape, so the
         # builder just serialises each entry into a litellm-compatible
@@ -4960,32 +4991,64 @@ class ChatSession:
     ) -> tuple[list[dict], list[dict], list[dict], dict | None]:
         """Decompose current history into (head, raw_middle, tail, summary) for retry_loop.
 
-        Mirrors :meth:`_build_history_for_router`'s head/tail slicing but
-        exposes the elided ``raw_middle`` explicitly so the bounded
-        adaptive-shrink ``retry_loop`` (#1125 Item 2) can fold it into the
-        running summary under overflow — instead of the prior degraded
-        compact-once. ``summary`` is the structured dict from the latest
-        persisted summary turn (retry_loop treats it as an immutable base).
+        #1128 step 3: mirrors :meth:`_build_history_for_router`'s token-budget
+        elide threshold (effective_trigger) and exposes the elided ``raw_middle``
+        explicitly so the bounded adaptive-shrink ``retry_loop`` (#1125 Item 2)
+        can fold it into the running summary under overflow.  ``summary`` is the
+        structured dict from the latest persisted summary turn (retry_loop treats
+        it as an immutable base).
 
-        When ``len(turns) <= head_size + tail_size`` the head/tail would
-        overlap (the documented Q4-attractor duplication hazard), so the whole
-        history goes into ``head`` with empty ``raw_middle`` / ``tail`` — there
-        is nothing to elide, and retry_loop's shrink can still trim ``head``.
+        When total token estimate <= effective_trigger the full history goes into
+        ``head`` with empty ``raw_middle`` / ``tail`` — there is nothing to elide,
+        and retry_loop's shrink can still trim ``head``.
         """
-        cfg = self._compaction
+        from reyn.services.compaction.engine import (
+            estimate_tokens_for_turn,
+            trim_head,
+            trim_tail,
+        )
         turns = [
             m for m in self.history
             if m.role in ("user", "assistant", "tool", "agent")
         ]
-        if len(turns) <= cfg.head_size + cfg.tail_size:
+
+        # Resolve token budgets from the compaction engine (same as _build_history_for_router).
+        _ctrl = getattr(self, "_compaction_controller", None)
+        engine = getattr(_ctrl, "_engine", None)
+        budgets = getattr(engine, "budgets", None)
+        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+        model = getattr(self, "model", "")
+        if budgets is not None:
+            effective_trigger = budgets.effective_trigger
+            head_budget = budgets.head_budget
+            tail_budget = budgets.tail_budget
+        else:
+            from reyn.llm.model_budget import get_max_input_tokens
+            effective_trigger = get_max_input_tokens(
+                model, events=getattr(self, "_chat_events", None)
+            )
+            head_budget = tail_budget = effective_trigger // 4
+
+        total = sum(
+            estimate_tokens_for_turn(m, model, use_chars4=use_chars4)
+            for m in turns
+        )
+
+        if total <= effective_trigger:
+            # Everything fits — no elide; retry_loop can still trim head.
             head_msgs = turns
             raw_middle_msgs: list = []
             tail_msgs: list = []
         else:
-            head_msgs = turns[:cfg.head_size]
-            tail_msgs = turns[-cfg.tail_size:] if cfg.tail_size else []
-            middle_end = len(turns) - cfg.tail_size if cfg.tail_size else len(turns)
-            raw_middle_msgs = turns[cfg.head_size:middle_end]
+            head_msgs = trim_head(turns, head_budget, model, use_chars4=use_chars4)
+            tail_msgs = trim_tail(turns, tail_budget, model, use_chars4=use_chars4)
+            # raw_middle = turns strictly between head and tail (by identity).
+            head_id_set = {id(t) for t in head_msgs}
+            tail_id_set = {id(t) for t in tail_msgs}
+            raw_middle_msgs = [
+                t for t in turns
+                if id(t) not in head_id_set and id(t) not in tail_id_set
+            ]
 
         summary_msg = self._latest_summary()
         summary_dict: dict | None = None
