@@ -1,9 +1,9 @@
 name: fizzbuzz_tdd_workspace
 
 models:
-  light:    gemini/gemini-2.5-flash-lite
-  standard: gemini/gemini-2.5-flash-lite
-  strong:   gemini/gemini-2.5-flash-lite
+  light:    gemini-flash-lite
+  standard: gemini-flash-lite
+  strong:   gemini-pro
 
 # Pre-approve file write + shell for the TDD scenario. The workspace
 # is an isolated tmp dir per run, so blanket grants are safe.

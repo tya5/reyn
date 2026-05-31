@@ -14,7 +14,7 @@ Project-level configuration. Checked in to git. Personal overrides go in `reyn.l
 ```yaml
 model: standard
 models:
-  light:    gemini/gemini-2.5-flash-lite
+  light:    gemini-flash-lite
   standard: openai/gpt-4o
   strong:   anthropic/claude-3-5-sonnet-20241022
 ```
@@ -64,7 +64,7 @@ If a str value **contains `/`**, it is treated as a literal LiteLLM model string
 
 ```yaml
 models:
-  light:    gemini/gemini-2.5-flash-lite
+  light:    gemini-flash-lite
   standard: openai/gpt-4o
   strong:   anthropic/claude-3-5-sonnet-20241022
 ```
@@ -87,7 +87,7 @@ An unknown shorthand (name not in user entries or built-ins) is a startup error.
 
 ```yaml
 models:
-  standard: gemini/gemini-2.5-flash-lite   # str form still OK alongside dict entries
+  standard: gemini-flash-lite   # str form still OK alongside dict entries
 
   strong:
     model: anthropic/claude-3-7-sonnet      # required
@@ -168,9 +168,9 @@ You can reference them by name without declaring them in `reyn.yaml`:
 | `claude-haiku` | `anthropic/claude-3-5-haiku` | |
 | `gpt-4o-mini` | `openai/gpt-4o-mini` | |
 | `gpt-4o` | `openai/gpt-4o` | |
-| `gemini-flash-lite` | `openai/gemini-2.5-flash-lite` | |
-| `gemini-3.1-flash-preview` | `openai/gemini-3.1-flash-preview` | |
-| `gemini-2.0-flash` | `openai/gemini-2.0-flash` | thinking disabled via `thinking_budget=0` |
+| `gemini-flash-lite` | `gemini/gemini-2.5-flash-lite` | |
+| `gemini-3.1-flash-preview` | `gemini/gemini-3.1-flash-preview` | |
+| `gemini-2.0-flash` | `gemini/gemini-2.0-flash` | thinking disabled via `thinking_budget=0` |
 
 User-declared entries **override** built-ins with the same name.  The built-in catalog
 is a convenience starting point; your `reyn.yaml` is always the source of truth.

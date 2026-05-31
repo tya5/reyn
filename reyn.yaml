@@ -10,9 +10,9 @@ model: standard
 # Model class → LiteLLM model string
 # Three standard tiers. Add custom classes as needed.
 models:
-  light:    gemini/gemini-2.5-flash-lite
-  standard: gemini/gemini-2.5-flash-lite
-  strong:   gemini/gemini-2.5-flash-lite
+  light:    gemini-flash-lite
+  standard: gemini-flash-lite
+  strong:   gemini-pro
 
 # Project-wide context injected into the system prompt for every phase.
 # Use this for stable background that all skills should implicitly know

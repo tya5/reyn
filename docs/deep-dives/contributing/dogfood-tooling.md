@@ -43,7 +43,7 @@ After the bundle, both patterns drive from a single YAML config per use case. Pe
 ```yaml
 trace: /tmp/reyn-worktrees/b43-7/.reyn/llm_trace.jsonl
 req_id: 1847830e-8eb0-4056-b129-cc160dc7d3f9
-model: openai/gemini-2.5-flash-lite
+model: gemini-flash-lite
 n: 10
 parallel: 8
 classifiers:

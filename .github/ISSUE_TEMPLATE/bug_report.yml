@@ -38,12 +38,12 @@ body:
         - Python version (`python --version`)
         - OS and version
         - Reyn version (`reyn --version`, or `pip show reyn`)
-        - LiteLLM model / provider used (e.g. `openai/gemini-2.5-flash-lite`)
+        - LiteLLM model / provider used (e.g. `gemini-flash-lite`)
       placeholder: |
         Python: 3.12.4
         OS: macOS 14.5 / Ubuntu 24.04 / ...
         Reyn: 0.1.0a1
-        Model: openai/gemini-2.5-flash-lite via LiteLLM proxy at localhost:4000
+        Model: gemini-flash-lite via LiteLLM proxy at localhost:4000
     validations:
       required: true
 

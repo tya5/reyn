@@ -28,6 +28,7 @@ EXPECTED_NAMES = {
     "gpt-4o-mini",
     "gpt-4o",
     "gemini-flash-lite",
+    "gemini-pro",
     "gemini-3.1-flash-preview",
     "gemini-2.0-flash",
 }

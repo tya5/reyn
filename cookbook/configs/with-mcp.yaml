@@ -4,9 +4,9 @@
 
 model: standard
 models:
-  light:    gemini/gemini-2.5-flash-lite
-  standard: gemini/gemini-2.5-flash-lite
-  strong:   gemini/gemini-2.5-pro
+  light:    gemini-flash-lite
+  standard: gemini-flash-lite
+  strong:   gemini-pro
 
 permissions:
   python.pure: allow
