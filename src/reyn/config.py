@@ -395,10 +395,6 @@ class CompactionConfig:
     Tokeniser:
         use_chars4_estimate=False (default) -> litellm.token_counter per turn.
         use_chars4_estimate=True  -> len(text)//4 (latency-opt for large deploys).
-
-    Legacy/background trigger:
-        trigger_total_tokens is kept for the background _maybe_compact() path
-        that fires after each reply (not the synchronous pre-frame guard).
     """
     # Integer weight-based budget allocation (PR-N6). Sum-arbitrary; normalised
     # at compute_budgets() time.
@@ -421,26 +417,24 @@ class CompactionConfig:
     section_caps_spec_tokens: int = 100
     # Tokeniser opt-out (Axis 10): set True for latency-sensitive deployments.
     use_chars4_estimate: bool = False
-    # Legacy fields kept for background trigger path and section caps.
-    trigger_total_tokens: int = 30000   # background trigger: compact when middle exceeds this
     body_token_cap: int = 1500          # hard cap on summary body tokens (post-truncation)
-    min_compact_batch: int = 5          # skip compact when fewer than N turns to absorb
     # #271 re-summarize (T2): max LLM re-compression passes when a produced
     # topic_arc overshoots body_budget, before the deterministic T3
     # hard_truncate floor. 1 = one judgment-based re-summary then floor; 0 =
     # skip T2 (straight to the floor, = pre-#271 behaviour).
     resummarize_passes: int = 1
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
-    # head_size / tail_size:
-    # DEPRECATED — retained only for the background `_maybe_compact()` legacy
-    # path which still uses turn-count gates to identify HEAD / TAIL
-    # boundaries. The new synchronous force-trigger path (= pre-frame guard
-    # in `_maybe_force_compact_for_router`) uses token-budget only via
-    # component_weights (= PR-N6). Background-path removal is a separate
-    # root-fix wave; until then these fields exist to keep the legacy lifecycle
-    # working without scope-creeping PR-N3/N6.
-    head_size: int = 12                 # First N user/agent turns = HEAD (background path)
-    tail_size: int = 12                 # Last N user/agent turns = TAIL (background path)
+    # head_size / tail_size: define the HEAD / TAIL turn-count boundaries for
+    # compaction candidate selection. #1125 I1-a / #1128 PR-a: these are LIVE
+    # (not deprecated) — the surviving synchronous force-trigger path
+    # (`force_compact_now`) uses them as `cover_floor = max(prev_cover,
+    # head_size)` and `tail_threshold = max_seq - tail_size` to pick which
+    # middle turns to compact, and `_build_history_for_router` slices history
+    # to head+tail. (The earlier "deprecated / background-only" note was
+    # incorrect — the background `_maybe_compact` path it referred to was
+    # removed in #1128 PR-a, but force_compact_now consumes these fields.)
+    head_size: int = 12                 # First N user/assistant turns = HEAD (never compacted)
+    tail_size: int = 12                 # Last N user/assistant turns = TAIL (preserved raw)
 
 
 @dataclass
@@ -1906,13 +1900,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
         use_chars4_estimate=bool(
             compaction_raw.get("use_chars4_estimate", defaults.use_chars4_estimate)
         ),
-        trigger_total_tokens=int(
-            compaction_raw.get("trigger_total_tokens", defaults.trigger_total_tokens)
-        ),
         body_token_cap=int(compaction_raw.get("body_token_cap", defaults.body_token_cap)),
-        min_compact_batch=int(
-            compaction_raw.get("min_compact_batch", defaults.min_compact_batch)
-        ),
         resummarize_passes=int(
             compaction_raw.get("resummarize_passes", defaults.resummarize_passes)
         ),

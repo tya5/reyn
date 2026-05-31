@@ -38,11 +38,13 @@ permissions:
 # See PR4 in plans/abstract-knitting-moonbeam.md for design rationale.
 chat:
   compaction:
-    trigger_total_tokens: 30000     # Compact when uncovered middle exceeds this (≈200-300 turns)
-    head_size: 12                   # First N user/agent turns kept raw
-    tail_size: 12                   # Last N user/agent turns kept raw
+    head_size: 12                   # First N user/assistant turns kept raw
+    tail_size: 12                   # Last N user/assistant turns kept raw
     body_token_cap: 1500            # Total cap across all summary sections
-    min_compact_batch: 5            # Skip compact when fewer than N turns to absorb
+    # #1128 PR-a: trigger_total_tokens / min_compact_batch were removed — they
+    # gated the background auto-fire path, now deleted. Auto-compaction fires
+    # at the window-relative pre-frame guard (effective_trigger), plus on-demand
+    # (/compact, compact op) and the retry_loop overflow backstop.
     section_token_caps:
       topic_arc: 200
       decisions: 400

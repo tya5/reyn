@@ -1,26 +1,24 @@
-"""CompactionController — background head/body/tail compaction.
+"""CompactionController — synchronous head/body/tail compaction.
 
-Extracted from ChatSession (FP-0019 Wave 1).  Owns the background
-asyncio.Task that drives OS-internal compaction (PR-N3: direct Python
-helper, no skill/phase overhead).
+Extracted from ChatSession (FP-0019 Wave 1).  Drives OS-internal
+compaction (PR-N3: direct Python helper, no skill/phase overhead) via
+:meth:`force_compact_now`, the synchronous pre-frame guard path.
+
+#1128 PR-a: the background fire-and-forget path (``spawn_maybe`` →
+``_maybe_compact``, the 30K-absolute ``trigger_total_tokens`` trigger)
+was removed. Auto-compaction is now driven solely by the synchronous
+pre-frame guard (``ChatSession._maybe_force_compact_for_router`` →
+:meth:`force_compact_now`, window-relative ``effective_trigger``), plus
+on-demand (the ``compact`` op / ``/compact``) and the ``retry_loop``
+overflow backstop. With no background task, compaction always runs
+synchronously inside the serial router handler.
 
 All event emissions go through the injected ``event_log``; no silent
 state changes (P6).  Business logic lives entirely here; ChatSession
-delegates via :meth:`spawn_maybe`, :meth:`cancel`, and
-:meth:`force_compact_now` (P3).
-
-Axis 8 (B_M trigger race strict):
-    ``force_compact_now()`` acquires the engine's ``compaction_lock``
-    (asyncio.Lock) for the entire duration of the compaction run.
-    Any code path that appends to ``ChatSession.history`` between the
-    force-trigger decision and compaction completion must await this
-    lock before appending, ensuring the mathematical gap is 0: no new
-    turn can land between the "T(M) > effective_trigger" decision and
-    the moment compaction reduces T(M) back below the budget.
+delegates via :meth:`force_compact_now` (P3).
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Callable
 
@@ -144,128 +142,32 @@ class CompactionController:
         self._render_summary = render_summary
         self._merge_action_usage = merge_action_usage
         self._compacting: bool = False
-        self._task: asyncio.Task | None = None
-
-    # ── public API ────────────────────────────────────────────────────────────
-
-    def spawn_maybe(self) -> None:
-        """Fire-and-forget :meth:`_maybe_compact` in a background task.
-
-        Replaces the ``asyncio.create_task(self._maybe_compact())`` call that
-        previously lived at session.py L1009.  The caller MUST NOT ``await``
-        this method — it returns immediately.
-        """
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._maybe_compact())
-
-    async def cancel(self) -> None:
-        """Graceful shutdown — cancel in-flight task and suppress CancelledError.
-
-        Replaces the shutdown block at session.py L943-948.  Any non-cancellation
-        exception is logged and a ``compaction_failed`` event is emitted.
-        """
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                logger.warning("compaction task failed during shutdown: %s", exc)
-                self._events.emit(
-                    "compaction_failed", error=str(exc), phase="shutdown"
-                )
 
     # ── internal compaction logic ─────────────────────────────────────────────
 
-    async def _maybe_compact(self) -> None:
-        """Threshold judgement + compaction trigger.
-
-        Originally session.py L1313-1368.
-
-        Trigger: estimated tokens of user/agent turns whose seq is BOTH:
-        - > head_size (those are HEAD, never compacted)
-        - > latest_summary.covers_through_seq (already covered)
-        - <= max_seq - tail_size (TAIL is preserved as raw)
-        exceeds ``config.trigger_total_tokens`` and the candidate set
-        contains at least ``config.min_compact_batch`` turns.
-        """
-        if self._compacting:
-            self._events.emit("compaction_check", outcome="already_running")
-            return
-        cfg = self._config
-        history = self._history_access()
-        # E-full PR-E2 (#383): tool turns (= role="assistant" with
-        # tool_calls + role="tool" responses) are now first-class history
-        # entries and should be compactable. "agent" is the pre-#383
-        # spelling of "assistant" — kept here for backward-compat with
-        # any legacy entries that escaped read-time migration.
-        turns = [
-            m for m in history
-            if m.role in ("user", "assistant", "tool", "agent")
-        ]
-        if len(turns) <= cfg.head_size + cfg.tail_size:
-            self._events.emit(
-                "compaction_check", outcome="too_few_turns",
-                turns=len(turns), head=cfg.head_size, tail=cfg.tail_size,
-            )
-            return
-
-        latest = self._latest_summary()
-        prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
-        cover_floor = max(prev_cover, cfg.head_size)
-
-        max_seq = max((t.seq for t in turns), default=0)
-        tail_threshold = max_seq - cfg.tail_size
-        candidates = [t for t in turns if cover_floor < t.seq <= tail_threshold]
-        if len(candidates) < cfg.min_compact_batch:
-            self._events.emit(
-                "compaction_check", outcome="below_min_batch",
-                candidate_count=len(candidates), min_batch=cfg.min_compact_batch,
-            )
-            return
-
-        total_tokens = sum(_estimate_tokens(t.text) for t in candidates)
-        if total_tokens < cfg.trigger_total_tokens:
-            self._events.emit(
-                "compaction_check", outcome="below_threshold",
-                total_tokens=total_tokens, threshold=cfg.trigger_total_tokens,
-                candidate_count=len(candidates),
-            )
-            return
-        self._events.emit(
-            "compaction_check", outcome="triggering",
-            total_tokens=total_tokens, candidate_count=len(candidates),
-        )
-
-        self._compacting = True
-        try:
-            await self._run_compaction(candidates, latest)
-        except Exception as exc:
-            self._events.emit("compaction_failed", error=str(exc))
-        finally:
-            self._compacting = False
-
     async def force_compact_now(self) -> None:
-        """Synchronous force-trigger — single pass (#1128 PR-c).
+        """Synchronous force-trigger — single pass (#1128 PR-a + PR-c).
 
         Used by the pre-frame guard in ``_maybe_force_compact_for_router`` when
         the projected prompt would exceed the model's max_input_tokens.  Emits
         ``compaction_check`` with ``outcome="forced_sync"``.
 
+        #1128 PR-a: the sole auto-compaction trigger (the background
+        ``spawn_maybe`` path was removed); the former vestigial
+        ``compaction_lock`` acquire was dropped (only this method acquired it;
+        no history appender awaited it).
+
         #1128 PR-c: collapsed from the former Option-B race-recovery loop
         (``max_passes`` re-measure + ``ForceCompactRaceUnrecoveredError``) to a
-        single pass. That loop existed to re-run when another coroutine appended
-        to history mid-compaction. Cross-driver turn serialization is now
-        structural — every transport that drives ``run_one_iteration`` holds the
-        shared per-agent lock (PR-b, ``reyn.chat.agent_locks``), and within a
-        turn ``_append_history`` is synchronous — so no concurrent append can
-        land during this method. If the single pass under-shoots (the guard's
+        single pass. That loop re-ran when another coroutine appended to history
+        mid-compaction. Cross-driver turn serialization is now structural —
+        every transport that drives ``run_one_iteration`` holds the shared
+        per-agent lock (PR-b, ``reyn.chat.agent_locks``), and within a turn
+        ``_append_history`` is synchronous — so no concurrent append can land
+        during this method. If the single pass under-shoots (the guard's
         estimate under-counted), the ``retry_loop`` overflow backstop in
         ``_run_router_loop`` folds raw_middle and monotonically shrinks: that is
         the under-shoot floor, replacing the multi-pass-or-raise contract.
-
-        Axis 8: acquires the engine's ``compaction_lock`` for the run.
         """
         if self._compacting:
             self._events.emit("compaction_check", outcome="already_running")
@@ -295,13 +197,12 @@ class CompactionController:
             return
 
         self._compacting = True
-        async with self._engine.compaction_lock:
-            try:
-                await self._run_compaction(candidates, latest)
-            except Exception as exc:
-                self._events.emit("compaction_failed", error=str(exc))
-            finally:
-                self._compacting = False
+        try:
+            await self._run_compaction(candidates, latest)
+        except Exception as exc:
+            self._events.emit("compaction_failed", error=str(exc))
+        finally:
+            self._compacting = False
 
     async def _run_compaction(
         self,

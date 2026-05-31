@@ -660,10 +660,6 @@ class CompactionEngine:
         are re-derived dynamically via :meth:`recompute_budgets` so that
         operator-editable SP changes (REYN.md reloads, skill catalog changes)
         are reflected before each pre-frame check.
-    Axis 8: exposes an ``asyncio.Lock`` (``compaction_lock``) that
-        force_compact_now() callers must hold while compaction is in progress.
-        History appends that need to be serialised with compaction must await
-        this lock before appending.
 
     Parameters
     ----------
@@ -760,9 +756,6 @@ class CompactionEngine:
                 self._cfg, model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
             )
             assert_static_bounds(self._cfg, self._budgets)
-
-        # Axis 8: compaction lock for synchronous force_compact path.
-        self.compaction_lock: asyncio.Lock = asyncio.Lock()
 
     def recompute_budgets(self) -> None:
         """Re-measure T_SP from the provider and recompute budgets.

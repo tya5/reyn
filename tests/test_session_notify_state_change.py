@@ -156,9 +156,9 @@ def test_state_change_entries_not_in_compactor_candidates(tmp_path):
     silently start collapsing state-change events.
 
     Replicates the actual filter from
-    ``CompactionController._maybe_compact`` (= ``turns = [m for m in
-    history if m.role in ("user", "agent")]``) and verifies the
-    state_change entry doesn't appear in the result.
+    ``CompactionController.force_compact_now`` (= ``turns = [m for m in
+    history if m.role in ("user", "assistant", "tool", "agent")]``) and
+    verifies the state_change entry doesn't appear in the result.
     """
     session = _make_session(tmp_path)
     # Append a mix of role types.

@@ -91,11 +91,13 @@ def test_helper_ignores_malformed_tool_call_entries() -> None:
 
 
 def test_compaction_filter_includes_tool_role() -> None:
-    """Tier 2: the new role filter in ``_maybe_compact`` admits tool turns.
+    """Tier 2: the role filter in ``force_compact_now`` admits tool turns.
 
     Pin via source-text invariant since the filter is a literal tuple
     inside the method body. The string check guards against accidental
-    revert to the pre-PR-E2 ``("user", "agent")``-only filter.
+    revert to the pre-PR-E2 ``("user", "agent")``-only filter. (#1128 PR-a:
+    the former ``_maybe_compact`` background path was removed; the same
+    candidate role filter lives in the surviving ``force_compact_now``.)
     """
     import inspect
 
