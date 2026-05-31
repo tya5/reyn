@@ -228,6 +228,28 @@ class ControlIRExecutor:
                 ),
                 example={"kind": "shell", "cmd": "reyn run my_skill 'hello'", "timeout": 120},
             )] if self._shell_allowed else []),
+            ControlIROpSpec(
+                kind="sandboxed_exec",
+                description=(
+                    "Execute a command under a sandbox policy and return stdout, stderr, "
+                    "and returncode. "
+                    "argv: the command as a LIST of strings — argv[0] is the executable, "
+                    "e.g. [\"python\", \"-m\", \"pytest\", \"-x\"]. It is NOT a single shell "
+                    "string and NOT a 'command'/'cmd' field — always provide argv as a list. "
+                    "There is no shell: pipes, redirects (>, 2>&1), globs, and &&/|| are NOT "
+                    "interpreted — pass real argv tokens only. "
+                    "Runs in the project root directory; stdout and stderr are captured "
+                    "separately (do not append redirections). "
+                    "Optional policy fields (network: bool, read_paths/write_paths: list[str], "
+                    "allow_subprocess: bool, env_passthrough: list[str], timeout_seconds: int) "
+                    "may be omitted — when the phase declares a default sandbox policy the OS "
+                    "applies it and overrides them. "
+                    "Use for git, pytest, build, and other repository commands. "
+                    "Status: enabled by default — issue sandboxed_exec ops directly; do not "
+                    "abort on permission concerns."
+                ),
+                example={"kind": "sandboxed_exec", "argv": ["python", "-m", "pytest", "-x", "--tb=short"]},
+            ),
             *([ControlIROpSpec(
                 kind="mcp",
                 description=(
