@@ -656,18 +656,14 @@ def run_install(args: argparse.Namespace) -> None:
         os.environ.setdefault("LITELLM_API_BASE", config.api_base)
     resolver = ModelResolver(config.models)
     logger = make_logger()
-    agent = Agent(
-        model=config.model,
+    # #997 dir2: config-derived permission/runtime bundle wired by from_config.
+    agent = Agent.from_config(
+        config,
+        shell_allowed=False,
+        resolver=resolver,
         strict=False,
         subscribers=[logger],
         intervention_bus=StdinInterventionBus(),
-        shell_allowed=False,
-        resolver=resolver,
-        permission_resolver=perm_resolver,
-        safety=config.safety,
-        mcp_servers=config.mcp,
-        python_allowed_modules=list(config.python.allowed_modules),
-        prompt_cache_enabled=config.prompt_cache_enabled,
         project_context=project_context,
         caller="direct",
     )
