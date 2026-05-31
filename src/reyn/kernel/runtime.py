@@ -481,6 +481,29 @@ class OSRuntime:
             if artifact_path is not None
             else None
         )
+        model_resolved = self._resolver.resolve(effective_model).model
+        # #1176 B1: OS-injected context-size signal (symmetric with chat). Render
+        # the exact-token free-window from the phase compaction engine's budget;
+        # render_context_size_signal returns None when the window is ample (most
+        # turns → frame stays stable, no noise) and a header when it is filling.
+        context_size_signal = None
+        _eng = self._phase_compaction_engine
+        _budgets = getattr(_eng, "budgets", None) if _eng is not None else None
+        if _budgets is not None:
+            import json as _json
+
+            from reyn.services.compaction.context_signal import (
+                render_context_size_signal,
+            )
+            from reyn.services.compaction.engine import estimate_tokens
+
+            _used = estimate_tokens(
+                _json.dumps(control_ir_results or [], ensure_ascii=False), model_resolved
+            )
+            context_size_signal = render_context_size_signal(
+                free_window=max(0, _budgets.effective_trigger - _used),
+                effective_trigger=_budgets.effective_trigger,
+            )
         return build_frame(
             phase_name=current_phase,
             phase=phase_def,
@@ -494,12 +517,13 @@ class OSRuntime:
             available_ops=effective_ops,
             op_catalog=all_ops,
             effective_model=effective_model,
-            model_resolved=self._resolver.resolve(effective_model).model,
+            model_resolved=model_resolved,
             events=self.events,
             control_ir_results=control_ir_results,
             artifact_path=resolved_artifact_path,
             remaining_act_turns=remaining_act_turns,
             offload_dir=offload_dir,
+            context_size_signal=context_size_signal,
         )
 
     # ── Phase entry + phase execution ─────────────────────────────────────────

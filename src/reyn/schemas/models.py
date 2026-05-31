@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_serializer, model_validator
 
 from reyn.permissions.permissions import PermissionDecl
 
@@ -672,7 +672,24 @@ class ContextFrame(BaseModel):
     # 0 means this call is the mandatory decide turn — the LLM MUST NOT emit any ops.
     # None means unlimited (no max_act_turns constraint on this phase).
     remaining_act_turns: int | None = None
+    # #1176 B1: OS-injected context-size signal (exact-token free-window header),
+    # symmetric with the chat axis. None when the phase window is ample (the OS
+    # omits it). Most per-turn-volatile → kept at the tail with the other
+    # volatile fields so the cached frame prefix above it stays stable.
+    context_size_signal: str | None = None
     current_datetime: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):  # noqa: ANN001
+        """#1176 B1: omit ``context_size_signal`` entirely when absent (ample
+        window) so a frame without a signal serializes byte-identically to the
+        pre-#1176 shape — keeps the LLM-facing JSON and LLMReplay fixture keys
+        stable. When the window is filling the signal rides in the volatile tail.
+        All other fields are untouched (default serialization)."""
+        data = handler(self)
+        if data.get("context_size_signal") is None:
+            data.pop("context_size_signal", None)
+        return data
 
 
 class Event(BaseModel):
