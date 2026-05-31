@@ -27,7 +27,7 @@ ChatSession constructs this on every turn. Selected fields:
 | `user_message` | inbox payload | The latest utterance to route |
 | `chat_id` | session | The agent's own name (used by classify when building memory paths) |
 | `history_path` | session | Path to `history.jsonl`, sliced by the classify preprocessor |
-| `compaction` | config | Head/tail sizes for history slicing |
+| `compaction` | config | Window-first token-budget compaction policy (`component_weights` / `section_weights`) |
 | `available_skills` | session | Project + stdlib catalogue (router/compactor excluded), filtered by `profile.allowed_skills` if set |
 | `available_agents` | registry | Other agents reachable via topology rules — `[{name, role}, ...]` |
 | `memory_index` | session | Pre-merged shared + agent layers (`{status, content}`); `content` is markdown with `(shared)` and `(agent: <name>)` sections |

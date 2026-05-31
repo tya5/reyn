@@ -245,7 +245,7 @@ plan:
 | フィールド | 型 | デフォルト | 説明 |
 |-------|------|---------|-------------|
 | `recent_step_results_raw` | int | `3` | 最新 N 件の step_results はそのまま保持し、それより古いものをコンパクション。 |
-| `step_results_ratio` | float | `0.50` | `main_pool`（= `T_max - T_SP`）のうち次ステップの sys_prompt 内 step_results 部分に割り当てる比率。`chat.compaction.body_ratio` の sibling。 |
+| `step_results_ratio` | float | `0.50` | `main_pool`（= `T_max - T_SP`）のうち次ステップの sys_prompt 内 step_results 部分に割り当てる比率。`chat.compaction.component_weights` の body 配分の sibling。 |
 | `summarize_older_threshold_tokens` | int \| null | `null` | 古い step_results をコンパクションする閾値（トークン数）。`null` の場合は `ComputedBudgets`（= `step_results_ratio × main_pool`）から導出。 |
 | `use_chars4_estimate` | bool | `false` | `true` の場合、`litellm.token_counter` の代わりに `len(text)//4` を使用（レイテンシ opt-out、`chat.compaction.use_chars4_estimate` と同じ意味）。 |
 
@@ -748,29 +748,33 @@ embedding:
 
 ## `chat` ブロック
 
-チャットセッションの圧縮設定 — 最近のターンを失わずにコンテキストを簡潔に保つ Head/Body/Tail トークンバジェット。
-
-バジェット配分は **比率ベース**: 4 つの ratio はモデルのメインコンテキストプール (= `T_max - T_SP`) の比率として表現され、合計が ≤ 1.0 でなければなりません（起動時に検証）。**weight dict** で同じ ratio バジェット内の詳細な調整が可能です。レガシーフィールド (`trigger_total_tokens` / `head_size` / `tail_size` / `body_token_cap` / `min_compact_batch` / `section_token_caps`) は、各リプライ後に発火する background パスを駆動します。
+チャットは最初にコンテキストウィンドウを生のターンで充填し、履歴が
+effective trigger（`component_weights` からモデルの実際のコンテキストウィンドウに対して
+ウィンドウ相対で導出）を超えた時点で圧縮が発火します。Head・Tail ゾーンは
+ターン数ではなく **トークンバジェット** で管理されます。
 
 ```yaml
 chat:
   compaction:
-    # 比率ベースのバジェット（合計 ≤ 1.0）:
-    head_ratio: 0.10
-    body_ratio: 0.05
-    tail_ratio: 0.15
-    new_msg_ratio: 0.10
+    # バジェット配分: 整数の重み、起動時に正規化。
+    # キー: head / body / tail / new_msg / compaction_batch
+    component_weights:
+      head:             10
+      body:             5
+      tail:             15
+      new_msg:          10
+      compaction_batch: 60
     section_caps_spec_tokens: 100
     use_chars4_estimate: false        # true = len(text)//4（レイテンシ opt-out）
-    # weight dict（整数の重み、合計値は任意）:
-    component_weights: {head: 10, body: 5, tail: 15, new_msg: 10}
-    section_weights: {decisions: 40, pending: 40, topic_arc: 20, session_user_facts: 20, artifacts_referenced: 30}
-    # レガシー / background-trigger パス:
-    trigger_total_tokens: 30000        # カバーされない中間部がこれを超えると圧縮
-    head_size: 12                      # 最初の N ユーザー/エージェントターンを生のまま保持
-    tail_size: 12                      # 最後の N ユーザー/エージェントターンを生のまま保持
-    body_token_cap: 1500               # 全 body サマリーセクションの合計トークン上限
-    min_compact_batch: 5               # N ターン未満の圧縮はスキップ
+    body_token_cap: 1500               # サマリー body トークン上限（post-truncation）
+    resummarize_passes: 1              # hard_truncate 前の LLM 再圧縮パス数
+    # body 内のセクション配分の重み、起動時に正規化。
+    section_weights:
+      topic_arc:            5
+      decisions:            40
+      pending:              25
+      session_user_facts:   10
+      artifacts_referenced: 35
     section_token_caps:
       topic_arc: 200
       decisions: 400
@@ -779,33 +783,16 @@ chat:
       artifacts_referenced: 300
 ```
 
-### `chat.compaction` ratio フィールド
+### `chat.compaction` フィールド
 
 | フィールド | 型 | デフォルト | 説明 |
 |-------|------|---------|-------------|
-| `head_ratio` | float | `0.10` | `main_pool` のうち HEAD スライス（= 最初の生ターン）に割り当てる比率。 |
-| `body_ratio` | float | `0.05` | `main_pool` のうち BODY（= 構造化サマリー）に割り当てる比率。 |
-| `tail_ratio` | float | `0.15` | `main_pool` のうち TAIL スライス（= 最新の生ターン）に割り当てる比率。 |
-| `new_msg_ratio` | float | `0.10` | `main_pool` のうち incoming ユーザーメッセージに割り当てる比率。 |
-| `section_caps_spec_tokens` | int | `100` | コンパクタープロンプト内の `section_token_caps` シリアライズに割り当てる静的オーバーヘッドバジェット。 |
+| `component_weights` | map[str,int] | `{head:10, body:5, tail:15, new_msg:10, compaction_batch:60}` | 各プロンプトコンポーネントの整数の重み。起動時に `main_pool` に対して正規化。合計値は任意。 |
+| `section_weights` | map[str,int] | （セクションごとのデフォルト） | body バジェット内のサブセクション配分の重み。`component_weights` と同じ shape セマンティクス。 |
+| `section_caps_spec_tokens` | int | `100` | コンパクタープロンプト内の `section_token_caps` シリアライズ用静的オーバーヘッドバジェット。 |
+| `body_token_cap` | int | `1500` | post-truncation 後のサマリー body トークン上限。 |
+| `resummarize_passes` | int | `1` | `topic_arc` が body バジェットを超えた場合の最大 LLM 再圧縮パス数（`hard_truncate` floor 適用前）。`0` = 再圧縮なし（straight to floor）。 |
 | `use_chars4_estimate` | bool | `false` | `true` の場合、`litellm.token_counter` の代わりに `len(text)//4` を使用（大規模デプロイ向けレイテンシ opt-out）。 |
-
-### `chat.compaction` weight dict
-
-| フィールド | 型 | デフォルト | 説明 |
-|-------|------|---------|-------------|
-| `component_weights` | map[str,int] | `{head: 10, body: 5, tail: 15, new_msg: 10}` | ratio バジェット内のコンポーネントごとの配分を駆動する整数の重み。合計値は任意。指定したキーのみオーバーライド。 |
-| `section_weights` | map[str,int] | （セクションごとのデフォルト） | `body_ratio` 内のサブセクション配分の重み。`component_weights` と同じ shape セマンティクス。 |
-
-### `chat.compaction` レガシー / background-path フィールド
-
-| フィールド | 型 | デフォルト | 説明 |
-|-------|------|---------|-------------|
-| `trigger_total_tokens` | int | `30000` | background パス: カバーされない中間部がこのトークン数を超えると圧縮。同期的な pre-frame ガードは ratio フィールドを使用。 |
-| `head_size` | int | `12` | background パス: 生のまま保持する最初のユーザー/エージェントターン数（ターン数ベースのゲート）。 |
-| `tail_size` | int | `12` | background パス: 生のまま保持する最新のユーザー/エージェントターン数（ターン数ベースのゲート）。 |
-| `body_token_cap` | int | `1500` | post-truncation 後のサマリー body トークン上限（legacy ceiling）。 |
-| `min_compact_batch` | int | `5` | 吸収するターン数がこれ未満の場合は圧縮をスキップ（小さな圧縮を回避）。 |
 
 ### `chat.compaction.section_token_caps` フィールド
 
@@ -816,6 +803,13 @@ chat:
 | `pending` | `400` | 保留項目セクションのトークン上限。 |
 | `session_user_facts` | `200` | 圧縮をまたいで引き継ぐユーザーファクトのトークン上限。 |
 | `artifacts_referenced` | `300` | アーティファクト参照一覧のトークン上限。 |
+
+### 廃止キー
+
+`head_size`、`tail_size`、`trigger_total_tokens`、`min_compact_batch` は認識されなくなりました。
+`reyn.yaml` に存在する場合、Reyn は起動時に `DeprecationWarning` を発行して無視します。
+これらのキーを設定ファイルから削除してください — head/tail のサイズ管理は `component_weights`
+によるトークンバジェットに移行し、自動圧縮はウィンドウ相対になりました。
 
 ## `events` ブロック
 

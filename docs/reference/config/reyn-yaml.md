@@ -34,7 +34,7 @@ models:
 | `sandbox` | map | Sandboxed-exec backend selection and unsupported-platform policy. See below. |
 | `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
 | `embedding` | map | RAG embedding model classes and batch settings. See below. |
-| `chat` | map | Chat-session compaction (head/body/tail) settings. See below. |
+| `chat` | map | Chat-session compaction settings. See below. |
 | `voice` | map | Voice input (Whisper) settings for the chat TUI. See below. |
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
 | `skill_search` | map | BM25 skill pre-filter settings. See below. |
@@ -254,7 +254,7 @@ plan:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `recent_step_results_raw` | int | `3` | Keep the last N step_results verbatim; compact older ones. |
-| `step_results_ratio` | float | `0.50` | Fraction of `main_pool` (= `T_max - T_SP`) allocated for the step_results portion of the next step's sys_prompt. Sibling to `chat.compaction.body_ratio`. |
+| `step_results_ratio` | float | `0.50` | Fraction of `main_pool` (= `T_max - T_SP`) allocated for the step_results portion of the next step's sys_prompt. Sibling to `chat.compaction.component_weights` body allocation. |
 | `summarize_older_threshold_tokens` | int \| null | `null` | Total token threshold above which older step_results are compacted. `null` derives the threshold from `ComputedBudgets` (= `step_results_ratio × main_pool`). |
 | `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out, mirrors `chat.compaction.use_chars4_estimate`). |
 
@@ -793,29 +793,33 @@ See [Concepts: RAG — local embedding backend](../../concepts/data-retrieval/ra
 
 ## `chat` block
 
-Chat-session compaction — head/body/tail token budgets that keep context concise without losing recent turns.
-
-Budget allocation is **ratio-based**: each of the four ratios is a fraction of the model's main context pool (= `T_max - T_SP`), and they must sum to ≤ 1.0 (validated at startup). **Weight dicts** allow fine-grained tuning within the same ratio budget. The legacy `trigger_total_tokens` / `head_size` / `tail_size` / `body_token_cap` / `min_compact_batch` / `section_token_caps` fields drive the background path that fires after each reply.
+Chat fills the context window with raw turns first; compaction fires when the
+history exceeds the effective trigger (window-relative, derived from
+`component_weights` against the model's actual context window). Head and tail
+zones are **token-budgeted**, not turn-count gated.
 
 ```yaml
 chat:
   compaction:
-    # Ratio-based budget (sum must be ≤ 1.0):
-    head_ratio: 0.10
-    body_ratio: 0.05
-    tail_ratio: 0.15
-    new_msg_ratio: 0.10
+    # Budget allocation: integer weights, normalised at runtime.
+    # Keys: head / body / tail / new_msg / compaction_batch
+    component_weights:
+      head:             10
+      body:             5
+      tail:             15
+      new_msg:          10
+      compaction_batch: 60
     section_caps_spec_tokens: 100
     use_chars4_estimate: false        # true = len(text)//4 (latency opt-out)
-    # Weight dicts (integer weights, sum-arbitrary):
-    component_weights: {head: 10, body: 5, tail: 15, new_msg: 10}
-    section_weights: {decisions: 40, pending: 40, topic_arc: 20, session_user_facts: 20, artifacts_referenced: 30}
-    # Legacy / background-trigger path:
-    trigger_total_tokens: 30000        # compact when uncovered middle exceeds this
-    head_size: 12                      # first N user/agent turns kept raw
-    tail_size: 12                      # last N user/agent turns kept raw
-    body_token_cap: 1500               # total token cap across all body summary sections
-    min_compact_batch: 5               # skip compaction when fewer than N turns to absorb
+    body_token_cap: 1500               # hard cap on summary body tokens (post-truncation)
+    resummarize_passes: 1              # LLM re-compression passes before hard_truncate floor
+    # Section budget weights within body, normalised at runtime.
+    section_weights:
+      topic_arc:            5
+      decisions:            40
+      pending:              25
+      session_user_facts:   10
+      artifacts_referenced: 35
     section_token_caps:
       topic_arc: 200
       decisions: 400
@@ -824,34 +828,16 @@ chat:
       artifacts_referenced: 300
 ```
 
-### `chat.compaction` ratio fields
+### `chat.compaction` fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `head_ratio` | float | `0.10` | Fraction of `main_pool` reserved for the HEAD slice (= earliest verbatim turns). |
-| `body_ratio` | float | `0.05` | Fraction of `main_pool` reserved for the BODY (= rolling structured summary). |
-| `tail_ratio` | float | `0.15` | Fraction of `main_pool` reserved for the TAIL slice (= most-recent verbatim turns). |
-| `new_msg_ratio` | float | `0.10` | Fraction of `main_pool` reserved for the incoming user message. |
+| `component_weights` | map[str,int] | `{head:10, body:5, tail:15, new_msg:10, compaction_batch:60}` | Integer weights for each prompt component, normalised to `main_pool` at runtime. Sum is arbitrary; larger values give more token budget to that component. |
+| `section_weights` | map[str,int] | (per-section default) | Integer weights for sub-section allocation within the body budget. Same shape semantics as `component_weights`. |
 | `section_caps_spec_tokens` | int | `100` | Static overhead budget for `section_token_caps` serialisation in the compactor prompt. |
-| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of the litellm token counter (latency opt-out for large deployments). |
-| `resummarize_passes` | int | `1` | #271: max LLM re-compression passes when a produced `topic_arc` overshoots its body budget, before the deterministic `hard_truncate` floor. `1` = one judgment-based re-summary then floor; `0` = skip the re-summary (straight to the floor = pre-#271 behaviour). |
-
-### `chat.compaction` weight dicts
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `component_weights` | map[str,int] | `{head: 10, body: 5, tail: 15, new_msg: 10}` | Integer weights driving per-component allocation within the ratio budget. Sum is arbitrary; individual keys override only those components. |
-| `section_weights` | map[str,int] | (per-section default) | Integer weights for sub-section allocation within `body_ratio`. Same shape semantics as `component_weights`. |
-
-### `chat.compaction` legacy / background-path fields
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `trigger_total_tokens` | int | `30000` | Background path: compact when the uncovered middle exceeds this token count. The synchronous pre-frame guard uses the ratio fields instead. |
-| `head_size` | int | `12` | Background path: number of earliest user/agent turns kept verbatim (turn-count gate). |
-| `tail_size` | int | `12` | Background path: number of most-recent user/agent turns kept verbatim (turn-count gate). |
-| `body_token_cap` | int | `1500` | Hard cap on summary body tokens after post-truncation (legacy ceiling). |
-| `min_compact_batch` | int | `5` | Skip compaction when fewer than this many turns would be absorbed (avoids tiny compactions). |
+| `body_token_cap` | int | `1500` | Hard cap on summary body tokens after post-truncation. |
+| `resummarize_passes` | int | `1` | Max LLM re-compression passes when a produced `topic_arc` overshoots its body budget, before the deterministic `hard_truncate` floor. `0` = skip re-summary (straight to the floor). |
+| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out for large deployments). |
 
 ### `chat.compaction.section_token_caps` fields
 
@@ -862,6 +848,14 @@ chat:
 | `pending` | `400` | Token cap for the pending-items section. |
 | `session_user_facts` | `200` | Token cap for user-facts carried across compactions. |
 | `artifacts_referenced` | `300` | Token cap for artifact reference listings. |
+
+### Removed keys
+
+`head_size`, `tail_size`, `trigger_total_tokens`, and `min_compact_batch` are
+no longer recognised. If present in your `reyn.yaml`, Reyn emits a
+`DeprecationWarning` at startup and ignores them. Remove these keys — head/tail
+sizing is now token-budget via `component_weights`, and auto-compaction is
+window-relative.
 
 ## `events` block
 
