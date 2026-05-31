@@ -39,7 +39,9 @@ permissions:
   file.write:
     - path: "*"
       scope: recursive
-  shell: true
+  # FP-0008 #1115 Stage 2: all phases migrated off the deprecated `shell` op to
+  # `sandboxed_exec` (which has default permissibility — no permissions entry).
+  # `permissions.shell` removed: no phase emits `kind: shell` any more.
   # FP-0008 PR-O v8: deterministic test_patch sanitizer (= line-ending
   # / BOM / trailing-newline normalization) runs as a `safe`-mode
   # python preprocessor step at the verify phase entry, BEFORE the
@@ -51,7 +53,7 @@ permissions:
       mode: safe
       timeout: 5
     # FP-0008 C6 v2: pure string parser — extracts +++ b/<path> targets from
-    # test_patch and returns git checkout command strings.  Mode: safe because
+    # test_patch and returns git checkout argv lists.  Mode: safe because
     # the function uses only re + json (both in PURE_STDLIB_ALLOWLIST) and
     # performs no filesystem access, subprocess calls, or environment reads.
     - module: ./parse_test_targets.py
@@ -69,8 +71,8 @@ commit, explores the codebase to understand the problem, plans and applies
 edits, verifies against the provided test patch, then emits a `git diff`
 patch as the final output.
 
-All required capabilities (`read_file`, `edit_file`, `shell`, `grep`) are
-existing OS ops — no OS changes required (P7 compliant).
+All required capabilities (`read_file`, `edit_file`, `sandboxed_exec`, `grep`)
+are existing OS ops — no OS changes required (P7 compliant).
 
 ## Phase flow
 
