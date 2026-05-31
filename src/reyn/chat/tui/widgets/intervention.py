@@ -18,7 +18,14 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label
 
-from reyn.chat.tui._palette import _EVENT_INTERVENTION, _TEXT_BODY, _TEXT_MUTED
+from reyn.chat.tui._palette import (
+    _EVENT_INTERVENTION,
+    _IV_HOVER,
+    _IV_SURFACE,
+    _IV_TEXT,
+    _TEXT_BODY,
+    _TEXT_MUTED,
+)
 
 
 class InterventionWidget(Widget):
@@ -40,12 +47,12 @@ class InterventionWidget(Widget):
 
     DEFAULT_CSS = f"""
     InterventionWidget {{
-        background: #1e1510;
+        background: {_IV_SURFACE};
         border: solid $primary;
         padding: 1 2;
         height: auto;
         margin: 1 0;
-        color: #eeddcc;
+        color: {_IV_TEXT};
     }}
     InterventionWidget Label.iv-question {{
         color: {_EVENT_INTERVENTION};
@@ -84,7 +91,7 @@ class InterventionWidget(Widget):
         min-width: 6;
     }}
     InterventionWidget Button:hover {{
-        background: #e0664e;
+        background: {_IV_HOVER};
     }}
     InterventionWidget Input {{
         margin-top: 1;
