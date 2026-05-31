@@ -35,7 +35,16 @@ TIER_DOCSTRING_RE = re.compile(r"^Tier [123][abc]?:", re.IGNORECASE)
 
 # len(...) < N  /  len(...) > N  /  len(...) == N  /  len(...) >= N  etc.
 # Exemption: len(x) > 0  (simple existence check)
-FORMAT_PIN_RE = re.compile(r"len\([^)]+\)\s*[<>=!]+\s*(\d+)")
+#
+# The leading ``\b`` is load-bearing: without it the bare ``len\(`` matched
+# the ``len(`` *substring* inside suffix-len builtins/helpers like
+# ``cell_len(``, ``str_len(``, ``byte_len(`` — flagging legitimate
+# cell-width invariants (e.g. ``cell_len(ch) <= 1``) as format pins. A word
+# boundary requires a non-word char (or start-of-line) immediately before
+# ``len``; since ``_`` is a word char, ``cell_len`` has no boundary at its
+# inner ``len`` and is correctly excluded, while standalone ``len(`` (after
+# ``(``, space, ``=``, ``[`` …) still matches. (Issue #1082.)
+FORMAT_PIN_RE = re.compile(r"\blen\([^)]+\)\s*[<>=!]+\s*(\d+)")
 
 # Private-state detection is AST-based via ``_find_private_attr_access``
 # below. The prior implementation used a regex ``r"\.\w+\._\w+"`` which
