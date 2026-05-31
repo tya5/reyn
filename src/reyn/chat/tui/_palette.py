@@ -91,7 +91,10 @@ _SEV_MED_HOVER = "#ffbb77"       # medium severity (hover)
 # aborted (app.py, conversation), the 8-colour-terminal error glyph fallback
 # (sticky_status), and the remote-limited mode marker (pending_tab). Distinct
 # shade from _STATUS_ERROR (active failure) and _SEV_HIGH (ErrorBox severity).
-_RED_MUTED = "#aa6666"
+# Lightened from #aa6666 (= 4.32:1, below WCAG AA) to clear 4.5:1 against the
+# panel bg (#111111 → 5.11:1) — this carries cancel/abort text, so it must be
+# legible. Kept in its own pink-red lane, distinct from the brand _CORAL.
+_RED_MUTED = "#b87272"
 # "ready / idle-but-available" agent/process state (olive). Orthogonal to
 # _STATUS_SUCCESS (running/done green) — the agents + pending panels show
 # ready ◐ in olive vs running in green so the two states stay scannable.
@@ -99,11 +102,17 @@ _STATUS_READY = "#aaaa55"
 # Dark success green — low-emphasis success tone for cost figures (cost_tab).
 # Darker sibling of _STATUS_SUCCESS (#44cc88) / _STATUS_SUCCESS_DIM (#88ddaa,
 # lighter); reads as "nominal" without competing with the brighter greens.
-_STATUS_SUCCESS_DARK = "#2d7a4f"
-# Actionable inline recovery hint (ErrorBox eb-inline-hint, muted gold).
+# Lightened from #2d7a4f (= 3.60:1, below WCAG AA) to 4.5:1+ against the panel
+# bg (#111111 → 5.34:1) — it labels cost figures (informational numbers), so
+# it must be legible. Stays the dimmest of the three success greens.
+_STATUS_SUCCESS_DARK = "#3a9968"
+# Actionable inline recovery hint (ErrorBox eb-inline-hint, warm olive-gold).
 # Distinct from _TEXT_DIM (the metadata eb-hint) so the extracted recovery
-# action reads as "do this", not just dim metadata.
-_HINT_ACTION = "#8a7a4a"
+# action reads as "do this", not just dim metadata. Lightened from #8a7a4a
+# (= 4.46:1, just below WCAG AA) to 4.5:1+ (#111111 → 5.51:1) while keeping
+# its own olive-gold lane — distinct from _SEV_MED amber, _AMBER agent
+# accent, and _STATUS_READY olive.
+_HINT_ACTION = "#9a8a52"
 
 __all__ = [
     "_CORAL",
