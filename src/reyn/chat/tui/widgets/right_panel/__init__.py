@@ -92,6 +92,43 @@ _REFRESH_INTERVAL = 2.0
 _PANEL_NARROW_TERMINAL_CUTOFF = 60
 
 
+def _yaml_block_dump(value: Any) -> str:
+    """``yaml`` dump with multi-line strings rendered as block scalars (``|``).
+
+    Plain ``yaml.safe_dump`` emits a multi-line string as a single-quoted
+    *folded* scalar: each ``\\n`` becomes a blank line and continuations are
+    quote-indented. For the tool-result payloads the events / recent-skill
+    previews surface (e.g. an email body or an MCP ``text`` content block),
+    that mangles the original line structure into something harder to read
+    than the raw text — the verbatim result is faithfully present but not
+    legible, so the operator falls back to the (paraphrase-prone) prose.
+
+    A custom ``str`` representer using block style (``|``) for any string
+    containing a newline keeps the lines intact; single-line strings keep
+    the default style. Raises if PyYAML is unavailable — callers keep their
+    JSON fallback. Pass an already JSON-normalised value (Path/datetime etc.
+    coerced to str) since ``yaml`` can't represent arbitrary types.
+    """
+    import yaml as _yaml
+
+    class _BlockDumper(_yaml.SafeDumper):
+        pass
+
+    def _str_rep(dumper: Any, data: str) -> Any:
+        style = "|" if "\n" in data else None
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
+
+    _BlockDumper.add_representer(str, _str_rep)
+    return _yaml.dump(
+        value,
+        Dumper=_BlockDumper,
+        default_flow_style=False,
+        allow_unicode=True,
+        sort_keys=False,
+        width=120,
+    )
+
+
 class RightPanel(Widget):
     """Swappable right-side panel with tab bar.
 
@@ -1119,17 +1156,10 @@ class RightPanel(Widget):
         from rich.text import Text as RichText
         body: str
         try:
-            import yaml as _yaml
             normalised = _json.loads(
                 _json.dumps(value, default=str, ensure_ascii=False),
             )
-            body = _yaml.safe_dump(
-                normalised,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-                width=120,
-            )
+            body = _yaml_block_dump(normalised)
         except Exception:
             try:
                 body = _json.dumps(value, indent=2, default=str, ensure_ascii=False)
@@ -2233,13 +2263,7 @@ class RightPanel(Widget):
                     normalised = _json.loads(
                         _json.dumps(events, default=str, ensure_ascii=False),
                     )
-                    body = _yaml.safe_dump(
-                        {"events": normalised},
-                        default_flow_style=False,
-                        allow_unicode=True,
-                        sort_keys=False,
-                        width=120,
-                    )
+                    body = _yaml_block_dump({"events": normalised})
                     lines.append(body.rstrip())
                 except Exception:
                     lines.append(_json.dumps(events, indent=2, default=str))
