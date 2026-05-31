@@ -47,12 +47,13 @@ BUILTIN_MODELS: dict[str, dict] = {
     "gpt-4o-mini": {"model": "openai/gpt-4o-mini"},
     "gpt-4o": {"model": "openai/gpt-4o"},
     # -------------------------------------------------------------------------
-    # Gemini
+    # Gemini  (gemini/ prefix = correct litellm catalog lookup → 1M context)
     # -------------------------------------------------------------------------
-    "gemini-flash-lite": {"model": "openai/gemini-2.5-flash-lite"},
-    "gemini-3.1-flash-preview": {"model": "openai/gemini-3.1-flash-preview"},
+    "gemini-flash-lite": {"model": "gemini/gemini-2.5-flash-lite"},
+    "gemini-pro": {"model": "gemini/gemini-2.5-pro"},
+    "gemini-3.1-flash-preview": {"model": "gemini/gemini-3.1-flash-preview"},
     "gemini-2.0-flash": {
-        "model": "openai/gemini-2.0-flash",
+        "model": "gemini/gemini-2.0-flash",
         "extra_body": {
             # Disable thinking to reduce cost.  Syntax is LiteLLM/Gemini API
             # specific — verify against LiteLLM release notes if behavior

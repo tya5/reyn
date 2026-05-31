@@ -79,23 +79,31 @@ OpenAI GPT-4o.  Strong general-purpose model.
 ### `gemini-flash-lite`
 
 ```yaml
-model: openai/gemini-2.5-flash-lite
+model: gemini/gemini-2.5-flash-lite
 ```
 
-Google Gemini 2.5 Flash Lite via the OpenAI-compatible shim.  Very low cost.
+Google Gemini 2.5 Flash Lite.  Very low cost.
+
+### `gemini-pro`
+
+```yaml
+model: gemini/gemini-2.5-pro
+```
+
+Google Gemini 2.5 Pro.  High capability, suitable for strong-tier tasks.
 
 ### `gemini-3.1-flash-preview`
 
 ```yaml
-model: openai/gemini-3.1-flash-preview
+model: gemini/gemini-3.1-flash-preview
 ```
 
-Google Gemini 3.1 Flash Preview via the OpenAI-compatible shim.
+Google Gemini 3.1 Flash Preview.
 
 ### `gemini-2.0-flash`
 
 ```yaml
-model: openai/gemini-2.0-flash
+model: gemini/gemini-2.0-flash
 extra_body:
   thinking_config:
     thinking_budget: 0

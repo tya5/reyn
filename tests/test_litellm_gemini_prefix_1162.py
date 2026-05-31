@@ -1,12 +1,12 @@
-"""Tier 2: regression guard — tracked config files must not use openai/<gemini> prefix.
+"""Tier 2: regression guards for LiteLLM Gemini model prefix and localization.
 
-Background (#1162): the `openai/gemini-*` LiteLLM model prefix causes litellm
-to fall back to a 128K context window (catalog lookup fails, hardcoded default
-kicks in). The correct prefix for Gemini models via an OpenAI-compatible proxy
-is `gemini/gemini-*`, which resolves to the actual 1M-token context limit.
-
-This test prevents silent regressions where someone reverts the prefix change in
-a tracked yaml file.
+Background (#1162 / #1167):
+- The `openai/gemini-*` prefix causes litellm catalog lookup to fail → 128K
+  fallback instead of the actual 1M context limit.
+- The `gemini/gemini-*` prefix resolves correctly.
+- Model strings are localised in builtin_models.py; tracked configs use
+  class-ref shorthands (e.g. ``gemini-flash-lite``) so future prefix or
+  model changes are 1-file updates.
 """
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 
-# Tracked config files that must NOT use openai/<gemini> prefix.
-# Each entry is a path relative to repo root.
+# Tracked config files that must NOT use any hardcoded <provider>/gemini- string.
+# Class-ref shorthands (e.g. gemini-flash-lite) are the correct form.
 TRACKED_CONFIGS = [
     Path("reyn.yaml"),
     Path("cookbook/configs/with-mcp.yaml"),
@@ -28,22 +28,40 @@ TRACKED_CONFIGS = [
     Path("dogfood/fixtures/skill_importer_chain/reyn.yaml"),
 ]
 
-_BAD_PREFIX = re.compile(r"openai/gemini-")
+_HARDCODED_GEMINI = re.compile(r"[a-z]+/gemini-")
 
 
 @pytest.mark.parametrize("rel_path", TRACKED_CONFIGS, ids=str)
-def test_no_openai_gemini_prefix_in_tracked_config(rel_path: Path) -> None:
-    """Tier 2: tracked config does not use openai/<gemini> model prefix.
+def test_no_hardcoded_gemini_model_in_tracked_config(rel_path: Path) -> None:
+    """Tier 2: tracked config does not hardcode any <provider>/gemini- model string.
 
-    The openai/ prefix for Gemini models causes litellm to fall back to a 128K
-    context window. Use gemini/ prefix instead (#1162).
+    Use class-ref shorthands (gemini-flash-lite, gemini-pro, …) so model
+    strings are localised in builtin_models.py (#1167).
     """
     path = ROOT / rel_path
     assert path.exists(), f"Tracked config not found: {path}"
     content = path.read_text()
-    matches = _BAD_PREFIX.findall(content)
+    matches = _HARDCODED_GEMINI.findall(content)
     assert not matches, (
-        f"{rel_path} contains openai/<gemini> model prefix "
-        f"({len(matches)} occurrence(s)). "
-        "Use gemini/<model> prefix instead — see #1162 for background."
+        f"{rel_path} contains hardcoded <provider>/gemini- model string "
+        f"({len(matches)} occurrence(s)): {matches}. "
+        "Use a class-ref shorthand (e.g. gemini-flash-lite) instead — see #1167."
     )
+
+
+def test_builtin_gemini_entries_use_gemini_prefix() -> None:
+    """Tier 2: builtin_models.py gemini entries use gemini/ (not openai/) prefix.
+
+    Ensures the canonical model string in the registry resolves to the 1M-token
+    context window, not the 128K fallback caused by the openai/ prefix (#1162).
+    """
+    from reyn.llm.builtin_models import BUILTIN_MODELS
+
+    for name, entry in BUILTIN_MODELS.items():
+        if not name.startswith("gemini"):
+            continue
+        model = entry.get("model", "")
+        assert model.startswith("gemini/"), (
+            f"builtin_models['{name}']['model'] = '{model}' does not start "
+            "with 'gemini/' prefix. Use gemini/<model> to get 1M context (#1162)."
+        )
