@@ -1,9 +1,9 @@
 name: skill_importer_chain_workspace
 
 models:
-  light:    openai/gemini-2.5-flash-lite
-  standard: openai/gemini-2.5-flash-lite
-  strong:   openai/gemini-2.5-flash-lite
+  light:    gemini/gemini-2.5-flash-lite
+  standard: gemini/gemini-2.5-flash-lite
+  strong:   gemini/gemini-2.5-flash-lite
 
 # Pre-approve everything skill_search + skill_importer chain needs.
 # Workspace is an isolated tmp dir per run, so blanket grants are safe.
