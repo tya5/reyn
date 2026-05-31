@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pydantic
@@ -47,6 +48,11 @@ if TYPE_CHECKING:
     from reyn.user_intervention import RequestBus
 
 _log = logging.getLogger(__name__)
+
+# FP-0008 #1135(b): inline cap for the raw LLM output captured on a phase-output
+# validation failure. Larger payloads are offloaded (size axis, non-history) so
+# the P6 events audit log never balloons.
+_RAW_OUTPUT_INLINE_CAP = 8192
 
 
 class PhaseExecutor:
@@ -104,6 +110,44 @@ class PhaseExecutor:
         # _run_act_loop so RunOrchestrator can snapshot them at A → B
         # transition (= `rollback_state.snapshot_phase_history`).
         self._last_control_ir_results: list[dict] = []
+
+    # ── #1135(b): raw-output capture on phase-output validation failure ───────
+
+    def _emit_output_validation_failed(
+        self, *, phase: str, attempt: int, failure_kind: str, error: str, raw: dict,
+    ) -> None:
+        """Emit the additive `phase_output_validation_failed` event (#1135b).
+
+        Captures the model's raw emitted output that failed validation into the
+        always-on P6 audit log — otherwise it survives only in the opt-in
+        REYN_LLM_TRACE_DUMP. Emitted ALONGSIDE the existing kind-specific
+        validation event (which is left unchanged for TUI/test back-compat).
+
+        Per #1135 canonical contract: inline ``raw_output`` when ≤ cap, else a
+        ``raw_output_ref`` = state_dir-RELATIVE offload handle (the offload value
+        returns an absolute ref; converted to relative explicitly so the ref is
+        portable in the long-lived audit log). Exactly one of raw_output /
+        raw_output_ref is non-null. No hash field.
+        """
+        serialized = json.dumps(raw, ensure_ascii=False)
+        raw_output: str | None = None
+        raw_output_ref: str | None = None
+        if len(serialized.encode("utf-8")) <= _RAW_OUTPUT_INLINE_CAP:
+            raw_output = serialized
+        else:
+            from reyn.services.offload import offload_value
+            state_dir = self._control_ir_executor.workspace.state_dir
+            res = offload_value(serialized, store_dir=state_dir / "control_ir_offload")
+            raw_output_ref = str(Path(res.path_ref).relative_to(state_dir))
+        self._events.emit(
+            "phase_output_validation_failed",
+            phase=phase,
+            attempt=attempt,
+            failure_kind=failure_kind,
+            error=error,
+            raw_output=raw_output,
+            raw_output_ref=raw_output_ref,
+        )
 
     # ── Phase-budget enforcement (moved up from Component B shim) ─────────────
 
@@ -179,6 +223,7 @@ class PhaseExecutor:
         allowed_next: list[str],
         state: "RunState",
         input_artifact: dict | None = None,
+        attempt: int = 0,
     ) -> tuple[NormalizationResult, LLMOutput]:
         """Normalize and validate one LLM response.
 
@@ -195,9 +240,17 @@ class PhaseExecutor:
             result = normalize(raw, allowed_next)
         except ControlIRValidationError as exc:
             self._events.emit("control_ir_validation_error", phase=current_phase, error=str(exc))
+            self._emit_output_validation_failed(
+                phase=current_phase, attempt=attempt, failure_kind="control_ir",
+                error=str(exc), raw=raw,
+            )
             raise ValueError(str(exc)) from exc
         except NormalizationError as exc:
             self._events.emit("normalization_error", phase=current_phase, error=str(exc))
+            self._emit_output_validation_failed(
+                phase=current_phase, attempt=attempt, failure_kind="normalization",
+                error=str(exc), raw=raw,
+            )
             raise ValueError(str(exc)) from exc
 
         self._events.emit(
@@ -233,6 +286,10 @@ class PhaseExecutor:
             _validate_artifact_structure(normalized, current_phase)
         except ValueError as exc:
             self._events.emit("validation_error", phase=current_phase, error=str(exc))
+            self._emit_output_validation_failed(
+                phase=current_phase, attempt=attempt, failure_kind="artifact_structure",
+                error=str(exc), raw=raw,
+            )
             raise
 
         # P7-clean: the OS supplies the generic context dict; only the
@@ -263,6 +320,10 @@ class PhaseExecutor:
         if errors:
             error_str = "; ".join(errors)
             self._events.emit("validation_error", phase=current_phase, error=error_str)
+            self._emit_output_validation_failed(
+                phase=current_phase, attempt=attempt, failure_kind="artifact_data",
+                error=error_str, raw=raw,
+            )
             raise ValueError(
                 f"Artifact data validation failed for '{normalized.get('type')}': {error_str}"
             )
@@ -276,12 +337,20 @@ class PhaseExecutor:
         except pydantic.ValidationError as exc:
             msg = f"Invalid ops structure: {exc}"
             self._events.emit("validation_error", phase=current_phase, error=msg)
+            self._emit_output_validation_failed(
+                phase=current_phase, attempt=attempt, failure_kind="ops_structure",
+                error=msg, raw=raw,
+            )
             raise ValueError(msg) from exc
 
         try:
             validate_output(output, candidates)
         except ValidationError as exc:
             self._events.emit("validation_error", phase=current_phase, error=str(exc))
+            self._emit_output_validation_failed(
+                phase=current_phase, attempt=attempt, failure_kind="output_validation",
+                error=str(exc), raw=raw,
+            )
             raise ValueError(str(exc)) from exc
 
         return result, output
@@ -451,6 +520,10 @@ class PhaseExecutor:
             try:
                 act = ActOutput.model_validate(raw)
             except pydantic.ValidationError as exc:
+                self._emit_output_validation_failed(
+                    phase=phase, attempt=len(prior_attempts), failure_kind="act_ops",
+                    error=str(exc), raw=raw,
+                )
                 prior_attempts.append({"raw": json.dumps(raw, ensure_ascii=False), "error": str(exc)})
                 if len(prior_attempts) > max_phase_retries:
                     self._events.emit("phase_failed", phase=phase,
@@ -504,6 +577,7 @@ class PhaseExecutor:
             try:
                 result, output = self._validate_phase_output(
                     raw, phase, candidates, allowed_next, state, input_artifact=artifact,
+                    attempt=len(prior_attempts),
                 )
                 return result, output, len(prior_attempts)
             except WorkflowAbortedError:
