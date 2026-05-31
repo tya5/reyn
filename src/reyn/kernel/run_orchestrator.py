@@ -257,6 +257,13 @@ class RunOrchestrator:
             events=self._events,
             safety=self._safety,
             recorder=self._budget_tracker,
+            # #1190 stage (iii) Part 4: attribute skill_node adaptation to the
+            # run's agent (caller "agents/<name>" → "<name>").
+            recorder_agent=(
+                self._caller.split("/", 1)[1]
+                if self._caller and self._caller.startswith("agents/")
+                else None
+            ),
         )
         self._state.add_usage(usage, None)
         return adapted

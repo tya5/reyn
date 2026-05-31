@@ -1818,6 +1818,8 @@ class ChatSession:
                 resolver=self._resolver,
                 # #1190 stage (ii): record chat compaction LLM spend (purpose=compaction).
                 recorder=self._budget_tracker,
+                # #1190 stage (iii) Part 4: attribute chat compaction to this session's agent.
+                recorder_agent=self.agent_name,
             ),
             history_appender=self._append_history,
             make_summary_message=lambda rendered, structured, covers: ChatMessage(

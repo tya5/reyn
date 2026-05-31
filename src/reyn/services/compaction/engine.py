@@ -708,6 +708,7 @@ class CompactionEngine:
         system_prompt_provider: Callable[[], str] | None = None,
         resolver: "ModelResolver | None" = None,
         recorder: object | None = None,
+        recorder_agent: str | None = None,
     ) -> None:
         # #1172: resolve the model CLASS ("standard"/"light"/"strong") to its
         # LiteLLM string at construction — by-construction guarantee that no
@@ -726,6 +727,10 @@ class CompactionEngine:
         # #1190 stage (ii): BudgetTracker for cost recording (purpose=compaction)
         # via recorded_acompletion. None = unrecorded (e.g. ad-hoc/test engines).
         self._recorder = recorder
+        # #1190 stage (iii) Part 4: agent for per-agent cost attribution. Chat
+        # compaction = the session's agent_name; phase compaction = the run's
+        # agent. None = attributed to no agent (legacy/test engines).
+        self._recorder_agent = recorder_agent
         self._events = events
         # Axis 10: opt-out flag
         from reyn.config import CompactionConfig as _CC
@@ -795,6 +800,7 @@ class CompactionEngine:
             messages=messages,
             purpose="compaction",
             recorder=self._recorder,
+            agent=self._recorder_agent,
             response_format=response_format,
         )
 
@@ -1240,6 +1246,7 @@ async def compact_step_results(
             ],
             purpose="compaction",
             recorder=getattr(engine, "_recorder", None),
+            agent=getattr(engine, "_recorder_agent", None),
         )
         raw_summary = (response.choices[0].message.content or "").strip()
         if not raw_summary:
@@ -1408,6 +1415,7 @@ async def compact_control_ir_results(
             ],
             purpose="compaction",
             recorder=getattr(engine, "_recorder", None),
+            agent=getattr(engine, "_recorder_agent", None),
         )
         raw_summary = (response.choices[0].message.content or "").strip()
         if not raw_summary:

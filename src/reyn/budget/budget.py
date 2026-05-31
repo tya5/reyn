@@ -320,6 +320,10 @@ class BudgetTracker:
             self._skill_tokens_cap = CostLimitConfig()
         self._agent_tokens: dict[str, int] = defaultdict(int)
         self._agent_cost_usd: dict[str, float] = defaultdict(float)
+        # #1190 stage (iii): per-purpose cost attribution (main/phase/compaction/
+        # judge/skill_node_adapt/dogfood) for the /budget breakdown payoff.
+        self._purpose_tokens: dict[str, int] = defaultdict(int)
+        self._purpose_cost_usd: dict[str, float] = defaultdict(float)
         self._chain_skill_calls: dict[tuple[str, str], int] = defaultdict(int)
         self._chain_skill_tokens: dict[tuple[str, str], int] = defaultdict(int)
         # FP-0003: per-(chain_id, skill) extensions granted via the
@@ -550,6 +554,11 @@ class BudgetTracker:
         cost_usd, _ = estimate_cost(model, usage)
         cost_usd = cost_usd or 0.0
 
+        # #1190 stage (iii): per-purpose attribution for the /budget breakdown.
+        if purpose is not None:
+            self._purpose_tokens[purpose] += usage.total_tokens
+            self._purpose_cost_usd[purpose] += cost_usd
+
         if agent is not None:
             new_tokens = self._agent_tokens[agent] + usage.total_tokens
             self._agent_tokens[agent] = new_tokens
@@ -765,6 +774,9 @@ class BudgetTracker:
         return {
             "agent_tokens": dict(self._agent_tokens),
             "agent_cost_usd": dict(self._agent_cost_usd),
+            # #1190 stage (iii): per-purpose cost attribution.
+            "purpose_tokens": dict(self._purpose_tokens),
+            "purpose_cost_usd": dict(self._purpose_cost_usd),
             "chain_skill_calls": {
                 f"{cid}/{sk}": v
                 for (cid, sk), v in self._chain_skill_calls.items()
@@ -1208,6 +1220,18 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
             )
         else:
             lines.append(f"    cost:    ${cost:>9.4f}              (no cap)")
+        lines.append("")
+
+    # #1190 stage (iii): per-purpose cost attribution — where the spend went
+    # (main / phase / compaction / judge / skill_node_adapt / dogfood).
+    purpose_tokens = snapshot.get("purpose_tokens") or {}
+    purpose_cost = snapshot.get("purpose_cost_usd") or {}
+    if purpose_tokens or purpose_cost:
+        lines.append("  By purpose:")
+        for p in sorted(set(purpose_tokens) | set(purpose_cost)):
+            tok = purpose_tokens.get(p, 0)
+            cost = purpose_cost.get(p, 0.0)
+            lines.append(f"    {p:<18}{tok:>10,} tok | ${cost:.4f}")
         lines.append("")
 
     if snapshot["chain_skill_calls"]:

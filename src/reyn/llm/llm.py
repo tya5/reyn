@@ -749,6 +749,14 @@ async def recorded_acompletion(
     """
     import litellm
 
+    # #1190 stage (iii): typo guard — a purpose outside the known set would
+    # silently land spend in an unattributed bucket in /cost.
+    if purpose not in LLM_PURPOSES:
+        raise ValueError(
+            f"recorded_acompletion: unknown purpose {purpose!r}; "
+            f"must be one of {LLM_PURPOSES}"
+        )
+
     extra = proxy_kwargs()
     effective_model = model.split("/", 1)[1] if extra and "/" in model else model
     base_kwargs = dict(extra_kwargs or {})

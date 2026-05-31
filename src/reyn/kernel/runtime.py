@@ -251,6 +251,14 @@ class OSRuntime:
                     resolver=self._resolver,
                     # #1190 stage (ii): record phase act-results compaction spend.
                     recorder=budget_tracker,
+                    # #1190 stage (iii) Part 4: attribute phase compaction to the
+                    # run's agent (caller "agents/<name>" → "<name>"), matching
+                    # the main phase call's budget agent (LLMCallRecorder).
+                    recorder_agent=(
+                        caller.split("/", 1)[1]
+                        if caller and caller.startswith("agents/")
+                        else None
+                    ),
                 )
             except Exception:  # noqa: BLE001 — best-effort; skip if unavailable
                 phase_compaction_engine = None
