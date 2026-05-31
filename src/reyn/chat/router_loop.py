@@ -2148,6 +2148,17 @@ class RouterLoop:
                     content_str = json.dumps(r, default=str)
                     if post_text:
                         content_str = f"{content_str}\n\n---\n{post_text}"
+                    # #1128 size axis (dead-end #1): cap an oversized tool result
+                    # ONCE at this chokepoint — the full body is offloaded to the
+                    # #385 store (lossless) and content_str becomes a bounded
+                    # preview, so BOTH consumers below (the live prompt append +
+                    # the persisted-history _append_entry) get the capped form.
+                    # This makes every tool turn individually compactable, so the
+                    # chat retry_loop's shrink can always fold it. getattr keeps
+                    # partial/test hosts a no-op.
+                    _cap = getattr(self.host, "cap_tool_result", None)
+                    if _cap is not None:
+                        content_str = _cap(content_str)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
