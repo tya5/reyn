@@ -36,6 +36,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from reyn.chat.agent_locks import get_agent_lock as _get_agent_lock
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -58,20 +60,15 @@ _IDLE_POLL_INTERVAL_SECONDS: float = 0.05
 _IDLE_GRACE_SECONDS: float = 0.05
 
 
-# Per-agent serialization lock. Concurrent FastAPI request handlers (e.g.
-# the A2A endpoint) can reach ``send_to_agent_impl`` in parallel for the
-# same agent; without serialization both coroutines race on
-# ``session.history[-1]`` (RouterLoop reads the wrong prompt) and on
-# reply harvesting (each picks up the other's ``role="agent"`` entries).
+# Per-agent serialization lock — shared across ALL transport layers (MCP +
+# A2A).  ``_get_agent_lock`` is imported from ``reyn.chat.agent_locks`` at the
+# top of this file so MCP and A2A share the SAME lock object per agent name.
+# See that module for the full rationale.
+#
 # FP-0013: with MessageBus, the inbox is the serialization point but the
 # lock is retained as a belt-and-suspenders measure during the migration
 # period — it prevents concurrent calls from racing on history harvest
 # (baseline → MessageBus.request → history-read must be atomic per agent).
-_AGENT_LOCKS: dict[str, asyncio.Lock] = {}
-
-
-def _get_agent_lock(agent_name: str) -> asyncio.Lock:
-    return _AGENT_LOCKS.setdefault(agent_name, asyncio.Lock())
 
 
 async def _get_session(registry: "AgentRegistry", name: str) -> "object":

@@ -98,7 +98,7 @@ async def test_await_skill_completion_returns_true_when_task_done():
     asyncio.create_task(_trigger())
 
     result = await asyncio.wait_for(
-        _await_skill_completion(session, "run-1", deadline_s=2.0),
+        _await_skill_completion(session, "run-1", deadline_s=2.0, agent_name="test-agent"),
         timeout=3.0,
     )
     assert result is True
@@ -118,7 +118,7 @@ async def test_await_skill_completion_returns_true_immediately_when_no_such_run_
     session = _Session(running_skills={})
     # Should complete well under the deadline
     result = await asyncio.wait_for(
-        _await_skill_completion(session, "phantom", deadline_s=1.0),
+        _await_skill_completion(session, "phantom", deadline_s=1.0, agent_name="test-agent"),
         timeout=2.0,
     )
     assert result is True
@@ -142,7 +142,7 @@ async def test_await_skill_completion_returns_false_on_deadline():
     session = _Session(running_skills={"run-x": task})
 
     result = await asyncio.wait_for(
-        _await_skill_completion(session, "run-x", deadline_s=0.2),
+        _await_skill_completion(session, "run-x", deadline_s=0.2, agent_name="test-agent"),
         timeout=1.0,
     )
     assert result is False

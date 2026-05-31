@@ -43,6 +43,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from reyn.chat.agent_locks import get_agent_lock
 from reyn.mcp_server import DEFAULT_SEND_TIMEOUT_SECONDS, send_to_agent_impl
 from reyn.web.deps import get_registry, get_run_registry
 
@@ -497,6 +498,7 @@ async def _escalate_to_task(
             session = await _get_session_for_monitor(registry, agent_name)
             completed = await _await_skill_completion(
                 session, skill_run_id, deadline_s=600.0,
+                agent_name=agent_name,
             )
             if not completed:
                 run_registry.update(
@@ -544,6 +546,7 @@ async def _get_session_for_monitor(registry, agent_name: str):
 
 async def _await_skill_completion(
     session, skill_run_id: str, *, deadline_s: float = 600.0,
+    agent_name: str,
 ) -> bool:
     """Poll ``session.running_skills`` until ``skill_run_id`` is no longer
     active, OR the deadline fires.
@@ -559,6 +562,13 @@ async def _await_skill_completion(
     mark the run_registry entry as ``status="timeout"`` rather than
     ``"completed"`` to avoid conflating "we gave up waiting" with a real
     completion).
+
+    ``agent_name`` is used to acquire the per-agent serialization lock
+    (shared with MCP via ``reyn.chat.agent_locks``) around each
+    ``run_one_iteration`` call so A2A drain turns and MCP turns on the
+    same session do not race on ``session.history``.  The lock is held
+    only for the duration of a single iteration (NOT the entire polling
+    loop) so MCP callers are not blocked for the full ``deadline_s``.
     """
     deadline = asyncio.get_event_loop().time() + deadline_s
     while True:
@@ -572,10 +582,14 @@ async def _await_skill_completion(
     # Final inbox drain: pump iterations until quiescent so the
     # skill_completion_injected inbox entry is consumed and the
     # narration turn lands in history.
+    # Each iteration is wrapped in the per-agent lock so A2A drain turns
+    # serialize with concurrent MCP (or registry.run()) turns on the same
+    # shared ChatSession.
     for _ in range(20):  # bounded; each iteration consumes one inbox msg
         if session.inbox.empty():
             break
-        await session.run_one_iteration()
+        async with get_agent_lock(agent_name):
+            await session.run_one_iteration()
     return True
 
 
