@@ -9,6 +9,8 @@ Usage:
     python scripts/dogfood_trace.py --mode llm-detail <request_id> --trace .reyn/llm_trace.jsonl [--full]
     python scripts/dogfood_trace.py --mode llm-tools-schema <request_id> --trace .reyn/llm_trace.jsonl
     python scripts/dogfood_trace.py --mode llm-context <request_id> --trace .reyn/llm_trace.jsonl
+    python scripts/dogfood_trace.py --mode llm-advertised-ops <request_id> --trace .reyn/llm_trace.jsonl
+    python scripts/dogfood_trace.py --mode llm-emitted-ops <request_id> --trace .reyn/llm_trace.jsonl [--root .reyn]
 
     # Multiple trace files (merged chronologically):
     python scripts/dogfood_trace.py --mode llm-payloads --trace a.jsonl --trace b.jsonl
@@ -1096,6 +1098,285 @@ def mode_llm_tools_schema(records: list[dict], request_id: str) -> None:
     print(json.dumps(tools, indent=2, ensure_ascii=False))
 
 
+def _extract_available_control_ops(req: dict) -> "list[dict] | None":
+    """Pull the ``available_control_ops`` array out of a request.
+
+    The Control IR op catalog the OS advertises to the LLM is serialised
+    *inside a message content string* (not a top-level request field), so
+    a plain ``req.get`` does not reach it. This helper scans message
+    contents for the embedded JSON array and parses it defensively.
+
+    Returns the parsed list, or ``None`` when the request does not carry
+    an ``available_control_ops`` block (= phase/skill that advertises no
+    control ops, or a non-phase request). Never raises.
+    """
+    messages = req.get("messages", []) or []
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, list):
+            content = "".join(
+                x.get("text", "") for x in content if isinstance(x, dict)
+            )
+        if not isinstance(content, str) or "available_control_ops" not in content:
+            continue
+        # The content is itself a JSON object (the ContextFrame payload).
+        # Try a structured parse first; fall back to locating the array.
+        try:
+            obj = json.loads(content)
+            ops = obj.get("available_control_ops")
+            if isinstance(ops, list):
+                return ops
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        # Fallback: brace-match the array literal after the key.
+        key = '"available_control_ops"'
+        idx = content.find(key)
+        start = content.find("[", idx)
+        if start == -1:
+            continue
+        depth = 0
+        for end in range(start, len(content)):
+            ch = content[end]
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        ops = json.loads(content[start : end + 1])
+                        if isinstance(ops, list):
+                            return ops
+                    except json.JSONDecodeError:
+                        break
+                    break
+    return None
+
+
+def _op_field_summary(op: dict) -> "tuple[bool, bool, list[str], list[str], str]":
+    """Return (has_description, has_example, fields, required, fields_source).
+
+    Defensive against schema-shape variation across skills: looks for an
+    argument schema under common keys (``schema`` / ``parameters`` /
+    ``arguments`` / ``input_schema``) and reads ``properties`` + ``required``
+    when present; otherwise treats remaining top-level keys as fields.
+    """
+    has_desc = bool(op.get("description"))
+    has_example = bool(op.get("example") or op.get("示例") or op.get("examples"))
+
+    schema = None
+    for k in ("schema", "parameters", "arguments", "input_schema", "args"):
+        if isinstance(op.get(k), dict):
+            schema = op[k]
+            break
+
+    fields: list[str] = []
+    required: list[str] = []
+    fields_source = "none"
+    if isinstance(schema, dict):
+        props = schema.get("properties")
+        if isinstance(props, dict):
+            fields = list(props.keys())
+            fields_source = "schema.properties"
+        req_list = schema.get("required")
+        if isinstance(req_list, list):
+            required = [str(r) for r in req_list]
+    else:
+        # No formal arg schema (the common case — op specs are advertised as
+        # {kind, description, example}, not JSON Schema). The structured
+        # signal for "which fields does this op take" then lives in the
+        # ``example`` object's keys (minus ``kind``). This is what answers
+        # "is op X advertised with field Y?" (FP-0008 #1133).
+        ex = op.get("example")
+        if isinstance(ex, dict):
+            fields = [k for k in ex.keys() if k != "kind"]
+            fields_source = "example"
+        else:
+            meta_keys = {"kind", "description", "example", "examples", "示例"}
+            fields = [k for k in op.keys() if k not in meta_keys]
+            fields_source = "top-level"
+
+    return has_desc, has_example, fields, required, fields_source
+
+
+def mode_llm_advertised_ops(records: list[dict], request_id: str) -> None:
+    """Structured summary of the Control IR ops advertised to the LLM.
+
+    For the given request, extract ``available_control_ops`` and print one
+    line per op: ``kind | desc=Y/N | example=Y/N | fields=[...] | required=[...]``.
+
+    Origin: answering "is op X advertised? is field Y presented as required?"
+    previously required hand-parsing nested JSON out of the prompt payload
+    (FP-0008 #1133 co-sign investigation). This makes it a one-command
+    structured read. Generic — works for any skill's request.
+    """
+    req: dict | None = None
+    for rec in records:
+        if rec.get("request_id") == request_id and rec.get("kind") == "request":
+            req = rec
+            break
+
+    if req is None:
+        print(f"request_id not found: {request_id}")
+        sys.exit(1)
+
+    ops = _extract_available_control_ops(req)
+    if ops is None:
+        print(f"available_control_ops: not present in request {request_id}")
+        print("(= this phase/skill advertises no control ops, or non-phase request)")
+        return
+
+    print(f"available_control_ops ({len(ops)} entries) for request {request_id}:")
+    print()
+    for op in ops:
+        if not isinstance(op, dict):
+            print(f"  (non-dict entry: {op!r})")
+            continue
+        kind = op.get("kind", "?")
+        has_desc, has_example, fields, required, fsrc = _op_field_summary(op)
+        print(
+            f"  kind={kind:<16} "
+            f"desc={'Y' if has_desc else 'N'}  "
+            f"example={'Y' if has_example else 'N'}  "
+            f"fields={fields} (from {fsrc})  "
+            f"required={required}"
+        )
+
+
+# CANONICAL contract: tya5/reyn#1135 issue comment (single source of truth,
+# supersedes all broker v-FINAL-N ticks). The model's rejected raw output is
+# carried by a single NEW additive event `phase_output_validation_failed`
+# (existing validation_error/phase_failed etc. are UNCHANGED). failure_kind is
+# an explicit enum field on the event (not derived from the event name).
+_VALIDATION_FAIL_EVENT = "phase_output_validation_failed"
+
+
+def _op_kind_keys(op: dict) -> "tuple[str, list[str]]":
+    """Return (kind, sorted-non-kind-keys) for one emitted control_ir op."""
+    kind = op.get("kind", "?")
+    keys = sorted(k for k in op.keys() if k != "kind")
+    return kind, keys
+
+
+def _resolve_raw_output(ev: dict, state_dir: "Path | None") -> "str | None":
+    """Return the raw model output for a phase_output_validation_failed event.
+
+    Reads ``raw_output`` inline; if absent and ``raw_output_ref`` is set,
+    dereferences via ``read_offloaded``. Per canonical contract (#1135) the ref
+    is **state_dir-RELATIVE**, so the absolute path is ``state_dir / ref`` and
+    the boundary check uses ``base_dir=state_dir``. Defensive: returns None on
+    any miss/error rather than raising.
+    """
+    data = ev.get("data", ev)
+    inline = data.get("raw_output")
+    if isinstance(inline, str) and inline:
+        return inline
+    ref = data.get("raw_output_ref")
+    if not (isinstance(ref, str) and ref) or state_dir is None:
+        return None
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+        from reyn.services.offload import read_offloaded
+        content, found = read_offloaded(str(state_dir / ref), base_dir=state_dir)
+        return content if found else None
+    except Exception:
+        return None
+
+
+def mode_llm_emitted_ops(records: list[dict], request_id: str, root: "Path | None") -> None:
+    """Structured summary of the control_ir ops the model EMITTED.
+
+    Two sources, both reduced to ``{kind, keys}``:
+      1. The LLM response for *request_id* — its ``ops`` array (the ops the
+         model emitted on a successful parse).
+      2. Validation-failure events (``control_ir_validation_error`` etc.) whose
+         ``raw_output`` / ``raw_output_ref`` carries the raw model output that
+         FAILED validation — so "emitted a valid-looking op but it was rejected"
+         is visible. (Requires FP-0008 #1135(b) write-side; until that lands the
+         events simply carry no raw_output and this half shows nothing.)
+
+    Pairs with ``llm-advertised-ops``: advertised (what the OS offered) vs
+    emitted (what the model produced), for decide-turn failure classification.
+    """
+    # Source 1: response ops for this request_id (from the LLM trace).
+    resp: dict | None = None
+    for rec in records:
+        if rec.get("request_id") == request_id and rec.get("kind") == "response":
+            resp = rec
+            break
+
+    print(f"emitted control_ir ops for request {request_id}:")
+    print()
+    if resp is None:
+        print("  (no response record for this request_id in trace)")
+    else:
+        content = resp.get("content", "")
+        ops = None
+        if isinstance(content, str):
+            try:
+                ops = (json.loads(content) or {}).get("ops")
+            except (json.JSONDecodeError, AttributeError):
+                ops = None
+        if not isinstance(ops, list) or not ops:
+            print("  response: no ops emitted (empty / non-act response)")
+        else:
+            print(f"  response: {len(ops)} op(s)")
+            for op in ops:
+                if isinstance(op, dict):
+                    kind, keys = _op_kind_keys(op)
+                    print(f"    kind={kind:<16} keys={keys}")
+                else:
+                    print(f"    (non-dict op: {op!r})")
+
+    # Source 2: phase_output_validation_failed events carrying raw model output.
+    # Events live in the events log (--root), not the LLM trace, and are
+    # phase-keyed (no request_id), so we list all such events. Per canonical
+    # contract (#1135) this is a single NEW event with an explicit failure_kind
+    # field and a state_dir-relative raw_output_ref (state_dir == --root here:
+    # the offload root the relative ref resolves under).
+    if root is None:
+        return
+    state_dir = root
+    fail_events = [
+        e for e in _all_events(root)
+        if e.get("kind") == _VALIDATION_FAIL_EVENT
+        or (isinstance(e.get("data"), dict) and e["data"].get("kind") == _VALIDATION_FAIL_EVENT)
+    ]
+    raw_bearing = []
+    for e in fail_events:
+        d = e.get("data", e)
+        if d.get("raw_output") or d.get("raw_output_ref"):
+            raw_bearing.append(e)
+    if not raw_bearing:
+        print()
+        print(f"  {_VALIDATION_FAIL_EVENT} events with raw_output: none")
+        print("  (= no rejected-op records; or FP-0008 #1135(b) write-side not yet landed)")
+        return
+    print()
+    print(f"  {_VALIDATION_FAIL_EVENT} events with raw model output ({len(raw_bearing)}):")
+    for e in raw_bearing:
+        d = e.get("data", e)
+        failure_kind = d.get("failure_kind", "?")  # explicit enum field (canonical #1135)
+        phase = d.get("phase", "?")
+        raw = _resolve_raw_output(e, state_dir)
+        ops_summary = "?"
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                ops = parsed.get("ops") if isinstance(parsed, dict) else None
+                if isinstance(ops, list):
+                    ops_summary = ", ".join(
+                        f"{_op_kind_keys(o)[0]}{_op_kind_keys(o)[1]}"
+                        for o in ops if isinstance(o, dict)
+                    ) or "(no ops in raw)"
+                else:
+                    ops_summary = "(raw not act-shaped)"
+            except (json.JSONDecodeError, AttributeError):
+                ops_summary = "(raw unparseable)"
+        else:
+            ops_summary = "(raw_output_ref unresolved)"
+        print(f"    failure_kind={failure_kind}  phase={phase}  emitted={ops_summary}")
+
+
 # ---------------------------------------------------------------------------
 # Time-travel: replay + compare modes
 # ---------------------------------------------------------------------------
@@ -1271,7 +1552,7 @@ def main() -> None:
         choices=[
             "summary", "full", "chain", "cost",
             "llm-payloads", "llm-detail", "llm-tools-schema",
-            "llm-context",
+            "llm-context", "llm-advertised-ops", "llm-emitted-ops",
             # Time-travel modes:
             "replay", "compare",
             # Plan-mode dogfood modes (ADR-0022/0023/0024/0025):
@@ -1385,7 +1666,7 @@ def main() -> None:
         return
 
     # ── LLM trace modes ───────────────────────────────────────────────────
-    if args.mode in ("llm-payloads", "llm-detail", "llm-tools-schema", "llm-context"):
+    if args.mode in ("llm-payloads", "llm-detail", "llm-tools-schema", "llm-context", "llm-advertised-ops", "llm-emitted-ops"):
         trace_paths = _resolve_trace_paths(args.trace)
         if not trace_paths:
             trace_paths = [".reyn/llm_trace.jsonl"]
@@ -1408,6 +1689,24 @@ def main() -> None:
                 print("llm-tools-schema requires a request_id argument")
                 sys.exit(1)
             mode_llm_tools_schema(records, args.request_id)
+            return
+
+        if args.mode == "llm-advertised-ops":
+            if not args.request_id:
+                print("llm-advertised-ops requires a request_id argument")
+                sys.exit(1)
+            mode_llm_advertised_ops(records, args.request_id)
+            return
+
+        if args.mode == "llm-emitted-ops":
+            if not args.request_id:
+                print("llm-emitted-ops requires a request_id argument")
+                sys.exit(1)
+            # Validation-fail events live in the events log (--root), separate
+            # from the LLM trace. Pass root when it exists so the rejected-op
+            # half can read them; None otherwise (response-ops half still works).
+            emit_root = Path(args.root) if Path(args.root).exists() else None
+            mode_llm_emitted_ops(records, args.request_id, emit_root)
             return
 
         if args.mode == "llm-context":
