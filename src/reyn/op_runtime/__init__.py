@@ -114,6 +114,9 @@ def available_kinds() -> list[str]:
 # Eagerly import handler modules so they self-register.
 from . import ask_user as _ask_user  # noqa: F401, E402
 
+# #272/#1128: voluntary LLM-initiated compaction op.
+from . import compact as _compact  # noqa: F401, E402
+
 # ADR-0033: RAG-extensible OS — embed / index_* / recall ops
 from . import embed as _embed  # noqa: F401, E402
 from . import file as _file  # noqa: F401, E402

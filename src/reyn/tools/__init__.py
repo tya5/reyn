@@ -46,6 +46,7 @@ def get_default_registry() -> ToolRegistry:
         LIST_AGENTS,
         LIST_SKILLS,
     )
+    from reyn.tools.compact import COMPACT
     from reyn.tools.cron import (
         CRON_DISABLE,
         CRON_ENABLE,
@@ -128,6 +129,7 @@ def get_default_registry() -> ToolRegistry:
     # RAG ops (ADR-0033 Phase 1)
     registry.register(RECALL)
     registry.register(DROP_SOURCE)
+    registry.register(COMPACT)
     # File ops (Wave 2 — Open Q #6 fine-grained naming)
     registry.register(READ_FILE)
     registry.register(WRITE_FILE)

@@ -524,17 +524,39 @@ class SkillResolveIROp(BaseModel):
     name: str   # short skill name, e.g. "skill_improver" (no slashes or extensions)
 
 
+class CompactIROp(BaseModel):
+    """Voluntarily compact the conversation/phase history (#272 / #1128).
+
+    LLM-emittable advisory control_ir op: when the OS-injected context-size
+    signal shows the window is filling, the model can request a compaction
+    rather than waiting for the involuntary ``retry_loop`` backstop. The OS
+    runs the existing synchronous compaction (``force_compact_now``) and
+    returns the freed tokens + the free window afterwards (exact tokens,
+    unit-aligned with the load-contract / context-size signal) so the model
+    can reason consistently about "should I compact" and "what fits now".
+
+    Voluntary (LLM-initiated) and independent of the mandatory retry_loop
+    backstop — this op never replaces it.
+
+    P7/P8 note: carries no skill-specific fields. ``reason`` is optional
+    free-text the model may supply for the audit trail; the OS never
+    interprets it.
+    """
+    kind: Literal["compact"]
+    reason: str | None = None   # optional model-supplied rationale (audit only)
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
 # All variants below are implemented in `op_runtime/`:
 #   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search,
 #   mcp_install, embed, index_write, index_query, recall, index_drop,
-#   sandboxed_exec, judge_output, skill_resolve.
+#   sandboxed_exec, judge_output, skill_resolve, compact.
 ControlIROp = Annotated[
     Union[
         FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
         EmbedIROp, IndexWriteIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
-        SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp,
+        SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,
     ],
     Field(discriminator="kind"),
 ]

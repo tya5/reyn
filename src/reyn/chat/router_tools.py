@@ -250,6 +250,7 @@ def build_tools(
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-i: opt-in catalog wrappers
     search_actions_visible: bool = False,       # FP-0034 Phase 2 step 1: D14 visibility gate
     hot_list_aliases: list[dict] | None = None,  # FP-0034 Phase 2 step 3: hot list direct aliases
+    compact_visible: bool = False,              # #272/#1128: visibility-gate compact on window-fill
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
@@ -762,6 +763,23 @@ def build_tools(
             description=_drop_source_rendered["function"]["description"],
             parameters=_drop_source_rendered["function"]["parameters"],
             dispatch_kind=_drop_source_def.dispatch_kind,
+        ))
+
+    # ── #272/#1128: compact (voluntary history compaction) ─────────────────────
+    # Visibility-gated (like search_actions §D14): only advertised when the
+    # window is filling (compact_visible, paired with the context-size signal).
+    # Offering compact on an empty window is noise + nothing to compact; gates
+    # stay router=allow (permission), this controls when it's surfaced. Keeping
+    # it hidden on ample-window turns also leaves tools= (and LLMReplay fixtures
+    # keyed on it) byte-stable.
+    _compact_def = _registry.lookup("compact")
+    if compact_visible and _compact_def is not None and _compact_def.gates.router == "allow":
+        _compact_rendered = _compact_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_compact_rendered["function"]["name"],
+            description=_compact_rendered["function"]["description"],
+            parameters=_compact_rendered["function"]["parameters"],
+            dispatch_kind=_compact_def.dispatch_kind,
         ))
 
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────

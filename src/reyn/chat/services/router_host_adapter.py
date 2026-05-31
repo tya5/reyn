@@ -208,6 +208,15 @@ class RouterHostAdapter:
         # left for the media follow-up after the (capped) tool text, so
         # router_loop bounds media materialisation. ``None`` = unbounded (pre-#272).
         media_followup_budget: Any = None,
+        # #272/#1128 compact op: awaitable () -> {freed_tokens, free_window_after}
+        # wired by ChatSession to its force_compact_now wrapper, so the LLM-
+        # emittable `compact` control_ir op can voluntarily compact history.
+        # ``None`` = no compaction context (compact op returns a clear error).
+        compact_now: Any = None,
+        # #272/#1128 context-size signal: callable () -> {free_window,
+        # effective_trigger} (exact tokens) for the OS-injected SP header.
+        # ``None`` = no signal rendered (e.g. test stubs).
+        context_window_status: Any = None,
         # FP-0037 S1: persistent MCP tools cache directory.
         # Default is Path(".reyn/state") which resolves relative to cwd
         # (= the project root in all production entry points). Tests pass
@@ -302,6 +311,10 @@ class RouterHostAdapter:
         self._cap_tool_result = cap_tool_result
         # #272 media axis: per-turn media-budget provider (or None).
         self._media_followup_budget = media_followup_budget
+        # #272/#1128 compact op: voluntary-compaction callable (or None).
+        self._compact_now = compact_now
+        # #272/#1128 context-size signal: live budget provider (or None).
+        self._context_window_status = context_window_status
 
     # --- RouterLoopHost identity attributes ---
 
@@ -769,6 +782,16 @@ class RouterHostAdapter:
     def resolve_model(self, name: str) -> str:
         """Resolve config model name (e.g. 'router') to actual model id."""
         return self._resolver.resolve(name).model
+
+    def context_window_status(self) -> "dict | None":
+        """#272/#1128: live exact-token context budget for the SP context-size
+        signal, or None when no provider is wired (= signal omitted)."""
+        if self._context_window_status is None:
+            return None
+        try:
+            return self._context_window_status()
+        except Exception:  # noqa: BLE001 — signal is best-effort, never break a turn
+            return None
 
     # --- Plan-mode lifecycle persistence (ADR-0022 Phase 1) ---
     #
@@ -1393,4 +1416,6 @@ class RouterHostAdapter:
             multimodal_config=self._multimodal_config,
             # Issue #383 PR-C: shared MediaStore for path-ref save/read.
             media_store=self._media_store,
+            # #272/#1128: voluntary-compaction capability for the compact op.
+            compact_now=self._compact_now,
         )

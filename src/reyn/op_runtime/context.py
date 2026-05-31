@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
@@ -67,6 +69,15 @@ class OpContext:
     # User interventions (ask_user, permission prompts in PR7)
     intervention_bus: "RequestBus | None" = None
     current_phase: str = ""
+
+    # #272/#1128: voluntary-compaction capability for the `compact` op.
+    # An awaitable zero-arg callable the caller (ChatSession / phase runtime)
+    # wires to its synchronous compaction (force_compact_now), returning
+    # {"freed_tokens", "free_window_after", ...} in exact tokens. None when no
+    # compaction context is available (e.g. preprocessor / direct construction)
+    # → the compact op returns a clear error rather than silently no-op'ing
+    # (same contract as ask_user without an intervention_bus).
+    compact_now: "Callable[[], Awaitable[dict]] | None" = None
 
     # PR20: caller provenance threaded from the parent Agent so sub-skill
     # invocations land under the same `events/<caller>/skill_runs/...` tree.
