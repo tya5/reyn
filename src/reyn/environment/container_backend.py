@@ -9,10 +9,11 @@ One class implementing BOTH Protocols (案C-pure):
 Injecting the SAME instance at ``Workspace.environment_backend`` (FS) and
 ``OpContext.sandbox_backend`` (exec) makes file edits + commands hit one
 container target — the agent edits ``/testbed`` directly, so there is **no
-host-diff bridge** (unlike the interim FP-0017/PR-A ``DockerSandboxBackend``,
-whose ``git diff host → reset → apply into container`` logic is deliberately
-DROPPED here — that bridge, and the per-call reset / tracked-untracked
-gymnastics, were artifacts of file-on-host / exec-in-container divergence).
+host-diff bridge** (unlike the interim FP-0017/PR-A apply-into-prebuilt
+approach, whose ``git diff host → reset → apply into container`` logic is
+deliberately DROPPED here — that bridge, and the per-call reset / tracked-
+untracked gymnastics, were artifacts of file-on-host / exec-in-container
+divergence).
 ``run()`` is a plain ``docker exec`` because the files are already in
 ``repo_dir``.
 
@@ -45,7 +46,7 @@ from reyn.sandbox.policy import SandboxPolicy
 # Sync runner: execute argv (optionally stdin), return SandboxResult. Injected so
 # the FS-op orchestration is testable without Docker; default = _sync_runner.
 SyncRunner = Callable[..., SandboxResult]
-# Async runner: same contract for run() (mirrors PR-A DockerSandboxBackend).
+# Async runner: same contract for run() (mirrors the PR-A backend runner).
 AsyncRunner = Callable[..., Awaitable[SandboxResult]]
 
 
