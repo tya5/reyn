@@ -104,9 +104,9 @@ class OpContext:
     # FP-0008 C7 #2: runtime backend-instance override for sandboxed_exec.
     # When set, the sandboxed_exec handler uses this backend INSTANCE verbatim
     # instead of resolving one by name from sandbox_config. This is the seam for
-    # *stateful* backends bound to a runtime resource (e.g. DockerSandboxBackend
-    # bound to a specific container + host workspace) that a name-based factory
-    # cannot construct. Generic: any caller owning such a resource may inject
+    # *stateful* backends bound to a runtime resource (e.g. a
+    # DockerEnvironmentBackend bound to a specific container + host workspace)
+    # that a name-based factory cannot construct. Generic: any caller owning such a resource may inject
     # one; None preserves the default name-based platform auto-selection.
     sandbox_backend: "SandboxBackend | None" = None
 
