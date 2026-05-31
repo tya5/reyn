@@ -44,6 +44,13 @@ async def handle(
             timeout_seconds=op.timeout_seconds,
         )
 
+    # Anchor the working directory to the run's workspace base_dir — parity with
+    # the legacy `shell` op (FP-0008 PR-I). Without this, repo-relative `git` /
+    # `pytest` run in the harness process cwd instead of the repo root, which
+    # breaks concurrent benchmark runs. A workspace-coupled backend (e.g. a
+    # container backend) may ignore this host path and use its own baked cwd.
+    cwd = str(ctx.workspace.base_dir)
+
     ctx.events.emit(
         "sandboxed_exec_started",
         argv=list(op.argv),
@@ -53,7 +60,7 @@ async def handle(
         allow_subprocess=op.allow_subprocess,
     )
 
-    result = await backend.run(list(op.argv), policy)
+    result = await backend.run(list(op.argv), policy, cwd=cwd)
 
     stdout_text = result.stdout.decode("utf-8", errors="replace")
     stderr_text = result.stderr.decode("utf-8", errors="replace")

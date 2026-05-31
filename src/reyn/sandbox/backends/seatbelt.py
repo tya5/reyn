@@ -164,8 +164,14 @@ class SeatbeltBackend:
         policy: SandboxPolicy,
         *,
         stdin: bytes | None = None,
+        cwd: str | None = None,
     ) -> SandboxResult:
-        """Execute *argv* under the SBPL policy derived from *policy*."""
+        """Execute *argv* under the SBPL policy derived from *policy*.
+
+        ``cwd`` (= the run's ``workspace.base_dir``) is the working directory the
+        sandboxed child inherits, so repo-relative ``git`` / ``pytest`` resolve
+        correctly. The SBPL profile still bounds what that child may read/write.
+        """
         profile_text = _build_sbpl_profile(policy)
 
         # Build env from passthrough allowlist; fall back PATH if not listed.
@@ -198,6 +204,7 @@ class SeatbeltBackend:
                         input=stdin,
                         capture_output=True,
                         env=env,
+                        cwd=cwd,
                         timeout=policy.timeout_seconds,
                         check=False,
                     )

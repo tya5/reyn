@@ -209,14 +209,22 @@ async def test_dispatch_timeout_status():
 
 
 class _StubBackend:
-    """Real (non-mock) SandboxBackend stub for the injection-seam test."""
+    """Real (non-mock) SandboxBackend stub for the injection-seam test.
+
+    Records the ``cwd`` it was invoked with so the cwd-anchoring contract can be
+    asserted behaviorally.
+    """
 
     name = "stub-injected"
+
+    def __init__(self) -> None:
+        self.received_cwd: str | None = None
 
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None) -> SandboxResult:
+    async def run(self, argv, policy, *, stdin=None, cwd=None) -> SandboxResult:
+        self.received_cwd = cwd
         return SandboxResult(returncode=0, stdout=b"from-stub", stderr=b"")
 
 
@@ -235,6 +243,64 @@ async def test_injected_sandbox_backend_takes_precedence():
     # The injected instance ran — not the platform default (e.g. seatbelt here).
     assert result["backend"] == "stub-injected"
     assert result["stdout"] == "from-stub"
+
+
+# ─── 4c. cwd anchoring (parity with shell op, FP-0008 PR-I) ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_handler_passes_workspace_base_dir_as_cwd():
+    """Tier 2: the handler anchors cwd to workspace.base_dir on backend.run.
+
+    Parity with the legacy `shell` op (FP-0008 PR-I). Asserted behaviorally via
+    a recording stub so repo-relative git/pytest run in the repo root.
+    """
+    ctx, _events = _make_ctx()
+    stub = _StubBackend()
+    ctx.sandbox_backend = stub
+    op = SandboxedExecIROp(
+        kind="sandboxed_exec", argv=["/bin/echo", "x"],
+        env_passthrough=["PATH"], timeout_seconds=10,
+    )
+    await execute_op(op, ctx, caller="control_ir")
+    assert stub.received_cwd == str(ctx.workspace.base_dir)
+
+
+@pytest.mark.asyncio
+async def test_default_backend_actually_runs_in_workspace_cwd(tmp_path):
+    """Tier 2: the default backend's subprocess runs with cwd=workspace.base_dir.
+
+    End-to-end proof (not just handler threading): /bin/pwd executed via the
+    real platform default backend reports the workspace base_dir. Uses realpath
+    on both sides to tolerate macOS /var → /private/var symlink resolution.
+    """
+    import os
+
+    from reyn.events.events import EventLog
+    from reyn.op_runtime.context import OpContext
+    from reyn.workspace.workspace import Workspace
+
+    events = EventLog()
+    ws = Workspace(events=events, base_dir=tmp_path)
+    ctx = OpContext(
+        workspace=ws, events=events,
+        permission_decl=PermissionDecl(), permission_resolver=None,
+    )
+    # Grant read on the cwd: a deny-default backend (seatbelt) otherwise blocks
+    # /bin/pwd from stat-ing its own working directory. This mirrors the
+    # permissive policy a repo-exec phase must declare for git/pytest.
+    op = SandboxedExecIROp(
+        kind="sandboxed_exec", argv=["/bin/pwd"],
+        read_paths=[str(tmp_path)],
+        env_passthrough=["PATH"], timeout_seconds=10,
+    )
+    result = await execute_op(op, ctx, caller="control_ir")
+    assert result["returncode"] == 0, f"/bin/pwd failed: {result!r}"
+    reported = os.path.realpath(result["stdout"].strip())
+    assert reported == os.path.realpath(str(ws.base_dir)), (
+        f"sandboxed_exec ran in {reported!r}, expected workspace base_dir "
+        f"{ws.base_dir!r}"
+    )
 
 
 @pytest.mark.asyncio

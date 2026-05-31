@@ -317,12 +317,18 @@ class DockerEnvironmentBackend:
 
     async def run(
         self, argv: list[str], policy: SandboxPolicy, *, stdin: bytes | None = None,
+        cwd: str | None = None,
     ) -> SandboxResult:
         """Plain ``docker exec`` of argv with cwd=repo_dir — NO host-diff bridge.
 
         The files are already in ``repo_dir`` (the agent edited them via the FS
         methods above), so there is nothing to sync in. Honors only
         ``policy.timeout_seconds`` (the fidelity boundary, as in PR-A).
+
+        The host-side ``cwd`` (= the OS's ``workspace.base_dir``) is **ignored**:
+        the repo lives at the in-container ``self.repo_dir`` (``-w``), which a
+        host path can't address. Same asymmetry as policy enforcement — a
+        workspace-coupled backend scopes both to the fidelity boundary.
         """
         exec_argv = [self.docker_bin, "exec", "-w", self.repo_dir, self.container, *argv]
         return await self._runner(exec_argv, stdin=stdin, timeout=policy.timeout_seconds)

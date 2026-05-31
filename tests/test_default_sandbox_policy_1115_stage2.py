@@ -31,12 +31,14 @@ class _PolicyRecordingBackend:
 
     def __init__(self) -> None:
         self.received: SandboxPolicy | None = None
+        self.received_cwd: str | None = None
 
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None) -> SandboxResult:
+    async def run(self, argv, policy, *, stdin=None, cwd=None) -> SandboxResult:
         self.received = policy
+        self.received_cwd = cwd
         return SandboxResult(returncode=0, stdout=b"", stderr=b"")
 
 
