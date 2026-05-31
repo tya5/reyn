@@ -289,22 +289,18 @@ def _build_runner():
         project_context = load_project_context(config, project_root)
         logger = make_logger()
 
-        perm_resolver = _build_permission_resolver(config, shell_allowed=False)
-        agent = Agent(
+        # #997 dir2: config-derived permission/runtime bundle wired by
+        # Agent.from_config (cron jobs run unattended → shell_allowed=False).
+        agent = Agent.from_config(
+            config,
+            shell_allowed=False,
             model=resolved,
+            resolver=resolver,
             strict=False,
             subscribers=[logger],
             intervention_bus=StdinInterventionBus(),
-            shell_allowed=False,
-            resolver=resolver,
-            permission_resolver=perm_resolver,
-            safety=config.safety,
-            mcp_servers=config.mcp,
-            python_allowed_modules=list(config.python.allowed_modules),
-            prompt_cache_enabled=config.prompt_cache_enabled,
             project_context=project_context,
             caller="cron",
-            sandbox_config=config.sandbox,
         )
 
         skill_dir, skill_root = resolve_skill_path(job.skill)

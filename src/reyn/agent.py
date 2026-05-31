@@ -123,6 +123,99 @@ class Agent:
         self.run_id: str | None = run_id
         self.events_path: Path | None = None
 
+    @classmethod
+    def from_config(
+        cls,
+        config: "ReynConfig",
+        *,
+        shell_allowed: bool,
+        model: str | None = None,
+        safety: "SafetyConfig | None" = None,
+        resolver: ModelResolver | None = None,
+        python_allowed_modules: list[str] | None = None,
+        caller: str = "direct",
+        unsafe_python: bool = False,
+        interactive: bool | None = None,
+        strict: bool = False,
+        subscribers: list[Callable] | None = None,
+        intervention_bus: RequestBus | None = None,
+        project_context: str = "",
+        agent_role: str = "",
+        budget_tracker: BudgetTracker | None = None,
+        multimodal_config: "MultimodalConfig | None" = None,
+        media_store: "MediaStore | None" = None,
+        secret_store: "ScopedSecretStore | None" = None,
+        workspace_base_dir: "Path | None" = None,
+        workspace_state_dir: "Path | None" = None,
+        run_id: str | None = None,
+        environment_backend: "EnvironmentBackend | None" = None,
+        sandbox_backend: "SandboxBackend | None" = None,
+    ) -> "Agent":
+        """Construct a fully-wired Agent from a ReynConfig (#997 dir2).
+
+        Construction-time prevention of the FP-0008 / #1133 wiring-gap class:
+        the permission/runtime bundle that direct callers historically
+        hand-listed (and sometimes omitted — e.g. ``eval benchmark`` shipped
+        without ``permission_resolver`` / ``shell_allowed``, so a phase that
+        declared ``shell`` got the op filtered to nothing and the LLM
+        hallucinated a fake schema) is derived here from ``config`` once. A
+        caller need only decide ``shell_allowed`` (+ any per-invocation extras);
+        it **cannot** forget ``permission_resolver`` / ``mcp_servers`` /
+        ``python_allowed_modules`` / ``prompt_cache_enabled`` / ``sandbox_config``.
+
+        ``model`` / ``safety`` / ``resolver`` default to the config-derived value
+        but accept an override (e.g. ``reyn run`` passes an args-aware
+        ``safety`` for ``--max-phase-visits`` and friends). The gap-prone bundle
+        is always derived — it is intentionally not overridable.
+
+        The permission-resolver derivation matches ``cli.run._build_permission_resolver``
+        (inlined here to keep the factory in the core layer, dependency-free of
+        the cli package). ``interactive`` defaults to ``sys.stdin.isatty()``.
+        """
+        import sys
+
+        from reyn.config import _find_project_root
+
+        perm_config = dict(getattr(config, "permissions", {}) or {})
+        if shell_allowed and "shell" not in perm_config:
+            perm_config["shell"] = "allow"
+        permission_resolver = PermissionResolver(
+            config_permissions=perm_config,
+            project_root=_find_project_root(Path.cwd()),
+            interactive=sys.stdin.isatty() if interactive is None else interactive,
+            unsafe_python_allowed=unsafe_python,
+        )
+        return cls(
+            model=model if model is not None else config.model,
+            strict=strict,
+            subscribers=subscribers,
+            intervention_bus=intervention_bus,
+            shell_allowed=shell_allowed,
+            resolver=resolver if resolver is not None else ModelResolver(config.models),
+            permission_resolver=permission_resolver,
+            safety=safety if safety is not None else config.safety,
+            mcp_servers=config.mcp,
+            python_allowed_modules=(
+                list(python_allowed_modules)
+                if python_allowed_modules is not None
+                else list(config.python.allowed_modules)
+            ),
+            prompt_cache_enabled=config.prompt_cache_enabled,
+            project_context=project_context,
+            agent_role=agent_role,
+            caller=caller,
+            budget_tracker=budget_tracker,
+            sandbox_config=config.sandbox,
+            multimodal_config=multimodal_config,
+            media_store=media_store,
+            secret_store=secret_store,
+            workspace_base_dir=workspace_base_dir,
+            workspace_state_dir=workspace_state_dir,
+            run_id=run_id,
+            environment_backend=environment_backend,
+            sandbox_backend=sandbox_backend,
+        )
+
     @property
     def caller(self) -> str:
         return self._caller

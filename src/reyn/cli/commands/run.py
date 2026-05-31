@@ -133,10 +133,6 @@ def run(args: argparse.Namespace) -> None:
     if not unsafe_python and loaded.skill_md is not None:
         from reyn.skill.skill_paths import is_stdlib_skill
         unsafe_python = is_stdlib_skill(loaded.skill_md.parent)
-    perm_resolver = _build_permission_resolver(
-        session.config, shell_allowed, unsafe_python=unsafe_python,
-    )
-
     from reyn.agent import Agent
     from reyn.config import _find_project_root, load_project_context
     from reyn.user_intervention import StdinInterventionBus
@@ -144,21 +140,24 @@ def run(args: argparse.Namespace) -> None:
     project_context = load_project_context(session.config, project_root)
     logger = make_logger()
     env_backend, ws_base_dir, ws_state_dir = _build_environment_backend(args)
-    agent = Agent(
+    # #997 dir2: the permission/runtime bundle (permission_resolver, mcp_servers,
+    # python_allowed_modules, prompt_cache_enabled, sandbox_config, resolver) is
+    # derived from config inside Agent.from_config — a caller cannot omit it (the
+    # FP-0008 / #1133 wiring-gap class). Only the per-invocation overrides
+    # (args-aware safety, the docker env backend, workspace dirs, logger) are
+    # passed here.
+    agent = Agent.from_config(
+        session.config,
+        shell_allowed=shell_allowed,
         model=model,
+        safety=safety,
+        resolver=session.resolver,
+        unsafe_python=unsafe_python,
         strict=args.strict,
         subscribers=[logger],
         intervention_bus=StdinInterventionBus(),
-        shell_allowed=shell_allowed,
-        resolver=session.resolver,
-        permission_resolver=perm_resolver,
-        safety=safety,
-        mcp_servers=session.config.mcp,
-        python_allowed_modules=list(session.config.python.allowed_modules),
-        prompt_cache_enabled=session.config.prompt_cache_enabled,
         project_context=project_context,
         caller="direct",
-        sandbox_config=session.config.sandbox,
         # FP-0008 #1115 Stage 2: inject the SAME container backend instance at
         # both seams (FS = environment_backend, exec = sandbox_backend), agent-
         # level uniform. None (host) preserves the default identity behavior.
