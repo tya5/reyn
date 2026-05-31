@@ -14,6 +14,31 @@ import httpx
 logger = logging.getLogger(__name__)
 from reyn.llm.json_parse import loads_lenient
 from reyn.llm.model_resolver import ModelSpec
+
+# FP-0008 #1135 sibling: inline cap for the raw output captured on a pre-parse
+# JSON-decode failure (opt A — llm layer, no offload).
+_JSON_DECODE_RAW_CAP = 8192
+
+
+def _truncate_json_for_event(raw: str, pos: "int | None", cap: int = _JSON_DECODE_RAW_CAP) -> str:
+    """Bound the raw LLM output for the json-decode-failure event (#1135 sibling).
+
+    Returns *raw* unchanged when ≤ ``cap``. Otherwise returns a ``cap``-byte
+    window centered on the JSONDecodeError position (where the malformation is),
+    or the head when ``pos`` is unknown, with ``…[N bytes before/after]`` markers.
+    Inline-only: the malformation in a decode failure is diagnosable from the
+    window, so no offload is needed at the llm layer.
+    """
+    if len(raw) <= cap:
+        return raw
+    if pos is None:
+        return raw[:cap] + f"\n…[truncated {len(raw) - cap} bytes]"
+    half = cap // 2
+    start = max(0, min(pos - half, len(raw) - cap))
+    end = start + cap
+    head = f"…[{start} bytes before]\n" if start > 0 else ""
+    tail = f"\n…[{len(raw) - end} bytes after]" if end < len(raw) else ""
+    return head + raw[start:end] + tail
 from reyn.llm.pricing import TokenUsage
 from reyn.schemas.models import ContextFrame
 
@@ -922,6 +947,21 @@ async def call_llm(
             )
         return result
 
+    # FP-0008 #1135 sibling (opt A, canonical contract in #1135): capture the
+    # raw LLM output into the always-on P6 events log on a pre-parse JSON-decode
+    # failure — otherwise it survives only in the opt-in REYN_LLM_TRACE_DUMP, so
+    # the failure (e.g. a malformed `\escape`) is undiagnosable from events. The
+    # read-side is dogfood_trace --mode llm-emitted-ops. Inline-cap only: the llm
+    # layer has no state_dir to offload to, and a decode malformation is
+    # diagnosable from a window around the error position.
+    if event_log is not None:
+        _pos = getattr(last_exc, "pos", None)
+        event_log.emit(
+            "llm_output_json_decode_failed",
+            failure_kind="json_decode",
+            error=str(last_exc),
+            raw_output=_truncate_json_for_event(last_raw, _pos),
+        )
     raise ValueError(
         f"LLM returned invalid JSON after repair and retry.\n"
         f"Error: {last_exc}\n"
