@@ -2559,6 +2559,28 @@ class ConversationView(Widget):
                 pass
         self._user_scrolled = True
 
+    def scroll_to_top(self) -> None:
+        """Jump the conv log to the very top (oldest content), no focus change.
+
+        Symmetric with ``scroll_to_bottom`` (Alt+End): the conv log has
+        ``can_focus=False`` so Textual's default Home key never reaches it,
+        and there was a jump-to-bottom but no jump-to-top. Sets
+        ``_user_scrolled`` so the scroll watcher doesn't yank the user back
+        to the tail on the next write (they're now reading the oldest
+        history). The ``scroll_y`` watcher also fires from the position
+        change, arming the same scroll-lock + ``↓ N new`` baseline as a
+        manual scroll-up.
+        """
+        log = self._log()
+        try:
+            log.scroll_home(animate=False)
+        except Exception:
+            try:
+                log.scroll_to(y=0, animate=False)
+            except Exception:
+                pass
+        self._user_scrolled = True
+
     def scroll_page_down(self) -> None:
         """Scroll the conv log down one page without changing focus."""
         log = self._log()

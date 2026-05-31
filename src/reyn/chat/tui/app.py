@@ -156,6 +156,7 @@ class ReynTUIApp(App):
         # waiting for a manual PageDown chain.
         Binding("alt+up", "conv_scroll_line_up", "Scroll up 1 line", priority=True, show=False),
         Binding("alt+down", "conv_scroll_line_down", "Scroll down 1 line", priority=True, show=False),
+        Binding("alt+home", "conv_scroll_home", "Scroll to top", priority=True, show=False),
         Binding("alt+end", "conv_scroll_end", "Scroll to bottom", priority=True, show=False),
         # ``/find`` cycle navigation. After ``/find <query>`` lands the
         # first match, Ctrl+G cycles forward and Ctrl+Shift+G cycles
@@ -1516,6 +1517,14 @@ class ReynTUIApp(App):
         try:
             conv = self.query_one("#conversation", ConversationView)
             conv.scroll_line_down()
+        except Exception:
+            pass
+
+    def action_conv_scroll_home(self) -> None:
+        """Alt+Home — jump the conv log to the top (oldest content)."""
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.scroll_to_top()
         except Exception:
             pass
 
