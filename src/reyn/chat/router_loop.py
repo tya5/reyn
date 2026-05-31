@@ -2569,6 +2569,8 @@ class RouterLoop:
         # (= host.make_router_op_context) so the permission resolver and
         # intervention_bus are present for the index_drop gate.
         "recall", "drop_source",
+        # #272/#1128: voluntary history compaction (handler → execute_op → compact op).
+        "compact",
         # FP-0034 Phase 1: universal catalog wrappers.  Handlers in
         # src/reyn/tools/universal_catalog.py — list_actions enumerates
         # via ctx.router_state, describe_action / invoke_action route

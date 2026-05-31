@@ -92,6 +92,7 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_AGENT,
         REMEMBER_SHARED,
     )
+    from reyn.tools.compact import COMPACT
     from reyn.tools.plan import PLAN
     from reyn.tools.read_tool_result import READ_TOOL_RESULT
     from reyn.tools.recall import RECALL
@@ -128,6 +129,7 @@ def get_default_registry() -> ToolRegistry:
     # RAG ops (ADR-0033 Phase 1)
     registry.register(RECALL)
     registry.register(DROP_SOURCE)
+    registry.register(COMPACT)
     # File ops (Wave 2 — Open Q #6 fine-grained naming)
     registry.register(READ_FILE)
     registry.register(WRITE_FILE)

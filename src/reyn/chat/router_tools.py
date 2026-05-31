@@ -764,6 +764,17 @@ def build_tools(
             dispatch_kind=_drop_source_def.dispatch_kind,
         ))
 
+    # ── #272/#1128: compact (voluntary history compaction) ─────────────────────
+    _compact_def = _registry.lookup("compact")
+    if _compact_def is not None and _compact_def.gates.router == "allow":
+        _compact_rendered = _compact_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_compact_rendered["function"]["name"],
+            description=_compact_rendered["function"]["description"],
+            parameters=_compact_rendered["function"]["parameters"],
+            dispatch_kind=_compact_def.dispatch_kind,
+        ))
+
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────
     #
     # FP-0024 Component D: threshold-based switch.

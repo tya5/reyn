@@ -53,6 +53,9 @@ EXPECTED_TOOL_NAMES = [
     # when the ToolRegistry contains them (B17-S6-1 / B17-S8-2 fix).
     "recall",
     "drop_source",
+    # compact (#272/#1128) — always exposed; voluntary history compaction
+    # paired with the OS-injected context-size signal.
+    "compact",
 ]
 
 
@@ -98,15 +101,15 @@ MCP_TOOL_NAMES = {"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"}
 SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
-def test_build_tools_returns_19_tools_when_no_extras():
+def test_build_tools_returns_expected_baseline_tools():
     """Tier 2: No file / MCP extras: 11 baseline + web_search (E1, always on)
     + web_fetch (E2, FP-0022: always on, handler-level approval)
     + read_tool_result (E3, B49 Step 2 v6 fix: lazy-expand half of the
     preview-driven design, surfaced for router-side use)
     + reyn_src_list + reyn_src_read (F1/F2, always on)
-    + plan (G1, always on) + recall + drop_source (H1/H2, always on).
-    All file-class tools and MCP remain gated, so 19 total at the
-    unconfigured baseline.
+    + plan (G1, always on) + recall + drop_source (H1/H2, always on)
+    + compact (#272/#1128, always on). All file-class tools and MCP remain
+    gated, so the unconfigured baseline is exactly EXPECTED_TOOL_NAMES.
     """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     assert _tool_names(tools) == EXPECTED_TOOL_NAMES, (
