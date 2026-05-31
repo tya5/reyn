@@ -187,16 +187,16 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
     the height — input bar regains full vertical space.
     """
 
-    DEFAULT_CSS = """
-    AsyncStackPanel {
+    DEFAULT_CSS = f"""
+    AsyncStackPanel {{
         dock: bottom;
         height: auto;
         max-height: 6;
         padding: 0 1;
         background: transparent;
         overflow: hidden;
-    }
-    AsyncStackPanel #async_stack_text {
+    }}
+    AsyncStackPanel #async_stack_text {{
         /* Force the inner Static to clip rather than wrap when a
            pre-truncated row's residual width briefly exceeds the
            constrained panel width (= e.g. between Ctrl+B side-panel
@@ -207,10 +207,10 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
            rebuild on the new width, wrap is eliminated. */
         height: auto;
         overflow: hidden;
-    }
-    AsyncStackPanel:focus {
-        background: #1a1a1a;
-    }
+    }}
+    AsyncStackPanel:focus {{
+        background: {_BG_HEADER};
+    }}
     """
 
     # Focusable so the F4 binding can route focus here and j/k
