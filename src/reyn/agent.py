@@ -68,7 +68,14 @@ class Agent:
         sandbox_backend: "SandboxBackend | None" = None,
     ) -> None:
         self.model = model
-        self.state_dir = ".reyn"
+        # FP-0008 #1132: the events audit log lives under state_dir. Honor an
+        # explicit workspace_state_dir (the same host-side dir that holds the
+        # Workspace's artifacts + control_ir_offload) so events co-locate with
+        # the rest of the run's state — required for an in-container run where
+        # base_dir is the container repo and state is kept host-side. Falls back
+        # to the cwd-relative ".reyn" default (unchanged host behavior) when no
+        # explicit state dir is given.
+        self.state_dir = str(workspace_state_dir) if workspace_state_dir is not None else ".reyn"
         self.strict = strict
         self._subscribers = list(subscribers or [])
         self._intervention_bus = intervention_bus
