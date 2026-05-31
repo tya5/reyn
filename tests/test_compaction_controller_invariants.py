@@ -7,6 +7,13 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
     - events.all() (EventLog public read accessor)
     - event.type / event.data (public fields on Event)
 - Each test docstring's first line starts with ``Tier 2: ...``.
+
+#1128 PR-a: the background fire-and-forget path (``spawn_maybe`` /
+``_maybe_compact``) was removed; ``force_compact_now`` — the synchronous
+pre-frame guard path — is the sole controller-driven compaction entry point.
+Candidate selection is token-budget (step 3, ``_select_candidates`` via the
+engine's ComputedBudgets head_budget/tail_budget), so the stub engines below
+expose synthetic ``budgets``.
 """
 from __future__ import annotations
 
@@ -25,30 +32,13 @@ from reyn.services.compaction.engine import (
     HistoryChunkToCompact,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers — minimal ChatMessage stand-in and engine stub
-# ---------------------------------------------------------------------------
-
-
-def _small_budgets(*, head: int = 2, tail: int = 2) -> ComputedBudgets:
-    """Return ComputedBudgets with small head/tail token budgets for tests.
-
-    ``head`` and ``tail`` are in tokens (chars4 units).  All controller
-    tests use ``use_chars4_estimate=True``.  "hi" = 2 chars → max(1, 2//4)
-    = 1 token.  With head=tail=2, trim_head keeps the first 2 turns and
-    trim_tail keeps the last 2, leaving a non-empty middle for a 7-turn
-    history (exactly 3 middle candidates).
-    """
-    return ComputedBudgets(
-        main_pool=1000,
-        head_budget=head,
-        body_budget=100,
-        tail_budget=tail,
-        new_msg_budget=100,
-        B_M=1000,
-        main_M_room=1000,
-        effective_trigger=1000,
-    )
+# Synthetic budgets: head/tail each fit ~one 50-token turn ("x"*200 via chars4),
+# so a 7-turn history yields head=[t1], tail=[t7], middle=[t2..t6] = candidates.
+_STUB_BUDGETS = ComputedBudgets(
+    main_pool=100_000, head_budget=50, body_budget=5_000,
+    tail_budget=50, new_msg_budget=10_000,
+    B_M=80_000, main_M_room=65_000, effective_trigger=65_000,
+)
 
 
 @dataclass
@@ -62,19 +52,12 @@ class _FakeMessage:
 
 
 class _AbortingEngine(CompactionEngine):
-    """Engine stub that always raises so compaction aborts early.
-
-    Inherits from the real engine but overrides compact() — no LLM call.
-    Sets ``_budgets`` to small values so ``_select_candidates`` produces
-    non-empty middle candidates from a moderate-length history.
-    """
+    """Engine stub that always raises so compaction aborts early (no LLM call)."""
 
     def __init__(self) -> None:
-        # Skip CompactionEngine.__init__ (needs model + events).
-        self._model = "stub"
+        self._model = ""
         self._events = EventLog()
-        self._budgets = _small_budgets()
-        self.compaction_lock = asyncio.Lock()
+        self._budgets = _STUB_BUDGETS
 
     async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
         raise RuntimeError("aborting engine stub: test-time abort")
@@ -83,251 +66,109 @@ class _AbortingEngine(CompactionEngine):
 class _SucceedingEngine(CompactionEngine):
     """Engine stub that returns a minimal ChatSummary without an LLM call."""
 
-    def __init__(self, covers: int = 0) -> None:
-        self._model = "stub"
+    def __init__(self) -> None:
+        self._model = ""
         self._events = EventLog()
-        self._covers = covers
-        self._budgets = _small_budgets()
-        self.compaction_lock = asyncio.Lock()
+        self._budgets = _STUB_BUDGETS
 
     async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
         seqs = [int(t.get("seq", 0)) for t in input_chunk.new_turns if isinstance(t, dict)]
-        covers = max(seqs) if seqs else self._covers
-        return ChatSummary(topic_arc="stub", covers_through_seq=covers)
-
-
-class _BlockingEngine(CompactionEngine):
-    """Engine stub that blocks on an asyncio.Event — for single-flight tests."""
-
-    def __init__(self, gate: asyncio.Event) -> None:
-        self._model = "stub"
-        self._events = EventLog()
-        self._gate = gate
-        self.call_count = 0
-        self._budgets = _small_budgets()
-        self.compaction_lock = asyncio.Lock()
-
-    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
-        self.call_count += 1
-        await self._gate.wait()
-        raise RuntimeError("blocking engine stub released")
-
-
-class _CancellableEngine(CompactionEngine):
-    """Engine stub that signals start then waits forever (for cancel tests)."""
-
-    def __init__(self, start_gate: asyncio.Event, cancel_gate: asyncio.Event) -> None:
-        self._model = "stub"
-        self._events = EventLog()
-        self._start = start_gate
-        self._cancel = cancel_gate
-        self._budgets = _small_budgets()
-        self.compaction_lock = asyncio.Lock()
-
-    async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
-        self._start.set()
-        await self._cancel.wait()
-        return ChatSummary(topic_arc="", covers_through_seq=0)
+        return ChatSummary(topic_arc="stub", covers_through_seq=max(seqs) if seqs else 0)
 
 
 def _make_controller(
     *,
-    history: list[_FakeMessage] | None = None,
-    config: CompactionConfig | None = None,
-    engine: CompactionEngine | None = None,
-) -> tuple[CompactionController, EventLog]:
-    """Return a (CompactionController, EventLog) pair ready for testing."""
+    history: list[_FakeMessage],
+    engine: CompactionEngine,
+) -> tuple[CompactionController, EventLog, list[_FakeMessage]]:
+    """Return a (controller, events, history) triple ready for testing."""
     events = EventLog()
-    _history: list[_FakeMessage] = history if history is not None else []
-    cfg = config or CompactionConfig(
-        trigger_total_tokens=100,
-        min_compact_batch=3,
-        use_chars4_estimate=True,  # deterministic offline token counts
-    )
 
     def _latest_summary():
-        for m in reversed(_history):
+        for m in reversed(history):
             if m.role == "summary":
                 return m
         return None
 
-    def _appender(msg):
-        _history.append(msg)
-
-    def _make_msg(rendered, structured, covers):
-        return _FakeMessage(
-            role="summary",
-            text=rendered,
-            seq=0,
-            meta={"structured": structured, "covers_through_seq": covers},
-        )
-
     ctrl = CompactionController(
         event_log=events,
-        config=cfg,
-        history_access=lambda: list(_history),
+        config=CompactionConfig(use_chars4_estimate=True),
+        history_access=lambda: list(history),
         latest_summary=_latest_summary,
-        compaction_engine=engine or _AbortingEngine(),
-        history_appender=_appender,
-        make_summary_message=_make_msg,
+        compaction_engine=engine,
+        history_appender=history.append,
+        make_summary_message=lambda rendered, structured, covers: _FakeMessage(
+            role="summary", text=rendered, seq=0,
+            meta={"structured": structured, "covers_through_seq": covers},
+        ),
         render_summary=lambda s: str(s),
     )
-    return ctrl, events
+    return ctrl, events, history
 
 
-# ---------------------------------------------------------------------------
-# Invariant 1: history below threshold → compaction_check emitted, no started
-# ---------------------------------------------------------------------------
-
-
-def test_threshold_below_trigger_no_compaction():
-    """Tier 2: when history token count is below trigger_total_tokens,
-    _maybe_compact emits compaction_check with outcome='below_threshold'
-    and does NOT emit compaction_started.
-
-    Config: trigger=10_000 tokens (very high), 3 candidate turns ~3 tokens
-    total (using chars4, "hi"=1 token each) → compaction should not fire.
-    The stub engine has head/tail budgets=2 tokens each, so 7 turns leave
-    3 middle candidates above min_compact_batch=3.
-    compaction_check must appear; compaction_started must not.
-    """
-    # 7 turns: seq 1-7 with "hi" text (1 token each via chars4).
-    # _small_budgets(head=2, tail=2) → head=[seq1,seq2], tail=[seq6,seq7],
-    # candidates=[seq3,seq4,seq5] (3 turns, exactly at min_compact_batch).
-    history: list[_FakeMessage] = []
-    for i in range(1, 8):
-        role = "user" if i % 2 == 1 else "agent"
-        history.append(_FakeMessage(role=role, text="hi", seq=i))
-
-    ctrl, events = _make_controller(
-        history=history,
-        config=CompactionConfig(
-            trigger_total_tokens=10_000,  # well above actual token count (~3 tok)
-            min_compact_batch=3,
-            use_chars4_estimate=True,
-        ),
-    )
-
-    asyncio.run(ctrl._maybe_compact())
-
-    emitted = events.all()
-    check_events = [e for e in emitted if e.type == "compaction_check"]
-    started_events = [e for e in emitted if e.type == "compaction_started"]
-
-    assert check_events, "expected at least one compaction_check event"
-    assert check_events[0].data["outcome"] == "below_threshold", (
-        f"Expected outcome='below_threshold', got {check_events[0].data['outcome']!r}"
-    )
-    assert not started_events, (
-        f"compaction_started must not fire when below threshold, got {[e.data for e in started_events]}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Invariant 2: single-flight lock prevents concurrent compaction
-# ---------------------------------------------------------------------------
-
-
-def test_single_flight_lock_prevents_concurrent():
-    """Tier 2: when a compaction is already in flight (_compacting=True),
-    a second call to _maybe_compact returns immediately after emitting
-    compaction_check with outcome='already_running', without starting
-    another compaction.
-
-    Verified by: (a) injecting a blocking engine to hold _compacting=True,
-    (b) calling _maybe_compact a second time concurrently,
-    (c) asserting exactly one 'already_running' check event and no second
-    compaction_started.
-    """
-    history: list[_FakeMessage] = []
-    for i in range(1, 12):
-        role = "user" if i % 2 == 1 else "agent"
-        history.append(_FakeMessage(role=role, text="x" * 200, seq=i))
-
-    blocked: asyncio.Event = asyncio.Event()
-    blocking_engine = _BlockingEngine(gate=blocked)
-
-    ctrl, events = _make_controller(
-        history=history,
-        config=CompactionConfig(
-            trigger_total_tokens=1,
-            min_compact_batch=3,
-            use_chars4_estimate=True,
-        ),
-        engine=blocking_engine,
-    )
-
-    async def _run():
-        task1 = asyncio.create_task(ctrl._maybe_compact())
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        await ctrl._maybe_compact()
-        blocked.set()
-        try:
-            await task1
-        except Exception:
-            pass
-
-    asyncio.run(_run())
-
-    emitted = events.all()
-    already_running = [
-        e for e in emitted
-        if e.type == "compaction_check" and e.data.get("outcome") == "already_running"
+def _history(n: int) -> list[_FakeMessage]:
+    return [
+        _FakeMessage(role="user" if i % 2 == 1 else "assistant", text="x" * 200, seq=i)
+        for i in range(1, n + 1)
     ]
-    assert already_running, (
-        "Expected at least one 'already_running' check event — single-flight lock not observed"
-    )
-    assert already_running[0].data.get("outcome") == "already_running", (
-        f"check event must carry outcome='already_running', got {already_running[0].data!r}"
-    )
-    assert blocking_engine.call_count == 1, (
-        f"Expected engine compact() invoked once (single-flight), got {blocking_engine.call_count}"
-    )
 
 
 # ---------------------------------------------------------------------------
-# Invariant 3: cancel() during shutdown suppresses CancelledError cleanly
+# Invariant 1: no middle candidates (small chat) → forced_sync, no compaction
 # ---------------------------------------------------------------------------
 
 
-def test_cancel_during_shutdown_graceful():
-    """Tier 2: cancel() on an in-flight compaction task cancels the task,
-    suppresses asyncio.CancelledError, and leaves no unhandled exception.
-
-    No compaction_failed event should be emitted for a clean cancellation
-    (the task was cancelled, not failed).  The public interface is that
-    cancel() completes without raising.
+def test_force_compact_no_candidates_emits_forced_sync_no_started():
+    """Tier 2: when head+tail token budgets cover the whole history (no middle
+    to compact), force_compact_now emits compaction_check(outcome='forced_sync')
+    with candidate_count=0 and does NOT emit compaction_started.
     """
-    start_gate: asyncio.Event = asyncio.Event()
-    cancel_gate: asyncio.Event = asyncio.Event()
-    cancellable_engine = _CancellableEngine(start_gate=start_gate, cancel_gate=cancel_gate)
+    ctrl, events, _ = _make_controller(history=_history(2), engine=_AbortingEngine())
 
-    history: list[_FakeMessage] = []
-    for i in range(1, 12):
-        role = "user" if i % 2 == 1 else "agent"
-        history.append(_FakeMessage(role=role, text="x" * 200, seq=i))
-
-    ctrl, events = _make_controller(
-        history=history,
-        config=CompactionConfig(
-            trigger_total_tokens=1,
-            min_compact_batch=3,
-            use_chars4_estimate=True,
-        ),
-        engine=cancellable_engine,
-    )
-
-    async def _run():
-        ctrl.spawn_maybe()
-        await start_gate.wait()
-        await ctrl.cancel()
-
-    asyncio.run(_run())
+    asyncio.run(ctrl.force_compact_now())
 
     emitted = events.all()
-    failed_events = [e for e in emitted if e.type == "compaction_failed"]
-    assert not failed_events, (
-        f"cancel() on a clean CancelledError must not emit compaction_failed, "
-        f"got {[e.data for e in failed_events]}"
+    forced = [e for e in emitted if e.type == "compaction_check"
+              and e.data.get("outcome") == "forced_sync"]
+    started = [e for e in emitted if e.type == "compaction_started"]
+    assert forced, "expected a forced_sync compaction_check event"
+    assert forced[0].data.get("candidate_count") == 0
+    assert not started, "compaction_started must not fire with no candidates"
+
+
+# ---------------------------------------------------------------------------
+# Invariant 2: middle candidates present → compaction runs + summary appended
+# ---------------------------------------------------------------------------
+
+
+def test_force_compact_with_candidates_appends_summary():
+    """Tier 2: with a compactable middle, force_compact_now runs the engine
+    (compaction_started + compaction_completed) and appends a summary entry.
+    """
+    ctrl, events, hist = _make_controller(history=_history(7), engine=_SucceedingEngine())
+
+    asyncio.run(ctrl.force_compact_now())
+
+    emitted = events.all()
+    assert [e for e in emitted if e.type == "compaction_started"], "expected compaction_started"
+    assert [e for e in emitted if e.type == "compaction_completed"], "expected compaction_completed"
+    summaries = [m for m in hist if m.role == "summary"]
+    assert summaries, "force_compact_now must append a summary entry on success"
+
+
+# ---------------------------------------------------------------------------
+# Invariant 3: engine failure → compaction_failed emitted, no raise to caller
+# ---------------------------------------------------------------------------
+
+
+def test_force_compact_engine_failure_emits_failed():
+    """Tier 2: when the engine raises mid-compaction, force_compact_now emits
+    compaction_failed and returns (the try/except swallows the engine error
+    rather than propagating it to the caller)."""
+    ctrl, events, _ = _make_controller(history=_history(7), engine=_AbortingEngine())
+
+    asyncio.run(ctrl.force_compact_now())  # must not raise
+
+    assert [e for e in events.all() if e.type == "compaction_failed"], (
+        "engine failure during force_compact_now must emit compaction_failed"
     )

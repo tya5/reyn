@@ -55,7 +55,7 @@ def test_head_size_tail_size_emit_deprecation_warning() -> None:
             "compaction": {
                 "head_size": 6,
                 "tail_size": 6,
-                "trigger_total_tokens": 30_000,
+                "body_token_cap": 1500,
             }
         })
 
@@ -85,7 +85,7 @@ def test_clean_config_no_warning() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error", DeprecationWarning)
         # Must not raise — no deprecated key present.
-        _build_chat_config({"compaction": {"trigger_total_tokens": 30_000}})
+        _build_chat_config({"compaction": {"body_token_cap": 1500}})
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +114,6 @@ def _make_session_with_t_max(tmp_path: Path, t_max: int):
             budget_tracker=BudgetTracker(CostConfig()),
             state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
             compaction_config=CompactionConfig(
-                trigger_total_tokens=100_000,
                 use_chars4_estimate=True,
                 section_caps_spec_tokens=0,
             ),

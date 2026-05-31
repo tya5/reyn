@@ -106,7 +106,7 @@ def test_parse_on_propose_ignores_unrelated_top_level_keys():
           strong: openai/gemini-2.5-flash-lite
         chat:
           compaction:
-            trigger_total_tokens: 30000
+            body_token_cap: 1500
         self_improvement:
           on_propose: auto
           max_versions: 7

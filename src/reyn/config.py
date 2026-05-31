@@ -395,10 +395,6 @@ class CompactionConfig:
     Tokeniser:
         use_chars4_estimate=False (default) -> litellm.token_counter per turn.
         use_chars4_estimate=True  -> len(text)//4 (latency-opt for large deploys).
-
-    Legacy/background trigger:
-        trigger_total_tokens is kept for the background _maybe_compact() path
-        that fires after each reply (not the synchronous pre-frame guard).
     """
     # Integer weight-based budget allocation (PR-N6). Sum-arbitrary; normalised
     # at compute_budgets() time.
@@ -421,10 +417,7 @@ class CompactionConfig:
     section_caps_spec_tokens: int = 100
     # Tokeniser opt-out (Axis 10): set True for latency-sensitive deployments.
     use_chars4_estimate: bool = False
-    # Legacy fields kept for background trigger path and section caps.
-    trigger_total_tokens: int = 30000   # background trigger: compact when middle exceeds this
     body_token_cap: int = 1500          # hard cap on summary body tokens (post-truncation)
-    min_compact_batch: int = 5          # skip compact when fewer than N turns to absorb
     # #271 re-summarize (T2): max LLM re-compression passes when a produced
     # topic_arc overshoots body_budget, before the deterministic T3
     # hard_truncate floor. 1 = one judgment-based re-summary then floor; 0 =
@@ -1907,13 +1900,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
         use_chars4_estimate=bool(
             compaction_raw.get("use_chars4_estimate", defaults.use_chars4_estimate)
         ),
-        trigger_total_tokens=int(
-            compaction_raw.get("trigger_total_tokens", defaults.trigger_total_tokens)
-        ),
         body_token_cap=int(compaction_raw.get("body_token_cap", defaults.body_token_cap)),
-        min_compact_batch=int(
-            compaction_raw.get("min_compact_batch", defaults.min_compact_batch)
-        ),
         resummarize_passes=int(
             compaction_raw.get("resummarize_passes", defaults.resummarize_passes)
         ),
