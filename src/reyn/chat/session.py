@@ -1756,6 +1756,9 @@ class ChatSession:
             # #272 media axis: per-turn media budget (= cap − tool text tokens)
             # so router_loop bounds the media follow-up (overflow media → ref).
             media_followup_budget=self._media_followup_budget,
+            # #272/#1128 compact op: voluntary-compaction callback so the LLM-
+            # emittable `compact` control_ir op can compact chat history.
+            compact_now=self._compact_now_for_op,
             # B25-S5-1: thread eager-build flag so RouterLoop awaits build
             # before computing _search_visible on the first turn.
             eager_embedding_build=self._eager_embedding_build,
@@ -5083,6 +5086,51 @@ class ChatSession:
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
         text_tokens = estimate_tokens(tool_content, self.model, use_chars4=use_chars4)
         return max(0, self._per_turn_cap_tokens() - text_tokens)
+
+    def _free_window_now(self) -> "tuple[int, int]":
+        """Return ``(effective_trigger, estimated_history_tokens)`` for the
+        current router history (#272/#1128 compact op + context-size signal).
+
+        ``free_window = effective_trigger − estimated_history_tokens`` is the
+        exact-token headroom before the involuntary backstop fires — the unit
+        the context-size signal and the load-contract error both speak.
+        """
+        import json as _json
+
+        from reyn.services.compaction.engine import estimate_tokens
+
+        controller = getattr(self, "_compaction_controller", None)
+        engine = getattr(controller, "_engine", None) if controller is not None else None
+        budgets = getattr(engine, "budgets", None)
+        if budgets is not None:
+            effective_trigger = budgets.effective_trigger
+        else:
+            from reyn.llm.model_budget import get_max_input_tokens
+            effective_trigger = get_max_input_tokens(self.model, events=self._chat_events)
+        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+        try:
+            combined = _json.dumps(self._build_history_for_router(), ensure_ascii=False)
+            estimated = estimate_tokens(combined, self.model, use_chars4=use_chars4)
+        except Exception:  # noqa: BLE001 — estimation best-effort
+            estimated = 0
+        return effective_trigger, estimated
+
+    async def _compact_now_for_op(self) -> dict:
+        """#272/#1128: voluntary-compaction callback wired to the compact op.
+
+        Runs the existing synchronous compaction and reports the freed tokens +
+        the free window afterwards in EXACT tokens (unit-aligned with the
+        context-size signal + media load-contract error). Raises propagate to
+        the op handler, which surfaces them as a structured op error.
+        """
+        effective_trigger, before = self._free_window_now()
+        await self._compaction_controller.force_compact_now()
+        _, after = self._free_window_now()
+        return {
+            "freed_tokens": max(0, before - after),
+            "free_window_after": max(0, effective_trigger - after),
+            "free_window_before": max(0, effective_trigger - before),
+        }
 
     async def _maybe_force_compact_for_router(
         self,

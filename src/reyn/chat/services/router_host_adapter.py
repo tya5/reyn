@@ -208,6 +208,11 @@ class RouterHostAdapter:
         # left for the media follow-up after the (capped) tool text, so
         # router_loop bounds media materialisation. ``None`` = unbounded (pre-#272).
         media_followup_budget: Any = None,
+        # #272/#1128 compact op: awaitable () -> {freed_tokens, free_window_after}
+        # wired by ChatSession to its force_compact_now wrapper, so the LLM-
+        # emittable `compact` control_ir op can voluntarily compact history.
+        # ``None`` = no compaction context (compact op returns a clear error).
+        compact_now: Any = None,
         # FP-0037 S1: persistent MCP tools cache directory.
         # Default is Path(".reyn/state") which resolves relative to cwd
         # (= the project root in all production entry points). Tests pass
@@ -302,6 +307,8 @@ class RouterHostAdapter:
         self._cap_tool_result = cap_tool_result
         # #272 media axis: per-turn media-budget provider (or None).
         self._media_followup_budget = media_followup_budget
+        # #272/#1128 compact op: voluntary-compaction callable (or None).
+        self._compact_now = compact_now
 
     # --- RouterLoopHost identity attributes ---
 
@@ -1393,4 +1400,6 @@ class RouterHostAdapter:
             multimodal_config=self._multimodal_config,
             # Issue #383 PR-C: shared MediaStore for path-ref save/read.
             media_store=self._media_store,
+            # #272/#1128: voluntary-compaction capability for the compact op.
+            compact_now=self._compact_now,
         )
