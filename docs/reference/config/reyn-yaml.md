@@ -14,7 +14,7 @@ Project-level configuration. Checked in to git. Personal overrides go in `reyn.l
 ```yaml
 model: standard
 models:
-  light:    openai/gemini-2.5-flash-lite
+  light:    gemini/gemini-2.5-flash-lite
   standard: openai/gpt-4o
   strong:   anthropic/claude-3-5-sonnet-20241022
 ```
@@ -64,7 +64,7 @@ If a str value **contains `/`**, it is treated as a literal LiteLLM model string
 
 ```yaml
 models:
-  light:    openai/gemini-2.5-flash-lite
+  light:    gemini/gemini-2.5-flash-lite
   standard: openai/gpt-4o
   strong:   anthropic/claude-3-5-sonnet-20241022
 ```
@@ -87,7 +87,7 @@ An unknown shorthand (name not in user entries or built-ins) is a startup error.
 
 ```yaml
 models:
-  standard: openai/gemini-2.5-flash-lite   # str form still OK alongside dict entries
+  standard: gemini/gemini-2.5-flash-lite   # str form still OK alongside dict entries
 
   strong:
     model: anthropic/claude-3-7-sonnet      # required
@@ -342,7 +342,7 @@ action_retrieval:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | When `true` (default), the router's `tools=` exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM but remain available as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class`.  Set `false` to disable the wrapper surface entirely (= legacy tools become the only addressing path again). |
-| `embedding_class` | string \| null | `"local-mini"` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search.  Default `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations.  **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, reyn silently treats this as `null` and `list_actions` surfaces the install command to the LLM. Set explicitly to `standard` (= OpenAI) or `null` (= opt out) to override. |
+| `embedding_class` | string \| null | `"local-mini"` | Name of an entry in [`embedding.classes`](../../concepts/data-retrieval/rag.md) to use for action-retrieval semantic search.  Default `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations.  **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, reyn silently treats this as `null` and `list_actions` surfaces the install command to the LLM. Set explicitly to `standard` (= OpenAI) or `null` (= opt out) to override. |
 | `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases. Must be ≥ 0. `0` opts out entirely (= minimal mode). |
 | `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
 | `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["skill__index_docs"]`) pins those as the initial hot list before usage stats accumulate. |
@@ -363,7 +363,7 @@ When enabled (default), the chat router's `tools=` includes the wrappers at the 
 
 Resource categories (`mcp.server`, `rag.corpus`, `memory.entry`, …) also support `invoke_action`.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
 
-See [Concepts: architecture](../../concepts/architecture.md) for the tool registry / dispatch background.
+See [Concepts: architecture](../../concepts/architecture/architecture.md) for the tool registry / dispatch background.
 
 ## `agent` block
 
@@ -382,7 +382,7 @@ agent:
 
 The default `reyn/<hostname>` gives a fresh install a usable identity without operator action. Override in `reyn.yaml` when running multi-agent fleets or enterprise deployments that need a stable per-role identifier.
 
-See [Concepts: multi-agent — Agent ID propagation](../../concepts/multi-agent.md) for cross-agent tracing and A2A header forwarding.
+See [Concepts: multi-agent — Agent ID propagation](../../concepts/multi-agent/multi-agent.md) for cross-agent tracing and A2A header forwarding.
 
 ## `auth` block
 
@@ -423,8 +423,8 @@ auth:
 See also:
 
 - [Reference: `reyn auth`](../../reference/cli/auth.md) — `reyn auth login/list/revoke` commands
-- [Concepts: secret handling](../../concepts/secret-handling.md) — OAuth lifecycle and credential scoping
-- [Concepts: multi-agent](../../concepts/multi-agent.md) — agent identity propagation
+- [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — OAuth lifecycle and credential scoping
+- [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — agent identity propagation
 
 ## `cron:` block
 
@@ -462,7 +462,7 @@ cron:
 ### Cross-references
 
 - `docs/reference/cli/cron.md` — `reyn cron run/list/status`
-- `docs/concepts/operational-intelligence.md` — `index_events` /
+- `docs/concepts/data-retrieval/operational-intelligence.md` — `index_events` /
   `ops_report` use-cases
 
 ## `permissions` block
@@ -534,7 +534,7 @@ Both the async op-handler client (`reyn.registry.client`) and the safe-mode skil
 
 This implements "private first, public fallback" semantics. Legacy singular `REYN_MCP_REGISTRY_URL` is honored as a one-item list for backward compat.
 
-See [Concepts: permission model](../../concepts/permission-model.md) → "Collapse arc" for the full migration story and the canonical decomposition table.
+See [Concepts: permission model](../../concepts/runtime/permission-model.md) → "Collapse arc" for the full migration story and the canonical decomposition table.
 
 > Legacy `permissions.mcp_install` keys in older `reyn.yaml` files are accepted with a `DeprecationWarning` and translate to the equivalent `file.write` / `http.get` gates during the migration window.
 
@@ -542,7 +542,7 @@ The full permission grammar is documented in `reference/config/permissions.md`.
 
 ## `${VAR}` interpolation {#var-interpolation}
 
-Any string field in any section of `reyn.yaml` (or `reyn.local.yaml` / `~/.reyn/config.yaml`) can reference an environment variable using `${VAR}` syntax. Variables are resolved from `os.environ` at startup, after `~/.reyn/secrets.env` is loaded into the environment (see [Concepts: secret handling](../../concepts/secret-handling.md)).
+Any string field in any section of `reyn.yaml` (or `reyn.local.yaml` / `~/.reyn/config.yaml`) can reference an environment variable using `${VAR}` syntax. Variables are resolved from `os.environ` at startup, after `~/.reyn/secrets.env` is loaded into the environment (see [Concepts: secret handling](../../concepts/runtime/secret-handling.md)).
 
 ```yaml
 # reyn.yaml — ${VAR} works in every string field
@@ -668,7 +668,7 @@ cost:
 
 ## MCP servers
 
-External tool servers reyn can call via the [Model Context Protocol](../../concepts/mcp.md). Each entry under `mcp.servers:` is keyed by a short name (the same name the skill declares in `permissions.mcp` and emits in `mcp` ops).
+External tool servers reyn can call via the [Model Context Protocol](../../concepts/tools-integrations/mcp.md). Each entry under `mcp.servers:` is keyed by a short name (the same name the skill declares in `permissions.mcp` and emits in `mcp` ops).
 
 The recommended way to add a server is `reyn mcp install <server_id>` (see [Reference: `reyn mcp`](../../reference/cli/mcp.md)) — it writes the entry below automatically and handles credentials via `~/.reyn/secrets.env`. Manual config is also fully supported.
 
@@ -728,7 +728,7 @@ mcp:
     ...
 ```
 
-See [Concepts: MCP](../../concepts/mcp.md) for the protocol overview and [How-to: use an MCP server](../../guide/for-skill-authors/operations/use-an-mcp-server.md) for the end-to-end quickstart.
+See [Concepts: MCP](../../concepts/tools-integrations/mcp.md) for the protocol overview and [How-to: use an MCP server](../../guide/for-skill-authors/operations/use-an-mcp-server.md) for the end-to-end quickstart.
 
 ## `embedding` block
 
@@ -789,7 +789,7 @@ Built-in classes (active when `classes:` is empty or absent):
 | `local-mini` | `sentence-transformers/all-MiniLM-L6-v2` | Requires `pip install 'reyn[local-embed]'`; without the extras, instantiating raises at first `embed()` call (the `search_actions` visibility gate degrades to hidden gracefully). |
 | `local-e5` | `sentence-transformers/intfloat/multilingual-e5-small` | Same `local-embed` extras requirement; multilingual model (better recall on non-English corpora). |
 
-See [Concepts: RAG — local embedding backend](../../concepts/rag.md#local-embedding-backend-fp-0043) for cache locations and trade-offs.
+See [Concepts: RAG — local embedding backend](../../concepts/data-retrieval/rag.md#local-embedding-backend-fp-0043) for cache locations and trade-offs.
 
 ## `chat` block
 
@@ -1038,7 +1038,7 @@ See `src/reyn/chat/external_routing.py` for the per-transport contract and the f
 
 - `reference/config/permissions.md` — full permission grammar
 - `reference/config/state-dir.md` — `.reyn/` layout
-- [Concepts: MCP](../../concepts/mcp.md)
-- [Concepts: secret handling](../../concepts/secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
+- [Concepts: MCP](../../concepts/tools-integrations/mcp.md)
+- [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
 - [Reference: `reyn secret`](../../reference/cli/secret.md) — managing secrets via CLI
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — MCP server management CLI
