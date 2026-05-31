@@ -91,7 +91,7 @@ def test_prefix_strip_resolution_emits_no_fallback_event() -> None:
 
 
 def test_unknown_prefixed_model_still_falls_back() -> None:
-    """Tier 2 (regression guard): a prefixed model whose bare name is also unknown
+    """Tier 2: regression guard — a prefixed model whose bare name is also unknown
     keeps the 128K fallback — prefix-strip only improves resolution, never hides
     a genuinely-unknown model."""
     events = EventLog()
