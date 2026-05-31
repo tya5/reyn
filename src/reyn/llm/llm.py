@@ -713,6 +713,70 @@ def proxy_kwargs() -> dict:
     return {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
 
 
+# #1190 cost-observability: the valid purpose (cost-attribution) buckets. Every
+# recorded_acompletion call must tag one so /cost can break spend down by where
+# the LLM call originated. ``dogfood`` covers test/trace sites (recorder=None).
+LLM_PURPOSES: tuple[str, ...] = (
+    "main", "phase", "compaction", "judge", "skill_node_adapt", "dogfood",
+)
+
+
+async def recorded_acompletion(
+    *,
+    model: str,
+    messages: list,
+    purpose: str,
+    recorder: object | None = None,
+    agent: str | None = None,
+    response_format: dict | None = None,
+    fallback_without_response_format: bool = False,
+    extra_kwargs: dict | None = None,
+) -> object:
+    """Single cost-observability chokepoint for ALL ``litellm.acompletion`` calls (#1190).
+
+    Absorbs proxy routing + provider-prefix strip, performs the call (with an
+    optional ``response_format`` retry-without fallback), extracts usage, and
+    records it via ``recorder.record_llm(purpose=...)`` **by construction** when
+    a recorder is given. Returns the RAW litellm response — callers keep their
+    own response-shape handling (``.content`` / json parse / tool extraction)
+    above. ``purpose`` is the required cost-attribution bucket (see
+    ``LLM_PURPOSES``).
+
+    Stage (iii)'s AST guard (tya5/reyn#1190) enforces that ``litellm.acompletion``
+    is called ONLY inside this function, so no LLM call can bypass recording.
+    Replay-safe: the call still bottoms out at ``litellm.acompletion``, which
+    ``LLMReplay`` monkeypatches.
+    """
+    import litellm
+
+    extra = proxy_kwargs()
+    effective_model = model.split("/", 1)[1] if extra and "/" in model else model
+    base_kwargs = dict(extra_kwargs or {})
+    base_kwargs.update(extra)  # Reyn proxy kwargs win over caller-supplied ones
+
+    async def _once(rf: dict | None) -> object:
+        call_kwargs = dict(base_kwargs)
+        if rf is not None:
+            call_kwargs["response_format"] = rf
+        return await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs)
+
+    try:
+        response = await _once(response_format)
+    except Exception:
+        if response_format is not None and fallback_without_response_format:
+            response = await _once(None)
+        else:
+            raise
+
+    if recorder is not None:
+        usage = _extract_usage(response)
+        if usage is not None:
+            recorder.record_llm(
+                model=effective_model, agent=agent, usage=usage, purpose=purpose,
+            )
+    return response
+
+
 def _build_system_message(system_text: str, prompt_cache_enabled: bool) -> dict:
     """Build the system message, optionally with an Anthropic cache_control marker.
 
@@ -749,6 +813,7 @@ async def call_llm(
     agent_role: str = "",
     budget: "BudgetTracker | None" = None,
     budget_agent: str | None = None,
+    purpose: str = "main",  # #1190 cost-attribution bucket (see LLM_PURPOSES)
     trace_caller: str | None = None,
     event_log: "EventLog | None" = None,
 ) -> LLMCallResult:
@@ -871,24 +936,21 @@ async def call_llm(
             })
 
         async def _do_call() -> object:
-            import litellm
-            try:
-                return await litellm.acompletion(
-                    model=effective_model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                    **spec_kwargs,
-                    **common_kwargs,
-                    **extra,
-                )
-            except Exception:
-                return await litellm.acompletion(
-                    model=effective_model,
-                    messages=messages,
-                    **spec_kwargs,
-                    **common_kwargs,
-                    **extra,
-                )
+            # #1190: route through the single cost-observability chokepoint
+            # (proxy + prefix-strip + json_object fallback live there now).
+            # recorder=None here — call_llm keeps its own retry-aware
+            # record-once below (the chokepoint records the bypass sites that
+            # have no existing record). ``extra`` is re-derived inside the
+            # chokepoint, so only spec/common kwargs are passed through.
+            return await recorded_acompletion(
+                model=effective_model,
+                messages=messages,
+                purpose=purpose,
+                recorder=None,
+                response_format={"type": "json_object"},
+                fallback_without_response_format=True,
+                extra_kwargs={**spec_kwargs, **common_kwargs},
+            )
 
         response = await _llm_call_with_retry(_do_call, effective_model, event_log)
 
@@ -944,6 +1006,7 @@ async def call_llm(
                 model=effective_model,
                 agent=budget_agent,
                 usage=result.usage,
+                purpose=purpose,
             )
         return result
 
@@ -982,6 +1045,7 @@ async def call_llm_tools(
     prompt_cache_enabled: bool = True,
     budget: "BudgetTracker | None" = None,
     budget_agent: str | None = None,
+    purpose: str = "main",  # #1190 cost-attribution bucket (chat router = main)
     trace_caller: str | None = None,
     event_log: "EventLog | None" = None,
 ) -> LLMToolCallResult:
@@ -1110,8 +1174,17 @@ async def call_llm_tools(
     })
 
     async def _tools_call() -> object:
-        import litellm
-        return await litellm.acompletion(**call_kwargs)
+        # #1190: route through the single cost-observability chokepoint.
+        # recorder=None — call_llm_tools keeps its own record below; the
+        # chokepoint re-derives proxy kwargs (idempotent) so only the
+        # pre-built tools/tool_choice/response_format kwargs flow as extras.
+        _kw = dict(call_kwargs)
+        _model = _kw.pop("model")
+        _messages = _kw.pop("messages")
+        return await recorded_acompletion(
+            model=_model, messages=_messages, purpose=purpose,
+            recorder=None, extra_kwargs=_kw,
+        )
 
     response = await _llm_call_with_retry(_tools_call, effective_model, event_log)
 
@@ -1126,6 +1199,7 @@ async def call_llm_tools(
             model=effective_model,
             agent=budget_agent,
             usage=usage,
+            purpose=purpose,
         )
 
     # Normalize tool_calls to plain dicts so callers don't depend on litellm internals

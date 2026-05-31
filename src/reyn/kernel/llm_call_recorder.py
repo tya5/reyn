@@ -405,6 +405,7 @@ class LLMCallRecorder:
         check = self._budget_tracker.record_llm(
             model=model, agent=agent, usage=usage,
             chain_id=self._chain_id, skill=self._budget_skill_name,
+            purpose="phase",  # #1190: the OS phase-execution LLM path
         )
         for dim in check.warn_dimensions:
             self._events.emit(
