@@ -46,6 +46,7 @@ def get_default_registry() -> ToolRegistry:
         LIST_AGENTS,
         LIST_SKILLS,
     )
+    from reyn.tools.compact import COMPACT
     from reyn.tools.cron import (
         CRON_DISABLE,
         CRON_ENABLE,
@@ -92,7 +93,6 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_AGENT,
         REMEMBER_SHARED,
     )
-    from reyn.tools.compact import COMPACT
     from reyn.tools.plan import PLAN
     from reyn.tools.read_tool_result import READ_TOOL_RESULT
     from reyn.tools.recall import RECALL
