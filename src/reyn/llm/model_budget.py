@@ -35,6 +35,24 @@ _FALLBACK_MAX_INPUT_TOKENS = 128_000
 _warned_models: set[str] = set()
 
 
+def _lookup_max_input(model: str) -> "int | None":
+    """Return ``max_input_tokens`` from LiteLLM's catalog for *model*, or None
+    when the model is unrecognized or has no positive window.
+
+    No fallback, no events — pure catalog lookup so callers can compose retries
+    (e.g. provider-prefix-strip, #1162).
+    """
+    try:
+        import litellm
+        info = litellm.get_model_info(model)
+        max_input = info.get("max_input_tokens")
+        if max_input and int(max_input) > 0:
+            return int(max_input)
+    except Exception:
+        pass  # Not in catalog / no positive window.
+    return None
+
+
 def get_max_input_tokens(
     model: str,
     *,
@@ -65,15 +83,24 @@ def get_max_input_tokens(
     int
         Positive integer token count. Always > 0.
     """
-    try:
-        import litellm
-        info = litellm.get_model_info(model)
-        max_input = info.get("max_input_tokens")
-        if max_input and int(max_input) > 0:
-            return int(max_input)
-        # Model is in catalog but max_input_tokens is None/0 — fall through.
-    except Exception:
-        pass  # Not in catalog — fall through to default.
+    max_input = _lookup_max_input(model)
+    if max_input is not None:
+        return max_input
+
+    # #1162: provider-prefixed proxy models miss the catalog under the prefix
+    # but resolve under the bare model name. e.g. ``openai/gemini-2.5-flash-lite``
+    # (routing Gemini through an openai-compat proxy) is not in litellm's openai
+    # catalog → exception → would fall to the 128K default, over-compacting a
+    # real 1M window by ~87%. Strip the FIRST provider segment and retry before
+    # falling back. This only IMPROVES resolution: a still-unknown bare name
+    # falls through to the same conservative fallback as before (safe even if a
+    # proxy aliases the prefixed name to something else — the bare lookup just
+    # misses → 128K).
+    if "/" in model:
+        bare = model.split("/", 1)[1]
+        max_input = _lookup_max_input(bare)
+        if max_input is not None:
+            return max_input
 
     # Fallback path: emit warning once per model.
     if model not in _warned_models:

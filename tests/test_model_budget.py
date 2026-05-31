@@ -7,8 +7,14 @@ Invariants guarded:
   4. Fallback value is always > 0 (safe for downstream compaction math).
   5. Repeated calls for the same unknown model emit the event only once
      per EventLog instance (no event flood).
+  6. #1162 provider-prefix-strip-retry: a proxy-routed ``<provider>/<model>``
+     that misses the catalog under the prefix resolves under the bare name
+     (avoids premature over-compaction); a still-unknown name keeps the
+     fallback (and still emits the event).
 """
 from __future__ import annotations
+
+import pytest
 
 from reyn.events.events import EventLog
 from reyn.llm.model_budget import _FALLBACK_MAX_INPUT_TOKENS, get_max_input_tokens
@@ -47,3 +53,50 @@ def test_fallback_value_always_positive() -> None:
     """Tier 2: the fallback default is a positive integer (safe for compaction arithmetic)."""
     assert isinstance(_FALLBACK_MAX_INPUT_TOKENS, int)
     assert _FALLBACK_MAX_INPUT_TOKENS > 0
+
+
+# ── #1162 provider-prefix-strip-retry ─────────────────────────────────────────
+
+_BARE = "gemini-2.5-flash-lite"  # cataloged at 1M (≠ 128K fallback) per the issue probe
+
+
+@pytest.mark.parametrize("wrong_prefix", ["openai", "anthropic", "vertex_ai"])
+def test_proxy_prefixed_model_resolves_via_prefix_strip(wrong_prefix: str) -> None:
+    """Tier 2: a ``<wrong-provider>/<model>`` (= proxy routing) resolves to the
+    same real window as the bare model via prefix-strip-retry — not the 128K
+    fallback. ``openai/gemini-2.5-flash-lite`` was returning 128K (~87% of a
+    real 1M window wasted on premature compaction) before #1162.
+    """
+    bare_window = get_max_input_tokens(_BARE)
+    if bare_window == _FALLBACK_MAX_INPUT_TOKENS:
+        pytest.skip(f"litellm catalog lacks {_BARE!r} in this env — strip target absent")
+    prefixed_window = get_max_input_tokens(f"{wrong_prefix}/{_BARE}")
+    assert prefixed_window == bare_window, (
+        f"{wrong_prefix}/{_BARE} must resolve to the bare model's window "
+        f"({bare_window}) via prefix-strip, got {prefixed_window}"
+    )
+    assert prefixed_window > _FALLBACK_MAX_INPUT_TOKENS, (
+        "prefix-strip must surface the real (>128K) window, not the fallback"
+    )
+
+
+def test_prefix_strip_resolution_emits_no_fallback_event() -> None:
+    """Tier 2: a prefix-strip-resolvable model does NOT emit model_budget_fallback
+    (it resolved — the event is reserved for genuinely-unknown models)."""
+    if get_max_input_tokens(_BARE) == _FALLBACK_MAX_INPUT_TOKENS:
+        pytest.skip(f"litellm catalog lacks {_BARE!r} in this env")
+    events = EventLog()
+    get_max_input_tokens(f"openai/{_BARE}", events=events)
+    assert not [e for e in events.all() if e.type == "model_budget_fallback"]
+
+
+def test_unknown_prefixed_model_still_falls_back() -> None:
+    """Tier 2: regression guard — a prefixed model whose bare name is also unknown
+    keeps the 128K fallback — prefix-strip only improves resolution, never hides
+    a genuinely-unknown model."""
+    events = EventLog()
+    model = "openai/totally-made-up-proxy-model-1162-xyz"
+    result = get_max_input_tokens(model, events=events)
+    assert result == _FALLBACK_MAX_INPUT_TOKENS
+    # the fallback event still fires for the genuinely-unknown model (unchanged).
+    assert [e for e in events.all() if e.type == "model_budget_fallback"]
