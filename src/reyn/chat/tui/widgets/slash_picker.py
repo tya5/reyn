@@ -407,17 +407,18 @@ class SlashPicker(RenderableCacheMixin, Static):
                     indent + f"+{hidden} more — keep typing to filter",
                     style="dim " + _TEXT_DIM,
                 )
-        # Tab-recall discovery footer — only for /find, only when history
-        # is non-empty. Surfaces the affordance ("Tab inserts a recent
-        # query") that the module docstring documents but the picker hint
-        # never previously mentioned. We import lazily to avoid a circular
-        # dependency between the widget layer and the slash submodule.
-        if cmd.name == "find":
-            from reyn.chat.slash.find import find_history_has_entries
-            if find_history_has_entries():
+        # Optional command-supplied picker-hint footer. The command owns
+        # both the message and its visibility condition via ``tab_footer_fn``
+        # (e.g. /find surfaces "Tab inserts a recent query" only when there's
+        # history to recall); the picker stays generic — it never hardcodes a
+        # command name, it just renders whatever the command supplies with the
+        # same ``↳`` chrome the usage row uses. ``None`` / "" → render nothing.
+        if cmd.tab_footer_fn is not None:
+            footer = cmd.tab_footer_fn()
+            if footer:
                 indent = " " * (2 + len(name) + 2)
                 t.append("\n")
-                t.append(indent + "↳ Tab inserts a recent query", style="dim " + _TEXT_NEUTRAL)
+                t.append(indent + "↳ " + footer, style="dim " + _TEXT_NEUTRAL)
         self.update(t)
         self._set_rendered_cache(t)
 

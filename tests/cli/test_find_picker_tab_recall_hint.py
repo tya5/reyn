@@ -1,21 +1,23 @@
-"""Tier 2: /find picker hint shows Tab-recall footer iff history is non-empty.
+"""Tier 2: SlashPicker renders the command-supplied ``tab_footer_fn`` footer.
 
-Wave-12 T2-2 (Topic A #5). The /find command documents a Tab-recall
-affordance (= last 5 queries accessible via Tab) only in its module
-docstring. The picker hint had no visible surface for this, so users
-had to read source to discover the feature.
+The picker hint can show a dim "↳ <message>" sub-row supplied by a
+command via ``SlashCommand.tab_footer_fn`` (a ``() -> str | None``). The
+command owns the message + its visibility condition; the picker stays
+generic and never hardcodes a command name (P7 — see issue #1070, which
+removed the original ``if cmd.name == "find":`` hardcode).
 
-This PR adds a dim "↳ Tab inserts a recent query" footer row to the
-picker hint, rendered ONLY when:
-  - the command is /find (scoped: other commands unaffected)
-  - find history is non-empty (guard: avoids implying Tab does
-    something when there's nothing to recall)
+/find is the canonical consumer: it surfaces "Tab inserts a recent
+query" only when its history is non-empty (guard: avoids implying Tab
+does something when there's nothing to recall). The first three tests
+pin /find's end-to-end wiring; the last two pin the generic mechanism
+with a synthetic command (proving the picker is not /find-specific).
 
 Public surface tested (no MagicMock, no private-state assertions):
   - /find + non-empty history → hint contains "Tab inserts"
   - /find + empty history → hint does NOT contain "Tab inserts"
-  - non-find command + non-empty history → hint does NOT contain
-    "Tab inserts" (scope guard)
+  - command without tab_footer_fn → no footer (back-compat / scope guard)
+  - synthetic command whose tab_footer_fn returns text → footer rendered
+  - synthetic command whose tab_footer_fn returns None → no footer
 """
 from __future__ import annotations
 
@@ -112,12 +114,14 @@ async def test_find_hint_omits_tab_recall_footer_when_history_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_find_hint_omits_tab_recall_footer_even_with_history() -> None:
-    """Tier 2: non-/find command hint does NOT show Tab-recall footer even if history is populated."""
+async def test_command_without_tab_footer_fn_renders_no_footer() -> None:
+    """Tier 2: a command that supplies no tab_footer_fn renders no footer (back-compat)."""
     from reyn.chat.slash import SlashCommand
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
 
+    # Populated find history must NOT leak into an unrelated command's hint:
+    # the picker keys off the command's own tab_footer_fn, not global state.
     _clear_find_history()
     _seed_find_history("myquery")
 
@@ -130,7 +134,7 @@ async def test_non_find_hint_omits_tab_recall_footer_even_with_history() -> None
             async def _h(s, a):
                 return None
 
-            # A non-find command: name differs, so the scope guard applies.
+            # No tab_footer_fn → defaults to None → no footer row.
             other_cmd = SlashCommand(
                 name="help",
                 summary="Show command help",
@@ -141,8 +145,72 @@ async def test_non_find_hint_omits_tab_recall_footer_even_with_history() -> None
             text = _picker_text(picker)
 
             assert "Tab inserts" not in text, (
-                f"Expected no 'Tab inserts' in non-/find hint even with populated "
-                f"find history. Got:\n{text!r}"
+                f"Expected no 'Tab inserts' for a command without tab_footer_fn even "
+                f"with populated find history. Got:\n{text!r}"
             )
     finally:
         _clear_find_history()
+
+
+@pytest.mark.asyncio
+async def test_generic_command_tab_footer_fn_text_is_rendered() -> None:
+    """Tier 2: the picker renders ANY command's tab_footer_fn message (not /find-specific)."""
+    from reyn.chat.slash import SlashCommand
+    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+
+    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        picker = app.query_one("#slash-picker", SlashPicker)
+
+        async def _h(s, a):
+            return None
+
+        # A synthetic, non-find command supplying a footer. Proves the picker
+        # is generic: it renders whatever tab_footer_fn returns, for any name.
+        synthetic = SlashCommand(
+            name="synthetic",
+            summary="A synthetic command for the generic footer test",
+            handler=_h,
+            tab_footer_fn=lambda: "generic footer line",
+        )
+        picker.set_hint(synthetic)
+        await pilot.pause()
+        text = _picker_text(picker)
+
+        assert "generic footer line" in text, (
+            f"Expected the synthetic command's tab_footer_fn message to render. "
+            f"Got:\n{text!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_generic_command_tab_footer_fn_none_renders_no_footer() -> None:
+    """Tier 2: a tab_footer_fn returning None renders no footer (visibility is command-owned)."""
+    from reyn.chat.slash import SlashCommand
+    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+
+    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        picker = app.query_one("#slash-picker", SlashPicker)
+
+        async def _h(s, a):
+            return None
+
+        synthetic = SlashCommand(
+            name="synthetic",
+            summary="A synthetic command whose footer is currently hidden",
+            handler=_h,
+            tab_footer_fn=lambda: None,
+        )
+        picker.set_hint(synthetic)
+        await pilot.pause()
+        text = _picker_text(picker)
+
+        assert "↳" not in text, (
+            f"Expected no footer chrome when tab_footer_fn returns None. "
+            f"Got:\n{text!r}"
+        )
