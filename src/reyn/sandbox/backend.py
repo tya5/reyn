@@ -48,6 +48,17 @@ class SandboxBackend(Protocol):
         policy: SandboxPolicy,
         *,
         stdin: bytes | None = None,
+        cwd: str | None = None,
     ) -> SandboxResult:
-        """Execute argv under the given policy and return the result."""
+        """Execute argv under the given policy and return the result.
+
+        ``cwd`` is the working directory the command runs in. The OS passes the
+        run's ``workspace.base_dir`` (= parity with the legacy ``shell`` op,
+        FP-0008 PR-I) so ``git`` / ``pytest`` resolve against the repo root even
+        under concurrent benchmark runs. ``None`` = inherit the parent process
+        cwd. A workspace-coupled backend (e.g. a container backend whose repo
+        lives at an in-container path) may ignore this host-side ``cwd`` and use
+        its own baked working directory — same asymmetry as policy enforcement,
+        which such a backend also scopes to the fidelity boundary.
+        """
         ...

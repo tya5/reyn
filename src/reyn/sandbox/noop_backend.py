@@ -59,6 +59,7 @@ class NoopBackend:
         policy: SandboxPolicy,
         *,
         stdin: bytes | None = None,
+        cwd: str | None = None,
     ) -> SandboxResult:
         _warn_once()
 
@@ -83,6 +84,7 @@ class NoopBackend:
                     input=stdin,
                     capture_output=True,
                     env=env,
+                    cwd=cwd,
                     timeout=policy.timeout_seconds,
                     check=False,
                 )

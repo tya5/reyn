@@ -158,8 +158,13 @@ class DockerSandboxBackend:
         policy: SandboxPolicy,
         *,
         stdin: bytes | None = None,
+        cwd: str | None = None,
     ) -> SandboxResult:
         """Clean-reset the container repo, apply the host diff, then exec argv.
+
+        The host-side ``cwd`` is ignored: argv runs at the baked in-container
+        ``repo_dir`` (a host path can't address the container FS).
+
 
         Steps (each via the injected runner):
           1. capture the host diff (vs base_ref);

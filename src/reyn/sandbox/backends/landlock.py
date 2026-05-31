@@ -120,8 +120,14 @@ class LandlockBackend:
         policy: SandboxPolicy,
         *,
         stdin: bytes | None = None,
+        cwd: str | None = None,
     ) -> SandboxResult:
-        """Execute argv under Landlock isolation and return the result."""
+        """Execute argv under Landlock isolation and return the result.
+
+        ``cwd`` (= the run's ``workspace.base_dir``) sets the child working
+        directory so repo-relative ``git`` / ``pytest`` resolve correctly; the
+        Landlock ruleset still bounds filesystem access independently.
+        """
         if not self.available():
             raise RuntimeError(
                 "LandlockBackend not available on this platform. "
@@ -226,6 +232,7 @@ class LandlockBackend:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     env=env,
+                    cwd=cwd,
                     start_new_session=True,
                     preexec_fn=lambda: _build_preexec(ruleset),
                 )
