@@ -103,12 +103,12 @@ InputBar #hints {
 
 /* Intervention widget */
 InterventionWidget {
-    background: #1e1510;
+    background: $reyn-iv-surface;
     border: solid $primary;
     padding: 1 2;
     height: auto;
     margin: 1 0;
-    color: #eeddcc;
+    color: $reyn-iv-text;
 }
 
 InterventionWidget .iv-question {
@@ -133,7 +133,7 @@ InterventionWidget Button {
 }
 
 InterventionWidget Button:hover {
-    background: #e0664e;
+    background: $reyn-iv-hover;
 }
 
 InterventionWidget Button:focus {
@@ -142,6 +142,6 @@ InterventionWidget Button:focus {
        the previous "background lightens slightly" cue was a 1.28:1
        contrast change relative to the hover state, indistinguishable
        without color vision. */
-    background: #e0664e;
+    background: $reyn-iv-hover;
     text-style: bold reverse;
 }

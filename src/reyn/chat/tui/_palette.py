@@ -114,6 +114,18 @@ _STATUS_SUCCESS_DARK = "#3a9968"
 # accent, and _STATUS_READY olive.
 _HINT_ACTION = "#9a8a52"
 
+# Intervention widget warm surface (promoted from cross-file duplicates that
+# lived in BOTH intervention.py DEFAULT_CSS and theme.tcss — a drift hazard
+# now that theme.tcss can reference _palette via the $reyn-* CSS vars). These
+# name the intervention widget's own warm theme; distinct from the global
+# _BG_*/_TEXT_* ramp. The remaining intervention browns (#2a1a10 / #443322 /
+# #aa8866 / #664433 / #ddaa88) are intervention.py-only (single-use) → left
+# literal there (tokenising single-use colours adds indirection without a
+# single-source win).
+_IV_SURFACE = "#1e1510"          # intervention widget background
+_IV_TEXT = "#eeddcc"             # intervention default text
+_IV_HOVER = "#e0664e"            # intervention button hover / focus
+
 __all__ = [
     "_CORAL",
     "_AMBER",
@@ -150,6 +162,9 @@ __all__ = [
     "_STATUS_READY",
     "_STATUS_SUCCESS_DARK",
     "_HINT_ACTION",
+    "_IV_SURFACE",
+    "_IV_TEXT",
+    "_IV_HOVER",
     "css_variables",
 ]
 
@@ -182,4 +197,7 @@ def css_variables() -> dict[str, str]:
         "reyn-status-critical": _STATUS_CRITICAL,
         "reyn-status-warn": _STATUS_WARN,
         "reyn-event-intervention": _EVENT_INTERVENTION,
+        "reyn-iv-surface": _IV_SURFACE,
+        "reyn-iv-text": _IV_TEXT,
+        "reyn-iv-hover": _IV_HOVER,
     }
