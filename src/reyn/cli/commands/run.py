@@ -77,6 +77,31 @@ def register(sub) -> None:
                        "Enable unsafe-mode Python preprocessor steps (no AST sandboxing). "
                        "Safe-mode python steps run without this flag. Off by default."
                    ))
+    # FP-0008 #1115 Stage 2: route the repo filesystem + command execution
+    # through a container EnvironmentBackend instead of the host. Generic (any
+    # skill); the OS stays on the host, only the repo FS + exec cross into the
+    # container. Used e.g. for faithful in-container benchmarking.
+    p.add_argument("--env-backend", dest="env_backend",
+                   choices=["host", "docker"], default="host",
+                   help=(
+                       "Where the repo filesystem and commands execute: 'host' "
+                       "(default, no isolation change) or 'docker' (route FS + exec "
+                       "into a running container via --container/--repo-dir)."
+                   ))
+    p.add_argument("--container", dest="container", default=None, metavar="NAME",
+                   help="Running container name/id for --env-backend=docker.")
+    p.add_argument("--repo-dir", dest="repo_dir", default=None, metavar="PATH",
+                   help=(
+                       "In-container absolute path of the repo working tree "
+                       "(e.g. /repo) for --env-backend=docker. Relative paths "
+                       "resolve against this; commands run with it as cwd."
+                   ))
+    p.add_argument("--state-dir", dest="state_dir", default=None, metavar="PATH",
+                   help=(
+                       "Host-side directory for OS state/artifacts (events, "
+                       "offload, artifact handles), kept off the routed repo FS. "
+                       "Recommended with --env-backend=docker so state stays on the host."
+                   ))
     p.set_defaults(func=run)
 
 
@@ -118,6 +143,7 @@ def run(args: argparse.Namespace) -> None:
     project_root = _find_project_root(Path.cwd())
     project_context = load_project_context(session.config, project_root)
     logger = make_logger()
+    env_backend, ws_base_dir, ws_state_dir = _build_environment_backend(args)
     agent = Agent(
         model=model,
         strict=args.strict,
@@ -133,6 +159,13 @@ def run(args: argparse.Namespace) -> None:
         project_context=project_context,
         caller="direct",
         sandbox_config=session.config.sandbox,
+        # FP-0008 #1115 Stage 2: inject the SAME container backend instance at
+        # both seams (FS = environment_backend, exec = sandbox_backend), agent-
+        # level uniform. None (host) preserves the default identity behavior.
+        environment_backend=env_backend,
+        sandbox_backend=env_backend,
+        workspace_base_dir=ws_base_dir,
+        workspace_state_dir=ws_state_dir,
     )
 
     input_type = initial_input.get("type", "unknown")
@@ -167,6 +200,52 @@ def run(args: argparse.Namespace) -> None:
 
     if not result.ok:
         sys.exit(2)
+
+
+def _build_environment_backend(args: argparse.Namespace):
+    """Build the EnvironmentBackend + workspace dirs from --env-backend flags.
+
+    Returns ``(backend, workspace_base_dir, workspace_state_dir)``:
+
+    - host (default): ``(None, None, None)`` — the Agent uses its identity
+      HostBackend and default base_dir/state_dir (unchanged behavior).
+    - docker: a single ``DockerEnvironmentBackend`` instance (injected at BOTH
+      the FS and exec seams by the caller), with ``workspace_base_dir`` = the
+      in-container ``--repo-dir`` (so relative paths + command cwd resolve there)
+      and ``workspace_state_dir`` = the host-side ``--state-dir`` (OS state kept
+      off the routed repo FS).
+
+    Generic — no skill-specific knowledge (P7).
+    """
+    backend_kind = getattr(args, "env_backend", "host")
+    if backend_kind == "host":
+        return None, None, None
+
+    if backend_kind == "docker":
+        container = getattr(args, "container", None)
+        repo_dir = getattr(args, "repo_dir", None)
+        state_dir = getattr(args, "state_dir", None)
+        missing = [
+            name for name, val in (("--container", container), ("--repo-dir", repo_dir))
+            if not val
+        ]
+        if missing:
+            print(
+                f"Error: --env-backend=docker requires {', '.join(missing)}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        from reyn.environment import DockerEnvironmentBackend
+        backend = DockerEnvironmentBackend(container=container, repo_dir=repo_dir)
+        return (
+            backend,
+            Path(repo_dir),
+            Path(state_dir) if state_dir else None,
+        )
+
+    # argparse `choices` prevents this, but stay defensive.
+    print(f"Error: unknown --env-backend '{backend_kind}'.", file=sys.stderr)
+    sys.exit(1)
 
 
 def _read_input(args: argparse.Namespace) -> str:
