@@ -874,6 +874,8 @@ async def execute_plan(
                 resolver=parent_host.resolver,
                 # #1190 stage (ii): record planner step-results compaction spend.
                 recorder=budget,
+                # #1190 stage (iii) Part 4: attribute planner compaction to the host's agent.
+                recorder_agent=getattr(parent_host, "agent_name", None),
             )
         except Exception as exc:  # noqa: BLE001 — best-effort; skip if unavailable
             logger.warning(

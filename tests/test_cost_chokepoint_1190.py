@@ -144,3 +144,72 @@ def test_ledger_persists_purpose_and_omits_when_none(tmp_path: Path) -> None:
     lines = [json.loads(line) for line in (tmp_path / "ledger.jsonl").read_text().splitlines() if line.strip()]
     assert lines[0]["purpose"] == "phase"
     assert "purpose" not in lines[1], "None purpose must be omitted (legacy byte-identical)"
+
+
+def test_recorded_acompletion_rejects_unknown_purpose() -> None:
+    """Tier 2: stage (iii) Part 3 — an unknown purpose (typo) is rejected at the
+    chokepoint before any LLM call, so a mis-tagged call cannot silently land in
+    no per-purpose bucket."""
+    import pytest
+
+    with pytest.raises(ValueError, match="purpose"):
+        asyncio.run(recorded_acompletion(
+            model="m", messages=[{"role": "user", "content": "x"}],
+            purpose="compcation",  # typo of "compaction"
+            recorder=None,
+        ))
+    # every advertised purpose is accepted (guards against the list drifting out
+    # of sync with the assert).
+    assert set(LLM_PURPOSES) >= {"main", "phase", "compaction", "judge",
+                                 "skill_node_adapt", "dogfood"}
+
+
+def test_compaction_engine_threads_agent(monkeypatch) -> None:
+    """Tier 2: stage (iii) Part 4 — CompactionEngine(recorder_agent=...) attributes
+    its compaction spend to that agent (end-to-end agent threading through
+    recorded_acompletion → record_llm)."""
+    from reyn.config import CompactionConfig
+    from reyn.events.events import EventLog
+    from reyn.services.compaction.engine import CompactionEngine, HistoryChunkToCompact
+
+    async def _fake(model, messages, **kw):  # noqa: ANN001, ANN003
+        return _resp(content=json.dumps({
+            "topic_arc": "arc", "new_turn_seqs": [1],
+            "decisions": [], "pending": [],
+            "session_user_facts": [], "artifacts_referenced": [],
+        }))
+    monkeypatch.setattr(litellm, "acompletion", _fake)
+
+    rec = _Recorder()
+    engine = CompactionEngine(
+        model="gpt-4o", events=EventLog(),
+        cfg=CompactionConfig(use_chars4_estimate=True),
+        recorder=rec, recorder_agent="researcher",
+    )
+    asyncio.run(engine.compact(HistoryChunkToCompact(
+        previous_summary=None,
+        new_turns=[{"role": "user", "text": "hi", "seq": 1}],
+        section_token_caps={},
+    )))
+    assert [c["agent"] for c in rec.calls] == ["researcher"]
+
+
+def test_budget_per_purpose_breakdown_visible() -> None:
+    """Tier 2: stage (iii) Part 2 — the cost-observability payoff: per-purpose
+    spend is aggregated and surfaced (snapshot + /budget full rendering), so a
+    user can see how much compaction vs main cost."""
+    from reyn.budget.budget import BudgetTracker, CostConfig, format_budget_full
+
+    tracker = BudgetTracker(CostConfig())
+    tracker.record_llm(model="m", agent="a", usage=TokenUsage(prompt_tokens=100, completion_tokens=20), purpose="main")
+    tracker.record_llm(model="m", agent="a", usage=TokenUsage(prompt_tokens=40, completion_tokens=10), purpose="compaction")
+    tracker.record_llm(model="m", agent="a", usage=TokenUsage(prompt_tokens=5, completion_tokens=5), purpose="compaction")
+
+    snap = tracker.snapshot()
+    # aggregation: two compaction calls summed, main separate.
+    assert snap["purpose_tokens"]["main"] == 120
+    assert snap["purpose_tokens"]["compaction"] == 60
+
+    rendered = format_budget_full(snap, attached=None)
+    assert "By purpose:" in rendered
+    assert "compaction" in rendered and "main" in rendered

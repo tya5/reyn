@@ -29,6 +29,7 @@ async def _adapt_artifact(
     llm_timeout: float = 60.0,
     llm_max_retries: int = 3,
     recorder: object | None = None,
+    recorder_agent: str | None = None,
 ) -> tuple[dict, TokenUsage]:
     """
     Call LLM to convert a sub-app's final_output data to the parent's target schema.
@@ -59,6 +60,7 @@ async def _adapt_artifact(
         messages=[{"role": "user", "content": prompt}],
         purpose="skill_node_adapt",
         recorder=recorder,
+        agent=recorder_agent,
         response_format={"type": "json_object"},
         extra_kwargs={"timeout": llm_timeout, "num_retries": llm_max_retries},
     )
@@ -93,6 +95,7 @@ async def execute_skill_node(
     events: EventLog,
     limits: Any = None,
     recorder: object | None = None,  # #1190 stage (ii): skill_node_adapt cost recording
+    recorder_agent: str | None = None,  # #1190 stage (iii) Part 4: per-agent attribution
 ) -> tuple[dict, TokenUsage]:
     """
     Run a sub-app to completion and adapt its final_output to target_schema.
@@ -137,5 +140,6 @@ async def execute_skill_node(
         llm_timeout=llm_timeout,
         llm_max_retries=llm_max_retries,
         recorder=recorder,
+        recorder_agent=recorder_agent,
     )
     return adapted, token_usage + adapt_usage
