@@ -135,6 +135,8 @@
 # above which ``build_tools()`` switches from inlining every tool schema to
 # Anthropic's ``tool_search_tool`` (deferred-loading mode). Default 30 (= Spring AI
 # experiment shows 63–64% token reduction at 40+ tools). Set 0 to disable.
+# (Internally the ``ReynConfig.mcp_search_threshold`` field — set it via the
+# ``mcp.search_threshold`` key here, not a top-level ``mcp_search_threshold:``.)
 #
 # ``mcp.registries``: a list of external registry URLs. Propagated
 # into ``REYN_MCP_REGISTRY_URLS`` so the subprocess-side safe registry resolver
