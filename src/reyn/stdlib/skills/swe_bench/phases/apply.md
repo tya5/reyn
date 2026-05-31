@@ -4,8 +4,19 @@ name: apply
 input: plan
 role: implementer
 model_class: standard
-allowed_ops: [file, shell]
+allowed_ops: [file, sandboxed_exec]
 max_act_turns: 30
+# FP-0008 #1115 Stage 2: policy for this phase's sandboxed_exec ops (e.g.
+# python -m py_compile syntax checks), winning over op fields. Permissive —
+# operates on an arbitrary repository. Ignored by a container EnvironmentBackend
+# (the C7 path); best-effort on host backends.
+default_sandbox_policy:
+  network: true
+  read_paths: ["/"]
+  write_paths: ["/"]
+  allow_subprocess: true
+  env_passthrough: ["PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "LANG", "LC_ALL", "TMPDIR"]
+  timeout_seconds: 120
 ---
 
 Implement the edit plan by modifying the repository files.
@@ -36,9 +47,9 @@ that the op succeeded before proceeding to the next.
 
 ## Step 3 — Basic syntax check (when applicable)
 
-If the edited files are Python, issue a shell op running
-`python -m py_compile <file>` on each modified file.  If a compile error is
-reported, correct the syntax before transitioning.
+If the edited files are Python, run `python -m py_compile <file>` on each
+modified file.  If a compile error is reported, correct the syntax before
+transitioning.
 
 For non-Python files, skip this step.
 
@@ -65,8 +76,8 @@ reads of that file.  Re-reading accumulates results in the context without
 advancing the plan.  The accumulated read results will NOT change — the file
 content is fixed until an edit op is issued.
 
-Similarly, if you have attempted the same shell command (same command string)
-**3 or more consecutive times** and it keeps failing with the same error,
-STOP and transition rather than retrying.  Repeated shell failures with
-identical error output indicate a structural problem that additional retries
-will not resolve within this budget.
+Similarly, if you have attempted the same command (same argv) **3 or more
+consecutive times** and it keeps failing with the same error, STOP and
+transition rather than retrying.  Repeated command failures with identical
+error output indicate a structural problem that additional retries will not
+resolve within this budget.

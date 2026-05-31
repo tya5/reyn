@@ -4,8 +4,18 @@ name: explore
 input: swe_bench_input
 role: analyst
 model_class: standard
-allowed_ops: [file, grep, shell]
+allowed_ops: [file, grep, sandboxed_exec]
 max_act_turns: 20
+# FP-0008 #1115 Stage 2: policy for any sandboxed_exec op this phase runs while
+# exploring an arbitrary repository (e.g. git log / ls). Permissive; ignored by a
+# container EnvironmentBackend (the C7 path), best-effort on host backends.
+default_sandbox_policy:
+  network: true
+  read_paths: ["/"]
+  write_paths: ["/"]
+  allow_subprocess: true
+  env_passthrough: ["PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "LANG", "LC_ALL", "TMPDIR"]
+  timeout_seconds: 120
 ---
 
 Understand the problem by reading the `problem_statement` and finding the
@@ -66,9 +76,9 @@ entire repository.
 
 Read `data.test_patch` from the input artifact to understand what the tests
 expect the fixed code to do.  This is a unified diff string that has been
-present in the input from Step 1 — you do NOT need to issue a shell or file
-op to access it. The value lives at `data.test_patch` in the same input
-artifact as `data.problem_statement`.
+present in the input from Step 1 — you do NOT need to issue any op to access
+it. The value lives at `data.test_patch` in the same input artifact as
+`data.problem_statement`.
 
 This gives a precise specification: the fix must make those tests pass. Do
 NOT apply the test_patch now — that happens in verify.

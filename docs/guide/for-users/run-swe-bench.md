@@ -7,7 +7,7 @@ This guide walks through using Reyn to solve [SWE-bench Verified](https://www.sw
 ## Prerequisites
 
 - **Python 3.11+** with `reyn` installed and `reyn` on `PATH`.
-- **A configured LLM** — set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or whichever provider your `reyn.yaml` points at.  The `swe_bench` skill uses the `shell` op and needs file read/write; no additional permissions setup is required because `shell: true` and `file.write: ["*"]` are declared in the skill's `skill.md`.
+- **A configured LLM** — set `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or whichever provider your `reyn.yaml` points at.  The `swe_bench` skill runs commands via the `sandboxed_exec` op and needs file read/write; no additional permissions setup is required because `sandboxed_exec` is permitted by default and `file.write: ["*"]` is declared in the skill's `skill.md`.
 - **Git** available in `PATH` (the skill runs `git checkout`, `git diff`).
 - **The target repo's test runner** (e.g. `pytest`, `tox`) installed in the environment where `reyn run` executes — or inside the Docker container if you're using the official harness.
 - *(Optional)* **Docker** if you're connecting to the official SWE-bench evaluation harness.
@@ -190,7 +190,7 @@ Wait — the `--reyn-cmd` flag replaces the base command list (`reyn run swe_ben
 - No LLM credentials: set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / the relevant env var for your model provider.
 - No models configured: run `reyn config` or add a `model:` entry to `reyn.yaml`.
 - The repo clone failed: ensure the repository is cloned at the path the skill expects, or that `git` can access the remote.
-- `shell: true` permission not granted: the `swe_bench` skill declares `shell: true` in its frontmatter; `reyn run` respects this automatically for stdlib skills, so you should not need `--allow-shell`.
+- Exec not permitted: the `swe_bench` skill runs commands via the `sandboxed_exec` op, which is permitted by default (no `--allow-shell` or extra permission entry needed) for stdlib skills.
 
 **`could not find 'patch' field in reyn output`** — reyn ran but did not produce a `swe_bench_result` artifact with a `patch` field. This means the skill aborted or the `report` phase failed. Check the stderr output for the `reyn run` diagnostic lines, or run the instance manually:
 
