@@ -237,7 +237,7 @@ Fields: `server` (required — must match a key under `mcp.servers:` in `reyn.ya
 
 The OS resolves the server's transport (`stdio`, `http`, or `sse`), dispatches via `MCPClient`, and returns the tool result. Every call emits `mcp_called`, `mcp_completed`, and (on failure) `mcp_failed` events.
 
-See [concepts/mcp.md](../../concepts/mcp.md) for server configuration, transport options, and the security model.
+See [concepts/mcp.md](../../concepts/tools-integrations/mcp.md) for server configuration, transport options, and the security model.
 
 ## `mcp_install`
 
@@ -486,9 +486,10 @@ window. The OS injects a **context-size signal** (a `## Context window` header
 with the exact-token free window) when the window is filling; the model may
 respond by emitting `compact` instead of waiting for the mandatory `retry_loop`
 backstop. The op routes to the caller-wired compaction (chat:
-`force_compact_now`) and reports the freed tokens + the free window afterwards,
-in exact tokens (unit-aligned with the media load-contract error so "should I
-compact" and "what fits now" use the same scale).
+`force_compact_now`; phase: `compact_control_ir_results` on-demand seam) and
+reports the freed tokens + the free window afterwards, in exact tokens
+(unit-aligned with the media load-contract error so "should I compact" and
+"what fits now" use the same scale).
 
 ```json
 {
@@ -514,7 +515,7 @@ Returns:
 
 **Visibility**: advertised to the LLM (tool / `available_control_ops`) only when the window is filling — paired with the context-size signal — so it is not offered when there is nothing to compact (mirrors the `search_actions` visibility gate). The permission gate stays "allow"; only *when surfaced* is gated.
 
-**Axis scope (chat vs phase)**: the LLM-requested `compact` op is wired for the **chat** axis, which is the live conversation dead-end and the only axis with an on-demand compaction seam (`force_compact_now`). **Phases already auto-compact** older act-results every frame (`compact_control_ir_results`, gated on act-result count) — there is no on-demand force-compact seam there — so the LLM-requested-compact gap in phases is small and covered by the existing automatic compaction. An on-demand **phase** force-compact seam (mid-phase `control_ir_results` summarisation + a phase context-size signal) is a deliberate **follow-up** rather than a rushed mid-phase-state mutation.
+**Axis scope (chat vs phase)**: the `compact` op is available on **both** axes. On the **chat** axis, it routes to `force_compact_now`; on the **phase** axis, it routes to the `compact_control_ir_results` on-demand seam wired by the phase runtime (in addition to the automatic per-frame compaction that fires regardless). In both cases the OS wires `ctx.compact_now`; the op handler itself is axis-agnostic. Both axes also inject the paired context-size signal so the model knows when to emit `compact`.
 
 ---
 
@@ -528,4 +529,4 @@ The OS injects available ops into every context frame as `available_control_ops`
 
 - [run.md](../cli/run.md) — `--allow-shell`, `--allow-unsafe-python`
 - [events.md](events.md) — events emitted per op kind
-- [Concepts: principles P8](../../concepts/principles.md#p8-phase-instructions-contain-only-domain-logic)
+- [Concepts: principles P8](../../concepts/architecture/principles.md#p8-phase-instructions-contain-only-domain-logic)

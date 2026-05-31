@@ -228,11 +228,11 @@ mindmap
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| Head+tail+body budget | Keeps the most-recent turns (tail) and earliest context (head) within per-component token budgets; turns between them are replaced by an LLM-generated summary | [Chat Compaction](concepts/chat-compaction.md) |
-| Overflow retry loop | When the compacted context still exceeds the model limit, budgets for head / tail / summary shrink monotonically per iteration until the prompt fits; fails fast with a structured error when no further reduction is possible | [Chat Compaction](concepts/chat-compaction.md) |
-| Adaptive token estimation | Learns a per-model token-count multiplier over time, reducing estimation drift across sessions | [Chat Compaction](concepts/chat-compaction.md) |
-| Multimodal token estimation | Estimates tokens for text and image content; image parts use a fixed per-part cost | [Chat Compaction](concepts/chat-compaction.md) |
-| Compaction lock | Async mutex prevents concurrent turn appends from racing with an in-flight compaction call | [Chat Compaction](concepts/chat-compaction.md) |
+| Head+tail+body budget | Keeps the most-recent turns (tail) and earliest context (head) within per-component token budgets; turns between them are replaced by an LLM-generated summary | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
+| Overflow retry loop | When the compacted context still exceeds the model limit, budgets for head / tail / summary shrink monotonically per iteration until the prompt fits; fails fast with a structured error when no further reduction is possible | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
+| Adaptive token estimation | Learns a per-model token-count multiplier over time, reducing estimation drift across sessions | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
+| Multimodal token estimation | Estimates tokens for text and image content; image parts use a fixed per-part cost | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
+| Compaction lock | Async mutex prevents concurrent turn appends from racing with an in-flight compaction call | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 
 #### Plan Mode
 
@@ -244,7 +244,7 @@ mindmap
 | PlanRuntime | Dedicated execution engine for plan-mode, peer to the OS phase runtime | [Plan Mode](concepts/plan-mode.md) |
 | Step iteration | Each step runs the router sub-loop up to `step_max_iterations` turns; `retry_limit` caps automatic retries on transient failure with user-approval escalation when the budget is exhausted | [Plan Mode](concepts/plan-mode.md) · [Config: plan block](reference/config/reyn-yaml.md#plan-block) |
 | Plan resume | Persisted decomposition and per-step result memos allow a plan to resume after crash; completed steps replay without LLM cost | [Plan Mode](concepts/plan-mode.md) |
-| Per-step compaction | Each plan step runs its own context compaction budget, independent of the main session | [Plan Mode](concepts/plan-mode.md) · [Chat Compaction](concepts/chat-compaction.md) |
+| Per-step compaction | Each plan step runs its own context compaction budget, independent of the main session | [Plan Mode](concepts/plan-mode.md) · [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | Multi-plan concurrency | Multiple plans can be in flight simultaneously; each has its own `plan_id` with results delivered in completion order | [Plan Mode](concepts/plan-mode.md) |
 | Operator slash commands | `/plan list` / `/plan discard` / `/plan resume --from <step>` for plan lifecycle management | [Plan Mode](concepts/plan-mode.md) |
 
@@ -345,7 +345,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `web` | `web.fetch` SSL `verify_ssl` and `ca_bundle` override | [reyn-yaml § web](reference/config/reyn-yaml.md#web-block) |
 | `eval` | Trace exporters: file / langfuse / otlp / ietf_audit | [reyn-yaml § eval](reference/config/reyn-yaml.md#eval-block) |
 | `plan` | `step_max_iterations` / `retry_limit` per plan step | [reyn-yaml § plan](reference/config/reyn-yaml.md#plan-block) |
-| `chat` | Compaction trigger / head+tail retention / section token caps | [Chat Compaction](concepts/chat-compaction.md) |
+| `chat` | Compaction trigger / head+tail retention / section token caps | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | `embedding` | Model classes / batch_size / cost_warn_threshold | [RAG concepts](concepts/rag.md) |
 | `voice` | Whisper model / language / device — optional `reyn[voice]` | [Voice concepts](concepts/voice.md) |
 | `events` | Rotation size/age + cleanup_period_days | [Events reference](reference/runtime/events.md) |
