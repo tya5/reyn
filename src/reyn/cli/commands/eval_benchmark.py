@@ -679,19 +679,20 @@ async def _run_single_task(
     run_dir: Path,
     semaphore: asyncio.Semaphore,
     shell_allowed: bool = False,
-    permission_resolver=None,
+    unsafe_python: bool = False,
     python_allowed_modules: list[str] | None = None,
     clone_task_repo: bool = False,
     verify_tier: str = _TIER_NO_FAITHFUL_ENV,
 ) -> dict:
     """Run a single task under the semaphore; return a result record.
 
-    ``shell_allowed`` + ``permission_resolver`` are derived once at batch
-    start (= from ``--allow-shell`` / ``--allow-unsafe-python`` + the
-    skill's declared permissions) and threaded through every task so the
-    Agent's op_catalog exposes the shell op uniformly. Without this, the
-    LLM doesn't see ``shell`` in the catalog and hallucinates a fake
-    schema (= ``{kind: "shell", op: "run", command: ...}`` vs the real
+    ``shell_allowed`` + ``unsafe_python`` are derived once at batch start
+    (= from ``--allow-shell`` / ``--allow-unsafe-python``) and threaded through
+    every task; ``Agent.from_config`` then derives the permission_resolver (and
+    the rest of the runtime bundle) per task so the Agent's op_catalog exposes
+    the shell op uniformly (#997 dir2 — the benchmark cannot omit the bundle).
+    Without this, the LLM doesn't see ``shell`` in the catalog and hallucinates
+    a fake schema (= ``{kind: "shell", op: "run", command: ...}`` vs the real
     ``{kind: "shell", cmd: ...}``), every retry hits the validator, the
     batch reports $0.00 cost + 100% error rate. See PR-D follow-up to PR-B
     (= FP-0008 sandbox_2 calibration block 2026-05-28).
@@ -727,9 +728,25 @@ async def _run_single_task(
             with _benchmark_isolated_workspace(
                 task=task, clone_task_repo=clone_task_repo,
             ) as workspace_path:
-                agent = Agent(
+                # #997 dir2: the permission/runtime bundle (permission_resolver,
+                # mcp_servers, python_allowed_modules, prompt_cache_enabled,
+                # sandbox_config, resolver) is derived from config inside
+                # from_config — the benchmark cannot omit it (this WAS the FP-0008
+                # gap: a missing permission_resolver/shell_allowed left shell out
+                # of the catalog, the LLM hallucinated a fake schema). The
+                # permission resolver is derived per task from shell_allowed +
+                # unsafe_python (identical to the prior batch-built one, which used
+                # the same _build_permission_resolver). interactive=False: a
+                # benchmark subprocess is non-interactive.
+                agent = Agent.from_config(
+                    session.config,
+                    shell_allowed=shell_allowed,
                     model=model,
                     resolver=session.resolver,
+                    safety=session.safety_for(argparse.Namespace()),
+                    python_allowed_modules=python_allowed_modules or None,
+                    unsafe_python=unsafe_python,
+                    interactive=False,
                     # PR-N9: benchmark is a non-interactive subprocess. An
                     # interactive bus blocks on tty raw_mode at limit-checkpoint
                     # boundaries (= sandbox_2 13977 4h+ hang at apply visit 6).
@@ -737,12 +754,6 @@ async def _run_single_task(
                     # ``no_bus`` clean abort, the same path scripted/headless
                     # callers use. See FP-0008 PR-N9 / issue #1045.
                     intervention_bus=None,
-                    safety=session.safety_for(argparse.Namespace()),
-                    shell_allowed=shell_allowed,
-                    permission_resolver=permission_resolver,
-                    python_allowed_modules=python_allowed_modules or list(session.config.python.allowed_modules),
-                    mcp_servers=session.config.mcp,
-                    prompt_cache_enabled=session.config.prompt_cache_enabled,
                     project_context=project_context,
                     caller="direct",
                     workspace_base_dir=workspace_path,
@@ -882,17 +893,15 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
     session = session_mod.Session.from_args(args)
     model = getattr(args, "model", None) or session.config.model
 
-    # Derive shell_allowed + permission_resolver once at batch start (= mirrors
-    # `reyn run`'s pattern in cli/commands/run.py). Without this, the Agent's
-    # OS runtime keeps `shell` out of the op_catalog and the LLM hallucinates
-    # a fake schema on every retry — see _run_single_task docstring.
+    # Derive shell_allowed + unsafe_python once at batch start and thread them
+    # through every task; Agent.from_config derives the permission_resolver (+
+    # the rest of the runtime bundle) per task (#997 dir2). Without the right
+    # shell_allowed the Agent's OS runtime keeps `shell` out of the op_catalog
+    # and the LLM hallucinates a fake schema on every retry — see
+    # _run_single_task docstring.
     shell_allowed = session.shell_allowed_for(args)
     unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
     clone_task_repo = bool(getattr(args, "clone_task_repo", False))
-    from reyn.cli.commands.run import _build_permission_resolver
-    perm_resolver = _build_permission_resolver(
-        session.config, shell_allowed, unsafe_python=unsafe_python,
-    )
 
     # C7: Detect verification tier ONCE at batch start.
     # All tasks in this run share the same host environment, so detecting
@@ -977,7 +986,7 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
                 run_dir=run_dir,
                 semaphore=semaphore,
                 shell_allowed=shell_allowed,
-                permission_resolver=perm_resolver,
+                unsafe_python=unsafe_python,
                 clone_task_repo=clone_task_repo,
                 verify_tier=verify_tier,
             )

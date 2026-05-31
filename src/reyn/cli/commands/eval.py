@@ -272,12 +272,14 @@ def _run_case(
     project_root = _find_project_root(Path.cwd())
     project_context = load_project_context(session.config, project_root)
 
-    agent = Agent(
+    # #997 dir2: config-derived permission/runtime bundle via from_config.
+    agent = Agent.from_config(
+        session.config,
+        shell_allowed=False,
         model=model,
         resolver=session.resolver,
-        intervention_bus=StdinInterventionBus(),
         safety=session.safety_for(argparse.Namespace()),
-        prompt_cache_enabled=session.config.prompt_cache_enabled,
+        intervention_bus=StdinInterventionBus(),
         project_context=project_context,
         caller="direct",
     )
@@ -843,12 +845,14 @@ def _run_spec_case(
     project_context = load_project_context(
         session.config, _find_project_root(Path.cwd()),
     )
-    agent = Agent(
+    # #997 dir2: config-derived permission/runtime bundle via from_config.
+    agent = Agent.from_config(
+        session.config,
+        shell_allowed=False,
         model=model,
         resolver=session.resolver,
-        intervention_bus=StdinInterventionBus(),
         safety=session.safety_for(args),
-        prompt_cache_enabled=session.config.prompt_cache_enabled,
+        intervention_bus=StdinInterventionBus(),
         project_context=project_context,
         caller="direct",
     )
