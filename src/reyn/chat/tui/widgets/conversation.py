@@ -361,6 +361,21 @@ class ConversationView(Widget):
     ConversationView #empty-hint.hidden {
         display: none;
     }
+    /* New-messages-below affordance: a 1-line dim-coral strip docked just
+       above the sticky/async area, shown ONLY while the user is scrolled up
+       AND content arrived after they locked. ``.hidden`` collapses it to
+       zero height in the (default) following case so the layout is unchanged.
+       Coral = the action-accent (= "jump here"). */
+    ConversationView #new-below {
+        dock: bottom;
+        height: auto;
+        color: #C8553D;  /* _CORAL */
+        background: #1a1a1a;  /* _BG_HEADER — subtle strip so it reads as chrome */
+        padding: 0 1;
+    }
+    ConversationView #new-below.hidden {
+        display: none;
+    }
     """
 
     def __init__(self, *, id: str | None = None) -> None:
@@ -437,6 +452,16 @@ class ConversationView(Widget):
         self._recent_replies: list[str] = []
         # Track whether user has scrolled up (suppress auto-scroll while scrolled)
         self._user_scrolled = False
+        # New-messages-below affordance: ``_new_below_baseline`` is the log's
+        # ``max_scroll_y`` captured at the instant the user scrolled up (=
+        # locked their view). While locked, new content grows ``max_scroll_y``;
+        # the delta from the baseline is the row count shown in the ``↓ N new``
+        # indicator. ``-1`` = "not locked" (= following the tail), so the
+        # content-grew watcher knows to stay hidden.
+        self._new_below_baseline: int = -1
+        # Current row count shown in the ``↓ N new`` strip (0 = hidden).
+        # Exposed read-only via the ``new_below_count`` property.
+        self._new_below_count: int = 0
         # Issue 5 — track mounted ErrorBoxes for Escape-to-dismiss
         self._error_boxes: list[ErrorBox] = []
         # Cursor into ``_error_boxes`` for the F5 / F6 jump-to-error
@@ -505,6 +530,12 @@ class ConversationView(Widget):
         # cold-default case.
         yield StickyStatus(id="sticky-status")
         yield AsyncStackPanel(id="async-stack")
+        # New-messages-below affordance. Yielded LAST so the dock:bottom
+        # stacking rule places it ABOVE sticky + async-stack (= right at the
+        # bottom edge of the scrollable log, where new content lands).
+        # Starts hidden; ``_update_new_below`` toggles it while the user is
+        # scrolled up and content arrives below their locked viewport.
+        yield Static("", id="new-below", classes="hidden", markup=True)
 
     def _log(self) -> RichLog:
         return self.query_one("#log", RichLog)
@@ -636,6 +667,17 @@ class ConversationView(Widget):
         ``_user_scrolled`` directly.
         """
         return self._user_scrolled
+
+    @property
+    def new_below_count(self) -> int:
+        """Rows of new content that landed below the locked viewport.
+
+        ``0`` when the user is following the tail (= the ``↓ N new`` strip is
+        hidden); positive while the user is scrolled up and content has
+        arrived since they locked. Read-only accessor for the indicator
+        state — tests assert this rather than poking the Static internals.
+        """
+        return self._new_below_count
 
     @property
     def trim_warned(self) -> bool:
@@ -788,6 +830,17 @@ class ConversationView(Widget):
             # If Textual's cross-widget watch API changes, fail open
             # (= keep historic auto-scroll behaviour) rather than crash mount.
             pass
+        try:
+            # Content-growth signal for the ``↓ N new`` affordance: while the
+            # user is scrolled up, writes don't move ``scroll_y`` (so the
+            # scroll watcher above never fires), but they DO grow the log's
+            # ``virtual_size``. Watching it is a single chokepoint that
+            # covers every write path without instrumenting each one.
+            self.watch(log, "virtual_size", self._on_log_content_grew)
+        except Exception:
+            # Fail open — the indicator is a non-critical affordance; a
+            # watch-API change must not break the conv pane.
+            pass
         # Load persisted timestamp-toggle state. The app instance holds
         # the project root; ConversationView reaches it defensively via
         # app.app (= the Textual ``app`` property on every widget).
@@ -820,6 +873,10 @@ class ConversationView(Widget):
         except Exception:
             pass
         self._user_scrolled = False
+        # Explicit re-engage: drop the lock baseline + clear the ``↓ N new``
+        # affordance so it doesn't linger after the user is back at the tail.
+        self._new_below_baseline = -1
+        self._update_new_below(0)
 
     def _on_log_scroll_y(self, old: float, new: float) -> None:
         """Flip ``auto_scroll`` and ``_user_scrolled`` based on at-bottom check.
@@ -840,11 +897,76 @@ class ConversationView(Widget):
                 log.auto_scroll = True
             if self._user_scrolled:
                 self._user_scrolled = False
+            # Back at the tail: drop the lock baseline + clear the affordance.
+            self._new_below_baseline = -1
+            self._update_new_below(0)
         else:
             if log.auto_scroll:
                 log.auto_scroll = False
             if not self._user_scrolled:
                 self._user_scrolled = True
+            # Just locked the view by scrolling up: capture the current
+            # content extent as the baseline so subsequent growth counts as
+            # "new below". Only capture on the False→True transition so a
+            # scroll WITHIN the locked region doesn't reset the baseline (=
+            # the count keeps accumulating until the user returns to bottom).
+            if self._new_below_baseline < 0:
+                self._new_below_baseline = int(log.max_scroll_y)
+                self._update_new_below(0)
+
+    def _on_log_content_grew(self, old: object, new: object) -> None:
+        """RichLog ``virtual_size`` changed — refresh the ``↓ N new`` count.
+
+        Fires on every write (the size grows as content is appended). Only
+        meaningful while the user has locked their view above the tail
+        (``_new_below_baseline >= 0``); otherwise the user is following and
+        the indicator stays hidden. The count is ``max_scroll_y - baseline``
+        — i.e. the rows of content that landed below the locked viewport.
+        """
+        if self._new_below_baseline < 0:
+            return
+        try:
+            log = self._log()
+        except Exception:
+            return
+        delta = int(log.max_scroll_y) - self._new_below_baseline
+        self._update_new_below(max(0, delta))
+
+    def _update_new_below(self, count: int) -> None:
+        """Show / hide the ``↓ N new`` indicator with ``count`` rows below.
+
+        ``count <= 0`` hides the strip (collapses to zero height); a positive
+        count shows ``↓ N new · Alt+End`` in coral. Defensive: a missing
+        widget (pre-mount / torn-down) is a silent no-op.
+        """
+        self._new_below_count = max(0, count)
+        try:
+            strip = self.query_one("#new-below", Static)
+        except Exception:
+            return
+        if count <= 0:
+            if "hidden" not in strip.classes:
+                strip.add_class("hidden")
+            return
+        noun = "new line" if count == 1 else "new lines"
+        strip.update(f"↓ {count} {noun} below · Alt+End to jump")
+        if "hidden" in strip.classes:
+            strip.remove_class("hidden")
+
+    def on_click(self, event: object) -> None:
+        """Click on the ``↓ N new`` strip jumps to the bottom (= Alt+End).
+
+        Only the indicator strip triggers the jump; clicks elsewhere in the
+        conv pane keep their default (no-op / text-select) behaviour. The
+        widget-id guard keeps this handler scoped so it doesn't hijack other
+        click targets in the pane.
+        """
+        try:
+            target_id = getattr(getattr(event, "widget", None), "id", None)
+        except Exception:
+            target_id = None
+        if target_id == "new-below":
+            self._snap_to_bottom()
 
     # ── empty state ───────────────────────────────────────────────────────────
 
