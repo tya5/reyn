@@ -30,6 +30,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
 | `skill_resolve` | Resolve a skill name to its on-disk path (read-only) | none |
+| `compact` | Voluntarily compact the conversation/phase history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
 
 ## Common envelope
 
@@ -475,6 +476,45 @@ Returns:
 **OpPurity**: `world` (filesystem metadata read; result may vary if skills are added/removed between calls).
 
 **Use case**: stdlib python steps that need a skill's absolute path can offload the filesystem walk to this op and stay in `mode: safe`. See R-PURE-MODE Class D refactor — `skill_improver/copy_to_work_resolver` and `eval_builder/analyze_skill_resolver` are the primary consumers.
+
+---
+
+## `compact`
+
+Voluntarily compact the conversation/phase history *now*, freeing context
+window. The OS injects a **context-size signal** (a `## Context window` header
+with the exact-token free window) when the window is filling; the model may
+respond by emitting `compact` instead of waiting for the mandatory `retry_loop`
+backstop. The op routes to the caller-wired compaction (chat:
+`force_compact_now`) and reports the freed tokens + the free window afterwards,
+in exact tokens (unit-aligned with the media load-contract error so "should I
+compact" and "what fits now" use the same scale).
+
+```json
+{
+  "kind": "compact"
+}
+```
+
+Fields:
+- `reason` (str, optional): Short model-supplied rationale for the audit trail. The OS never interprets it.
+
+Returns:
+- `status: "ok" | "error"`
+- `freed_tokens: int` — tokens removed from the window by the compaction
+- `free_window_after: int` — exact-token headroom after compaction
+- `free_window_before: int` — headroom before (for delta reasoning)
+- On error: `error_kind` (`compaction_unavailable` when no compaction context is wired here; `compaction_failed`) + `error`.
+
+**Events**: `compact_op_requested` / `compact_op_completed` (`freed_tokens`, `free_window_after`) / `compact_op_failed` / `compact_op_unavailable` (P6). The inner compaction engine emits its own compaction events.
+
+**Permission**: none required (LLM cost only). Voluntary and independent of the involuntary `retry_loop` backstop, which always runs regardless.
+
+**OpPurity**: `external` (LLM cost + history/state mutation; like `recall`, a macro whose inner engine emits its own events).
+
+**Visibility**: advertised to the LLM (tool / `available_control_ops`) only when the window is filling — paired with the context-size signal — so it is not offered when there is nothing to compact (mirrors the `search_actions` visibility gate). The permission gate stays "allow"; only *when surfaced* is gated.
+
+**Axis scope (chat vs phase)**: the LLM-requested `compact` op is wired for the **chat** axis, which is the live conversation dead-end and the only axis with an on-demand compaction seam (`force_compact_now`). **Phases already auto-compact** older act-results every frame (`compact_control_ir_results`, gated on act-result count) — there is no on-demand force-compact seam there — so the LLM-requested-compact gap in phases is small and covered by the existing automatic compaction. An on-demand **phase** force-compact seam (mid-phase `control_ir_results` summarisation + a phase context-size signal) is a deliberate **follow-up** rather than a rushed mid-phase-state mutation.
 
 ---
 
