@@ -437,6 +437,22 @@ class OSRuntime:
         allowed = set(phase_def.allowed_ops)
         all_ops = self.control_ir_executor.available_ops()
         filtered_ops = [op for op in all_ops if op.kind in allowed]
+        # #997: wiring-gap detection. A phase that declares an op in allowed_ops
+        # which the executor does NOT advertise (e.g. `shell` while
+        # shell_allowed=False, `mcp` with no servers configured) has that op
+        # filtered to nothing — the LLM sees the phase instruction referencing
+        # the op but no schema, and hallucinates a fake one (the FP-0008 / #1133
+        # failure class). Surface it as a P6 event so the trace tool catches the
+        # caller-side wiring gap proactively, once per phase per run.
+        gap = allowed - {op.kind for op in all_ops}
+        if gap and current_phase not in self._state.op_catalog_gap_warned:
+            self._state.op_catalog_gap_warned.add(current_phase)
+            self.events.emit(
+                "phase_op_catalog_gap",
+                phase=current_phase,
+                missing_ops=sorted(gap),
+                advertised_ops=sorted(op.kind for op in all_ops),
+            )
         # When the act budget is exhausted, strip available ops so the LLM has
         # no ops to call and is structurally forced into a decide turn.
         effective_ops = [] if force_decide else filtered_ops
