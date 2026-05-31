@@ -8,9 +8,10 @@ coarse op kind to ``OP_KIND_MODEL_MAP`` but forgets the registry entry,
 the kind silently falls back to the legacy ``execute_op`` path and the
 ADR-0026 M4 unification claim regresses unnoticed.
 
-The 11 kinds pinned here are the ones FP-0039 §S1 audit found wired:
+The kinds pinned here are the ones FP-0039 §S1 audit found wired:
 file / mcp / run_skill / shell / lint / ask_user / web_fetch /
-web_search / mcp_install / recall / sandboxed_exec. The 6 RAG / internal
+web_search / mcp_install / recall / sandboxed_exec — plus ``compact``
+(#272/#1128, phase=allow registry entry). The 6 RAG / internal
 kinds (embed / index_* / judge_output / skill_resolve) intentionally
 stay on the legacy path and are documented in this test's expected-
 legacy set so adding them later is an explicit change, not a silent one.
@@ -38,6 +39,13 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     "shell",
     "web_fetch",
     "web_search",
+    # #272/#1128: compact has a phase=allow registry ToolDefinition, so the op
+    # dispatches through the unified registry. The phase compaction CAPABILITY
+    # (OpContext.compact_now) is wired for chat now; in phases it is unwired
+    # until the B1 follow-up (#1176), so a phase-emitted compact fail-louds with
+    # compaction_unavailable rather than silently no-op'ing. Dispatch path is
+    # registry-wired either way → classified here.
+    "compact",
 })
 
 # Coarse op kinds that intentionally still dispatch via the legacy
