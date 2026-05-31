@@ -4,7 +4,8 @@ Provides :func:`walk_config_schema` which traverses the ``ReynConfig``
 dataclass hierarchy and yields :class:`SchemaNode` objects — one per
 dotted key.  Used by ``reyn config fields``, ``reyn config get``, and
 ``reyn config set`` so those commands track the *real* schema rather
-than a hand-maintained ``CONFIG_FIELDS`` list.
+than a hand-maintained list (the former ``CONFIG_FIELDS`` allowlist,
+now removed).
 
 Design notes
 ------------

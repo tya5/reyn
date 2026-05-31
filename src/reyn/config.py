@@ -1541,7 +1541,10 @@ def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
 
 @dataclass
 class ReynConfig:
-    model: str = "standard"
+    model: str = field(
+        default="standard",
+        metadata={"desc": "Default model class used when a phase has no model_class."},
+    )
     # Optional. None = user did not configure; downstream callers decide
     # how to handle (chat router skips the language directive in its
     # system prompt; phase / skill paths default to "ja" preserving the
@@ -1549,16 +1552,31 @@ class ReynConfig:
     # explicit value (e.g. "ja", "en") forces a strict directive in the
     # chat router prompt — see `_ROUTER_RETRY_EXHAUSTED_MSG` and
     # `build_system_prompt(output_language=...)`.
-    output_language: str | None = None
-    shell_allowed: bool = False
-    models: dict[str, str | dict] = field(default_factory=dict)
+    output_language: str | None = field(
+        default=None,
+        metadata={"desc": "Language code injected into the context frame for all LLM outputs."},
+    )
+    shell_allowed: bool = field(
+        default=False,
+        metadata={"desc": "Allow the shell Control IR op globally. Equivalent to --allow-shell on every run."},
+    )
+    models: dict[str, str | dict] = field(
+        default_factory=dict,
+        metadata={"desc": "Map of model class names to LiteLLM model strings."},
+    )
     # LiteLLM proxy: non-secret base URL only.
     # API keys must be set as environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
     # — never stored in config files.
-    api_base: str = ""
+    api_base: str = field(
+        default="",
+        metadata={"desc": "LiteLLM proxy base URL. Set this if you route requests through a local proxy."},
+    )
     # Pre-approved permissions (same structure as phase frontmatter, but value is "allow").
     # Example: permissions: {shell: allow, file.delete: allow, mcp: {github: allow}}
-    permissions: dict = field(default_factory=dict)
+    permissions: dict = field(
+        default_factory=dict,
+        metadata={"desc": "Pre-approve specific Control IR ops without interactive prompts."},
+    )
     # MCP server definitions.  Merged across config sources (servers dict is shallow-merged;
     # local overrides project which overrides global).
     #
