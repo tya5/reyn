@@ -62,6 +62,11 @@ class SchemaNode:
     desc: str = ""
     """Description from ``field(metadata={'desc': ...})``, or empty string."""
 
+    field_type: Any = None
+    """Unwrapped (Optional-stripped) field type for scalar leaves, e.g. ``int``,
+    ``str``, or a ``Literal[...]`` — ``None`` for dict leaves. Lets callers
+    introspect valid values (e.g. pick a non-default ``Literal`` member)."""
+
 
 #: Sentinel for fields whose default can only be computed by calling
 #: ``default_factory()``.  We eagerly call the factory so this sentinel
@@ -258,6 +263,14 @@ def _walk(
         if fname not in fields_map:
             continue
         dc_field = fields_map[fname]
+        if _is_schema_internal(dc_field):
+            # Field is internal storage (e.g. loader-derived from a different
+            # operator key), not an operator-settable schema key — omit it
+            # from the settable schema entirely so config set/get/fields and
+            # the doc-mirror guard never advertise a key the set/get path
+            # can't honor. The field's value still flows to its runtime
+            # consumers via the loader; it just isn't a settable dotted key.
+            continue
         dotkey = f"{prefix}.{fname}" if prefix else fname
         inner = _unwrap_optional(ftype)
 
@@ -285,6 +298,7 @@ def _walk(
                 default=default,
                 is_dict_leaf=False,
                 desc=desc,
+                field_type=inner,
             ))
 
 
@@ -294,3 +308,18 @@ def _field_desc(f: dataclasses.Field) -> str:  # type: ignore[type-arg]
     if meta and isinstance(meta, typing.Mapping):
         return str(meta.get("desc", ""))
     return ""
+
+
+def _is_schema_internal(f: dataclasses.Field) -> bool:  # type: ignore[type-arg]
+    """True when a field opts out of the operator-settable schema.
+
+    A field flags itself with ``field(metadata={'schema_internal': True})``
+    when it is internal storage (e.g. loader-derived from a *different*
+    operator key) rather than a directly settable config key. ``walk_config_schema``
+    omits such fields so ``reyn config set/get/fields`` and the doc-mirror
+    guard don't advertise a key whose set/get round-trip the loader can't honor.
+    """
+    meta = getattr(f, "metadata", None)
+    if meta and isinstance(meta, typing.Mapping):
+        return bool(meta.get("schema_internal", False))
+    return False

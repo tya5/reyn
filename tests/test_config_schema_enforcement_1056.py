@@ -4,12 +4,15 @@ PR1 (`test_config_schema_introspection.py`) proved the walk *includes* known
 nested keys + a top-level no-silent-skip drift guard. This PR2 file closes the
 remaining enforcement gap:
 
-  - **Every** scalar leaf the walk advertises actually round-trips through the
-    real ``reyn config set`` → ``load_config`` → ``resolve_config_value`` path
-    (not just the handful sampled in PR1). This is the framework's whole
-    promise — "adding a config field auto-reflects in reyn config set/get" —
-    pinned for the entire schema, so a future field whose section builder
-    silently drops it (set-able key that doesn't survive reload) fails loudly.
+  - **Every** scalar leaf the walk advertises actually takes effect through the
+    real ``reyn config set`` → ``load_config`` → ``resolve_config_value`` path,
+    set to a **non-default** value (not just the handful sampled in PR1, and not
+    its own default — see #1146). This is the framework's whole promise —
+    "adding a config field auto-reflects in reyn config set/get" — pinned for the
+    entire schema, so a future field whose loader never reads the key (the
+    operator's value silently discarded = a no-op set) fails loudly. A
+    default-valued round-trip passes trivially for such a field; a non-default
+    value exposes it.
   - **Every** free-form dict leaf accepts an arbitrary sub-key.
   - The 6 top-level descriptions migrated out of the deleted ``CONFIG_FIELDS``
     allowlist into ``field(metadata={'desc': ...})`` are preserved (regression
@@ -23,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import typing
 from pathlib import Path
 
 import yaml
@@ -30,10 +34,57 @@ import yaml
 from reyn.config import ReynConfig, load_config
 from reyn.config_schema import (
     MISSING,
+    SchemaNode,
     is_valid_config_key,
     resolve_config_value,
     walk_config_schema,
 )
+
+# Fields that silently COERCE an invalid value back to their default (rather
+# than raising a validation error), so a generic "<default>_nd" candidate can't
+# distinguish "loader read+coerced" from a real no-op. Supply a domain-valid
+# non-default so the guard stays decisive. Keyed by dotted key; the iteration
+# itself is still live-walk-derived — this only overrides the candidate VALUE.
+_VALID_NONDEFAULT_OVERRIDES: dict[str, object] = {
+    "skill_resume.default": "skip",  # validated against SKILL_RESUME_POLICIES, coerces
+}
+
+
+def _nondefault_candidate(node: SchemaNode) -> object | None:
+    """Return a non-default value for a scalar leaf, or None to skip it.
+
+    Derives a distinct-but-type-valid value from the node's default + field
+    type. ``Literal`` members come from the type itself; list leaves are skipped
+    (structured entries need shaped dicts — covered by their own builder tests).
+    """
+    if node.key in _VALID_NONDEFAULT_OVERRIDES:
+        return _VALID_NONDEFAULT_OVERRIDES[node.key]
+    d = node.default
+    t = node.field_type
+    if typing.get_origin(t) is typing.Literal:
+        for member in typing.get_args(t):
+            if member != d:
+                return member
+        return None
+    if isinstance(d, bool):
+        return not d
+    if isinstance(d, int):
+        return d + 1
+    if isinstance(d, float):
+        return round(d / 2, 6) if 0.0 < d < 1.0 else (d + 1.0 if d != 0.0 else 1.0)
+    if isinstance(d, str):
+        return (d + "_nd") if d else "nd_val"
+    if isinstance(d, list):
+        return None  # structured-list leaves need shaped entries — skip
+    if d is None:
+        if t is bool:
+            return True
+        if t is int:
+            return 1
+        if t is float:
+            return 1.0
+        return "nd_val"
+    return None
 
 # Top-level fields whose human descriptions were migrated from the (now
 # deleted) hand-maintained ``CONFIG_FIELDS`` allowlist into field metadata.
@@ -53,49 +104,63 @@ def _project_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_every_scalar_leaf_round_trips_through_set_and_load(tmp_path: Path) -> None:
-    """Tier 2: every scalar leaf survives reyn config set → load_config → resolve.
+def test_every_scalar_leaf_takes_effect_on_nondefault_set(tmp_path: Path) -> None:
+    """Tier 2: setting a NON-DEFAULT value on every scalar leaf actually takes effect.
 
-    For each scalar leaf the schema walk advertises, write its own default via
-    the real ``_set`` CLI path, reload the merged config, and assert
-    ``resolve_config_value`` returns the same value. A leaf that is advertised
-    by the walk but is silently dropped by its section builder on reload (=
-    set-able key, value vanishes) re-creates the old allowlist-drift bug; this
-    makes that loud for the *entire* schema, not just sampled keys.
+    The original default-valued round-trip (#1142) passed *trivially* for a field
+    the loader silently ignores: set X → reload → default, and default == X when X
+    is the default. #1146: set a value ≠ default so a no-op-set field (loader never
+    reads the key — e.g. a parse-derived alias like ``mcp_search_threshold``, or a
+    field declared + consumed but never wired into ``load_config`` like the
+    formerly-dead ``prompt_cache_enabled`` / ``project_context_path``) is caught.
+
+    Per field, set V ≠ default and reload (each in an isolated project root so one
+    field's value can't perturb another's load). Then require EITHER:
+      - the value round-trips (``resolve == V``) — loader read the key, OR
+      - ``load_config`` raises (the candidate hit the field's validation) — which
+        also proves the loader *read* the key.
+    A field that silently returns its default after a non-default set is a no-op
+    (the operator's value is discarded on reload) = FAIL.
     """
     from reyn.cli.commands.config import _set
 
-    root = _project_root(tmp_path)
     nodes = [n for n in walk_config_schema() if not n.is_dict_leaf]
     assert nodes, "walk returned no scalar leaves — catastrophic introspection failure"
 
-    mismatches: list[str] = []
+    noops: list[str] = []
+    checked = 0
     old_cwd = os.getcwd()
-    os.chdir(root)
     try:
-        for node in nodes:
-            default = node.default
-            if default is MISSING:
-                # No static default to round-trip (none today; defensive — such a
-                # field is still covered by the resolvable-on-default guard below).
+        for i, node in enumerate(nodes):
+            if node.default is MISSING:
                 continue
-            # Serialise the default to the YAML scalar string the CLI accepts,
-            # exactly as a human typing `reyn config set <key> <value>` would.
-            value_str = yaml.safe_dump(default, default_flow_style=True).strip()
-            _set(node.key, value_str)
-            cfg = load_config()
+            cand = _nondefault_candidate(node)
+            if cand is None or cand == node.default:
+                continue
+            root = tmp_path / f"leaf{i}"
+            root.mkdir()
+            (root / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+            os.chdir(root)
+            _set(node.key, yaml.safe_dump(cand, default_flow_style=True).strip())
+            try:
+                cfg = load_config()
+            except Exception:
+                # Loader read the key and rejected the candidate during
+                # validation → the key IS wired (not a no-op). Counts as covered.
+                checked += 1
+                continue
+            checked += 1
             found, got = resolve_config_value(cfg, node.key)
-            if not found:
-                mismatches.append(f"{node.key}: not resolvable after set")
-            elif got != default:
-                mismatches.append(f"{node.key}: set={default!r} got back {got!r}")
+            if not found or got != cand:
+                noops.append(f"{node.key}: set {cand!r} → reload {got!r} (set ignored)")
     finally:
         os.chdir(old_cwd)
 
-    assert not mismatches, (
-        "config leaves that do not round-trip through set→load→resolve "
-        "(advertised by the schema walk but not preserved on reload — a "
-        "section builder is dropping the key): " + "; ".join(mismatches)
+    assert checked > 0, "no scalar leaf exercised — candidate generator returned None for all"
+    assert not noops, (
+        "config leaves whose set is a NO-OP (advertised by the schema walk + "
+        "set-able, but load_config never reads the key, so the operator's value "
+        "is silently discarded on reload): " + "; ".join(noops)
     )
 
 

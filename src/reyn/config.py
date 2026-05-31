@@ -1609,7 +1609,17 @@ class ReynConfig:
     # (deferred-loading mode).  Default 30; set 0 to disable.
     # Configurable via ``mcp.search_threshold:`` in reyn.yaml.
     # Spring AI experiment: 63–64% token reduction at 40+ MCP tools.
-    mcp_search_threshold: int = 30
+    #
+    # ``schema_internal``: this field is INTERNAL storage derived by the
+    # loader from the ``mcp.search_threshold`` key (see
+    # ``_parse_mcp_search_threshold``); it is NOT itself an operator-settable
+    # top-level key. The operator sets ``mcp.search_threshold`` (a free-form
+    # sub-key of the ``mcp`` dict); ``reyn config set mcp_search_threshold``
+    # would be a no-op on reload. The metadata flag tells
+    # ``walk_config_schema`` to omit it from the settable schema so
+    # ``reyn config set/get/fields`` and the doc-mirror guard don't advertise
+    # a key the set/get path can't honor.
+    mcp_search_threshold: int = field(default=30, metadata={"schema_internal": True})
     # FP-0024 Component A — BM25 skill pre-filter settings.
     # Below threshold: full enum. Above threshold: BM25 top-K filter.
     # Default 20 — current stdlib (~30-50 skills) stays at full enum unless
@@ -1754,7 +1764,19 @@ def _merge(base: dict, override: dict) -> dict:
             existing = result.get("mcp", {})
             existing_servers = existing.get("servers", {}) if isinstance(existing, dict) else {}
             new_servers = val.get("servers", {}) if isinstance(val, dict) else {}
-            result["mcp"] = {**existing, "servers": {**existing_servers, **new_servers}}
+            # Override-wins for scalar mcp keys (``search_threshold``,
+            # ``registries``), server entries union (existing ∪ new). The
+            # earlier ``{**existing, "servers": ...}`` form silently dropped
+            # the override's non-``servers`` keys, making ``mcp.search_threshold``
+            # and ``mcp.registries`` impossible to set from any config layer
+            # (they always fell back to the default). Spreading ``val`` after
+            # ``existing`` restores last-layer-wins for those scalars while the
+            # explicit ``servers`` key keeps the server union intact.
+            result["mcp"] = {
+                **existing,
+                **val,
+                "servers": {**existing_servers, **new_servers},
+            }
         elif key == "cron" and isinstance(val, dict):
             # FP-0041 #489 PR-B: cron jobs merge by name — dynamic
             # entries (= .reyn/cron.yaml) win on collision with legacy
@@ -2045,6 +2067,13 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
             for k, v in (merged.get("models") or {}).items()
         },
         api_base=str(merged.get("api_base") or ""),
+        # prompt_cache_enabled / project_context_path were declared as
+        # ReynConfig fields + consumed (llm.py / session.py / agent.py /
+        # _read_project_context) but never read here, so operator config was
+        # silently ignored (always the dataclass default = a no-op set). Wire
+        # them through merged so the operator-set value actually takes effect.
+        prompt_cache_enabled=bool(merged.get("prompt_cache_enabled", True)),
+        project_context_path=str(merged.get("project_context_path", "REYN.md")),
         permissions=dict(merged.get("permissions") or {}),
         mcp=dict(merged.get("mcp") or {}),
         mcp_search_threshold=_parse_mcp_search_threshold(merged.get("mcp")),
