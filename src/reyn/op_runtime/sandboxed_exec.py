@@ -1,9 +1,9 @@
 """sandboxed_exec kind handler — execute argv under a SandboxPolicy (FP-0017).
 
 Routes through `reyn.sandbox.get_default_backend()` so the OS selects the
-appropriate enforcement mechanism per platform. Today the default is
-NoopBackend (no isolation enforced); future waves add SeatbeltBackend
-(macOS) and LandlockBackend (Linux) without touching this handler.
+appropriate enforcement mechanism per platform. `get_default_backend` auto-
+selects SeatbeltBackend (macOS) or LandlockBackend (Linux) where available,
+falling back to NoopBackend on unsupported platforms.
 
 Emits `sandboxed_exec_started` / `sandboxed_exec_completed` events (P6).
 """
