@@ -184,6 +184,15 @@ def _strip_frontmatter(content: str) -> str:
 # per-turn media bound is unit-consistent with how a turn's image cost is
 # measured — one constant, no drift. Name preserved for in-module + test use.
 _MEDIA_IMAGE_TOKEN_COST = _IMAGE_FIXED_TOKEN_COST
+# #272 media-COUNT cap: conservative per-item token bound for an individual
+# overflow ref — boilerplate + a filesystem-bounded path (≤ ~255 chars ≈ 64
+# tokens); 128 upper-bounds it so the bounded accounting never under-counts.
+_MEDIA_REF_TOKEN_COST = 128
+# Reserved for the single tail preview (offload-manifest pointer or no-store
+# degrade note) so the WHOLE follow-up stays ≤ budget_tokens.
+_MEDIA_TAIL_PREVIEW_RESERVE_TOKENS = 256
+# The "Tool `X` returned the following image(s):" intro line.
+_MEDIA_INTRO_TOKEN_COST = 24
 
 
 def _render_context_size_signal_for_host(host: "RouterLoopHost") -> "str | None":
@@ -207,6 +216,115 @@ def _render_context_size_signal_for_host(host: "RouterLoopHost") -> "str | None"
         return None
 
 
+def _materialise_image_part(block: dict, media_store: Any) -> dict | None:
+    """Render one image block into a litellm ``image_url`` part.
+
+    Path-ref blocks (``{"type":"image","path":...}``) are read via the
+    MediaStore and base64-embedded; inline blocks (``{"data":"<b64>"}``) embed
+    their base64 directly. Returns ``None`` when the block cannot be rendered
+    (path-ref without a store, missing/unreadable bytes, or no data).
+    """
+    mime = block.get("mime_type") or block.get("mimeType") or "image/png"
+    path = block.get("path")
+    if isinstance(path, str) and path:
+        if media_store is None:
+            return None
+        try:
+            data_bytes, found = media_store.read_image(path)
+        except PermissionError:
+            return None
+        if not found:
+            return None
+        import base64
+        data_b64 = base64.b64encode(data_bytes).decode("ascii")
+        return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data_b64}"}}
+    data = block.get("data")
+    if isinstance(data, str) and data:
+        return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}}
+    return None
+
+
+def _as_path_ref(
+    block: dict, media_store: Any, *, tool_name: str, seq: int
+) -> dict | None:
+    """Return a ``{"path","mime_type"}`` lossless handle for an image block.
+
+    A path-ref block is returned as-is (its on-disk path is the handle, valid
+    even without a live store object). An inline-base64 block is persisted to
+    the MediaStore (``save_image``) so it gains a path — requires a store.
+    Returns ``None`` when no path can be obtained (inline + no store, or
+    undecodable base64) — the caller then degrades consciously.
+    """
+    path = block.get("path")
+    if isinstance(path, str) and path:
+        return {
+            "path": path,
+            "mime_type": block.get("mime_type") or block.get("mimeType") or "image/png",
+        }
+    data = block.get("data")
+    if isinstance(data, str) and data and media_store is not None:
+        import base64
+        try:
+            raw = base64.b64decode(data)
+        except (ValueError, TypeError):
+            return None
+        mime = block.get("mime_type") or block.get("mimeType") or "image/png"
+        saved = media_store.save_image(raw, mime_type=mime, tool=tool_name, seq=seq)
+        return {"path": saved["path"], "mime_type": saved.get("mime_type", mime)}
+    return None
+
+
+def _overflow_ref_text(ref: dict) -> str:
+    return (
+        f"[image not loaded — exceeds the per-turn media budget. "
+        f"Stored at {ref['path']} ({ref.get('mime_type', 'image')}); "
+        f"load it with read_tool_result when the context has room.]"
+    )
+
+
+def _build_media_tail_preview(
+    tail: list[dict], media_store: Any, *, tool_name: str
+) -> dict:
+    """One bounded text part standing in for ``len(tail)`` over-budget images.
+
+    With a MediaStore: offload a LOSSLESS JSON manifest of the tail images'
+    on-disk paths (``save_tool_result``) and point to it (read_tool_result-able)
+    — O(1) follow-up cost no matter how many images overflowed.
+
+    Without a store (or if none could be persisted): a least-lossy bounded note
+    naming the count. Losslessness requires a store, so this is a conscious
+    *environment-bound* degrade, never a silent drop (#272 / the
+    no-lossy-truncate principle: the loss is surfaced, not hidden).
+    """
+    n = len(tail)
+    if media_store is not None:
+        manifest_images: list[dict] = []
+        for i, block in enumerate(tail):
+            ref = _as_path_ref(block, media_store, tool_name=tool_name, seq=10_000 + i)
+            if ref is not None:
+                manifest_images.append(ref)
+        if manifest_images:
+            import json as _json
+            manifest = _json.dumps({"images": manifest_images}, ensure_ascii=False)
+            try:
+                saved = media_store.save_tool_result(
+                    manifest, mime_type="application/json", tool=tool_name,
+                )
+                return {"type": "text", "text": (
+                    f"[{n} more image(s) exceed the per-turn media budget and are "
+                    f"not shown here. A lossless manifest of their on-disk paths is "
+                    f"stored at {saved['path']}; load it with read_tool_result to "
+                    f"access them.]"
+                )}
+            except Exception:  # noqa: BLE001 — offload best-effort; degrade below
+                pass
+    return {"type": "text", "text": (
+        f"[{n} more image(s) exceed the per-turn media budget and are not shown. "
+        f"No media store is configured for lossless offload, so they cannot be "
+        f"re-loaded from here — configure a media store to retain them.]"
+    )}
+
+
 def _build_media_followup_message(
     *,
     tool_name: str,
@@ -214,97 +332,79 @@ def _build_media_followup_message(
     media_store: Any = None,
     budget_tokens: int | None = None,
 ) -> dict | None:
-    """Build a multimodal follow-up user message for MCP tool results that
-    include image / non-text content blocks (issue #362 → #383 PR-C).
+    """Build a multimodal follow-up user message for tool results carrying image
+    content (issue #362 → #383 PR-C; bounded by #272 + the media-count cap).
 
-    Strategy (= Option A): after each tool result that carries non-text
-    media, append a synthetic user message containing those media blocks
-    in litellm-normalised shape. Provider-agnostic because user messages
-    with content lists are universally supported (Anthropic, Gemini,
-    OpenAI vision models).
+    Strategy (Option A): append a synthetic user message containing the tool's
+    images in litellm-normalised shape — provider-agnostic, since user messages
+    with content lists are universally supported (Anthropic, Gemini, OpenAI).
 
-    Two media block shapes are accepted (= dual mode during the #383 PR-C
-    transition):
-      1. **Path-ref** (post-PR-C, MediaStore-backed):
-         ``{"type": "image", "path": "...", "mime_type": "...", "content_hash": "..."}``
-         → read the file via ``media_store.read_image``, base64-encode,
-         embed as data URL.
-      2. **Inline** (pre-PR-C / no MediaStore):
-         ``{"type": "image", "data": "<b64>", "mimeType": "..."}``
-         → embed directly as data URL.
-
-    Returns None when no image-typed block can be rendered.
+    #272 + media-count cap (dead-end-free media axis): when ``budget_tokens`` is
+    given, the WHOLE follow-up (materialised images + individual refs + the tail
+    preview) is held ≤ ``budget_tokens`` so the result turn stays single-turn
+    compactable (the chat retry_loop's shrink can always fold it). Images are
+    materialised while they fit; the next become small LOSSLESS path-refs while
+    THOSE fit; the remaining tail collapses into ONE offloaded-manifest preview
+    (lossless). So neither the image bytes NOR the ref count can grow the
+    follow-up without bound — closing the inline-shape bypass (Gap A) and the
+    unbounded-ref count (Gap B). ``budget_tokens=None`` preserves the pre-#272
+    unbounded behaviour (partial/test hosts).
     """
+    images = [
+        b for b in media_blocks if isinstance(b, dict) and b.get("type") == "image"
+    ]
+    if not images:
+        return None
+
     parts: list[dict] = [
         {"type": "text", "text": f"Tool `{tool_name}` returned the following image(s):"},
     ]
-    rendered = 0
-    materialized = 0  # #272: images actually embedded (count against budget_tokens)
 
-    def _over_budget() -> bool:
-        # #272 per-turn media bound: materialise an image only while the running
-        # image cost stays within budget_tokens; overflow → small lossless ref.
-        if budget_tokens is None:
-            return False
-        return (materialized + 1) * _MEDIA_IMAGE_TOKEN_COST > budget_tokens
+    # Unbounded path (pre-#272 / partial-host): materialise all renderable images.
+    if budget_tokens is None:
+        for block in images:
+            part = _materialise_image_part(block, media_store)
+            if part is not None:
+                parts.append(part)
+        return {"role": "user", "content": parts} if len(parts) > 1 else None
 
-    for block in media_blocks:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") != "image":
-            continue
-        mime = block.get("mime_type") or block.get("mimeType") or "image/png"
-        # Path-ref shape (PR-C): resolve via MediaStore.
-        path = block.get("path")
-        if isinstance(path, str) and path:
-            if media_store is None:
-                # Path-ref present but no MediaStore available — skip the
-                # block rather than crash. Pre-PR-C consumers shouldn't
-                # see path-refs in the first place, so this is defensive
-                # only.
+    # Bounded path (#272 + media-count cap): keep the whole follow-up ≤ budget.
+    spent = _MEDIA_INTRO_TOKEN_COST
+    emitted: list[tuple[str, dict]] = []  # (kind, part); kind ∈ {"img", "ref"}
+    tail_start = len(images)
+    for i, block in enumerate(images):
+        # Prefer materialising (usable by the vision model) while it fits.
+        if spent + _MEDIA_IMAGE_TOKEN_COST <= budget_tokens:
+            part = _materialise_image_part(block, media_store)
+            if part is not None:
+                parts.append(part)
+                emitted.append(("img", part))
+                spent += _MEDIA_IMAGE_TOKEN_COST
                 continue
-            if _over_budget():
-                # #272: overflow media stays a small ref (lossless — the image
-                # remains on disk, materialisable later via the load-contract).
-                # NEVER materialise beyond the per-turn budget → result turn
-                # stays ≤ cap_tokens.
-                parts.append({
-                    "type": "text",
-                    "text": (
-                        f"[image not loaded — exceeds the per-turn media budget. "
-                        f"Stored at {path} ({mime}); load it with read_tool_result "
-                        f"when the context has room.]"
-                    ),
-                })
-                rendered += 1
-                continue
-            try:
-                data_bytes, found = media_store.read_image(path)
-            except PermissionError:
-                continue
-            if not found:
-                continue
-            import base64
-            data_b64 = base64.b64encode(data_bytes).decode("ascii")
-            parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{data_b64}"},
-            })
-            rendered += 1
-            materialized += 1
+        # Otherwise a small LOSSLESS ref, while THAT fits.
+        ref = _as_path_ref(block, media_store, tool_name=tool_name, seq=i + 1)
+        if ref is not None and spent + _MEDIA_REF_TOKEN_COST <= budget_tokens:
+            txt = {"type": "text", "text": _overflow_ref_text(ref)}
+            parts.append(txt)
+            emitted.append(("ref", txt))
+            spent += _MEDIA_REF_TOKEN_COST
             continue
-        # Inline shape (pre-PR-C): use the base64 directly.
-        data = block.get("data")
-        if not isinstance(data, str) or not data:
-            continue
-        parts.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:{mime};base64,{data}"},
-        })
-        rendered += 1
-    if rendered == 0:
-        return None
-    return {"role": "user", "content": parts}
+        # Doesn't fit (or no lossless ref obtainable here) → this + rest = tail.
+        tail_start = i
+        break
+
+    if tail_start < len(images):
+        # Reserve room for the single tail preview by popping trailing emitted
+        # items until it fits — guarantees the whole follow-up stays ≤ budget.
+        while emitted and spent + _MEDIA_TAIL_PREVIEW_RESERVE_TOKENS > budget_tokens:
+            kind, part = emitted.pop()
+            parts.remove(part)
+            spent -= _MEDIA_IMAGE_TOKEN_COST if kind == "img" else _MEDIA_REF_TOKEN_COST
+            tail_start -= 1
+        tail = images[tail_start:]
+        parts.append(_build_media_tail_preview(tail, media_store, tool_name=tool_name))
+
+    return {"role": "user", "content": parts} if len(parts) > 1 else None
 
 
 def _is_empty_router_response(response: Any) -> bool:
