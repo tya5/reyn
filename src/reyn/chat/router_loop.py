@@ -1572,6 +1572,10 @@ class RouterLoop:
                         skill_metadata_lookup=_skill_meta_map or None,
                         mcp_tool_lookup=_mcp_tool_map or None,
                     )
+        # #272/#1128: compute the OS context-size signal once. It is None when
+        # the window is ample (then compact stays hidden + the SP header is
+        # omitted); non-None when filling (compact tool + header appear together).
+        _ctx_signal = _render_context_size_signal_for_host(host)
         tools = build_tools(
             skills_for_tools,
             host.list_available_agents(),
@@ -1581,6 +1585,7 @@ class RouterLoop:
             universal_wrappers_enabled=_univ_enabled,
             search_actions_visible=_search_visible,
             hot_list_aliases=_hot_list_aliases,
+            compact_visible=_ctx_signal is not None,
         )
         # D2-wrapper scope expansion (B38): propagate schemas for ALL
         # session-visible actions into invoke_action's description so the
@@ -1649,11 +1654,10 @@ class RouterLoop:
                 # configured + index ready); False there means the SP and tools=
                 # both exclude search_actions, eliminating the N5 hallucination.
                 search_actions_enabled=_search_visible if _univ_enabled else True,
-                # #272/#1128: OS-injected context-size signal (header). Computed
-                # from the host's live free-window so the LLM can voluntarily
-                # `compact` before the backstop. Rendered LAST in the SP (most
-                # volatile section → preserves the cached prefix above it).
-                context_size_signal=_render_context_size_signal_for_host(host),
+                # #272/#1128: OS-injected context-size signal (header), computed
+                # once above. Rendered LAST in the SP (most volatile section →
+                # preserves the cached prefix above it); None when ample.
+                context_size_signal=_ctx_signal,
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the

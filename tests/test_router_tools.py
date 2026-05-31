@@ -53,9 +53,9 @@ EXPECTED_TOOL_NAMES = [
     # when the ToolRegistry contains them (B17-S6-1 / B17-S8-2 fix).
     "recall",
     "drop_source",
-    # compact (#272/#1128) — always exposed; voluntary history compaction
-    # paired with the OS-injected context-size signal.
-    "compact",
+    # compact (#272/#1128) is NOT in the baseline — it is visibility-gated
+    # (compact_visible) and only appears when the window is filling, paired
+    # with the context-size signal (see test_compact_visible_gates_tool).
 ]
 
 
@@ -107,9 +107,10 @@ def test_build_tools_returns_expected_baseline_tools():
     + read_tool_result (E3, B49 Step 2 v6 fix: lazy-expand half of the
     preview-driven design, surfaced for router-side use)
     + reyn_src_list + reyn_src_read (F1/F2, always on)
-    + plan (G1, always on) + recall + drop_source (H1/H2, always on)
-    + compact (#272/#1128, always on). All file-class tools and MCP remain
-    gated, so the unconfigured baseline is exactly EXPECTED_TOOL_NAMES.
+    + plan (G1, always on) + recall + drop_source (H1/H2, always on). compact
+    (#272/#1128) is visibility-gated (off by default), so the unconfigured
+    baseline is exactly EXPECTED_TOOL_NAMES. All file-class tools and MCP
+    remain gated.
     """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     assert _tool_names(tools) == EXPECTED_TOOL_NAMES, (
@@ -123,6 +124,21 @@ def test_tool_order_is_deterministic():
     tools_b = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     assert _tool_names(tools_a) == _tool_names(tools_b)
     assert _tool_names(tools_a) == EXPECTED_TOOL_NAMES
+
+
+def test_compact_visible_gates_tool():
+    """Tier 2: #272/#1128 — `compact` is exposed only when compact_visible=True
+    (window filling), and absent by default (ample window). Mirrors the
+    search_actions §D14 visibility gate; keeps tools= stable on ample-window
+    turns (and LLMReplay fixtures keyed on tools byte-stable).
+    """
+    default = _tool_names(build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS))
+    assert "compact" not in default, "compact must be hidden when the window is ample"
+
+    gated = _tool_names(build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS, compact_visible=True))
+    assert "compact" in gated, "compact must appear when the window is filling"
+    # Enabling the gate only adds compact — no other tool churn.
+    assert set(gated) - set(default) == {"compact"}
 
 
 def test_no_forbidden_schema_keywords():
