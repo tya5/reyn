@@ -246,6 +246,8 @@
 #     tail_size: 12
 #     body_token_cap: 1500
 #     min_compact_batch: 5
+#     resummarize_passes: 1            # #271: LLM re-compression passes on topic_arc
+#                                      # overshoot before the hard_truncate floor (0 = skip)
 #     section_token_caps:
 #       topic_arc: 200
 #       decisions: 400

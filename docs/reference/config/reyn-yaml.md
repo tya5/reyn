@@ -834,6 +834,7 @@ chat:
 | `new_msg_ratio` | float | `0.10` | Fraction of `main_pool` reserved for the incoming user message. |
 | `section_caps_spec_tokens` | int | `100` | Static overhead budget for `section_token_caps` serialisation in the compactor prompt. |
 | `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of the litellm token counter (latency opt-out for large deployments). |
+| `resummarize_passes` | int | `1` | #271: max LLM re-compression passes when a produced `topic_arc` overshoots its body budget, before the deterministic `hard_truncate` floor. `1` = one judgment-based re-summary then floor; `0` = skip the re-summary (straight to the floor = pre-#271 behaviour). |
 
 ### `chat.compaction` weight dicts
 

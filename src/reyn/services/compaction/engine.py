@@ -497,6 +497,29 @@ Output ONLY the JSON object — no explanation, no markdown fences.
 """
 
 
+# #271 re-summarize (T2): a DISTINCT prompt for the overshoot case. The main
+# compaction SP forbids re-summarising `previous_summary` (immutable base); this
+# one EXPLICITLY relaxes that — it is the controlled re-compression pass invoked
+# only when the produced topic_arc overshoots body_budget. LLM-judgment loss
+# (preserve decision-relevant, drop least essential) replaces the blind char-cut
+# of hard_truncate; the deterministic floor (T3) still applies after.
+_RESUMMARIZE_SYSTEM_PROMPT = """\
+You are compressing a single rolling-summary narrative (the `topic_arc`) that
+overshot its token budget. Rewrite it to fit within the target budget.
+
+You MAY re-compress, rephrase, and drop content — this is an explicit
+re-summarisation pass (unlike the main compaction step, here re-summarising is
+REQUIRED to shrink the text).
+
+Rules:
+- Preserve the MOST decision-relevant content; drop the least essential.
+- Keep VERBATIM: file paths, line numbers, commit hashes, decision identifiers
+  (PR-N6, FP-0008, issue #1035), temporal markers, exit/error codes.
+- Match the original language.
+- Output ONLY the rewritten narrative text — no JSON, no markdown, no preamble.
+"""
+
+
 def compute_covers_through_seq(new_turn_seqs: list) -> int:
     """Return max(new_turn_seqs) or 0 when the list is empty.
 
@@ -729,6 +752,54 @@ class CompactionEngine:
         """Read-only access to the computed budget values."""
         return self._budgets
 
+    async def _acompletion(self, messages: list[dict], *, response_format: dict | None = None):
+        """Single litellm.acompletion call with proxy routing applied.
+
+        Shared by ``compact`` (JSON response) and ``_resummarize_topic_arc``
+        (text response) so the proxy_kwargs + provider-prefix-strip routing is
+        in one place.
+        """
+        from reyn.llm.llm import proxy_kwargs
+        extra = proxy_kwargs()
+        # Strip provider prefix for proxy routing.
+        effective_model = self._model
+        if extra.get("custom_llm_provider") == "openai":
+            parts = self._model.split("/", 1)
+            if len(parts) == 2:
+                effective_model = parts[1]
+        import litellm
+        kwargs: dict = {"model": effective_model, "messages": messages, **extra}
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        return await litellm.acompletion(**kwargs)
+
+    async def _resummarize_topic_arc(self, topic_arc: str, body_budget: int) -> str:
+        """T2 (#271): LLM re-compression of an overshooting ``topic_arc``.
+
+        Invokes the compactor model with the distinct relaxation prompt
+        (``_RESUMMARIZE_SYSTEM_PROMPT``) to rewrite ``topic_arc`` to fit
+        ``body_budget`` tokens — LLM-judgment loss (preserve decision-relevant)
+        rather than the blind char-cut. Returns the original on any LLM error or
+        empty response (T3 hard_truncate is the floor either way).
+        """
+        try:
+            messages = [
+                {"role": "system", "content": _RESUMMARIZE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Target budget: {body_budget} tokens.\n\n"
+                        f"topic_arc to compress:\n{topic_arc}"
+                    ),
+                },
+            ]
+            response = await self._acompletion(messages)
+            rewritten = (response.choices[0].message.content or "").strip()
+            return rewritten or topic_arc
+        except Exception as exc:  # noqa: BLE001 — re-summarize is best-effort; T3 floors it.
+            self._events.emit("summary_resummarize_failed", error=str(exc))
+            return topic_arc
+
     async def compact(self, input_chunk: HistoryChunkToCompact) -> ChatSummary:
         """Run one compaction LLM call and return a ChatSummary.
 
@@ -752,22 +823,8 @@ class CompactionEngine:
             {"role": "user", "content": user_content},
         ]
 
-        from reyn.llm.llm import proxy_kwargs
-        extra = proxy_kwargs()
-
-        # Strip provider prefix for proxy routing.
-        effective_model = self._model
-        if extra.get("custom_llm_provider") == "openai":
-            parts = self._model.split("/", 1)
-            if len(parts) == 2:
-                effective_model = parts[1]
-
-        import litellm
-        response = await litellm.acompletion(
-            model=effective_model,
-            messages=messages,
-            response_format={"type": "json_object"},
-            **extra,
+        response = await self._acompletion(
+            messages, response_format={"type": "json_object"}
         )
 
         raw = (response.choices[0].message.content or "").strip()
@@ -793,10 +850,31 @@ class CompactionEngine:
                 default=0,
             )
 
-        # Axis 9: hard-truncate the topic_arc to body_budget.
-        topic_arc = hard_truncate_summary(
-            str(parsed.get("topic_arc") or ""),
-            self._budgets.body_budget,
+        # #271 — 3-tier topic_arc bounding (replaces the lone Axis-9 blind cut):
+        #   T1 fit         — within budget → no LLM, unchanged (common case).
+        #   T2 re-summarize — overshoot → LLM re-compression (judgment loss, the
+        #                     user's "intentional summary compression is fine"),
+        #                     bounded to ``resummarize_passes`` (default 1).
+        #   T3 hard_truncate — deterministic floor, always applied last so
+        #                     topic_arc ≤ body_budget is NEVER violated (the
+        #                     dead-end-free bound; rare backstop after T2).
+        body_budget = self._budgets.body_budget
+        topic_arc = str(parsed.get("topic_arc") or "")
+        passes = max(0, int(getattr(self._cfg, "resummarize_passes", 1)))
+        for _ in range(passes):
+            before_tokens = estimate_tokens(topic_arc, self._model, use_chars4=self._use_chars4)
+            if before_tokens <= body_budget:
+                break  # T1: fits
+            topic_arc = await self._resummarize_topic_arc(topic_arc, body_budget)
+            self._events.emit(
+                "summary_resummarized",
+                original_tokens=before_tokens,
+                target_budget=body_budget,
+                result_tokens=estimate_tokens(topic_arc, self._model, use_chars4=self._use_chars4),
+            )
+        topic_arc = hard_truncate_summary(  # T3: deterministic floor
+            topic_arc,
+            body_budget,
             self._model,
             self._events,
             use_chars4=self._use_chars4,
