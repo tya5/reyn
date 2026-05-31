@@ -10,8 +10,10 @@ from __future__ import annotations
 import logging
 
 from reyn.chat.tui._palette import (
+    _BG_HEADER,
     _BORDER_DIM,
     _CORAL,
+    _DIVIDER_DIM,
     _EVENT_INTERVENTION,
     _EVENT_LLM,
     _EVENT_PLAN,
@@ -39,8 +41,10 @@ from reyn.chat.tui._text_util import _esc
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "_BG_HEADER",
     "_BORDER_DIM",
     "_CORAL",
+    "_DIVIDER_DIM",
     "_EVENT_INTERVENTION",
     "_EVENT_LLM",
     "_EVENT_PLAN",
