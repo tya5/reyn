@@ -29,6 +29,13 @@ HandlerFn = Callable[..., Awaitable[None]]
 # ``"discard ab"``). Completers that don't need it (e.g. ``/attach``
 # which always lists agent names) can ignore the arg via a default.
 CompleterFn = Callable[..., list[str]]
+# TabFooterFn signature: ``() -> str | None``. Supplies the optional
+# picker-hint footer line (the dim ``↳ <message>`` sub-row shown once the
+# user types ``/<cmd> ``). Returning ``None`` (or "") means "show nothing
+# right now" — the command owns both the message text and its visibility
+# condition (e.g. /find only surfaces its Tab-recall affordance when there
+# is history to recall). The picker owns the ``↳`` chrome + styling.
+TabFooterFn = Callable[[], "str | None"]
 
 
 @dataclass
@@ -58,6 +65,16 @@ class SlashCommand:
     # ``"docs/concepts/plan-mode.md"``). Defaults to empty tuple so all
     # existing commands without explicit see_also are unaffected.
     see_also: tuple[str, ...] = ()
+    # Optional picker-hint footer supplier. When set, the SlashPicker hint
+    # mode renders a dim ``  ↳ <message>`` sub-row below the summary/usage,
+    # where ``<message>`` is whatever this callable returns. The callable
+    # returns ``None`` (or "") to render nothing — letting the command gate
+    # the footer on runtime state (e.g. /find shows its Tab-recall hint only
+    # when history is non-empty). Defaults to ``None`` so every command
+    # without an explicit footer behaves exactly as before. Keeping the
+    # message + its visibility inside the command (not the widget) is what
+    # makes the picker generic: it never hardcodes a command name.
+    tab_footer_fn: TabFooterFn | None = None
 
 
 class SlashRegistry:
@@ -133,6 +150,7 @@ def slash(
     hidden: bool = False,
     usage: str = "",
     see_also: tuple[str, ...] = (),
+    tab_footer_fn: TabFooterFn | None = None,
 ) -> Callable[[HandlerFn], HandlerFn]:
     """Decorator that registers `fn` as a slash command on import.
 
@@ -145,6 +163,9 @@ def slash(
     ``see_also`` is an optional tuple of repo-relative doc paths surfaced
     in ``/help <cmd>`` focus mode as a footer link (see
     ``SlashCommand.see_also``).
+
+    ``tab_footer_fn`` is an optional ``() -> str | None`` supplier for the
+    picker-hint footer row (see ``SlashCommand.tab_footer_fn``).
     """
 
     def _decorator(fn: HandlerFn) -> HandlerFn:
@@ -157,6 +178,7 @@ def slash(
             hidden=hidden,
             usage=usage,
             see_also=see_also,
+            tab_footer_fn=tab_footer_fn,
         ))
         return fn
 

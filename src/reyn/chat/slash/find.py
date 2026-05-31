@@ -83,14 +83,32 @@ def _find_history_snapshot() -> list[str]:
 def find_history_has_entries() -> bool:
     """Return True when the find history deque is non-empty.
 
-    Public surface used by :func:`SlashPicker._repaint_hint` to gate
-    the Tab-recall footer row (= "↳ Tab inserts a recent query") on
+    Public surface used by :func:`_find_tab_footer` to gate the
+    Tab-recall footer row (= "↳ Tab inserts a recent query") on
     whether there's actually anything to recall. Callers must NOT
     reach into ``_find_history`` directly — that would bypass the
-    module-level encapsulation and couple widget rendering to a private
-    deque. This wrapper is the minimal clean public surface.
+    module-level encapsulation. This wrapper is the minimal clean
+    public surface.
     """
     return bool(_find_history)
+
+
+def _find_tab_footer() -> str | None:
+    """Picker-hint footer message for /find — the Tab-recall affordance.
+
+    Returns the dim sub-row message ("Tab inserts a recent query")
+    surfaced once the user types ``/find ``, but ONLY when there is
+    history to recall — otherwise ``None`` so the picker renders no
+    footer (avoids implying Tab does something when there's nothing).
+
+    This is the command-owned half of the SlashPicker footer contract
+    (``SlashCommand.tab_footer_fn``): /find owns the message text + the
+    "show only with history" condition; the picker owns the ``↳`` chrome
+    and never hardcodes the command name.
+    """
+    if find_history_has_entries():
+        return "Tab inserts a recent query"
+    return None
 
 
 def _find_completer(session: "object", arg_partial: str = "") -> list[str]:
@@ -114,6 +132,7 @@ def _find_completer(session: "object", arg_partial: str = "") -> list[str]:
     summary="Search the conv pane (substring or regex)",
     usage="/find [-r|-c|-rc] <query>",
     completer=_find_completer,
+    tab_footer_fn=_find_tab_footer,
 )
 async def find_cmd(session: "object", args: str) -> None:
     # Forward the raw arg; the TUI handler validates and surfaces
