@@ -169,8 +169,14 @@ class BudgetLedger:
         model: str,
         tokens: int,
         cost_usd: float,
+        purpose: str | None = None,
     ) -> None:
-        """Append one record and fsync."""
+        """Append one record and fsync.
+
+        ``purpose`` (#1190) is the cost-attribution bucket
+        (main/phase/compaction/judge/skill_node_adapt/dogfood). Omitted from the
+        record when None so pre-#1190 ledger lines stay byte-identical.
+        """
         # Build ISO-8601 timestamp with local UTC offset.
         now = time.time()
         lt = time.localtime(now)
@@ -190,6 +196,8 @@ class BudgetLedger:
             "tokens": tokens,
             "cost_usd": cost_usd,
         }
+        if purpose is not None:
+            record["purpose"] = purpose
         line = json.dumps(record, ensure_ascii=False) + "\n"
         # Guard against partial writes from a previous crash (no trailing newline).
         need_lead = self._needs_lead_newline()
@@ -526,6 +534,7 @@ class BudgetTracker:
         usage: TokenUsage,
         chain_id: str | None = None,
         skill: str | None = None,
+        purpose: str | None = None,
     ) -> BudgetCheck:
         """Update counters after a successful LLM call.
 
@@ -574,6 +583,7 @@ class BudgetTracker:
                 model=model,
                 tokens=usage.total_tokens,
                 cost_usd=cost_usd,
+                purpose=purpose,
             )
 
         # Warn on daily / monthly thresholds
