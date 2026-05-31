@@ -52,6 +52,11 @@ class RunState:
     # Trusted input (PR33)
     skill_input: dict | None = None
 
+    # #997: phases for which a phase_op_catalog_gap event has already been
+    # emitted this run (dedup — the gap is a static config fact, so warn once
+    # per phase rather than every act-turn).
+    op_catalog_gap_warned: set[str] = field(default_factory=set)
+
     # ── Navigation / phase lifecycle ────────────────────────────────────────
 
     def begin_phase(self, phase: str) -> int:
