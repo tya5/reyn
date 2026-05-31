@@ -278,15 +278,18 @@ def test_chat_message_content_list_persists_image_block():
 def _make_history_builder():
     """Pluck ``_build_history_for_router`` in a minimal harness — we
     only need its content-shape decision logic.
+
+    #1128 step 3: slicing is now token-budget based (effective_trigger from
+    engine budgets, falling back to get_max_input_tokens).  Short test turns
+    (1-2 messages of a few tokens) are well below any realistic trigger, so
+    all turns are returned raw — no elide, no duplication.
     """
     from reyn.chat.session import ChatSession
 
     cs = ChatSession.__new__(ChatSession)  # bypass __init__
     cs.history = []  # set by tests
-    # Compaction config must be present; the no-compaction branch fires
-    # when len(turns) <= head + tail, so set both to large.
     from reyn.config import CompactionConfig
-    cs._compaction = CompactionConfig(head_size=100, tail_size=100)
+    cs._compaction = CompactionConfig(use_chars4_estimate=True)
     cs._latest_summary = lambda: None  # type: ignore[method-assign]
     return cs
 

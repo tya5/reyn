@@ -29,6 +29,8 @@ from reyn.events.events import EventLog
 from reyn.services.compaction.engine import (
     CompactionEngine,
     HistoryChunkToCompact,
+    trim_head,
+    trim_tail,
 )
 
 if TYPE_CHECKING:
@@ -178,22 +180,58 @@ class CompactionController:
 
     # ── internal compaction logic ─────────────────────────────────────────────
 
+    def _select_candidates(
+        self,
+        turns: "list[ChatMessage]",
+        prev_cover: int,
+    ) -> "list[ChatMessage]":
+        """Select compaction candidates using token-budget-derived HEAD/TAIL boundaries.
+
+        #1128 step 3: replaces the old seq-arithmetic on cfg.head_size/tail_size
+        with token-budget trimming via the engine's ComputedBudgets.  Candidates
+        are the turns strictly between the head (trim_head) and tail (trim_tail)
+        slices that also have seq > prev_cover (= not yet covered by the latest
+        summary).
+
+        Falls back to a quarter of get_max_input_tokens when budgets are None
+        (engine not yet initialised — highly unlikely in production but safe).
+        """
+        budgets = getattr(self._engine, "budgets", None)
+        model = getattr(self._engine, "_model", "")
+        use_chars4 = getattr(self._config, "use_chars4_estimate", False)
+        if budgets is not None:
+            head_budget = budgets.head_budget
+            tail_budget = budgets.tail_budget
+        else:
+            from reyn.llm.model_budget import get_max_input_tokens
+            fallback = get_max_input_tokens(model) if model else 100_000
+            head_budget = tail_budget = fallback // 4
+
+        head_turns = trim_head(turns, head_budget, model, use_chars4=use_chars4)
+        tail_turns = trim_tail(turns, tail_budget, model, use_chars4=use_chars4)
+        head_id_set = {id(t) for t in head_turns}
+        tail_id_set = {id(t) for t in tail_turns}
+        return [
+            t for t in turns
+            if id(t) not in head_id_set
+            and id(t) not in tail_id_set
+            and t.seq > prev_cover
+        ]
+
     async def _maybe_compact(self) -> None:
         """Threshold judgement + compaction trigger.
 
         Originally session.py L1313-1368.
 
         Trigger: estimated tokens of user/agent turns whose seq is BOTH:
-        - > head_size (those are HEAD, never compacted)
+        - in the MIDDLE (not HEAD, not TAIL — per token-budget boundaries)
         - > latest_summary.covers_through_seq (already covered)
-        - <= max_seq - tail_size (TAIL is preserved as raw)
         exceeds ``config.trigger_total_tokens`` and the candidate set
         contains at least ``config.min_compact_batch`` turns.
         """
         if self._compacting:
             self._events.emit("compaction_check", outcome="already_running")
             return
-        cfg = self._config
         history = self._history_access()
         # E-full PR-E2 (#383): tool turns (= role="assistant" with
         # tool_calls + role="tool" responses) are now first-class history
@@ -204,20 +242,18 @@ class CompactionController:
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent")
         ]
-        if len(turns) <= cfg.head_size + cfg.tail_size:
-            self._events.emit(
-                "compaction_check", outcome="too_few_turns",
-                turns=len(turns), head=cfg.head_size, tail=cfg.tail_size,
-            )
-            return
 
         latest = self._latest_summary()
         prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
-        cover_floor = max(prev_cover, cfg.head_size)
+        candidates = self._select_candidates(turns, prev_cover)
+        if not candidates:
+            self._events.emit(
+                "compaction_check", outcome="too_few_turns",
+                turns=len(turns),
+            )
+            return
 
-        max_seq = max((t.seq for t in turns), default=0)
-        tail_threshold = max_seq - cfg.tail_size
-        candidates = [t for t in turns if cover_floor < t.seq <= tail_threshold]
+        cfg = self._config
         if len(candidates) < cfg.min_compact_batch:
             self._events.emit(
                 "compaction_check", outcome="below_min_batch",
@@ -270,7 +306,6 @@ class CompactionController:
         if self._compacting:
             self._events.emit("compaction_check", outcome="already_running")
             return
-        cfg = self._config
 
         history = self._history_access()
         turns = [
@@ -282,10 +317,7 @@ class CompactionController:
             return
         latest = self._latest_summary()
         prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
-        cover_floor = max(prev_cover, cfg.head_size)
-        max_seq = max((t.seq for t in turns), default=0)
-        tail_threshold = max_seq - cfg.tail_size
-        candidates = [t for t in turns if cover_floor < t.seq <= tail_threshold]
+        candidates = self._select_candidates(turns, prev_cover)
 
         self._events.emit(
             "compaction_check", outcome="forced_sync",

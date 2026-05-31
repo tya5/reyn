@@ -541,10 +541,12 @@ class _LockHoldingEngine(CompactionEngine):
         self._cfg = _CC(use_chars4_estimate=True)
         self._use_chars4 = True
         self._T_comp_SP = 10
-        # Synthetic budgets — bypass assert_static_bounds.
+        # Synthetic budgets — small head/tail so 11 turns of "x"*200
+        # (50 tokens each via chars4) produce non-empty middle candidates.
+        # head=tail=50 → each budget fits exactly 1 turn; middle=[t2..t10].
         self._budgets = ComputedBudgets(
-            main_pool=100_000, head_budget=10_000, body_budget=5_000,
-            tail_budget=15_000, new_msg_budget=10_000,
+            main_pool=100_000, head_budget=50, body_budget=5_000,
+            tail_budget=50, new_msg_budget=10_000,
             B_M=80_000, main_M_room=65_000, effective_trigger=65_000,
         )
         self.compaction_lock = asyncio.Lock()
@@ -593,7 +595,7 @@ def test_compaction_lock_blocks_concurrent_append() -> None:
     ctrl = CompactionController(
         event_log=EventLog(),
         config=CompactionConfig(
-            head_size=2, tail_size=2, min_compact_batch=1,
+            min_compact_batch=1,
             use_chars4_estimate=True,
         ),
         history_access=lambda: list(history),
@@ -923,7 +925,7 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
 
     ctrl = CompactionController(
         event_log=events,
-        config=CompactionConfig(head_size=2, tail_size=2, use_chars4_estimate=True),
+        config=CompactionConfig(use_chars4_estimate=True),
         history_access=_big_history,
         latest_summary=lambda: None,
         compaction_engine=engine,

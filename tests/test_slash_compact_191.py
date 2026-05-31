@@ -41,17 +41,35 @@ def _now() -> str:
 
 
 def _make_session(tmp_path) -> ChatSession:
-    return ChatSession(
-        agent_name="default",
-        budget_tracker=BudgetTracker(CostConfig()),
-        state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
-        compaction_config=CompactionConfig(
-            head_size=2, tail_size=2, min_compact_batch=1,
-            trigger_total_tokens=100_000,  # high → no auto-fire; /compact forces it
-            use_chars4_estimate=True,      # deterministic offline token counts
-        ),
-        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
-    )
+    """Create a ChatSession with a small synthetic T_max to force non-empty candidates.
+
+    #1128 step 3: _select_candidates uses token-budget boundaries from the engine.
+    With ``t_max=2000`` and ``section_caps_spec_tokens=0`` (T_SP≈1125, T_comp_SP≈481):
+    head_budget≈87, tail_budget≈131, effective_trigger≈570.
+    Turns of 'x'*4000 (=1000 tokens) each individually exceed both budgets, so
+    the Axis-7 single-oversized-turn rule includes exactly one turn in head and
+    one in tail.  With 8 turns: middle=[t1..t6]=6 candidates ≥ min_compact_batch=1.
+    """
+    import reyn.llm.model_budget as _mb
+
+    original = _mb.get_max_input_tokens
+    _mb.get_max_input_tokens = lambda model, **kw: 2000  # type: ignore[assignment]
+    try:
+        session = ChatSession(
+            agent_name="default",
+            budget_tracker=BudgetTracker(CostConfig()),
+            state_log=StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl"),
+            compaction_config=CompactionConfig(
+                min_compact_batch=1,
+                trigger_total_tokens=100_000,  # high → no auto-fire; /compact forces it
+                use_chars4_estimate=True,      # deterministic offline token counts
+                section_caps_spec_tokens=0,    # keeps B_M positive for small T_max
+            ),
+            snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+        )
+    finally:
+        _mb.get_max_input_tokens = original
+    return session
 
 
 def _drain(session) -> list:
