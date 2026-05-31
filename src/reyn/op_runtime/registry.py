@@ -55,6 +55,7 @@ from pydantic import BaseModel
 
 from reyn.schemas.models import (
     AskUserIROp,
+    CompactIROp,
     EmbedIROp,
     FileIROp,
     IndexDropIROp,
@@ -131,6 +132,9 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "judge_output": JudgeOutputIROp,
     # R-PURE-MODE Wave 5a: resolve a skill name to its on-disk path.
     "skill_resolve": SkillResolveIROp,
+    # #272/#1128: LLM-emittable voluntary compaction (advisory; the mandatory
+    # retry_loop backstop is independent).
+    "compact": CompactIROp,
 }
 
 # ---------------------------------------------------------------------------
@@ -180,6 +184,11 @@ OP_PURITY: dict[str, OpPurity] = {
     "judge_output": OpPurity.llm,
     # R-PURE-MODE Wave 5a: read-only path resolution, no external API calls.
     "skill_resolve": OpPurity.world,
+    # #272/#1128: compact triggers a compaction LLM call (cost) AND mutates
+    # history/state; like `recall` it is a macro whose inner compaction engine
+    # emits its own events. external = emit both started+completed so a crash
+    # mid-compaction surfaces as ambiguous on resume.
+    "compact": OpPurity.external,
 }
 
 
