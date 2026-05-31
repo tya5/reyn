@@ -5131,20 +5131,59 @@ class ChatSession:
         }
 
     async def _compact_now_for_op(self) -> dict:
-        """#272/#1128: voluntary-compaction callback wired to the compact op.
+        """#272/#1128/#191: voluntary-compaction callback (compact op + /compact).
 
-        Runs the existing synchronous compaction and reports the freed tokens +
-        the free window afterwards in EXACT tokens (unit-aligned with the
-        context-size signal + media load-contract error). Raises propagate to
-        the op handler, which surfaces them as a structured op error.
+        Runs the existing synchronous compaction and reports what it did.
+
+        Axis note (#191, traced): the CHAT router prompt is head+tail TURN-COUNT
+        bounded (``_build_history_for_router``), so the router-view
+        ``freed_tokens`` is structurally ~0 even when compaction fires — chat
+        compaction COMPRESSES the already-elided middle into a summary bridge
+        rather than shrinking the bounded view. So the meaningful chat metric is
+        ``summarized_turns`` + ``compressed_tokens`` (raw middle) → ``bridge_tokens``
+        (the summary). ``freed_tokens`` is kept for the op contract shared with
+        the phase axis (where it IS the real control_ir shrink), but is ~0 for
+        chat — callers front the compression numbers, not freed, for chat.
         """
+        import json as _json
+
+        from reyn.services.compaction.engine import estimate_tokens
+
+        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+
+        def _cover() -> int:
+            s = self._latest_summary()
+            return int((s.meta or {}).get("covers_through_seq", 0)) if s is not None else 0
+
+        def _est(text: str) -> int:
+            try:
+                return estimate_tokens(text, self.model, use_chars4=use_chars4)
+            except Exception:  # noqa: BLE001 — estimation best-effort
+                return 0
+
         effective_trigger, before = self._free_window_now()
+        prev_cover = _cover()
         await self._compaction_controller.force_compact_now()
         _, after = self._free_window_now()
+        new_cover = _cover()
+
+        # Chat middle-compression: the conversational turns newly covered by the
+        # summary bridge (prev_cover < seq <= new_cover) and their raw vs bridge
+        # token cost. Empty when nothing was compacted (new_cover == prev_cover).
+        conv = [m for m in self.history if m.role in ("user", "assistant", "tool", "agent")]
+        middle = [m for m in conv if prev_cover < int(getattr(m, "seq", 0) or 0) <= new_cover]
+        summary = self._latest_summary()
+        bridge_text = summary.text if summary is not None else ""
+        if not isinstance(bridge_text, str):
+            bridge_text = _json.dumps(bridge_text, ensure_ascii=False)
         return {
             "freed_tokens": max(0, before - after),
             "free_window_after": max(0, effective_trigger - after),
             "free_window_before": max(0, effective_trigger - before),
+            # #191 chat-axis compression metric (the meaningful chat signal):
+            "summarized_turns": len(middle),
+            "compressed_tokens": sum(_est(m.text) for m in middle),
+            "bridge_tokens": _est(bridge_text) if summary is not None else 0,
         }
 
     async def _maybe_force_compact_for_router(
