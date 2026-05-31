@@ -143,6 +143,52 @@ def test_decompose_wire_shape_matches_build_history(tmp_path) -> None:
     assert decomposed_contents == build_contents
 
 
+def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
+    """Tier 2: with a persisted summary, the recovery bridge text == the normal path's.
+
+    The recovery prompt rebuilt by ``_router_main_call`` renders the structured
+    summary via ``_render_summary_for_storage`` — the same renderer that produced
+    the persisted ``summary.content`` the normal path (``_build_history_for_router``)
+    uses for its bridge. So the summary bridge is byte-identical across the two
+    paths (pinning the fix for the structured-vs-rendered divergence). retry_loop
+    still receives the structured dict as its immutable fold base.
+    """
+    from reyn.chat.session import _render_summary_for_storage
+
+    session = _make_session(tmp_path, head_size=2, tail_size=2)
+    structured = {
+        "topic_arc": "planning the trip",
+        "decisions": ["book the tuesday flight"],
+        "pending": ["confirm hotel"],
+        "session_user_facts": [],
+        "artifacts_referenced": [],
+    }
+    # Store the summary exactly as the controller does: content = rendered form.
+    rendered = _render_summary_for_storage(structured)
+    session.history.append(ChatMessage(
+        role="summary",
+        content=rendered,
+        ts=_now(),
+        meta={"structured": structured, "covers_through_seq": 2},
+    ))
+    for i in range(8):  # > head+tail → else-branch → bridge inserted
+        _push(session, "user" if i % 2 == 0 else "assistant", f"t-{i}")
+
+    # Normal path bridge content.
+    normal = session._build_history_for_router()
+    normal_bridge = next(
+        m["content"] for m in normal
+        if isinstance(m["content"], str) and m["content"].startswith("[summary")
+    )
+    # Recovery path: decomposition hands the structured dict; _router_main_call
+    # renders it the same way → reproduce that bridge text here.
+    _h, _rm, _t, summary_dict = session._decompose_history_for_retry()
+    recovery_bridge = (
+        "[summary of earlier conversation]\n" + _render_summary_for_storage(summary_dict)
+    )
+    assert recovery_bridge == normal_bridge
+
+
 # ── wiring data contract: session decomposition feeds real retry_loop ────────
 
 

@@ -5177,7 +5177,13 @@ class ChatSession:
                 # decomposition retry_loop hands back each iteration.
                 _msgs = list(head)
                 if summary:
-                    _summary_text = json.dumps(summary, ensure_ascii=False)
+                    # Render the structured summary via the SAME renderer that
+                    # produced the persisted summary.content (= the normal path's
+                    # bridge text), so the recovery prompt's summary bridge is
+                    # byte-identical to what _build_history_for_router would send.
+                    # retry_loop still folds raw_middle into the *structured*
+                    # dict (its immutable base); only the bridge text is rendered.
+                    _summary_text = _render_summary_for_storage(summary)
                     _msgs.append({
                         "role": "assistant",
                         "content": (
