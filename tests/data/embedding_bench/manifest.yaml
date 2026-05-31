@@ -37,11 +37,11 @@ fixtures:
 
   - id: file_read_via_chat
     source: dogfood/scenarios/control_ir_ops.yaml
-    prompt: "Show me the contents of `docs/concepts/principles.md`."
+    prompt: "Show me the contents of `docs/concepts/architecture/principles.md`."
     expected_action: file__read
     expected_reach_path:
-      - 'file__read({path: "docs/concepts/principles.md"})'
-      - 'invoke_action({action_name: "file__read", args: {path: "docs/concepts/principles.md"}})'
+      - 'file__read({path: "docs/concepts/architecture/principles.md"})'
+      - 'invoke_action({action_name: "file__read", args: {path: "docs/concepts/architecture/principles.md"}})'
     axis: [precision, call_rate]
 
   - id: file_glob_grep_search
