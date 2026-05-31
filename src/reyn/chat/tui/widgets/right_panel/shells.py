@@ -19,7 +19,15 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, Static
 
-from .base import _esc, logger
+from .base import (
+    _BG_HEADER,
+    _BORDER_DIM,
+    _DIVIDER_DIM,
+    _TEXT_BODY,
+    _TEXT_DIM,
+    _esc,
+    logger,
+)
 
 if TYPE_CHECKING:
     from . import RightPanel
@@ -28,13 +36,13 @@ if TYPE_CHECKING:
 class _PanelHeader(Static):
     """Fixed header strip — 1 line of text + bottom border."""
 
-    DEFAULT_CSS = """
-    _PanelHeader {
-        background: #1a1a1a;
-        color: #aaaaaa;
+    DEFAULT_CSS = f"""
+    _PanelHeader {{
+        background: {_BG_HEADER};
+        color: {_TEXT_BODY};
         padding: 0 1;
-        border-bottom: solid #333333;
-    }
+        border-bottom: solid {_DIVIDER_DIM};
+    }}
     """
 
     def __init__(self, panel: "RightPanel", **kwargs) -> None:
@@ -116,15 +124,15 @@ class _PanelTop(Widget):
 
     can_focus = True
 
-    DEFAULT_CSS = """
-    _PanelTop {
+    DEFAULT_CSS = f"""
+    _PanelTop {{
         height: 1fr;
         layout: vertical;
-        border-left: solid #2a2a2a;
-    }
-    _PanelTop.x-focused {
+        border-left: solid {_BORDER_DIM};
+    }}
+    _PanelTop.x-focused {{
         border-left: solid $primary;
-    }
+    }}
     """
 
 
@@ -158,42 +166,42 @@ class _PreviewPane(Widget):
 
         pass
 
-    DEFAULT_CSS = """
-    _PreviewPane {
+    DEFAULT_CSS = f"""
+    _PreviewPane {{
         display: none;
         height: 1fr;
-        border-top: solid #2a2a2a;
-        border-left: solid #2a2a2a;
+        border-top: solid {_BORDER_DIM};
+        border-left: solid {_BORDER_DIM};
         layout: vertical;
-    }
-    _PreviewPane.preview-visible {
+    }}
+    _PreviewPane.preview-visible {{
         display: block;
-    }
-    _PreviewPane #preview-header {
+    }}
+    _PreviewPane #preview-header {{
         height: 1;
-        color: #555555;
-        background: #1a1a1a;
+        color: {_TEXT_DIM};
+        background: {_BG_HEADER};
         padding: 0 1;
-    }
-    _PreviewPane:focus {
+    }}
+    _PreviewPane:focus {{
         border-top: solid $primary;
         border-left: solid $primary;
-    }
-    _PreviewPane:focus #preview-header {
+    }}
+    _PreviewPane:focus #preview-header {{
         color: $primary;
-    }
-    _PreviewPane RichLog {
+    }}
+    _PreviewPane RichLog {{
         background: transparent;
         height: 1fr;
         padding: 0 1;
         overflow-x: auto;
-        scrollbar-color: #2a2a2a;
+        scrollbar-color: {_BORDER_DIM};
         scrollbar-color-hover: $primary;
         scrollbar-color-active: $primary;
         scrollbar-background: transparent;
         scrollbar-size-vertical: 1;
         scrollbar-size-horizontal: 1;
-    }
+    }}
     """
 
     def __init__(self, **kwargs) -> None:
