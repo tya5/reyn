@@ -224,6 +224,98 @@ def run_reyn(
     return {"ok": True, "patch": patch}
 
 
+# ── in-container lifecycle (β2b) ─────────────────────────────────────────────
+
+
+def _default_docker_runner(argv: list[str], *, timeout: int = 180):
+    """Run a docker CLI command and return the CompletedProcess.
+
+    Injectable in tests so the lifecycle is exercised without a real daemon.
+    """
+    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+
+
+def run_reyn_in_container(
+    instance: dict[str, Any],
+    *,
+    image: str,
+    repo_dir: str = "/testbed",
+    state_dir: str | None = None,
+    docker_bin: str = "docker",
+    reyn_base: list[str] | None = None,
+    timeout: int = 600,
+    docker_runner=None,
+    container_name: str | None = None,
+) -> dict[str, Any]:
+    """Run `swe_bench` inside a fresh per-instance container; return a result dict.
+
+    Lifecycle (FP-0008 #1115 Stage 2 β2b):
+      1. ``docker run -d --name <name> <image> sleep infinity`` — start the
+         pre-built SWE-bench instance container (repo already at ``repo_dir``).
+      2. ``reyn run swe_bench --env-backend=docker --container <name>
+         --repo-dir <repo_dir> --state-dir <host>`` — the skill's repo FS +
+         commands route into the container (bridge-free, /testbed direct edit);
+         the final ``git diff HEAD`` runs in-container, so the model_patch is the
+         in-container diff (parsed by the existing ``extract_patch``).
+      3. ``docker rm -f <name>`` — teardown, **always** (even on failure).
+
+    Returns the same shape as :func:`run_reyn`
+    (``{"ok": True, "patch": ...}`` / ``{"ok": False, "error": ...}``).
+
+    ``docker_runner`` is injectable for tests: ``callable(argv, *, timeout)`` →
+    an object with ``.returncode`` / ``.stdout`` / ``.stderr``.
+    """
+    import tempfile
+    import uuid
+
+    runner = docker_runner or _default_docker_runner
+    instance_id = instance["instance_id"]
+    name = container_name or f"reyn_swebench_{instance_id}_{uuid.uuid4().hex[:8]}"
+    host_state = state_dir or tempfile.mkdtemp(prefix="reyn_swebench_state_")
+
+    print(
+        f"[swe_bench_runner] docker run image={image} name={name} (instance={instance_id})",
+        file=sys.stderr,
+    )
+    try:
+        start = runner(
+            [docker_bin, "run", "-d", "--name", name, image, "sleep", "infinity"],
+            timeout=300,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": f"docker run error: {exc}"}
+    if start.returncode != 0:
+        return {
+            "ok": False,
+            "error": f"docker run failed (rc={start.returncode}): {(start.stderr or '')[:400]}",
+        }
+
+    try:
+        base = reyn_base if reyn_base is not None else ["reyn", "run", "swe_bench"]
+        full_cmd = [
+            *base,
+            "--env-backend=docker",
+            "--container", name,
+            "--repo-dir", repo_dir,
+            "--state-dir", host_state,
+        ]
+        return run_reyn(instance, reyn_cmd=full_cmd, timeout=timeout)
+    finally:
+        try:
+            rm = runner([docker_bin, "rm", "-f", name], timeout=120)
+            if getattr(rm, "returncode", 0) != 0:
+                print(
+                    f"[swe_bench_runner] WARN teardown rm -f {name} rc={rm.returncode}: "
+                    f"{(rm.stderr or '')[:200]}",
+                    file=sys.stderr,
+                )
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(
+                f"[swe_bench_runner] WARN teardown rm -f {name} raised: {exc}",
+                file=sys.stderr,
+            )
+
+
 # ── CLI entry point ──────────────────────────────────────────────────────────
 
 
@@ -267,6 +359,42 @@ def build_parser() -> argparse.ArgumentParser:
             "Useful for testing with a local install: --reyn-cmd 'python -m reyn'."
         ),
     )
+    # FP-0008 #1115 Stage 2 (β2b): faithful in-container run. When
+    # --env-backend=docker, the runner owns the per-instance container lifecycle
+    # (docker run the official SWE-bench image → reyn run inside it via the
+    # generic --env-backend flags → teardown), so the swe_bench skill's
+    # repo FS + commands execute against the pre-built /testbed, not the host.
+    p.add_argument(
+        "--env-backend", dest="env_backend", choices=["host", "docker"],
+        default="host",
+        help=(
+            "Where the swe_bench skill's repo FS + commands run: 'host' (default) "
+            "or 'docker' (per-instance container from --image; faithful in-container run)."
+        ),
+    )
+    p.add_argument(
+        "--image", dest="image", default=None, metavar="IMAGE",
+        help=(
+            "Docker image for --env-backend=docker — the pre-built SWE-bench "
+            "instance image whose repo is checked out at --repo-dir (e.g. an "
+            "official swebench/sweb.eval.* image). Required with --env-backend=docker."
+        ),
+    )
+    p.add_argument(
+        "--repo-dir", dest="repo_dir", default="/testbed", metavar="PATH",
+        help="In-container repo working tree for --env-backend=docker (default: /testbed).",
+    )
+    p.add_argument(
+        "--state-dir", dest="state_dir", default=None, metavar="PATH",
+        help=(
+            "Host-side OS state/artifacts dir for --env-backend=docker. "
+            "Defaults to a per-run temp directory when omitted."
+        ),
+    )
+    p.add_argument(
+        "--docker-bin", dest="docker_bin", default="docker", metavar="BIN",
+        help="Docker CLI binary for --env-backend=docker (default: docker).",
+    )
 
     return p
 
@@ -304,8 +432,26 @@ def main(argv: list[str] | None = None) -> int:
     else:
         reyn_cmd = None  # run_reyn uses default ["reyn", "run", "swe_bench"]
 
-    # ── run reyn ──────────────────────────────────────────────────────────────
-    result = run_reyn(instance, reyn_cmd=reyn_cmd, timeout=args.timeout)
+    # ── run reyn (host, or in a per-instance container for faithful eval) ──────
+    if getattr(args, "env_backend", "host") == "docker":
+        if not args.image:
+            print(
+                "Error: --env-backend=docker requires --image "
+                "(the pre-built SWE-bench instance image).",
+                file=sys.stderr,
+            )
+            return 1
+        result = run_reyn_in_container(
+            instance,
+            image=args.image,
+            repo_dir=args.repo_dir,
+            state_dir=args.state_dir,
+            docker_bin=args.docker_bin,
+            reyn_base=reyn_cmd,
+            timeout=args.timeout,
+        )
+    else:
+        result = run_reyn(instance, reyn_cmd=reyn_cmd, timeout=args.timeout)
 
     # ── emit harness output ───────────────────────────────────────────────────
     if result["ok"]:
