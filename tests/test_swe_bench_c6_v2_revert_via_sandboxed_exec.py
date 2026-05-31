@@ -1,18 +1,25 @@
-"""Tier 2: FP-0008 C6 v2 — revert test_patch targets via shell run_op.
+"""Tier 2: FP-0008 C6 v2 — revert test_patch targets via sandboxed_exec run_op.
 
 Root cause recap: v1 (#1098, reverted in #1099) used ``import subprocess``
 inside a ``mode: safe`` python step.  The safe-mode sandbox rejects subprocess
 at AST parse time (``SafeModeViolation``) — the preprocessor aborted before any
 code ran, and every verify instance errored.
 
-v2 mechanism (this PR):
+v2 mechanism (#1115 Stage 2 migrated it off the deprecated ``shell`` op):
   1. ``parse_test_targets.py`` (mode: safe, pure re+json only) — parses
      ``+++ b/<path>`` headers from test_patch and returns a list of
-     ``git checkout HEAD -- <path>`` command strings.  No subprocess/os.
-  2. ``iterate`` + ``run_op shell`` with ``args_from: {cmd: _iter.item}`` —
-     runs each checkout command via op_runtime's shell handler, which executes
-     with ``cwd=workspace.base_dir`` (FP-0008 PR-I) = the correct repo root.
+     ``["git", "checkout", "HEAD", "--", <path>]`` argv lists.  No subprocess/os.
+  2. ``iterate`` + ``run_op sandboxed_exec`` with ``args_from: {argv: _iter.item}`` —
+     runs each checkout argv via op_runtime's sandboxed_exec handler, which
+     anchors the subprocess to ``cwd=workspace.base_dir`` (FP-0008 PR-I, restored
+     for sandboxed_exec) = the correct repo root, and routes through the run's
+     EnvironmentBackend (host or container) instead of the host-only shell op.
   3. Mirror in ``report.md`` preprocessor for source-only final diff.
+
+The verify / report phases declare a permissive ``default_sandbox_policy`` (D
+mechanism): the OS applies it to every sandboxed_exec op in the phase, winning
+over op fields. On host the platform default backend enforces it; on a container
+backend it is ignored (the container is the boundary).
 
 ## Merge gate tests (mandatory per task spec)
 
@@ -22,7 +29,10 @@ v2 mechanism (this PR):
 
 (b) E2E real-preprocessor-path test:
     PreprocessorExecutor with real git repo → after preprocessor, contaminated
-    test file is reverted AND ``git apply test_patch`` returns rc=0.
+    test file is reverted AND ``git apply test_patch`` returns rc=0. A NoopBackend
+    is injected so the test is deterministic across platforms and validates the
+    migration as behavior-preserving (= old no-sandbox shell ≡ noop); seatbelt /
+    landlock enforcement is exercised separately in test_op_sandboxed_exec.
 
 All tests: real git (subprocess), real files in tmp_path, real PythonRunner /
 op_runtime.  No MagicMock / AsyncMock / patch.  Docstrings open "Tier 2:".
@@ -130,13 +140,13 @@ def test_parse_test_targets_safe_mode_no_violation() -> None:
             f"If kind='SafeModeViolation', the module uses a forbidden import "
             f"(subprocess/os/etc).  v2 must use only re+json."
         )
-    # Result must be the expected list of checkout commands
+    # Result must be the expected list of checkout argv lists
     assert isinstance(result, list), f"Expected list, got {type(result).__name__}: {result!r}"
-    assert any("tests/test_x.py" in cmd for cmd in result), (
-        f"Expected a command targeting tests/test_x.py. Got: {result}"
+    assert any("tests/test_x.py" in argv for argv in result), (
+        f"Expected an argv targeting tests/test_x.py. Got: {result}"
     )
-    assert all(cmd.startswith("git checkout HEAD -- ") for cmd in result), (
-        f"All commands must be 'git checkout HEAD -- <path>' strings. Got: {result}"
+    assert all(argv[:4] == ["git", "checkout", "HEAD", "--"] for argv in result), (
+        f"All entries must be ['git','checkout','HEAD','--', <path>] argv lists. Got: {result}"
     )
 
 
@@ -167,11 +177,11 @@ def test_parse_test_targets_module_no_subprocess_import() -> None:
                 )
 
 
-# ── Pure parsing unit tests ───────────────────────────────────────────────────
+# ── Pure parsing unit tests (argv-list contract) ──────────────────────────────
 
 
-def test_parse_test_targets_returns_checkout_commands() -> None:
-    """Tier 2: parse_test_targets returns git checkout command strings."""
+def test_parse_test_targets_returns_checkout_argv() -> None:
+    """Tier 2: parse_test_targets returns git checkout argv lists."""
     from reyn.stdlib.skills.swe_bench.parse_test_targets import parse_test_targets
 
     patch = (
@@ -183,8 +193,8 @@ def test_parse_test_targets_returns_checkout_commands() -> None:
     )
     result = parse_test_targets({"data": {"test_patch": patch}})
     assert isinstance(result, list)
-    assert result == ["git checkout HEAD -- tests/test_foo.py"], (
-        f"Expected single checkout command. Got: {result}"
+    assert result == [["git", "checkout", "HEAD", "--", "tests/test_foo.py"]], (
+        f"Expected single checkout argv list. Got: {result}"
     )
 
 
@@ -201,10 +211,7 @@ def test_parse_test_targets_excludes_dev_null() -> None:
     """Tier 2: /dev/null on +++ line is excluded."""
     from reyn.stdlib.skills.swe_bench.parse_test_targets import parse_test_targets
 
-    # A new-file hunk has --- /dev/null, +++ b/new_test.py.
-    # The /dev/null appears on the --- line, not the +++ line, so the +++ path
-    # is still included. But when /dev/null appears on a +++ line (deletion),
-    # it must be excluded.
+    # When /dev/null appears on a +++ line (deletion), it must be excluded.
     patch_with_dev_null_target = (
         "diff --git a/old.py b/new.py\n"
         "--- a/old.py\n"
@@ -213,25 +220,24 @@ def test_parse_test_targets_excludes_dev_null() -> None:
         "-gone\n"
     )
     result = parse_test_targets({"data": {"test_patch": patch_with_dev_null_target}})
-    assert "/dev/null" not in result, f"/dev/null must not appear in result: {result}"
-    assert all("/dev/null" not in cmd for cmd in result), (
-        f"No command should reference /dev/null: {result}"
+    assert all("/dev/null" not in argv for argv in result), (
+        f"No argv should reference /dev/null: {result}"
     )
 
 
 def test_parse_test_targets_deduplicates() -> None:
-    """Tier 2: repeated +++ b/<path> lines produce a single command."""
+    """Tier 2: repeated +++ b/<path> lines produce a single argv."""
     from reyn.stdlib.skills.swe_bench.parse_test_targets import parse_test_targets
 
     patch = "+++ b/tests/test_foo.py\n+++ b/tests/test_foo.py\n"
     result = parse_test_targets({"data": {"test_patch": patch}})
-    assert result.count("git checkout HEAD -- tests/test_foo.py") == 1, (
+    assert result.count(["git", "checkout", "HEAD", "--", "tests/test_foo.py"]) == 1, (
         f"Deduplicated path must appear exactly once. Got: {result}"
     )
 
 
 def test_parse_test_targets_multiple_files() -> None:
-    """Tier 2: patch with two target files → two checkout commands."""
+    """Tier 2: patch with two target files → two checkout argv lists."""
     from reyn.stdlib.skills.swe_bench.parse_test_targets import parse_test_targets
 
     patch = (
@@ -239,11 +245,34 @@ def test_parse_test_targets_multiple_files() -> None:
         "+++ b/tests/test_bar.py\n"
     )
     result = parse_test_targets({"data": {"test_patch": patch}})
-    assert "git checkout HEAD -- tests/test_foo.py" in result
-    assert "git checkout HEAD -- tests/test_bar.py" in result
+    assert ["git", "checkout", "HEAD", "--", "tests/test_foo.py"] in result
+    assert ["git", "checkout", "HEAD", "--", "tests/test_bar.py"] in result
 
 
 # ── (b) E2E real-preprocessor-path test ──────────────────────────────────────
+
+
+def _preprocessor(skill, ws, events):
+    """Build a PreprocessorExecutor with an injected NoopBackend.
+
+    NoopBackend makes sandboxed_exec a plain subprocess (no enforcement),
+    deterministic across platforms and behaviorally equivalent to the legacy
+    no-sandbox shell op — which is exactly the behavior-preservation this
+    migration claims.
+    """
+    from reyn.kernel.preprocessor_executor import PreprocessorExecutor
+    from reyn.sandbox import NoopBackend
+
+    return PreprocessorExecutor(
+        skill=skill,
+        workspace=ws,
+        model="standard",
+        events=events,
+        subscribers=[],
+        resolver=None,
+        permission_resolver=None,
+        sandbox_backend=NoopBackend(),
+    )
 
 
 def test_verify_preprocessor_reverts_contaminated_test_file_and_git_apply_succeeds(
@@ -253,7 +282,8 @@ def test_verify_preprocessor_reverts_contaminated_test_file_and_git_apply_succee
 
     This is the mandatory E2E merge gate test.  It runs the verify phase's
     full preprocessor chain through PreprocessorExecutor (real Workspace, real
-    skill loaded from disk, real shell op_runtime execution in a real git repo).
+    skill loaded from disk, real sandboxed_exec op_runtime execution via an
+    injected NoopBackend in a real git repo).
 
     Setup:
       - git init + commit source file + test file
@@ -266,7 +296,6 @@ def test_verify_preprocessor_reverts_contaminated_test_file_and_git_apply_succee
     """
     from reyn.compiler.loader import load_dsl_skill
     from reyn.events.events import EventLog
-    from reyn.kernel.preprocessor_executor import PreprocessorExecutor
     from reyn.workspace.workspace import Workspace
 
     # ── Setup: real git repo ──────────────────────────────────────────────────
@@ -301,15 +330,7 @@ def test_verify_preprocessor_reverts_contaminated_test_file_and_git_apply_succee
 
     events = EventLog()
     ws = Workspace(events=events, base_dir=repo)
-    executor = PreprocessorExecutor(
-        skill=skill,
-        workspace=ws,
-        model="standard",
-        events=events,
-        subscribers=[],
-        resolver=None,
-        permission_resolver=None,
-    )
+    executor = _preprocessor(skill, ws, events)
 
     # Artifact: simulate apply_state with test_patch already set
     # (in production, sanitize_test_patch step sets data.test_patch;
@@ -357,12 +378,12 @@ def test_verify_preprocessor_reverts_contaminated_test_file_and_git_apply_succee
 def test_verify_preprocessor_clean_tree_no_error(tmp_path: Path) -> None:
     """Tier 2: E2E — verify preprocessor runs without error on clean working tree.
 
-    When the working tree is already at HEAD (no contamination), the shell
-    git checkout ops are no-ops and the preprocessor completes successfully.
+    When the working tree is already at HEAD (no contamination), the
+    sandboxed_exec git checkout ops are no-ops and the preprocessor completes
+    successfully.
     """
     from reyn.compiler.loader import load_dsl_skill
     from reyn.events.events import EventLog
-    from reyn.kernel.preprocessor_executor import PreprocessorExecutor
     from reyn.workspace.workspace import Workspace
 
     repo = _setup_repo(tmp_path)
@@ -373,15 +394,7 @@ def test_verify_preprocessor_clean_tree_no_error(tmp_path: Path) -> None:
 
     events = EventLog()
     ws = Workspace(events=events, base_dir=repo)
-    executor = PreprocessorExecutor(
-        skill=skill,
-        workspace=ws,
-        model="standard",
-        events=events,
-        subscribers=[],
-        resolver=None,
-        permission_resolver=None,
-    )
+    executor = _preprocessor(skill, ws, events)
 
     artifact = {
         "type": "apply_state",
@@ -410,22 +423,29 @@ def test_verify_md_has_parse_step_and_iterate_step() -> None:
         "verify.md must reference parse_test_targets in its preprocessor"
     )
     assert "type: iterate" in verify_md, (
-        "verify.md must have an iterate step to run shell checkout commands"
+        "verify.md must have an iterate step to run sandboxed_exec checkout argv"
     )
     assert "data._revert_cmds" in verify_md, (
         "verify.md must use data._revert_cmds as the iterate over path"
     )
 
 
-def test_verify_md_shell_step_has_args_from_iter_item() -> None:
-    """Tier 2: verify.md iterate run_op uses args_from to bind cmd from _iter.item."""
+def test_verify_md_iterate_uses_sandboxed_exec_argv_from_iter_item() -> None:
+    """Tier 2: verify.md iterate run_op is sandboxed_exec binding argv from _iter.item.
+
+    Replaces the old shell/cmd pin after the #1115 Stage 2 migration.
+    """
     verify_md = (_SKILL_ROOT / "phases" / "verify.md").read_text(encoding="utf-8")
-    assert "args_from" in verify_md, (
-        "verify.md must have args_from in the iterate run_op step"
+    assert "kind: sandboxed_exec" in verify_md, (
+        "verify.md iterate run_op must use kind: sandboxed_exec (not shell)"
     )
-    assert "_iter.item" in verify_md, (
-        "verify.md must bind cmd via args_from: {cmd: _iter.item}"
+    assert "kind: shell" not in verify_md, (
+        "verify.md must no longer use the deprecated shell op"
     )
+    assert "args_from" in verify_md and "_iter.item" in verify_md, (
+        "verify.md must bind argv via args_from: {argv: _iter.item}"
+    )
+    assert "argv:" in verify_md, "verify.md iterate op must set argv"
 
 
 def test_verify_md_parse_step_mode_safe() -> None:
@@ -436,6 +456,42 @@ def test_verify_md_parse_step_mode_safe() -> None:
         "verify.md must declare mode: safe for both sanitize_test_patch and "
         f"parse_test_targets. Found {verify_md.count('mode: safe')} occurrences."
     )
+
+
+def test_verify_and_report_declare_default_sandbox_policy() -> None:
+    """Tier 2: verify.md and report.md declare a default_sandbox_policy (D mechanism)."""
+    verify_md = (_SKILL_ROOT / "phases" / "verify.md").read_text(encoding="utf-8")
+    report_md = (_SKILL_ROOT / "phases" / "report.md").read_text(encoding="utf-8")
+    assert "default_sandbox_policy:" in verify_md, (
+        "verify.md must declare default_sandbox_policy for its sandboxed_exec ops"
+    )
+    assert "default_sandbox_policy:" in report_md, (
+        "report.md must declare default_sandbox_policy for its sandboxed_exec ops"
+    )
+
+
+def test_loader_wires_default_sandbox_policy_and_sandboxed_exec() -> None:
+    """Tier 2: loading swe_bench produces Phase.default_sandbox_policy + sandboxed_exec allowed_ops.
+
+    Behavioral pin for the parser→ir→expander wiring (the frontmatter key must
+    reach the Phase object, not be dropped). Loads the real skill from disk.
+    """
+    from reyn.compiler.loader import load_dsl_skill
+    from reyn.sandbox import SandboxPolicy
+
+    skill = load_dsl_skill(_SKILL_ROOT / "skill.md")
+    for phase_name in ("verify", "report"):
+        phase = skill.phases[phase_name]
+        assert "sandboxed_exec" in phase.allowed_ops, (
+            f"{phase_name}.allowed_ops must include sandboxed_exec. Got: {phase.allowed_ops}"
+        )
+        policy = phase.default_sandbox_policy
+        assert isinstance(policy, dict) and policy, (
+            f"{phase_name}.default_sandbox_policy must be a non-empty dict reaching "
+            f"the Phase object. Got: {policy!r}"
+        )
+        # SandboxPolicy must accept the declared kwargs (no unknown/typo'd key).
+        SandboxPolicy(**policy)
 
 
 def test_report_md_has_parse_step_and_iterate_step() -> None:
@@ -449,6 +505,9 @@ def test_report_md_has_parse_step_and_iterate_step() -> None:
     )
     assert "preprocessor:" in report_md, (
         "report.md must have a preprocessor block"
+    )
+    assert "kind: sandboxed_exec" in report_md and "kind: shell" not in report_md, (
+        "report.md iterate run_op must use sandboxed_exec, not the deprecated shell op"
     )
 
 
@@ -479,7 +538,7 @@ def test_report_md_uses_os_injected_skill_input_not_basedir_path() -> None:
             "data": {"instance_id": "i", "test_patch": patch},
         },
     }
-    assert parse_test_targets(artifact) == ["git checkout HEAD -- tests/test_x.py"]
+    assert parse_test_targets(artifact) == [["git", "checkout", "HEAD", "--", "tests/test_x.py"]]
 
 
 def test_apply_md_has_source_only_rule() -> None:

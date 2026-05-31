@@ -1,9 +1,9 @@
-"""FP-0008 C6 v2 — parse test_patch targets for shell-based revert.
+"""FP-0008 C6 v2 — parse test_patch targets for sandboxed-exec revert.
 
 Safe-mode python step: parses ``+++ b/<path>`` diff header lines from the
-sanitized ``data.test_patch`` and returns a list of ``git checkout HEAD --
-<path>`` command strings — one per unique target, excluding ``/dev/null``
-and blank paths.
+sanitized ``data.test_patch`` and returns a list of
+``["git", "checkout", "HEAD", "--", <path>]`` argv lists — one per unique
+target, excluding ``/dev/null`` and blank paths.
 
 ## Why pure string parsing (no subprocess)
 
@@ -13,20 +13,22 @@ The safe-mode sandbox rejects subprocess at AST parse time
 verify preprocessor errored on every instance.
 
 v2 separates concerns:
-- This module (mode: safe): pure string → command-list transform (re + json
+- This module (mode: safe): pure string → argv-list transform (re + json
   only, both in PURE_STDLIB_ALLOWLIST).
-- Iterate + shell run_op (OS-owned): runs each git checkout command via the
-  op_runtime shell handler, which executes with ``cwd=workspace.base_dir``
-  (FP-0008 PR-I) — the SWE-bench repo root, correct for concurrent benchmarks.
+- Iterate + sandboxed_exec run_op (OS-owned): runs each git checkout argv via
+  the op_runtime sandboxed_exec handler, which anchors the subprocess to
+  ``cwd=workspace.base_dir`` (FP-0008 PR-I, restored for sandboxed_exec in the
+  cwd-anchor PR) — the SWE-bench repo root, correct for concurrent benchmarks.
+  #1115 Stage 2 migrated this off the deprecated ``shell`` op so repo exec
+  routes through the run's EnvironmentBackend (host or container).
 
-## Why args_from {cmd: _iter.item} works
+## Why args_from {argv: _iter.item} works
 
 ``_materialize_op`` in ``preprocessor_executor.py`` resolves dot-paths from
 the ``iter_artifact`` dict, which includes ``_iter.item`` injected by
-``_apply_iterate``. The shell op has ``cmd: str`` as a settable field on
-``ShellIROp``, so ``model_copy(update={"cmd": item})`` replaces the
-placeholder. Each iteration builds a fresh ``ShellIROp`` with the resolved
-command string.
+``_apply_iterate``. ``SandboxedExecIROp`` has ``argv: list[str]`` as a settable
+field, so ``model_copy(update={"argv": item})`` replaces the placeholder argv.
+Each iteration builds a fresh ``SandboxedExecIROp`` with the resolved argv list.
 
 ## Input shape
 
@@ -44,8 +46,9 @@ Called with the full runtime artifact dict. Source priority mirrors
 
 ## Output schema
 
-``array of strings`` — zero or more ``git checkout HEAD -- <path>`` command
-strings.  Returns ``[]`` on absent/empty test_patch (graceful no-op).
+``array of array-of-strings`` — zero or more
+``["git", "checkout", "HEAD", "--", <path>]`` argv lists.  Returns ``[]`` on
+absent/empty test_patch (graceful no-op).
 """
 from __future__ import annotations
 
@@ -123,15 +126,20 @@ def _parse_paths(test_patch: str) -> list[str]:
     return paths
 
 
-def parse_test_targets(data: Mapping[str, Any]) -> list[str]:
-    """Parse test_patch targets and return git checkout command strings.
+def parse_test_targets(data: Mapping[str, Any]) -> list[list[str]]:
+    """Parse test_patch targets and return git checkout argv lists.
 
-    Returns a list of strings of the form::
+    Returns a list of argv lists of the form::
 
-        ["git checkout HEAD -- tests/test_x.py", ...]
+        [["git", "checkout", "HEAD", "--", "tests/test_x.py"], ...]
 
     One entry per unique ``+++ b/<path>`` target in the sanitized test_patch,
     excluding ``/dev/null``.  Returns ``[]`` when test_patch is absent or empty.
+
+    Each entry is an argv list (not a shell command string) because the verify /
+    report preprocessors iterate it into ``sandboxed_exec`` ops, whose ``argv``
+    field is a ``list[str]`` executed directly (no shell). ``args_from:
+    {argv: _iter.item}`` binds one argv list per iteration.
 
     This is a pure string transform — no subprocess, no filesystem access, no
     environment reads.  It is safe to call in ``mode: safe`` (uses only ``re``
@@ -141,4 +149,4 @@ def parse_test_targets(data: Mapping[str, Any]) -> list[str]:
     if not test_patch.strip():
         return []
     paths = _parse_paths(test_patch)
-    return [f"git checkout HEAD -- {path}" for path in paths]
+    return [["git", "checkout", "HEAD", "--", path] for path in paths]

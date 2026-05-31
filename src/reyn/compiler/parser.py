@@ -65,6 +65,19 @@ def parse_phase(path: Path) -> PhaseDef:
         allowed_ops: list[str] | None = [str(x).strip() for x in ao_raw if str(x).strip()]
     else:
         allowed_ops = None
+    # default_sandbox_policy: optional dict of SandboxPolicy kwargs that the OS
+    # applies to every sandboxed_exec op in this phase, winning over the op's own
+    # fields (FP-0008 #1115 Stage 2 D mechanism). Absent → None (op fields used).
+    if "default_sandbox_policy" in fm:
+        dsp_raw = fm.get("default_sandbox_policy")
+        if dsp_raw is not None and not isinstance(dsp_raw, dict):
+            raise ValueError(
+                f"Phase '{name}': 'default_sandbox_policy' must be a YAML mapping, "
+                f"got {type(dsp_raw).__name__}"
+            )
+        default_sandbox_policy: dict | None = dict(dsp_raw) if dsp_raw else None
+    else:
+        default_sandbox_policy = None
     return PhaseDef(
         name=name,
         inputs=inputs,
@@ -75,6 +88,7 @@ def parse_phase(path: Path) -> PhaseDef:
         model_class=str(fm.get("model_class") or "").strip(),
         preprocessor=list(preprocessor_raw),
         allowed_ops=allowed_ops,
+        default_sandbox_policy=default_sandbox_policy,
     )
 
 

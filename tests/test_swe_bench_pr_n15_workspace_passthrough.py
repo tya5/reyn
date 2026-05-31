@@ -237,7 +237,7 @@ def test_parse_test_targets_reads_from_skill_input_binding() -> None:
         "--- a/tests/test_x.py\n+++ b/tests/test_x.py\n@@\n-old\n+new\n"
     )
     artifact = _make_skill_input_artifact(patch)
-    assert parse_test_targets(artifact) == ["git checkout HEAD -- tests/test_x.py"]
+    assert parse_test_targets(artifact) == [["git", "checkout", "HEAD", "--", "tests/test_x.py"]]
 
 
 # ── (d) sanitizer: Priority 1 — workspace _input_raw path ───────────────────

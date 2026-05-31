@@ -20,6 +20,13 @@ role: <short_label>            # optional; one-word role for events
 can_finish: true               # optional; allow terminating from here (default: false)
 allowed_ops: [file, ask_user]  # optional; Control IR op kinds this phase may use
                                 # (default: ["file", "ask_user"]; [] means no ops)
+default_sandbox_policy:        # optional; SandboxPolicy applied to every
+  network: true                # sandboxed_exec op in this phase, winning over
+  read_paths: ["/"]            # the op's own fields (the LLM cannot override it)
+  write_paths: ["/"]
+  allow_subprocess: true
+  env_passthrough: [PATH, HOME]
+  timeout_seconds: 600
 preprocessor:                  # optional; deterministic pre-LLM steps
   - run_skill:
       skill: recall_memory
@@ -45,6 +52,8 @@ preprocessor:                  # optional; deterministic pre-LLM steps
 - **`can_finish`** — when `true`, the LLM may emit `decision="finish"` from this phase. The OS validates the final artifact against the skill's `final_output_schema`.
 - **`preprocessor`** — chain of deterministic steps that run before the LLM call. See `reference/dsl/preprocessor.md` (Phase 2).
 - **`allowed_ops`** — list of Control IR op kinds this phase may emit (e.g. `[file, lint]`). The OS filters the `available_control_ops` advertised to the LLM down to this set, *and* rejects any out-of-set op the LLM emits anyway with `control_ir_skipped: not_allowed_in_phase`. Default: `["file", "ask_user"]` — file I/O plus user clarification, the common case. An explicit empty list (`[]`) means "no ops" (use this for pure routing/judging phases). The narrower the list, the less context spent on op descriptions and the less room the LLM has to drift outside the phase's intent. Meta-skills (`skill_builder`, `skill_improver`, `skill_importer`) consult the ContextFrame's `op_catalog` field — a reference list of every op kind the OS supports — to choose `allowed_ops` values for the phases they generate.
+
+- **`default_sandbox_policy`** — optional mapping of [`SandboxPolicy`](../../concepts/permission-model.md) kwargs (`network`, `read_paths`, `write_paths`, `allow_subprocess`, `env_passthrough`, `timeout_seconds`). When set, the OS applies it to **every** `sandboxed_exec` op this phase runs, overriding the op's own policy fields — so the policy is deterministic and the LLM cannot weaken or strengthen it. Omitted → each op's own fields are used. This is policy only (the *what-is-allowed*); the working directory and backend are run context, not declared here. A workspace-coupled backend (e.g. a container `EnvironmentBackend`) may ignore the policy entirely when the container is itself the isolation boundary.
 
 > **Note:** Phase-level `permissions:` was removed in the skill-only permissions migration. Declare permissions at the skill-md frontmatter instead — see [skill-md.md](skill-md.md) and [permission-model.md](../../concepts/permission-model.md).
 
