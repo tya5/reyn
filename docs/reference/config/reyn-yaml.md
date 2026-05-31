@@ -345,6 +345,7 @@ action_retrieval:
 | `embedding_class` | string \| null | `"local-mini"` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search.  Default `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations.  **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, reyn silently treats this as `null` and `list_actions` surfaces the install command to the LLM. Set explicitly to `standard` (= OpenAI) or `null` (= opt out) to override. |
 | `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases. Must be ≥ 0. `0` opts out entirely (= minimal mode). |
 | `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
+| `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["skill__index_docs"]`) pins those as the initial hot list before usage stats accumulate. |
 
 ### Quick-start — opt out
 
@@ -620,6 +621,8 @@ Layers 5 and 6 are scoped: each carries only its own section (`mcp.servers` / `c
 
 Budget caps and rate limits. All fields are optional; omitting a field (or setting its `hard_limit` to `null`) means **unlimited**.
 
+Each token / cost cap (`per_agent_tokens`, `per_agent_cost_usd`, `daily_*`, `monthly_*`) is a `CostLimitConfig` with four sub-fields: `hard_limit` (the cap; `null` = unlimited), `warn_ratio` (warn threshold as a fraction of `hard_limit`, default `0.8`), `ask_on_exceed` (when `true`, prompt for approval to extend the cap on hit instead of aborting), and `extension_calls` (how many approved extensions to grant before the cap is enforced hard). The examples below set only the commonly-tuned `hard_limit` / `warn_ratio`; the other two default to `false` / `0`.
+
 ```yaml
 cost:
   # Per-agent caps (in-memory, reset on restart or /budget reset)
@@ -715,6 +718,8 @@ The MCP runtime is an optional dependency: install with `pip install -e ".[mcp]"
 ### `mcp.search_threshold`
 
 When the total number of MCP tools (across all connected servers) reaches this threshold, `build_tools()` switches from inlining all MCP tool schemas to using Anthropic's `tool_search_tool` (deferred-loading mode). Default `30`. Set `0` to disable.
+
+> **Note**: internally this is the `ReynConfig.mcp_search_threshold` field, but the operator-facing key is `mcp.search_threshold` (read from the `mcp:` block) — set it there, not as a top-level `mcp_search_threshold:`.
 
 ```yaml
 mcp:
