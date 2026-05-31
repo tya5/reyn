@@ -10,38 +10,37 @@ How Reyn keeps long chat sessions from overflowing the context window.
 
 ## What it is
 
-When enough turns accumulate, the middle of the history is folded into a
-rolling structured summary. Three zones are fed to the LLM:
+When context fills, the middle of the history is folded into a rolling
+structured summary. Three zones are fed to the LLM:
 
-- **Head** — first N turns (raw, never compacted; preserves the original task context)
+- **Head** — earliest turns (raw, never compacted; preserves the original task context)
 - **Body** — rolling summary produced by the compaction engine
-- **Tail** — last N turns (raw, kept for recency)
+- **Tail** — most-recent turns (raw, kept for recency)
+
+Head and tail sizes are **token-budgeted** — derived from `component_weights`
+against the model's actual context window, not a fixed turn count. Chat fills
+the window raw first; compaction fires only once the history exceeds the
+effective trigger, which is window-relative (derived from the same budgets, not
+an absolute token count).
 
 The `CompactionEngine` is an OS-internal Python helper that makes a direct
 LLM call to produce the summary. It is not a stdlib skill.
 
 ## Compaction paths
 
-Compaction can be triggered by four independent paths. All four use the same
+Compaction can be triggered by three independent paths. All three use the same
 `CompactionEngine` and Head/Body/Tail slice logic.
 
 ### 1. Synchronous pre-frame guard
 
 Before each router LLM call, `_maybe_force_compact_for_router` checks the
 estimated token usage of the current history against the effective trigger
-budget. If over budget, it calls `force_compact_now` synchronously before the
-LLM frame is built. This ensures the prompt never exceeds the budget *before*
-the call — a proactive shrink rather than a reactive one.
+budget (window-relative). If over budget, it calls `force_compact_now`
+synchronously before the LLM frame is built. This ensures the prompt never
+exceeds the budget *before* the call — a proactive shrink rather than a
+reactive one.
 
-### 2. Background post-reply path
-
-After each reply, `CompactionController.spawn_maybe` fires a background task
-when both conditions hold: estimated middle-turn tokens exceed
-`trigger_total_tokens` (default 30 000) and at least `min_compact_batch` turns
-(default 5) are available to absorb. This path is fire-and-forget and never
-blocks the current turn.
-
-### 3. Voluntary compact op (LLM-requested)
+### 2. Voluntary compact op (LLM-requested)
 
 When the window is filling, the OS injects a `## Context window` header with
 the exact-token free window (the context-size signal). The model may emit a
@@ -49,7 +48,7 @@ the exact-token free window (the context-size signal). The model may emit a
 the current axis (chat or phase) and returns the freed tokens and new headroom.
 See [`control-ir.md`](../../reference/runtime/control-ir.md) for the op contract.
 
-### 4. `retry_loop` overflow backstop
+### 3. `retry_loop` overflow backstop
 
 When the pre-frame guard's token estimate under-counts and the router raises a
 context-length error, `retry_loop` takes over. It shrinks head, tail, and the
@@ -88,9 +87,15 @@ The same engine serves three distinct compaction axes:
 - **Planner step axis** — older plan-step results inside an active plan.
 - **Phase axis** — older `control_ir_results` inside a running phase's act loop.
 
-Each axis has both automatic compaction (per-frame or per-reply) and an
-on-demand seam (the `compact` Control IR op, available to the LLM when the
-context-size signal fires).
+Each axis has both automatic compaction (per-frame) and an on-demand seam (the
+`compact` Control IR op, available to the LLM when the context-size signal fires).
+
+## Cost observability
+
+The `/budget` command shows token and cost usage broken down **by purpose**:
+`main`, `phase`, `compaction`, `judge`, and agent-attributed buckets. This lets
+operators see how much of their token spend the compaction engine is consuming
+across a session.
 
 ## Configuration (`reyn.yaml`)
 
@@ -114,10 +119,6 @@ chat:
       session_user_facts:   10
       artifacts_referenced: 35
 
-    # Background trigger (spawn_maybe path only).
-    trigger_total_tokens: 30000
-    min_compact_batch: 5
-
     # Hard cap on summary body tokens (post-truncation).
     body_token_cap: 1500
 
@@ -128,12 +129,19 @@ chat:
 Weights are sum-arbitrary — any positive integers work; Reyn normalises them at
 startup. Larger values give more token budget to that component.
 
+**Removed keys:** `head_size`, `tail_size`, `trigger_total_tokens`, and
+`min_compact_batch` are no longer recognised. If present in `reyn.yaml`, Reyn
+emits a `DeprecationWarning` and ignores them. Remove these keys from your
+config — head/tail sizing is now token-budget via `component_weights`, and
+auto-compaction is window-relative.
+
 ## Trade-offs
 
 **Preserved:** topic arc, decisions, pending items, user facts, referenced
 artifacts (including tool activity — files read / URLs fetched / MCP tools
 called surface as `artifacts_referenced` entries when the result is
-conversation-relevant), and the raw first/last N turns.
+conversation-relevant), and the raw head and tail zones (token-budgeted,
+sized relative to the model's actual context window).
 
 **Lost:** verbatim phrasing of compacted turns; exact ordering of minor
 exchanges. Section budgets are soft — slight overruns self-correct on the
@@ -147,9 +155,9 @@ input and decides whether to record the call under `artifacts_referenced`. Tool
 turns count toward the head/tail/body slice the same as plain conversational
 turns.
 
-Compaction runs in a background asyncio task (path 2) or synchronously before
-the frame (path 1). Events `compaction_started` / `compaction_completed` /
-`compaction_failed` are emitted to the session event log (P6).
+Compaction runs synchronously before the frame (path 1) or on-demand (path 2).
+Events `compaction_started` / `compaction_completed` / `compaction_failed` are
+emitted to the session event log (P6).
 
 ## See also
 
