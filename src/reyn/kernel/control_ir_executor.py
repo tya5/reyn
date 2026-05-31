@@ -318,6 +318,7 @@ class ControlIRExecutor:
         decl: PermissionDecl,
         current_phase: str,
         default_sandbox_policy: dict | None = None,
+        compact_now=None,
     ) -> OpContext:
         """Construct the OpContext for a single dispatch iteration."""
         return OpContext(
@@ -338,6 +339,10 @@ class ControlIRExecutor:
             mcp_servers=self._mcp_servers,
             mcp_clients=self._mcp_clients,
             intervention_bus=self._intervention_bus,
+            # #1176 B1: phase on-demand voluntary compaction capability. None
+            # for batches with no phase compaction engine wired (compact op
+            # then fail-louds compaction_unavailable, same as chat).
+            compact_now=compact_now,
             current_phase=current_phase,
             caller=self._caller,
             # R-D13: propagate the running skill's run_id so nested
@@ -394,6 +399,7 @@ class ControlIRExecutor:
         decl: PermissionDecl | None = None,
         allowed_ops: set[str] | None = None,
         default_sandbox_policy: dict | None = None,
+        compact_now=None,
     ) -> list[dict[str, Any]]:
         """Execute a list of Control IR operations.
 
@@ -407,7 +413,7 @@ class ControlIRExecutor:
         the existing tool_executed events emitted by op_runtime handlers.
         """
         effective_decl = decl or PermissionDecl()
-        ctx = self._build_ctx(effective_decl, phase, default_sandbox_policy)
+        ctx = self._build_ctx(effective_decl, phase, default_sandbox_policy, compact_now=compact_now)
         results: list[dict[str, Any]] = []
 
         # Build a tool catalog for dispatch_tool name/arg validation.

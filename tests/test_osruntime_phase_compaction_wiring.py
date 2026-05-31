@@ -258,6 +258,7 @@ class _FakeIRExecutor:
         decl: Any = None,
         allowed_ops: Any = None,
         default_sandbox_policy: Any = None,
+        compact_now: Any = None,  # #1176 B1: mirror the real execute() signature
     ) -> list[dict]:
         """Return one synthetic grep result regardless of the ops list."""
         return [

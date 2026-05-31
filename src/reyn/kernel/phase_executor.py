@@ -55,6 +55,71 @@ _log = logging.getLogger(__name__)
 _RAW_OUTPUT_INLINE_CAP = 8192
 
 
+class _ControlIRResultsHolder:
+    """Mutable handle to the act loop's ``control_ir_results`` accumulator (#1176).
+
+    An on-demand ``compact`` op reaches it via ``OpContext.compact_now`` to
+    compact + replace the accumulated results mid-batch. get/set only — the raw
+    list is never exposed by index, so the OpContext callback stays opaque to
+    the accumulator's storage shape.
+    """
+
+    def __init__(self, initial: "list[dict]") -> None:
+        self._results: list[dict] = list(initial)
+
+    def get(self) -> "list[dict]":
+        return self._results
+
+    def set(self, results: "list[dict]") -> None:
+        self._results = list(results)
+
+
+def _make_phase_compact_now(holder, engine, cfg, events, phase):
+    """Build the phase-axis ``compact_now`` callback (#1176 B1).
+
+    On-demand counterpart to the act loop's automatic compaction: it compacts
+    the SAME older split (keep last ``recent_act_turns_raw`` raw, summarise the
+    rest) via the SAME ``compact_control_ir_results`` primitive — so the emitted
+    compaction events are shape-identical to the auto path (replay-consistent,
+    lead-coder's safety requirement). Returns the chat-byte-identical contract
+    ``{freed_tokens, free_window_after, free_window_before}`` in exact tokens.
+    """
+
+    async def _compact_now() -> dict:
+        from reyn.services.compaction.engine import (
+            compact_control_ir_results,
+            estimate_tokens,
+        )
+
+        model = engine._model  # noqa: SLF001 — resolved litellm string owned by the engine
+
+        def _free_window(results: "list[dict]") -> "tuple[int, int]":
+            budgets = getattr(engine, "budgets", None)
+            trigger = budgets.effective_trigger if budgets is not None else 0
+            used = estimate_tokens(json.dumps(results, ensure_ascii=False), model)
+            return trigger, used
+
+        trigger, before_used = _free_window(holder.get())
+        n_recent = cfg.recent_act_turns_raw
+        results = holder.get()
+        older = results[:-n_recent] if n_recent > 0 else results
+        recent = results[-n_recent:] if n_recent > 0 else []
+        if older:
+            older_compacted = await compact_control_ir_results(
+                older, engine=engine, cfg=cfg, events=events, phase=phase,
+            )
+            holder.set(older_compacted + recent)
+        # else: nothing older to compact — no-op (still report the live window).
+        _, after_used = _free_window(holder.get())
+        return {
+            "freed_tokens": max(0, before_used - after_used),
+            "free_window_after": max(0, trigger - after_used),
+            "free_window_before": max(0, trigger - before_used),
+        }
+
+    return _compact_now
+
+
 class PhaseExecutor:
     """Drives one phase to completion via act/decide loops with retry.
 
@@ -536,13 +601,31 @@ class PhaseExecutor:
             phase_def = self._skill.phases.get(phase)
             phase_decl = self._skill.permissions
             allowed_ops = set(phase_def.allowed_ops) if phase_def is not None else None
+            # #1176 B1: expose on-demand voluntary compaction to the batch's ops.
+            # The holder carries the accumulator across the execute() boundary so
+            # a `compact` op can compact + replace the settled results mid-batch;
+            # we read it back afterward. compact_now is None (→ compact op
+            # fail-louds) when no phase compaction engine is wired.
+            _holder = _ControlIRResultsHolder(control_ir_results)
+            _compact_now = (
+                _make_phase_compact_now(
+                    _holder, self._phase_compaction_engine,
+                    self._phase_compaction_cfg, self._events, phase,
+                )
+                if self._phase_compaction_engine is not None
+                and self._phase_compaction_cfg is not None
+                else None
+            )
             ir_results = await self._control_ir_executor.execute(
                 act.ops, phase=phase, decl=phase_decl, allowed_ops=allowed_ops,
                 default_sandbox_policy=(
                     phase_def.default_sandbox_policy if phase_def is not None else None
                 ),
+                compact_now=_compact_now,
             )
-            control_ir_results = control_ir_results + ir_results
+            # _holder reflects any mid-batch on-demand compaction; the new
+            # results append after the (possibly compacted) settled accumulator.
+            control_ir_results = _holder.get() + ir_results
             prior_attempts = []
             self._events.emit(
                 "act_executed",
