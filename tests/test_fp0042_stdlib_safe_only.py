@@ -10,7 +10,7 @@ Two enforcement axes:
    documented exemption set.** A small number of pre-FP-0042 entries are
    grandfathered (= deprecated compat path + skills outside the
    migration's listed Phase 2 scope). The exemption list is mirrored in
-   ``docs/concepts/python-safe-mode.md`` under "Stdlib safe-only doctrine
+   ``docs/concepts/skills/python-safe-mode.md`` under "Stdlib safe-only doctrine
    (FP-0042)" — the test and the doc are kept in lock-step on purpose
    so a CI failure here lands as a documentation update too.
 
@@ -152,7 +152,7 @@ def test_stdlib_mode_unsafe_only_in_exemption_set() -> None:
     fails this test; the right path is to refactor through
     ``reyn.safe.*`` primitives or split the I/O via a ``run_op``. If a
     new exemption is genuinely required, both this test and
-    ``docs/concepts/python-safe-mode.md`` need to be updated together.
+    ``docs/concepts/skills/python-safe-mode.md`` need to be updated together.
     """
     found = _collect_unsafe_python_entries()
     unexpected = found - GRANDFATHERED_UNSAFE
@@ -162,7 +162,7 @@ def test_stdlib_mode_unsafe_only_in_exemption_set() -> None:
         "Either refactor to mode: safe (= preferred — use reyn.safe.* "
         "primitives or split I/O via run_op), or, if genuinely required, "
         "extend GRANDFATHERED_UNSAFE in this test AND add the entry to "
-        "docs/concepts/python-safe-mode.md under the FP-0042 stdlib "
+        "docs/concepts/skills/python-safe-mode.md under the FP-0042 stdlib "
         "safe-only doctrine section."
     )
 
@@ -201,6 +201,6 @@ def test_grandfathered_exemptions_are_still_present() -> None:
         f"GRANDFATHERED_UNSAFE lists entries that are no longer "
         f"declared as mode: unsafe in stdlib (or no longer exist): "
         f"{sorted(stale)}. Remove the entry from this test and from "
-        "docs/concepts/python-safe-mode.md — the migration succeeded, "
+        "docs/concepts/skills/python-safe-mode.md — the migration succeeded, "
         "the carve-out is no longer needed."
     )

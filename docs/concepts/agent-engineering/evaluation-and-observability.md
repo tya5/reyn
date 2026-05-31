@@ -58,7 +58,7 @@ There is no built-in cost dashboard or longitudinal eval trend view; consumers p
 
 ## See also
 
-- [events.md](../events.md) — concept
+- [../runtime/events.md](../runtime/events.md) — concept
 - [Reference: events](../../reference/runtime/events.md)
 - [Reference: stdlib/eval](../../reference/stdlib/eval.md)
 - [Reference: stdlib/eval_builder](../../reference/stdlib/eval_builder.md)

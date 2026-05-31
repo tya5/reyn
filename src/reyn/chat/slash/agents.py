@@ -88,7 +88,7 @@ async def agents_cmd(session: "ChatSession", args: str) -> None:
     summary="Switch attached agent",
     usage="/attach <name>",
     completer=_attach_completer,
-    see_also=("docs/concepts/multi-agent.md",),
+    see_also=("docs/concepts/multi-agent/multi-agent.md",),
 )
 async def attach_cmd(session: "ChatSession", args: str) -> None:
     """``/attach <name>`` — request the REPL switch to a different agent.

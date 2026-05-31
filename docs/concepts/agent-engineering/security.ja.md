@@ -51,7 +51,7 @@ Skill 作者は `safe` に誘導されます。`unsafe` に手を伸ばすこと
 
 ## 関連情報
 
-- [permission-model.md](../permission-model.md) — コンセプト
+- [../runtime/permission-model.md](../runtime/permission-model.md) — コンセプト
 - [リファレンス: permissions](../../reference/config/permissions.md) — 完全なスキーマ
 - [リファレンス: reyn.yaml](../../reference/config/reyn-yaml.md) — `permissions:` キー
 - [ハウツー: Permission の管理](../../guide/for-users/manage-permissions.md)

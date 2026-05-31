@@ -58,7 +58,7 @@ Phase をキーとした構造が重要です: 「要約がフレンドリーで
 
 ## 関連情報
 
-- [events.md](../events.md) — コンセプト
+- [../runtime/events.md](../runtime/events.md) — コンセプト
 - [リファレンス: events](../../reference/runtime/events.md)
 - [リファレンス: stdlib/eval](../../reference/stdlib/eval.md)
 - [リファレンス: stdlib/eval_builder](../../reference/stdlib/eval_builder.md)

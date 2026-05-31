@@ -41,9 +41,9 @@ The graph is a DAG with no self-loops — a phase cannot list itself as a next p
 
 ## See also
 
-- [principles.md](../principles.md) — P1, P2, P3, P7
-- [phase-vs-skill-vs-os.md](../phase-vs-skill-vs-os.md)
-- [llm-as-decision-engine.md](../llm-as-decision-engine.md)
+- [../architecture/principles.md](../architecture/principles.md) — P1, P2, P3, P7
+- [../architecture/phase-vs-skill-vs-os.md](../architecture/phase-vs-skill-vs-os.md)
+- [../architecture/llm-as-decision-engine.md](../architecture/llm-as-decision-engine.md)
 - [Reference: graph](../../reference/dsl/graph.md)
 - [tool-contract-design.md](tool-contract-design.md) — how the LLM expresses its choices
 - [reliability-engineering.md](reliability-engineering.md) — what happens when the LLM gets it wrong

@@ -57,7 +57,7 @@ If a step needs a non-ambient capability (operator files, network, env vars,
 process spawning), use a `run_op` step — that is the proper escape hatch with
 its own permission gate and event log entry.
 
-Full author guide: docs/concepts/python-safe-mode.md
+Full author guide: docs/concepts/skills/python-safe-mode.md
 """
 from __future__ import annotations
 

@@ -193,43 +193,43 @@ nav:
           - reference/upgrade-policy.md
   - Concepts:
       - Architecture:
-          - concepts/principles.md
-          - concepts/architecture.md
-          - concepts/care-boundary.md
-          - concepts/phase-vs-skill-vs-os.md
-          - concepts/llm-invocation-surfaces.md
-          - concepts/llm-as-decision-engine.md
+          - concepts/architecture/principles.md
+          - concepts/architecture/architecture.md
+          - concepts/architecture/care-boundary.md
+          - concepts/architecture/phase-vs-skill-vs-os.md
+          - concepts/architecture/llm-invocation-surfaces.md
+          - concepts/architecture/llm-as-decision-engine.md
       - Runtime:
-          - concepts/workspace.md
-          - concepts/events.md
-          - concepts/permission-model.md
-          - concepts/sandbox.md
-          - concepts/secret-handling.md
+          - concepts/runtime/workspace.md
+          - concepts/runtime/events.md
+          - concepts/runtime/permission-model.md
+          - concepts/runtime/sandbox.md
+          - concepts/runtime/secret-handling.md
       - Skills:
-          - concepts/skill-design-patterns.md
-          - concepts/skill-self-improvement.md
-          - concepts/skill-resume.md
-          - concepts/async-skill-execution.md
-          - concepts/preprocessor.md
-          - concepts/postprocessor.md
-          - concepts/python-safe-mode.md
+          - concepts/skills/skill-design-patterns.md
+          - concepts/skills/skill-self-improvement.md
+          - concepts/skills/skill-resume.md
+          - concepts/skills/async-skill-execution.md
+          - concepts/skills/preprocessor.md
+          - concepts/skills/postprocessor.md
+          - concepts/skills/python-safe-mode.md
       - Multi-agent:
-          - concepts/multi-agent.md
-          - concepts/a2a.md
-          - concepts/topology.md
-          - concepts/plan-mode.md
+          - concepts/multi-agent/multi-agent.md
+          - concepts/multi-agent/a2a.md
+          - concepts/multi-agent/topology.md
+          - concepts/multi-agent/plan-mode.md
       - Data & retrieval:
-          - concepts/rag.md
-          - concepts/memory.md
-          - concepts/operational-intelligence.md
-          - concepts/chat-compaction.md
+          - concepts/data-retrieval/rag.md
+          - concepts/data-retrieval/memory.md
+          - concepts/data-retrieval/operational-intelligence.md
+          - concepts/data-retrieval/chat-compaction.md
       - Tools & integrations:
-          - concepts/mcp.md
-          - concepts/universal-catalog.md
-          - concepts/voice.md
+          - concepts/tools-integrations/mcp.md
+          - concepts/tools-integrations/universal-catalog.md
+          - concepts/tools-integrations/voice.md
       - Observability:
-          - concepts/dogfood-scenarios.md
-          - concepts/evaluation.md
+          - concepts/observability/dogfood-scenarios.md
+          - concepts/observability/evaluation.md
       - Agent engineering — seven lenses:
           - concepts/agent-engineering/index.md
           - concepts/agent-engineering/system-design.md

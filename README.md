@@ -117,7 +117,7 @@ reyn chat
 > What is the care boundary in Reyn?
 ```
 
-The LLM picks the chunking strategy from a closed candidate set (P4); the chunk → embed → write chain runs deterministically in the skill postprocessor (no LLM, no attractor surface). To override the chunker for a specialised corpus (Python AST, SQL schemas, structured YAML), drop in a `skill.md` that extends `stdlib/index_docs` and swap one python step. Details and the full op surface in [docs/concepts/rag.md](docs/concepts/rag.md).
+The LLM picks the chunking strategy from a closed candidate set (P4); the chunk → embed → write chain runs deterministically in the skill postprocessor (no LLM, no attractor surface). To override the chunker for a specialised corpus (Python AST, SQL schemas, structured YAML), drop in a `skill.md` that extends `stdlib/index_docs` and swap one python step. Details and the full op surface in [docs/concepts/data-retrieval/rag.md](docs/concepts/data-retrieval/rag.md).
 
 ---
 
@@ -133,9 +133,9 @@ The LLM picks the chunking strategy from a closed candidate set (P4); the chunk 
 
 **Reyn is more constrained.** If you want maximum LLM autonomy and creative agent behavior, LangGraph or AutoGen will feel less restrictive.
 
-**Reyn ships a RAG framework foundation, not a mature RAG product.** The differentiator is that you write your indexing strategy as a `skill.md` — LLM-driven adaptive chunking with a deterministic postprocessor chain — not a Python pipeline. Override the chunker per-source by swapping a single python step. End-to-end smoke (= `reyn run index_docs` against `docs/concepts/*.md` → 418 chunks via real `gemini-embedding-001` → `reyn chat` with natural concept queries) returned indexed semantic answers in 3/3 runs (batch 22, 2026-05-10). Maturity gaps (rerank / HyDE / contextual retrieval / RAG eval framework / IDE integration / vector store variety beyond SQLite) live downstream — see [Project Status](#project-status) and [docs/concepts/rag.md](docs/concepts/rag.md).
+**Reyn ships a RAG framework foundation, not a mature RAG product.** The differentiator is that you write your indexing strategy as a `skill.md` — LLM-driven adaptive chunking with a deterministic postprocessor chain — not a Python pipeline. Override the chunker per-source by swapping a single python step. End-to-end smoke (= `reyn run index_docs` against `docs/concepts/*.md` → 418 chunks via real `gemini-embedding-001` → `reyn chat` with natural concept queries) returned indexed semantic answers in 3/3 runs (batch 22, 2026-05-10). Maturity gaps (rerank / HyDE / contextual retrieval / RAG eval framework / IDE integration / vector store variety beyond SQLite) live downstream — see [Project Status](#project-status) and [docs/concepts/data-retrieval/rag.md](docs/concepts/data-retrieval/rag.md).
 
-**Reyn is smaller.** No chain abstractions, no rich vector store ecosystem — those live downstream (see [care-boundary.md](docs/concepts/care-boundary.md)).
+**Reyn is smaller.** No chain abstractions, no rich vector store ecosystem — those live downstream (see [care-boundary.md](docs/concepts/architecture/care-boundary.md)).
 
 **Reyn is opinionated about state.** The Workspace is the only inter-phase data channel; Events are the only audit log. Other frameworks let you pass state in-memory or through callbacks — convenient, but invisible to crash recovery and audit trails.
 
@@ -154,12 +154,12 @@ The LLM picks the chunking strategy from a closed candidate set (P4); the chunk 
 - You want quick prototyping with maximum flexibility — LangGraph + LangChain's ecosystem is substantially denser.
 - Your agent is single-shot and stateless — use a plain LLM call; the OS overhead is not worth it.
 - You need a mature RAG product with rerank / HyDE / contextual retrieval / a RAG eval framework / IDE integration — Reyn ships a foundation (`index_docs` + `recall` + `IndexBackend` plugin path), not the mature ecosystem. LangChain / LlamaIndex have substantially denser RAG tooling.
-- You want a UI or dashboard out of the box — that is downstream territory (see [care-boundary.md](docs/concepts/care-boundary.md#downstream-tooling--what-builds-on-reyn)).
+- You want a UI or dashboard out of the box — that is downstream territory (see [care-boundary.md](docs/concepts/architecture/care-boundary.md#downstream-tooling--what-builds-on-reyn)).
 
 **Further reading:**
-[Why this design — principles](docs/concepts/principles.md) |
-[What Reyn cares about — care boundary](docs/concepts/care-boundary.md) |
-[Architecture, including the act-sense-react loop](docs/concepts/architecture.md)
+[Why this design — principles](docs/concepts/architecture/principles.md) |
+[What Reyn cares about — care boundary](docs/concepts/architecture/care-boundary.md) |
+[Architecture, including the act-sense-react loop](docs/concepts/architecture/architecture.md)
 
 ---
 
@@ -182,7 +182,7 @@ User → Agent → Skill → OS → Phase → Workspace
 
 The LLM is a constrained decision engine: it picks a next phase from the OS-provided candidate list and produces a typed artifact. It cannot hallucinate a transition or bypass validation.
 
-Details: [docs/concepts/architecture.md](docs/concepts/architecture.md) | [docs/concepts/principles.md](docs/concepts/principles.md)
+Details: [docs/concepts/architecture/architecture.md](docs/concepts/architecture/architecture.md) | [docs/concepts/architecture/principles.md](docs/concepts/architecture/principles.md)
 
 ---
 
@@ -322,7 +322,7 @@ For long-running skills — including ones that fire `ask_user` mid-execution �
 - Mid-run `ask_user`: when the task transitions to `input-required`, the prompt is exposed as `question`. Reply with another `message/send` carrying `params.task_id` and the user's answer in `params.message`.
 - Push notifications: when `params.webhook_url` is set on the initial call, Reyn POSTs JSON payloads to the URL on each status transition.
 
-Details: [`docs/concepts/a2a.md`](docs/concepts/a2a.md#task-lifecycle-and-async-execution-fp-0001).
+Details: [`docs/concepts/multi-agent/a2a.md`](docs/concepts/multi-agent/a2a.md#task-lifecycle-and-async-execution-fp-0001).
 
 ### Supported
 
@@ -372,7 +372,7 @@ When `recall` is available against an indexed source whose description covers Re
 ### Recommended deep-dive entry points
 
 **Architectural questions** ("what is Reyn?"):
-`docs/concepts/architecture.md`, `docs/concepts/principles.md` (P1–P8), `docs/concepts/phase-vs-skill-vs-os.md`, `docs/concepts/rag.md`, `CLAUDE.md`.
+`docs/concepts/architecture/architecture.md`, `docs/concepts/architecture/principles.md` (P1–P8), `docs/concepts/architecture/phase-vs-skill-vs-os.md`, `docs/concepts/data-retrieval/rag.md`, `CLAUDE.md`.
 
 **Implementation questions** ("how does X work?"):
 `src/reyn/chat/router_loop.py`, `src/reyn/chat/router_system_prompt.py` (= recall vs reyn_src_read routing), `src/reyn/chat/session.py`, `src/reyn/kernel/runtime.py`, `src/reyn/kernel/control_ir_executor.py`, `src/reyn/op_runtime/` (file, web, mcp, ask_user, embed, index_*, recall, …), `src/reyn/permissions/permissions.py`.
