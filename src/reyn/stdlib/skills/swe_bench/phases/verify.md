@@ -4,9 +4,24 @@ name: verify
 input: apply_state
 role: tester
 model_class: standard
-allowed_ops: [file, shell]
+allowed_ops: [file, sandboxed_exec]
 max_retries: 3
 max_act_turns: 30
+# FP-0008 #1115 Stage 2 (D mechanism): the OS applies this policy to every
+# sandboxed_exec op in this phase, winning over the op's own fields (the LLM
+# cannot weaken or strengthen it). This phase runs an arbitrary repository's
+# git + test suite, which inherently needs broad filesystem + subprocess +
+# network access — so the policy is permissive. On a container EnvironmentBackend
+# (the C7 path) the policy is ignored entirely (the container IS the boundary);
+# on host backends it is best-effort enforcement. timeout_seconds bounds the
+# longest op (pytest).
+default_sandbox_policy:
+  network: true
+  read_paths: ["/"]
+  write_paths: ["/"]
+  allow_subprocess: true
+  env_passthrough: ["PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "LANG", "LC_ALL", "TMPDIR"]
+  timeout_seconds: 600
 preprocessor:
   # FP-0008 PR-N15 / #1115 Stage 0: deterministic entry-input passthrough.
   # The OS injects the skill's original entry artifact (the `swe_bench_input`)
@@ -33,8 +48,8 @@ preprocessor:
       type: string
   #
   # FP-0008 C6 v2 Step 3: parse test_patch targets → list of git-checkout
-  # command strings.  Pure string transform (re + json only, mode: safe).
-  # Output: ["git checkout HEAD -- tests/test_x.py", ...] — zero or more.
+  # argv lists.  Pure string transform (re + json only, mode: safe).
+  # Output: [["git","checkout","HEAD","--","tests/test_x.py"], ...] — zero or more.
   # The function itself returns [] on absent/empty test_patch (graceful no-op).
   - type: python
     module: ./parse_test_targets.py
@@ -43,18 +58,23 @@ preprocessor:
     into: data._revert_cmds
     output_schema:
       type: array
-      items: {type: string}
+      items:
+        type: array
+        items: {type: string}
   #
-  # FP-0008 C6 v2 Step 4: iterate over command strings and run each via shell
-  # run_op.  Shell ops execute with cwd=workspace.base_dir (FP-0008 PR-I) =
-  # the SWE-bench repo root, so git checkout operates on the correct working
-  # tree even in concurrent benchmark runs.
+  # FP-0008 C6 v2 Step 4 (#1115 Stage 2): iterate over argv lists and run each
+  # via sandboxed_exec run_op.  sandboxed_exec anchors the subprocess to
+  # cwd=workspace.base_dir (FP-0008 PR-I, restored for sandboxed_exec in the
+  # cwd-anchor PR) = the SWE-bench repo root, so git checkout operates on the
+  # correct working tree even in concurrent benchmark runs, and routes through
+  # the run's EnvironmentBackend (host or container) instead of the deprecated
+  # shell op.  The phase default_sandbox_policy (above) governs the policy.
   #
-  # args_from {cmd: "_iter.item"} is resolved by _materialize_op:
-  # the IterateStep injects {_iter: {item: <cmd_string>}} into iter_artifact
+  # args_from {argv: "_iter.item"} is resolved by _materialize_op:
+  # the IterateStep injects {_iter: {item: <argv_list>}} into iter_artifact
   # before calling _materialize_op, which resolves the dot-path "_iter.item"
-  # to the current command string and replaces ShellIROp.cmd via
-  # model_copy(update={"cmd": item_string}).
+  # to the current argv list and replaces SandboxedExecIROp.argv via
+  # model_copy(update={"argv": argv_list}).
   #
   # on_error: skip — a path not in HEAD (= new test file) returns non-zero
   # from git checkout; skip it rather than aborting the whole preprocessor.
@@ -63,11 +83,10 @@ preprocessor:
     apply:
       type: run_op
       op:
-        kind: shell
-        cmd: "git checkout HEAD -- __placeholder__"
-        timeout: 10
+        kind: sandboxed_exec
+        argv: ["git", "checkout", "HEAD", "--", "__placeholder__"]
       args_from:
-        cmd: "_iter.item"
+        argv: "_iter.item"
       on_error: skip
     into: data._revert_results
     on_error: skip
@@ -113,17 +132,21 @@ After the patch is applied, run the test files that were added or modified by
 the patch.  Determine the test file paths from the diff header lines
 (`+++ b/<path>`).
 
-Issue a shell op:
+Run:
 
 ```
-python -m pytest <test_file_path> -x --tb=short 2>&1
+python -m pytest <test_file_path> -x --tb=short
 ```
 
 If pytest is not available, fall back to:
 
 ```
-python -m unittest <test_module> 2>&1
+python -m unittest <test_module>
 ```
+
+Both stdout and stderr are captured for you — do not append shell redirections
+(`2>&1`); the command runs directly (not through a shell), so a redirection
+token would be passed as a literal argument.
 
 ## Step 3 — Revert the test_patch
 

@@ -104,3 +104,81 @@ def test_no_phase_default_falls_back_to_op_fields(tmp_path: Path) -> None:
     assert pol.network is False
     assert pol.allow_subprocess is False
     assert pol.timeout_seconds == 10
+
+
+# ── Loader wiring: default_sandbox_policy frontmatter → Phase ─────────────────
+
+
+def _write_phase_md(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / "p.md"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_parser_and_expander_wire_default_sandbox_policy_from_frontmatter(tmp_path: Path) -> None:
+    """Tier 2: a default_sandbox_policy frontmatter key reaches Phase.default_sandbox_policy.
+
+    Behavioral pin for the parser→ir→expander wiring. Without it the D mechanism
+    is unreachable from a real skill.md (#1115 Stage 2 found this gap). Generic
+    (not swe_bench-specific): a synthetic phase .md is parsed + expanded.
+    """
+    from reyn.compiler.expander import expand_phase
+    from reyn.compiler.parser import parse_phase
+
+    md = (
+        "---\n"
+        "type: phase\n"
+        "name: p\n"
+        "allowed_ops: [sandboxed_exec]\n"
+        "default_sandbox_policy:\n"
+        "  network: true\n"
+        "  allow_subprocess: true\n"
+        "  read_paths: [\"/\"]\n"
+        "  timeout_seconds: 42\n"
+        "---\n\n"
+        "Body.\n"
+    )
+    phase_def = parse_phase(_write_phase_md(tmp_path, md))
+    assert phase_def.default_sandbox_policy == {
+        "network": True, "allow_subprocess": True, "read_paths": ["/"], "timeout_seconds": 42,
+    }
+    phase = expand_phase(phase_def, input_arts=[])
+    assert phase.default_sandbox_policy == phase_def.default_sandbox_policy
+    # And the dict must be valid SandboxPolicy kwargs.
+    SandboxPolicy(**phase.default_sandbox_policy)
+
+
+def test_parser_omitted_default_sandbox_policy_is_none(tmp_path: Path) -> None:
+    """Tier 2: omitting the frontmatter key yields default_sandbox_policy=None (op fields used)."""
+    from reyn.compiler.expander import expand_phase
+    from reyn.compiler.parser import parse_phase
+
+    md = (
+        "---\n"
+        "type: phase\n"
+        "name: p\n"
+        "allowed_ops: [sandboxed_exec]\n"
+        "---\n\n"
+        "Body.\n"
+    )
+    phase_def = parse_phase(_write_phase_md(tmp_path, md))
+    assert phase_def.default_sandbox_policy is None
+    assert expand_phase(phase_def, input_arts=[]).default_sandbox_policy is None
+
+
+def test_parser_rejects_non_mapping_default_sandbox_policy(tmp_path: Path) -> None:
+    """Tier 2: a non-mapping default_sandbox_policy is a load-time error."""
+    import pytest
+
+    from reyn.compiler.parser import parse_phase
+
+    md = (
+        "---\n"
+        "type: phase\n"
+        "name: p\n"
+        "default_sandbox_policy: [not, a, mapping]\n"
+        "---\n\n"
+        "Body.\n"
+    )
+    with pytest.raises(ValueError, match="default_sandbox_policy"):
+        parse_phase(_write_phase_md(tmp_path, md))
