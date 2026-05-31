@@ -216,14 +216,14 @@ and run the checklist below before continuing:
 
 ## When in doubt — read these (Tier 2)
 
-- **P1–P8 rationale and examples**: `docs/concepts/principles.md`
-- **Care boundary** (what Reyn cares / doesn't care): `docs/concepts/care-boundary.md`
-- **Architecture overview / component layers**: `docs/concepts/architecture.md`
-- **Phase vs Skill vs OS boundary**: `docs/concepts/phase-vs-skill-vs-os.md`
-- **Why constrain the LLM (P4)**: `docs/concepts/llm-as-decision-engine.md`
-- **Workspace** (P5): `docs/concepts/workspace.md`
-- **Events / replay** (P6): `docs/concepts/events.md`
-- **Permission model**: `docs/concepts/permission-model.md`
+- **P1–P8 rationale and examples**: `docs/concepts/architecture/principles.md`
+- **Care boundary** (what Reyn cares / doesn't care): `docs/concepts/architecture/care-boundary.md`
+- **Architecture overview / component layers**: `docs/concepts/architecture/architecture.md`
+- **Phase vs Skill vs OS boundary**: `docs/concepts/architecture/phase-vs-skill-vs-os.md`
+- **Why constrain the LLM (P4)**: `docs/concepts/architecture/llm-as-decision-engine.md`
+- **Workspace** (P5): `docs/concepts/runtime/workspace.md`
+- **Events / replay** (P6): `docs/concepts/runtime/events.md`
+- **Permission model**: `docs/concepts/runtime/permission-model.md`
 - **Input handling, ask_user, Phase Preprocessor (run_op / iterate / validate
   / lint_plan / python)**: read the corresponding stdlib skill (`skill_router`,
   `eval`, `skill_improver`) for live examples

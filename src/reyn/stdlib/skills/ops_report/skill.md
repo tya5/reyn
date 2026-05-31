@@ -137,5 +137,5 @@ reyn run ops_report '{"period_days": 30, "skills": ["swe_bench", "eval"]}'
 ## See also
 
 - `src/reyn/stdlib/skills/index_events/` — events source を populate するスキル
-- `docs/concepts/rag.md` — `recall(sources=["events"])` の使い方
+- `docs/concepts/data-retrieval/rag.md` — `recall(sources=["events"])` の使い方
 - FP-0009: `docs/deep-dives/proposals/0009-operational-intelligence.ja.md`

@@ -53,7 +53,7 @@ def _memory_completer(
     summary="Inspect project memory entries",
     usage="/memory [list|view <name>]",
     completer=_memory_completer,
-    see_also=("docs/concepts/memory.md",),
+    see_also=("docs/concepts/data-retrieval/memory.md",),
 )
 async def memory_cmd(session: "ChatSession", args: str) -> None:
     """Dispatch ``list`` / ``view <name>`` subcommands."""

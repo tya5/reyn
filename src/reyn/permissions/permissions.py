@@ -356,7 +356,7 @@ class PermissionDecl:
                     f"permissions.{legacy_key}: <bool> is removed in the "
                     f"#571 collapse arc (Phase 5). Replace it with the "
                     f"explicit list axes: file.write / http.get / secret.write. "
-                    f"See docs/concepts/permission-model.md → Collapse arc.",
+                    f"See docs/concepts/runtime/permission-model.md → Collapse arc.",
                     DeprecationWarning,
                     stacklevel=3,
                 )
