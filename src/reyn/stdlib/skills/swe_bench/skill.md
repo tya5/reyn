@@ -60,6 +60,13 @@ permissions:
       function: parse_test_targets
       mode: safe
       timeout: 5
+    # #1209 PR-B: regex-escapes each plan edit's verbatim `anchor` so the apply
+    # preprocessor's grep matches it literally.  Mode: safe — uses only re
+    # (PURE_STDLIB_ALLOWLIST), pure data transform, no filesystem/subprocess/env.
+    - module: ./escape_anchors.py
+      function: escape_anchors
+      mode: safe
+      timeout: 5
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---
