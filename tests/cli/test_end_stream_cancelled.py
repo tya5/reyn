@@ -2,8 +2,8 @@
 
 Wave-9 Topic F finding F7 (P1): the old cancel path committed the
 partial accumulated text via ``end_stream`` →
-``_write_agent_markdown_with_fold``, applying the SAME Markdown
-styling used for complete replies. Then a separate
+``_write_agent_markdown``, applying the SAME Markdown styling used
+for complete replies. Then a separate
 ``"  ⌁ cancelled"`` suffix line was appended. The user couldn't
 tell a cancelled fragment from a finished reply at a glance —
 Markdown rendering applied bold / headers / code blocks to the

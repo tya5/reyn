@@ -1,16 +1,14 @@
 """Tier 2: ConversationView.clear() empties _recent_replies (G-F3).
 
-Wave-10 Topic G finding F3 (P2): ``clear()`` reset
-``_turn_anchors``, ``_last_long_reply``, header-grouping state, etc.
-but never touched ``_recent_replies``. After Ctrl+L, ``/copy`` /
-``/copy N`` returned agent replies from the now-invisible prior
-session — confusing the user (= "where did this content come
-from?") and potentially surfacing content they had intentionally
-cleared.
+Wave-10 Topic G finding F3 (P2): ``clear()`` reset ``_turn_anchors``,
+header-grouping state, etc. but never touched ``_recent_replies``.
+After Ctrl+L, ``/copy`` / ``/copy N`` returned agent replies from the
+now-invisible prior session — confusing the user (= "where did this
+content come from?") and potentially surfacing content they had
+intentionally cleared.
 
-``clear()`` now also calls ``self._recent_replies.clear()``,
-matching the lifecycle of ``_last_long_reply`` directly above.
-The fresh-session state has zero replies in the buffer, so
+``clear()`` now also calls ``self._recent_replies.clear()``. The
+fresh-session state has zero replies in the buffer, so
 ``last_reply_text()`` returns ``None`` until a new agent reply is
 committed.
 
@@ -45,8 +43,8 @@ async def test_clear_empties_recent_replies_buffer() -> None:
         conv = app.query_one("#conversation", ConversationView)
 
         # Simulate two agent replies committed before clear.
-        conv._write_agent_markdown_with_fold("first reply text")
-        conv._write_agent_markdown_with_fold("second reply text")
+        conv._write_agent_markdown("first reply text")
+        conv._write_agent_markdown("second reply text")
         await pilot.pause()
 
         # Sanity: the buffer has both before clear.
@@ -78,11 +76,11 @@ async def test_new_reply_after_clear_starts_fresh_buffer() -> None:
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        conv._write_agent_markdown_with_fold("pre-clear reply")
+        conv._write_agent_markdown("pre-clear reply")
         await pilot.pause()
         conv.clear()
         await pilot.pause()
-        conv._write_agent_markdown_with_fold("post-clear fresh reply")
+        conv._write_agent_markdown("post-clear fresh reply")
         await pilot.pause()
         assert conv.recent_reply_count() == 1
         assert conv.last_reply_text() == "post-clear fresh reply"

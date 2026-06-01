@@ -137,9 +137,9 @@ def test_overflow_image_is_lossless_individual_ref(tmp_path: Path) -> None:
 
 
 def test_total_followup_bounded_for_huge_image_count(tmp_path: Path) -> None:
-    """Tier 2: Gap B (foldability pin) — a tool result with MANY images keeps the
+    """Tier 2: Gap B (retry-loop-safe pin) — a tool result with MANY images keeps the
     whole follow-up ≤ budget; the over-budget tail collapses into ONE preview, not
-    one ref per image, which is what makes the result turn retry_loop-foldable."""
+    one ref per image, which is what keeps the result turn bounded for retry loops."""
     store = _store(tmp_path)
     blocks = _path_blocks(store, 500)
     budget = 6 * _MEDIA_IMAGE_TOKEN_COST

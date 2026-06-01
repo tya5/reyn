@@ -1,7 +1,7 @@
 """Tier 2: end_stream_cancelled appends partial to _recent_replies (G-F10).
 
 Wave-10 Topic G finding F10 (P2): the normal ``end_stream`` path
-routed through ``_write_agent_markdown_with_fold`` which appends
+routed through ``_write_agent_markdown`` which appends
 the reply text to ``_recent_replies``. ``end_stream_cancelled``
 (= the Ctrl+C cancel path introduced by wave-9 F-F7) wrote the
 partial body directly to the log, BYPASSING ``_recent_replies``.
@@ -111,7 +111,7 @@ async def test_cancel_then_normal_reply_both_in_buffer_order() -> None:
         await pilot.pause()
 
         # Normal completed reply → buffer index 2.
-        conv._write_agent_markdown_with_fold("complete reply after cancel")
+        conv._write_agent_markdown("complete reply after cancel")
         await pilot.pause()
 
         assert conv.recent_reply_count() == 2

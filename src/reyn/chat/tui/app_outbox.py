@@ -242,7 +242,6 @@ class OutboxRouter:
             "__matrix__":               self._on_matrix,
             "__donut__":                self._on_donut,
             "__cost_inline_toggle__":   self._on_cost_inline_toggle,
-            "__expand_last_reply__":    self._on_expand_last_reply,
             "__copy_last_reply__":      self.on_copy_last_reply,
             "__find__":                 self._on_find,
             "__save__":                 self._on_save,
@@ -566,17 +565,6 @@ class OutboxRouter:
             prefs = load_tui_prefs(root)
             prefs["cost_inline"] = app._cost_inline_enabled
             save_tui_prefs(root, prefs)
-
-    def _on_expand_last_reply(
-        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
-    ) -> None:
-        """`__expand_last_reply__` — /expand slash; toggle latest foldable.
-
-        Semantics change: was one-way "reveal tail"; now toggles the latest
-        FoldableMarkdown widget (expand ↔ collapse). Repeated /expand cycles.
-        """
-        if not conv.toggle_last_foldable():
-            self._show_transient_status(conv, "nothing to expand", duration=2.0)
 
     def on_copy_last_reply(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,

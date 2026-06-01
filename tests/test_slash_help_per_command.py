@@ -76,10 +76,11 @@ def test_render_focus_without_usage_omits_usage_line() -> None:
     from reyn.chat.slash.help import _render_command_focus
 
     # /help itself does have usage now, so pick a no-usage command.
-    panel = _render_command_focus("expand")
-    assert "/expand" in panel
+    # (/expand was removed with the conversation-reply fold; use /skills.)
+    panel = _render_command_focus("skills")
+    assert "/skills" in panel
     assert "summary:" in panel
-    # No structured usage was set on /expand → no usage line.
+    # No structured usage was set on /skills → no usage line.
     assert "usage:" not in panel.lower() or "usage:" in panel.lower().split("\n")[0]
     # More precise: the "usage:" prefix line shouldn't appear.
     assert not any(line.lstrip().startswith("usage:") for line in panel.split("\n"))

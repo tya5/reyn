@@ -60,9 +60,9 @@ async def test_recent_replies_addressable_by_one_indexed_recency() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        conv._write_agent_markdown_with_fold("reply A")
-        conv._write_agent_markdown_with_fold("reply B")
-        conv._write_agent_markdown_with_fold("reply C")
+        conv._write_agent_markdown("reply A")
+        conv._write_agent_markdown("reply B")
+        conv._write_agent_markdown("reply C")
         await pilot.pause()
 
         assert conv.recent_reply_count() == 3
@@ -85,7 +85,7 @@ async def test_ring_caps_at_max_drops_oldest() -> None:
         conv = app.query_one("#conversation", ConversationView)
         # Push 5 more than the cap.
         for i in range(_RECENT_REPLIES_MAX + 5):
-            conv._write_agent_markdown_with_fold(f"reply {i}")
+            conv._write_agent_markdown(f"reply {i}")
         await pilot.pause()
 
         assert conv.recent_reply_count() == _RECENT_REPLIES_MAX
@@ -108,8 +108,8 @@ async def test_last_reply_text_returns_newest_for_back_compat() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        conv._write_agent_markdown_with_fold("first")
-        conv._write_agent_markdown_with_fold("second")
+        conv._write_agent_markdown("first")
+        conv._write_agent_markdown("second")
         await pilot.pause()
         assert conv.last_reply_text() == "second"
 

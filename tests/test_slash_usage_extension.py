@@ -19,7 +19,7 @@ Pinned:
     guard against revert.
 
 Hidden commands (matrix / donut / zen) and no-arg commands
-(/list / /tasks / /skills / /cost / /pending / /expand /
+(/list / /tasks / /skills / /cost / /pending /
 /quit / /exit / /cost-inline) intentionally do NOT get a
 usage line — they have no args to document. Pinned by spot
 checks to make sure no accidental opt-in slipped through.
@@ -105,7 +105,7 @@ def test_no_arg_commands_have_no_usage() -> None:
     from reyn.chat.slash import REGISTRY
 
     no_arg_commands = [
-        "list", "tasks", "skills", "cost", "expand",
+        "list", "tasks", "skills", "cost",
         "quit", "exit", "cost-inline",
     ]
     for name in no_arg_commands:
