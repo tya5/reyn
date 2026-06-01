@@ -732,8 +732,14 @@ class CompactionEngine:
         self._system_prompt_provider = system_prompt_provider
 
         # Axis 2: measure comp_SP token cost once at init.
+        # #1172 completion: use the RESOLVED self._model (not the raw class) so
+        # token-counting + budget derivation see the real litellm model. The
+        # static path (no system_prompt_provider) does NOT recompute_budgets(),
+        # so __init__ is the only chance to resolve — passing the raw class
+        # "standard" here made get_max_input_tokens() fall back to 128K and
+        # handicapped every phase compaction (offload fired far too early).
         self._T_comp_SP: int = estimate_tokens(
-            _COMPACTION_SYSTEM_PROMPT, model, use_chars4=self._use_chars4
+            _COMPACTION_SYSTEM_PROMPT, self._model, use_chars4=self._use_chars4
         )
 
         if system_prompt_provider is not None:
@@ -742,7 +748,7 @@ class CompactionEngine:
             # to the first recompute_budgets() call below.
             # Initialise with a placeholder so _budgets is always set.
             self._budgets: ComputedBudgets = compute_budgets(
-                self._cfg, model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
+                self._cfg, self._model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
             )
             # Run the first recompute immediately so the provider is consulted
             # at init time and assert_static_bounds fires fail-fast.
@@ -750,7 +756,7 @@ class CompactionEngine:
         else:
             # Static path: T_SP is fixed for the session lifetime.
             self._budgets = compute_budgets(
-                self._cfg, model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
+                self._cfg, self._model, T_SP=T_SP, T_comp_SP=self._T_comp_SP
             )
             assert_static_bounds(self._cfg, self._budgets)
 
