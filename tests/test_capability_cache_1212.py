@@ -102,9 +102,8 @@ def test_chokepoint_caches_success(monkeypatch) -> None:
     assert cc.response_format_supported("m2", has_tools=False) is True
 
 
-def test_chokepoint_no_fallback_leaves_cache_untouched(monkeypatch) -> None:
-    """Tier 2: with fallback disabled, the chokepoint neither consults nor records
-    the cache (exact raise-on-error semantics preserved for non-fallback callers)."""
+def test_chokepoint_no_fallback_rejection_leaves_cache_untouched(monkeypatch) -> None:
+    """Tier 2: fallback disabled + rf rejected → raises, cache untouched (semantics preserved)."""
     async def _fake(model, messages, **kw):  # noqa: ANN001, ANN003
         if "response_format" in kw:
             raise ValueError("rf unsupported")
@@ -122,3 +121,23 @@ def test_chokepoint_no_fallback_leaves_cache_untouched(monkeypatch) -> None:
     with pytest.raises(ValueError):
         asyncio.run(_call())
     assert cc.response_format_supported("m3", has_tools=False) is None
+
+
+def test_chokepoint_no_fallback_success_not_recorded(monkeypatch) -> None:
+    """Tier 2: fallback disabled + rf SUCCEEDS → still not recorded.
+
+    The invariant is "only the fallback-enabled path touches the cache". A
+    non-fallback caller whose response_format call succeeds must NOT write the
+    cache either (closes claim==content for the success path, not just rejection).
+    """
+    async def _fake(model, messages, **kw):  # noqa: ANN001, ANN003
+        return _Resp()
+
+    monkeypatch.setattr(litellm, "acompletion", _fake)
+
+    asyncio.run(recorded_acompletion(
+        model="m4", messages=[{"role": "user", "content": "x"}], purpose="judge",
+        recorder=None, response_format={"type": "json_object"},
+        fallback_without_response_format=False,
+    ))
+    assert cc.response_format_supported("m4", has_tools=False) is None

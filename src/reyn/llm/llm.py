@@ -789,7 +789,7 @@ async def recorded_acompletion(
 
     try:
         response = await _once(rf)
-        if rf is not None:
+        if rf is not None and fallback_without_response_format:
             record_response_format_support(effective_model, has_tools=has_tools, supported=True)
     except Exception:
         if rf is not None and fallback_without_response_format:
