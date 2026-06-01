@@ -34,7 +34,7 @@ a summary hand-off).
 
 | instance | reached verify→report? | tests_passed | patch | verdict failure-mode (all MODEL-AXIS, distinct) |
 |----------|:----------------------:|:------------:|-------|--------------------------------------------------|
-| astropy-13453 | ✅ | false | 5314 B | edit applied but introduced an `IndentationError` in `html.py` (bad edit). pytest ran in testbed. |
+| astropy-13453 | ✅ | false | 5065 B | edit applied but introduced an `IndentationError` in `html.py` (bad edit). pytest ran in testbed. |
 | astropy-13236 | ✅ | false | 0 B | all 6 `file op=edit` on `table.py` returned `status=error` (old_string no-match → file never written) → empty diff. OS reported each error faithfully; 13453 capture worked → not plumbing. base-commit checkout only in setup → not a revert. |
 | astropy-13398 | ✅ | false | 4415 B | real ITRS-transform fix attempt, but the model placed `from ...builtin_frames.itrs import ITRS` / `from ...earth import EarthLocation` at **module level** → circular `ImportError` at collection (11 edits ok / 3 error). |
 | astropy-13977 | ✅ | false | 960 B | real `quantity.py` fix; verify applied test_patch (`git apply` rc=0), **re-applied** it (rc=1 = already-applied), misread the idempotency failure as "patch failed", reverted, and **never ran pytest**. Apply mechanism proven sound (see rule-out). → enhancement #1206. |
