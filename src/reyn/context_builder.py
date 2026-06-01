@@ -45,6 +45,38 @@ MAX_OFFLOADED_INLINE_BYTES: int = 16_384  # 16KB absolute ceiling for offloaded 
 # as-is (they're small enough not to contribute meaningfully to bloat).
 _FIELD_KEEP_THRESHOLD: int = MAX_CONTROL_IR_RESULT_INLINE_BYTES
 
+# Window-derived inline cap (#1209). The fixed 8KB above is a FLOOR; the
+# effective per-result offload trigger scales with the model's input window so
+# that a normal file read (e.g. a 150KB source file under a 1M-token window)
+# stays INLINE instead of being offloaded out of the editing model's view. The
+# fixed 8KB was a root anomaly — same class as #1201/#1172 (fixed-constant →
+# window-derive). The per-RESULT cap is orthogonal to count-axis compaction,
+# which still trims the TOTAL across results.
+_INLINE_CAP_CHARS_PER_TOKEN: int = 4
+_INLINE_CAP_WINDOW_FRACTION: float = 0.08  # one result may inline up to ~8% of the window
+
+
+def control_ir_inline_cap(
+    model_resolved: str | None,
+    *,
+    events: Any = None,
+    phase: str | None = None,
+) -> int:
+    """Window-derived per-result inline cap in chars, floored at the fixed 8KB.
+
+    ``model_resolved`` MUST be a litellm model string (already class-resolved).
+    A raw model CLASS like ``"standard"`` mis-resolves to the fallback window
+    (the #1201/#1172 bug) — callers pass the resolved string. ``None`` (no model
+    context) falls back to the fixed floor.
+    """
+    if not model_resolved:
+        return MAX_CONTROL_IR_RESULT_INLINE_BYTES
+    from reyn.llm.model_budget import get_max_input_tokens
+
+    t_max = get_max_input_tokens(model_resolved, events=events, phase=phase)
+    derived = int(t_max * _INLINE_CAP_CHARS_PER_TOKEN * _INLINE_CAP_WINDOW_FRACTION)
+    return max(MAX_CONTROL_IR_RESULT_INLINE_BYTES, derived)
+
 
 def _preview_field(value: Any, ref_path: str) -> Any:
     """Return a bounded preview of *value* for the offloaded inline dict.
@@ -171,6 +203,7 @@ def offload_control_ir_result(
     *,
     events: Any = None,
     phase: str | None = None,
+    cap: int = MAX_CONTROL_IR_RESULT_INLINE_BYTES,
 ) -> dict:
     """Offload an oversized control_ir_result to a workspace scratch file.
 
@@ -194,7 +227,7 @@ def offload_control_ir_result(
     """
     serialized = json.dumps(result, ensure_ascii=False)
     size_chars = len(serialized)
-    if size_chars <= MAX_CONTROL_IR_RESULT_INLINE_BYTES:
+    if size_chars <= cap:
         return result
 
     offload_filename = f"{result_idx:04d}_{uuid.uuid4().hex[:8]}.json"
@@ -209,6 +242,11 @@ def offload_control_ir_result(
     inline: dict = offload_result.preview
     # Attach content_hash for verified read-back (new in Phase 1).
     inline["_offload_content_hash"] = offload_result.content_hash
+    # #1209 (2): explicit machine-readable truncation status as a SEPARATE field
+    # (the per-field previews already carry head+tail + total chars; this flags
+    # the result as truncated without the model having to parse the content).
+    inline["_offload_status"] = "truncated"
+    inline["_offload_total_chars"] = size_chars
     ref_path = offload_result.path_ref
     large_fields = _oversized_fields(result)
 
@@ -231,15 +269,19 @@ def maybe_offload_control_ir_results(
     *,
     events: Any = None,
     phase: str | None = None,
+    cap: int = MAX_CONTROL_IR_RESULT_INLINE_BYTES,
 ) -> list[dict]:
-    """Apply per-result offload to all control_ir_results that exceed the inline limit.
+    """Apply per-result offload to all control_ir_results that exceed *cap*.
 
     When *offload_dir* is None, results pass through unchanged (backward compat).
+    *cap* is the per-result inline trigger in chars — pass the window-derived
+    value from ``control_ir_inline_cap`` so large reads stay inline on big
+    windows (#1209); defaults to the fixed floor for callers without a model.
     """
     if offload_dir is None:
         return control_ir_results
     return [
-        offload_control_ir_result(r, i, offload_dir, events=events, phase=phase)
+        offload_control_ir_result(r, i, offload_dir, events=events, phase=phase, cap=cap)
         for i, r in enumerate(control_ir_results)
     ]
 
@@ -321,11 +363,17 @@ def build_frame(
     # a ref path so the LLM can file.read the full content when needed.
     # Orthogonal-complementary to count-axis compaction (PR-N5 / PR-N8).
     raw_results = list(control_ir_results or [])
+    # #1209: window-derive the per-result inline cap from the resolved model so
+    # a normal file read stays inline instead of being offloaded out of the
+    # editing model's view (fixed 8KB was a root anomaly). model_resolved is the
+    # already-resolved litellm string here (build_frame's caller resolved it).
+    inline_cap = control_ir_inline_cap(model_resolved, events=events, phase=phase_name)
     offloaded_results = maybe_offload_control_ir_results(
         raw_results,
         offload_dir,
         events=events,
         phase=phase_name,
+        cap=inline_cap,
     )
 
     frame = ContextFrame(
