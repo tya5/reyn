@@ -152,7 +152,11 @@ def test_swe_bench_graph_transitions():
     assert sorted(t.get("apply", [])) == ["plan", "verify"], (
         f"apply transitions: {t.get('apply')}"
     )
-    assert sorted(t.get("verify", [])) == ["apply", "report"], (
+    # verify → report only: report is the sole satisfiable transition (it
+    # accepts verify_state). The former verify → apply edge required a `plan`
+    # artifact (edits/rationale) that verify cannot emit (un-satisfiable); the
+    # re-plan loop is a tracked enhancement, not yet wired.
+    assert sorted(t.get("verify", [])) == ["report"], (
         f"verify transitions: {t.get('verify')}"
     )
     assert t.get("report", []) == [], f"report transitions: {t.get('report')}"

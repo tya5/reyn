@@ -190,25 +190,40 @@ def test_apply_md_convergence_guard_has_action():
 
 
 # ---------------------------------------------------------------------------
-# Test 6: verify.md convergence guard has transition-back-to-apply as action
+# Test 6: verify.md convergence guard records a best-effort verdict as the action
 # ---------------------------------------------------------------------------
 
-def test_verify_md_convergence_guard_has_apply_transition_action():
-    """Tier 2: verify.md convergence guard must specify transitioning back to apply.
+def test_verify_md_convergence_guard_records_verdict_action():
+    """Tier 2: verify.md convergence guard must prescribe recording the verdict.
 
-    In the observed failure pattern (14182), the correct action when git apply
-    keeps failing is to go back to the apply phase to re-examine the fix.
-    The guard must explicitly prescribe this transition so the LLM exits the
-    verify dead-end loop productively rather than aborting.
+    In the observed failure pattern (14182) the LLM looped on a failing git
+    apply.  The guard must give a concrete escape action so the LLM exits the
+    dead-end loop productively rather than aborting.  The action is to RECORD
+    the best-effort outcome (`tests_passed = false` + the git apply error in
+    `failure_summary`) — NOT to prescribe a phase transition: verify must not
+    hardcode a next phase (P1/P8), and the only satisfiable verify transition
+    is to report (which the OS offers as the sole candidate). The former
+    "transition back to apply" guidance named an un-satisfiable edge (apply
+    requires a `plan` artifact verify cannot emit).
     """
     text = _read_phase(_VERIFY_MD)
     start = text.find(_CONVERGENCE_HEADER)
     assert start != -1
-    guard_section = text[start:]
+    guard_section = text[start:].lower()
 
-    # The guard section must mention transitioning back to apply.
-    assert "apply" in guard_section.lower(), (
-        "verify.md Convergence guard must mention transitioning back to 'apply' "
-        "as the action when git apply fails repeatedly.  Without this, the LLM "
-        "will abort instead of returning to the apply phase for re-examination."
+    # The guard must give a concrete action: record the failure verdict.
+    assert "failure_summary" in guard_section and "tests_passed" in guard_section, (
+        "verify.md Convergence guard must prescribe recording the best-effort "
+        "verdict (tests_passed = false + failure_summary) as the escape action "
+        "when git apply fails repeatedly, so the LLM records the outcome and "
+        "proceeds rather than aborting."
     )
+    # And it must NOT hardcode a transition back to the apply *phase* (P1/P8).
+    # "git apply" / "attempting to apply the patch" are command references and
+    # are fine; the banned markers are the phase-transition phrasings.
+    for banned in ("back to apply", "transition back to", "transition to apply"):
+        assert banned not in guard_section, (
+            f"verify.md Convergence guard must not prescribe {banned!r} — the "
+            "verify→apply edge is un-satisfiable and hardcoding a next phase "
+            "violates P1/P8.  Record the verdict and let the OS offer candidates."
+        )
