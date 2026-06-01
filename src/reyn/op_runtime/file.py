@@ -129,6 +129,26 @@ def _nearby_files(ws, path: str, *, max_results: int = _NOT_FOUND_SUGGESTIONS_LI
         return []
 
 
+def _read_inline_cap(ctx: OpContext) -> int:
+    """Window-derived inline cap (chars) for an unbounded read (#1209).
+
+    Resolves ``ctx.model`` (a CLASS like ``"standard"``) to its litellm string
+    BEFORE deriving the window (resolve-before-window — the #1172-correct path;
+    a raw class mis-resolves to the fallback window), then reuses the shared
+    ``control_ir_inline_cap`` so read-bounding and offload use the same cap.
+    Falls back to the fixed floor when there is no resolver.
+    """
+    from reyn.context_builder import control_ir_inline_cap
+
+    model_str: str | None = None
+    if ctx.resolver is not None:
+        try:
+            model_str = ctx.resolver.resolve(ctx.model).model
+        except Exception:
+            model_str = None
+    return control_ir_inline_cap(model_str, events=ctx.events, phase=ctx.skill_name)
+
+
 async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     # Permission check (single point for both frontends). For
     # `regenerate_index` the file actually written is `output_path`, not
@@ -175,11 +195,54 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "suggestions": suggestions,
                 "content": "",
             }
-        if op.offset is not None or op.limit is not None:
+        explicit_bounded = op.offset is not None or op.limit is not None
+        if explicit_bounded:
+            # Caller asked for an explicit window — honor it verbatim.
             lines = content.splitlines(keepends=True)
             start = op.offset or 0
             sliced = lines[start:start + op.limit] if op.limit is not None else lines[start:]
             content = "".join(sliced)
+            ctx.events.emit("tool_executed", op="read_file", path=op.path)
+            return {
+                "kind": "file",
+                "op": "read",
+                "path": op.path,
+                "status": "ok",
+                "content": content,
+            }
+
+        # #1209 (1) read-bounding, bound-only-when-over: an UNBOUNDED read whose
+        # content exceeds the window-derived inline cap is truncated to a head
+        # window and flagged with a STRUCTURAL truncation signal in SEPARATE
+        # fields (not embedded in `content`). This keeps the content in the
+        # model's decide context instead of being offloaded out of view (the
+        # apply-starvation root cause, #1209); the model pages the rest via
+        # `next_offset`. Small reads are returned unchanged.
+        cap = _read_inline_cap(ctx)
+        if len(content) > cap:
+            all_lines = content.splitlines(keepends=True)
+            shown: list[str] = []
+            acc = 0
+            for line in all_lines:
+                if shown and acc + len(line) > cap:
+                    break
+                shown.append(line)
+                acc += len(line)
+            ctx.events.emit(
+                "tool_executed", op="read_file", path=op.path,
+                truncated=True, shown_lines=len(shown), total_lines=len(all_lines),
+            )
+            return {
+                "kind": "file",
+                "op": "read",
+                "path": op.path,
+                "status": "truncated",
+                "content": "".join(shown),
+                "shown_lines": len(shown),
+                "total_lines": len(all_lines),
+                "next_offset": len(shown),
+                "total_chars": len(content),
+            }
         ctx.events.emit("tool_executed", op="read_file", path=op.path)
         return {
             "kind": "file",
