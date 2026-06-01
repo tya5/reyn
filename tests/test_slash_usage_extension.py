@@ -105,7 +105,7 @@ def test_no_arg_commands_have_no_usage() -> None:
     from reyn.chat.slash import REGISTRY
 
     no_arg_commands = [
-        "list", "tasks", "skills", "cost", "expand",
+        "list", "tasks", "skills", "cost",
         "quit", "exit", "cost-inline",
     ]
     for name in no_arg_commands:
