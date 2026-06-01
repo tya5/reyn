@@ -110,7 +110,7 @@ The shortcuts you reach for daily:
 |-----|--------|
 | `Ctrl+D` | Quit the TUI (also `/quit`) |
 
-> Slash commands like `/copy`, `/expand`, `/cancel`, `/list`, `/skill`, `/plan`,
+> Slash commands like `/copy`, `/cancel`, `/list`, `/skill`, `/plan`,
 > `/agents`, `/attach`, `/tasks` are documented in the
 > [`reyn chat` reference](../../reference/cli/chat.md#slash-commands).
 
