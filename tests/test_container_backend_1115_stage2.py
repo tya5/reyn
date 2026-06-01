@@ -2,8 +2,9 @@
 
 The container backend implements BOTH EnvironmentBackend (repo FS) and
 SandboxBackend (exec), executing FS ops as in-container ``python3 -c`` so the
-container reproduces HostBackend's exact Python semantics. ``run()`` is a plain
-``docker exec`` — NO host-diff bridge.
+container reproduces HostBackend's exact Python semantics. ``run()`` is a
+``docker exec`` into a login shell (so the image's env-activation is honored) —
+NO host-diff bridge.
 
 These tests use a real **local** runner Fake (not a mock): it strips the
 ``docker exec`` prefix and runs the SAME ``python3 -c <script> <args>`` on the
@@ -14,8 +15,9 @@ live Docker daemon.
 Pins:
   (a) the backend satisfies BOTH Protocols (EnvironmentBackend + SandboxBackend);
   (b) every FS op produces the SAME result as HostBackend (semantics parity);
-  (c) run() is a plain `docker exec -w <repo_dir> <container> <argv>` with NO
-      diff / reset / apply bridge steps;
+  (c) run() is a `docker exec -w <repo_dir> <container> bash -lc 'exec "$@"' …
+      <argv>` (login-shell, env-activation honored) with NO diff/reset/apply
+      bridge steps, and argv pass through as positional params (no injection);
   (d) FS args are passed via argv (path with shell-special chars round-trips).
 """
 from __future__ import annotations
@@ -136,8 +138,15 @@ def test_fs_arg_with_special_chars_roundtrips(tmp_path: Path) -> None:
     assert cont.read_bytes(weird) == b"ok"
 
 
-def test_run_is_plain_docker_exec_no_bridge(tmp_path: Path) -> None:
-    """Tier 2: (c) run() = plain `docker exec -w repo_dir container argv`, no bridge."""
+def test_run_is_login_shell_docker_exec_no_bridge(tmp_path: Path) -> None:
+    """Tier 2: (c) run() = `docker exec -w repo_dir container` into a LOGIN shell
+    (`bash -lc 'exec "$@"' …`) so the image's env-activation is honored, no bridge.
+
+    A plain `docker exec <argv>` uses the base PATH only and misses login-shell
+    tooling (e.g. a SWE-bench image's `conda activate`-d pytest). The argv are
+    passed as positional params after the script — NOT spliced into the script
+    text — so there is no shell-injection / quoting surface.
+    """
     calls: list[list[str]] = []
 
     async def _record_runner(argv, *, stdin=None, timeout=None) -> SandboxResult:
@@ -154,7 +163,40 @@ def test_run_is_plain_docker_exec_no_bridge(tmp_path: Path) -> None:
     assert res.returncode == 0 and res.stdout == b"out"
     # exactly one exec call — no host-diff / reset / clean / apply steps
     [argv] = calls
-    assert argv == ["docker", "exec", "-w", "/testbed", "testc", "pytest", "-x"]
+    assert argv == [
+        "docker", "exec", "-w", "/testbed", "testc",
+        "bash", "-lc", 'exec "$@"', "reyn-exec", "pytest", "-x",
+    ]
     joined = " ".join(a for c in calls for a in c)
     for bridge_token in ("diff", "reset", "clean", "apply"):
         assert bridge_token not in joined, f"bridge step {bridge_token!r} must be absent"
+
+
+def test_run_argv_passed_as_positional_params_not_interpolated(tmp_path: Path) -> None:
+    """Tier 2: (b/argv-safe) shell-special chars in argv survive verbatim — the
+    login-shell wrapper forwards them as positional params, never interpolated.
+
+    The exact argv (including a token with `$`, `;`, spaces, quotes) must appear
+    as trailing list elements after the fixed `bash -lc 'exec "$@"' reyn-exec`
+    prefix, proving no quoting/injection seam was opened by the login-shell wrap.
+    """
+    calls: list[list[str]] = []
+
+    async def _record_runner(argv, *, stdin=None, timeout=None) -> SandboxResult:
+        calls.append(argv)
+        return SandboxResult(returncode=0, stdout=b"", stderr=b"")
+
+    import asyncio
+
+    be = DockerEnvironmentBackend(
+        container="testc", repo_dir="/testbed", runner=_record_runner,
+    )
+    hostile = ["python", "-c", "print('a; rm -rf $HOME')", "x y", '"q"']
+    asyncio.run(be.run(hostile, SandboxPolicy(timeout_seconds=30)))
+
+    [argv] = calls
+    prefix = ["docker", "exec", "-w", "/testbed", "testc",
+              "bash", "-lc", 'exec "$@"', "reyn-exec"]
+    assert argv[: len(prefix)] == prefix
+    # argv survives byte-for-byte as positional params (no escaping mutation)
+    assert argv[len(prefix):] == hostile
