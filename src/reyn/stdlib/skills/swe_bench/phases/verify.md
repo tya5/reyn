@@ -115,10 +115,10 @@ tolerates off-by-N context line counts, and `--whitespace=fix`
 forgives trailing-space drift.
 
 If `git apply` STILL fails after preprocessor sanitization + robust
-flags, record the failure in `failure_summary` (= include the exact
-stderr from git apply, NOT a vague "patch failed" summary) and treat
-this as a verify execution failure (not a test failure) — transition
-back to apply so the patch can be re-examined.
+flags, treat this as a verify execution failure (not a test failure):
+set `tests_passed = false` and record the failure in `failure_summary`
+(= include the exact stderr from git apply, NOT a vague "patch failed"
+summary). The tests could not be evaluated, so this is not a pass.
 
 **Do NOT skip the test_patch** — an unapplied test patch means tests
 can't be evaluated; that's NOT a pass. The schema invariant
@@ -168,37 +168,37 @@ the test files applied when it produces the final diff.
 
 ## Step 4 — Evaluate the outcome
 
-Inspect the test runner's exit code and output:
+Inspect the test runner's exit code and output and record the verdict:
 
-- Exit code 0, all tests collected and passed → `tests_passed = true` → transition to report
-- Non-zero exit code, test failures reported → `tests_passed = false` → transition back to plan
-  (the plan phase will revise the fix based on `failure_summary`)
+- Exit code 0, all tests collected and passed → `tests_passed = true`,
+  `failure_summary = ""`.
+- Non-zero exit code, test failures reported → `tests_passed = false`, and
+  record a concise `failure_summary`: which test names failed, the assertion
+  error messages, and any relevant tracebacks.
 
-Record a concise `failure_summary` when tests fail: which test names failed,
-the assertion error messages, and any relevant tracebacks.  This summary is
-the primary input for the next plan phase.
+Whether the tests passed or failed, the verdict is captured in `tests_passed`
++ `failure_summary` — the downstream phase consumes that outcome. The skill
+always carries the best-effort patch forward, even when the tests did not pass
+(matching SWE-bench harness expectations).
 
 ## Retry limit
 
 If `attempt` has reached the maximum allowed (3 by default), set
-`tests_passed = false` and transition to report anyway — the skill reports the
-best-effort patch even when tests did not pass, matching SWE-bench harness
+`tests_passed = false` and record the best-effort outcome — the skill reports
+the patch even when the tests did not pass, matching SWE-bench harness
 expectations.
 
 ## Convergence guard — MANDATORY
 
 If `git apply` (or `git apply --check`) has failed **3 or more consecutive
 times** with the same error (same `returncode`, same `stderr` substring), STOP
-attempting to apply the patch.  Do ONE of:
-
-- If the error is "No valid patches in input" or a similar content-empty
-  error: the patch you wrote is invalid.  Transition back to **apply** so the
-  fix can be re-examined.
-- If the error is a context-line conflict: the repository state differs from
-  what the patch expects.  Transition back to **apply** with the failure
-  summary.
+attempting to apply the patch.  In either of these cases — "No valid patches
+in input" (the patch you wrote is invalid) or a context-line conflict (the
+repository state differs from what the patch expects) — set
+`tests_passed = false` and record the exact `git apply` error in
+`failure_summary`.
 
 Do NOT write a new version of the same patch and retry `git apply` in a loop.
 Each identical write+apply pair consumes 2 turns with zero forward progress.
-After 3 consecutive failures, treating the error as structural and transitioning
-is always more productive than additional retries.
+After 3 consecutive failures, treating the error as structural and recording
+the best-effort outcome is always more productive than additional retries.

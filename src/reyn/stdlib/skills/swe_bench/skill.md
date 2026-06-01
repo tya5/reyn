@@ -20,7 +20,7 @@ graph:
   explore: [plan]
   plan:    [apply]
   apply:   [verify, plan]
-  verify:  [report, apply]
+  verify:  [report]
   report:  []
 routing:
   intents: [task]
@@ -78,11 +78,12 @@ are existing OS ops — no OS changes required (P7 compliant).
 
 ```
 setup → explore → plan → apply → verify → report
-                              ↑        ↓
-                              └─ plan ←┘  (tests fail → back to plan)
-                                     ↑
-                              apply ←─┘  (verify execution failed → back to apply)
 ```
+
+`verify` always proceeds to `report`, carrying the verdict (`tests_passed` +
+`failure_summary`); `report` produces the best-effort patch whether the tests
+passed or failed. A test-failure re-plan loop (verify → plan to revise the fix)
+is a tracked enhancement, not yet wired into the graph.
 
 | Phase   | Role        | Responsibility |
 |---------|-------------|----------------|
@@ -90,7 +91,7 @@ setup → explore → plan → apply → verify → report
 | explore | analyst     | Grep and read to find relevant code; save exploration notes |
 | plan    | architect   | Decide which files to edit and what to change |
 | apply   | implementer | Execute the plan via file edits |
-| verify  | tester      | Run test_patch tests; transition to report on pass, back to apply on fail |
+| verify  | tester      | Run test_patch tests; record the `tests_passed` verdict, then report |
 | report  | reporter    | Run `git diff HEAD` to produce the final patch |
 
 ## Input
