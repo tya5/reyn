@@ -24,9 +24,12 @@ from typing import Any
 def escape_anchors(data: Mapping[str, Any]) -> list[dict]:
     """Return ``data['edits']`` with a regex-escaped ``anchor_re`` per edit.
 
-    Edits without an ``anchor`` get an empty ``anchor_re`` (the iterate grep
-    then yields zero matches → the apply instructions treat it as not-locatable
-    and report rather than blind-edit). Non-dict entries are skipped.
+    Edits without an ``anchor`` get the never-match sentinel ``(?!)`` (NOT an
+    empty string: an empty regex matches every line via ``re.search("", line)``,
+    which would wrongly land in the multi-match path — see #1214 review). The
+    sentinel makes the iterate grep yield zero matches → the apply instructions
+    treat it as not-locatable and report rather than blind-edit. Non-dict entries
+    are skipped.
 
     The python step receives the FULL artifact: the edit plan lives at
     ``data["data"]["edits"]`` (inner dict), with a flat ``data["edits"]``
@@ -41,5 +44,7 @@ def escape_anchors(data: Mapping[str, Any]) -> list[dict]:
         if not isinstance(edit, dict):
             continue
         anchor = edit.get("anchor") or ""
-        out.append({**edit, "anchor_re": re.escape(anchor) if anchor else ""})
+        # Empty/missing anchor → never-match sentinel (NOT "" which matches every
+        # line). `(?!)` is a valid regex that never matches → grep count 0.
+        out.append({**edit, "anchor_re": re.escape(anchor) if anchor else "(?!)"})
     return out

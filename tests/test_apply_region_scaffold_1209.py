@@ -51,8 +51,14 @@ def test_escape_anchors_adds_regex_escaped_field() -> None:
     assert re.compile(out[0]["anchor_re"]).search(f"prefix {anchor} suffix")
 
 
-def test_escape_anchors_empty_anchor_is_empty_re() -> None:
-    """Tier 2: a missing/empty anchor → empty anchor_re (grep yields no match → not-locatable)."""
+def test_escape_anchors_empty_anchor_is_never_match_sentinel() -> None:
+    """Tier 2: a missing/empty anchor → the never-match sentinel `(?!)`, NOT "".
+
+    An empty regex matches every line (`re.search("", line)` → pos 0), which would
+    wrongly land in the multi-match path; the sentinel yields zero matches so the
+    edit is treated as not-locatable (#1214 review).
+    """
+    import re
     import sys
 
     sys.path.insert(0, str(SWE_BENCH_DIR))
@@ -61,7 +67,10 @@ def test_escape_anchors_empty_anchor_is_empty_re() -> None:
     finally:
         sys.path.pop(0)
     out = escape_anchors({"edits": [{"file": "a.py", "description": "d", "anchor": ""}]})
-    assert out[0]["anchor_re"] == ""
+    sentinel = out[0]["anchor_re"]
+    assert sentinel != ""
+    # the sentinel compiles and matches NOTHING (so grep returns count 0)
+    assert re.search(sentinel, "any code line at all") is None
 
 
 # ── apply preprocessor: deterministic edit-region scaffolding ───────────────
@@ -130,6 +139,20 @@ def test_apply_preprocessor_anchor_not_found_is_graceful(tmp_path: Path) -> None
         [{"file": "pkg/mod.py", "description": "x", "anchor": "NONEXISTENT-ANCHOR-QQQ"}],
     )
     assert data["_edit_regions"][0]["count"] == 0  # one entry per edit (empty → IndexError)
+
+
+def test_apply_preprocessor_empty_anchor_is_not_locatable(tmp_path: Path) -> None:
+    """Tier 2: an empty anchor → count 0 (NOT match-all), so the edit is not-locatable.
+
+    Guards the #1214 review finding: an empty regex would match every line and
+    wrongly look like a multi-match; the never-match sentinel keeps count at 0.
+    """
+    data = _run_apply_preprocessor(
+        tmp_path,
+        _big_body("    real_line = 1  # ACTUAL"),
+        [{"file": "pkg/mod.py", "description": "x", "anchor": ""}],
+    )
+    assert data["_edit_regions"][0]["count"] == 0
 
 
 def test_apply_preprocessor_multi_match_surfaces_count(tmp_path: Path) -> None:
