@@ -129,7 +129,7 @@ reyn eval benchmark swe_bench \
 | 8 | ~4–6 hours  | ~$150–200 |
 | 16 | ~2–3 hours | ~$150–200 (same total; concurrency trades time for parallelism) |
 
-Cost per instance is dominated by the explore + apply + verify loop (~$0.30–0.50 per instance). Problems that require multiple verify/apply cycles cost more.
+Cost per instance is dominated by the explore + apply + verify flow (~$0.30–0.50 per instance). Problems that require re-planning — the model loops from apply back to plan before re-applying — cost more; verify routes only to report and does not add extra iterations.
 
 ## Connecting to the SWE-bench harness
 
