@@ -2,7 +2,7 @@
 
 Composition (top → bottom):
   - RichLog (1fr) — the main append-only log of user/agent messages
-  - Per-stream / inline widgets mounted as children: StreamingRow, ErrorBox,
+  - Per-stream / inline widgets mounted as children: StreamingRow,
     SkillActivityRow, InterventionWidget — all height:auto so they stack
     naturally below the log as it streams.
   - StickyStatus (dock: bottom, h:1) — pins at the very bottom; replaces
@@ -13,7 +13,8 @@ Message-kind routing:
                 consecutive turns are within _GROUP_WINDOW_S) followed
                 by full inline Markdown (Claude-Code-style, no collapse).
   status      → routed to StickyStatus (sticky 1-line, never logged).
-  error       → mounted as an ErrorBox widget (collapsible 1-line).
+  error       → inline Rich Text written into the conv RichLog (ephemeral,
+                scroll-away). Severity color applied inline.
   intervention→ InterventionWidget (mount_intervention).
   trace       → suppressed in the conv pane; the App's outbox loop drives
                 a SkillActivityRow instead. Right panel events tab still
@@ -58,14 +59,17 @@ from reyn.chat.tui._palette import (
     _AMBER,
     _CORAL,
     _EVENT_INTERVENTION,
+    _HINT_ACTION,
     _RED_MUTED,
+    _SEV_HIGH,
+    _SEV_MED,
     _TEXT_DIM,
+    _TEXT_MID,
     _TEXT_MUTED,
     _TEXT_NEUTRAL,
 )
 
 from .async_stack_panel import AsyncStackPanel
-from .error_box import ErrorBox
 from .inline_thinking_row import InlineThinkingRow
 from .intervention import InterventionWidget
 from .skill_activity import SkillActivityRow
@@ -111,12 +115,6 @@ _RICHLOG_MAX_LINES = 20_000
 # within a single event-loop tick, leaving no perceptual cue. 0.3s
 # matches typical perceptual threshold (= "I saw something happen").
 _TOOL_CALL_MIN_DISPLAY_S = 0.3
-# Cap on simultaneously-mounted ErrorBox widgets. Past this, the oldest
-# rolls into a dim ``_write_log`` breadcrumb (= same shape as the F2
-# Esc-dismissed breadcrumb) so the footer area can't pile up under a
-# burst of failures (e.g. proxy down + multiple retries).
-_MAX_VISIBLE_ERROR_BOXES = 3
-
 
 def _pad_to_cells(s: str, target_cells: int) -> str:
     """Right-pad ``s`` with spaces so its terminal column width >= target.
@@ -325,7 +323,8 @@ class ConversationView(Widget):
       - `show_status(text, kind)` / `hide_status()` → drive StickyStatus.
 
     Errors:
-      - `mount_error(message, details, ...)` → ErrorBox widget.
+      - `write_error(message, details, ...)` → inline Rich Text in the log
+        (ephemeral, scrolls away naturally like any other log content).
     """
 
     DEFAULT_CSS = """
@@ -448,14 +447,6 @@ class ConversationView(Widget):
         # Current row count shown in the ``↓ N new`` strip (0 = hidden).
         # Exposed read-only via the ``new_below_count`` property.
         self._new_below_count: int = 0
-        # Issue 5 — track mounted ErrorBoxes for Escape-to-dismiss
-        self._error_boxes: list[ErrorBox] = []
-        # Cursor into ``_error_boxes`` for the F5 / F6 jump-to-error
-        # navigation. ``-1`` means "no cursor yet" (= first jump
-        # targets the newest error). Invalidated whenever a dismiss
-        # or auto-eviction mutates ``_error_boxes`` so the next jump
-        # re-seeds from the (now-different) newest error.
-        self._error_jump_cursor: int = -1
         # F9 timestamp toggle — default on. Loaded from tui_prefs.json in
         # on_mount; callers use toggle_timestamps() / show_timestamps property.
         # New messages rendered after a toggle use the new indent; past
@@ -714,16 +705,6 @@ class ConversationView(Widget):
         rather than accessing ``_tool_call_rows`` directly.
         """
         return frozenset(self._tool_call_rows)
-
-    def error_box_count(self) -> int:
-        """Number of currently-mounted (undismissed) ErrorBox widgets.
-
-        Tests should use this rather than accessing ``_error_boxes`` directly.
-        Zero means no live error boxes; ``> 0`` means at least one is
-        mounted and visible. See also ``has_error_boxes()`` for the boolean
-        form.
-        """
-        return len(self._error_boxes)
 
     def richlog_start_line(self, log: "RichLog") -> int:
         """Public wrapper around ``_richlog_start_line`` for test access.
@@ -1104,7 +1085,7 @@ class ConversationView(Widget):
           agent      → header + Markdown inline (with B3 fold for >30 lines)
           system     → header + plain-text inline (persistent slash output)
           intervention/trace/status/skill_done → suppressed (handled elsewhere)
-          error      → ErrorBox widget
+          error      → inline Rich Text written into the RichLog
           others     → plain Rich Text line
         """
         if msg.kind == "intervention":
@@ -1153,7 +1134,7 @@ class ConversationView(Widget):
                     val = msg.meta.get(key)
                     if val:
                         context_lines.append(f"{key}={val}")
-            self.mount_error(
+            self.write_error(
                 message=msg.text,
                 details=details,
                 run_id_short=run_id_short,
@@ -1878,9 +1859,9 @@ class ConversationView(Widget):
         except Exception:
             pass  # not mounted — idempotent
 
-    # ── error box (A2) ────────────────────────────────────────────────────────
+    # ── inline error rendering ────────────────────────────────────────────────
 
-    def mount_error(
+    def write_error(
         self,
         *,
         message: str,
@@ -1889,297 +1870,102 @@ class ConversationView(Widget):
         skill_name: str = "",
         context_lines: list[str] | None = None,
         meta: dict | None = None,
-    ) -> ErrorBox:
-        self._consume_empty_hint()
-        # F5: cap the live stack. When more than _MAX_VISIBLE_ERROR_BOXES
-        # mounted boxes pile up under the conv pane, the oldest get
-        # "rolled" into a dim breadcrumb in the RichLog and removed from
-        # the DOM. This matches the F2 pattern for ESC-dismissed
-        # ErrorBoxes (same summary + has_trace gating, same dim style)
-        # so the conv log carries a coherent "✗ … (state)" record
-        # regardless of whether the box was dismissed by user or
-        # auto-evicted by stack pressure.
+    ) -> None:
+        """Render an error as inline Rich Text into the conv RichLog.
+
+        Errors flow as plain log lines — ephemeral, scroll-away (= Claude
+        Code style).  Severity colour is applied inline.  No widget is
+        mounted; no dismiss mechanic is needed.
+
+        Lines written:
+          1. ``✗ [prefix]: <first-line>``  in the severity colour.
+          2. ``  • <inline-hint>`` in _HINT_ACTION  (when present).
+          3. Detail lines (first 5 + ``… N more``) dim, OR context_lines.
+          4. ``Ctrl+B → events for full trace`` dim  (when has_trace).
+          5. A blank separator line.
+        """
+        from rich.markup import escape as _markup_escape
         from rich.text import Text as _RichText
-        while len(self._error_boxes) >= _MAX_VISIBLE_ERROR_BOXES:
-            # Auto-eviction shifts every remaining error's index down
-            # by 1; the jump cursor would silently point at the wrong
-            # box. Reset to -1 so the next F5 / F6 re-seeds from the
-            # post-eviction newest error.
-            self._error_jump_cursor = -1
-            oldest = self._error_boxes.pop(0)
-            old_first, _sep, _rest = (
-                getattr(oldest, "_message", "") or ""
-            ).partition("\n")
-            if len(old_first) > 72:
-                old_summary = old_first[:71] + "…"
-            else:
-                old_summary = old_first
-            old_has_trace = bool(
-                getattr(oldest, "_skill_name", "")
-                or getattr(oldest, "_run_id_short", "")
-            )
-            try:
-                oldest.remove()
-            except Exception:
-                pass
-            old_trailer = " (see events)" if old_has_trace else ""
-            self._write_log(_RichText(
-                f"  ✗ {old_summary} (rolled to log){old_trailer}",
-                style="dim " + _TEXT_DIM,
-            ))
-        # Stop the inline thinking spinner — the turn is over (it failed).
-        # When the user is at the tail, a bare ``stop_thinking`` + ``hide_status``
-        # is enough (they'll see the ErrorBox the next render tick). When
-        # they're scrolled up reading history, the spinner vanishing was their
-        # only feedback that something happened — leave a "✗ error below ↓"
-        # cue so they know to scroll down. The next user submit clears it
-        # via ``on_input_bar_user_submitted``'s own ``start_thinking()``.
-        self.stop_thinking()  # turn ended in error — unmount inline spinner
+
+        self._consume_empty_hint()
+        self.stop_thinking()  # turn ended in error
+
+        # Scrolled-up cue — show "error below" when user is reading history.
         if self._user_scrolled:
             self.show_status("✗ error below ↓", kind="general")
         else:
             self.hide_status()
-        # W13 A#3: classify severity so ErrorBox can apply a per-tier
-        # border-left color.  Default meta={} keeps the classifier stable
-        # for callers that don't pass meta.
+
+        # Severity → colour.
         severity = _classify_error_severity(message, meta or {})
-        box = ErrorBox(
-            message=message,
-            details=details,
-            run_id_short=run_id_short,
-            skill_name=skill_name,
-            context_lines=context_lines,
-            severity=severity,
-        )
-        self.mount(box)
-        self._error_boxes.append(box)
-        # Wave-11 B#6 — renumber the stack so every mounted box shows
-        # ``[N/M]`` for its current position. Cheap (≤ ``_MAX_VISIBLE
-        # _ERROR_BOXES`` rows = small loop), idempotent via
-        # ``set_index_total``'s equality gate.
-        self._renumber_error_boxes()
-        # C-F4 (wave-8): once ≥ 2 error boxes are stacked, surface the
-        # count via the sticky so the user can see at a glance that
-        # one Esc per box is the dismiss path. Single-error case keeps
-        # the existing ``"✗ error below ↓"`` cue (= no count noise for
-        # the common path).
-        self._maybe_show_error_count_status()
-        # Same scroll-respect rule as ``mount_intervention``: when the
-        # user has scrolled up to read prior context, an async error
-        # arriving must not yank the view to the bottom; the error box
-        # carries its own non-color cue (left-bar) and the user can
-        # discover it on their next scroll-down without being interrupted.
-        if not self._user_scrolled:
-            try:
-                box.scroll_visible()
-            except Exception:
-                pass
-        return box
-
-    def _renumber_error_boxes(self) -> None:
-        """Push current ``[i, total]`` to every mounted ErrorBox.
-
-        Wave-11 B#6 — called after every mutation to ``_error_boxes``
-        (= new mount, dismiss, auto-eviction) so the per-box
-        ``[N/M]`` header badge stays accurate. ``ErrorBox.set_index_total``
-        is equality-gated (no DOM round-trip when values are
-        unchanged), so re-numbering an unchanged stack is cheap.
-        Index is 1-based for human readability.
-        """
-        total = len(self._error_boxes)
-        for i, box in enumerate(self._error_boxes):
-            try:
-                box.set_index_total(i + 1, total)
-            except Exception:
-                # Box mid-teardown / DOM teardown — best-effort.
-                pass
-
-    def has_error_boxes(self) -> bool:
-        """Return True if any undismissed ErrorBox remains."""
-        return bool(self._error_boxes)
-
-    def jump_to_error(self, direction: int) -> bool:
-        """Scroll the conv pane to the next / previous mounted ErrorBox.
-
-        ``direction``: ``+1`` for newer (forward through the list),
-        ``-1`` for older (backward). The list ordering is chronological
-        (= newest at end), so "forward" walks toward the most recent
-        error.
-
-        First call (= cursor unset) targets the NEWEST error (=
-        ``_error_boxes[-1]``) regardless of direction — that's almost
-        always the one the user wants to investigate first. Subsequent
-        calls cycle with wrap.
-
-        Returns True when a jump happened, False when no errors are
-        mounted. The caller surfaces a status hint in the False case;
-        the cursor advance + scroll happen inside this method.
-        """
-        if not self._error_boxes:
-            return False
-        if self._error_jump_cursor < 0 or self._error_jump_cursor >= len(self._error_boxes):
-            self._error_jump_cursor = len(self._error_boxes) - 1
+        if severity == "high":
+            sev_color = _SEV_HIGH
+        elif severity == "med":
+            sev_color = _SEV_MED
         else:
-            self._error_jump_cursor = (
-                self._error_jump_cursor + direction
-            ) % len(self._error_boxes)
-        target = self._error_boxes[self._error_jump_cursor]
-        try:
-            target.scroll_visible()
-        except Exception:
-            pass
-        # Suppress auto-scroll so the next outbox tick doesn't yank
-        # the view back to the tail.
-        self._user_scrolled = True
-        return True
+            sev_color = _TEXT_MUTED  # low
 
-    def error_jump_cursor(self) -> int:
-        """Public read of the current error-jump cursor index (= test hook).
-
-        Returns -1 when the cursor is unset (= no jump fired yet) or
-        when the last dismissal invalidated it. Otherwise the
-        0-based index into ``_error_boxes`` of the last jump target.
-        """
-        return self._error_jump_cursor
-
-    def dismiss_last_error(self) -> None:
-        """Remove the most recently mounted ErrorBox + leave a breadcrumb.
-
-        UX wave F2: previously Esc removed the ErrorBox entirely with no
-        trace — scrolling up later showed only the user's unanswered
-        message and the failure context was gone. Now we write a dim
-        one-line breadcrumb to the conv log so the dismissed failure
-        stays visible in scroll history. ``(see events)`` is appended
-        only when the error originated from a skill / run (= the same
-        ``has_trace`` gate the ErrorBox's own ``.eb-hint`` label uses).
-
-        Wave-10 follow-up I-F3: previously this used a ``while`` loop
-        that would ``continue`` past boxes whose ``remove()`` raised
-        — silently swallowing the breadcrumb for the actual "most
-        recently mounted" box AND falling through to write a
-        breadcrumb for the NEXT-most-recent one instead. The docstring
-        promised "the most recently mounted" singular; the
-        implementation was "the most recently mounted that can be
-        removed without raising", with the breadcrumb pointing at the
-        wrong box on remove failure.
-
-        Restructured to a single iteration: pop the most recent box,
-        write its breadcrumb FIRST (= the load-bearing record per the
-        F2 intent), then best-effort ``remove()``. Removal failure no
-        longer affects the breadcrumb path.
-        """
-        if not self._error_boxes:
-            return
-        # Reset the jump cursor — the list just changed shape; the next
-        # F5 / F6 should re-seed from the (now newest-remaining) error
-        # rather than land on a stale index.
-        self._error_jump_cursor = -1
-        box = self._error_boxes.pop()
-        first_line, _sep, _rest = (getattr(box, "_message", "") or "").partition("\n")
-        if len(first_line) > 72:
-            summary = first_line[:71] + "…"
+        # Build prefix: [skill#run_id] / [skill] / [#run_id] / "".
+        if skill_name and run_id_short:
+            prefix = f"[{skill_name}#{run_id_short}]"
+        elif skill_name:
+            prefix = f"[{skill_name}]"
+        elif run_id_short:
+            prefix = f"[#{run_id_short}]"
         else:
-            summary = first_line
-        has_trace = bool(
-            getattr(box, "_skill_name", "") or getattr(box, "_run_id_short", "")
-        )
-        trailer = " (see events)" if has_trace else ""
-        from rich.text import Text as _RichText
-        # Write the breadcrumb FIRST so it lands regardless of whether
-        # the subsequent remove() succeeds. The F2 intent is "scroll
-        # history retains the failure context"; the DOM remove is
-        # secondary cleanup.
-        self._write_log(_RichText(
-            f"  ✗ {summary} (dismissed){trailer}",
-            style="dim " + _TEXT_DIM,
-        ))
-        try:
-            box.remove()
-        except Exception:
-            # Already removed / DOM teardown in progress / etc. The
-            # breadcrumb is in the log; that's the user-visible
-            # contract.
-            pass
-        # Wave-11 B#6 — renumber surviving boxes so the badge stays
-        # accurate after a dismiss. ``[2/3]`` after removing the
-        # newest becomes ``[2/2]`` for the remaining tail entry.
-        self._renumber_error_boxes()
-        # C[1] fix: keep session._error_box_count in sync.  Defensive:
-        # only decrement when the session exposes the attribute and the
-        # count is already > 0 (guard against going negative on
-        # double-dismiss or a session that initialises late).
-        try:
-            _session = self.app._get_session()  # type: ignore[attr-defined]
-            if getattr(_session, "_error_box_count", None) is not None:
-                if _session._error_box_count > 0:
-                    _session._error_box_count -= 1
-        except Exception:
-            pass
-        # C-F4 (wave-8): after dismiss the live count drops by 1.
-        # If still ≥ 2, refresh the count sticky to the new value;
-        # otherwise the count form is stale and we clear the
-        # sticky so it doesn't linger as "2 errors" when only 1
-        # (or 0) remains.
-        n = len(self._error_boxes)
-        if n >= 2:
-            self._maybe_show_error_count_status()
+            prefix = ""
+
+        # Extract trailing " • <hint>" from the first message line.
+        first_line, _sep, _rest = message.partition("\n")
+        if " • " in first_line:
+            detail_part, _bullet, hint_part = first_line.partition(" • ")
+            inline_hint = hint_part.strip()
+            first_line_for_header = detail_part
         else:
-            self.hide_status()
+            inline_hint = ""
+            first_line_for_header = first_line
 
-    def dismiss_all_errors(self) -> None:
-        """Remove ALL mounted ErrorBoxes in one keystroke + emit a summary breadcrumb.
-
-        Wave-13 B#1: when N ErrorBoxes are stacked, Esc required N
-        presses. Shift+Esc binds here to clear the whole stack at once.
-        A single summary breadcrumb "✗ N errors dismissed (see events)"
-        lands in the conv log so the audit trail is preserved without
-        flooding the log with N individual lines.
-        """
-        n = len(self._error_boxes)
-        if n == 0:
-            return
-        boxes = list(self._error_boxes)
-        self._error_boxes.clear()
-        for box in boxes:
-            try:
-                box.remove()
-            except Exception:
-                pass
-        from rich.text import Text as _RichText
-        noun = "error" if n == 1 else "errors"
-        self._write_log(_RichText(
-            f"  ✗ {n} {noun} dismissed (see events)",
-            style="dim " + _TEXT_DIM,
-        ))
-        # C[1] fix: zero out session._error_box_count.  Defensive guard.
-        try:
-            _session = self.app._get_session()  # type: ignore[attr-defined]
-            if getattr(_session, "_error_box_count", None) is not None:
-                _session._error_box_count = 0
-        except Exception:
-            pass
-        # Sticky count is now stale — clear it.
-        self.hide_status()
-
-    def _maybe_show_error_count_status(self) -> None:
-        """Surface the live ErrorBox count via the sticky when ≥ 2 stacked.
-
-        C-F4 (wave-8): the existing ``_MAX_VISIBLE_ERROR_BOXES = 3``
-        cap lets an error storm stack 3 boxes each requiring its own
-        Esc to dismiss. Before this helper there was no at-a-glance
-        count + no clue that Esc was the dismiss key. The sticky now
-        reads ``✗ N errors — Esc=1, ⇧Esc=all`` when ≥ 2 boxes are
-        live (Wave-13 B#1: updated to hint at the bulk-dismiss shortcut).
-        The < 2 case is intentionally untouched here so the
-        ``mount_error`` single-error sticky (``"✗ error below ↓"``)
-        is preserved; ``dismiss_last_error`` clears the stale count
-        sticky directly when it drops the live count below 2.
-        """
-        n = len(self._error_boxes)
-        if n >= 2:
-            self.show_status(
-                f"✗ {n} errors — Esc=1, ⇧Esc=all", kind="general",
+        # Header line: ✗ [prefix]: message-first-line.
+        header = _RichText()
+        if prefix:
+            header.append(
+                f"✗ {_markup_escape(prefix)}: {_markup_escape(first_line_for_header)}",
+                style="bold " + sev_color,
             )
+        else:
+            header.append(
+                f"✗ {_markup_escape(first_line_for_header)}",
+                style="bold " + sev_color,
+            )
+        self._write_log(header)
+
+        # Inline hint line.
+        if inline_hint:
+            hint_t = _RichText(f"  • {_markup_escape(inline_hint)}", style=_HINT_ACTION)
+            self._write_log(hint_t)
+
+        # Detail / context lines.
+        has_trace = bool(skill_name or run_id_short)
+        if details:
+            lines = details.splitlines()
+            visible = lines[:5]
+            overflow = len(lines) - 5
+            for ln in visible:
+                self._write_log(_RichText(f"  {_markup_escape(ln)}", style=_TEXT_MID))
+            if overflow > 0:
+                self._write_log(_RichText(f"  … {overflow} more", style=_TEXT_MID))
+        elif context_lines:
+            for ln in context_lines:
+                self._write_log(_RichText(f"  {_markup_escape(ln)}", style=_TEXT_MID))
+
+        # Ctrl+B trace pointer.
+        if has_trace:
+            self._write_log(
+                _RichText("  Ctrl+B → events for full trace", style="dim " + _TEXT_DIM)
+            )
+
+        # Trailing blank separator.
+        self._write_log(_RichText(""))
 
     # ── intervention mounting ─────────────────────────────────────────────────
 
@@ -2669,11 +2455,6 @@ class ConversationView(Widget):
 
     def clear(self) -> None:
         """Ctrl+L: clear the log + reset state. Does not affect engine state."""
-        # Wave-13 C#1: capture the live error count BEFORE clearing so we can
-        # emit an audit breadcrumb AFTER the log wipe. The breadcrumb lands in
-        # the freshly-blank log so it survives the clear and points the user at
-        # the events tab for full context.
-        _error_count_before_clear = len(self._error_boxes)
         self._log().clear()
         for row in self._stream_rows.values():
             row.seal()
@@ -2682,43 +2463,14 @@ class ConversationView(Widget):
         for row in list(self._skill_rows.values()):
             row.finish(success=True, reason="cleared")
         self._skill_rows.clear()
-        # Remove any leftover ErrorBox widgets. They mount as children of
-        # the conv pane (not lines in the RichLog), so ``_log().clear()``
-        # above doesn't touch them — without this loop the boxes float on
-        # an otherwise-blank conv pane until the user hits Esc per box.
-        for box in self._error_boxes:
-            try:
-                box.remove()
-            except Exception:
-                pass
-        self._error_boxes.clear()
-        # C[1] fix: zero out session._error_box_count after all boxes
-        # are gone.  Defensive guard — _get_session() may return None.
-        try:
-            _session = self.app._get_session()  # type: ignore[attr-defined]
-            if getattr(_session, "_error_box_count", None) is not None:
-                _session._error_box_count = 0
-        except Exception:
-            pass
-        # Wave-13 C#1: post-clear audit breadcrumb. Written AFTER _log().clear()
-        # so it survives in the fresh log (writing before clear() would wipe it
-        # along with the rest of the history). The message is intentionally
-        # brief and dim — it's a pointer to the events tab, not a summary.
-        if _error_count_before_clear > 0:
-            from rich.text import Text as _RichText
-            _noun = "error" if _error_count_before_clear == 1 else "errors"
-            self._write_log(_RichText(
-                f"  ✗ {_error_count_before_clear} {_noun} cleared"
-                " (see events tab, filter=error)",
-                style="dim " + _TEXT_DIM,
-            ))
+        # Errors are now plain log lines — _log().clear() above removes them
+        # automatically; no separate widget sweep needed.
         # Wave-10 G-F1: sweep in-flight ToolCallRow widgets too. They
         # share the same "child of ConversationView, not a RichLog
-        # line" mounting model as ErrorBox / StreamingRow / SkillActivityRow,
+        # line" mounting model as StreamingRow / SkillActivityRow,
         # so ``_log().clear()`` doesn't unmount them. Without this loop:
         #   - the row widgets stay on screen as orphans on the now-blank
-        #     pane (= same visual artefact ErrorBox suffered before its
-        #     sweep was added)
+        #     pane
         #   - ``_tool_call_rows`` still carries the stale op_id keys, so
         #     when the in-flight tool finally completes,
         #     ``complete_tool_call_row`` / ``fail_tool_call_row`` pops
@@ -2744,8 +2496,7 @@ class ConversationView(Widget):
         # Ctrl+L leaves the panel empty alongside the conv log.
         # Without this the running-task overview would survive the
         # clear and look like ghost rows attached to an otherwise-
-        # fresh pane. Same pattern as the ErrorBox / ToolCallRow
-        # sweeps directly above.
+        # fresh pane. Same pattern as the ToolCallRow sweep directly above.
         self.clear_async_tasks()
         # Wave-10 G-F2: sweep any pending InterventionWidget children too.
         # ``mount_intervention`` adds the widget via ``self.mount(widget)``

@@ -6,10 +6,8 @@ Pinned checks (per spec):
   1. _classify_error_severity("[budget exceeded] ...", {}) → "high"
   2. _classify_error_severity("usage: /image <path>", {}) → "low"
   3. _classify_error_severity("router failed: ...", {}) → "med"
-  4. ErrorBox(severity="low") mounted → has CSS class -sev-low
-  5. ErrorBox(severity="high") mounted → has CSS class -sev-high
-  6. sticky.show("...", kind="error", terminal=True) → priority 110 > thinking 100
-  7. events_tab error filter set includes safety_limit_checkpoint,
+  4. sticky.show("...", kind="error", terminal=True) → priority 110 > thinking 100
+  5. events_tab error filter set includes safety_limit_checkpoint,
      chain_timeout, chain_peer_discarded
 
 No mocks. Public surface only.
@@ -92,62 +90,7 @@ def test_classify_empty_message_is_med() -> None:
     assert _classify_error_severity("", {}) == "med"
 
 
-# ── 4-5: ErrorBox severity CSS class application ──────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_error_box_low_severity_has_sev_low_class() -> None:
-    """Tier 2: ErrorBox(severity='low') mounted → has -sev-low CSS class."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-
-    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
-    async with app.run_test(headless=True) as pilot:
-        await pilot.pause()
-        conv = app.query_one("#conversation", ConversationView)
-        box = conv.mount_error(message="usage: /image <path>")
-        await pilot.pause()
-        # public surface: has_class is part of Textual's Widget API
-        assert box.has_class("-sev-low"), (
-            f"Expected -sev-low on low-severity box, got classes: {box.classes}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_error_box_high_severity_has_sev_high_class() -> None:
-    """Tier 2: ErrorBox(severity='high') mounted → has -sev-high CSS class."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-
-    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
-    async with app.run_test(headless=True) as pilot:
-        await pilot.pause()
-        conv = app.query_one("#conversation", ConversationView)
-        box = conv.mount_error(message="[budget exceeded] daily cap reached")
-        await pilot.pause()
-        assert box.has_class("-sev-high"), (
-            f"Expected -sev-high on high-severity box, got classes: {box.classes}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_error_box_med_severity_has_sev_med_class() -> None:
-    """Tier 2: ErrorBox(severity='med') mounted → has -sev-med CSS class."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-
-    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
-    async with app.run_test(headless=True) as pilot:
-        await pilot.pause()
-        conv = app.query_one("#conversation", ConversationView)
-        box = conv.mount_error(message="router failed: connection reset")
-        await pilot.pause()
-        assert box.has_class("-sev-med"), (
-            f"Expected -sev-med on med-severity box, got classes: {box.classes}"
-        )
-
-
-# ── 6: sticky terminal priority override ──────────────────────────────────────
+# ── 4: sticky terminal priority override ──────────────────────────────────────
 
 
 @pytest.mark.asyncio

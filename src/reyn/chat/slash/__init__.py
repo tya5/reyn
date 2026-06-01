@@ -116,12 +116,11 @@ REGISTRY: SlashRegistry = SlashRegistry()
 def suggest_for_unknown(cmd: str, *, names: list[str] | None = None) -> list[str]:
     """Return up to ~3 closest-match suggestions for a typo'd slash command.
 
-    Used by :meth:`ChatSession._dispatch_slash` to build the ErrorBox
-    body when ``/<cmd>`` doesn't resolve. The ErrorBox header caps at
-    ~72 cells, so the suggestion list is intentionally tight: 3 fuzzy
-    matches by similarity (= ``difflib.get_close_matches`` with a low
-    cutoff so single-char prefixes still hit), or the alphabetical head
-    when nothing matches at all, with ``help`` always appended as the
+    Used by :meth:`ChatSession._dispatch_slash` to build the inline error
+    body when ``/<cmd>`` doesn't resolve. The suggestion list is
+    intentionally tight: 3 fuzzy matches by similarity (= ``difflib.get_close_matches``
+    with a low cutoff so single-char prefixes still hit), or the alphabetical
+    head when nothing matches at all, with ``help`` always appended as the
     escape hatch to the full catalog.
 
     Pure function (= no I/O, no registry mutation) so it's directly

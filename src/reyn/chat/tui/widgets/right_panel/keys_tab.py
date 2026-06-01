@@ -147,9 +147,6 @@ _CONVERSATION_KEYS = {
     # tasks), so CONVERSATION is the right home for discovery
     # alongside Ctrl+P / Ctrl+N turn jump.
     "f4",
-    # F5 / F6 — error block jump (= prev / next mounted ErrorBox).
-    # Conv-pane scoped: targets widgets inside the conv pane.
-    "f5", "f6",
     # W13 T2-1: ToolCallRow failure drill-down. Same rationale as F3 --
     # toggles inline expand on a widget that lives in the conv pane.
     "f7",

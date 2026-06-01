@@ -73,24 +73,24 @@ _GREEN_DIMMEST = "#335544"       # context_built (very dim green)
 # across header (cap≥0.75, pending, transcribing), streaming_row / tool_call_row /
 # async_stack_panel / skill_activity (elapsed-time stall). Distinct from the event
 # ambers (_EVENT_LLM / _EVENT_INTERVENTION / _EVENT_PLAN*) which name event categories.
-# (ErrorBox's own severity ramp is the _SEV_* family below — a separate concept.)
+# (The inline error severity ramp is the _SEV_* family below — a separate concept.)
 _STATUS_WARN = "#ffaa44"
 
-# ErrorBox severity ramp (W13 3-tier border + header). HIGH/MED carry distinct
-# rest + hover shades; LOW reuses the neutral text ramp (no dedicated token).
-# This is the ErrorBox card's own severity system — distinct from _STATUS_ERROR
-# (event-failure colour); the two reds name different concepts.
-_SEV_HIGH = "#cc5555"            # high severity (rest)
-_SEV_MED = "#cc9955"             # medium severity (rest)
-_SEV_HIGH_HOVER = "#ff7777"      # high severity (hover — lighter sibling of _SEV_HIGH)
-_SEV_MED_HOVER = "#ffbb77"       # medium severity (hover)
+# Inline error severity ramp (3-tier text colour for write_error). HIGH/MED carry
+# distinct shades; LOW reuses the neutral text ramp (no dedicated token).
+# Drives write_error's inline coloured header in the conv RichLog.
+# Distinct from _STATUS_ERROR (event-failure colour); the two reds name different concepts.
+_SEV_HIGH = "#cc5555"            # high severity
+_SEV_MED = "#cc9955"             # medium severity
+_SEV_HIGH_HOVER = "#ff7777"      # high severity (hover — kept for palette completeness)
+_SEV_MED_HOVER = "#ffbb77"       # medium severity (hover — kept for palette completeness)
 
 # ── Phase-2c semantic accents (promoted from hardcoded hex) ─────────────────
 # Muted red — a desaturated red for "soft negative" states where the full
 # _STATUS_ERROR (#ff6644) red would be too loud: cancelled / partial-reply
 # aborted (app.py, conversation), the 8-colour-terminal error glyph fallback
 # (sticky_status), and the remote-limited mode marker (pending_tab). Distinct
-# shade from _STATUS_ERROR (active failure) and _SEV_HIGH (ErrorBox severity).
+# shade from _STATUS_ERROR (active failure) and _SEV_HIGH (inline error severity).
 # Lightened from #aa6666 (= 4.32:1, below WCAG AA) to clear 4.5:1 against the
 # panel bg (#111111 → 5.11:1) — this carries cancel/abort text, so it must be
 # legible. Kept in its own pink-red lane, distinct from the brand _CORAL.
@@ -106,8 +106,8 @@ _STATUS_READY = "#aaaa55"
 # bg (#111111 → 5.34:1) — it labels cost figures (informational numbers), so
 # it must be legible. Stays the dimmest of the three success greens.
 _STATUS_SUCCESS_DARK = "#3a9968"
-# Actionable inline recovery hint (ErrorBox eb-inline-hint, warm olive-gold).
-# Distinct from _TEXT_DIM (the metadata eb-hint) so the extracted recovery
+# Actionable inline recovery hint (write_error inline hint line, warm olive-gold).
+# Distinct from _TEXT_DIM (the dim metadata pointer) so the extracted recovery
 # action reads as "do this", not just dim metadata. Lightened from #8a7a4a
 # (= 4.46:1, just below WCAG AA) to 4.5:1+ (#111111 → 5.51:1) while keeping
 # its own olive-gold lane — distinct from _SEV_MED amber, _AMBER agent

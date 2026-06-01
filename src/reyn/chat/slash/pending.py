@@ -128,9 +128,6 @@ def _render_needs_attention(summary: dict) -> str:
     can skip appending entirely (= no blank "needs attention:" header).
     """
     lines: list[str] = []
-    error_count = summary.get("error_box_count", 0)
-    if error_count:
-        lines.append(f"  ✗ {error_count} error{'s' if error_count != 1 else ''} on screen")
     for p in summary.get("interrupted_plans", []):
         pid = p.get("plan_id", "?")
         goal = p.get("goal", "")
