@@ -73,6 +73,21 @@ def test_escape_anchors_empty_anchor_is_never_match_sentinel() -> None:
     assert re.search(sentinel, "any code line at all") is None
 
 
+def test_skill_md_registers_escape_anchors_python_permission() -> None:
+    """Tier 2: skill.md declares escape_anchors as a safe python step.
+
+    The apply preprocessor's python step requires an explicit permission entry in
+    skill.md frontmatter; without it the OS (with a real PermissionResolver)
+    rejects the step at runtime and the apply phase never executes. A
+    permission_resolver=None unit harness bypasses this check, so this structural
+    pin guards the declared-and-enforced path (#1214 faithful-run gap).
+    """
+    skill_md = (SWE_BENCH_DIR / "skill.md").read_text(encoding="utf-8")
+    assert "escape_anchors.py" in skill_md
+    assert "function: escape_anchors" in skill_md
+    assert "mode: safe" in skill_md
+
+
 # ── apply preprocessor: deterministic edit-region scaffolding ───────────────
 
 def _run_apply_preprocessor(tmp_path: Path, file_body: str, edits: list[dict]) -> dict:
