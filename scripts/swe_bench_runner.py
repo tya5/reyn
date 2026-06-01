@@ -116,29 +116,43 @@ def extract_patch(reyn_stdout: str) -> str:
     # Strategy B: scan every line for a JSON object with a "patch" key.
     lines = reyn_stdout.splitlines()
 
-    # Strategy A
+    # Strategy A — parse the JSON object that follows the marker.
+    # `reyn run` prints the marker, then `json.dumps(result.data, indent=2)`
+    # (multi-line, pretty), then trailing lines (token usage, "events saved →").
+    # A plain json.loads of everything-after-the-marker fails on those trailing
+    # lines, so use raw_decode: it parses the first JSON value starting at the
+    # block and ignores whatever follows.
     marker = "=== Final Output ==="
     for i, line in enumerate(lines):
         if marker in line:
-            json_block = "\n".join(lines[i + 1 :]).strip()
+            json_block = "\n".join(lines[i + 1 :]).lstrip()
             if json_block:
                 try:
-                    obj = json.loads(json_block)
+                    obj, _ = json.JSONDecoder().raw_decode(json_block)
                     return _extract_patch_from_obj(obj)
                 except (json.JSONDecodeError, ValueError):
                     pass  # fall through to Strategy B
             break
 
-    # Strategy B: scan every line
-    for line in lines:
-        line = line.strip()
-        if not line.startswith("{"):
+    # Strategy B: scan for the start of a JSON object anywhere and raw_decode
+    # from there (handles a pretty-printed object with no marker, and trailing
+    # non-JSON text after it).
+    text = reyn_stdout
+    search_from = 0
+    while True:
+        start = text.find("{", search_from)
+        if start == -1:
+            break
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(text[start:])
+        except (json.JSONDecodeError, ValueError):
+            search_from = start + 1
             continue
         try:
-            obj = json.loads(line)
             return _extract_patch_from_obj(obj)
-        except (json.JSONDecodeError, ValueError):
-            continue
+        except ValueError:
+            # parsed a JSON object without a patch key — keep scanning
+            search_from = start + 1
 
     raise ValueError("could not find 'patch' field in reyn output")
 
