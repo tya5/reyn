@@ -320,7 +320,7 @@ class DockerEnvironmentBackend:
         self, argv: list[str], policy: SandboxPolicy, *, stdin: bytes | None = None,
         cwd: str | None = None,
     ) -> SandboxResult:
-        """Plain ``docker exec`` of argv with cwd=repo_dir — NO host-diff bridge.
+        """``docker exec`` of argv (via a login shell) with cwd=repo_dir — NO host-diff bridge.
 
         The files are already in ``repo_dir`` (the agent edited them via the FS
         methods above), so there is nothing to sync in. Honors only
@@ -331,5 +331,20 @@ class DockerEnvironmentBackend:
         host path can't address. Same asymmetry as policy enforcement — a
         workspace-coupled backend scopes both to the fidelity boundary.
         """
-        exec_argv = [self.docker_bin, "exec", "-w", self.repo_dir, self.container, *argv]
+        # Run inside a LOGIN shell so the image's env-activation (conda / nvm /
+        # rbenv / pyenv — set up in /etc/profile or ~/.bash_profile/~/.bashrc)
+        # is in effect. A plain ``docker exec <argv>`` uses only the base PATH
+        # and misses login-activated tooling — e.g. a SWE-bench image installs
+        # pytest into a ``conda activate``-d env, so ``python -m pytest`` under a
+        # direct exec resolves the base python (no pytest) and fails. This is a
+        # generic correctness fix: the backend knows nothing image-specific, it
+        # just honors whatever the image's login profile activates.
+        #
+        # ``bash -lc 'exec "$@"' reyn-exec <argv>`` passes argv as positional
+        # params ($1..), NOT spliced into the script text, so there is no
+        # shell-injection / quoting surface (``"$@"`` re-exec is argv-faithful).
+        exec_argv = [
+            self.docker_bin, "exec", "-w", self.repo_dir, self.container,
+            "bash", "-lc", 'exec "$@"', "reyn-exec", *argv,
+        ]
         return await self._runner(exec_argv, stdin=stdin, timeout=policy.timeout_seconds)
