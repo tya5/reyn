@@ -1,8 +1,7 @@
 """Tier 2: ConversationView.clear() removes mounted InterventionWidget (G-F2).
 
 Wave-10 Topic G finding F2 (P1): ``clear()`` swept
-``_stream_rows`` / ``_skill_rows`` / ``_error_boxes`` /
-(post-G-F1) ``_tool_call_rows``, but missed
+``_stream_rows`` / ``_skill_rows`` / ``_tool_call_rows``, but missed
 ``InterventionWidget``. ``mount_intervention`` adds the widget
 via ``self.mount(widget)`` with no tracking list. After Ctrl+L
 the widget stayed on the now-blank pane and the user could still
@@ -10,10 +9,10 @@ click chip buttons → fired the answer_callback against a session
 context they just cleared (= acting on stale UI state).
 
 ``clear()`` now queries ``self.query(InterventionWidget)`` and
-removes each, mirroring the ErrorBox sweep directly above. No
-tracking list is added — the per-clear ``query`` cost is
-negligible compared with the ``log.clear()`` call right next to
-it.
+removes each. No tracking list is added — the per-clear ``query``
+cost is negligible compared with the ``log.clear()`` call right
+next to it. (Errors are now plain RichLog lines so ``_log().clear()``
+already removes them — no separate sweep needed.)
 
 Public surfaces tested:
   - InterventionWidget present before clear() is gone after

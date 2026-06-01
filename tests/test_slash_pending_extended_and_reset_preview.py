@@ -1,16 +1,17 @@
-"""Tier 2: /pending list needs-attention + /reset confirm preview (Wave-13 T2-5).
+"""Tier 2: /pending list needs-attention + /reset confirm preview.
 
 Pinned:
-  1. /pending list with 0 errors + 0 interrupted plans + 0 stuck skills
+  1. /pending list with 0 interrupted plans + 0 stuck skills
      → no "needs attention" section in output.
-  2. /pending list with 3 errors on screen → output contains "needs attention"
-     and "3 errors".
-  3. /pending list with 1 interrupted plan → output contains "interrupted".
-  4. /pending list with 1 stuck skill → output contains "stuck @".
-  5. /reset (no arg, no state) → confirm output contains "Currently:" with
-     "0 skills", "0 plans", "0 errors".
-  6. /reset (no arg, with state: 2 skills, 1 plan, 3 errors) → output
-     contains "2 skills", "1 plan", "3 errors".
+  2. /pending list with 1 interrupted plan → output contains "interrupted".
+  3. /pending list with 1 stuck skill → output contains "stuck @".
+  4. /reset (no arg, no state) → confirm output contains "Currently:" with
+     "0 skills" and "0 plans".
+  5. /reset (no arg, with state: 2 skills, 1 plan) → output
+     contains "2 skills" and "1 plan".
+
+Note: error_box_count was removed from the state summary in the inline
+scroll-away refactor (errors are now plain log lines, not persistent widgets).
 
 Policy compliance:
   - No MagicMock / AsyncMock / patch — stub session pattern only.
@@ -38,14 +39,12 @@ class _StubSession:
     def __init__(
         self,
         *,
-        error_box_count: int = 0,
         interrupted_plans: list[dict] | None = None,
         stuck_skills: list[dict] | None = None,
         running_skills: int = 0,
         running_plans: int = 0,
         pending_ops: list | None = None,
     ) -> None:
-        self._error_box_count = error_box_count
         self._interrupted_plans = interrupted_plans or []
         self._stuck_skills = stuck_skills or []
         self._running_skills = running_skills
@@ -63,7 +62,6 @@ class _StubSession:
         return {
             "running_skills": self._running_skills,
             "running_plans": self._running_plans,
-            "error_box_count": self._error_box_count,
             "interrupted_plans": list(self._interrupted_plans),
             "stuck_skills": list(self._stuck_skills),
         }
@@ -77,12 +75,11 @@ class _StubSession:
 
 
 def test_pending_list_no_attention_when_clean() -> None:
-    """Tier 2: /pending list with 0 errors/interrupted/stuck → no needs-attention section."""
+    """Tier 2: /pending list with 0 interrupted/stuck → no needs-attention section."""
     from reyn.chat.slash import REGISTRY  # noqa: F401 — triggers registration
     from reyn.chat.slash.pending import pending_cmd
 
     session = _StubSession(
-        error_box_count=0,
         interrupted_plans=[],
         stuck_skills=[],
     )
@@ -91,23 +88,6 @@ def test_pending_list_no_attention_when_clean() -> None:
     text = session.captured_text()
     assert "needs attention" not in text, (
         f"Expected no 'needs attention' section, got: {text!r}"
-    )
-
-
-def test_pending_list_shows_error_count() -> None:
-    """Tier 2: /pending list with 3 errors → output contains 'needs attention' and '3 errors'."""
-    from reyn.chat.slash import REGISTRY  # noqa: F401
-    from reyn.chat.slash.pending import pending_cmd
-
-    session = _StubSession(error_box_count=3)
-    asyncio.run(pending_cmd(session, "list"))
-
-    text = session.captured_text()
-    assert "needs attention" in text, (
-        f"Expected 'needs attention' in output, got: {text!r}"
-    )
-    assert "3 errors" in text, (
-        f"Expected '3 errors' in output, got: {text!r}"
     )
 
 
@@ -170,7 +150,6 @@ def test_reset_no_arg_no_state_shows_currently_zero() -> None:
     session = _StubSession(
         running_skills=0,
         running_plans=0,
-        error_box_count=0,
     )
     asyncio.run(reset_cmd(session, ""))
 
@@ -184,20 +163,16 @@ def test_reset_no_arg_no_state_shows_currently_zero() -> None:
     assert "0 plans" in text, (
         f"Expected '0 plans' in /reset prompt, got: {text!r}"
     )
-    assert "0 errors" in text, (
-        f"Expected '0 errors' in /reset prompt, got: {text!r}"
-    )
 
 
 def test_reset_no_arg_with_state_shows_counts() -> None:
-    """Tier 2: /reset (no arg, 2 skills, 1 plan, 3 errors) → output contains counts."""
+    """Tier 2: /reset (no arg, 2 skills, 1 plan) → output contains counts."""
     from reyn.chat.slash import REGISTRY  # noqa: F401
     from reyn.chat.slash.reset import reset_cmd
 
     session = _StubSession(
         running_skills=2,
         running_plans=1,
-        error_box_count=3,
     )
     asyncio.run(reset_cmd(session, ""))
 
@@ -207,7 +182,4 @@ def test_reset_no_arg_with_state_shows_counts() -> None:
     )
     assert "1 plan" in text, (
         f"Expected '1 plan' in /reset prompt, got: {text!r}"
-    )
-    assert "3 errors" in text, (
-        f"Expected '3 errors' in /reset prompt, got: {text!r}"
     )

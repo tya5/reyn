@@ -24,7 +24,7 @@ from reyn.chat.slash import reply, reply_error, slash
 
 
 def _format_currently_line(session: "object") -> str:
-    """Build the 'Currently: N skills, M plans, K errors' context line.
+    """Build the 'Currently: N skills, M plans' context line.
 
     Reads from ``session.current_state_summary()`` when available.
     Returns an empty string when the session is not a full ChatSession
@@ -39,14 +39,11 @@ def _format_currently_line(session: "object") -> str:
         return ""
     n_skills = s.get("running_skills", 0)
     n_plans = s.get("running_plans", 0)
-    n_errors = s.get("error_box_count", 0)
     skill_word = "skill" if n_skills == 1 else "skills"
     plan_word = "plan" if n_plans == 1 else "plans"
-    error_word = "error" if n_errors == 1 else "errors"
     return (
         f"Currently: {n_skills} {skill_word} running, "
-        f"{n_plans} {plan_word}, "
-        f"{n_errors} {error_word} on screen."
+        f"{n_plans} {plan_word}."
     )
 
 

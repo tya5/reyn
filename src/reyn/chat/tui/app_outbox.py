@@ -1364,7 +1364,7 @@ class OutboxRouter:
     def _on_error(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`error` — render via conv (mounts ErrorBox) + remember focal tab.
+        """`error` — render inline in conv log + remember focal tab.
 
         Also unmounts the inline spinner and clears the sticky: a turn that
         ends in error never reaches `__stream_start__` / `agent`, so
@@ -1398,13 +1398,13 @@ class OutboxRouter:
         from .widgets.conversation import _classify_error_severity
         severity = _classify_error_severity(msg.text or "", msg.meta or {})
         if severity == "high":
-            # C[2] fix: render_message FIRST so mount_error's hide_status
+            # Render the inline error first so write_error's hide_status
             # fires before we set the terminal sticky.  If we set the
-            # sticky first and then call render_message, mount_error's own
+            # sticky first and then call render_message, write_error's own
             # ``hide_status()`` (unconditional when not scrolled) would
             # immediately clear the terminal-priority sticky we just set —
             # effective display time ZERO.  By rendering first the sticky
-            # is set AFTER the hide_status inside mount_error has already
+            # is set AFTER the hide_status inside write_error has already
             # run, so it persists for the user to read.
             conv.render_message(msg)
             try:
@@ -1414,14 +1414,6 @@ class OutboxRouter:
         else:
             conv.hide_status()
             conv.render_message(msg)
-        # C[1] fix: increment session._error_box_count to keep slash-
-        # command surfaces (/pending list, /reset preview) in sync with
-        # the actual number of mounted ErrorBoxes.  Defensive: only write
-        # if the session exposes the attribute (= stripped / mock sessions
-        # in tests don't crash).
-        _session = self._app._get_session()
-        if getattr(_session, "_error_box_count", None) is not None:
-            _session._error_box_count += 1  # type: ignore[union-attr]
         self._app._last_focal_tab = "events"
         # Out-of-band: flag the terminal title and ring the bell so a
         # user with reyn in a background tab notices something failed.

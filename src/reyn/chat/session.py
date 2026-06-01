@@ -1859,12 +1859,6 @@ class ChatSession:
         # default ChatInterventionBus continues to serve chat-mode interactions.
         self._intervention_overrides: dict[str, "RequestBus"] = {}
 
-        # Wave-13 T2-5: TUI-side error box count surfaced to slash commands
-        # (/pending list needs-attention, /reset confirm preview).  Starts at
-        # 0.  The TUI app's outbox handler increments this on mount_error and
-        # decrements on dismiss; slash commands read it via current_state_summary().
-        self._error_box_count: int = 0
-
         self._a2a_handler = A2AHandler(
             event_log=self._chat_events,
             chain_manager=self._chains,
@@ -1910,18 +1904,6 @@ class ChatSession:
         commands and tests that need to verify the role.
         """
         return self._agent_role
-
-    @property
-    def error_box_count(self) -> int:
-        """Read-only accessor for the TUI error-box count.
-
-        Incremented by ``app_outbox`` on ``mount_error`` and decremented
-        on ``dismiss_error``. Slash commands and tests read via this
-        public surface; the write path stays on
-        ``self._error_box_count`` so the lifecycle stays visible at the
-        TUI call sites that own it.
-        """
-        return self._error_box_count
 
     @property
     def router_loop_agent_replies(self) -> "list[str] | None":
@@ -2128,8 +2110,6 @@ class ChatSession:
 
         - ``running_skills``: count of currently running skill runs.
         - ``running_plans``: count of currently running plan tasks.
-        - ``error_box_count``: count of undismissed TUI error boxes
-          (maintained by the TUI outbox handler; 0 in non-TUI mode).
         - ``interrupted_plans``: list of ``{plan_id, goal, exc_type}``
           dicts for recently-interrupted plans (event-store scan; empty
           when project_root is unavailable).
@@ -2141,7 +2121,6 @@ class ChatSession:
         """
         n_skills = len(self.running_skills) if hasattr(self, "_skill_runner") else 0
         n_plans = len(self.running_plans) if hasattr(self, "_plan_runner") else 0
-        error_count = getattr(self, "_error_box_count", 0)
 
         # Interrupted plans + stuck skills require the event-store scan
         # implemented in the agents-tab helper functions.  We import lazily
@@ -2187,7 +2166,6 @@ class ChatSession:
         return {
             "running_skills": n_skills,
             "running_plans": n_plans,
-            "error_box_count": error_count,
             "interrupted_plans": interrupted_plans,
             "stuck_skills": stuck_skills,
         }
@@ -4350,17 +4328,16 @@ class ChatSession:
         slash_cmd = REGISTRY.get(cmd)
         if slash_cmd is None:
             # Suggest the 3 closest matches rather than dumping the full
-            # 20+ command catalog into the ErrorBox header (= the box caps
-            # at 72 cells and the previous list truncated mid-name at
-            # ``try: /agent, /agents, /answer, /attach,``, hiding the
-            # actionable tail). ``suggest_for_unknown`` is a pure helper
-            # in ``reyn.chat.slash`` so the suggestion contract is
+            # 20+ command catalog into the error line (the previous list
+            # truncated mid-name at ``try: /agent, /agents, /answer, /attach,``
+            # hiding the actionable tail). ``suggest_for_unknown`` is a pure
+            # helper in ``reyn.chat.slash`` so the suggestion contract is
             # directly testable without the surrounding session machinery.
             from reyn.chat.slash import suggest_for_unknown
             suggestions = suggest_for_unknown(cmd)
             known = ", ".join(f"/{n}" for n in suggestions)
-            # ``kind="error"`` so the TUI mounts an ErrorBox (= red ✗ icon,
-            # collapsible, Esc-to-dismiss). The previous ``kind="system"``
+            # ``kind="error"`` so the TUI renders an inline error (✗ glyph,
+            # severity colour, scroll-away). The previous ``kind="system"``
             # rendered as a dim grey line indistinguishable from a successful
             # slash-command reply — a typo'd command silently looked OK.
             await self._put_outbox(OutboxMessage(

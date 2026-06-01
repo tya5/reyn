@@ -404,11 +404,10 @@ async def _resume_from_step(session: "ChatSession", args: str) -> None:
         # Format known steps as a vertical bulleted list rather than a
         # Python ``repr`` of the list — the prior ``known: ['step1',
         # 'step2', 'step3']`` was a single very long quoted-string line
-        # that broke into the ErrorBox header truncation and forced the
-        # user to expand to read. A bulleted list reads naturally in
-        # the expanded view, scales to longer step IDs, and surfaces
-        # in the picker's hint-mode step completer as a discoverability
-        # path so this error is rarer to begin with.
+        # that rendered poorly in the inline error text. A bulleted list
+        # reads naturally in multi-line view, scales to longer step IDs,
+        # and surfaces in the picker's hint-mode step completer as a
+        # discoverability path so this error is rarer to begin with.
         steps_block = "\n".join(f"    - {s}" for s in step_order)
         await reply_error(
             session,

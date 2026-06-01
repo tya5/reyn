@@ -1,4 +1,4 @@
-"""Tier 2: mount_intervention / mount_error preserve a backlog signal when mid-scroll.
+"""Tier 2: mount_intervention / write_error preserve a backlog signal when mid-scroll.
 
 When the user has scrolled up to read history (``_user_scrolled=True``)
 and an intervention or error arrives, the previous wiring called
@@ -9,7 +9,7 @@ waiting at the bottom.
 The fix swaps the bare ``hide_status()`` for a directional sticky
 ("⚑ intervention below ↓" / "✗ error below ↓") only when mid-scroll.
 At the tail, ``hide_status()`` keeps firing because the widget itself
-will be visible on the next render tick.
+(intervention) or the newly-written log line (error) will be visible.
 
 Contract pinned:
 
@@ -17,8 +17,8 @@ Contract pinned:
    backlog signal, widget itself is visible).
 2. mount_intervention mid-scroll → sticky shows "intervention below"
    directional cue.
-3. mount_error at tail → ``hide_status`` fires.
-4. mount_error mid-scroll → sticky shows "error below" cue.
+3. write_error at tail → ``hide_status`` fires.
+4. write_error mid-scroll → sticky shows "error below" cue.
 """
 from __future__ import annotations
 
@@ -99,8 +99,8 @@ async def test_intervention_mount_mid_scroll_shows_directional_cue() -> None:
 
 
 @pytest.mark.asyncio
-async def test_error_mount_at_tail_clears_sticky() -> None:
-    """Tier 2: mount_error when at-tail → no backlog signal."""
+async def test_error_write_at_tail_clears_sticky() -> None:
+    """Tier 2: write_error when at-tail → no backlog signal."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -110,29 +110,29 @@ async def test_error_mount_at_tail_clears_sticky() -> None:
 
         # at-tail: same rationale as the intervention-at-tail test above —
         # no private-state precondition assert, contract is sticky body.
-        conv.mount_error(message="boom", details="")
+        conv.write_error(message="boom", details="")
         await pilot.pause()
 
         body = _sticky_text(conv)
         assert "below" not in body, (
-            f"at-tail error mount must not leave a directional cue; got {body!r}"
+            f"at-tail error write must not leave a directional cue; got {body!r}"
         )
 
 
 @pytest.mark.asyncio
-async def test_error_mount_mid_scroll_shows_directional_cue() -> None:
-    """Tier 2: mount_error while mid-scroll → sticky shows "error below"."""
+async def test_error_write_mid_scroll_shows_directional_cue() -> None:
+    """Tier 2: write_error while mid-scroll → sticky shows "error below"."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         conv._user_scrolled = True
 
-        conv.mount_error(message="boom", details="")
+        conv.write_error(message="boom", details="")
         await pilot.pause()
 
         body = _sticky_text(conv)
         assert "error" in body, (
-            f"mid-scroll error mount must surface a directional cue; got {body!r}"
+            f"mid-scroll error write must surface a directional cue; got {body!r}"
         )
         assert "↓" in body or "below" in body, body

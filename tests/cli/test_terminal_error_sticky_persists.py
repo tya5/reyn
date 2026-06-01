@@ -1,23 +1,14 @@
-"""Tier 2: terminal-error sticky persists after ErrorBox mount (C[2] race fix).
+"""Tier 2: terminal-error sticky persists after inline write_error (C[2] race fix).
 
-Wave-13 cascade audit finding C[2]: in app_outbox._on_error, the original
-code for severity=="high" called conv.show_status("✗ terminal error",
-terminal=True) BEFORE conv.render_message(msg).  But render_message calls
-mount_error, which internally calls self.hide_status() (unconditional when
-not scrolled).  Result: the sticky was shown then immediately hidden in the
-same call stack — effective display time ZERO.
-
-Fixed by reordering:
-  1. conv.render_message(msg) first (= mount ErrorBox + mount_error's
-     hide_status fires here).
-  2. conv.show_status("✗ terminal error", terminal=True) after (= now
-     persists because mount_error's hide_status has already run).
+Wave-13 cascade audit finding C[2]: in app_outbox._on_error, render_message
+(= write_error) must be called BEFORE show_status("✗ terminal error",
+terminal=True), because write_error's own hide_status() would suppress
+the terminal sticky if called after.
 
 Pinned invariants:
   1. _on_error with a "high"-severity message → after dispatch the sticky
      is active, body contains "terminal error", priority == 110.
-  2. An ErrorBox is also mounted (= both side effects achieved, not just
-     the sticky).
+  2. The conv log contains the error text (inline render happened).
   3. A "med"-severity message (normal error path) → sticky is NOT
      showing the terminal-error message (scope guard: only high-severity
      triggers the terminal sticky).
@@ -48,8 +39,6 @@ def _make_high_severity_msg():
     """Build an error OutboxMessage that _classify_error_severity rates 'high'.
 
     Uses the ``[budget exceeded]`` text marker (one of the _HIGH_TEXT_MARKERS).
-    meta["skill"] is present so the render_message path mounts an ErrorBox
-    (= the error-kind branch in render_message).
     """
     from reyn.chat.outbox import OutboxMessage
     return OutboxMessage(
@@ -73,11 +62,11 @@ def _make_med_severity_msg():
 
 
 @pytest.mark.asyncio
-async def test_high_severity_error_sticky_persists_after_mount() -> None:
+async def test_high_severity_error_sticky_persists_after_render() -> None:
     """Tier 2: high-severity _on_error → sticky active with priority 110, body 'terminal error'.
 
     Verifies the C[2] race fix: the sticky must survive the hide_status()
-    call inside mount_error because render_message is now called first.
+    call inside write_error because render_message is now called first.
     """
     from reyn.chat.tui.app_outbox import OutboxRouter
     from reyn.chat.tui.widgets import ConversationView, ReynHeader
@@ -112,15 +101,17 @@ async def test_high_severity_error_sticky_persists_after_mount() -> None:
         )
 
 
-# ── test 2: ErrorBox also mounted (both side effects) ─────────────────────────
+# ── test 2: error text appears inline in the conv log ─────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_high_severity_error_also_mounts_error_box() -> None:
-    """Tier 2: high-severity _on_error mounts an ErrorBox alongside the sticky.
+async def test_high_severity_error_renders_inline_in_log() -> None:
+    """Tier 2: high-severity _on_error writes the error text inline in the conv log.
 
-    Both effects must occur: the sticky (test 1) and the ErrorBox in the
-    conv pane.  Verifies via ConversationView._error_boxes list length.
+    Errors are now plain RichLog lines (no widget mount). Verify the
+    conv log contains the '✗' glyph from write_error's header line.
+    Public surface: iterate log.lines (RichLog's public buffer) and check
+    that at least one line's plain text contains '✗'.
     """
     from reyn.chat.tui.app_outbox import OutboxRouter
     from reyn.chat.tui.widgets import ConversationView, ReynHeader
@@ -136,18 +127,22 @@ async def test_high_severity_error_also_mounts_error_box() -> None:
         header = app.query_one("#header", ReynHeader)
         router = OutboxRouter(app)
 
-        # Pre-condition: no ErrorBox children under ConversationView yet.
-        from reyn.chat.tui.widgets.error_box import ErrorBox
-        pre_boxes = conv.query(ErrorBox)
-        assert not pre_boxes, "pre-condition: no ErrorBoxes mounted yet"
-
         router._on_error(_make_high_severity_msg(), conv, header)
         await pilot.pause()
 
-        # At least one ErrorBox must now exist as a child of conv.
-        post_boxes = conv.query(ErrorBox)
-        assert post_boxes, (
-            "at least one ErrorBox must be mounted after high-severity _on_error"
+        log = conv._log()
+        # RichLog.lines is a public list of Text renderables.
+        log_plain = "\n".join(
+            line.plain if hasattr(line, "plain") else str(line)
+            for line in log.lines
+        )
+        assert "✗" in log_plain, (
+            f"conv log must contain '✗' error glyph from write_error; "
+            f"log_plain snippet: {log_plain[:300]!r}"
+        )
+        assert "budget exceeded" in log_plain, (
+            f"conv log must contain the error text; "
+            f"log_plain snippet: {log_plain[:300]!r}"
         )
 
 

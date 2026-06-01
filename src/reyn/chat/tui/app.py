@@ -123,20 +123,9 @@ class ReynTUIApp(App):
         # touching the keyboard for the edit step. Gated by check_action
         # so plain Enter in the input bar still does its normal submit.
         Binding("enter", "voice_stop_and_submit", "Voice send", priority=True, show=False),
-        # Esc multiplexes: cancel voice recording / dismiss ErrorBox /
-        # close right panel — see ``action_voice_cancel``. The action
-        # name is historical (= voice was the first user, the rest
-        # accreted), but the surfaced description should reflect the
-        # dominant chat-time meaning so the Keys tab doesn't tell a
-        # non-voice user "Voice cancel" for a key they use daily for
-        # dismissing errors. Wave-2 K3.
-        Binding("escape", "voice_cancel", "Dismiss / cancel", priority=True, show=False),
-        # Wave-13 B#1: bulk-dismiss all stacked ErrorBoxes at once.
-        # Complements Esc (= dismiss one) for the "3 errors stacked,
-        # clear all immediately" recovery pattern. Shift+Esc is chosen
-        # because it mirrors the Esc semantic (= dismiss errors) and
-        # is not bound by any OS or terminal convention at this modifier.
-        Binding("shift+escape", "dismiss_all_errors", "Dismiss all errors", priority=True, show=False),
+        # Esc multiplexes: cancel voice recording / close right panel /
+        # close slash picker — see ``action_voice_cancel``.
+        Binding("escape", "voice_cancel", "Cancel / close", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
         # Wave-4 AR5: keyboard scroll for the conv log. RichLog has
         # ``can_focus=False`` (intentional — prevents inadvertent
@@ -167,13 +156,6 @@ class ReynTUIApp(App):
         # win against any widget-level binding.
         Binding("ctrl+g", "find_next", "Find next match", priority=True, show=False),
         Binding("ctrl+shift+g", "find_prev", "Find prev match", priority=True, show=False),
-        # F5 / F6 — jump to the prev / next mounted ErrorBox. Useful in
-        # debugging-heavy sessions where multiple errors stack up and
-        # the user wants to scroll through them quickly without
-        # manual page-up / page-down. Cycles with wrap; first press
-        # always targets the newest error.
-        Binding("f5", "jump_prev_error", "Prev error", priority=True, show=False),
-        Binding("f6", "jump_next_error", "Next error", priority=True, show=False),
         # Keyboard companion to the mouse-click skill-row drill-down
         # (= toggle phase-history expand). F3 avoids the Ctrl+letter
         # collision with TextArea's default editing shortcuts (ctrl+e
@@ -1596,32 +1578,6 @@ class ReynTUIApp(App):
             pass
         return True
 
-    def _jump_error(self, direction: int) -> None:
-        """Shared helper for F5 / F6 error-jump dispatch."""
-        try:
-            conv = self.query_one("#conversation", ConversationView)
-        except Exception:
-            return
-        if not conv.jump_to_error(direction):
-            try:
-                conv.show_status("no errors to jump to", kind="general")
-                self.set_timer(2.0, conv.hide_status)
-            except Exception:
-                pass
-
-    def action_jump_prev_error(self) -> None:
-        """F5 — jump to the previous (older) mounted ErrorBox.
-
-        First press from a fresh state targets the newest error;
-        subsequent presses walk backwards through the list with
-        wrap. No-op-with-hint when no errors are mounted.
-        """
-        self._jump_error(-1)
-
-    def action_jump_next_error(self) -> None:
-        """F6 — jump to the next (newer) mounted ErrorBox (wraps)."""
-        self._jump_error(+1)
-
     def action_skill_expand_toggle(self) -> None:
         """F3 — toggle drill-down on every in-flight inline row.
 
@@ -2309,20 +2265,13 @@ class ReynTUIApp(App):
         )
 
     def action_voice_cancel(self) -> None:
-        """Esc — cancel voice recording, dismiss slash picker / ErrorBox, or close panel.
+        """Esc — cancel voice recording, dismiss slash picker, or close panel.
 
         Priority:
           1. If recording → cancel recording.
           2. **Else if InputBar is in slash-entry → dismiss picker + clear**
-             prefix (= wave-2 P2). Previously this was unreachable when
-             an ErrorBox was also mounted because ``check_action`` claimed
-             Esc on behalf of step 3 and the user had to press Esc twice
-             (once for ErrorBox, again for picker). Picker first matches
-             the user's mental model (= the picker is the foreground UI
-             they're actively interacting with) and lets a stale
-             ErrorBox wait one more keypress.
-          3. Else if ErrorBoxes visible → dismiss the topmost one.
-          4. Else if side panel is visible → close it.
+             prefix (= wave-2 P2).
+          3. Else if side panel is visible → close it.
 
         Gated by check_action so this never fires when no condition holds
         (allowing InputBar's own Esc binding to handle slash-picker
@@ -2340,28 +2289,8 @@ class ReynTUIApp(App):
                 return
         except Exception:
             pass
-        try:
-            conv = self.query_one("#conversation", ConversationView)
-            if conv.has_error_boxes():
-                conv.dismiss_last_error()
-                return
-        except Exception:
-            pass
         if self._panel_visible:
             self.action_toggle_panel()
-
-    def action_dismiss_all_errors(self) -> None:
-        """Shift+Esc — dismiss all stacked ErrorBoxes at once (Wave-13 B#1).
-
-        Delegates to ``ConversationView.dismiss_all_errors`` which
-        unmounts every live ErrorBox and emits one summary breadcrumb
-        "✗ N errors dismissed (see events)" to the conv log.
-        """
-        try:
-            conv = self.query_one("#conversation", ConversationView)
-            conv.dismiss_all_errors()
-        except Exception:
-            pass
 
     def _voice_config(self):
         """Best-effort fetch of the user's voice config block."""
@@ -2397,22 +2326,14 @@ class ReynTUIApp(App):
                 return False
         if action == "voice_cancel":
             # Intercept Esc when there's an overlay/recording to dismiss:
-            # voice recording, ErrorBoxes, or the side panel. The slash
-            # picker / prefix case is intentionally handled by
-            # InputBar's own Esc binding when no other overlay is
-            # present (= simpler dispatch path); when an ErrorBox is
-            # also live the app claims Esc here and ``action_voice_cancel``
-            # dismisses the picker first (= wave-2 P2 fix) before the
-            # ErrorBox.
+            # voice recording or the side panel. The slash picker / prefix
+            # case is handled by InputBar's own Esc binding when no other
+            # overlay is present (= simpler dispatch path).
             if self._voice_input is not None and self._voice_input.is_recording:
                 return True
             if self._panel_visible:
                 return True
-            try:
-                conv = self.query_one("#conversation", ConversationView)
-                return conv.has_error_boxes()
-            except Exception:
-                return False
+            return False
         if action == "voice_stop_and_submit":
             # Same gate as voice_cancel: Enter only behaves as "stop+send"
             # while recording. Outside of recording it falls through to

@@ -616,11 +616,10 @@ async def test_status_message_routes_to_sticky_status():
 
 
 @pytest.mark.asyncio
-async def test_error_message_mounts_error_box():
-    """Tier 2b: kind=error mounts an ErrorBox widget (no longer a RichLog line)."""
+async def test_error_message_renders_inline_in_log():
+    """Tier 2b: kind=error writes inline '✗' text into the RichLog (scroll-away style)."""
     from textual.widgets import RichLog
 
-    from reyn.chat.tui.widgets.error_box import ErrorBox
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -630,10 +629,20 @@ async def test_error_message_mounts_error_box():
         msg = OutboxMessage(kind="error", text="something broke")
         conv.render_message(msg)
         await pilot.pause()
-        # ErrorBox is mounted as a child; RichLog stays clean
-        boxes = list(conv.query(ErrorBox))
-        assert len(boxes) >= 1
-        assert len(log.lines) == before_lines
+        # Error is written as RichLog lines (not a widget mount).
+        assert len(log.lines) > before_lines, (
+            "write_error must add lines to the RichLog"
+        )
+        log_plain = "\n".join(
+            line.plain if hasattr(line, "plain") else str(line)
+            for line in log.lines
+        )
+        assert "✗" in log_plain, (
+            f"write_error must write '✗' glyph; log_plain: {log_plain[:300]!r}"
+        )
+        assert "something broke" in log_plain, (
+            f"write_error must include the error text; log_plain: {log_plain[:300]!r}"
+        )
 
 
 @pytest.mark.asyncio

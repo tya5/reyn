@@ -1,11 +1,10 @@
 """Tier 2: ConversationView.clear() sweeps in-flight ToolCallRow widgets (G-F1).
 
 Wave-10 Topic G finding F1 (P1): ``clear()`` (= Ctrl+L) swept
-``_stream_rows``, ``_skill_rows``, and ``_error_boxes`` but NOT
-``_tool_call_rows``. Tool-call widgets are mounted as direct
-children of ConversationView (not lines in the RichLog), so
-``_log().clear()`` doesn't unmount them. Two visible failures
-followed:
+``_stream_rows`` and ``_skill_rows`` but NOT ``_tool_call_rows``.
+Tool-call widgets are mounted as direct children of ConversationView
+(not lines in the RichLog), so ``_log().clear()`` doesn't unmount
+them. Two visible failures followed:
 
   - the widget stayed on screen as an orphan over the now-blank
     pane (= same visual artefact ErrorBox had before its sweep was
