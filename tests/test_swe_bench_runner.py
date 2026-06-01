@@ -197,6 +197,37 @@ def test_extract_patch_from_nested() -> None:
     assert patch == "nested_diff\n"
 
 
+def test_extract_patch_from_pretty_json_with_trailing_lines() -> None:
+    """Tier 2: real `reyn run` stdout shape — indent=2 pretty JSON after the
+    marker, followed by trailing token-usage / "events saved →" lines.
+
+    Reproduces the gap where a plain json.loads of everything-after-the-marker
+    fails on the trailing non-JSON lines (the multi-line patch never parsed).
+    The fix (raw_decode) parses the first JSON value and ignores the trailing
+    text.  Uses a multi-line patch so single-line scanning cannot accidentally
+    succeed.
+    """
+    from scripts.swe_bench_runner import extract_patch
+
+    patch_text = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-old\n+new\n"
+    stdout = (
+        "skill           : swe_bench\n"
+        "model           : standard\n"
+        "\n"
+        "=== Final Output ===\n"
+        + json.dumps(
+            {"type": "swe_bench_result", "data": {"patch": patch_text, "tests_passed": False}},
+            indent=2,
+        )
+        + "\n"
+        "Total tokens: 12345  cost: $0.0042\n"
+        "\n"
+        "events saved → /tmp/state/events/skill_runs/2026-06/x.jsonl\n"
+    )
+
+    assert extract_patch(stdout) == patch_text
+
+
 # ── 10. run_reyn: success ────────────────────────────────────────────────────
 
 
