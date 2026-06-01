@@ -11,7 +11,7 @@ Composition (top → bottom):
 Message-kind routing:
   agent       → header (timestamp + label, optionally suppressed when
                 consecutive turns are within _GROUP_WINDOW_S) followed
-                by FoldableMarkdown so long replies can be folded.
+                by full inline Markdown (Claude-Code-style, no collapse).
   status      → routed to StickyStatus (sticky 1-line, never logged).
   error       → mounted as an ErrorBox widget (collapsible 1-line).
   intervention→ InterventionWidget (mount_intervention).
@@ -66,7 +66,6 @@ from reyn.chat.tui._palette import (
 
 from .async_stack_panel import AsyncStackPanel
 from .error_box import ErrorBox
-from .foldable_markdown import FoldableMarkdown
 from .inline_thinking_row import InlineThinkingRow
 from .intervention import InterventionWidget
 from .skill_activity import SkillActivityRow
@@ -82,7 +81,6 @@ _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
 _GLYPH_USER = ">"
 _GLYPH_AGENT = "⏺"
 _GLYPH_SYSTEM = "·"
-_FOLD_THRESHOLD_LINES = 30  # B3: rendered-screen-line estimate above this folds inline
 # Hanging indent constants — two modes gated by ``_show_timestamps``.
 # ON  (ts shown):  ``HH:MM <sym>`` = 5 (ts) + 1 (space) + 1 (sym) + 1 (space)
 #                  → body starts col 8.
@@ -90,13 +88,13 @@ _FOLD_THRESHOLD_LINES = 30  # B3: rendered-screen-line estimate above this folds
 _BODY_INDENT_WITH_TS = 8
 _BODY_INDENT_NO_TS = 2
 # Legacy alias kept so external code that imports _BODY_INDENT_COLS
-# directly (e.g. streaming_row.py, foldable_markdown.py, tests) still
-# compiles. Points at the ts-on value (= the default).
+# directly (e.g. streaming_row.py, tests) still compiles. Points at the
+# ts-on value (= the default).
 _BODY_INDENT_COLS = _BODY_INDENT_WITH_TS
 # Public alias for cross-module invariant tests that pin
 # ``streaming_row.BODY_INDENT_COLS == conversation.BODY_INDENT_COLS``.
 BODY_INDENT_COLS = _BODY_INDENT_COLS
-_FOLD_WIDTH_FALLBACK = 73   # estimated body width when size.width is 0 (= 80 - _BODY_INDENT_WITH_TS)
+_BODY_WIDTH_FALLBACK = 73  # estimated body width when size.width is 0 (= 80 - _BODY_INDENT_WITH_TS)
 # /copy ring-buffer depth. Far enough back that the user can grab "the
 # reply two turns ago" — the typical "wait, that one was useful" recovery
 # pattern — without growing memory unboundedly across long sessions.
@@ -430,18 +428,6 @@ class ConversationView(Widget):
         # log spam when a Textual upgrade removes the ``_start_line``
         # attribute we depend on for turn-navigation anchors.
         self._start_line_warned = False
-        # B3 — full text of the last truncated agent reply (or None when the
-        # most recent reply fit within _FOLD_THRESHOLD_LINES).
-        # DEPRECATED: retained for has_pending_expand property only.
-        # Long replies are now mounted as FoldableMarkdown widgets tracked
-        # in ``_foldables`` below. ``expand_last_reply`` is kept for
-        # backwards-compat but delegates to toggle_last_foldable().
-        self._last_long_reply: str | None = None
-        # B3 (toggle): ordered list of mounted FoldableMarkdown widgets,
-        # newest last. toggle_last_foldable() operates on the tail element.
-        # Cleared on clear(). Does NOT grow unboundedly — FoldableMarkdown
-        # widgets are height:auto children; the list is a reference list only.
-        self._foldables: list[FoldableMarkdown] = []
         # Recent agent replies (newest last), capped at ``_RECENT_REPLIES_MAX``.
         # Consumed by the /copy slash command — users can grab the latest reply
         # (``/copy``) or any of the last N (``/copy 2``, ``/copy 3``, …) without
@@ -690,18 +676,6 @@ class ConversationView(Widget):
         return self._trim_warned
 
     @property
-    def last_long_reply(self) -> str | None:
-        """Tail text of the most recent long agent reply (= fold tail), or None.
-
-        Mirrors the ``_last_long_reply`` slot: set when the most recent
-        reply triggered the B3 fold (= too long for inline), cleared when
-        a subsequent short reply fits inline. Use ``has_pending_expand``
-        for the boolean form; this property exposes the raw value for
-        tests that need to distinguish *which* tail was stashed.
-        """
-        return self._last_long_reply
-
-    @property
     def last_speaker_at(self) -> float:
         """Wall-clock timestamp (``time.time()`` epoch seconds) of the last header write.
 
@@ -795,17 +769,6 @@ class ConversationView(Widget):
         policy.  Returns a snapshot; do not mutate the returned dict.
         """
         return dict(self._stream_rows)
-
-    @property
-    def foldables(self) -> "list[FoldableMarkdown]":
-        """A copy of the list of live ``FoldableMarkdown`` widgets.
-
-        Populated by ``_write_agent_markdown_with_fold`` when a reply is
-        long enough to fold. Tests use this to locate the widgets without
-        reaching into ``_foldables`` directly — per CLAUDE.md testing
-        policy. Returns a shallow list copy; do not mutate.
-        """
-        return list(self._foldables)
 
     def on_mount(self) -> None:
         """Wire a scroll watcher so user scroll-up suppresses auto-scroll.
@@ -1075,7 +1038,7 @@ class ConversationView(Widget):
 
         Body wrap is computed by splitting ``body_text`` at
         ``pane_width - indent`` cell-width.  The pane width falls back to
-        ``_FOLD_WIDTH_FALLBACK + indent`` when ``self.size.width`` is 0
+        ``_BODY_WIDTH_FALLBACK + indent`` when ``self.size.width`` is 0
         (= widget not yet laid-out or test harness with ``size=(0,0)``).
 
         This is the load-bearing writer for ``render_user_message`` and
@@ -1104,9 +1067,9 @@ class ConversationView(Widget):
         try:
             pane_width = self.size.width
             if pane_width <= 0:
-                pane_width = _FOLD_WIDTH_FALLBACK + indent
+                pane_width = _BODY_WIDTH_FALLBACK + indent
         except Exception:
-            pane_width = _FOLD_WIDTH_FALLBACK + indent
+            pane_width = _BODY_WIDTH_FALLBACK + indent
         # RichLog has 1-cell padding on each side (see CSS: padding: 0 1).
         body_width = max(10, pane_width - indent - 2)
 
@@ -1312,118 +1275,25 @@ class ConversationView(Widget):
             if len(body_lines) > 1:
                 # Remaining lines as Markdown (preserving formatting).
                 rest = "\n".join(body_lines[1:])
-                self._write_agent_markdown_with_fold(rest)
+                self._write_agent_markdown(rest)
             # Single-line body: already rendered inline; no extra write needed.
         self._write_log(Text(""))
 
-    # ── B3 fold (long-reply truncation + /expand) ────────────────────────────
+    def _write_agent_markdown(self, text: str) -> None:
+        """Write ``text`` as full inline Markdown (Claude-Code-style, no collapse).
 
-    def _estimate_rendered_lines(self, lines: list[str]) -> int:
-        """Estimate the number of terminal-screen lines ``lines`` will occupy.
-
-        Each source line wraps to ``ceil(cell_len(line) / body_width)``
-        screen lines (or 1 if empty). The body column begins at
-        ``_BODY_INDENT_COLS``; we conservatively subtract that + a 2-cell
-        margin from the pane width. CJK / emoji are counted in display
-        cells (= 2 per glyph) via ``rich.cells.cell_len``. When the pane
-        is not yet mounted ``self.size.width`` is 0, in which case we
-        fall back to a typical 80-col body (73 cells after indent).
-        Markdown rendering may add extra lines (= headers, blockquotes,
-        code blocks add padding) — the estimate is a lower bound on
-        rendered height, which is the correct direction for the fold
-        guard (= over-fold a little is better than letting a 116-line
-        reply through).
-        """
-        try:
-            width = max(20, self.size.width - self._current_body_indent() - 2)
-        except Exception:
-            width = _FOLD_WIDTH_FALLBACK
-        if width <= 0:
-            width = _FOLD_WIDTH_FALLBACK
-        total = 0
-        for line in lines:
-            cells = cell_len(line)
-            if cells <= 0:
-                total += 1
-                continue
-            total += (cells + width - 1) // width
-        return total
-
-    def _write_agent_markdown_with_fold(self, text: str) -> None:
-        """Write `text` as Markdown; mount FoldableMarkdown when too long.
-
-        Short replies (≤ _FOLD_THRESHOLD_LINES estimated rendered lines):
-        rendered via _write_body directly into the RichLog.
-
-        Long replies: a FoldableMarkdown widget is mounted as a child of
-        ConversationView, AFTER the most-recent RichLog content. Collapsed
-        by default (shows preview + ▶ hint). toggle_last_foldable() and
-        on_click toggle state.
+        All replies — regardless of length — are rendered directly into the
+        RichLog via ``_write_body``. Fold machinery removed per user direction
+        ("会話 reply は fold しなくて良い、claude code みたいに").
 
         Side effect: appends ``text`` to ``self._recent_replies`` (capped
         at ``_RECENT_REPLIES_MAX``) so the /copy slash command can hand
         any of the last N replies to the system clipboard.
         """
-        # Always remember the full text — independent of fold thresholds.
         self._recent_replies.append(text)
         if len(self._recent_replies) > _RECENT_REPLIES_MAX:
             self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
-        # Wave-10 follow-up G-F11: ``splitlines()`` instead of
-        # ``split("\n")`` so CRLF / CR endings normalise correctly.
-        lines = text.splitlines()
-        # Wave-7 B-F2: fold decision uses an estimated rendered-screen-line
-        # count rather than raw source newlines.
-        if self._estimate_rendered_lines(lines) <= _FOLD_THRESHOLD_LINES:
-            self._write_body(RichMarkdown(text))
-            self._last_long_reply = None
-            return
-        preview = "\n".join(lines[:_FOLD_THRESHOLD_LINES])
-        # Wave-10 follow-up G-F6: report the rendered-screen-line count
-        # of the suppressed tail, not the raw source-line count.
-        tail_lines = lines[_FOLD_THRESHOLD_LINES:]
-        remaining = self._estimate_rendered_lines(tail_lines)
-        # Mount a FoldableMarkdown widget for the long reply.
-        # The widget renders preview by default and supports
-        # click / F8 / /expand to toggle to full content.
-        foldable = FoldableMarkdown(
-            full_text=text,
-            preview_text=preview,
-            remaining_lines=remaining,
-        )
-        self._foldables.append(foldable)
-        self._last_long_reply = "\n".join(tail_lines)  # kept for has_pending_expand
-        self.mount(foldable)
-
-    def toggle_last_foldable(self) -> bool:
-        """Toggle the latest FoldableMarkdown widget (expand ↔ collapse).
-
-        Returns True when a widget was toggled, False when no foldable
-        exists yet in this session (= "nothing to expand" path for /expand).
-        """
-        if not self._foldables:
-            return False
-        self._foldables[-1].toggle()
-        return True
-
-    def expand_last_reply(self) -> bool:
-        """Toggle the latest foldable (= bidirectional; kept for back-compat).
-
-        The old one-way append is superseded by FoldableMarkdown. This method
-        now delegates to toggle_last_foldable() so callers wired to the old
-        path continue to work (= /expand handler in app_outbox.py).
-        """
-        return self.toggle_last_foldable()
-
-    @property
-    def has_pending_expand(self) -> bool:
-        """True when the latest reply produced a foldable (= long enough to fold).
-
-        Mirrors the old single-slot semantics: a subsequent short reply
-        clears ``_last_long_reply`` to None, so this returns False even
-        though older foldable widgets from previous turns are still mounted.
-        Used by tests that check whether the most-recent reply was long.
-        """
-        return self._last_long_reply is not None
+        self._write_body(RichMarkdown(text))
 
     def last_reply_text(self) -> str | None:
         """Return the full text of the most recent agent reply (any length).
@@ -1573,7 +1443,7 @@ class ConversationView(Widget):
         then remove the transient StreamingRow widget so the bottom of the
         pane stays empty (or holds the next streaming row).
 
-        Long replies are truncated with a /expand hint (B3 fold).
+        Replies render full inline regardless of length (Claude-Code-style).
         """
         row = self._stream_rows.pop(msg_id, None)
         if row is None:
@@ -1585,7 +1455,7 @@ class ConversationView(Widget):
         self.hide_status()
         if full:
             try:
-                self._write_agent_markdown_with_fold(full)
+                self._write_agent_markdown(full)
             except Exception:
                 self._log().write(Text(full))
         self._log().write(Text(""))
@@ -1600,7 +1470,7 @@ class ConversationView(Widget):
 
         Wave-9 F-F7: the previous cancel path called ``end_stream``
         which committed the partial text via the same
-        ``_write_agent_markdown_with_fold`` formatting used for
+        ``_write_agent_markdown`` formatting used for
         complete replies, then appended a separate ``"  ⌁ cancelled"``
         suffix line. Scrolling back through history the user couldn't
         tell which was a cancelled fragment vs a real reply — the
@@ -1633,15 +1503,9 @@ class ConversationView(Widget):
         if full:
             # Wave-10 G-F10: stash the partial in the recent-replies ring
             # buffer so ``/copy`` after a cancel returns the fragment the
-            # user just saw streaming. Pre-fix only the normal
-            # ``end_stream`` path routed through
-            # ``_write_agent_markdown_with_fold`` (= the only writer to
-            # ``_recent_replies``), so a cancel left the buffer carrying
-            # whatever reply ran two turns earlier — ``/copy`` returned
-            # the wrong content with no signal that the cancelled
-            # fragment was unrecoverable. Capping mirrors the
-            # ``_write_agent_markdown_with_fold`` cap (= one source of
-            # truth for the buffer's bounded size).
+            # user just saw streaming. Capping mirrors the
+            # ``_write_agent_markdown`` cap (= one source of truth for
+            # the buffer's bounded size).
             self._recent_replies.append(full)
             if len(self._recent_replies) > _RECENT_REPLIES_MAX:
                 self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
@@ -2919,20 +2783,10 @@ class ConversationView(Widget):
         self._last_boundary_flash = None
         self._turn_anchors.clear()
         self._trim_warned = False
-        self._last_long_reply = None
-        # B3 toggle: remove any mounted FoldableMarkdown widgets + clear list.
-        for widget in list(self.query(FoldableMarkdown)):
-            try:
-                widget.remove()
-            except Exception:
-                pass
-        self._foldables.clear()
         # Wave-10 G-F3: reset the recent-replies ring buffer. Pre-fix
         # ``/copy`` after a Ctrl+L returned replies from the now-invisible
         # prior session — confusing, and potentially surfaces content
-        # the user thought they had cleared. Same lifecycle as
-        # ``_last_long_reply`` directly above: both are agent-reply
-        # caches that should not survive a pane clear.
+        # the user thought they had cleared.
         self._recent_replies.clear()
         # Re-arm auto-scroll: clear() puts the user back at a fresh blank
         # log, and any prior scroll-up state is meaningless once the

@@ -2,21 +2,22 @@
 
 Visual UX audit (HIGH severity Finding F1): a single ``_CORAL`` accent
 was used for agent identity (header label, streaming cursor,
-intervention prefix), interactive affordances (``/expand`` hint, picker
-selection caret, panel cursor ``▶``), and status glyphs. The eye saw
-coral everywhere with no semantic rule.
+intervention prefix), interactive affordances (picker selection caret,
+panel cursor ``▶``), and status glyphs. The eye saw coral everywhere
+with no semantic rule.
 
 The split:
 
   • ``_AMBER`` = agent identity (header label, streaming cursor ``▍``,
     intervention "Aria asks" prefix). One read: "this names the agent".
-  • ``_CORAL`` = interactive affordance / "you are here" (``/expand``
-    hint, fold markers, picker selection caret, panel cursor ``▶``).
+  • ``_CORAL`` = interactive affordance / "you are here" (picker
+    selection caret, panel cursor ``▶``).
     One read: "you can act here / your cursor is here".
 
 These tests pin both reads — palette values exist and are distinct, and
-the load-bearing render paths (agent header, streaming cursor, fold
-hint) use the right one of the two.
+the load-bearing render paths (agent header, streaming cursor) use the
+right one of the two. Note: fold/expand machinery removed; conversation
+replies render full inline (Claude-Code-style).
 """
 from __future__ import annotations
 
@@ -172,51 +173,47 @@ async def test_streaming_cursor_uses_amber() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fold_hint_uses_coral_action_colour() -> None:
-    """Tier 2b: the fold hint is a FoldableMarkdown widget, not an amber agent element.
+async def test_long_reply_renders_full_inline_without_amber() -> None:
+    """Tier 2b: long agent replies render full inline (no fold); amber not used in body.
 
-    FoldableMarkdown design: the hint Label uses a dim coral palette (#886633),
-    NOT _AMBER (agent identity). We verify:
-      1. A FoldableMarkdown widget is mounted for a long reply.
-      2. The FoldableMarkdown DEFAULT_CSS does NOT reference _AMBER so the
-         semantic split is intact.
-      3. The hint Label has the fm-hint CSS class (= correct widget structure).
-
-    The old test searched for a RichLog strip containing "/expand"; with
-    FoldableMarkdown the hint lives in a Label widget child.
+    Fold/expand machinery removed per user direction. Replies of any length
+    render directly into the RichLog via _write_agent_markdown. This test
+    verifies:
+      1. A long reply (60 lines) is accepted by _write_agent_markdown and
+         rendered fully inline (no collapse widget mounted).
+      2. The palette invariant still holds: reply body text in the RichLog
+         does NOT carry _AMBER styling (agent identity colour stays on the
+         header symbol only, not body text).
     """
-    from textual.widgets import Label
+    from textual.widgets import RichLog
 
-    from reyn.chat.tui.widgets.foldable_markdown import FoldableMarkdown
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
+        log = conv.query_one(RichLog)
+        lines_before = len(list(getattr(log, "lines", [])))
 
-        # Trigger fold with a long reply (> _FOLD_THRESHOLD_LINES)
+        # Send a long reply (60 lines) — should render full inline, no fold widget.
         long_text = "\n".join(f"line {i}" for i in range(60))
-        conv._write_agent_markdown_with_fold(long_text)
+        conv._write_agent_markdown(long_text)
         await pilot.pause()
 
-        foldables = list(conv.query(FoldableMarkdown))
-        assert foldables, "FoldableMarkdown should be mounted for a long reply"
-        latest = foldables[-1]
-        hint_label = latest.query_one(".fm-hint", Label)
-        assert hint_label is not None, "fm-hint Label should exist in FoldableMarkdown"
+        # Fold removed: no collapse widget mounted; reply goes straight into RichLog.
+        lines_after = len(list(getattr(log, "lines", [])))
+        assert lines_after > lines_before, (
+            "Long reply must write at least one line into RichLog"
+        )
 
-        # Structural check: DEFAULT_CSS must not reference _AMBER (amber = agent identity).
+        # Palette check: body content must not carry _AMBER (amber = agent identity).
+        # We look for strips added after lines_before; none should use the amber colour.
         amber_lower = _AMBER.lower()
-        css = FoldableMarkdown.DEFAULT_CSS.lower()
-        assert amber_lower not in css, (
-            f"FoldableMarkdown.DEFAULT_CSS must NOT use _AMBER ({_AMBER}); "
-            f"found it in CSS"
-        )
-
-        # Hint text check (internal attribute): contains the ▶ glyph and "more lines".
-        hint_text = latest._collapsed_hint()
-        assert "more lines" in hint_text, (
-            f"collapsed hint should contain 'more lines', got: {hint_text!r}"
-        )
-        assert "▶" in hint_text, (
-            f"collapsed hint should contain '▶', got: {hint_text!r}"
-        )
+        body_strips = list(getattr(log, "lines", []))[lines_before:]
+        for strip in body_strips:
+            for seg in strip:
+                if seg.text.strip():
+                    style_str = str(seg.style).lower() if seg.style else ""
+                    assert amber_lower not in style_str, (
+                        f"Body segment {seg.text!r} must not use _AMBER in a reply body; "
+                        f"got style={style_str}"
+                    )

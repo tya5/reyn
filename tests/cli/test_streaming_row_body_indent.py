@@ -4,7 +4,7 @@ Wave-9 Topic F findings F1 + F6 (P1): the streaming body Static and
 the sealed Markdown swap had ``padding: 0 0`` — both rendered at
 col 0 — while the final committed markdown went through
 ``_write_body`` → ``_indent_body``. The body visibly jumped at seal()
-time when ``end_stream`` committed through ``_write_agent_markdown_with_fold``.
+time when ``end_stream`` committed through ``_write_agent_markdown``.
 
 Fix: both the streaming Static and the sealed Markdown carry
 ``padding: 0 0 0 <_BODY_INDENT_COLS>`` so they sit at the same

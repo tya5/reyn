@@ -220,7 +220,6 @@ from reyn.chat.slash import copy as _copy_mod  # noqa: E402, F401
 from reyn.chat.slash import cost_inline as _cost_inline_mod  # noqa: E402, F401
 from reyn.chat.slash import docs_filter as _docs_filter_mod  # noqa: E402, F401
 from reyn.chat.slash import donut as _donut_mod  # noqa: E402, F401
-from reyn.chat.slash import expand as _expand_mod  # noqa: E402, F401
 from reyn.chat.slash import find as _find_mod  # noqa: E402, F401
 from reyn.chat.slash import help as _help_mod  # noqa: E402, F401
 from reyn.chat.slash import image as _image_mod  # noqa: E402, F401

@@ -95,7 +95,7 @@ async def test_on_copy_last_reply_returns_synchronously() -> None:
         conv = app.query_one("#conversation", ConversationView)
         header = app.query_one("#header", ReynHeader)
         # Lay down a reply so /copy has something to fetch
-        conv._write_agent_markdown_with_fold("hello reply")
+        conv._write_agent_markdown("hello reply")
         await pilot.pause()
 
         router = OutboxRouter(app)

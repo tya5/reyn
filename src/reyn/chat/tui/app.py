@@ -193,9 +193,6 @@ class ReynTUIApp(App):
         # description); F5/F6 reserved for conv-pane error-jump (#586).
         # F7 is the first free function key after those reservations.
         Binding("f7", "drill_failed_tool", "Toggle most-recent failed tool row", priority=True, show=False),
-        # F8: toggle the latest FoldableMarkdown widget (long reply expand/collapse).
-        # Same action as /expand slash and clicking the widget's hint footer.
-        Binding("f8", "toggle_last_foldable", "Toggle long reply (expand/collapse)", priority=True, show=False),
         # F9: toggle timestamp prefix (HH:MM) in conv pane headers.
         # With ts hidden, body indent shrinks col 8 → col 2, reclaiming
         # horizontal space for content. State persists via tui_prefs.json.
@@ -1768,25 +1765,6 @@ class ReynTUIApp(App):
             row.toggle_expand()
         except Exception:
             pass
-
-    def action_toggle_last_foldable(self) -> None:
-        """F8 — toggle the latest FoldableMarkdown widget (expand ↔ collapse).
-
-        Keyboard companion to clicking the widget's hint footer or running
-        /expand. Surfaces a "nothing to expand" status when no long reply
-        has been rendered in this session.
-        """
-        try:
-            conv = self.query_one("#conversation", ConversationView)
-        except Exception:
-            return
-        toggled = conv.toggle_last_foldable()
-        if not toggled:
-            try:
-                conv.show_status("nothing to expand", kind="general")
-                self.set_timer(2.0, conv.hide_status)
-            except Exception:
-                pass
 
     def action_toggle_timestamps(self) -> None:
         """F9 — toggle the HH:MM timestamp prefix in conv-pane message headers.

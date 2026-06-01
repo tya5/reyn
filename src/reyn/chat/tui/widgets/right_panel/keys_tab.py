@@ -22,11 +22,6 @@ _KEY_DETAILS: dict[str, str] = {
         "If the row was already flushed to scroll history, surfaces a\n"
         "Ctrl+B -> Events hint. No-op hint when no failure exists yet."
     ),
-    "f8": (
-        "Toggle the latest long agent reply (expand/collapse). Same as\n"
-        "/expand or clicking the foldable's hint footer. Collapsed shows\n"
-        "preview + ▶ hint; expanded shows full text + ▼ hint."
-    ),
     "f9": (
         "Toggle the HH:MM timestamp prefix in conv-pane message headers.\n"
         "With timestamps hidden, body indent shrinks col 8 → col 2, giving\n"
@@ -158,9 +153,6 @@ _CONVERSATION_KEYS = {
     # W13 T2-1: ToolCallRow failure drill-down. Same rationale as F3 --
     # toggles inline expand on a widget that lives in the conv pane.
     "f7",
-    # F8: FoldableMarkdown toggle. Same rationale as F3/F7 — toggles
-    # expand state of a widget mounted in the conv pane.
-    "f8",
     # F9: timestamp toggle — affects conv-pane header rendering.
     "f9",
 }
@@ -196,7 +188,6 @@ _GROUP_ORDER = [
 _MOUSE_EXPLICIT: list[tuple[str, str]] = [
     ("click skill row", "Drill-down (= F3 mouse equivalent)"),
     ("click failed tool row", "Expand failure detail (= F7 mouse equivalent)"),
-    ("click foldable reply", "Toggle long reply expand/collapse (= F8 / /expand)"),
     ("click header [N pending]", "Jump to Pending tab"),
     ("click header [find: ...]", "Clear find filter"),
 ]

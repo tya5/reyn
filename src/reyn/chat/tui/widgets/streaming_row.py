@@ -107,7 +107,7 @@ class StreamingRow(Widget):
     # hanging indent as ``_write_body`` / ``_indent_body``. Without
     # this, the streaming text rendered at col 0 and visibly jumped 7
     # cells to the right at seal time when ``end_stream`` committed
-    # the final markdown through ``_write_agent_markdown_with_fold``.
+    # the final markdown through ``_write_agent_markdown``.
     # The 4-value form is ``top right bottom left``.
     DEFAULT_CSS = f"""
     StreamingRow {{
