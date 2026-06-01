@@ -96,6 +96,38 @@ def test_planner_default_light_class_is_resolved(monkeypatch) -> None:
     assert _run_capture(monkeypatch, engine) == "openai/resolved-light"
 
 
+def test_static_path_budget_uses_resolved_model_window() -> None:
+    """Tier 2: #1172 completion — a STATIC-path CompactionEngine (no
+    system_prompt_provider, e.g. the phase / swe_bench engine) derives its
+    budget from the RESOLVED model's real context window, not the 128K
+    unresolved-class fallback.
+
+    Pre-fix, __init__ called compute_budgets() with the raw class string while
+    self._model was resolved only for the litellm call — so the static path
+    (which never recompute_budgets()) handicapped every phase compaction to a
+    128K offload threshold (the C7 confound). The budget must reflect the real
+    window.
+    """
+    from reyn.llm.model_budget import get_max_input_tokens
+
+    real_model = "openai/gemini-2.5-flash-lite"
+    real_window = get_max_input_tokens(real_model)
+
+    engine = CompactionEngine(
+        model="standard",  # the class — phase engines pass the raw runtime class
+        events=EventLog(),
+        cfg=CompactionConfig(use_chars4_estimate=True),
+        resolver=ModelResolver({"standard": real_model}),
+        # no system_prompt_provider → static path (the swe_bench/phase shape)
+    )
+    # main_pool = T_max - T_SP(=0 default); must be the RESOLVED model's window,
+    # not the 128K unresolved-class fallback.
+    assert engine.budgets.main_pool == real_window, (
+        "static-path budget must use the resolved model's real window; "
+        f"got {engine.budgets.main_pool} (128000 = the unresolved-class fallback)"
+    )
+
+
 def test_literal_litellm_string_passes_through(monkeypatch) -> None:
     """Tier 2: an unknown literal litellm string is unchanged (passthrough);
     resolver omitted defaults to an empty (builtin-only) resolver, so a string
