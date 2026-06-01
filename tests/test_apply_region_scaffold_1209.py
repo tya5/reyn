@@ -23,6 +23,7 @@ from pathlib import Path
 from reyn.compiler.loader import load_dsl_skill
 from reyn.events.events import EventLog
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
+from reyn.permissions.permissions import PermissionResolver
 from reyn.workspace.workspace import Workspace
 
 SWE_BENCH_DIR = (
@@ -73,29 +74,52 @@ def test_escape_anchors_empty_anchor_is_never_match_sentinel() -> None:
     assert re.search(sentinel, "any code line at all") is None
 
 
-def test_skill_md_registers_escape_anchors_python_permission() -> None:
-    """Tier 2: skill.md declares escape_anchors as a safe python step.
+def test_escape_anchors_passes_enforced_python_permission(tmp_path: Path) -> None:
+    """Tier 2: escape_anchors clears the ENFORCED require_python path (not a string grep).
 
-    The apply preprocessor's python step requires an explicit permission entry in
-    skill.md frontmatter; without it the OS (with a real PermissionResolver)
-    rejects the step at runtime and the apply phase never executes. A
-    permission_resolver=None unit harness bypasses this check, so this structural
-    pin guards the declared-and-enforced path (#1214 faithful-run gap).
+    Runs the apply preprocessor through a real PermissionResolver (see
+    _run_apply_preprocessor) so the python step actually invokes
+    ``PermissionResolver.require_python``. With escape_anchors declared in
+    skill.md it must NOT raise and the downstream iterate must still produce
+    `_edit_regions`. If the skill.md declaration is removed, require_python
+    raises "not declared" (config-independent) and this test fails — closing the
+    #1214 gap (the original permission_resolver=None harness masked it). This
+    asserts the declared-AND-enforced path, not merely that text is present.
     """
-    skill_md = (SWE_BENCH_DIR / "skill.md").read_text(encoding="utf-8")
-    assert "escape_anchors.py" in skill_md
-    assert "function: escape_anchors" in skill_md
-    assert "mode: safe" in skill_md
+    # A run that reaches the python step + the iterate grep without a
+    # PermissionError proves require_python admitted the declared escape_anchors.
+    data = _run_apply_preprocessor(
+        tmp_path,
+        _big_body("    x = compute()  # ANCHOR-ENFORCE"),
+        [{"file": "pkg/mod.py", "description": "d", "anchor": "    x = compute()  # ANCHOR-ENFORCE"}],
+    )
+    assert "_edit_regions" in data  # escape→grep ran ⇒ python step was permitted
+    assert data["_edit_regions"][0]["count"] == 1
 
 
 # ── apply preprocessor: deterministic edit-region scaffolding ───────────────
 
 def _run_apply_preprocessor(tmp_path: Path, file_body: str, edits: list[dict]) -> dict:
+    """Run the apply preprocessor through the REAL enforced permission path.
+
+    Uses a real PermissionResolver (config-approving, non-interactive) — NOT
+    permission_resolver=None. The None resolver makes an undeclared python step
+    default to mode=safe and slip through (the exact masking that hid the
+    original #1214 bug); a real resolver invokes ``require_python``, which raises
+    "not declared" before approval if escape_anchors is absent from skill.md.
+    So these tests fail if the skill.md python permission declaration is removed
+    = the declared-AND-enforced path is genuinely exercised.
+    """
     from reyn.sandbox import NoopBackend
 
     skill = load_dsl_skill(SWE_BENCH_DIR / "skill.md")
     events = EventLog()
-    ws = Workspace(events=events, base_dir=tmp_path)
+    resolver = PermissionResolver(
+        config_permissions={"python.safe": "allow"},
+        project_root=tmp_path,
+        interactive=False,
+    )
+    ws = Workspace(events=events, base_dir=tmp_path, permission_resolver=resolver)
     ws.write_file("pkg/mod.py", file_body)
 
     artifact = {
@@ -114,7 +138,7 @@ def _run_apply_preprocessor(tmp_path: Path, file_body: str, edits: list[dict]) -
         events=events,
         subscribers=[],
         resolver=None,
-        permission_resolver=None,
+        permission_resolver=resolver,
         sandbox_backend=NoopBackend(),
     )
     result, _usage = asyncio.run(
