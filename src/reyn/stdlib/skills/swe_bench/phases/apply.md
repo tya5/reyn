@@ -17,6 +17,39 @@ default_sandbox_policy:
   allow_subprocess: true
   env_passthrough: ["PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "LANG", "LC_ALL", "TMPDIR"]
   timeout_seconds: 120
+# #1209 PR-B — deterministic edit-region scaffolding. BEFORE the LLM enters this
+# phase, the OS places each edit's target region into context by grepping the
+# plan's verbatim `anchor`, so the model never edits a file it cannot see (the
+# apply-starvation root cause: a large file was offloaded out of view and the
+# model fabricated non-existent old_strings). Deterministic (P5), never
+# LLM-mutated. `escape_anchors` regex-escapes each anchor (grep compiles regex);
+# the iterate step greps each anchor (±50 lines of context) into `_edit_regions`.
+preprocessor:
+  - type: python
+    module: ./escape_anchors.py
+    function: escape_anchors
+    mode: safe
+    into: data.edits
+    output_schema:
+      type: array
+  - type: iterate
+    over: data.edits
+    apply:
+      type: run_op
+      op:
+        kind: file
+        op: grep
+        path: "__placeholder__"
+        pattern: "__placeholder__"
+        output_mode: content
+        context_before: 50
+        context_after: 50
+      args_from:
+        path: "_iter.item.file"
+        pattern: "_iter.item.anchor_re"
+      on_error: skip
+    into: data._edit_regions
+    on_error: skip
 ---
 
 Implement the edit plan by modifying the repository files.
@@ -28,11 +61,27 @@ the test_patch itself after the skill run.  The verify preprocessor reverts any
 test-file edits before running `git apply test_patch`, so apply-phase test edits
 do not count and will not survive into the final diff.
 
-## Step 1 — Read each file before editing
+## Step 1 — Ground each edit in its pre-fetched region
 
-For every file listed in the plan's edits, issue a file read op to retrieve
-the current content.  Do NOT edit from memory — always read first to ensure
-the edit target is accurate.
+The OS has already placed each edit's target region into your input under
+`_edit_regions` (one entry per edit, in plan order) — a `grep` of the plan's
+`anchor` with surrounding context. Use these regions as the source of truth for
+the exact current text; do NOT edit from memory.
+
+For each edit, check its `_edit_regions` entry:
+
+- **One match** → use the matched line and its surrounding context as the basis
+  for the edit's `old_string` (copy the exact current text).
+- **No match** (`count` is 0 / empty) → the anchor was not found, so the edit
+  site is not located. Do NOT guess or fabricate an `old_string` — that produces
+  a no-op or wrong edit. Skip this edit, note the file as not-locatable, and
+  proceed; the verify phase will surface the gap for a re-plan.
+- **Multiple matches** (`count` > 1) → the anchor was not unique. Use the match
+  whose surrounding context best fits the plan's `description` for that edit.
+
+If a region is large or you need more than the ±context shown, issue a targeted
+`read` (with `offset`/`limit`) for that file — a bounded read stays in context
+(it is not offloaded out of view).
 
 ## Step 2 — Apply each edit
 

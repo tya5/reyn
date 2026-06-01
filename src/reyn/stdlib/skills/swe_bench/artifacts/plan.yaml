@@ -18,9 +18,19 @@ schema:
           description:
             type: string
             description: Human-readable description of what to change in this file and why.
+          anchor:
+            type: string
+            description: >
+              A short VERBATIM single-line snippet copied exactly from the
+              current file at the edit site (a unique landmark). The apply phase
+              greps this anchor to deterministically place the edit-target region
+              into context before editing, so it never edits a file it cannot
+              see. Choose a line unique within the file; for an addition (new
+              function/import) use the nearest existing line.
         required:
           - file
           - description
+          - anchor
     rationale:
       type: string
       description: Overall rationale for this plan — why these edits fix the problem.

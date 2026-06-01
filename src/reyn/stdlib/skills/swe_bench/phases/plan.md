@@ -63,6 +63,16 @@ For each file that needs to change, describe:
 - The specific function, method, or code block to modify
 - What the change should be (add, remove, or replace logic)
 - Why this change addresses the problem
+- An **`anchor`**: a short, VERBATIM single-line snippet copied EXACTLY from the
+  current file at the edit site. This is a grep landmark — the apply phase greps
+  it to place the edit's target region into context automatically, so apply
+  never edits a file it cannot see. Requirements:
+  - Copy it character-for-character from a line you actually read (do not
+    paraphrase or reconstruct from memory) — a mismatched anchor finds nothing.
+  - Choose a line **unique** within the file (a distinctive signature,
+    assignment, or comment) so the grep returns exactly one match.
+  - For an **addition** (new function/import/block), anchor on the nearest
+    existing line where the insertion goes.
 
 The plan should be precise enough that the apply phase can execute it without
 further analysis.  Prefer minimal, targeted changes over large rewrites.
