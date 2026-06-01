@@ -109,8 +109,15 @@ Live calls via the litellm proxy (:4000), `gemini-2.5-flash-lite`:
   `tools` + `response_format={json_object}` → `litellm.BadRequestError`:
   *"Function calling with a response mime type: 'application/json' is unsupported"*
   (Gemini 400, wrapped as a Python `Exception`). reyn's broad `except Exception`
-  catches it → retry without `response_format` → **tools-only SUCCEEDED**,
-  `finish_reason=tool_calls` (the op tool_call is emitted). D4 confirmed.
+  catches it → retry without `response_format` → **the tools-only retry succeeds
+  (no error)**. D4 confirmed. The load-bearing fact is precisely that the retry
+  does not error — **whether the model emits a `tool_call` vs plain `content` on
+  that retry is model-choice and non-deterministic on a weak model** (one run here
+  returned `finish_reason=tool_calls`; an independent re-run returned `content`
+  with `finish_reason=stop`). Both are fine: the op-loop simply continues on a
+  `tool_use` stop and ends on `end_turn`/content. (Per the pre-conclusion
+  observation discipline — the flaky tool_call-vs-content outcome is not stated as
+  a deterministic criterion.)
 - **(b) Does the transition come out valid after degrade?** YES. The transition call
   (json-mode, no tools, control schema) → `finish_reason=stop`, valid
   `{control:{type:transition, decision:continue, next_phase:report, …}, artifact:…}`.
