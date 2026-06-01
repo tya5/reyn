@@ -768,10 +768,32 @@ async def recorded_acompletion(
             call_kwargs["response_format"] = rf
         return await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs)
 
+    # #1212 D5: per-(model, call-shape) capability cache. If this model+shape is
+    # already known to reject response_format, skip the doomed attempt and go
+    # straight to the no-response_format call (only on the fallback-enabled path,
+    # so non-fallback callers keep their exact raise-on-error semantics). Pure
+    # optimization — the fallback below still handles a first/uncached 400.
+    from reyn.llm.capability_cache import (
+        record_response_format_support,
+        response_format_supported,
+    )
+
+    has_tools = bool(base_kwargs.get("tools"))
+    rf = response_format
+    if (
+        response_format is not None
+        and fallback_without_response_format
+        and response_format_supported(effective_model, has_tools=has_tools) is False
+    ):
+        rf = None
+
     try:
-        response = await _once(response_format)
+        response = await _once(rf)
+        if rf is not None:
+            record_response_format_support(effective_model, has_tools=has_tools, supported=True)
     except Exception:
-        if response_format is not None and fallback_without_response_format:
+        if rf is not None and fallback_without_response_format:
+            record_response_format_support(effective_model, has_tools=has_tools, supported=False)
             response = await _once(None)
         else:
             raise
