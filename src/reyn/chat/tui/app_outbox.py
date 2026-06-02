@@ -1514,6 +1514,12 @@ class OutboxRouter:
             conv.fail_tool_call_row(op_id, error=reason)
         except Exception:
             pass
+        # C6: a tool failure is something the user will want to inspect, so
+        # set the smart-Ctrl+B focal tab to events (same as ``_on_error``).
+        # Without this the focal tab stays on whatever the last skill-trace
+        # event set (= agents), and Ctrl+B after a tool failure opens the
+        # Agents tab instead of the Events trace the user came to see.
+        self._app._last_focal_tab = "events"
 
     def _on_embedding_lifecycle(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
