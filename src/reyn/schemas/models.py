@@ -298,6 +298,31 @@ class DeleteFileIROp(BaseModel):
     path: str
 
 
+# ── #1240 Wave 1.5: glob_files / grep_files fine ops ─────────────────────────
+# Same pattern as Wave 1's read_file/write_file/edit_file/delete_file above.
+# Field names/types mirror the args the registry handler functions read:
+#   _handle_glob (tools/file.py): path, pattern
+#   _handle_grep (tools/file.py): path, pattern, glob, case_sensitive, max_results
+# Both have phase=allow ToolDefinitions (GLOB_FILES/GREP_FILES, tools/file.py),
+# so control_ir_executor routes them via the unified registry (same path as chat).
+
+
+class GlobFilesIROp(BaseModel):
+    kind: Literal["glob_files"]
+    path: str = "."                  # root directory to search from
+    pattern: str                     # glob pattern, e.g. "**/*.py"
+    max_results: int = 50
+
+
+class GrepFilesIROp(BaseModel):
+    kind: Literal["grep_files"]
+    path: str = "."                  # directory or file to search
+    pattern: str                     # regex pattern to search for
+    glob: str | None = None          # file filter glob, e.g. "**/*.py"
+    case_sensitive: bool = False
+    max_results: int = 50
+
+
 class MCPIROp(BaseModel):
     kind: Literal["mcp"]
     server: str
@@ -589,11 +614,15 @@ class CompactIROp(BaseModel):
 #   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search,
 #   mcp_install, embed, index_write, index_query, recall, index_drop,
 #   sandboxed_exec, judge_output, skill_resolve, compact.
+# Fine-grained file ops (#1240 Wave 1+1.5): read_file, write_file, edit_file,
+#   delete_file, glob_files, grep_files (phase=allow registry entries).
 ControlIROp = Annotated[
     Union[
         FileIROp,
         # #1240 Wave 1: fine-grained file ops (coarse FileIROp retained for compat).
         ReadFileIROp, WriteFileIROp, EditFileIROp, DeleteFileIROp,
+        # #1240 Wave 1.5: glob_files / grep_files fine ops.
+        GlobFilesIROp, GrepFilesIROp,
         MCPIROp, AskUserIROp, ShellIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
         EmbedIROp, IndexWriteIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
