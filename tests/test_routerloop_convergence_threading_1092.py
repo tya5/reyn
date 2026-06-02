@@ -199,3 +199,79 @@ def test_converged_op_loop_dispatches_phase_op_not_unknown_tool(tmp_path, monkey
         "a phase op tool_call must route through the converged path's ctx.tool_catalog, "
         "not be rejected as unknown_tool (the native-dispatch catalog gap)"
     )
+
+
+def test_converged_decide_frame_information_equivalent_to_json_op_loop(tmp_path, monkeypatch) -> None:
+    """Tier 2: the converged FD2 decide frame carries the SAME information the #1212
+    json-mode op-loop decide frame does — act_turn_reasoning + RAW control_ir_results.
+
+    Regression guard for the #1092 PR-B GATE-2 finding (the decide-fumble reliability
+    regression, invisible to unit tests until dogfood): the converged decide frame was
+    WEAKER than _run_op_loop's — (a) act_turn_reasoning was not collected from the native
+    assistant turns, and (b) control_ir_results were the dispatch-wrapped
+    ``{"status":"ok","data":<r>}`` envelope instead of the raw op result. Both = a general
+    context-inadequacy bug. This pins information-equivalence so a future refactor can't
+    silently re-introduce it.
+    """
+    monkeypatch.chdir(tmp_path)
+    captured: dict = {"frame": None}
+    turn = {"n": 0}
+
+    async def _tools(*a, **k):  # noqa: ANN002, ANN003
+        i = turn["n"]
+        turn["n"] += 1
+        if i == 0:
+            return LLMToolCallResult(
+                content="reading the file to decide",  # native assistant reasoning
+                tool_calls=[{
+                    "id": "c1", "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "x.txt"}'},
+                }],
+                finish_reason="tool_calls",
+                usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
+            )
+        return LLMToolCallResult(
+            content=None, tool_calls=[], finish_reason="stop",
+            usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
+        )
+
+    async def _decide(model, frame, *a, **k):  # noqa: ANN001, ANN002, ANN003
+        captured["frame"] = frame
+        return LLMCallResult(
+            data=_FINISH, usage=TokenUsage(prompt_tokens=20, completion_tokens=10),
+        )
+
+    monkeypatch.setattr(lcr, "call_llm", _decide)
+    monkeypatch.setattr(lcr, "call_llm_tools", _tools)
+
+    draft = Phase(
+        name="draft", instructions="d",
+        input_schema={"type": "object", "properties": {}},
+        allowed_ops=["read_file"],
+    )
+    skill = Skill(
+        name=_SKILL_NAME, entry_phase="draft", phases={"draft": draft},
+        graph=SkillGraph(transitions={}, can_finish_phases=["draft"]),
+        final_output_schema={"type": "object", "properties": {}},
+        final_output_name="result",
+    )
+    config = ReynConfig(routerloop_convergence_skills=[_SKILL_NAME])
+    agent = Agent.from_config(config, shell_allowed=False, model="stub/model")
+    result = asyncio.run(agent.run(skill, {"type": "input", "data": {}}))
+
+    assert result.ok, f"run must complete; got {result.status}"
+    fr = captured["frame"]
+    assert fr is not None, "the FD2 decide frame must be built + passed to the json decide call"
+    # (a) reasoning continuity: the model's native assistant content is carried into the
+    # decide frame (exactly what _run_op_loop carries via act_turn_reasoning).
+    assert any("reading the file" in r for r in fr.act_turn_reasoning), (
+        "converged decide frame must carry act_turn_reasoning from the native assistant "
+        f"turns (got {fr.act_turn_reasoning!r})"
+    )
+    # (b) raw op-result shape: control_ir_results must be unwrapped, NOT the dispatch_tool
+    # {"status":"ok","data":<r>} envelope (which the json-mode op-loop never carries).
+    assert fr.control_ir_results, "the decide frame must carry the op results"
+    for r in fr.control_ir_results:
+        assert not (
+            isinstance(r, dict) and "data" in r and set(r) <= {"status", "data", "error"}
+        ), f"control_ir_results must be raw op results, not the dispatch envelope: {r!r}"
