@@ -46,9 +46,40 @@ dispatcher the op-executor uses (no dispatch gap). But RouterLoop builds its too
 `allowed_ops`. So **PR-A needs a catalog-source REPLACE seam in RouterLoop**: a phase supplies
 `_build_phase_tool_catalog(allowed_ops)` (EXISTS ✓) **INSTEAD of** chat discovery — and per #1212 PR3 decision A
 (chat-router tools ≠ phase ops) it must **REPLACE, not augment** (no skills/agents/mcp/universal-wrappers inside
-a phase). `RouterLoopHost` also has ~10 chat-specific methods (skills/agents/mcp/memory/web/project) the
-phase-host stubs. `system_prompt_override` handles the prompt ✓. **→ PR-A scope = RouterLoop catalog-source seam
-+ phase-host (op catalog + stubs)** — bigger than "supply a host", but tractable + no structural blocker.
+a phase). `system_prompt_override` handles the prompt ✓.
+
+**FD1 RESOLVED — (c) narrow-core extraction** (lead-coder call; e2e verify-gate line-mapped, APPROVE). The
+`RouterLoopHost` Protocol is actually **~30 methods** (not ~10) — most chat-specific (web/reyn_src/memory/
+file_*/mcp_*/discovery/spawn/send_to_agent/record_plan_*). Rejected: (a) a ~30-method stub phase-host (27 stubs =
+throwaway under the user's no-throwaway principle, fragile); (b) a full chat-host refactor (too big, risks the
+live chat path). **(c)**: extract the host calls RouterLoop's **loop** directly makes into a **`RouterLoopCore`
+Protocol**; `RouterLoopHost = RouterLoopCore + chat-extras`; RouterLoop's loop is typed against
+`RouterLoopCore`; the chat `RouterHostAdapter` (a superset) satisfies `RouterLoopCore` for free (zero chat
+risk); the **PhaseRouterLoopHost implements `RouterLoopCore` only, ZERO chat-extra stubs**.
+
+verify-gate (e2e, line-mapped — no chat-extra couples into the loop-core, so (c) holds):
+- **`RouterLoopCore` = 6 shared members**: `events` (property) · `make_router_op_context()` (the OpContext
+  for `dispatch_tool` — the op-execution bridge) · `resolve_model(name)` · `put_outbox(...)` · attrs
+  `agent_name` / `agent_role` / `output_language`. (`append_history_entry` / `record_plan_*` / `resolver` are
+  NOT directly called by RouterLoop → out of core; no plan-record no-op needed.)
+- **`get_phase_op_catalog()`** stays a **getattr-hook** (phase-only; chat doesn't implement it), already added
+  in the catalog-source seam (8d48b4ef).
+- **chat-extras (outside core, phase-unreached)**: list_available_skills/agents, get_memory_index/mcp/web/
+  file_perms/project/universal/embedding/sandbox, memory_*, file_*, mcp_*, web_*, reyn_src_*, spawn/run_skill/
+  send_to_agent. They live in the chat-discovery setup, the chat-SP-build (override-skipped), or chat-dispatch
+  handlers — phase ops dispatch via the op handlers + the phase OpContext, never these.
+
+**Refinement (i)**: the chat-discovery SETUP (`router_loop.py` ~1486-1717, `list_available_skills`/`get_*`) runs
+BEFORE the seam — guard it behind `_phase_op_catalog is None` so a phase calls zero discovery methods (grows the
+catalog-source seam from "override `tools=`" to "skip setup + set `tools=`"; no cascade to the chat adapter;
+chat byte-identical). **Refinement (ii)**: `put_outbox` is a phase **no-op** — phase has no user outbox (its
+output is the result artifact / transition), a legitimate concept-absent no-op, not a fragile chat stub. The
+Tier-2 test asserts this is **not load-bearing** (phase accumulates op-results into the message-history; no-op-ing
+`put_outbox` drops nothing phase needs — if it were load-bearing, the test fails).
+
+**→ PR-A scope** = catalog-source seam (✓ 8d48b4ef) + `RouterLoopCore` extraction + setup-guard +
+PhaseRouterLoopHost (6 core impls + `get_phase_op_catalog`, zero chat-extra stubs). Throwaway-free,
+chat-unaffected, P7-aligned (no chat-tool-exec baked into the loop).
 
 ### FD2 — RouterLoop is json-mode-free; the structured transition stays a separable post-pend (肝)
 *(3-source locked: user direction + primary-evidence + e2e §3a.)* RouterLoop runs ops native-tools
