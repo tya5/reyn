@@ -5,7 +5,7 @@ input: improvement_plan
 role: implementer
 model_class: standard
 max_act_turns: 1
-allowed_ops: [file]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files]
 ---
 
 Commit the iteration to history, optionally apply the planned DSL changes, then decide whether to loop or finish.

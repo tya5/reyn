@@ -5,7 +5,7 @@ input: improvement_session
 role: evaluator
 model_class: standard
 max_act_turns: 1
-allowed_ops: [file, run_skill]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, run_skill]
 ---
 
 Run the target skill against the chosen test case via the `eval` stdlib sub-skill, capture the score for this iteration, and update the workspace history file.

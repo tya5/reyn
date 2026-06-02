@@ -4,7 +4,7 @@ name: analyze_skill
 input: user_message | eval_builder_request
 role: eval_designer
 max_act_turns: 7
-allowed_ops: [file]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files]
 preprocessor:
   # Step 1: extract target skill name from the input artifact (pure dict/regex — safe mode).
   # Handles all three artifact shapes: top-level target_skill, wrapped data.target_skill,
