@@ -38,8 +38,16 @@ from reyn.workspace.workspace import Workspace
 # #1133 regression anchor (it was the op that went missing). The list is derived
 # from the invariant intent, not the implementation — a future change that gates
 # one of these behind a flag must update this guard deliberately.
+# #1240 Wave 2b: coarse "file" replaced by fine file kinds (read_file/write_file/
+# edit_file/delete_file/glob_files/grep_files) — these are now the unconditionally-
+# advertised file ops via available_ops() → _fine_file_op_specs().
 _UNCONDITIONAL_OPS = {
-    "file",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "delete_file",
+    "glob_files",
+    "grep_files",
     "ask_user",
     "sandboxed_exec",
     "lint",
@@ -163,7 +171,7 @@ def test_phase_op_catalog_gap_emitted_when_declared_op_not_advertised(tmp_path: 
 
     os.chdir(tmp_path)
     rt = OSRuntime(
-        _skill_with_allowed_ops(["file", "shell"]),  # shell declared, shell_allowed defaults False
+        _skill_with_allowed_ops(["read_file", "shell"]),  # shell declared, shell_allowed defaults False
         model="stub/model",
         run_id="gap_test",
         workspace_base_dir=tmp_path,
@@ -175,7 +183,7 @@ def test_phase_op_catalog_gap_emitted_when_declared_op_not_advertised(tmp_path: 
     d = gaps[-1].data
     assert d["phase"] == "act"
     assert "shell" in d["missing_ops"], f"missing_ops should name shell: {d['missing_ops']}"
-    assert "file" not in d["missing_ops"], "file is advertised — must not be flagged as a gap"
+    assert "read_file" not in d["missing_ops"], "read_file is advertised — must not be flagged as a gap"
 
 
 def test_no_gap_event_when_all_declared_ops_advertised(tmp_path: Path) -> None:
@@ -185,7 +193,7 @@ def test_no_gap_event_when_all_declared_ops_advertised(tmp_path: Path) -> None:
 
     os.chdir(tmp_path)
     rt = OSRuntime(
-        _skill_with_allowed_ops(["file", "sandboxed_exec"]),  # both unconditional
+        _skill_with_allowed_ops(["read_file", "sandboxed_exec"]),  # both unconditional
         model="stub/model",
         run_id="no_gap_test",
         workspace_base_dir=tmp_path,
@@ -203,7 +211,7 @@ def test_phase_op_catalog_gap_emitted_once_per_phase(tmp_path: Path) -> None:
 
     os.chdir(tmp_path)
     rt = OSRuntime(
-        _skill_with_allowed_ops(["file", "shell"]),
+        _skill_with_allowed_ops(["read_file", "shell"]),
         model="stub/model",
         run_id="dedup_test",
         workspace_base_dir=tmp_path,

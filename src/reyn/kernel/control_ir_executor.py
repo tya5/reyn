@@ -44,55 +44,37 @@ def _build_phase_tool_catalog(allowed_ops: set[str]) -> dict[str, dict]:
 
     Each allowed op kind becomes a tool entry whose parameters schema comes
     from the unified ToolRegistry (= ADR-0026 Phase 4-3).  Each
-    ToolDefinition with ``gates.phase == "allow"`` carries the same
-    coarse-IROp-derived schema the legacy ``OP_KIND_MODEL_MAP``-based path
-    used; the registry is now the single source for both schema rendering
+    ToolDefinition with ``gates.phase == "allow"`` carries the IROp-derived
+    schema; the registry is now the single source for both schema rendering
     and dispatch.
 
     Unknown / router-only kinds get a schema-less entry (= no arg
     validation; dispatch will return ``unknown_tool`` if invoked).
 
+    #1240 Wave 2b: D7 verb-drop removed (coarse "file" kind dropped; all
+    file ops are now plain fine kinds: read_file/write_file/etc.). The
+    split_tool_name call and _drop_schema_property helper are no longer
+    needed here; each name is looked up directly in the registry.
+
     Returns a dict[str, dict] in litellm tools= entry shape:
         {op_kind: {"function": {"name": op_kind, "parameters": <json schema>}}}
     """
-    from reyn.op_runtime.registry import split_tool_name
     from reyn.tools import get_default_registry
     registry = get_default_registry()
 
     catalog: dict[str, dict] = {}
     for name in allowed_ops:
-        # #1212 PR4 (D7): a verb-granular file tool-name (file__read) resolves to
-        # the `file` schema; the verb is implied by the tool name, so its `op`
-        # field is dropped from the offered parameters (the conversion re-injects
-        # it). All other names are kinds (tool-name == kind).
-        kind, verb = split_tool_name(name)
-        tool_def = registry.lookup(kind)
+        tool_def = registry.lookup(name)
         if tool_def is None or tool_def.gates.phase != "allow":
             catalog[name] = {"function": {"name": name}}
             continue
-        params = dict(tool_def.parameters)
-        if verb is not None:
-            params = _drop_schema_property(params, "op")
         catalog[name] = {
             "function": {
                 "name": name,
-                "parameters": params,
+                "parameters": dict(tool_def.parameters),
             }
         }
     return catalog
-
-
-def _drop_schema_property(schema: dict, prop: str) -> dict:
-    """Return a copy of a JSON-schema object with ``prop`` removed from
-    ``properties`` and ``required`` (used to hide an implied field)."""
-    out = dict(schema)
-    props = out.get("properties")
-    if isinstance(props, dict) and prop in props:
-        out["properties"] = {k: v for k, v in props.items() if k != prop}
-    req = out.get("required")
-    if isinstance(req, list) and prop in req:
-        out["required"] = [r for r in req if r != prop]
-    return out
 
 
 class ControlIRExecutor:
@@ -251,28 +233,8 @@ class ControlIRExecutor:
         ``allowed_ops`` in ``build_frame``.
         """
         return [
-            ControlIROpSpec(
-                kind="file",
-                description=(
-                    "File operations. All paths are relative to the project root (CWD). "
-                    "op='read': read a file. offset (int, 0-indexed line) and limit (int, line count) enable partial reads. "
-                    "op='write': create or overwrite a file. content: full file text. "
-                    "op='glob': find files by pattern (supports ** for recursive). max_results (default 50) caps output. "
-                    "op='delete': delete a single file (no-op if not found). "
-                    "op='grep': search file contents with a regex. path=search root (dir or file). "
-                    "  pattern: required regex. glob: file filter (e.g. '**/*.py'). file_type: extension filter (e.g. 'py'). "
-                    "  output_mode: 'content' (default, returns matches with line numbers), "
-                    "  'files_with_matches' (paths only), 'count' (total match count). "
-                    "  case_insensitive: bool. context_before/context_after: surrounding lines. head_limit: cap matches. "
-                    "op='edit': partial replace in a file. old_string must match exactly once (or use replace_all=true). "
-                    "  new_string: replacement text. Fails with error if old_string is not found or not unique."
-                ),
-                example={"kind": "file", "op": "grep", "path": "src", "pattern": "def \\w+", "glob": "**/*.py", "output_mode": "content"},
-            ),
-            # #1240 Wave 2a: fine-grained file kinds (read_file/write_file/…),
-            # advertised alongside the coarse "file" above. build_frame filters
-            # per phase by allowed_ops — migrated (fine) phases see these,
-            # un-migrated (coarse [file]) phases see only the coarse spec.
+            # #1240 Wave 2b: coarse "file" op dropped — all file ops use fine kinds.
+            # build_frame filters per phase by allowed_ops.
             *self._fine_file_op_specs(),
             ControlIROpSpec(
                 kind="ask_user",
@@ -495,7 +457,11 @@ class ControlIRExecutor:
 
         # Build a tool catalog for dispatch_tool name/arg validation.
         # Use allowed_ops if provided; fall back to all known op kinds.
-        catalog_ops = allowed_ops if allowed_ops is not None else set(_IROP_MODEL_MAP.keys())
+        if allowed_ops is not None:
+            catalog_ops = allowed_ops
+        else:
+            from reyn.op_runtime.registry import OP_KIND_MODEL_MAP
+            catalog_ops = set(OP_KIND_MODEL_MAP.keys())
         tool_catalog = _build_phase_tool_catalog(catalog_ops)
 
         caller_id = f"{self._skill_name}.{phase}" if self._skill_name else phase
@@ -519,10 +485,6 @@ class ControlIRExecutor:
         _registry = get_default_registry()
 
         # Lazy import to avoid module-init cycles.
-        # #1212 PR4 (D7): op-aware allowance — gates a file op by its verb
-        # (file__read) when allowed_ops is verb-granular, while a coarse `file`
-        # entry still allows every verb (behavior-preserving). Non-file ops are
-        # unchanged (delegates to is_op_allowed on op.kind).
         from reyn.op_runtime.registry import is_op_instance_allowed
 
         for op_idx, op in enumerate(ops):
@@ -538,15 +500,11 @@ class ControlIRExecutor:
                 })
                 continue
 
-            # #1240 Wave 1: exclude None so unset optional fields are OMITTED
-            # rather than sent as JSON null. The coarse FILE_OP schema tolerates
-            # null, but the fine-grained ToolDefinition schemas (read_file etc.)
+            # Exclude None so unset optional fields are OMITTED rather than sent
+            # as JSON null. Fine-grained ToolDefinition schemas (read_file etc.)
             # type optional fields strictly (e.g. offset: integer), and a model
             # default of None dumps to null which fails strict validation. Omit
-            # matches how the chat LLM emits these args (absent when unset);
-            # handlers rebuild the op from args with the same defaults, so this
-            # is functionally identical for coarse ops (only the memoization
-            # args_hash shifts, consistently for record + lookup).
+            # matches how the chat LLM emits these args (absent when unset).
             op_args = op.model_dump(exclude={"kind"}, exclude_none=True)
 
             async def _invoker(args: dict, _op=op, _ctx=ctx, _name=op.kind) -> Any:
@@ -554,13 +512,10 @@ class ControlIRExecutor:
                 # ToolRegistry when the op kind has a phase=allow entry.
                 # This routes through the canonical handler in
                 # src/reyn/tools/<name>.py which itself delegates to
-                # op_runtime/<kind>.py (= shared implementation).  All 8
-                # Control IR op kinds are registered (= ask_user / shell /
-                # lint / web_fetch / web_search directly + file / mcp /
-                # run_skill via the coarse-name ToolDefinitions added in
-                # Phase 4-2a).  The legacy execute_op fallback below is
-                # retained as a safety net for any future op kind whose
-                # registry entry isn't yet wired with phase=allow.
+                # op_runtime/<kind>.py (= shared implementation).
+                # The legacy execute_op fallback below is retained as a
+                # safety net for RAG / internal op kinds whose registry
+                # entry isn't wired with phase=allow.
                 tool_def = _registry.lookup(_name)
                 if tool_def is not None and tool_def.gates.phase == "allow":
                     phase_state = PhaseCallerState(

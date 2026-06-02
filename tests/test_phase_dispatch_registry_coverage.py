@@ -29,11 +29,11 @@ from reyn.tools import get_default_registry
 # for it.
 _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     "ask_user",
-    "file",
+    # #1240 Wave 2b: coarse "file" kind dropped from OP_KIND_MODEL_MAP + registry.
     # #1240 Wave 1: fine-grained file kinds. Each has a phase=allow
     # ToolDefinition (READ_FILE/WRITE_FILE/EDIT_FILE/DELETE_FILE, tools/file.py)
     # that control_ir_executor routes via the registry (op.kind → _registry.lookup)
-    # — the SAME handler chat uses. Coarse "file" stays registry-wired for compat.
+    # — the SAME handler chat uses.
     "read_file",
     "write_file",
     "edit_file",

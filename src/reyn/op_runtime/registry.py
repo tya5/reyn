@@ -1,16 +1,22 @@
-"""Op kind registry — coarse-name op classification (ADR-0026 Phase 4 steady state).
+"""Op kind registry — op kind classification (ADR-0026 Phase 4 steady state).
 
-This module holds three classifications keyed by **coarse op kind**
-(= the ``op.kind`` values phase Control IR emits today: ``file`` /
-``mcp`` / ``run_skill`` / ``shell`` / ``lint`` / ``ask_user`` /
-``web_fetch`` / ``web_search``):
+This module holds three classifications keyed by **op kind**
+(= the ``op.kind`` values phase Control IR emits today:
+``read_file`` / ``write_file`` / ``edit_file`` / ``delete_file`` /
+``glob_files`` / ``grep_files`` / ``mcp`` / ``run_skill`` / ``shell`` /
+``lint`` / ``ask_user`` / ``web_fetch`` / ``web_search`` / etc.).
 
-  1. ``OP_KIND_MODEL_MAP`` — coarse name → IROp Pydantic model.
-     Schema derivation is now done by ``reyn.tools.ToolRegistry``
-     entries (= ADR-0026 Phase 4-3); this map is retained as a backwards-
-     compat reference and a stable target for ``ALL_OP_KINDS``.
+Note: the coarse ``"file"`` kind was retired in #1240 Wave 2b. All file
+ops now use fine kinds (``read_file`` / ``write_file`` / etc.).  The
+execution backend (``op_runtime/file.py`` ``register("file", handle)``)
+is KEPT — fine handlers still build ``FileIROp(kind="file")`` internally.
 
-  2. ``ALL_OP_KINDS`` — frozenset of coarse op kinds.  Used by the DSL
+  1. ``OP_KIND_MODEL_MAP`` — op kind → IROp Pydantic model.
+     Schema derivation is done by ``reyn.tools.ToolRegistry``
+     entries (= ADR-0026 Phase 4-3); this map is retained as a
+     stable target for ``ALL_OP_KINDS`` and purity classification.
+
+  2. ``ALL_OP_KINDS`` — frozenset of op kinds.  Used by the DSL
      linter to flag misspelled ``allowed_ops`` entries; also drives
      ``OP_PURITY`` coverage tests.
 
@@ -20,11 +26,8 @@ This module holds three classifications keyed by **coarse op kind**
 
 Helper:
   - ``is_op_allowed(op_kind, allowed_ops)`` — prefix-wildcard membership
-    check (= ADR-0026 Phase 4-2c).  ``allowed_ops: ["file"]`` matches
-    fine-grained kinds (``read_file`` / ``write_file`` / etc.) when phase
-    Control IR migrates to fine-grained ``op.kind`` values in a future
-    phase.  Today phase emits coarse kinds, so the helper is a pass-
-    through but the rule is in place to keep skill frontmatter stable.
+    check (= ADR-0026 Phase 4-2c).  ``COARSE_TO_FINE`` covers ``mcp``
+    and ``run_skill`` coarse→fine mappings (prefix-wildcard).
 
 Consumers:
   - ``reyn.compiler.linter``     — ``ALL_OP_KINDS``
@@ -35,21 +38,9 @@ Consumers:
 Note: ``_WRITE_OPS`` / ``_READ_OPS`` in ``op_runtime/file.py`` classify
 *file sub-operations* (op.op values within the "file" kind), not top-level
 op kinds.  They are a different concern and intentionally stay local.
-
-Migration note (ADR-0026 Phase 4 closeout)
-------------------------------------------
-``ControlIRExecutor._build_phase_tool_catalog`` reads schema from
-``get_default_registry()`` (= unified ToolRegistry) directly.  This
-module's ``OP_KIND_MODEL_MAP`` no longer drives dispatch-time schema
-derivation; it survives as the canonical coarse-kind list (= for purity
-classification, linter warnings, prefix-wildcard mappings).  Removing
-this module entirely awaits phase Control IR's migration to fine-grained
-``op.kind`` values, at which point the linter and OP_PURITY can also
-key off registry names.
 """
 from __future__ import annotations
 
-import typing as _t
 from enum import Enum
 
 from pydantic import BaseModel
@@ -60,7 +51,6 @@ from reyn.schemas.models import (
     DeleteFileIROp,
     EditFileIROp,
     EmbedIROp,
-    FileIROp,
     GlobFilesIROp,
     GrepFilesIROp,
     IndexDropIROp,
@@ -118,9 +108,10 @@ class OpPurity(str, Enum):
 # ---------------------------------------------------------------------------
 
 OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
-    "file":        FileIROp,
-    # #1240 Wave 1: fine-grained file kinds (phase = chat-tools subset). Listed
-    # alongside the coarse "file" (coarse+fine union; coarse retained for compat).
+    # #1240 Wave 2b: coarse "file" kind dropped from OP_KIND_MODEL_MAP.
+    # The execution backend (op_runtime/file.py register("file") + handle())
+    # is KEPT — fine handlers still build FileIROp(kind="file") internally.
+    # #1240 Wave 1: fine-grained file kinds (phase = chat-tools subset).
     # control_ir_executor routes each via the registry (READ_FILE/WRITE_FILE/...
     # ToolDefinitions, gates.phase=allow) — no separate op_runtime handler.
     "read_file":   ReadFileIROp,
@@ -171,18 +162,14 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
 OP_PURITY: dict[str, OpPurity] = {
     # Pure: pure computation, no I/O.
     "lint":        OpPurity.pure,
-    # World-state dependent (read APIs).  ``file`` includes both read and
-    # write ops; we mark it side_effect (conservative).  Sub-op refinement
-    # can happen inside the handler if perf demands.
+    # World-state dependent (read APIs).
     "web_fetch":   OpPurity.world,
     "web_search":  OpPurity.world,
-    # Side effect (workspace mutation; file/write/delete fall here).
-    "file":        OpPurity.side_effect,
-    # #1240 Wave 1: fine-grained file kinds. Match the coarse "file"
-    # classification (side_effect) for behavior-preservation across the
-    # migration — the coarse kind is uniformly side_effect regardless of verb,
-    # so the fine kinds keep that conservative stance. (A read_file→world
-    # accuracy refinement is a separate decision, out of pivot scope.)
+    # Side effect (workspace mutation; file write/delete fall here).
+    # #1240 Wave 2b: coarse "file" purity entry dropped (coarse kind removed).
+    # #1240 Wave 1: fine-grained file kinds. Conservative side_effect stance
+    # (matches the former coarse "file" classification). A read_file→world
+    # accuracy refinement is a separate decision, out of pivot scope.
     "read_file":   OpPurity.side_effect,
     "write_file":  OpPurity.side_effect,
     "edit_file":   OpPurity.side_effect,
@@ -265,7 +252,9 @@ ALL_OP_KINDS: frozenset[str] = frozenset(OP_KIND_MODEL_MAP.keys())
 # ---------------------------------------------------------------------------
 
 COARSE_TO_FINE: dict[str, frozenset[str]] = {
-    "file":      frozenset({"read_file", "write_file", "edit_file", "delete_file", "list_directory", "glob_files", "grep_files"}),
+    # #1240 Wave 2b: "file" entry removed — coarse kind dropped. Skills that
+    # still declare allowed_ops: [file] will fail linting (ALL_OP_KINDS no
+    # longer includes "file") and should migrate to fine kinds.
     "mcp":       frozenset({"call_mcp_tool", "list_mcp_servers", "list_mcp_tools"}),
     "run_skill": frozenset({"invoke_skill"}),
 }
@@ -298,43 +287,29 @@ def is_op_allowed(op_kind: str, allowed_ops: set[str] | frozenset[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# #1212 PR4 (D7): op-native file verb granularity
+# split_tool_name — general helper (KEPT)
 # ---------------------------------------------------------------------------
-# `file` is the ONLY op kind with a genuine tool-verb axis (FileIROp.op:
-# read / write / edit / delete / glob / grep / …); every other op kind is
-# single-verb, so its tool-name == its kind (a no-op under granularity).
-# Decision (a), #1212: the chat-router taxonomy (web__fetch / mcp__call_tool)
-# is deliberately NOT adopted as the allowed_ops vocabulary — that is a separate
-# surface (PR3 decision A). The verb set is derived from the model so it never
-# drifts from FileIROp.
-_FILE_VERBS: frozenset[str] = frozenset(
-    a
-    for a in _t.get_args(OP_KIND_MODEL_MAP["file"].model_fields["op"].annotation)
-    if isinstance(a, str)
-)
-FILE_VERB_TOOL_NAMES: frozenset[str] = frozenset(f"file__{v}" for v in _FILE_VERBS)
+# split_tool_name is a general utility used by op_loop + conversion paths.
+# FILE_VERB_TOOL_NAMES / op_tool_name / is_op_instance_allowed were the D7
+# file-verb-granular machinery (#1212 PR4); they are retired in #1240 Wave 2b
+# now that the coarse "file" kind is dropped and all file ops use fine kinds
+# (read_file/write_file/edit_file/delete_file/glob_files/grep_files).
+# ---------------------------------------------------------------------------
 
 # Every name the linter / catalog may legitimately see in allowed_ops.
-ALL_TOOL_NAMES: frozenset[str] = ALL_OP_KINDS | FILE_VERB_TOOL_NAMES
-
-
-def op_tool_name(kind: str, op: str | None = None) -> str:
-    """Canonical op-native tool-name (D7).
-
-    ``file`` + a verb → ``file__<verb>``; every other kind → the kind itself
-    (single-verb, tool-name == kind).
-    """
-    if kind == "file" and op:
-        return f"file__{op}"
-    return kind
+# Fine file kinds are already in ALL_OP_KINDS (they're in OP_KIND_MODEL_MAP).
+ALL_TOOL_NAMES: frozenset[str] = ALL_OP_KINDS
 
 
 def split_tool_name(tool_name: str) -> tuple[str, str | None]:
-    """Inverse of :func:`op_tool_name`: split a tool-name into ``(kind, verb)``.
+    """Split a tool-name into ``(kind, verb)``.
 
-    ``"file__read"`` → ``("file", "read")``; a plain kind (``"web_fetch"``) →
-    ``("web_fetch", None)``. Used by the op-loop catalog + conversion to map a
-    verb-granular file tool back to a ``file`` op with its ``op`` field.
+    Legacy file-verb names (``"file__read"``) → ``("file", "read")``.
+    Plain kind names (``"read_file"``, ``"web_fetch"``) → ``(name, None)``.
+
+    The ``"file__"`` prefix branch handles any surviving ``file__*`` tool-call
+    names from in-flight op-loop sessions (= backward compat during rollout).
+    New sessions emit fine kind names directly (``read_file`` etc.).
     """
     if tool_name.startswith("file__"):
         return "file", tool_name[len("file__"):]
@@ -342,18 +317,12 @@ def split_tool_name(tool_name: str) -> tuple[str, str | None]:
 
 
 def is_op_instance_allowed(op: object, allowed_ops: set[str] | frozenset[str]) -> bool:
-    """Op-aware allowance (D7): gate a ControlIROp *instance* against an
-    ``allowed_ops`` set that may mix coarse kinds and file verb-level tool-names.
+    """Gate a ControlIROp instance against an ``allowed_ops`` set.
 
-    - **file op**: allowed iff coarse ``"file"`` is in ``allowed_ops`` (legacy —
-      every verb, behavior-preserving for existing ``allowed_ops: [file]``
-      frontmatter) OR ``file__<op.op>`` is in ``allowed_ops`` (per-verb
-      tightening, the D7/P4 precision win — e.g. read but not delete).
-    - **any other op**: delegates to ``is_op_allowed(op.kind, ...)`` unchanged.
+    Delegates to ``is_op_allowed(op.kind, allowed_ops)`` for all op kinds.
+    The D7 file-verb-granular special-case (``file__read``-style) is retired
+    in #1240 Wave 2b now that the coarse ``file`` kind is dropped; all file ops
+    use fine kinds (``read_file`` / ``write_file`` / etc.) in allowed_ops.
     """
     kind = getattr(op, "kind", None) or ""
-    if kind == "file":
-        if "file" in allowed_ops:
-            return True
-        return op_tool_name("file", getattr(op, "op", None)) in allowed_ops
     return is_op_allowed(kind, allowed_ops)

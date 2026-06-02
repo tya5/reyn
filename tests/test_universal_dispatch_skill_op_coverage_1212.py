@@ -69,11 +69,10 @@ _DSL_STEP_TYPES_OUT_OF_SCOPE: frozenset[str] = frozenset(
 # entry here AND that universal_dispatch has at least one qualified name
 # for that category.
 _OP_KIND_CATEGORY: dict[str, str] = {
-    # file ops → "file" category (_OPERATION_RULES: file__read/write/edit/…)
-    "file":          "file",
     # #1240 Wave 2a: fine-grained file kinds (skills migrated allowed_ops
-    # file→fine). Same "file" universal_dispatch category as the coarse kind
-    # (file__read/write/edit/glob/grep qualified names already wired).
+    # file→fine). "file" universal_dispatch category (file__read/write/edit/
+    # glob/grep qualified names already wired).
+    # #1240 Wave 2b: coarse "file" entry removed (kind dropped from ALL_OP_KINDS).
     "read_file":     "file",
     "write_file":    "file",
     "edit_file":     "file",
@@ -301,6 +300,14 @@ def test_universal_dispatch_covers_all_stdlib_skill_real_op_kinds() -> None:
     _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS = frozenset({
         "ask_user",       # control-flow (user-input request); not a dispatchable action
         "embed",          # low-level RAG primitive; chat surface is the `recall` macro
+        # #1240 Wave 2b: coarse "file" kind dropped from OP_KIND_MODEL_MAP and the
+        # LLM-facing catalog. It is still used in OS-deterministic preprocessor
+        # run_op steps (skill_improver copy_to_work/finalize) because PreprocessorExecutor
+        # routes run_ops through execute_op (op_runtime), which has no fine-kind handlers
+        # — only the coarse "file" handler. These are NOT LLM-emitted ops and therefore
+        # not a chat-router dispatch target. Migration to fine-kind run_op is a
+        # separate work item (requires wiring PreprocessorExecutor → ToolRegistry).
+        "file",           # legacy coarse kind; still in OS-deterministic preprocessor run_ops
         "index_write",    # low-level RAG write primitive; not chat-exposed
         "skill_resolve",  # skill-internal name resolution (preprocessor run_op)
     })
@@ -354,8 +361,10 @@ def test_skill_real_op_kind_scanner_finds_known_ops() -> None:
             all_kinds.add(kind)
 
     # Spot-checks confirmed by direct recon (source in parentheses):
+    # #1240 Wave 2b: "file" removed — no skill uses coarse kind in allowed_ops
+    # any more; replaced by "read_file" (many skills, allowed_ops).
     spot_checks = {
-        "file",          # many skills, allowed_ops
+        "read_file",     # many skills, allowed_ops
         "sandboxed_exec", # swe_bench, allowed_ops + run_op preprocessor
         "embed",         # index_docs + index_events, run_op postprocessor
         "index_write",   # index_docs + index_events, run_op postprocessor

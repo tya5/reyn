@@ -61,7 +61,6 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.file import (
         DELETE_FILE,
         EDIT_FILE,
-        FILE_OP,
         GLOB_FILES,
         GREP_FILES,
         LIST_DIRECTORY,
@@ -180,11 +179,12 @@ def get_default_registry() -> ToolRegistry:
     registry.register(REYN_SRC_GLOB)
     registry.register(REYN_SRC_GREP)
     # ── Phase-only coarse-name ops (gates.router=deny, gates.phase=allow) ─
-    # ADR-0026 Phase 4: Control IR ``kind: file/mcp/run_skill`` values map
+    # ADR-0026 Phase 4: Control IR ``kind: mcp/run_skill`` values map
     # 1:1 to these coarse ToolDefinitions; ControlIRExecutor dispatches via
     # the registry by op.kind name.  Router-side stays on the fine-grained
-    # equivalents (read_file/write_file/etc., call_mcp_tool, invoke_skill).
-    registry.register(FILE_OP)
+    # equivalents (call_mcp_tool, invoke_skill).
+    # NOTE: FILE_OP coarse ToolDefinition dropped — all file ops now use fine
+    # kinds (read_file/write_file/edit_file/delete_file/glob_files/grep_files).
     registry.register(MCP_OP)
     registry.register(RUN_SKILL_OP)
     registry.register(MCP_INSTALL_OP)
