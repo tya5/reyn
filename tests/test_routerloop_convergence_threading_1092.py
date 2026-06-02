@@ -129,3 +129,73 @@ def test_from_config_unlisted_skill_no_convergence(tmp_path, monkeypatch) -> Non
     assert "phase_routerloop_op_loop_started" not in _event_kinds(sink), (
         "an unlisted skill must not reach the converged op-loop"
     )
+
+
+def test_converged_op_loop_dispatches_phase_op_not_unknown_tool(tmp_path, monkeypatch) -> None:
+    """Tier 2: a phase op tool_call (read_file) emitted in the converged op-loop
+    DISPATCHES — the dispatch catalog is in sync with the advertised tools.
+
+    Regression for the native-dispatch catalog gap (#1092 PR-B dogfood bar 1): the
+    converged path advertises the phase's fine ops as ``tools=`` but the dispatch-side
+    ``ctx.tool_catalog`` (= ``RouterLoop._catalog``) was only populated in ``run()``'s
+    pre-loop, which the phase path bypasses (it drives ``run_loop`` directly) → a
+    native ``read_file`` tool_call was advertised yet rejected as ``unknown_tool``.
+    Fixed by syncing ``self._catalog`` from ``tools`` at ``run_loop`` start.
+    """
+    monkeypatch.chdir(tmp_path)
+    sink: list = []
+    turn = {"n": 0}
+
+    async def _tools(*a, **k):  # noqa: ANN002, ANN003
+        i = turn["n"]
+        turn["n"] += 1
+        if i == 0:
+            return LLMToolCallResult(
+                content=None,
+                tool_calls=[{
+                    "id": "c1", "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "x.txt"}'},
+                }],
+                finish_reason="tool_calls",
+                usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
+            )
+        return LLMToolCallResult(
+            content=None, tool_calls=[], finish_reason="stop",
+            usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
+        )
+
+    async def _decide(model, frame, *a, **k):  # noqa: ANN001, ANN002, ANN003
+        return LLMCallResult(
+            data=_FINISH, usage=TokenUsage(prompt_tokens=20, completion_tokens=10),
+        )
+
+    monkeypatch.setattr(lcr, "call_llm", _decide)
+    monkeypatch.setattr(lcr, "call_llm_tools", _tools)
+
+    draft = Phase(
+        name="draft", instructions="d",
+        input_schema={"type": "object", "properties": {}},
+        allowed_ops=["read_file"],  # the op catalog advertises read_file as a tool
+    )
+    skill = Skill(
+        name=_SKILL_NAME, entry_phase="draft", phases={"draft": draft},
+        graph=SkillGraph(transitions={}, can_finish_phases=["draft"]),
+        final_output_schema={"type": "object", "properties": {}},
+        final_output_name="result",
+    )
+    config = ReynConfig(routerloop_convergence_skills=[_SKILL_NAME])
+    agent = Agent.from_config(
+        config, shell_allowed=False, model="stub/model", subscribers=[sink.append],
+    )
+    result = asyncio.run(agent.run(skill, {"type": "input", "data": {}}))
+
+    assert result.ok, f"run must complete; got {result.status}"
+    assert "phase_routerloop_op_loop_started" in _event_kinds(sink)
+    # The advertised read_file tool_call must DISPATCH (catalog check passes) — never
+    # be rejected as unknown_tool (the native-dispatch catalog gap). A nonexistent
+    # path yields not_found, which is a successful dispatch (catalog OK), not
+    # unknown_tool.
+    assert "unknown_tool" not in repr(sink), (
+        "a phase op tool_call must route through the converged path's ctx.tool_catalog, "
+        "not be rejected as unknown_tool (the native-dispatch catalog gap)"
+    )

@@ -1854,6 +1854,16 @@ class RouterLoop:
         NOT in this loop (P1/P8 preserved).
         """
         host = self.host
+        # #1092 PR-B: keep the DISPATCH catalog (``self._catalog``, consumed by
+        # ``_execute_tool`` → ``dispatch_tool``'s ``name in ctx.tool_catalog`` gate)
+        # in lockstep with the ADVERTISED ``tools=``. For the chat ``run()`` path
+        # this is idempotent (run() already set it from the same post-exclude
+        # ``tools``). For a phase host that drives ``run_loop`` directly (bypassing
+        # run()'s pre-loop setup), this is the ONLY place it gets set — without it
+        # a native tool_call (read_file …) advertised to the model is rejected as
+        # ``unknown_tool`` (the native-dispatch catalog gap caught by #1092 dogfood).
+        self._catalog = {t["function"]["name"]: t for t in tools}
+        self._tool_names = frozenset(self._catalog.keys())
         # B28-Q2 Case A: per-turn counters for chat_turn_completed_inline.
         # _routing_decided_fired: set to True the first time routing_decided
         #   is emitted in this turn (= invoke_action or hot_list_alias path).
