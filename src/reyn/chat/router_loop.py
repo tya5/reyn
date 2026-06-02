@@ -1483,6 +1483,13 @@ class RouterLoop:
         """
         self._total_usage = TokenUsage()
         host = self.host
+        # #1092 PR-A (FD1, ADR-0036): catalog-source REPLACE seam. A phase host
+        # supplies its op tool catalog (allowed_ops via _build_phase_tool_catalog),
+        # which REPLACES chat-discovery — a phase has no skills/agents/mcp/universal
+        # (#1212 PR3 decision A). getattr-fallback so chat / plan-step hosts (no such
+        # method) keep the existing chat-discovery tool-build byte-identically.
+        _phase_op_catalog_getter = getattr(host, "get_phase_op_catalog", None)
+        _phase_op_catalog = _phase_op_catalog_getter() if _phase_op_catalog_getter else None
         all_skills = host.list_available_skills()
         # FP-0024 Component A — BM25 skill pre-filter.
         # Narrow available_skills to top-K BM25 keyword matches when the
@@ -1678,17 +1685,24 @@ class RouterLoop:
         # the window is ample (then compact stays hidden + the SP header is
         # omitted); non-None when filling (compact tool + header appear together).
         _ctx_signal = _render_context_size_signal_for_host(host)
-        tools = build_tools(
-            skills_for_tools,
-            host.list_available_agents(),
-            file_permissions=host.get_file_permissions(),
-            mcp_servers=host.get_mcp_servers(),
-            web_fetch_allowed=host.get_web_fetch_allowed(),
-            universal_wrappers_enabled=_univ_enabled,
-            search_actions_visible=_search_visible,
-            hot_list_aliases=_hot_list_aliases,
-            compact_visible=_ctx_signal is not None,
-        )
+        if _phase_op_catalog is not None:
+            # #1092 PR-A (FD1): phase op catalog REPLACES chat-discovery. The
+            # chat-discovery setup above ran on the phase host's stubs
+            # (empty skills/agents/mcp, universal off) — harmless; its build_tools
+            # result is discarded here in favor of the op catalog.
+            tools = list(_phase_op_catalog)
+        else:
+            tools = build_tools(
+                skills_for_tools,
+                host.list_available_agents(),
+                file_permissions=host.get_file_permissions(),
+                mcp_servers=host.get_mcp_servers(),
+                web_fetch_allowed=host.get_web_fetch_allowed(),
+                universal_wrappers_enabled=_univ_enabled,
+                search_actions_visible=_search_visible,
+                hot_list_aliases=_hot_list_aliases,
+                compact_visible=_ctx_signal is not None,
+            )
         # D2-wrapper scope expansion (B38): propagate schemas for ALL
         # session-visible actions into invoke_action's description so the
         # LLM can see canonical arg key names when it routes via the wrapper,
