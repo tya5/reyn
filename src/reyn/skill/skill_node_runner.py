@@ -96,6 +96,7 @@ async def execute_skill_node(
     limits: Any = None,
     recorder: object | None = None,  # #1190 stage (ii): skill_node_adapt cost recording
     recorder_agent: str | None = None,  # #1190 stage (iii) Part 4: per-agent attribution
+    tool_calls_op_loop_skills: list[str] | None = None,  # #1212: gate inherited by the sub-skill
 ) -> tuple[dict, TokenUsage]:
     """
     Run a sub-app to completion and adapt its final_output to target_schema.
@@ -115,6 +116,7 @@ async def execute_skill_node(
         subscribers=subscribers,
         resolver=resolver,
         safety=limits,
+        tool_calls_op_loop_skills=tool_calls_op_loop_skills,
     )
     run_result = await sub_runtime.run(input_artifact, output_language=output_language)
     token_usage = sub_runtime._token_usage

@@ -411,6 +411,7 @@ def run_serve(args: argparse.Namespace) -> None:
             # ``noop``) never reaches the sandboxed_exec handler.
             sandbox_config=session_cfg.config.sandbox,
             multimodal_config=session_cfg.config.multimodal,
+            tool_calls_op_loop_skills=session_cfg.config.tool_calls_op_loop_skills,
             action_retrieval_config=session_cfg.config.action_retrieval,
             embedding_config=session_cfg.config.embedding,
         )

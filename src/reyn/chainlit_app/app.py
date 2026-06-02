@@ -190,6 +190,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 budget_tracker=budget_tracker,
                 sandbox_config=session_cfg.config.sandbox,
                 multimodal_config=session_cfg.config.multimodal,
+                tool_calls_op_loop_skills=session_cfg.config.tool_calls_op_loop_skills,
                 action_retrieval_config=session_cfg.config.action_retrieval,
                 embedding_config=session_cfg.config.embedding,
                 agent_id=session_cfg.config.agent.id,

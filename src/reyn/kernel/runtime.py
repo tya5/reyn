@@ -99,6 +99,9 @@ class OSRuntime:
         self._chain_id = chain_id
         self._budget_tracker = budget_tracker
         self._budget_skill_name = skill_name or skill.name
+        # #1212: retained so sub-skill runs (run_skill / @sub_skill nodes) inherit
+        # the same op-loop gate — a sub-skill named in the list also op-loops.
+        self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
         self.events = EventLog(
             subscribers=subscribers, run_id=run_id, plan_step=plan_step,
         )
@@ -317,6 +320,7 @@ class OSRuntime:
             caller=caller,
             max_phase_visits=self._max_phase_visits,
             budget_tracker=budget_tracker,  # #1190 stage (ii): skill_node_adapt cost recording
+            tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,  # #1212 sub-skill gate
         )
 
     # ── Backward-compat properties (FP-0020 Component A) ───────────────────
