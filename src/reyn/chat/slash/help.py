@@ -87,15 +87,15 @@ async def help_cmd(session: "object", args: str) -> None:
             await reply(session, panel)
         return
 
-    rows: list[tuple[str, str]] = [
-        (cmd.name, cmd.summary)
+    rows: list[tuple[str, str, tuple[str, ...]]] = [
+        (cmd.name, cmd.summary, cmd.aliases)
         for cmd in REGISTRY.all_commands()
         if not cmd.hidden
     ]
-    rows.extend(_BUILTIN_HINTS)
+    rows.extend((name, summary, ()) for name, summary in _BUILTIN_HINTS)
     rows.sort(key=lambda r: r[0])
 
-    name_w = max((len(name) for name, _ in rows), default=8)
+    name_w = max((len(name) for name, _, _ in rows), default=8)
     # Data column starts after "  /" + name + "  ". Wrap continuations of
     # the summary align to this column so they read as continuations
     # rather than orphan commands.
@@ -103,16 +103,23 @@ async def help_cmd(session: "object", args: str) -> None:
     indent = " " * data_col
 
     lines = ["Slash commands:"]
-    for name, summary in rows:
+    for name, summary, aliases in rows:
+        # Append alias hint inline so the user can discover shorthand names
+        # without having to run ``/help <cmd>`` for each command individually.
+        alias_hint = (
+            "  (also: " + ", ".join(f"/{a}" for a in aliases) + ")"
+            if aliases else ""
+        )
+        display_summary = summary + alias_hint
         prefix = f"  /{name:<{name_w}}  "
         wrapped = textwrap.fill(
-            summary,
+            display_summary,
             width=_TARGET_WIDTH,
             initial_indent=prefix,
             subsequent_indent=indent,
             break_long_words=False,
             break_on_hyphens=False,
-        ) if len(prefix) + len(summary) > _TARGET_WIDTH else prefix + summary
+        ) if len(prefix) + len(display_summary) > _TARGET_WIDTH else prefix + display_summary
         lines.append(wrapped)
     lines.append("")
     footer = (

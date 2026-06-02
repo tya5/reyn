@@ -118,20 +118,43 @@ def suggest_for_unknown(cmd: str, *, names: list[str] | None = None) -> list[str
 
     Used by :meth:`ChatSession._dispatch_slash` to build the inline error
     body when ``/<cmd>`` doesn't resolve. The suggestion list is
-    intentionally tight: 3 fuzzy matches by similarity (= ``difflib.get_close_matches``
-    with a low cutoff so single-char prefixes still hit), or the alphabetical
-    head when nothing matches at all, with ``help`` always appended as the
-    escape hatch to the full catalog.
+    intentionally tight: prefix-matches (= commands whose name starts with
+    the typed token) come first, then fuzzy similarity matches
+    (``difflib.get_close_matches``), deduplicated and capped at 3 total.
+    When nothing matches at all, falls back to the alphabetical head.
+    ``help`` is always appended as the escape hatch to the full catalog.
 
     Pure function (= no I/O, no registry mutation) so it's directly
     testable without the surrounding session machinery.
     """
     import difflib
     all_names = names if names is not None else REGISTRY.names()
-    suggestions = difflib.get_close_matches(
-        cmd, all_names, n=3, cutoff=0.3,
-    ) or all_names[:3]
-    out = list(suggestions)
+    # Prefix-biased ranking: exact-prefix matches surface before
+    # edit-distance matches so typing ``/fi`` reliably suggests ``/find``
+    # rather than a distantly-similar name that happens to score higher
+    # in difflib. Dedup by seen-set; insertion order preserved.
+    seen: set[str] = set()
+    out: list[str] = []
+    if cmd:
+        for n in all_names:
+            if n.startswith(cmd):
+                if n not in seen:
+                    seen.add(n)
+                    out.append(n)
+    # Fill remaining slots (up to 3 total) with fuzzy matches.
+    fuzzy = difflib.get_close_matches(cmd, all_names, n=3, cutoff=0.3)
+    for n in fuzzy:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    # Fall back to alphabetical head when neither prefix nor fuzzy hit.
+    if not out:
+        for n in all_names[:3]:
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+    # Cap at 3 before appending the always-on /help escape hatch.
+    out = out[:3]
     if "help" not in out:
         out.append("help")
     return out

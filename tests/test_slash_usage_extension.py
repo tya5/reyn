@@ -19,10 +19,12 @@ Pinned:
     guard against revert.
 
 Hidden commands (matrix / donut / zen) and no-arg commands
-(/list / /tasks / /skills / /cost / /pending /
+(/list / /skills / /cost / /pending /
 /quit / /exit / /cost-inline) intentionally do NOT get a
 usage line — they have no args to document. Pinned by spot
 checks to make sure no accidental opt-in slipped through.
+Note: /tasks is NOT no-arg — it has status/kill/list subcommands
+and is listed in _EXPECTED_USAGE above.
 """
 from __future__ import annotations
 
@@ -47,6 +49,10 @@ _EXPECTED_USAGE: dict[str, str] = {
     "reset":       "/reset confirm",
     "budget":      "/budget [reset]",
     "pending":     "/pending [list|discard <id>|claim <id>]",
+    # /tasks has status/kill/list subcommands and genuinely takes args.
+    # Previously omitted from _EXPECTED_USAGE (and misclassified as no-arg);
+    # corrected here alongside the usage= addition in slash/tasks.py.
+    "tasks":       "/tasks [list|status <run_id>|kill <run_id>]",
 }
 
 
@@ -105,7 +111,9 @@ def test_no_arg_commands_have_no_usage() -> None:
     from reyn.chat.slash import REGISTRY
 
     no_arg_commands = [
-        "list", "tasks", "skills", "cost",
+        # "tasks" intentionally removed: /tasks has status/kill/list subcommands
+        # and now carries usage= (see _EXPECTED_USAGE above).
+        "list", "skills", "cost",
         "quit", "exit", "cost-inline",
     ]
     for name in no_arg_commands:
