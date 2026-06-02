@@ -1,7 +1,7 @@
 """Outbox routing for ReynTUIApp.
 
 Drains ``registry.repl_outbox`` and dispatches each :class:`OutboxMessage`
-to the right widget (conv pane, sticky status, error box, skill activity row,
+to the right widget (conv pane, sticky status, skill activity row,
 preview pane, screen header). Lives in its own module to keep ``app.py``
 focused on composition / lifecycle.
 
