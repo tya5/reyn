@@ -77,7 +77,10 @@ from reyn.schemas.models import (
 )
 
 OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
-    "file":       FileIROp,
+    # The coarse "file" kind was retired in #1240 Wave 2b — file ops are now
+    # the fine kinds read_file/write_file/edit_file/delete_file/glob_files/
+    # grep_files (FileIROp is kept only as the shared execution backend).
+    "read_file":  ReadFileIROp,
     "mcp":        MCPIROp,
     "run_skill":  RunSkillIROp,
     "shell":      ShellIROp,
@@ -92,7 +95,7 @@ OP_PURITY: dict[str, OpPurity] = {
     "lint":       OpPurity.pure,
     "web_fetch":  OpPurity.world,
     "web_search": OpPurity.world,
-    "file":       OpPurity.side_effect,
+    "read_file":  OpPurity.side_effect,
     "mcp":        OpPurity.external,
     "shell":      OpPurity.external,
     "run_skill":  OpPurity.external,
@@ -268,7 +271,7 @@ async def test_notify_handler_emits_events():
 
 ```yaml
 # skill.md phase frontmatter
-allowed_ops: [file, notify]
+allowed_ops: [read_file, notify]
 ```
 
 The LLM's system prompt will include the `notify` op schema (via

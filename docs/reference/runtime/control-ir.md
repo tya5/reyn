@@ -12,7 +12,12 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 
 | Kind | Purpose | Permission required |
 |------|---------|---------------------|
-| `file` | Read, write, glob, grep, edit, delete, mkdir, move, or stat files | `file.<op>` |
+| `read_file` | Read a file (optionally a line range) | `file.read` |
+| `write_file` | Write (create / overwrite) a file | `file.write` |
+| `edit_file` | Replace a string in a file | `file.write` |
+| `delete_file` | Delete a file | `file.write` |
+| `glob_files` | List files matching a glob pattern | `file.read` |
+| `grep_files` | Search file contents by regex | `file.read` |
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
 | `run_skill` | Run another skill as a sub-workflow | none (skill-level decision) |
 | `lint` | Run the DSL linter on a skill directory | none |
@@ -38,62 +43,66 @@ Every op is a JSON object with a `kind` discriminator:
 
 ```json
 {
-  "kind": "file",
-  "op": "read",
+  "kind": "read_file",
   "path": "src/foo.py"
 }
 ```
 
 The OS validates the op against its kind's schema, executes it, and returns a result to the calling phase.
 
-## `file`
+## File ops (fine-grained)
 
-Sub-operations: `read`, `write`, `edit`, `delete`, `glob`, `grep`, `regenerate_index`, `mkdir`, `move`, `stat`.
+The LLM-emittable file operations are six fine-grained kinds — the same subset
+the chat router exposes as tools (see
+[concepts/architecture/llm-invocation-surfaces.md](../../concepts/architecture/llm-invocation-surfaces.md)).
+Each is a distinct op kind with its own schema; there is no `op` sub-field.
 
 ```json
-{"kind": "file", "op": "read", "path": "src/foo.py"}
+{"kind": "read_file", "path": "src/foo.py"}
+{"kind": "read_file", "path": "src/foo.py", "offset": 100, "limit": 40}
 
-{"kind": "file", "op": "write", "path": "out.txt", "content": "..."}
+{"kind": "write_file", "path": "out.txt", "content": "..."}
 
-{"kind": "file", "op": "edit", "path": "src/foo.py",
- "old_string": "...", "new_string": "..."}
+{"kind": "edit_file", "path": "src/foo.py",
+ "old_string": "...", "new_string": "...", "replace_all": false}
 
-{"kind": "file", "op": "delete", "path": "tmp.txt"}
+{"kind": "delete_file", "path": "tmp.txt"}
 
-{"kind": "file", "op": "glob", "pattern": "**/*.py"}
+{"kind": "glob_files", "path": ".", "pattern": "**/*.py", "max_results": 50}
 
-{"kind": "file", "op": "grep", "path": "src", "pattern": "def \\w+",
- "glob": "**/*.py", "output_mode": "content"}
-
-{"kind": "file", "op": "regenerate_index",
- "path": ".reyn/memory",
- "output_path": ".reyn/memory/MEMORY.md",
- "entry_template": "- [{name}]({slug}.md) — {description}",
- "header": "# Memory Index\n\n"}
-
-{"kind": "file", "op": "mkdir", "path": "subdir/nested"}
-
-{"kind": "file", "op": "move", "path": "old.txt", "dest_path": "new.txt"}
-
-{"kind": "file", "op": "stat", "path": "src/foo.py"}
+{"kind": "grep_files", "path": "src", "pattern": "def \\w+",
+ "glob": "**/*.py", "case_sensitive": false, "max_results": 50}
 ```
 
-**`mkdir`** creates a directory under the project. `mkdir -p` semantics — parents are created and the call is idempotent (returns `created: false` when the directory already exists). Raises an error if a non-directory exists at the path. Permission: `file.write`.
-
-**`move`** renames / moves a file or directory. Requires write permission on **both** source (= delete-like) and destination (= write-like). Destination parent directories are created as needed. Returns `status: not_found` if the source does not exist.
-
-**`stat`** returns filesystem metadata for a path: `{size, mtime, ctime, is_dir, is_file, mode}`. Returns `status: not_found` cleanly if the path does not exist. Permission: `file.read`.
-
-**`regenerate_index`** rebuilds a Markdown index from the YAML frontmatter of every `*.md` file under `path`. Fields:
-
-- `path` (required) — source directory to scan.
-- `output_path` (required) — path for the generated index file (excluded from scan).
-- `entry_template` (required) — format string with `{key}` placeholders drawn from each file's frontmatter plus `{slug}` (filename without `.md`).
-- `header` (optional) — preamble prepended before the generated entries.
-
-Used by `reyn memory` (post-mutation sync) and any memory skill that manages an index file.
+| Kind | Permission | Notes |
+|------|-----------|-------|
+| `read_file` | `file.read` | `offset` / `limit` (line range) optional. |
+| `write_file` | `file.write` | Creates or overwrites; parent dirs created as needed. |
+| `edit_file` | `file.write` | `old_string` must be unique unless `replace_all: true`. |
+| `delete_file` | `file.write` | |
+| `glob_files` | `file.read` | `path` defaults to `.`. |
+| `grep_files` | `file.read` | `glob` filters which files are searched. |
 
 Permission scopes are configured per-op kind. See `reference/config/permissions.md`.
+
+### The coarse `file` execution backend (not phase-emittable)
+
+The fine kinds above are the only file ops a phase advertises to (and accepts
+from) the LLM. They are dispatched through the unified ToolRegistry, then build
+a coarse `FileIROp` (`{kind: "file", op: ...}`) internally and route to the
+shared `op_runtime/file.py` backend. That coarse `file` kind — dropped from
+`OP_KIND_MODEL_MAP` in #1240 Wave 2b — is **not** an LLM-emittable Control IR
+kind. It survives only as:
+
+- the shared execution backend the fine handlers delegate to, and
+- the target of OS-deterministic preprocessor `run_op` steps
+  (`{kind: file, op: ...}`), the chat host file methods, and the `reyn memory`
+  CLI.
+
+Those non-phase callers also reach extended sub-ops the fine kinds do not
+expose — `mkdir`, `move`, `stat`, and `regenerate_index` (used by `reyn memory`
+and memory-managing skills via the preprocessor / CLI, never as phase Control
+IR).
 
 ## `ask_user`
 
@@ -118,6 +127,12 @@ Runs another skill as a sub-workflow. The result is returned as a structured art
   "input": {"type": "user_message", "data": {"text": "what did I tell you about my preferences?"}}
 }
 ```
+
+> **Advertised name.** Phases advertise this op to the LLM under the chat-tool
+> name `invoke_skill` (so the catalog is uniform with the chat router). The OS
+> aliases the emitted `invoke_skill` name back to the `run_skill` kind at the
+> parse boundary (#1240). `run_skill` remains the canonical kind in
+> `OP_KIND_MODEL_MAP` and on the dispatched op.
 
 For deterministic invocation from a phase's preprocessor (rather than LLM-driven), use the `run_skill` preprocessor step instead — see `reference/dsl/preprocessor.md`.
 
@@ -234,6 +249,11 @@ Calls a tool on a configured MCP server. Requires the server to be declared in `
 ```
 
 Fields: `server` (required — must match a key under `mcp.servers:` in `reyn.yaml`), `tool` (required — tool name as advertised by the server's `tools/list` response), `args` (optional, default `{}`).
+
+> **Advertised name.** As with `run_skill`/`invoke_skill`, phases advertise
+> this op to the LLM under the chat-tool name `call_mcp_tool`; the OS aliases it
+> back to the `mcp` kind at the parse boundary (#1240). `mcp` remains the
+> canonical kind in `OP_KIND_MODEL_MAP` and on the dispatched op.
 
 The OS resolves the server's transport (`stdio`, `http`, or `sse`), dispatches via `MCPClient`, and returns the tool result. Every call emits `mcp_called`, `mcp_completed`, and (on failure) `mcp_failed` events.
 

@@ -35,7 +35,7 @@ The Context Frame is the read-only payload the OS hands to the LLM at each phase
     "max_phase_visits": 25
   },
   "available_control_ops": [
-    {"kind": "file", "description": "...", "example": { ... }}
+    {"kind": "read_file", "description": "...", "example": { ... }}
   ],
   "output_language": "en"
 }

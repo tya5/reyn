@@ -35,7 +35,7 @@ Context Frame は OS が各 Phase 訪問時に LLM に渡す読み取り専用�
     "max_phase_visits": 25
   },
   "available_control_ops": [
-    {"kind": "file", "description": "...", "example": { ... }}
+    {"kind": "read_file", "description": "...", "example": { ... }}
   ],
   "output_language": "en"
 }

@@ -77,17 +77,25 @@ def _candidate_copy_to_work() -> CandidateOutput:
 
 
 def _op_file() -> ControlIROpSpec:
-    # #1240 Wave 2a: kept as the COARSE "file" spec intentionally, even though
-    # skill_improver migrated its allowed_ops file→fine (Batch 2). This is test
+    # #1240 Wave 2b: kept as the COARSE "file" spec intentionally. This is test
     # scaffolding for the LLM-replay frame, NOT the migrated skill's real
     # advertised catalog (which is now the 6 fine kinds). Safe because: (i) these
     # are decide-turn tests whose assertions are catalog-INSENSITIVE (the output
     # doesn't depend on which file ops are advertised); (ii) the act-path
     # (fine-op emission → executor route) fidelity is covered by the Batch-1
-    # dogfood (judge_phase, same available_ops mechanism). ★ Wave 2b drops the
-    # coarse "file" op kind, which makes this spec invalid — it MUST be updated to
-    # the fine kinds + the fixtures re-recorded then (the required re-record,
-    # bundled with the coarse-drop in the standard-model env). Tracked in #1240.
+    # dogfood (judge_phase, same available_ops mechanism); (iii) the coarse
+    # FileIROp(kind="file") model is KEPT in the ControlIROp union as the shared
+    # execution backend, so this spec still validates after the coarse kind was
+    # dropped from OP_KIND_MODEL_MAP / the LLM catalog.
+    #
+    # ★ A faithful fine-op re-record was attempted and DEFERRED out of Wave 2b:
+    # advertising the fine kinds surfaces a *legitimate behavior change* (the
+    # LLM emits file-read ACT turns before deciding under fine ops, vs. the
+    # recorded coarse fixture's decide-direct turn). Faithfully testing such a
+    # read-heavy phase under fine ops needs the single-call replay restructured
+    # to represent post-read state (file contents fed via control_ir_results) —
+    # a test-fidelity change, not a mechanical re-record. Tracked as a follow-up
+    # under #1240.
     return ControlIROpSpec(
         kind="file",
         description="Read a file",

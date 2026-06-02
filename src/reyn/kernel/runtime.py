@@ -462,7 +462,15 @@ class OSRuntime:
         phase_def = self.skill.phases[current_phase]
         allowed = set(phase_def.allowed_ops)
         all_ops = self.control_ir_executor.available_ops()
-        filtered_ops = [op for op in all_ops if op.kind in allowed]
+        # #1240 Wave 2b (A)-alias: advertised kind may be a chat name that aliases
+        # to an op kind (e.g. "invoke_skill" → "run_skill").  Resolve the alias
+        # before checking membership so allowed_ops=[run_skill] includes the
+        # invoke_skill spec and allowed_ops=[mcp] includes call_mcp_tool.
+        from reyn.op_runtime.registry import _PHASE_TOOL_NAME_ALIAS
+        filtered_ops = [
+            op for op in all_ops
+            if _PHASE_TOOL_NAME_ALIAS.get(op.kind, op.kind) in allowed
+        ]
         # #997: wiring-gap detection. A phase that declares an op in allowed_ops
         # which the executor does NOT advertise (e.g. `shell` while
         # shell_allowed=False, `mcp` with no servers configured) has that op
@@ -470,7 +478,12 @@ class OSRuntime:
         # the op but no schema, and hallucinates a fake one (the FP-0008 / #1133
         # failure class). Surface it as a P6 event so the trace tool catches the
         # caller-side wiring gap proactively, once per phase per run.
-        gap = allowed - {op.kind for op in all_ops}
+        # Apply the alias in reverse to exclude aliased names from the gap set:
+        # an allowed_ops entry "run_skill" is covered by the "invoke_skill" spec.
+        _advertised_resolved = {
+            _PHASE_TOOL_NAME_ALIAS.get(op.kind, op.kind) for op in all_ops
+        }
+        gap = allowed - _advertised_resolved
         if gap and current_phase not in self._state.op_catalog_gap_warned:
             self._state.op_catalog_gap_warned.add(current_phase)
             self.events.emit(

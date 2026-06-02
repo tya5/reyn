@@ -17,14 +17,19 @@ Three contracts, all schema-anchored:
 Every side effect (file I/O, asking the user, invoking a sub-skill, running shell, linting) is a JSON object with a `kind` discriminator. The OS dispatches each op against its kind's schema:
 
 ```json
-{"kind": "file", "op": "read", "path": "src/foo.py"}
+{"kind": "read_file", "path": "src/foo.py"}
 {"kind": "ask_user", "question": "Which model?", "suggestions": [...]}
 {"kind": "run_skill", "skill": "recall_memory", "input": {...}}
 ```
 
-Eight op kinds today (`file`, `ask_user`, `run_skill`, `lint`, `shell`, `mcp`, `web_search`, `web_fetch`). Available ops are injected into the LLM's context per phase as `available_control_ops` — phase markdown never describes the syntax (P8).
+The op kinds live in `OP_KIND_MODEL_MAP` (`op_runtime/registry.py`): the
+fine-grained file ops (`read_file`, `write_file`, `edit_file`, `delete_file`,
+`glob_files`, `grep_files`), plus `ask_user`, `run_skill`, `lint`, `shell`,
+`mcp`, `web_search`, `web_fetch`, and the RAG / sandbox / compaction kinds.
+Available ops are injected into the LLM's context per phase as
+`available_control_ops` — phase markdown never describes the syntax (P8).
 
-Each phase narrows that set further with `allowed_ops` in its frontmatter (default `[file, ask_user]`). The OS shows only the listed kinds to the LLM and rejects anything else the LLM emits anyway. This is two-edged: it prevents drift (a `write_memory` extract phase can't accidentally use `web_search` because it sees flash-lite and decides to "look up" a name), and it shrinks the prompt — irrelevant op descriptions are not paid for in tokens.
+Each phase narrows that set further with `allowed_ops` in its frontmatter (default: the fine file ops + `ask_user`). The OS shows only the listed kinds to the LLM and rejects anything else the LLM emits anyway. This is two-edged: it prevents drift (a `write_memory` extract phase can't accidentally use `web_search` because it sees flash-lite and decides to "look up" a name), and it shrinks the prompt — irrelevant op descriptions are not paid for in tokens.
 
 ### 2. Candidate outputs — the decision envelope
 

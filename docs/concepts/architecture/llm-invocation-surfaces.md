@@ -47,11 +47,11 @@ Reyn invokes the LLM in two structurally distinct contexts: the chat router (and
 
 No native function calling. The LLM declares its intended side effects in `control_ir` as typed op objects; the OS dispatches them.
 
-**Op surface:** 8 Control IR op kinds, defined in `OP_KIND_MODEL_MAP` in `src/reyn/op_runtime/registry.py`:
+**Op surface:** the Control IR op kinds are defined in `OP_KIND_MODEL_MAP` in `src/reyn/op_runtime/registry.py`. The core kinds (the RAG / sandbox / compaction kinds are omitted here for brevity):
 
 | Op kind | Purpose |
 |---------|---------|
-| `file` | Read, write, glob, grep, edit, or delete files |
+| `read_file` / `write_file` / `edit_file` / `delete_file` / `glob_files` / `grep_files` | Fine-grained file operations — the same subset the chat router exposes as tools (#1240) |
 | `mcp` | Call a tool on a configured MCP server |
 | `run_skill` | Invoke a sub-skill as a nested workflow |
 | `shell` | Run a shell command |
@@ -60,7 +60,9 @@ No native function calling. The LLM declares its intended side effects in `contr
 | `web_fetch` | Fetch a single URL |
 | `web_search` | Search the public web |
 
-Each phase narrows this set further via `allowed_ops: list[str]` in the phase declaration (default: `["file", "ask_user"]`). The OS enforces `allowed_ops` at dispatch time as a defense-in-depth layer.
+The fine file kinds replaced the former coarse `file` kind in #1240 Wave 2b (the coarse `FileIROp` is kept only as the shared execution backend, not as a phase-emittable kind). `mcp` and `run_skill` are advertised to the phase LLM under their chat-tool names `call_mcp_tool` / `invoke_skill` and aliased back to the canonical kinds at the parse boundary — so the phase catalog is uniform with the router's.
+
+Each phase narrows this set further via `allowed_ops: list[str]` in the phase declaration (default: `["read_file", "write_file", "edit_file", "delete_file", "glob_files", "grep_files", "ask_user"]`). The OS enforces `allowed_ops` at dispatch time as a defense-in-depth layer.
 
 **Role:** domain work — produce an artifact for the next phase or as the skill's final output.
 
@@ -80,9 +82,9 @@ Both are OS-executed deterministic pipelines, not LLM invocations.
 
 | Capability | Router-style surface | Phase-style surface | Status |
 |------------|---------------------|---------------------|--------|
-| File read | `read_file` (conditional on file read permission) | `file` op (kind=file, op=read) | Symmetric |
-| File write / delete | `write_file`, `delete_file` (conditional on file write permission) | `file` op (kind=file, op=write/delete) | Symmetric |
-| File list directory | `list_directory` | `file` op (kind=file, op=glob) | Symmetric |
+| File read | `read_file` (conditional on file read permission) | `read_file` op | Symmetric |
+| File write / delete | `write_file`, `delete_file` (conditional on file write permission) | `write_file`, `delete_file`, `edit_file` ops | Symmetric |
+| File list / search | `list_directory` | `glob_files`, `grep_files` ops | Symmetric |
 | Web search | `web_search` (always present) | `web_search` op | Symmetric |
 | Web fetch | `web_fetch` (operator opt-in) | `web_fetch` op | Symmetric |
 | MCP call_tool | `call_mcp_tool` (conditional on mcp_servers) | `mcp` op | Symmetric |
@@ -106,9 +108,9 @@ Both are OS-executed deterministic pipelines, not LLM invocations.
 
 Capabilities present on both sides with the same semantic, expressed in different invocation forms (function calling vs Control IR JSON). These are not problems; they are the natural consequence of two API styles.
 
-**Examples:** file ops (`read_file` ↔ `file/read`), web ops (`web_search` / `web_fetch` ↔ `web_search` / `web_fetch` ops), MCP invocation (`call_mcp_tool` ↔ `mcp` op), skill invocation (`invoke_skill` ↔ `run_skill` op).
+**Examples:** file ops (`read_file` ↔ `read_file` — the same fine kinds on both sides since #1240), web ops (`web_search` / `web_fetch` ↔ `web_search` / `web_fetch` ops), MCP invocation (`call_mcp_tool` ↔ `mcp` op), skill invocation (`invoke_skill` ↔ `run_skill` op).
 
-The router LLM calls `invoke_skill("name", input={...})`; the phase LLM emits `{"kind": "run_skill", "skill": "name", "input": {...}}`. The OS dispatches both. The symmetry is real; the surface form differs because the two invocation kinds use different protocols.
+The router LLM calls `invoke_skill("name", input={...})`; the phase LLM also emits `invoke_skill` (the chat-tool name the phase catalog advertises), which the OS aliases to `{"kind": "run_skill", "skill": "name", "input": {...}}` before dispatch. The OS dispatches both. Since #1240 the surface form is largely unified (fine file kinds + chat-tool names on both sides); the remaining difference is the wire protocol (native function-calling vs Control IR JSON).
 
 ### Type B — Deliberate role separation
 
@@ -322,14 +324,27 @@ goal.
   `ControlIRExecutor.execute()` dispatches via
   `invoke_tool(get_default_registry(), op.kind, ...)`. Catalog building
   (`_build_phase_tool_catalog`) reads schemas from the registry.
-- **Phase 4 step 3** — `OP_KIND_MODEL_MAP` retained as the coarse-kind
+- **Phase 4 step 3** — `OP_KIND_MODEL_MAP` retained as the op-kind
   reference (= linter `ALL_OP_KINDS`, `OP_PURITY` coverage); no longer
   consulted at dispatch time. `op_runtime/<kind>.py` handlers retained
   as the shared implementation that registry handlers delegate to.
-- **`is_op_allowed` helper** — prefix-wildcard membership for legacy
-  coarse-name `allowed_ops` declarations matching future fine-grained
-  `op.kind` values. Forward-looking: phase Control IR still emits
-  coarse kinds today.
+- **`is_op_allowed` helper** — prefix-wildcard membership for coarse-name
+  `allowed_ops` declarations matching fine-grained `op.kind` values.
+
+**#1240 (the 2-axis tool-model pivot) superseded the coarse phase-side
+dispatch.** The phase catalog and Control IR now use the fine-grained
+chat-tools subset directly:
+
+- **Catalog axis** — the coarse `FILE_OP` / `MCP_OP` / `RUN_SKILL_OP`
+  phase ToolDefinitions were dropped; phases advertise the fine file kinds
+  (`read_file` … `grep_files`) plus `invoke_skill` / `call_mcp_tool` (the
+  chat-tool names, aliased back to the `run_skill` / `mcp` kinds at the
+  parse boundary). `OP_KIND_MODEL_MAP` now holds the fine file kinds; the
+  coarse `"file"` kind was removed (the `FileIROp` model survives only as
+  the shared execution backend).
+- Phase `allowed_ops` defaults migrated to the fine kinds, so phase
+  Control IR now emits fine kinds — the earlier "still emits coarse kinds
+  today" caveat no longer holds.
 
 **Tool addition cost** at the steady state: 1 file in
 `src/reyn/tools/<name>.py` + 1 register call in `__init__.py` = 2 touch

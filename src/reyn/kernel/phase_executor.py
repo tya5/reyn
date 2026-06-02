@@ -780,6 +780,29 @@ class PhaseExecutor:
                                   attempts=act_turn_count, final_error=msg)
                 raise ValueError(msg)
 
+            # #1240 Wave 2b (A)-alias: the phase frame advertises chat names
+            # ("invoke_skill" / "call_mcp_tool") as op kinds.  Rewrite those
+            # names back to execution op kinds ("run_skill" / "mcp") BEFORE
+            # ActOutput.model_validate so the ControlIROp discriminated union
+            # resolves correctly.  The raw dict is shallow-copied so the
+            # original is untouched (needed for error reporting below).
+            from reyn.op_runtime.registry import _PHASE_TOOL_NAME_ALIAS
+            if raw.get("type") == "act" and isinstance(raw.get("ops"), list):
+                ops_list = raw["ops"]
+                if any(
+                    isinstance(op, dict)
+                    and op.get("kind") in _PHASE_TOOL_NAME_ALIAS
+                    for op in ops_list
+                ):
+                    raw = {
+                        **raw,
+                        "ops": [
+                            {**op, "kind": _PHASE_TOOL_NAME_ALIAS[op["kind"]]}
+                            if isinstance(op, dict) and op.get("kind") in _PHASE_TOOL_NAME_ALIAS
+                            else op
+                            for op in ops_list
+                        ],
+                    }
             try:
                 act = ActOutput.model_validate(raw)
             except pydantic.ValidationError as exc:

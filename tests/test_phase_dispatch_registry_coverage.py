@@ -9,12 +9,21 @@ the kind silently falls back to the legacy ``execute_op`` path and the
 ADR-0026 M4 unification claim regresses unnoticed.
 
 The kinds pinned here are the ones FP-0039 §S1 audit found wired:
-file / mcp / run_skill / shell / lint / ask_user / web_fetch /
-web_search / mcp_install / recall / sandboxed_exec — plus ``compact``
-(#272/#1128, phase=allow registry entry). The 6 RAG / internal
-kinds (embed / index_* / judge_output / skill_resolve) intentionally
-stay on the legacy path and are documented in this test's expected-
-legacy set so adding them later is an explicit change, not a silent one.
+shell / lint / ask_user / web_fetch / web_search / mcp_install / recall /
+sandboxed_exec — plus ``compact`` (#272/#1128, phase=allow registry entry).
+
+#1240 Wave 2b: mcp + run_skill moved to _LEGACY_ONLY_KINDS.  Phase no
+longer advertises them under their op-kind names; it advertises the chat
+names "call_mcp_tool" / "invoke_skill" via available_ops(). The (A)-alias
+in _PHASE_TOOL_NAME_ALIAS rewrites those names to "mcp"/"run_skill" at
+the parse boundary; ControlIRExecutor._invoker then calls
+registry.lookup("mcp") / registry.lookup("run_skill") which returns None
+(coarse ToolDef dropped), so execute_op fallback runs.
+
+The 6 RAG / internal kinds (embed / index_* / judge_output / skill_resolve)
+intentionally stay on the legacy path and are documented in this test's
+expected-legacy set so adding them later is an explicit change, not a
+silent one.
 """
 from __future__ import annotations
 
@@ -23,17 +32,16 @@ import pytest
 from reyn.op_runtime.registry import OP_KIND_MODEL_MAP
 from reyn.tools import get_default_registry
 
-# Coarse op kinds the FP-0039 audit confirmed dispatch through the
-# unified registry. Adding a kind here is a deliberate claim that
-# control_ir_executor.py routes via invoke_tool(_registry, op.kind, ...)
-# for it.
+# Coarse op kinds that dispatch through the unified registry.
+# Adding a kind here is a deliberate claim that control_ir_executor.py
+# routes via invoke_tool(_registry, op.kind, ...) for it.
 _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     "ask_user",
-    "file",
+    # #1240 Wave 2b: coarse "file" kind dropped from OP_KIND_MODEL_MAP + registry.
     # #1240 Wave 1: fine-grained file kinds. Each has a phase=allow
     # ToolDefinition (READ_FILE/WRITE_FILE/EDIT_FILE/DELETE_FILE, tools/file.py)
     # that control_ir_executor routes via the registry (op.kind → _registry.lookup)
-    # — the SAME handler chat uses. Coarse "file" stays registry-wired for compat.
+    # — the SAME handler chat uses.
     "read_file",
     "write_file",
     "edit_file",
@@ -43,10 +51,9 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     "glob_files",
     "grep_files",
     "lint",
-    "mcp",
+    # #1240 Wave 2b: "mcp" and "run_skill" moved to _LEGACY_ONLY_KINDS (see below).
     "mcp_install",
     "recall",
-    "run_skill",
     "sandboxed_exec",
     "shell",
     "web_fetch",
@@ -65,12 +72,18 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
 # execute_op fallback because the registry lookup returns None).
 # These are RAG plumbing + internal kernel ops that have no
 # router-side analog and don't benefit from the registry unification.
+# #1240 Wave 2b: "mcp" and "run_skill" added here — their coarse ToolDefs
+# (MCP_OP / RUN_SKILL_OP) are dropped; phase now advertises chat names
+# "call_mcp_tool" / "invoke_skill" which alias to these op kinds at parse.
+# registry.lookup("mcp") / registry.lookup("run_skill") → None → execute_op.
 _LEGACY_ONLY_KINDS: frozenset[str] = frozenset({
     "embed",
     "index_drop",
     "index_query",
     "index_write",
     "judge_output",
+    "mcp",
+    "run_skill",
     "skill_resolve",
 })
 

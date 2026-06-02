@@ -58,26 +58,26 @@ def _run(coro) -> Any:
 
 
 def test_build_phase_tool_catalog_known_ops():
-    """Tier 2: OS invariant — _build_phase_tool_catalog produces entries with function.parameters for known op kinds (file, shell)."""
-    catalog = _build_phase_tool_catalog({"file", "shell"})
-    assert "file" in catalog
+    """Tier 2: OS invariant — _build_phase_tool_catalog produces entries with function.parameters for known op kinds (read_file, shell)."""
+    catalog = _build_phase_tool_catalog({"read_file", "shell"})
+    assert "read_file" in catalog
     assert "shell" in catalog
     # Each entry should have a 'function' key with 'parameters'
-    assert "parameters" in catalog["file"]["function"]
+    assert "parameters" in catalog["read_file"]["function"]
     assert "parameters" in catalog["shell"]["function"]
 
 
 def test_build_phase_tool_catalog_kind_not_in_required():
     """Tier 2: OS invariant — 'kind' must be removed from required fields in the catalog schema so the LLM is not asked to supply a field the OS already knows."""
-    catalog = _build_phase_tool_catalog({"file"})
-    required = catalog["file"]["function"]["parameters"].get("required", [])
+    catalog = _build_phase_tool_catalog({"read_file"})
+    required = catalog["read_file"]["function"]["parameters"].get("required", [])
     assert "kind" not in required
 
 
 def test_build_phase_tool_catalog_kind_not_in_properties():
     """Tier 2: OS invariant — 'kind' must be removed from properties in the catalog schema so it does not appear in the LLM-facing tool description."""
-    catalog = _build_phase_tool_catalog({"file"})
-    props = catalog["file"]["function"]["parameters"].get("properties", {})
+    catalog = _build_phase_tool_catalog({"read_file"})
+    props = catalog["read_file"]["function"]["parameters"].get("properties", {})
     assert "kind" not in props
 
 
@@ -184,7 +184,7 @@ def test_unknown_op_kind_caught_by_dispatch_tool(tmp_path: Path):
     """Tier 2: OS invariant — op kind absent from dispatch catalog yields status=error/kind=unknown_tool; dispatch_tool does not crash on unrecognised op names."""
     executor, events = _make_executor(tmp_path)
 
-    # Synthesize an op with a kind that IS in allowed_ops but NOT in _IROP_MODEL_MAP
+    # Synthesize an op with a kind that IS in allowed_ops but NOT in the registry.
     # We abuse FileIROp as a carrier — the kind field is overridden post-construction
     # via a real minimal stub class (no MagicMock per policy).
     class _FakeOp:
@@ -195,7 +195,7 @@ def test_unknown_op_kind_caught_by_dispatch_tool(tmp_path: Path):
     fake_op = _FakeOp()
 
     # Build catalog that DOES NOT include "nonexistent_op"
-    allowed = {"file"}  # only file allowed; fake_op kind won't pass name validation
+    allowed = {"read_file"}  # fake_op kind won't pass name validation
     decl = PermissionDecl()
 
     results = _run(
@@ -215,7 +215,7 @@ def test_unknown_op_kind_caught_by_dispatch_tool(tmp_path: Path):
 
     async def run_unknown():
         ev = FakeEvents()
-        catalog = _build_phase_tool_catalog({"file"})  # no "mystery_op"
+        catalog = _build_phase_tool_catalog({"read_file"})  # no "mystery_op"
         dctx = DispatchContext(
             caller_kind="skill_phase",
             caller_id="sk.ph",

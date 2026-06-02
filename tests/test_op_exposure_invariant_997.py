@@ -9,10 +9,15 @@ prevents the whole #1133 / FP-0008 class:
 > the wiring gap as an event before the LLM hallucinates a fake schema.
 
 Direction 1 (op-exposure invariant): ``available_ops()`` advertises shell iff
-``shell_allowed``, mcp iff mcp servers are configured, and the unconditional set
-(sandboxed_exec / web_fetch / web_search / file / run_skill / lint / ask_user)
-regardless of flags — the last pinning #1133 (sandboxed_exec was the op that
-went missing).
+``shell_allowed``, call_mcp_tool iff mcp servers are configured, and the
+unconditional set (sandboxed_exec / web_fetch / web_search / fine file ops /
+invoke_skill / lint / ask_user) regardless of flags — the last pinning #1133
+(sandboxed_exec was the op that went missing).
+
+#1240 Wave 2b: available_ops() now advertises the chat names "invoke_skill" and
+"call_mcp_tool" (instead of "run_skill" / "mcp") as ControlIROpSpec.kind values.
+The underlying execution op kinds and allowed_ops frontmatter are unchanged;
+_PHASE_TOOL_NAME_ALIAS + build_frame filter bridge the gap.
 
 Direction 3 (wiring-gap event): ``build_frame`` emits a ``phase_op_catalog_gap``
 event (once per phase per run) when a phase's ``allowed_ops`` references an op
@@ -38,12 +43,23 @@ from reyn.workspace.workspace import Workspace
 # #1133 regression anchor (it was the op that went missing). The list is derived
 # from the invariant intent, not the implementation — a future change that gates
 # one of these behind a flag must update this guard deliberately.
+# #1240 Wave 2b: coarse "file" replaced by fine file kinds (read_file/write_file/
+# edit_file/delete_file/glob_files/grep_files) — these are now the unconditionally-
+# advertised file ops via available_ops() → _fine_file_op_specs().
+# #1240 Wave 2b: "run_skill" → "invoke_skill" (chat name alias; available_ops()
+# now advertises the invoke_skill spec). The execution op kind "run_skill" and
+# allowed_ops frontmatter are UNCHANGED.
 _UNCONDITIONAL_OPS = {
-    "file",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "delete_file",
+    "glob_files",
+    "grep_files",
     "ask_user",
     "sandboxed_exec",
     "lint",
-    "run_skill",
+    "invoke_skill",
     "web_fetch",
     "web_search",
 }
@@ -94,10 +110,15 @@ def test_shell_advertised_iff_shell_allowed(tmp_path: Path, shell_allowed: bool)
 def test_mcp_advertised_iff_servers_configured(
     tmp_path: Path, mcp_servers: dict | None, expect: bool
 ) -> None:
-    """Tier 2: mcp is in the op catalog exactly when mcp servers are configured."""
+    """Tier 2: call_mcp_tool is in the op catalog exactly when mcp servers are configured.
+
+    #1240 Wave 2b: available_ops() advertises "call_mcp_tool" (chat name) instead
+    of "mcp" (op kind).  The execution backend and allowed_ops frontmatter are
+    unchanged; _PHASE_TOOL_NAME_ALIAS bridges the gap at the parse boundary.
+    """
     kinds = _kinds(_executor(tmp_path, mcp_servers=mcp_servers))
-    assert ("mcp" in kinds) is expect, (
-        f"mcp advertised={('mcp' in kinds)} but servers configured={expect}"
+    assert ("call_mcp_tool" in kinds) is expect, (
+        f"call_mcp_tool advertised={('call_mcp_tool' in kinds)} but servers configured={expect}"
     )
 
 
@@ -163,7 +184,7 @@ def test_phase_op_catalog_gap_emitted_when_declared_op_not_advertised(tmp_path: 
 
     os.chdir(tmp_path)
     rt = OSRuntime(
-        _skill_with_allowed_ops(["file", "shell"]),  # shell declared, shell_allowed defaults False
+        _skill_with_allowed_ops(["read_file", "shell"]),  # shell declared, shell_allowed defaults False
         model="stub/model",
         run_id="gap_test",
         workspace_base_dir=tmp_path,
@@ -175,7 +196,7 @@ def test_phase_op_catalog_gap_emitted_when_declared_op_not_advertised(tmp_path: 
     d = gaps[-1].data
     assert d["phase"] == "act"
     assert "shell" in d["missing_ops"], f"missing_ops should name shell: {d['missing_ops']}"
-    assert "file" not in d["missing_ops"], "file is advertised — must not be flagged as a gap"
+    assert "read_file" not in d["missing_ops"], "read_file is advertised — must not be flagged as a gap"
 
 
 def test_no_gap_event_when_all_declared_ops_advertised(tmp_path: Path) -> None:
@@ -185,7 +206,7 @@ def test_no_gap_event_when_all_declared_ops_advertised(tmp_path: Path) -> None:
 
     os.chdir(tmp_path)
     rt = OSRuntime(
-        _skill_with_allowed_ops(["file", "sandboxed_exec"]),  # both unconditional
+        _skill_with_allowed_ops(["read_file", "sandboxed_exec"]),  # both unconditional
         model="stub/model",
         run_id="no_gap_test",
         workspace_base_dir=tmp_path,
@@ -203,7 +224,7 @@ def test_phase_op_catalog_gap_emitted_once_per_phase(tmp_path: Path) -> None:
 
     os.chdir(tmp_path)
     rt = OSRuntime(
-        _skill_with_allowed_ops(["file", "shell"]),
+        _skill_with_allowed_ops(["read_file", "shell"]),
         model="stub/model",
         run_id="dedup_test",
         workspace_base_dir=tmp_path,

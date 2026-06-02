@@ -1,18 +1,20 @@
 """invoke_skill ToolDefinition — naming canonicalization to router-side
 fine-grained name (ADR-0026 Open Q #6).
 
-Phase-side `run_skill` op kind continues to work via OP_KIND_MODEL_MAP
-backward-compat (= ADR-0026 Open Q #7 hybrid recommendation: alias
-preserved + deprecation in a later release).
+#1240 Wave 2b: the coarse-name RUN_SKILL_OP (kind="run_skill") is dropped.
+INVOKE_SKILL (kind="invoke_skill", gates.phase="allow") is now the canonical
+phase-advertised ToolDefinition.  Phase-side dispatch works via the
+(A)-alias in _PHASE_TOOL_NAME_ALIAS: available_ops() advertises "invoke_skill",
+the parse boundary (op_loop + json-mode) rewrites it to "run_skill" before
+ControlIROp validation, and execute_op falls through to op_runtime/run_skill.py.
 
-Dispatch status (post-FP-0039 audit, 2026-05-18):
+Dispatch status (post-#1240 Wave 2b):
   - schema_enricher (_enrich_router_schema) is wired into the INVOKE_SKILL
     ToolDefinition.  render_for_router(state=...) injects the `name` enum
     from RouterCallerState.available_skills per-call.
-  - The coarse phase-side counterpart ``RUN_SKILL_OP`` (kind="run_skill")
-    is wired end-to-end through ``invoke_tool(get_default_registry(), ...)``
-    in ``ControlIRExecutor._invoker``, delegating to
-    ``op_runtime/run_skill.py:handle``.
+  - Phase-side: available_ops() advertises kind="invoke_skill"; the alias
+    maps it to kind="run_skill" at parse; execute_op dispatches to
+    op_runtime/run_skill.py:handle via the legacy execute_op fallback.
   - Router-side INVOKE_SKILL handler dispatch still goes through the
     legacy adapter in router_loop.py rather than ``invoke_tool``.  Moving
     that path to the unified registry would require surfacing
@@ -221,63 +223,13 @@ INVOKE_SKILL = ToolDefinition(
     schema_enricher=_enrich_router_schema,
 )
 
-
-# ── Coarse-name "run_skill" ToolDefinition (phase-side, ADR-0026 Phase 4) ─────
-#
-# Phase Control IR uses ``kind: "run_skill"`` for sub-skill invocation.
-# Semantically the same operation as router-side ``invoke_skill`` but the
-# field name differs (= ``skill`` vs ``name``) and chain_id propagation
-# semantics don't apply phase-side.  Registered under the ``run_skill``
-# name so phase-side dispatch via ``op.kind`` finds it.
-
-def _build_run_skill_parameters() -> dict[str, Any]:
-    from reyn.schemas.models import RunSkillIROp
-    schema = RunSkillIROp.model_json_schema()
-    required = [f for f in schema.get("required", []) if f != "kind"]
-    properties = {k: v for k, v in schema.get("properties", {}).items() if k != "kind"}
-    return {"type": "object", "properties": properties, **({"required": required} if required else {})}
-
-
-_RUN_SKILL_DESCRIPTION = (
-    "Run a Reyn skill in-process and return its final output "
-    "(= phase-side coarse op).  ``skill`` selects the skill name (or "
-    "skill.md path); ``input`` is the input artifact dict; ``model`` / "
-    "``workspace`` / ``output_language`` are optional overrides.  See "
-    "RunSkillIROp for the full schema."
-)
-
-
-async def _handle_run_skill_op(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Coarse handler for phase-side ``run_skill`` op.  Delegates to op_runtime."""
-    from reyn.op_runtime.context import OpContext
-    from reyn.op_runtime.run_skill import handle as handle_run_skill
-    from reyn.permissions.permissions import PermissionDecl
-    from reyn.schemas.models import RunSkillIROp
-
-    op = RunSkillIROp(kind="run_skill", **{k: v for k, v in args.items() if k != "kind"})
-
-    _op_ctx = (
-        ctx.phase_state.op_context if ctx.phase_state is not None else None
-    )
-    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
-        legacy_ctx = _op_ctx
-    else:
-        legacy_ctx = OpContext(
-            workspace=ctx.workspace,
-            events=ctx.events,
-            permission_decl=PermissionDecl(),
-            permission_resolver=ctx.permission_resolver,
-            skill_name="",
-        )
-    return await handle_run_skill(op=op, ctx=legacy_ctx, caller="control_ir")
-
-
-RUN_SKILL_OP = ToolDefinition(
-    name="run_skill",
-    description=_RUN_SKILL_DESCRIPTION,
-    parameters=_build_run_skill_parameters(),
-    gates=ToolGates(router="deny", phase="allow"),
-    handler=_handle_run_skill_op,
-    category="invocation",
-    purity="external",
-)
+# #1240 Wave 2b: RUN_SKILL_OP (the coarse phase-side ToolDefinition under the
+# name "run_skill") is DROPPED.  Phase Control IR now advertises the chat name
+# "invoke_skill" via available_ops() (ControlIROpSpec with kind="invoke_skill"),
+# which aliases to op kind "run_skill" at the parse boundary.  Dispatch falls to
+# the legacy execute_op path (op_runtime/run_skill.py register("run_skill")).
+# allowed_ops=[run_skill] continues to match the invoke_skill spec via
+# _PHASE_TOOL_NAME_ALIAS in runtime.build_frame.
+# KEPT: INVOKE_SKILL (router+phase, gates.phase="allow") is the canonical
+# phase-advertised ToolDefinition.  The invoke_skill handler (phase path) builds
+# RunSkillIROp and delegates to op_runtime.run_skill.handle directly.
