@@ -4,7 +4,7 @@ name: explore
 input: swe_bench_input
 role: analyst
 model_class: standard
-allowed_ops: [file, grep, sandboxed_exec]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, sandboxed_exec]
 max_act_turns: 20
 # FP-0008 #1115 Stage 2: policy for any sandboxed_exec op this phase runs while
 # exploring an arbitrary repository (e.g. git log / ls). Permissive; ignored by a

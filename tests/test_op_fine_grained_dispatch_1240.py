@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from reyn.compiler import load_dsl_skill
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.permissions.permissions import PermissionResolver
@@ -37,6 +38,7 @@ from reyn.schemas.models import (
     ReadFileIROp,
     WriteFileIROp,
 )
+from reyn.skill.skill_paths import stdlib_root
 from reyn.workspace.workspace import Workspace
 
 
@@ -210,3 +212,46 @@ def test_fine_grep_files_dispatch_via_registry(tmp_path, monkeypatch):
     assert "wave15_marker" in result_str, (
         f"grep_files result must include the matched string: {result[0]}"
     )
+
+
+# ── #1240 Wave 2a: catalog-build (json-mode frame advertisement) full-path ───
+
+
+def test_migrated_phase_advertises_fine_ops_no_gap(tmp_path):
+    """Tier 2: a phase declaring FINE allowed_ops gets the fine ops ADVERTISED
+    by available_ops() with NO phase_op_catalog_gap — the json-mode frame's
+    available_control_ops path.
+
+    This is the full-path catch the Wave-1 β-obviation proof MISSED: that proof
+    exercised executor.execute (dispatch) with directly-constructed fine ops,
+    bypassing available_ops() — the json-mode frame advertisement path. The
+    Wave-2a dogfood surfaced the gap (a migrated phase advertised the coarse
+    "file" / allowed fine → the LLM emitted the coarse op it was SHOWN → the
+    executor skipped it with not_allowed_in_phase → silent correctness failure).
+
+    Load-from-disk full path (not direct construction): load the migrated
+    judge_phase, confirm its phase declares fine allowed_ops, and confirm the
+    executor advertises ALL of them — so runtime.build_frame's
+    `op.kind in allowed` filter yields the fine specs (not an empty set + the
+    #997 phase_op_catalog_gap). If available_ops() still hardcoded only the
+    coarse "file", `gap` below would be the full fine set and this would fail.
+    """
+    skill = load_dsl_skill(stdlib_root() / "skills" / "judge_phase" / "skill.md")
+    judge = skill.phases["judge"]
+    allowed = set(judge.allowed_ops)
+    # Post-migration the phase declares fine kinds, no coarse "file".
+    assert "file" not in allowed, f"judge_phase must be migrated to fine: {allowed}"
+    assert {"read_file", "write_file", "grep_files"} <= allowed, allowed
+
+    executor = _executor(tmp_path, grant=True)
+    advertised = {spec.kind for spec in executor.available_ops()}
+    gap = allowed - advertised
+    assert not gap, (
+        f"phase_op_catalog_gap: judge_phase declares {sorted(allowed)} but "
+        f"available_ops() advertises {sorted(advertised)} — missing {sorted(gap)}. "
+        f"The fine kinds must be advertised so build_frame's allowed-filter yields "
+        f"them (else the LLM sees no/wrong ops and the migration silently fails)."
+    )
+    # And the advertised fine specs carry a usable description (registry-derived).
+    fine_specs = {s.kind: s for s in executor.available_ops() if s.kind in allowed}
+    assert fine_specs["read_file"].description, "fine spec must have a description"

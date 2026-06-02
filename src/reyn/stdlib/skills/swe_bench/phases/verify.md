@@ -4,7 +4,7 @@ name: verify
 input: apply_state
 role: tester
 model_class: standard
-allowed_ops: [file, sandboxed_exec]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, sandboxed_exec]
 max_retries: 3
 max_act_turns: 30
 # FP-0008 #1115 Stage 2 (D mechanism): the OS applies this policy to every

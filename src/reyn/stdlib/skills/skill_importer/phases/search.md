@@ -5,7 +5,7 @@ input: user_message
 role: skill_searcher
 can_finish: false
 max_act_turns: 4
-allowed_ops: [file, web_fetch]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, web_fetch]
 ---
 
 Find skills in a public registry that match what the user is asking for.

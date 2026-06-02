@@ -3,7 +3,7 @@ type: phase
 name: plan_skill
 input: user_message | skill_request
 role: app_architect
-allowed_ops: [file, ask_user, run_skill]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, ask_user, run_skill]
 ---
 
 Design an Skill structure that fulfills the user's request with appropriate quality controls.

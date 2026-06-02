@@ -71,6 +71,15 @@ _DSL_STEP_TYPES_OUT_OF_SCOPE: frozenset[str] = frozenset(
 _OP_KIND_CATEGORY: dict[str, str] = {
     # file ops → "file" category (_OPERATION_RULES: file__read/write/edit/…)
     "file":          "file",
+    # #1240 Wave 2a: fine-grained file kinds (skills migrated allowed_ops
+    # file→fine). Same "file" universal_dispatch category as the coarse kind
+    # (file__read/write/edit/glob/grep qualified names already wired).
+    "read_file":     "file",
+    "write_file":    "file",
+    "edit_file":     "file",
+    "delete_file":   "file",
+    "glob_files":    "file",
+    "grep_files":    "file",
     # run_skill → "skill" resource category (_RESOURCE_RULES: skill → invoke_skill)
     "run_skill":     "skill",
     # web ops → "web" category (_OPERATION_RULES: web__fetch, web__search)

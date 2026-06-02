@@ -198,12 +198,57 @@ class ControlIRExecutor:
         """Read-only accessor for the injected ScopedSecretStore (or None)."""
         return self._secret_store
 
+    # #1240 Wave 2a (catalog-build): minimal valid example per fine file kind,
+    # used to build the json-mode ControlIROpSpec advertised in the frame. The
+    # description comes from the unified registry (single source); the example
+    # is the op shape (ControlIROpSpec requires one — it is not on ToolDefinition).
+    _FINE_FILE_OP_EXAMPLES: dict[str, dict[str, Any]] = {
+        "read_file":   {"kind": "read_file", "path": "src/module.py"},
+        "write_file":  {"kind": "write_file", "path": "out.txt", "content": "full file text"},
+        "edit_file":   {"kind": "edit_file", "path": "src/module.py", "old_string": "old", "new_string": "new"},
+        "delete_file": {"kind": "delete_file", "path": "tmp/scratch.txt"},
+        "glob_files":  {"kind": "glob_files", "path": ".", "pattern": "**/*.py"},
+        "grep_files":  {"kind": "grep_files", "path": "src", "pattern": "def \\w+", "glob": "**/*.py"},
+    }
+
+    def _fine_file_op_specs(self) -> list[ControlIROpSpec]:
+        """#1240 Wave 2a: fine-grained file op specs for the json-mode frame.
+
+        Derived from the unified ToolRegistry (the SAME phase=allow
+        ToolDefinitions the op-loop catalog ``_build_phase_tool_catalog`` uses —
+        single source for the description), so a json-mode phase that migrated
+        its ``allowed_ops`` to fine names (read_file/write_file/…) gets matching
+        ``available_control_ops`` in the frame (the LLM SEES + emits the fine
+        kinds). Advertised alongside the coarse ``file`` spec; ``build_frame``
+        filters per phase by ``allowed_ops``, so an un-migrated skill (coarse
+        ``[file]``) still sees only the coarse spec — behavior-preserving.
+
+        Closes the catalog-build gap (#997-class) the Wave-1 β-obviation proof
+        missed: that proof exercised the op-loop dispatch path
+        (``_build_phase_tool_catalog`` → executor.execute) and bypassed this
+        json-mode frame advertisement path (surfaced by the Wave-2a dogfood —
+        migrated phase advertised coarse ``file`` / allowed fine → LLM emitted
+        the coarse ``file`` it was shown → executor skipped it).
+        """
+        from reyn.tools import get_default_registry
+        registry = get_default_registry()
+        specs: list[ControlIROpSpec] = []
+        for name, example in self._FINE_FILE_OP_EXAMPLES.items():
+            tool_def = registry.lookup(name)
+            if tool_def is None or tool_def.gates.phase != "allow":
+                continue
+            specs.append(ControlIROpSpec(
+                kind=name, description=tool_def.description, example=example,
+            ))
+        return specs
+
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor advertises to the LLM.
 
         These specs flow into ContextFrame.available_control_ops; the LLM picks
         from this list when emitting `control_ir`. Op kinds are filtered per
-        runtime config (shell_allowed, mcp_servers configured).
+        runtime config (shell_allowed, mcp_servers configured) and per phase by
+        ``allowed_ops`` in ``build_frame``.
         """
         return [
             ControlIROpSpec(
@@ -224,6 +269,11 @@ class ControlIRExecutor:
                 ),
                 example={"kind": "file", "op": "grep", "path": "src", "pattern": "def \\w+", "glob": "**/*.py", "output_mode": "content"},
             ),
+            # #1240 Wave 2a: fine-grained file kinds (read_file/write_file/…),
+            # advertised alongside the coarse "file" above. build_frame filters
+            # per phase by allowed_ops — migrated (fine) phases see these,
+            # un-migrated (coarse [file]) phases see only the coarse spec.
+            *self._fine_file_op_specs(),
             ControlIROpSpec(
                 kind="ask_user",
                 description=(

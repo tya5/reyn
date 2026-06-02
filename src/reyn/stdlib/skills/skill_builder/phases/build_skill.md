@@ -4,7 +4,7 @@ name: build_skill
 input: skill_plan
 role: dsl_writer
 model_class: strong
-allowed_ops: [file]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files]
 ---
 
 Generate DSL markdown files for the skill defined in data, then write each one to the workspace using file ops.

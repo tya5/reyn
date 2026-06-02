@@ -5,7 +5,7 @@ input: build_result
 role: dsl_verifier
 can_finish: false
 max_act_turns: 1
-allowed_ops: [file, lint]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, lint]
 ---
 
 ## Step 1 — Run lint (your ONLY act turn)
