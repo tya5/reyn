@@ -69,21 +69,26 @@ nav:
   - Feature Map: feature-map.md
   - Guide:
       - Getting started:
-          - guide/getting-started/01-installation.md
-          - guide/getting-started/02-chat-mode.md
-          - guide/getting-started/03-your-first-skill.md
-          - guide/getting-started/04-running-a-skill.md
-          - guide/getting-started/05-writing-an-eval.md
+          - Installation & setup:
+              - guide/getting-started/01-installation.md
+              - guide/getting-started/02-chat-mode.md
+          - Your first skill:
+              - guide/getting-started/03-your-first-skill.md
+              - guide/getting-started/04-running-a-skill.md
+              - guide/getting-started/05-writing-an-eval.md
       - Setup evaluation: guide/evaluation.md
       - For users:
           - guide/for-users/index.md
-          - guide/for-users/manage-permissions.md
-          - guide/for-users/ask-user-mid-phase.md
-          - guide/for-users/chat-and-web-ui.md
-          - guide/for-users/work-with-files.md
-          - guide/for-users/enable-semantic-search.md
-          - guide/for-users/run-swe-bench.md
-          - guide/for-users/popular-mcp-servers.md
+          - Using Reyn:
+              - guide/for-users/chat-and-web-ui.md
+              - guide/for-users/manage-permissions.md
+              - guide/for-users/ask-user-mid-phase.md
+          - Files & integrations:
+              - guide/for-users/work-with-files.md
+              - guide/for-users/enable-semantic-search.md
+              - guide/for-users/popular-mcp-servers.md
+          - Evaluation:
+              - guide/for-users/run-swe-bench.md
       - For skill authors:
           - guide/for-skill-authors/index.md
           - Foundation:
@@ -119,9 +124,11 @@ nav:
               - guide/for-skill-authors/stdlib-authoring-tools/production-checklist.md
       - For Reyn developers:
           - guide/for-reyn-developers/index.md
-          - guide/for-reyn-developers/principles-and-code.md
-          - guide/for-reyn-developers/add-an-op-kind.md
-          - guide/for-reyn-developers/write-replay-tests.md
+          - Concepts & principles:
+              - guide/for-reyn-developers/principles-and-code.md
+          - Extending Reyn:
+              - guide/for-reyn-developers/add-an-op-kind.md
+              - guide/for-reyn-developers/write-replay-tests.md
   - Reference:
       - CLI:
           - reference/cli/run.md
