@@ -9,7 +9,7 @@ applies_to: [skill.md]
 
 A Skill may declare a `postprocessor` block that runs **after** the LLM emits its finish artifact, before that artifact is returned to the caller. Steps are deterministic: they invoke sub-skills, iterate over a list, run validators, lint a plan, or call a Python function. The caller receives the postprocessor's output, not the raw LLM artifact.
 
-For rationale and worked examples of **why** to use a postprocessor, see [Concepts: postprocessor](../../concepts/postprocessor.md).
+For rationale and worked examples of **why** to use a postprocessor, see [Concepts: postprocessor](../../concepts/skills/postprocessor.md).
 
 ## Block location
 
@@ -127,7 +127,7 @@ The executable op set mirrors the preprocessor exactly:
 
 See [preprocessor.md](preprocessor.md) for the full op-set discussion.
 
-Permission enforcement uses `skill.permissions` — the skill-level declaration in `skill.md` frontmatter. There is no phase-level permission gate for postprocessor steps. See [permission-model.md](../../concepts/permission-model.md) for semantics.
+Permission enforcement uses `skill.permissions` — the skill-level declaration in `skill.md` frontmatter. There is no phase-level permission gate for postprocessor steps. See [permission-model.md](../../concepts/runtime/permission-model.md) for semantics.
 
 ## Resume integration
 
@@ -137,7 +137,7 @@ Postprocessor steps run through the same `dispatch_tool` as preprocessor and pha
 2. Auto-resume replays the postprocessor from the first uncommitted step, skipping already-committed steps via memo lookup.
 3. World-purity ops re-execute on resume.
 
-The LLM's finish artifact is persisted to workspace before postprocessor starts, so resume has a durable input artifact regardless of in-process state. Op invocation IDs for postprocessor steps follow the pattern `__post__.<step_idx>` (e.g. `__post__.0`, `__post__.1`). See [skill-resume.md](../../concepts/skill-resume.md) for the broader resume machinery.
+The LLM's finish artifact is persisted to workspace before postprocessor starts, so resume has a durable input artifact regardless of in-process state. Op invocation IDs for postprocessor steps follow the pattern `__post__.<step_idx>` (e.g. `__post__.0`, `__post__.1`). See [skill-resume.md](../../concepts/skills/skill-resume.md) for the broader resume machinery.
 
 ## Worked examples
 
@@ -210,8 +210,8 @@ No `steps` key. The OS validates the LLM's finish artifact against `output_schem
 
 ## See also
 
-- [Concepts: postprocessor](../../concepts/postprocessor.md) — rationale and when to use
+- [Concepts: postprocessor](../../concepts/skills/postprocessor.md) — rationale and when to use
 - [preprocessor.md](preprocessor.md) — step types (shared with postprocessor)
 - [skill-md.md](skill-md.md) — full skill frontmatter reference
-- [permission-model.md](../../concepts/permission-model.md) — `skill.permissions` semantics
-- [skill-resume.md](../../concepts/skill-resume.md) — resume machinery postprocessor integrates with
+- [permission-model.md](../../concepts/runtime/permission-model.md) — `skill.permissions` semantics
+- [skill-resume.md](../../concepts/skills/skill-resume.md) — resume machinery postprocessor integrates with

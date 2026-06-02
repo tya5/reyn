@@ -8,7 +8,7 @@ audience: [human]
 
 Skill / agent / それを支えるランタイムを構築するためのタスク指向ハウツー集です。やりたいことに応じてクラスタを選んでください。
 
-まだ済ませていなければ、[Getting started](../getting-started/01-installation.md) を先に進めてください。これらのハウツーは Reyn がインストール済みで、[コンセプト: phase vs skill vs OS](../../concepts/phase-vs-skill-vs-os.md) を一読していることを前提にしています。
+まだ済ませていなければ、[Getting started](../getting-started/01-installation.md) を先に進めてください。これらのハウツーは Reyn がインストール済みで、[コンセプト: phase vs skill vs OS](../../concepts/architecture/phase-vs-skill-vs-os.md) を一読していることを前提にしています。
 
 ## Foundation（基礎）
 
@@ -63,6 +63,6 @@ LLM 駆動オーサリング stdlib（`skill_builder` / `skill_improver` / `skil
 
 ## See also
 
-- [コンセプト](../../concepts/principles.md) — これらのハウツーが使うパターンの「なぜ」。
+- [コンセプト](../../concepts/architecture/principles.md) — これらのハウツーが使うパターンの「なぜ」。
 - [Reference / DSL](../../reference/dsl/skill-md.md) — frontmatter と YAML スキーマの厳密な定義。
 - [Reference / CLI](../../reference/cli/run.md) — `reyn run` / `reyn lint` / `reyn eval` / `reyn chat`。

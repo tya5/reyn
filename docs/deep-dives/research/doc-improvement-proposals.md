@@ -127,7 +127,7 @@ Use `prompt` to hint what to extract (informational only).
 
 ### 2-B. `architecture.md` にコード例がない
 
-**問題**: `docs/en/concepts/architecture.md` と ja 版は設計思想の記述が充実しているが、
+**問題**: `docs/en/concepts/architecture/architecture.md` と ja 版は設計思想の記述が充実しているが、
 コード例がゼロ。「Phase とは」「Skill とは」を理解した後で「実際にどう書くか」への
 接続がない。
 
@@ -161,7 +161,7 @@ Use `prompt` to hint what to extract (informational only).
 Skill 著者が活用できず、LLM に委ねるべきでない処理まで LLM に流してしまう。
 
 **推奨アクション**:
-- `docs/en/concepts/postprocessor.md` に相当する `docs/en/concepts/preprocessor.md` 新規作成
+- `docs/en/concepts/skills/postprocessor.md` に相当する `docs/en/concepts/preprocessor.md` 新規作成
   （「なぜ確定論的処理を LLM から切り離すか」の設計思想 + 各種別の用途早見表）
 - `reference/dsl/preprocessor.md` はそのまま DSL リファレンスとして残す
 - 日本語版も同様
@@ -170,9 +170,9 @@ Skill 著者が活用できず、LLM に委ねるべきでない処理まで LLM
 
 ---
 
-### 2-D. `concepts/mcp.md` が MCP server / client の役割を区別していない
+### 2-D. `concepts/tools-integrations/mcp.md` が MCP server / client の役割を区別していない
 
-**問題**: `docs/en/concepts/mcp.md`（および ja 版）が、
+**問題**: `docs/en/concepts/tools-integrations/mcp.md`（および ja 版）が、
 Reyn の MCP における 2 つの役割を明確に区別していない。
 
 | 役割 | 実装状況 | 説明 |
@@ -185,7 +185,7 @@ OSS ローンチ後に同様の誤認が広まる可能性が高い。
 「Reyn は Claude Code から呼べる」という killer feature が認識されない。
 
 **推奨アクション**:
-- `concepts/mcp.md` の冒頭に上記の 2 役割表を追加
+- `concepts/tools-integrations/mcp.md` の冒頭に上記の 2 役割表を追加
 - MCP server（実装済み）と MCP client（Phase 2 予定）をセクション分けして記述
 - `reyn mcp serve` の起動手順と使用例を追加（現状ゼロ）
 
@@ -201,12 +201,12 @@ OSS ローンチ後に同様の誤認が広まる可能性が高い。
 
 | ファイル | 優先度 | 理由 |
 |---|---|---|
-| `concepts/a2a.md` | **高** | README で言及。日本ユーザーが最初に確認する機能 |
-| `concepts/mcp.md` | **高** | README で言及。Phase 2 の核心機能 |
+| `concepts/multi-agent/a2a.md` | **高** | README で言及。日本ユーザーが最初に確認する機能 |
+| `concepts/tools-integrations/mcp.md` | **高** | README で言及。Phase 2 の核心機能 |
 | `how-to/use-an-mcp-server.md` | **高** | MCP 接続の実装ガイド。Phase 2 対応後の主要コンテンツ |
 | `reference/upgrade-policy.md` | **高** | バージョン移行で日本ユーザーが最初に詰まる箇所 |
-| `concepts/postprocessor.md` | **中** | postprocessor は実装済みの機能 |
-| `concepts/skill-resume.md` | **中** | WAL クラッシュ回復の概念説明 |
+| `concepts/skills/postprocessor.md` | **中** | postprocessor は実装済みの機能 |
+| `concepts/skills/skill-resume.md` | **中** | WAL クラッシュ回復の概念説明 |
 | `how-to/author-a-design.md` | **中** | デザイン作成の how-to |
 | `reference/dsl/postprocessor.md` | **中** | postprocessor DSL リファレンス |
 | `reference/stdlib/read_local_files.md` | **中** | stdlib skill のリファレンス |
@@ -225,7 +225,7 @@ OSS ローンチ後に同様の誤認が広まる可能性が高い。
 
 ### 4-A. マルチエージェントの 4 層構造が docs に明文化されていない
 
-**問題**: `docs/en/concepts/multi-agent.md` と `how-to/build-an-agent-team.md` は存在するが、
+**問題**: `docs/en/concepts/multi-agent/multi-agent.md` と `how-to/build-an-agent-team.md` は存在するが、
 Reyn のマルチエージェントが以下 4 層で構成されていることが一目でわかる記述がない。
 
 ```
@@ -240,7 +240,7 @@ Layer 4: reyn mcp serve（外部 LLM クライアントから Reyn を呼ぶ MCP
 維持される」という genuine な差別化が外部から認識されない。
 
 **推奨アクション**:
-- `concepts/multi-agent.md` の冒頭に 4 層構造の概要図（ASCII art または Mermaid）を追加
+- `concepts/multi-agent/multi-agent.md` の冒頭に 4 層構造の概要図（ASCII art または Mermaid）を追加
 - 各層が「なぜこの設計か」の 1 行説明を追加（P4/P5/P6 との対応を示す）
 - 日本語版も同様に更新
 
@@ -284,7 +284,7 @@ Reyn の設計の実際を把握できない。
 `architecture.md` の理解と実装の接続が困難。
 
 **推奨アクション**:
-- `concepts/architecture.md` に Phase 実行のシーケンス図（Mermaid sequence diagram）を追加
+- `concepts/architecture/architecture.md` に Phase 実行のシーケンス図（Mermaid sequence diagram）を追加
   または `docs/en/concepts/phase-lifecycle.md` として新規作成
 - OS の各ステップ（context build → LLM call → validation → IR execution → event emit → transition）を可視化
 
@@ -335,7 +335,7 @@ Reyn の設計の実際を把握できない。
 | control-ir.md web ops 追加 | Phase 著者が web_search/web_fetch を活用できる。stdlib スキルの品質が上がる |
 | Skill Authoring ガイド | tutorials → 自作 skill のコンバージョン率向上。新規コントリビューター獲得 |
 | Phase Preprocessor 概観 | 確定論的処理を LLM から切り離すパターンが普及する |
-| concepts/mcp.md 役割分担 | MCP server（実装済み）が killer feature として認識される |
+| concepts/tools-integrations/mcp.md 役割分担 | MCP server（実装済み）が killer feature として認識される |
 | 日本語版 4 ファイル | 日本エンタープライズの社内提案を容易にする |
 | multi-agent 4 層図 | 競合比較での訴求力向上。「閉じた OS」という誤解の払拭 |
 | Phase 実行シーケンス図 | アーキテクチャ興味読者が設計を正確に把握できる |

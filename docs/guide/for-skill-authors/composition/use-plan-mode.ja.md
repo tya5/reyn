@@ -107,7 +107,7 @@ surgical escape hatch です。`step_id` 以降の記録済み結果をクリア
 
 decomposition artifact は planner LLM を通じて再生成されません — 再分解は非決定論的で step ID が変わり memoization が壊れます。artifact が欠落または破損している場合、coordinator は自動的に discard してoutbox notice を出します。
 
-この挙動の背景にある概念モデルは [concepts/plan-mode.md](../../../concepts/plan-mode.md) を参照してください。
+この挙動の背景にある概念モデルは [concepts/multi-agent/plan-mode.md](../../../concepts/multi-agent/plan-mode.md) を参照してください。
 
 ## オペレーターの介入レシピ
 
@@ -137,6 +137,6 @@ reyn events .reyn/agents/<name>/events.jsonl --filter plan_step_completed
 
 ## 関連情報
 
-- [concepts/plan-mode.md](../../../concepts/plan-mode.md) — 概念モデル: 非同期 dispatch、crash 分類、resume policy、multi-plan の順序付け。
+- [concepts/multi-agent/plan-mode.md](../../../concepts/multi-agent/plan-mode.md) — 概念モデル: 非同期 dispatch、crash 分類、resume policy、multi-plan の順序付け。
 - [reference/cli/chat.md](../../../reference/cli/chat.md) — `/plan` ファミリーを含む完全な slash command リファレンス。
 - [compose-skills-with-run-skill.md](compose-skills-with-run-skill.md) — マルチステップ plan の代わりに単一の sub-skill で済む場合。

@@ -125,9 +125,9 @@ discarded paths so future readers understand what was tried and why.
 
 ## Related reading
 
-- [Principles (P1–P8)](../concepts/principles.md) — invariants the
+- [Principles (P1–P8)](../concepts/architecture/principles.md) — invariants the
   decisions must respect
-- [Skill resume](../concepts/skill-resume.md) — user-facing summary of
+- [Skill resume](../concepts/skills/skill-resume.md) — user-facing summary of
   the resulting machinery
 - [Upgrade policy](../reference/upgrade-policy.md) — operator-facing
   consequence of ADR-0006

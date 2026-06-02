@@ -81,4 +81,4 @@ graph:
 
 - [skill-md.md](skill-md.md) — `entry`、`final_output`
 - [phase-md.md](phase-md.md) — `can_finish`
-- [コンセプト: principles P2（Skill が構造を定義する）](../../concepts/principles.md#p2-skill-defines-structure)
+- [コンセプト: principles P2（Skill が構造を定義する）](../../concepts/architecture/principles.md#p2-skill-defines-structure)

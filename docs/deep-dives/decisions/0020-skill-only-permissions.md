@@ -88,5 +88,5 @@ At that point, three placement strategies were on the table:
 - This commit — final deletion of `Phase.permissions` field (案 2 complete)
 - `docs/en/decisions/0006-schema-version-refuse-policy.md` — precedent for
   hard-rejection of removed fields during pre-1.0 (refuse + migration message)
-- `docs/en/concepts/principles.md` P5 (workspace as single source of truth)
+- `docs/en/concepts/architecture/principles.md` P5 (workspace as single source of truth)
   — same philosophy applied to permission declaration

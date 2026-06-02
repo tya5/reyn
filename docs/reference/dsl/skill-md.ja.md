@@ -63,7 +63,7 @@ imported_revision: <git-sha>
 
 ## `permissions:` (skill-level)
 
-`permissions:` は `skill.md` frontmatter の **唯一** のパーミッション宣言場所です。Phase レベルのパーミッションは skill-only permissions migration で廃止されました。完全なセマンティクスとケイパビリティ階層については [permission-model.md](../../concepts/permission-model.md) を参照してください。
+`permissions:` は `skill.md` frontmatter の **唯一** のパーミッション宣言場所です。Phase レベルのパーミッションは skill-only permissions migration で廃止されました。完全なセマンティクスとケイパビリティ階層については [permission-model.md](../../concepts/runtime/permission-model.md) を参照してください。
 
 ```yaml
 permissions:
@@ -99,7 +99,7 @@ permissions:
 - **`index_drop`** — `true` で `index_drop` Control IR 操作を許可（デフォルト `false`）。
 - **`mcp_drop_server`** — `true` で `mcp_drop_server` Control IR 操作を許可（デフォルト `false`）。
 
-`permissions` ブロックは上限ゲートです: Phase の `allowed_ops` が許可する操作であっても、`skill.permissions` の範囲外であればディスパッチ時に拒否されます。レイヤー化された適用モデルについては [permission-model.md](../../concepts/permission-model.md) を参照してください。
+`permissions` ブロックは上限ゲートです: Phase の `allowed_ops` が許可する操作であっても、`skill.permissions` の範囲外であればディスパッチ時に拒否されます。レイヤー化された適用モデルについては [permission-model.md](../../concepts/runtime/permission-model.md) を参照してください。
 
 ## `required_credentials:` (省略可能)
 
@@ -139,8 +139,8 @@ final_output: review_output
 
 ### 関連情報
 
-- [permission-model.md](../../concepts/permission-model.md) — "スキル別クレデンシャルスコーピング" セクション: 脅威モデルと詳細説明
-- [secret-handling.md](../../concepts/secret-handling.md) — シークレットストアの概要
+- [permission-model.md](../../concepts/runtime/permission-model.md) — "スキル別クレデンシャルスコーピング" セクション: 脅威モデルと詳細説明
+- [secret-handling.md](../../concepts/runtime/secret-handling.md) — シークレットストアの概要
 - [events.md](../runtime/events.md) — `sub_skill_credential_scope` イベントペイロード
 
 ## `postprocessor:`
@@ -165,7 +165,7 @@ postprocessor:
           html_body: { type: string }
 ```
 
-完全な構文（必須フィールド、省略可能フィールド、ステップ種別、`on_error` ポリシー、パーミッションゲート）については [postprocessor.md](postprocessor.md) を参照してください。設計の意図については [コンセプト: postprocessor](../../concepts/postprocessor.md) を参照してください。
+完全な構文（必須フィールド、省略可能フィールド、ステップ種別、`on_error` ポリシー、パーミッションゲート）については [postprocessor.md](postprocessor.md) を参照してください。設計の意図については [コンセプト: postprocessor](../../concepts/skills/postprocessor.md) を参照してください。
 
 ## ボディ
 
@@ -207,4 +207,4 @@ graph:
 - [phase-md.md](phase-md.md) — Phase frontmatter
 - `reference/dsl/artifact-yaml.md` — artifact スキーマファイル
 - `reference/dsl/graph.md` — グラフセマンティクスの詳細
-- [コンセプト: P2 Skill が構造を定義する](../../concepts/principles.md#p2-skill-defines-structure)
+- [コンセプト: P2 Skill が構造を定義する](../../concepts/architecture/principles.md#p2-skill-defines-structure)

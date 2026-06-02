@@ -91,6 +91,6 @@ already-committed portion.
 
 - Commit `4a1c0a8` — D3b-3 OSRuntime fast-forward
 - Commit `47847db` — D3b-4 e2e crash → resume → completion test
-- [docs/en/concepts/skill-resume.md](../concepts/skill-resume.md)
+- [docs/en/concepts/skills/skill-resume.md](../concepts/skills/skill-resume.md)
 - ADR-0001 (state model — the WAL that enables this)
 - ADR-0004 (memoization key)

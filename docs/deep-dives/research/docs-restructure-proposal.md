@@ -160,7 +160,7 @@ Phase 3 のタスクとして明示的に計画に入れることを提案する
 1. ディレクトリ・ファイルの移動（git mv）
 2. mkdocs.yml の nav 再構成
 3. i18n プラグイン設定を suffix モードに変更
-4. 内部リンク（`../concepts/architecture.md` 等）の一括修正
+4. 内部リンク（`../concepts/architecture/architecture.md` 等）の一括修正
 5. CLAUDE.md のドキュメントパス参照を更新
 
 スコープは大きいが機械的作業が中心。サブエージェント並列で処理可能。

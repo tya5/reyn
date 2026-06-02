@@ -16,7 +16,7 @@ The router runs as a **two-phase** workflow:
 1. **`classify`** — pick the intent (chitchat / memory_recall / stable_knowledge / clarification / task / fresh_lookup) and either finish with `routing_decision` or hand off to `match`.
 2. **`match`** — for `task` and `fresh_lookup` intents, dispatch to a specific skill (or peer agent), or transition to `web_research`.
 
-The classify phase also handles **memory writes**: every turn it inspects the new utterance and may emit `file/write` ops to persist user / feedback / project / reference facts. Memory reads are pre-merged by ChatSession (see [concepts/memory](../../concepts/memory.md)).
+The classify phase also handles **memory writes**: every turn it inspects the new utterance and may emit `file/write` ops to persist user / feedback / project / reference facts. Memory reads are pre-merged by ChatSession (see [concepts/memory](../../concepts/data-retrieval/memory.md)).
 
 ## Entry artifact: `chat_routing_request`
 
@@ -40,7 +40,7 @@ ChatSession constructs this on every turn. Selected fields:
 | `skills_to_run` | array (optional) | Project / stdlib skills to spawn this turn |
 | `messages_to_agents` | array (optional) | Delegations to peer agents — `[{to, request}, ...]` |
 
-ChatSession dispatches each non-empty array. `reply_text` reaches the user immediately for user-initiated chains. For agent-initiated chains (a peer agent received this request), the chain enters [deferred reply](../../concepts/multi-agent.md#deferred-reply) when `messages_to_agents` is non-empty: the router's `reply_text` is held until every delegate responds.
+ChatSession dispatches each non-empty array. `reply_text` reaches the user immediately for user-initiated chains. For agent-initiated chains (a peer agent received this request), the chain enters [deferred reply](../../concepts/multi-agent/multi-agent.md#deferred-reply) when `messages_to_agents` is non-empty: the router's `reply_text` is held until every delegate responds.
 
 ## Skill selection guidance
 
@@ -58,7 +58,7 @@ Never both a skill AND an agent in the same decision — pick one branch.
 
 ## See also
 
-- [Concepts: memory](../../concepts/memory.md) — 2-tier read/write contract
-- [Concepts: multi-agent](../../concepts/multi-agent.md) — `messages_to_agents` and chain semantics
+- [Concepts: memory](../../concepts/data-retrieval/memory.md) — 2-tier read/write contract
+- [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — `messages_to_agents` and chain semantics
 - [Reference: profile-yaml](../dsl/profile-yaml.md) — `allowed_skills` filter
 - [Reference: chat CLI](../cli/chat.md)

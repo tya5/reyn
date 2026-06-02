@@ -138,7 +138,7 @@ What you get:
 | `ceo ↔ eng_a` | ✗ | no shared topology — `ceo` must escalate via `vp_eng` |
 | `eng_a ↔ eng_b` | ✗ | `team_eng` peer ↔ peer forbidden |
 
-Multi-level escalation happens via repeated single hops (`ceo → vp_eng → eng_a`), bounded by `safety.loop.max_agent_hops` (default 3, raise it for deeper trees). See [concepts/topology — Tree pattern](../../../concepts/topology.md#tree-pattern) for why this falls out of the design rather than needing a special kind.
+Multi-level escalation happens via repeated single hops (`ceo → vp_eng → eng_a`), bounded by `safety.loop.max_agent_hops` (default 3, raise it for deeper trees). See [concepts/topology — Tree pattern](../../../concepts/multi-agent/topology.md#tree-pattern) for why this falls out of the design rather than needing a special kind.
 
 ## Picking a kind
 
@@ -172,8 +172,8 @@ safety:
 
 ## See also
 
-- [Concepts: topology](../../../concepts/topology.md) — kind semantics, single permit rule, tree pattern
-- [Concepts: multi-agent](../../../concepts/multi-agent.md) — agent identity, AgentRegistry, chain semantics
+- [Concepts: topology](../../../concepts/multi-agent/topology.md) — kind semantics, single permit rule, tree pattern
+- [Concepts: multi-agent](../../../concepts/multi-agent/multi-agent.md) — agent identity, AgentRegistry, chain semantics
 - [Reference: topology CLI](../../../reference/cli/topology.md)
 - [Reference: agent CLI](../../../reference/cli/agent.md)
 - [How-to: multi-hop delegation](multi-hop-delegation.md) — what to expect when chains span multiple agents

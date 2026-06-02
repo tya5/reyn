@@ -1,6 +1,6 @@
 # ADR-0029: `mcp_install` permission — install-time gating として permission system に追加
 
-**Status**: Superseded by [#571 collapse arc Phase 5 (PR #631)](https://github.com/tya5/reyn/pull/631) (2026-05-23). The bool axis `mcp_install` was removed; install gating now flows through `file.write` (= `.reyn/mcp.yaml`) + `http.get` (= registry host) + `secret.write` (= per-env-key) via the standard list-axis resolvers. See `docs/concepts/permission-model.md` → "Collapse arc" for the canonical decomposition.
+**Status**: Superseded by [#571 collapse arc Phase 5 (PR #631)](https://github.com/tya5/reyn/pull/631) (2026-05-23). The bool axis `mcp_install` was removed; install gating now flows through `file.write` (= `.reyn/mcp.yaml`) + `http.get` (= registry host) + `secret.write` (= per-env-key) via the standard list-axis resolvers. See `docs/concepts/runtime/permission-model.md` → "Collapse arc" for the canonical decomposition.
 **Track**: Architecture — permission system の install-time gating layer (= 旧 design、 historical record)
 
 > Historical context preserved below. The bool-axis shape this ADR proposed is no longer the active mechanism.
@@ -171,8 +171,8 @@ permissions:
 
 ## 5. 関連
 
-- P3 (LLM 判断のみ) + P6 (events as audit truth): `docs/concepts/principles.md`
-- 既存 permission system: `docs/concepts/permission-model.md`、 `src/reyn/permissions/permissions.py`
+- P3 (LLM 判断のみ) + P6 (events as audit truth): `docs/concepts/architecture/principles.md`
+- 既存 permission system: `docs/concepts/runtime/permission-model.md`、 `src/reyn/permissions/permissions.py`
 - ADR-0027 AuditSeal — `docs/deep-dives/decisions/0027-audit-seal-separation.md` (= `mcp_server_installed` event を将来 AuditSeal 入力ソースに統合)
 - positioning doc — `docs/deep-dives/research/positioning/reyn-mcp-cli-shape.md` (= `mcp_install` IR op の design)
 - 競合分析 — `docs/deep-dives/research/competitive/openclaw.md` (= ambient authority に対する差別化 motivation)

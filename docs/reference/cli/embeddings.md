@@ -9,7 +9,7 @@ applies_to: [reyn embeddings]
 
 Inspect and manage the action embedding index that backs `search_actions`. Reads on-disk state only — no network probes; matches the cheap-by-default posture of `reyn mcp list`.
 
-See [Concepts: enable semantic search](../../guide/for-users/enable-semantic-search.md) for the onboarding walkthrough, and [Concepts: RAG — Embedding configuration](../../concepts/rag.md#embedding-configuration) for the underlying `embedding.classes` map.
+See [Concepts: enable semantic search](../../guide/for-users/enable-semantic-search.md) for the onboarding walkthrough, and [Concepts: RAG — Embedding configuration](../../concepts/data-retrieval/rag.md#embedding-configuration) for the underlying `embedding.classes` map.
 
 ## Synopsis
 
@@ -99,6 +99,6 @@ Absent paths are reported as skipped — calling `clear` on a clean install is a
 ## Related
 
 - [Concepts: enable semantic search](../../guide/for-users/enable-semantic-search.md) — fresh-user setup
-- [Concepts: universal catalog — `search_actions`](../../concepts/universal-catalog.md#what-stays-out-of-phase-1) — the surface this index backs
-- [Concepts: RAG — Embedding configuration](../../concepts/rag.md#embedding-configuration) — `embedding.classes` map
+- [Concepts: universal catalog — `search_actions`](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) — the surface this index backs
+- [Concepts: RAG — Embedding configuration](../../concepts/data-retrieval/rag.md#embedding-configuration) — `embedding.classes` map
 - [`reyn secret`](secret.md) — set `OPENAI_API_KEY` for the LiteLLM-backed embedding classes

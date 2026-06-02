@@ -127,7 +127,7 @@ LLM invoked `skill_improver` for an `eval` scenario. Both skills share keywords 
 
 ### 3.5 PLAN-STEP-PATH (W6)
 
-Plan step LLMs call `reyn_src_read("principles.md")` (= relative) instead of the full `docs/concepts/principles.md` (= cwd-anchored). Step prompts don't carry the resolved cwd well enough to set the path correctly.
+Plan step LLMs call `reyn_src_read("principles.md")` (= relative) instead of the full `docs/concepts/architecture/principles.md` (= cwd-anchored). Step prompts don't carry the resolved cwd well enough to set the path correctly.
 
 **Severity: MED.** Plan-mode multi-source synthesis is brittle until step LLMs receive resolved-path context.
 

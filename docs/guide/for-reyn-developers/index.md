@@ -16,7 +16,7 @@ If you're building skills on top of Reyn rather than modifying the OS itself, se
 
 **`CLAUDE.md`** (in the repo root) — the invariants every code-writing agent (and human contributor) must follow. P1–P8 are hard constraints, not guidelines.
 
-**[concepts/principles.md](../../concepts/principles.md)** — the *why* behind P1–P8, with worked examples.
+**[concepts/architecture/principles.md](../../concepts/architecture/principles.md)** — the *why* behind P1–P8, with worked examples.
 
 **[principles-and-code.md](principles-and-code.md)** — P1–P8 mapped to the exact files and classes that enforce them. Read this when you need to find where something lives.
 

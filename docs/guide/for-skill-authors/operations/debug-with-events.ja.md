@@ -85,5 +85,5 @@ reyn events <log> --filter llm_called --skip context_built
 ## 関連情報
 
 - [リファレンス: events](../../../reference/runtime/events.md) — 完全なイベント分類
-- [コンセプト: events](../../../concepts/events.md)
+- [コンセプト: events](../../../concepts/runtime/events.md)
 - [リファレンス: run](../../../reference/cli/run.md) — `--events` フラグ

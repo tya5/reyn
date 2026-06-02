@@ -169,6 +169,6 @@ All times are UTC. The scheduler uses [`croniter`](https://pypi.org/project/cron
 ## Related
 
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `cron:` configuration block
-- [Concepts: Operational Intelligence](../../concepts/operational-intelligence.md) — use-cases for scheduled skill execution
-- [Concepts: A2A protocol](../../concepts/a2a.md) — `RunRegistry` pattern and future web-mode status API
+- [Concepts: Operational Intelligence](../../concepts/data-retrieval/operational-intelligence.md) — use-cases for scheduled skill execution
+- [Concepts: A2A protocol](../../concepts/multi-agent/a2a.md) — `RunRegistry` pattern and future web-mode status API
 - [Reference: `reyn run`](run.md) — headless single-shot skill execution (same Agent.run path)

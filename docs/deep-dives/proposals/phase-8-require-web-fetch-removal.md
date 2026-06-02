@@ -93,7 +93,7 @@ Remaining references:
 
 ### Doc updates
 
-1. `docs/concepts/permission-model.md` + `.ja.md`:
+1. `docs/concepts/runtime/permission-model.md` + `.ja.md`:
    - Collapse arc section: mark Phase 7 → Phase 8 transition.
    - Remove "legacy fallback" sentences from `http.get` axis description.
    - If `web.fetch` config alias kept, document it as a backward-compat alias; if removed, remove all references.
@@ -101,7 +101,7 @@ Remaining references:
 2. `docs/reference/config/permissions.md`:
    - Web ops section: remove the `web.fetch: allow/deny` legacy-alias bullet if the key is removed.
 
-3. `docs/concepts/mcp.md` + `.ja.md`:
+3. `docs/concepts/tools-integrations/mcp.md` + `.ja.md`:
    - Enterprise pattern: drop `web.fetch: allow` example, use `http.get: [{host: "*"}]` everywhere.
 
 ## Open design question
@@ -140,5 +140,5 @@ When (3) and (4) are satisfied, Phase 8 can be opened as a small follow-up PR.
 
 - `src/reyn/permissions/permissions.py:1320` — current `require_web_fetch` method.
 - `src/reyn/permissions/permissions.py:937-1063` — `require_http_get` method including the legacy compat branches.
-- `docs/concepts/permission-model.md` — "Collapse arc" section.
+- `docs/concepts/runtime/permission-model.md` — "Collapse arc" section.
 - PR #637 (Phase 7) — the unification work this proposal completes.

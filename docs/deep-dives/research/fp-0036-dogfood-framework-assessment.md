@@ -153,7 +153,7 @@ FP-0036 は `docs/feature-map.md` をパースすると書いているが、
 features:
   - path: os-core/phase-engine/act-decide-loop
     label: Act/Decide loop
-    reference: docs/concepts/principles.md
+    reference: docs/concepts/architecture/principles.md
   - path: control-ir/embed
     label: embed op
     reference: docs/reference/runtime/control-ir.md

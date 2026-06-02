@@ -151,7 +151,7 @@ grep "71d6c8b8" .reyn/agents/researcher/history.jsonl | jq '{role, source: .meta
 
 ## 関連情報
 
-- [コンセプト: multi-agent](../../../concepts/multi-agent.md) — チェーンセマンティクス、遅延返信、fan-out
+- [コンセプト: multi-agent](../../../concepts/multi-agent/multi-agent.md) — チェーンセマンティクス、遅延返信、fan-out
 - [リファレンス: events](../../../reference/runtime/events.md) — `chain_id` を持つ `agent_message_*` イベントのペイロード
 - [リファレンス: multi-agent config](../../../reference/config/multi-agent.md) — `max_hop_depth`
 - [ハウツー: events によるデバッグ](../operations/debug-with-events.md)

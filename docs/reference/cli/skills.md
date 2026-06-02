@@ -108,4 +108,4 @@ reyn skills validate --all || exit 1
 - [Reference: skill.md](../dsl/skill-md.md) — `permissions:` and `allowed_ops` fields
 - [Reference: phase.md](../dsl/phase-md.md) — `allowed_ops` field
 - [Reference: lint](lint.md) — `reyn lint` (graph + artifact checks; complementary)
-- [Concepts: permission-model](../../concepts/permission-model.md) — Tier 0-3 op classification
+- [Concepts: permission-model](../../concepts/runtime/permission-model.md) — Tier 0-3 op classification

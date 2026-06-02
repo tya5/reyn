@@ -176,5 +176,5 @@ class RunResult:
 - `src/reyn/user_intervention.py` — InterventionBus
 - FP-0003 (`0003-budget-exceed-user-approval.md`) — 本 FP の前身（D 限定版）
 - FP-0004 (`0004-safety-config-ux.md`) — `safety:` セクション設計（本 FP と統合対象）
-- `docs/concepts/events.md` — P6 イベント設計
+- `docs/concepts/runtime/events.md` — P6 イベント設計
 - `docs/guide/for-skill-authors/crash-recovery-and-resume.md` — WAL + forward-replay

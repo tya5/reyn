@@ -2,7 +2,7 @@
 
 **Status**: Design positioning (2026-05-09 update 1) — `reyn mcp {search,install,list,remove,set-secret,clear-secret}` CLI の design choice。 dogfood Step 0 (= 8 並列 sonnet research) の ground truth 反映済 + ADR-0030 universal secret infra との整合済。 ADR ではなく positioning doc として記録 (= CLI shape は将来 iterate 前提、 ただし storage / loading semantics は ADR-0030 で固定)。
 **Track**: MCP UX / OSS launch friction reduction
-**Related**: ADR-0029 (`mcp_install` permission)、 ADR-0030 (universal secret handling — `reyn mcp set-secret` の storage layer を提供)、 `docs/concepts/mcp.md` Quick start section
+**Related**: ADR-0029 (`mcp_install` permission)、 ADR-0030 (universal secret handling — `reyn mcp set-secret` の storage layer を提供)、 `docs/concepts/tools-integrations/mcp.md` Quick start section
 
 > 元 plan の researcher entry (= `reyn mcp` CLI proposal) を base に、 dogfood findings + industry research で confidence を上げた最終形。 着手 ready の design として残す。
 
@@ -220,7 +220,7 @@ Reyn config 階層 (ADR-0031 3-layer: `~/.reyn/config.yaml` / `<project>/reyn.ya
 ## 8. 関連
 
 - ADR-0029 `mcp_install` permission — `docs/deep-dives/decisions/0029-mcp-install-permission.md`
-- `docs/concepts/mcp.md` Quick start section (= reyn chat first onboarding)
+- `docs/concepts/tools-integrations/mcp.md` Quick start section (= reyn chat first onboarding)
 - `docs/deep-dives/research/positioning/web-ui-direction.md` — `reyn serve` での credentials UX (= server-side dotenv) と直結
 - `docs/deep-dives/research/competitive/{openclaw,hermes-agent,pi}.md` — enterprise differentiation の競合 baseline
 - 既存 `mcp_search` skill: `src/reyn/stdlib/skills/mcp_search/`

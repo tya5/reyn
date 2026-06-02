@@ -52,7 +52,7 @@ currently requires:
 
 With `run_id` on every event, step 1–3 collapse to a single filter: `run_id == Y`.
 
-The docs/concepts/events.md design doc already describes `run_id` as a stable envelope
+The docs/concepts/runtime/events.md design doc already describes `run_id` as a stable envelope
 field. This FP closes the gap between the documented design and the implementation.
 
 ### Isolation from crash recovery
@@ -174,7 +174,7 @@ check passes.
 | `src/reyn/op_runtime/__init__.py` | Add `run_id`, `skill`, `phase` to `permission_denied`; add `permission_granted` |
 | `src/reyn/op_runtime/ask_user.py` | Add `run_id`, `skill`, `intervention_id` to both intervention events |
 | `src/reyn/op_runtime/context.py` | Add `run_id` and `skill_name` to `OpContext` if missing |
-| `docs/concepts/events.md` | Correct `kind` → `type`; note `run_id` is now consistently present |
+| `docs/concepts/runtime/events.md` | Correct `kind` → `type`; note `run_id` is now consistently present |
 
 ---
 
@@ -193,7 +193,7 @@ check passes.
 | Add `run_id`/`skill`/`phase` to permission_denied | SMALL |
 | Add `permission_granted` event | SMALL |
 | Add `run_id`/`skill`/`intervention_id` to intervention events | SMALL |
-| Update `docs/concepts/events.md` | SMALL |
+| Update `docs/concepts/runtime/events.md` | SMALL |
 | **Total** | **SMALL** |
 
 All changes are additive kwargs — no existing consumers break (they already ignore unknown
@@ -206,7 +206,7 @@ data fields).
 - `src/reyn/kernel/runtime.py` — `workflow_finished`, `llm_called`, `llm_response_received`
 - `src/reyn/op_runtime/__init__.py` — `permission_denied`
 - `src/reyn/op_runtime/ask_user.py` — `user_intervention_requested/received`
-- `docs/concepts/events.md` — design doc describing `run_id` as stable envelope field
+- `docs/concepts/runtime/events.md` — design doc describing `run_id` as stable envelope field
 - FP-0018 (`0018-event-store-backend.md`) — future backend abstraction; this FP's richer
   events will be more useful once queryable via SQLite/DuckDB backend
 - FP-0007 (`0007-evaluation-infrastructure.md`) — eval trace export benefits directly

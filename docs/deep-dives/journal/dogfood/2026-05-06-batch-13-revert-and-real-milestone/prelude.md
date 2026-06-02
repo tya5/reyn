@@ -17,7 +17,7 @@
 
 ## Documented design の再確認
 
-`docs/en/concepts/permission-model.md` で明文化:
+`docs/en/concepts/runtime/permission-model.md` で明文化:
 
 ```
 3 layer:
@@ -126,5 +126,5 @@ Brier target: ≤ 0.30 (= batch 10 水準復帰)
 ## 参照リンク
 
 - batch 12 retro: `../2026-05-06-batch-12-real-milestone/retrospective.md`
-- documented permission model: `../../en/concepts/permission-model.md`
+- documented permission model: `../../en/concepts/runtime/permission-model.md`
 - giveup-tracker: `../giveup-tracker.md`

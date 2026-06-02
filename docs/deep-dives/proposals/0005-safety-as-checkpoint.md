@@ -166,5 +166,5 @@ The bottleneck is **Step A WAL commit guarantee** (existing abort paths are dive
 - `src/reyn/user_intervention.py` — InterventionBus
 - FP-0003 (`0003-budget-exceed-user-approval.md`) — Predecessor to this FP (D-only version)
 - FP-0004 (`0004-safety-config-ux.md`) — `safety:` section design (target for integration with this FP)
-- `docs/concepts/events.md` — P6 event design
+- `docs/concepts/runtime/events.md` — P6 event design
 - `docs/guide/for-skill-authors/crash-recovery-and-resume.md` — WAL + forward-replay

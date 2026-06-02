@@ -187,6 +187,6 @@ Skills that call `reyn.secrets.get_valid_token(key)` receive a valid access toke
 ## See also
 
 - [Reference: `reyn secret`](secret.md) — managing static dotenv secrets
-- [Concepts: secret handling](../../concepts/secret-handling.md) — OAuth lifecycle and credential scoping
+- [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — OAuth lifecycle and credential scoping
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `auth:` configuration block
 - [Reference: Events](../runtime/events.md) — `oauth_login_started`, `oauth_login_completed`, `token_refreshed`, `token_refresh_failed`

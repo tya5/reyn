@@ -91,7 +91,7 @@ resume_policy:
 | `.reyn/agents/<name>/state/skills/<run_id>.snapshot.json` | Per-skill resume checkpoint |
 | `.reyn/events/<caller>/skill_runs/<YYYY-MM>/…jsonl` | Immutable audit event log |
 
-The audit event log (`.reyn/events/`) is **never deleted** by Reyn — not even by `--reset`. It is the source of truth for what happened ([P6](../../../concepts/principles.md#p6-events-are-the-audit-truth)).
+The audit event log (`.reyn/events/`) is **never deleted** by Reyn — not even by `--reset`. It is the source of truth for what happened ([P6](../../../concepts/architecture/principles.md#p6-events-are-the-audit-truth)).
 
 ---
 
@@ -155,7 +155,7 @@ See [Debug with events](debug-with-events.md) for a step-by-step walkthrough.
 
 ## See also
 
-- [concepts/skill-resume](../../../concepts/skill-resume.md) — deeper explanation of the WAL + forward-replay mechanism
+- [concepts/skill-resume](../../../concepts/skills/skill-resume.md) — deeper explanation of the WAL + forward-replay mechanism
 - [Forward-replay design](../../../deep-dives/decisions/0002-forward-replay-resume.md) — why forward-replay, not phase-head re-execution
 - [Auto-resume design](../../../deep-dives/decisions/0012-auto-resume-default.md) — why auto-resume is the default
 - [Debug with events](debug-with-events.md) — reading the JSONL log

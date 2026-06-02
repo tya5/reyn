@@ -44,7 +44,7 @@ reyn/local/my_explainer/
 
 `skill.md` を開いて `graph:` と `final_output:` を確認。`phases/outline.md` を開いて `input:` と instructions だけが書かれていて、output schema が無いことを確認します。
 
-この分離は reyn の核心です。理由は [concepts/principles.md](../../concepts/principles.md) を参照。
+この分離は reyn の核心です。理由は [concepts/architecture/principles.md](../../concepts/architecture/principles.md) を参照。
 
 ## Step 3: 実行
 

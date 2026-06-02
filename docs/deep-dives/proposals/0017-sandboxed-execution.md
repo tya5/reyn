@@ -77,7 +77,7 @@ seccomp-BPF layer stacked on top of `LandlockBackend`:
 `get_default_backend(config)` does lazy platform-aware backend selection:
 
 - Configured via the `sandbox:` section in `reyn.yaml` (`backend: auto|seatbelt|landlock|noop`, `on_unsupported: warn|error|ignore`).
-- `auto` inspects the platform and installed extras to select the best backend. See [concepts/sandbox.md](../../concepts/sandbox.md) for the selection table.
+- `auto` inspects the platform and installed extras to select the best backend. See [concepts/runtime/sandbox.md](../../concepts/runtime/sandbox.md) for the selection table.
 - `on_unsupported: error` fails skill dispatch when the requested backend is unavailable (for production environments requiring enforcement guarantees).
 - Files: `src/reyn/config.py`, `src/reyn/sandbox/__init__.py`, `tests/test_sandbox_factory.py`.
 

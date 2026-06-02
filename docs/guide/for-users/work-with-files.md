@@ -53,7 +53,7 @@ The skill resolves the path and reads the file before composing its answer. It t
 Name more than one file in a single request:
 
 ```
-> Compare the approach in docs/concepts/workspace.md and docs/concepts/events.md
+> Compare the approach in docs/concepts/runtime/workspace.md and docs/concepts/runtime/events.md
 > What's different between src/reyn/models.py and src/reyn/op_runtime/registry.py?
 > Read CHANGELOG.md and pyproject.toml and tell me what version we are on
 ```
@@ -80,7 +80,7 @@ It will not read every file in a large directory; it infers which file to start 
 ### Summarise documentation
 
 ```
-> Summarise the philosophy section of docs/concepts/principles.md
+> Summarise the philosophy section of docs/concepts/architecture/principles.md
 > Give me a one-paragraph overview of docs/guide/for-users/index.md
 ```
 

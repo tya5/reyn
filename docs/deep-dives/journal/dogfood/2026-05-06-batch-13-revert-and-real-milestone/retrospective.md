@@ -26,7 +26,7 @@ User feedback (続):
 > 「reyn の permission システムは iapp を参考にすると、 あなたと決めたはずです。
 >   本当に曖昧ですか？」
 
-→ `docs/en/concepts/permission-model.md` 再読、 **iApp-style trust model が明文化済**
+→ `docs/en/concepts/runtime/permission-model.md` 再読、 **iApp-style trust model が明文化済**
 を再確認。 G15 / R1 fix が doc 違反であったことが確定。
 
 ### 実際の進行

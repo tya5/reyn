@@ -151,7 +151,7 @@ Four entries, four `meta.source` values: incoming request, outgoing delegation, 
 
 ## See also
 
-- [Concepts: multi-agent](../../../concepts/multi-agent.md) — chain semantics, deferred reply, fan-out
+- [Concepts: multi-agent](../../../concepts/multi-agent/multi-agent.md) — chain semantics, deferred reply, fan-out
 - [Reference: events](../../../reference/runtime/events.md) — `agent_message_*` event payloads with `chain_id`
 - [Reference: multi-agent config](../../../reference/config/multi-agent.md) — `max_hop_depth`
 - [How-to: debug with events](../operations/debug-with-events.md)

@@ -96,7 +96,7 @@ genuinely need raw I/O (= explicit operator opt-in via
 
 ### Why this matters
 
-The Reyn permission model (see `docs/concepts/permission-model.md`)
+The Reyn permission model (see `docs/concepts/runtime/permission-model.md`)
 promises: file paths, shell, MCP, and Python steps are all gated through
 the same 4-layer flow (config-deny → saved-grant → interactive-ask →
 default). Inside an unsafe-mode python step, that promise is silently
@@ -155,7 +155,7 @@ the permission resolver, not around it. Two interface layers:
 ```python
 from reyn.safe import file as sf
 
-content = sf.read("docs/concepts/architecture.md")     # → str
+content = sf.read("docs/concepts/architecture/architecture.md")     # → str
 sf.write(".reyn/tool-results/out.jsonl", payload)      # → None
 paths = sf.glob("docs/**/*.md")                        # → list[str]
 ok = sf.exists("src/reyn/safe/file.py")                # → bool
@@ -342,7 +342,7 @@ Phase 4 (= future, separate proposal):
   acknowledging the per-call audit gap.
 - `src/reyn/api/safe/` — existing helpers that need to migrate to
   `reyn.safe.*`.
-- `docs/concepts/permission-model.md` — the 4-layer permission flow this
+- `docs/concepts/runtime/permission-model.md` — the 4-layer permission flow this
   proposal extends into safe-mode python.
 - `docs/concepts/python-safe-mode.md` — the safe-mode contract this
   proposal closes the implementation gap on.

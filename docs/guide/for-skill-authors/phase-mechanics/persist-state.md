@@ -76,4 +76,4 @@ Or per-run via `--state-dir` (when supported by the subcommand) — generally th
 
 - [Reference: state-dir](../../../reference/config/state-dir.md)
 - [Reference: reyn.yaml](../../../reference/config/reyn-yaml.md) — `state_dir` key
-- [Concepts: memory](../../../concepts/memory.md)
+- [Concepts: memory](../../../concepts/data-retrieval/memory.md)

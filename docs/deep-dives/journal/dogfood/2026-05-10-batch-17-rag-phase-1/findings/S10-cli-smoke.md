@@ -229,7 +229,7 @@ gate — so no permission gate involvement.
 
 Sources were seeded via `write_index_directly()` (bypassing index_docs skill) with:
 - `notes`: 5 chunks, source_path=`.reyn/memory/notes.md`
-- `reyn_docs`: 10 chunks, source_path=`docs/concepts/architecture.md`
+- `reyn_docs`: 10 chunks, source_path=`docs/concepts/architecture/architecture.md`
 - `trial_a`: 3 chunks, source_path=`trial/data.md`
 
 All 3 sources used `embedding_model: fake/standard` from `FakeEmbeddingProvider`.

@@ -9,7 +9,7 @@ applies_to: [skill.md]
 
 Skill は `postprocessor` ブロックを宣言できます。このブロックは LLM が finish artifact を発行した**後**、その artifact が呼び出し元に返される前に実行されます。ステップは決定論的です。サブ Skill を呼び出す、リストに対して繰り返す、バリデーターを実行する、プランをリントする、または Python 関数を呼び出します。呼び出し元が受け取るのは Postprocessor の出力であり、生の LLM artifact ではありません。
 
-**なぜ** Postprocessor を使うのかについての解説と実例は [Concepts: postprocessor](../../concepts/postprocessor.md) を参照してください。
+**なぜ** Postprocessor を使うのかについての解説と実例は [Concepts: postprocessor](../../concepts/skills/postprocessor.md) を参照してください。
 
 ## ブロックの位置
 
@@ -127,7 +127,7 @@ Postprocessor の出力の詳細な説明。`reyn skills <name>` でスキルの
 
 op セットの詳細な説明は [preprocessor.md](preprocessor.md) を参照してください。
 
-パーミッション強制は `skill.permissions` を使用します — `skill.md` frontmatter の Skill レベルの宣言です。Postprocessor ステップに対する Phase レベルのパーミッションゲートはありません。セマンティクスは [permission-model.md](../../concepts/permission-model.md) を参照してください。
+パーミッション強制は `skill.permissions` を使用します — `skill.md` frontmatter の Skill レベルの宣言です。Postprocessor ステップに対する Phase レベルのパーミッションゲートはありません。セマンティクスは [permission-model.md](../../concepts/runtime/permission-model.md) を参照してください。
 
 ## Resume 統合
 
@@ -137,7 +137,7 @@ Postprocessor のステップは Preprocessor および Phase の op と同じ `
 2. 自動再開は最初の未コミットステップから Postprocessor をリプレイし、メモ参照によって既にコミット済みのステップをスキップします。
 3. World-purity op は再開時に再実行されます。
 
-LLM の finish artifact は Postprocessor 開始前に Workspace に永続化されるため、インプロセス状態が失われても再開時に耐久性のある入力 artifact が確保されます。Postprocessor ステップの op 呼び出し ID は `__post__.<step_idx>` のパターンに従います（例: `__post__.0`、`__post__.1`）。より広い再開の仕組みについては [skill-resume.md](../../concepts/skill-resume.md) を参照してください。
+LLM の finish artifact は Postprocessor 開始前に Workspace に永続化されるため、インプロセス状態が失われても再開時に耐久性のある入力 artifact が確保されます。Postprocessor ステップの op 呼び出し ID は `__post__.<step_idx>` のパターンに従います（例: `__post__.0`、`__post__.1`）。より広い再開の仕組みについては [skill-resume.md](../../concepts/skills/skill-resume.md) を参照してください。
 
 ## 実例
 
@@ -210,8 +210,8 @@ postprocessor:
 
 ## 関連情報
 
-- [Concepts: postprocessor](../../concepts/postprocessor.md) — 解説と使い所
+- [Concepts: postprocessor](../../concepts/skills/postprocessor.md) — 解説と使い所
 - [preprocessor.md](preprocessor.md) — ステップ型（Postprocessor と共通）
 - [skill-md.md](skill-md.md) — Skill frontmatter の完全リファレンス
-- [permission-model.md](../../concepts/permission-model.md) — `skill.permissions` のセマンティクス
-- [skill-resume.md](../../concepts/skill-resume.md) — Postprocessor が統合する再開の仕組み
+- [permission-model.md](../../concepts/runtime/permission-model.md) — `skill.permissions` のセマンティクス
+- [skill-resume.md](../../concepts/skills/skill-resume.md) — Postprocessor が統合する再開の仕組み

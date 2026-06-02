@@ -20,7 +20,7 @@ If you just want a skill that works, run `skill_builder` first and edit its outp
 ## Prerequisites
 
 - Reyn installed and running (`reyn run direct_llm "hi"` should answer).
-- Read [Concepts: phase vs skill vs OS](../../../concepts/phase-vs-skill-vs-os.md) — the contract this how-to follows.
+- Read [Concepts: phase vs skill vs OS](../../../concepts/architecture/phase-vs-skill-vs-os.md) — the contract this how-to follows.
 
 ## The skill directory layout
 
@@ -128,9 +128,9 @@ Match the user's language. Stay under 25 words. No meta-commentary.
 
 Notice what's **not** in the phase frontmatter:
 
-- No `output:` field. The output shape is determined by the skill's `final_output`, not the phase. ([P1](../../../concepts/principles.md#p1-phase-is-stateless-and-reusable))
+- No `output:` field. The output shape is determined by the skill's `final_output`, not the phase. ([P1](../../../concepts/architecture/principles.md#p1-phase-is-stateless-and-reusable))
 - No `next_phase:`. The skill graph owns transitions.
-- No artifact field list in instructions. The OS injects the schema at runtime. ([P8](../../../concepts/principles.md#p8-phase-instructions-contain-only-domain-logic))
+- No artifact field list in instructions. The OS injects the schema at runtime. ([P8](../../../concepts/architecture/principles.md#p8-phase-instructions-contain-only-domain-logic))
 
 ## Step 5: Write the skill
 
@@ -205,8 +205,8 @@ If you find yourself naming the next phase from a phase, or listing output field
 
 ## Common mistakes
 
-- **Listing output fields in phase instructions.** The OS already injects the schema. Re-stating it produces drift. [P8](../../../concepts/principles.md#p8-phase-instructions-contain-only-domain-logic)
-- **Telling the phase which phase is next.** Phases don't know. The skill graph + LLM decision pick. [P1](../../../concepts/principles.md#p1-phase-is-stateless-and-reusable)
+- **Listing output fields in phase instructions.** The OS already injects the schema. Re-stating it produces drift. [P8](../../../concepts/architecture/principles.md#p8-phase-instructions-contain-only-domain-logic)
+- **Telling the phase which phase is next.** Phases don't know. The skill graph + LLM decision pick. [P1](../../../concepts/architecture/principles.md#p1-phase-is-stateless-and-reusable)
 - **Skipping `final_output`.** Required. The OS validates the final artifact against this schema; without it there's no contract for callers.
 - **Putting permissions on the phase.** Permissions live on the skill since the [skill-only-permissions migration](../../../reference/dsl/skill-md.md#permissions-skill-level). Phase frontmatter rejects them.
 - **Recomputing in the LLM what Python already gave you.** The whole point of the preprocessor is to remove that responsibility — keep it removed. ([Concept: deterministic split](../../../concepts/agent-engineering/system-design.md))

@@ -9,7 +9,7 @@ applies_to: [topology.yaml]
 
 Declared communication topology at `.reyn/topologies/<name>.yaml`. Created by `reyn topology new`. Loaded by `AgentRegistry` on every process start.
 
-The auto-managed `_default` network topology is **not** stored on disk — it lives only in memory and is computed from "agents not in any user-declared topology". See [concepts/topology](../../concepts/topology.md).
+The auto-managed `_default` network topology is **not** stored on disk — it lives only in memory and is computed from "agents not in any user-declared topology". See [concepts/topology](../../concepts/multi-agent/topology.md).
 
 ## Schema
 
@@ -38,7 +38,7 @@ One of:
 - `team` — star around `leader`. `can_send(A, B) = (leader ∈ {A, B} and A != B and A,B ∈ members)`. Peer-to-peer (member ↔ member, neither being the leader) is forbidden.
 - `pipeline` — directed path. `can_send(A, B) = members.index(B) == members.index(A) + 1`. No jumps, no reverse, no fan-out.
 
-`tree`, `meeting`, `pair`, `broadcast` kinds are **not** implemented — `tree` is expressible as overlapping `team` topologies (see [concepts/topology](../../concepts/topology.md#tree-pattern)), the rest are residuals waiting on demand.
+`tree`, `meeting`, `pair`, `broadcast` kinds are **not** implemented — `tree` is expressible as overlapping `team` topologies (see [concepts/topology](../../concepts/multi-agent/topology.md#tree-pattern)), the rest are residuals waiting on demand.
 
 ### `members` (list of strings, required)
 
@@ -68,6 +68,6 @@ The registry's `permit(A, B)` checks every topology containing both `A` and `B` 
 
 ## See also
 
-- [Concepts: topology](../../concepts/topology.md)
+- [Concepts: topology](../../concepts/multi-agent/topology.md)
 - [Reference: topology CLI](../cli/topology.md)
 - [Reference: profile-yaml](profile-yaml.md)

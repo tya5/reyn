@@ -374,7 +374,7 @@ reyn eval spec reyn/local/my_skill/eval.md --model strong
 ## See also
 
 - [run.md](run.md) — `reyn run` (the underlying execution path)
-- [Concepts: evaluation](../../concepts/evaluation.md) — architecture overview and competitive comparison
+- [Concepts: evaluation](../../concepts/observability/evaluation.md) — architecture overview and competitive comparison
 - [Guide: Setup evaluation](../../guide/evaluation.md) — quickstart, export backends, CI integration
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `eval.exporters` configuration
 - [Reference: control-ir](../runtime/control-ir.md) — `judge_output` op schema

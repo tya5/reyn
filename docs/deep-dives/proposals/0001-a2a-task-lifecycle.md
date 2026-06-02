@@ -135,5 +135,5 @@ The only bottleneck is the **InterventionBus bridge**. Everything else chains as
 
 - `src/reyn/web/routers/a2a.py` — existing A2A implementation (see MVP comments)
 - `src/reyn/user_intervention.py` — InterventionBus implementation
-- `docs/concepts/a2a.md` — A2A concept documentation
+- `docs/concepts/multi-agent/a2a.md` — A2A concept documentation
 - ACP OpenAPI spec: https://github.com/i-am-bee/acp/blob/main/docs/spec/openapi.yaml

@@ -24,7 +24,7 @@ not itself a skill run — it is a coordinator that dispatches skill runs. Yet
 the plan has its own `plan_id`, generates `plan_step_completed` WAL events
 (ADR-0023 §3.2), and occupies a distinct causal position in the audit trail.
 
-The `plan_step_completed` event is defined in `docs/concepts/events.md` as a
+The `plan_step_completed` event is defined in `docs/concepts/runtime/events.md` as a
 WAL-eligible event. Whether it should also be a seal boundary is the question
 deferred to this sub-ADR.
 

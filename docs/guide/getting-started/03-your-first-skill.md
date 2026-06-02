@@ -44,7 +44,7 @@ reyn/local/my_explainer/
 
 Open `skill.md` — note the `graph:` and `final_output:` keys. Open `phases/outline.md` — note that it only declares `input:` and gives instructions, never an output schema.
 
-This separation is core to reyn: see [concepts/principles.md](../../concepts/principles.md) for why.
+This separation is core to reyn: see [concepts/architecture/principles.md](../../concepts/architecture/principles.md) for why.
 
 ## Step 3: Run it
 

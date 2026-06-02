@@ -7,7 +7,7 @@ applies_to: [skill_builder]
 
 # `skill_builder` — design checklist
 
-Use this checklist whenever you (the `skill_builder` skill) plan or write a new skill. Every item maps to one or more of the [P1–P8 principles](../../../concepts/principles.md).
+Use this checklist whenever you (the `skill_builder` skill) plan or write a new skill. Every item maps to one or more of the [P1–P8 principles](../../../concepts/architecture/principles.md).
 
 ## Phase decisions (must hold)
 

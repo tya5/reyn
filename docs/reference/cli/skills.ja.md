@@ -108,4 +108,4 @@ reyn skills validate --all || exit 1
 - [リファレンス: skill.md](../dsl/skill-md.md) — `permissions:` と `allowed_ops` フィールド
 - [リファレンス: phase.md](../dsl/phase-md.md) — `allowed_ops` フィールド
 - [リファレンス: lint](lint.md) — `reyn lint`（グラフ + artifact チェック；補完的）
-- [コンセプト: permission-model](../../concepts/permission-model.md) — Tier 0-3 op 分類
+- [コンセプト: permission-model](../../concepts/runtime/permission-model.md) — Tier 0-3 op 分類

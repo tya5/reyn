@@ -16,7 +16,7 @@ router は **2 Phase** のワークフローとして動作します:
 1. **`classify`** — インテント（chitchat / memory_recall / stable_knowledge / clarification / task / fresh_lookup）を判定し、`routing_decision` で終了するか `match` へ引き渡します。
 2. **`match`** — `task` および `fresh_lookup` インテントに対し、特定の Skill（またはピア agent）へディスパッチするか、`web_research` へ遷移します。
 
-classify Phase は**メモリ書き込み**も担当します。毎ターン新しい発話を検査し、ユーザー／フィードバック／プロジェクト／参照情報を永続化するために `file/write` op を発行することがあります。メモリの読み込みは ChatSession が事前にマージします（[concepts/memory](../../concepts/memory.md) を参照）。
+classify Phase は**メモリ書き込み**も担当します。毎ターン新しい発話を検査し、ユーザー／フィードバック／プロジェクト／参照情報を永続化するために `file/write` op を発行することがあります。メモリの読み込みは ChatSession が事前にマージします（[concepts/memory](../../concepts/data-retrieval/memory.md) を参照）。
 
 ## エントリー artifact: `chat_routing_request`
 
@@ -40,7 +40,7 @@ ChatSession が毎ターン構築します。主なフィールド:
 | `skills_to_run` | array（任意） | 今ターン実行するプロジェクト / stdlib Skill |
 | `messages_to_agents` | array（任意） | ピア agent へのデリゲーション — `[{to, request}, ...]` |
 
-ChatSession は空でない配列をそれぞれディスパッチします。`reply_text` はユーザー起点のチェーンでは即座にユーザーへ届きます。agent 起点のチェーン（ピア agent がこのリクエストを受信した場合）では、`messages_to_agents` が空でないとき router の `reply_text` は全デリゲートが応答するまで保留される [deferred reply](../../concepts/multi-agent.md#deferred-reply) に入ります。
+ChatSession は空でない配列をそれぞれディスパッチします。`reply_text` はユーザー起点のチェーンでは即座にユーザーへ届きます。agent 起点のチェーン（ピア agent がこのリクエストを受信した場合）では、`messages_to_agents` が空でないとき router の `reply_text` は全デリゲートが応答するまで保留される [deferred reply](../../concepts/multi-agent/multi-agent.md#deferred-reply) に入ります。
 
 ## Skill 選択ガイダンス
 
@@ -58,7 +58,7 @@ ChatSession は空でない配列をそれぞれディスパッチします。`r
 
 ## 関連情報
 
-- [コンセプト: memory](../../concepts/memory.md) — 2 層の読み書きコントラクト
-- [コンセプト: multi-agent](../../concepts/multi-agent.md) — `messages_to_agents` とチェーンのセマンティクス
+- [コンセプト: memory](../../concepts/data-retrieval/memory.md) — 2 層の読み書きコントラクト
+- [コンセプト: multi-agent](../../concepts/multi-agent/multi-agent.md) — `messages_to_agents` とチェーンのセマンティクス
 - [リファレンス: profile-yaml](../dsl/profile-yaml.md) — `allowed_skills` フィルター
 - [リファレンス: chat CLI](../cli/chat.md)

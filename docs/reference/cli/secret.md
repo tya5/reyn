@@ -7,7 +7,7 @@ applies_to: [reyn secret]
 
 # `reyn secret`
 
-Manage secrets stored in `~/.reyn/secrets.env`. See [Concepts: secret handling](../../concepts/secret-handling.md) for the mental model and security properties.
+Manage secrets stored in `~/.reyn/secrets.env`. See [Concepts: secret handling](../../concepts/runtime/secret-handling.md) for the mental model and security properties.
 
 ## Synopsis
 
@@ -168,6 +168,6 @@ You can edit this file directly in a text editor — `reyn secret` is a convenie
 
 ## See also
 
-- [Concepts: secret handling](../../concepts/secret-handling.md) — mental model, security properties, load timing
+- [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — mental model, security properties, load timing
 - [Reference: `reyn mcp`](mcp.md) — `set-secret` / `clear-secret` for MCP-server-specific credentials
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md#var-interpolation) — using `${VAR}` in config files

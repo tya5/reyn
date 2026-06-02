@@ -36,7 +36,7 @@ This is a form of structured empiricism. The discipline is how you make that emp
 
 ### Connection to Reyn's design vision
 
-Reyn is designed for **predictability over autonomy** — specifically for deployment contexts where unexpected behavior carries high cost (see [Principles P1–P8](../concepts/principles.md)). That vision only has meaning if "predictable" is measured against real workloads, not just synthetic test fixtures. Dogfood is the measurement instrument.
+Reyn is designed for **predictability over autonomy** — specifically for deployment contexts where unexpected behavior carries high cost (see [Principles P1–P8](../concepts/architecture/principles.md)). That vision only has meaning if "predictable" is measured against real workloads, not just synthetic test fixtures. Dogfood is the measurement instrument.
 
 ---
 

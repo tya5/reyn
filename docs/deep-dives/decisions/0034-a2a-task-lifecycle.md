@@ -6,7 +6,7 @@
 ## Context
 
 Reyn exposes each registered agent as an A2A-addressable peer (see
-`docs/concepts/a2a.md`). The MVP `message/send` implementation is
+`docs/concepts/multi-agent/a2a.md`). The MVP `message/send` implementation is
 **synchronous-with-timeout**: the caller POSTs a message and blocks waiting
 for the agent's final reply, up to `DEFAULT_SEND_TIMEOUT_SECONDS`.
 
@@ -165,6 +165,6 @@ to `true` once the router extensions land.
 - `src/reyn/web/notifications.py` — `post_webhook`
 - `src/reyn/web/routers/a2a.py` — router extensions
 - `src/reyn/chat/session.py` — `register_intervention_override`
-- `docs/concepts/a2a.md` — user-facing protocol documentation
+- `docs/concepts/multi-agent/a2a.md` — user-facing protocol documentation
 - ADR-0008 / ADR-0016 — intervention buffering precedent (`InterventionBus`
   contract that `A2AInterventionBus` implements)

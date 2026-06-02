@@ -89,7 +89,7 @@ P3 (OS が runtime engine) + P7 (skill-agnostic) compliant、 LLM への instruc
 prelude landing 後、 file overlap なしの 3 task を並列 background dispatch:
 - R1: `src/reyn/op_runtime/run_skill.py` + `src/reyn/llm/model_resolver.py`
 - R2: `tests/test_replay_skill_improver.py` のみ
-- R3: `docs/en/concepts/permission-model.md` + dogfood README
+- R3: `docs/en/concepts/runtime/permission-model.md` + dogfood README
 
 各 worktree で独立 sonnet が code reading + fix + commit、 順次 main に sequential
 cherry-pick (R3 → R2 → R1 の順、 R3 が最早完了)。 衝突なし、 1020 passed。

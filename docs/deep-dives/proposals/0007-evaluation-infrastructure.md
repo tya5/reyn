@@ -243,7 +243,7 @@ The following user-facing docs were created as part of the FP-0007 documentation
 
 | Document | Path | Description |
 |----------|------|-------------|
-| Concept doc | `docs/concepts/evaluation.md` | Architecture, 3-layer model, competitive comparison |
+| Concept doc | `docs/concepts/observability/evaluation.md` | Architecture, 3-layer model, competitive comparison |
 | Concept doc (JA) | `docs/concepts/evaluation.ja.md` | Japanese translation |
 | Operator guide | `docs/guide/evaluation.md` | Quickstart, export backends, CI integration, `judge_output` usage |
 | Operator guide (JA) | `docs/guide/evaluation.ja.md` | Japanese translation |

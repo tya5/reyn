@@ -73,4 +73,4 @@ reyn run skill_improver "improve my_skill" --allow-shell
 
 - [リファレンス: skill.md frontmatter](../dsl/skill-md.md)
 - `reference/runtime/events.md` — イベントの種類
-- [コンセプト: architecture](../../concepts/architecture.md)
+- [コンセプト: architecture](../../concepts/architecture/architecture.md)

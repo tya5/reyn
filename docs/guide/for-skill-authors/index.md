@@ -8,7 +8,7 @@ audience: [human]
 
 Task-oriented how-tos for building skills, agents, and the runtime around them. The pages are grouped by what you're trying to do — pick the cluster that matches your task.
 
-If you haven't already, work through [Getting started](../getting-started/01-installation.md) first — these how-tos assume you have Reyn installed and have at least skimmed [Concepts: phase vs skill vs OS](../../concepts/phase-vs-skill-vs-os.md).
+If you haven't already, work through [Getting started](../getting-started/01-installation.md) first — these how-tos assume you have Reyn installed and have at least skimmed [Concepts: phase vs skill vs OS](../../concepts/architecture/phase-vs-skill-vs-os.md).
 
 ## Foundation
 
@@ -70,6 +70,6 @@ Rubrics and reference material for the LLM-driven authoring stdlib (`skill_build
 
 ## See also
 
-- [Concepts](../../concepts/principles.md) — the "why" behind the patterns these how-tos use.
+- [Concepts](../../concepts/architecture/principles.md) — the "why" behind the patterns these how-tos use.
 - [Reference / DSL](../../reference/dsl/skill-md.md) — exact frontmatter and YAML schemas.
 - [Reference / CLI](../../reference/cli/run.md) — `reyn run`, `reyn lint`, `reyn eval`, `reyn chat`.

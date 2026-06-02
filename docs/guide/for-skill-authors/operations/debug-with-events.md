@@ -85,5 +85,5 @@ Replay is purely a render of saved events. The LLM is not re-invoked. If you cha
 ## See also
 
 - [Reference: events](../../../reference/runtime/events.md) — full event taxonomy
-- [Concepts: events](../../../concepts/events.md)
+- [Concepts: events](../../../concepts/runtime/events.md)
 - [Reference: run](../../../reference/cli/run.md) — `--events` flag

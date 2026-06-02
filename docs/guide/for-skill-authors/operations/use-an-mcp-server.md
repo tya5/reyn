@@ -7,7 +7,7 @@ applies_to: [reyn.yaml, mcp.servers, read_local_files]
 
 # Use an MCP server
 
-**Goal:** Wire an [MCP](../../../concepts/mcp.md) server into reyn and call it from a skill. We'll use the official `filesystem` server and the stdlib `read_local_files` skill as the worked example — substitute any other server (`git`, `github`, `fetch`, `brave-search`, …) by changing the `command` and `args`.
+**Goal:** Wire an [MCP](../../../concepts/tools-integrations/mcp.md) server into reyn and call it from a skill. We'll use the official `filesystem` server and the stdlib `read_local_files` skill as the worked example — substitute any other server (`git`, `github`, `fetch`, `brave-search`, …) by changing the `command` and `args`.
 
 ## When to use
 
@@ -162,8 +162,8 @@ permissions:
 
 ## See also
 
-- [Concepts: MCP](../../../concepts/mcp.md) — protocol overview, transport choice, security model
-- [Concepts: secret handling](../../../concepts/secret-handling.md) — credential storage and `${VAR}` interpolation
+- [Concepts: MCP](../../../concepts/tools-integrations/mcp.md) — protocol overview, transport choice, security model
+- [Concepts: secret handling](../../../concepts/runtime/secret-handling.md) — credential storage and `${VAR}` interpolation
 - [Reference: `reyn mcp`](../../../reference/cli/mcp.md) — `install`, `set-secret`, and other subcommands
 - [Reference: `reyn secret`](../../../reference/cli/secret.md) — managing credentials
 - [Reference: `reyn.yaml` § MCP servers](../../../reference/config/reyn-yaml.md#mcp-servers) — full schema

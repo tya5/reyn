@@ -9,7 +9,7 @@ applies_to: [topology.yaml]
 
 `.reyn/topologies/<name>.yaml` に宣言された通信 Topology。`reyn topology new` で作成されます。すべてのプロセス起動時に `AgentRegistry` が読み込みます。
 
-自動管理の `_default` network Topology はディスクに格納されません。メモリ上のみに存在し、「ユーザー宣言の Topology に含まれない agent」から計算されます。[コンセプト/topology](../../concepts/topology.md) を参照してください。
+自動管理の `_default` network Topology はディスクに格納されません。メモリ上のみに存在し、「ユーザー宣言の Topology に含まれない agent」から計算されます。[コンセプト/topology](../../concepts/multi-agent/topology.md) を参照してください。
 
 ## スキーマ
 
@@ -38,7 +38,7 @@ Topology 名。`^[a-z0-9][a-z0-9_-]{0,31}$` に一致しなければなりませ
 - `team` — `leader` を中心とするスター型。`can_send(A, B) = (leader ∈ {A, B} and A != B and A,B ∈ members)`。ピア間通信（リーダーでないメンバー同士）は禁止。
 - `pipeline` — 有向パス。`can_send(A, B) = members.index(B) == members.index(A) + 1`。ジャンプ不可、逆方向不可、fan-out 不可。
 
-`tree`、`meeting`、`pair`、`broadcast` の種類は**実装されていません**。`tree` は重複する `team` Topology として表現できます（[コンセプト/topology](../../concepts/topology.md#tree-pattern) を参照）。その他はニーズ待ちの残課題です。
+`tree`、`meeting`、`pair`、`broadcast` の種類は**実装されていません**。`tree` は重複する `team` Topology として表現できます（[コンセプト/topology](../../concepts/multi-agent/topology.md#tree-pattern) を参照）。その他はニーズ待ちの残課題です。
 
 ### `members`（文字列のリスト、必須）
 
@@ -68,6 +68,6 @@ Topology 名。`^[a-z0-9][a-z0-9_-]{0,31}$` に一致しなければなりませ
 
 ## 関連情報
 
-- [コンセプト: topology](../../concepts/topology.md)
+- [コンセプト: topology](../../concepts/multi-agent/topology.md)
 - [リファレンス: topology CLI](../cli/topology.md)
 - [リファレンス: profile-yaml](profile-yaml.md)
