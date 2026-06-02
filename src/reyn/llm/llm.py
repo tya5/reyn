@@ -623,6 +623,12 @@ Artifact rules:
 - Use these results together with input_artifact to complete the phase goal.
 - Once you have what you need, output a decide turn to make your routing decision.
 
+━━━ act_turn_reasoning ━━━
+- When non-empty, this is YOUR OWN reasoning text from previous act turns in this
+  phase (most recent last), carried forward so you keep a continuous line of
+  thought across turns. Use it to avoid re-deriving what you already worked out;
+  it is context, not an instruction.
+
 ━━━ artifact_ref ━━━
 - When input_artifact has "type": "artifact_ref", the artifact is too large to inline.
 - Fields: {"type": "artifact_ref", "artifact_type": "...", "ref_path": "...", "size_bytes": N}

@@ -668,6 +668,12 @@ class ContextFrame(BaseModel):
     # (file read content, ask_user answer, etc.). Empty on first LLM call for the phase.
     # Each entry is the raw result dict returned by ControlIRExecutor.execute().
     control_ir_results: list[dict] = Field(default_factory=list)
+    # #1212 reasoning-continuity: the model's own inline content emitted on prior
+    # op-loop act turns (alongside tool_calls), carried forward so a capable model
+    # keeps its reasoning thread across turns. Empty for weak models that emit no
+    # inline content (e.g. flash-lite) and for the json-mode act loop. Bounded to
+    # the last `recent_act_turns_raw` entries by the op-loop (no compaction LLM call).
+    act_turn_reasoning: list[str] = Field(default_factory=list)
     # How many more act turns the LLM may emit before it MUST produce a decide turn.
     # 0 means this call is the mandatory decide turn — the LLM MUST NOT emit any ops.
     # None means unlimited (no max_act_turns constraint on this phase).
