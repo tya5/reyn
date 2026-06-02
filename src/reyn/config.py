@@ -1552,6 +1552,14 @@ class ReynConfig:
         default_factory=dict,
         metadata={"desc": "Map of model class names to LiteLLM model strings."},
     )
+    tool_calls_op_loop_skills: list[str] = field(
+        default_factory=list,
+        metadata={"desc": (
+            "TRANSITIONAL (#1212): skill names opted into the native-tools op-loop "
+            "execution path. Skills not listed use the default json-mode execution "
+            "path, unchanged. Removed once the op-loop becomes the default."
+        )},
+    )
     # LiteLLM proxy: non-secret base URL only.
     # API keys must be set as environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
     # — never stored in config files.
@@ -2066,6 +2074,9 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
             str(k): (v if isinstance(v, dict) else str(v))
             for k, v in (merged.get("models") or {}).items()
         },
+        tool_calls_op_loop_skills=[
+            str(s) for s in (merged.get("tool_calls_op_loop_skills") or [])
+        ],
         api_base=str(merged.get("api_base") or ""),
         # prompt_cache_enabled / project_context_path were declared as
         # ReynConfig fields + consumed (llm.py / session.py / agent.py /
