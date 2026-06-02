@@ -38,6 +38,10 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     "write_file",
     "edit_file",
     "delete_file",
+    # #1240 Wave 1.5: glob_files / grep_files fine kinds. Each has a phase=allow
+    # ToolDefinition (GLOB_FILES/GREP_FILES, tools/file.py) — same dispatch path.
+    "glob_files",
+    "grep_files",
     "lint",
     "mcp",
     "mcp_install",
