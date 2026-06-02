@@ -1,25 +1,22 @@
-"""Tier 2b: AsyncStackPanel middle-elides long agent_id on narrow widths.
+"""Tier 2b: AsyncStackPanel shows summary primary, agent_id secondary.
 
-Wave-11 finding B#5. Before this PR, the truncation order
-shrunk ``summary`` first, keeping the full ``agent_id`` always
-visible. For typical UUID-shaped task ids (~36 chars) the
-prefix consumed ~50 cells; on a 50-cell narrow pane (panel
-open + small terminal) summary went to 0 cells and the entry
-became unreadable identity-only.
+fix/tui-asyncstack-summary-primary: the row format changed so the
+human-readable summary (= skill name) is the bold primary label and
+the agent_id (= timestamp + skill + 4-hex run_id) is a dim suffix,
+shown when width allows and dropped first at narrow widths.
 
-This PR adds a middle-elide fallback: when summary would be
-wiped below ``_MIN_SUMMARY_BUDGET_CELLS``, the agent_id is
-middle-elided (= ``abcd…7890``) to free cells for the summary.
-Identity is preserved via head+tail preview, which is enough
-to disambiguate among ≤ _CAP simultaneous tasks.
+At narrow widths the id suffix is dropped entirely rather than
+elided — there isn't enough room for a useful head+tail preview
+alongside the summary. At wide widths the full id appears as a
+dim ``async: <id>`` trailer.
 
 Pinned:
-  - ``_middle_elide_id`` head+tail+ellipsis output shape
+  - ``_middle_elide_id`` head+tail+ellipsis output shape (pure function)
   - Short input round-trips unchanged
   - Sub-3-cell budget degrades to plain head truncation
-  - Wide-panel renders preserve the full agent_id
+  - Wide-panel renders include the agent_id as dim suffix
     (= no regression on the common case)
-  - Narrow-panel renders elide the id + render the summary
+  - Narrow-panel renders surface the summary, drop the agent_id suffix
 """
 from __future__ import annotations
 
@@ -66,9 +63,13 @@ def test_middle_elide_id_subtle_budget_degrades_to_trunc() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wide_panel_keeps_full_agent_id() -> None:
-    """Tier 2: wide panel (= plenty of summary budget) preserves the
-    full agent_id (= regression check)."""
+async def test_wide_panel_shows_summary_primary_and_id_dim_suffix() -> None:
+    """Tier 2: wide panel shows summary as primary and full agent_id as dim suffix.
+
+    At 140 cols there is ample room for both the bold summary label and
+    the ``  async: <id>`` dim suffix.  Both must appear in the rendered text.
+    snapshot() always returns the raw agent_id key regardless of render width.
+    """
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
 
@@ -76,22 +77,30 @@ async def test_wide_panel_keeps_full_agent_id() -> None:
     async with app.run_test(headless=True, size=(140, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        uuid_36 = "abcdef12-3456-7890-abcd-ef1234567890"
-        conv.add_async_task(uuid_36, "code_review")
+        run_id = "20240601T123456123456Z_code_review_a1b2"
+        conv.add_async_task(run_id, "code_review")
         await pilot.pause()
         panel = conv._async_stack()
         snap = panel.snapshot()
         # Snapshot returns the raw agent_id (not the rendered form).
         ids = {entry["agent_id"] for entry in snap if not entry["is_overflow"]}
-        assert uuid_36 in ids
-        # Rendered text (via cache) preserves the full id at wide width.
+        assert run_id in ids
         text = panel.rendered_text()
-        assert uuid_36 in text
+        # Summary (primary bold label) is present.
+        assert "code_review" in text
+        # Full agent_id appears as dim suffix at wide width.
+        assert run_id in text
 
 
 @pytest.mark.asyncio
-async def test_narrow_panel_elides_agent_id_to_preserve_summary() -> None:
-    """Tier 2: narrow panel middle-elides the id + still renders summary."""
+async def test_narrow_panel_summary_primary_id_dropped() -> None:
+    """Tier 2: narrow panel drops agent_id suffix and surfaces summary as primary.
+
+    At 60-col width the run_id (= timestamp + skill + 4-hex, ~35 chars) has
+    no room alongside the summary + elapsed.  The new truncation order drops
+    the dim agent_id suffix first so the human-readable summary stays fully
+    visible as the bold primary label.
+    """
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
 
@@ -101,28 +110,27 @@ async def test_narrow_panel_elides_agent_id_to_preserve_summary() -> None:
     async with app.run_test(headless=True, size=(60, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        uuid_36 = "abcdef12-3456-7890-abcd-ef1234567890"
-        conv.add_async_task(uuid_36, "this-is-a-distinctive-summary")
+        run_id = "20240601T123456123456Z_code_review_a1b2"
+        conv.add_async_task(run_id, "this-is-a-distinctive-summary")
         await pilot.pause()
         panel = conv._async_stack()
         text = panel.rendered_text()
-        # Full UUID NOT in render — it was elided.
-        assert uuid_36 not in text
-        # Head + ellipsis + tail signature present.
-        assert "abcd" in text
-        assert "7890" in text
-        assert "…" in text
-        # Summary surfaced (at least partially — the distinctive
-        # head should land).
-        assert "this-is" in text or "distinctive" in text
+        # Full run_id NOT in render — the suffix was dropped.
+        assert run_id not in text
+        # The human-readable summary IS surfaced (the distinctive head
+        # must be present as the bold primary label).
+        assert "this-is-a-distinctive-summary" in text or "this-is" in text
 
 
 @pytest.mark.asyncio
-async def test_narrow_panel_no_summary_skips_elide() -> None:
-    """Tier 2: when entry has no summary, no elide pressure — id stays full.
+async def test_narrow_panel_no_summary_renders_without_id_suffix() -> None:
+    """Tier 2: entry with no summary renders glyph + elapsed, id suffix optional.
 
-    Without a summary to make room for, there's nothing to gain by
-    eliding the id; the row just renders ``<glyph> async: <id> · <elapsed>``.
+    Without a summary, the row is ``<glyph>  · <elapsed>`` or
+    ``<glyph>  · <elapsed>  async: <id>`` depending on available width.
+    The key invariant: the id key is never dropped from widget state;
+    only the rendered suffix may be omitted. ``snapshot()`` still returns
+    the full agent_id regardless.
     """
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import ConversationView
@@ -131,9 +139,10 @@ async def test_narrow_panel_no_summary_skips_elide() -> None:
     async with app.run_test(headless=True, size=(60, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        # Short id (already fits) — no elide needed.
         conv.add_async_task("short-id", "")  # empty summary
         await pilot.pause()
         panel = conv._async_stack()
-        text = panel.rendered_text()
-        assert "short-id" in text
+        # State: agent_id preserved in snapshot regardless of render.
+        snap = panel.snapshot()
+        ids = {e["agent_id"] for e in snap if not e["is_overflow"]}
+        assert "short-id" in ids
