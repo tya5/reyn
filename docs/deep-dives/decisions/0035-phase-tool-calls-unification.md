@@ -177,16 +177,16 @@ docs (no PoC needed). The capability cache (D5) is an optimization over a proven
    (cosmetic), and the only meaningful change is narrowing, which is
    non-behavior-preserving = the deliberate per-phase tightening (= the
    P4-precision win) phases opt into later.
-5. **PR5 — WAL/resume loop-adaptation + replay fixtures (D8).** Resume per op turn;
-   **replay fixtures track the json-mode frame shape, not a tool_call structure**
-   (frame-fed op-loop, D2-impl — the D8b provider-id normalization is moot), round
-   event carry. **Required scope
-   item — act-turn memo decision** (carried from PR2, see Open items): PR2 ships the
-   op-loop's per-tool-turn LLM call (`LLMCallRecorder.call_tools`) WITHOUT decide-memo
-   (model-resolution + budget + cost-record only); PR5 MUST decide whether act turns
-   are memoized for deterministic replay (json-mode-equal crash-recovery guarantee) or
-   left as re-decide-on-resume (weaker, divergence caveat below). Lead-coder leans
-   memoize-for-parity.
+5. **PR5 — op-loop resume semantics: decision (B), documented + pinned.** Shipped
+   scope = **document the resume guarantee** (re-decide-on-resume accepted; the
+   op-execution layer stays WAL-protected via `dispatch_tool`, only a divergent
+   re-decide re-executes) **as opt-in-safe, + a resume test pinning the guarantee
+   boundary** (deterministic re-decide → memo-hit / no re-execution; divergent →
+   re-execute). No new replay fixtures: the op-loop is **frame-fed** (D2-impl — provider
+   tool_call-id normalization is moot, replays like json-mode frame replay), and PR2
+   already covers gate-on/off. The **deterministic act-turn memo (A)** is **deferred +
+   HARD-GATED on op-loop production-enablement** (see Open items — the op-loop is not
+   production-reachable today, so (A) now = YAGNI; it MUST land before any prod opt-in).
 
 ## Open items / risks
 
@@ -203,13 +203,28 @@ docs (no PoC needed). The capability cache (D5) is an optimization over a proven
   like json-mode frame replay, with no provider-id normalization needed. Retained
   here only as the rationale trail; PR5 replay fixtures track the json-mode frame
   shape, not a tool_call structure.
-- **Op-loop act-turn memo / resume divergence (PR2→PR5)**: PR2's `call_tools` skips
-  decide-memo — correct for normal op-loop operation (memo only matters on
-  re-run/resume). But on *resume*, an un-memoized act turn is **re-decided** by the
-  model, which may pick a *different* op than the original run. `dispatch_tool`'s WAL
-  memo is keyed on op+args (`control_ir_executor.py:128`), so a divergent re-decide
-  misses the memo and the op **re-executes** (its side-effect lands outside WAL
-  protection) — a weaker crash-recovery guarantee than json-mode (decide memoized →
-  deterministic control_ir replay → op WAL replay). PR5 decides: memoize act turns for
-  json-mode-equal determinism (lead-coder lean) vs accept re-decide divergence with a
-  documented caveat. Un-opted skills are unaffected (json-mode unchanged).
+- **Op-loop act-turn memo / resume divergence (PR2→PR5) — RESOLVED (B), PR5.**
+  PR2's `call_tools` skips decide-memo — correct for normal op-loop operation (memo
+  only matters on re-run/resume). On *resume* an un-memoized act turn is **re-decided**
+  by the model, which may pick a *different* op than the original run. `dispatch_tool`'s
+  WAL memo is keyed on op+args (`control_ir_executor.py:128`), so a *deterministic*
+  re-decide (same op+args) memo-HITS — the op-execution layer stays WAL-protected, no
+  re-execution; only a *divergent* re-decide misses the memo and **re-executes** the new
+  op (its side-effect lands outside WAL protection) — a weaker crash-recovery guarantee
+  than json-mode (decide memoized → deterministic control_ir replay → op WAL replay).
+
+  **Decision (B)** (#1212, PR5): **accept re-decide-on-resume + document the weaker
+  guarantee as opt-in-safe; defer the deterministic act-turn memo (A) to op-loop
+  production-enablement.** Rationale: the op-loop is **not production-reachable** — no
+  caller threads `tool_calls_op_loop_skills` into `OSRuntime` yet (only tests construct
+  it), so op-loop resume cannot occur in production and the gap has zero current impact.
+  Adding (A) now = YAGNI for an unreachable path. Un-opted skills are unaffected
+  (json-mode unchanged).
+
+  **★ HARD GATE**: (A) deterministic act-turn memo (memoize `call_tools` parallel to
+  `call` → tool_call-sequence replay → `dispatch_tool` memo match → no op re-execution)
+  is a **hard gate for op-loop production-enablement**: the op-loop MUST NOT ship to
+  production (i.e. the gate-threading + opt-in of a real skill) without (A) landing
+  first, else a divergent re-decide could re-run a side-effecting op outside WAL
+  protection. Tracked on the op-loop-enablement issue alongside the other deferred items
+  (D8 offer∩permission, per-phase tightening, (ii) literal-identity).
