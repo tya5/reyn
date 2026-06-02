@@ -28,7 +28,7 @@ BudgetEnforcer / WalRecorder have ≥ 2 consumers.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from reyn.budget.budget import BudgetExceeded, format_refusal_message
 from reyn.dispatch.dispatcher import _compute_llm_args_hash, _lookup_memoized_step
@@ -414,6 +414,49 @@ class LLMCallRecorder:
             pricing_snapshot=pricing_snapshot,
         )
         return result
+
+    def make_phase_llm_caller(
+        self, *, phase: str, state: "RunState",
+    ) -> Callable:
+        """#1092 PR-A (step5): a ``call_llm_tools``-shaped callable for
+        RouterLoop's ``_llm_caller`` injection point.
+
+        Routes the phase act-turn LLM call through ``_call_phase_llm_core`` so
+        the phase's cost accounting (``state.add_usage``) + phase-flavored
+        ``llm_called`` / ``llm_response_received`` events are preserved when the
+        generic RouterLoop drives the converged op-loop (lead-coder STEP5
+        decision, #1234). RouterLoop invokes ``_llm_caller`` ONLY on a memo-MISS
+        (resume-HIT short-circuits via the ``memo_provider``), so this is the
+        fresh-call path — matching ``call_tools``' fresh path exactly; resume
+        replays events from the log (ADR-0002), no double cost/emit. Resolves the
+        phase model itself (mirrors ``call_tools``), ignoring RouterLoop's
+        router-model arg (the act-turn call uses the phase's model).
+        """
+        resolved_spec = self._resolver.resolve(self._effective_model(phase))
+        resolved_model = resolved_spec.model
+
+        async def _phase_llm_caller(
+            *,
+            messages: list[dict],
+            tools: list[dict],
+            model: object = None,
+            tool_choice: object = None,
+            skill_name: str | None = None,
+            budget: object = None,
+            budget_agent: str | None = None,
+            trace_caller: str | None = None,
+            **_kwargs: object,
+        ) -> "LLMToolCallResult":
+            return await self._call_phase_llm_core(
+                phase=phase,
+                resolved_spec=resolved_spec,
+                resolved_model=resolved_model,
+                messages=messages,
+                tools=tools,
+                state=state,
+            )
+
+        return _phase_llm_caller
 
     def make_phase_memo_provider(
         self, *, phase: str, state: "RunState",
