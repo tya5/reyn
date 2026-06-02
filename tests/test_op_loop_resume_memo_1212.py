@@ -1,16 +1,17 @@
-"""Tier 2: #1212 PR5 — op-loop resume semantics (decision B).
+"""Tier 2: #1212 — op-loop resume semantics (decision A, deterministic replay).
 
-PR5 decision (B): the op-loop accepts re-decide-on-resume (``call_tools`` is not
-LLM-memoized) but the op-EXECUTION layer stays WAL-protected — ``dispatch_tool``
-memoizes each op on (op_invocation_id + args_hash), so a *deterministic*
-re-decide (the model re-emits the same op) memo-HITS and does NOT re-execute the
-side effect. This test pins that guarantee boundary:
+Decision (A), #1225: the op-loop's act-turn LLM call (``call_tools``) is memoized
+parallel to the json-mode ``call`` (per-phase ``op_invocation_id`` + ``args_hash``
++ per-step WAL). So on crash-resume the act turn **replays deterministically** —
+``call_tools`` is NOT re-invoked (memo-HIT), it returns the recorded tool_calls,
+which produce the same op, so ``dispatch_tool`` also memo-hits and the
+side-effecting op does NOT re-execute. This is json-mode-equal crash recovery
+(resolves the earlier (B) re-decide weaker guarantee / the PR5 HARD GATE). This
+test pins both layers:
 
-  - the op-loop's act-turn op participates in ``dispatch_tool`` resume memo (a
-    matching CommittedStep → ``step_memoized``, no re-execution), AND
-  - ``call_tools`` IS re-invoked on resume (the act turn is re-decided, not
-    replayed) — the documented weaker guarantee that (A), the deterministic
-    act-turn memo, is HARD-GATED to land before any production op-loop opt-in.
+  - the act-turn LLM call memo-HITS on resume (``call_tools`` not re-invoked), AND
+  - the op it produced also memo-HITS ``dispatch_tool`` (``step_memoized``,
+    ``tool=file``), so no re-execution.
 
 Real ``OSRuntime`` + real ``ControlIRExecutor`` + real WAL (``StateLog``); the
 only scripted seam is the module-level ``call_llm`` / ``call_llm_tools`` provider
@@ -109,9 +110,10 @@ def _committed_steps_from_wal(state_log: StateLog) -> list[CommittedStep]:
     return steps
 
 
-def test_op_loop_op_memoized_on_resume_act_turn_re_decided(tmp_path, monkeypatch) -> None:
-    """Tier 2: on resume the op-loop re-decides (call_tools re-invoked) but its
-    file op memo-HITS through dispatch_tool (step_memoized, no re-execution) —
+def test_op_loop_act_turn_and_op_memoized_on_resume(tmp_path, monkeypatch) -> None:
+    """Tier 2: on resume the op-loop's act turn replays deterministically —
+    call_tools memo-HITS (not re-invoked) and the file op it produced also
+    memo-HITS through dispatch_tool (step_memoized, no re-execution) —
     decision B's guarantee boundary."""
     monkeypatch.chdir(tmp_path)
     wal = tmp_path / ".reyn" / "wal.jsonl"
@@ -154,19 +156,20 @@ def test_op_loop_op_memoized_on_resume_act_turn_re_decided(tmp_path, monkeypatch
     r2 = asyncio.run(rt2.run({"type": "input", "data": {}}))
     assert r2.ok, f"resume must complete; got {r2.status}"
 
-    # The op-EXECUTION layer is WAL-protected: the FILE op (not just the decide
-    # llm) memo-hits on resume → deterministic re-decide does not re-execute.
+    # (A) the act-turn LLM call replays deterministically: call_tools is NOT
+    # re-invoked on resume (it memo-hits and returns the recorded tool_calls).
+    assert script2.calls == 0, (
+        "call_tools must memo-HIT on resume (act turn replayed deterministically, "
+        f"not re-decided); got {script2.calls} fresh invocations"
+    )
+    # The op the replayed act turn produced also memo-hits dispatch_tool → the
+    # side-effecting file op does NOT re-execute (json-mode-equal crash recovery).
     file_memos = [
         e for e in rt2.events.all()
         if e.type == "step_memoized" and e.data.get("tool") == "file"
     ]
     assert file_memos, (
-        "the op-loop's file op must memo-hit dispatch_tool on resume (decision B "
-        "safety: a deterministic re-decide does not re-execute the side effect); "
+        "the op-loop's file op must memo-hit dispatch_tool on resume (the "
+        "deterministic replay does not re-execute the side effect); "
         f"step_memoized events={[e.data.get('tool') or e.data.get('op_kind') for e in rt2.events.all() if e.type == 'step_memoized']}"
-    )
-    # The documented weaker guarantee: the act turn is RE-DECIDED, not replayed.
-    assert script2.calls >= 1, (
-        "call_tools must be re-invoked on resume (act turns are not LLM-memoized "
-        "— the (A) deterministic act-turn memo is hard-gated for prod enablement)"
     )

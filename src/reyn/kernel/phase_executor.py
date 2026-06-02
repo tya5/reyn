@@ -471,18 +471,15 @@ class PhaseExecutor:
         act turns are json-mode-only here — the op-loop caps act turns then forces the
         json transition.
 
-        RESUME SEMANTICS (#1212 PR5, decision B). ``call_tools`` skips LLM memo/WAL, so
-        on crash-resume an act turn is **re-decided** (the LLM is re-called) rather than
-        replayed. The op-EXECUTION layer is still WAL-protected: ``dispatch_tool``
-        memoizes each op on (op+args), so a *deterministic* re-decide (same op) memo-hits
-        and does NOT re-execute. Only a *divergent* re-decide (different op) misses the
-        memo and re-executes the new op (its side-effect lands outside WAL protection) —
-        a weaker crash-recovery guarantee than json-mode, accepted as opt-in-safe because
-        the op-loop is not production-reachable (no caller threads
-        ``tool_calls_op_loop_skills`` into the runtime). **HARD GATE**: the deterministic
-        act-turn memo (A) — memoize ``call_tools`` parallel to ``call`` so the tool_call
-        sequence replays exactly — MUST land before any production op-loop opt-in. See
-        ADR-0035 Open items.
+        RESUME SEMANTICS (#1212, decision A — #1225). ``call_tools`` is memoized
+        parallel to the json-mode ``call`` (per-phase ``op_invocation_id`` +
+        ``args_hash`` + per-step WAL, in ``LLMCallRecorder.call_tools``), so on
+        crash-resume an act turn **replays deterministically**: ``call_tools``
+        memo-hits (not re-decided) and returns the recorded tool_calls → the same op
+        → ``dispatch_tool`` also memo-hits → no side-effecting op re-executes. This is
+        **json-mode-equal crash recovery** (resolves the earlier (B) re-decide weaker
+        guarantee / the prior HARD GATE). Pinned by
+        ``tests/test_op_loop_resume_memo_1212.py``.
         """
         from reyn.kernel.control_ir_executor import _build_phase_tool_catalog
         from reyn.kernel.op_loop import tool_call_to_control_ir_op
