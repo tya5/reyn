@@ -682,6 +682,14 @@ class PhaseExecutor:
             resolve_model_fn=lambda name: cie._resolver.resolve(name).model,
         )
         tools = host.get_phase_op_catalog()
+        # P6 audit + the distinguishing marker for the converged path (vs the
+        # #1212 phase-native _run_op_loop) — consumed by the full-path test and
+        # the dogfood host-polymorphism trace.
+        self._events.emit(
+            "phase_routerloop_op_loop_started",
+            phase=phase,
+            tool_count=len(tools),
+        )
 
         prior_results = (
             list(rollback_context["previous_control_ir_results"])
