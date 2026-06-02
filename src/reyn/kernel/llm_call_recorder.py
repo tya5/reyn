@@ -235,20 +235,22 @@ class LLMCallRecorder:
         tools: list[dict],
         state: "RunState",
     ) -> "LLMToolCallResult":
-        """#1212 PR2: native-tools variant of ``call``. Returns the raw assistant
+        """#1212: native-tools variant of ``call``. Returns the raw assistant
         message (content / tool_calls / finish_reason) for the op-loop.
 
         Shares ``call``'s model-resolution + budget pre-check + cost-record + the
         ``llm_called`` / ``llm_response_received`` events, and builds the [system,
         user(frame)] messages via the SAME ``build_phase_messages`` helper as the
         json-mode path (no drift), but calls ``call_llm_tools`` instead of
-        ``call_llm`` and — per ADR-0035 PR2 scope — **skips decide-memo and the
-        per-step WAL** (the op-EXECUTION crash-recovery WAL is owned by the
-        control_ir_executor's ``dispatch_tool``, D8; act-turn LLM memoization is a
-        PR5 decision, see ADR Open items). Un-opted skills never reach here, so the
-        json-mode ``call`` path is byte-for-byte unchanged.
+        ``call_llm``. **Decision (A), #1225**: this act-turn LLM call is **memoized
+        parallel to ``call``** (per-phase ``op_invocation_id`` + ``args_hash`` +
+        per-step WAL), so on crash-resume the tool_call sequence **replays
+        deterministically** (memo-HIT, no re-decide) — the act turn produces the same
+        ops, so ``dispatch_tool`` memo-hits and no side-effecting op re-executes. This
+        gives the op-loop json-mode-equal crash-recovery (resolves the PR5 HARD GATE).
+        Un-opted skills never reach here, so the json-mode ``call`` path is unchanged.
         """
-        from reyn.llm.llm import build_phase_messages
+        from reyn.llm.llm import LLMToolCallResult, build_phase_messages
 
         resolved_spec = self._resolver.resolve(self._effective_model(phase))
         resolved_model = resolved_spec.model
@@ -263,6 +265,56 @@ class LLMCallRecorder:
             agent_role=self._agent_role,
             prompt_cache_enabled=self._prompt_cache_enabled,
         )
+
+        # (A) #1225: per-phase op_invocation_id + memoization (parallel to ``call``).
+        op_invocation_id = state.next_llm_invocation_id(phase)
+        args_hash = _compute_llm_args_hash(
+            model=resolved_model,
+            frame=frame.model_dump(mode="json"),
+            prior_attempts=None,
+            rollback_context=None,
+            system_inputs={
+                "skill_name": self._skill.name,
+                "skill_description": self._skill.description,
+                "phase_role": phase_def.role if phase_def else None,
+                "project_context": self._project_context,
+                "agent_role": self._agent_role,
+                # the offered tools are part of the call shape
+                "op_loop_tools": sorted(
+                    (t.get("function") or {}).get("name", "") for t in tools
+                ),
+            },
+        )
+        if self._resume_plan is not None:
+            memo = _lookup_memoized_step(
+                self._resume_plan, op_invocation_id, phase, args_hash,
+            )
+            if memo is not None:
+                stored = self._extract_memoized_llm_result(
+                    memo, phase=phase, op_invocation_id=op_invocation_id,
+                )
+                if stored is not None:
+                    self._credit_budget_from_memo(
+                        memo,
+                        resolved_model=resolved_model,
+                        phase=phase,
+                        op_invocation_id=op_invocation_id,
+                        state=state,
+                    )
+                    self._events.emit(
+                        "step_memoized",
+                        run_id=self._run_id,
+                        phase=phase,
+                        op_invocation_id=op_invocation_id,
+                        op_kind="llm",
+                        args_hash=args_hash,
+                    )
+                    return LLMToolCallResult(
+                        content=stored.get("content"),
+                        tool_calls=stored.get("tool_calls") or [],
+                        finish_reason=stored.get("finish_reason"),
+                        usage=TokenUsage(prompt_tokens=0, completion_tokens=0),
+                    )
 
         self._check_budget_pre_llm(resolved_model)
         self._events.emit(
@@ -311,6 +363,20 @@ class LLMCallRecorder:
             completion_tokens=result.usage.completion_tokens if result.usage else None,
             cost_usd=cost_usd,
             pricing_snapshot=pricing_snapshot,
+        )
+
+        # (A) #1225: per-step WAL record so a resume replays this act turn's
+        # tool_calls deterministically (same shape ``call`` records for the decide).
+        await self._wal_step_completed_for_llm(
+            phase=phase,
+            op_invocation_id=op_invocation_id,
+            args_hash=args_hash,
+            result={
+                "content": result.content,
+                "tool_calls": result.tool_calls,
+                "finish_reason": result.finish_reason,
+            },
+            usage=result.usage.to_dict() if result.usage else None,
         )
         return result
 
