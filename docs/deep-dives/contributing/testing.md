@@ -1,6 +1,6 @@
 # Testing Policy
 
-Reyn aims for **predictability over autonomy** (see [Project vision](../concepts/architecture/principles.md)). Its test suite reflects that aim: **tests must guard the invariants that protect the OS, and must not become a tax on future evolution.**
+Reyn aims for **predictability over autonomy** (see [Project vision](../../concepts/architecture/principles.md)). Its test suite reflects that aim: **tests must guard the invariants that protect the OS, and must not become a tax on future evolution.**
 
 This document is the policy. New tests should pass through the [decision flow](#decision-flow) before being written, and existing tests not consistent with the policy will be refactored or removed when next touched.
 
