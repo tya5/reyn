@@ -1068,6 +1068,7 @@ async def call_llm_tools(
     messages: list[dict],            # OpenAI-format messages (role/content/tool_calls/tool_call_id)
     tools: list[dict],               # OpenAI-format tools array
     tool_choice: str = "auto",       # "auto" | "required" | "none" (note: "none" not Gemini-safe)
+    response_format: dict | None = None,  # #1212 D4: opt-in uniform tools+rf; None = chat default
     timeout: float | None = None,
     max_retries: int = 1,
     skill_name: str = "router",      # for budget/event tagging
@@ -1182,7 +1183,10 @@ async def call_llm_tools(
         **spec_kwargs,
         # Gemini-safe forced settings override spec_kwargs:
         "stream": False,             # Gemini #21041: streaming + tools bug
-        # No response_format: incompatible with tools= on most providers
+        # response_format is OPT-IN (#1212 D4): threaded separately to the
+        # chokepoint below (not here) WITH the fallback, so a provider that
+        # rejects tools+response_format (e.g. Gemini 400) degrades to tools-only
+        # via the PR1 capability cache. Default None = chat behavior (tools only).
         # No thinking kwargs: disabled by default on all providers
         **extra,
     }
@@ -1214,6 +1218,9 @@ async def call_llm_tools(
         return await recorded_acompletion(
             model=_model, messages=_messages, purpose=purpose,
             recorder=None, extra_kwargs=_kw,
+            # #1212 D4: opt-in response_format with the cache-backed degrade.
+            response_format=response_format,
+            fallback_without_response_format=response_format is not None,
         )
 
     response = await _llm_call_with_retry(_tools_call, effective_model, event_log)
