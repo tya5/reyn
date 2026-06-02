@@ -38,6 +38,7 @@ Cost suffix (A4):
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Literal
 
@@ -147,6 +148,45 @@ def _indent_body(renderable: RenderableType, indent: int = _BODY_INDENT_WITH_TS)
     ``ConversationView._current_body_indent()``.
     """
     return Padding(renderable, (0, 0, 0, indent))
+
+
+# Regex for leading Markdown sigil characters (headers, emphasis, code, blockquote).
+_MD_LEADING_SIGILS = re.compile(r"^[#*`_~> ]+")
+# Paired inline markers: **bold**, *em*, `code`.  Order matters — longest
+# pattern first so ``**x**`` is handled before the single-``*`` pass.
+_MD_BOLD = re.compile(r"\*\*([^*]+)\*\*")
+_MD_EM = re.compile(r"\*([^*]+)\*")
+_MD_CODE = re.compile(r"`([^`]+)`")
+
+
+def _plain_first_line(raw: str) -> str:
+    """Strip Markdown markup from the first line of ``raw`` for inline display.
+
+    Goal: the ``⏺ HH:MM <first-line>`` inline header shows clean prose
+    even when the reply opens with ``**Key finding:** …``, ``## Heading``,
+    or `` `code` ``.
+
+    Steps:
+    1. Take only the first line.
+    2. Remove paired inline emphasis / code markers so ``**x**`` → ``x``,
+       ``*x*`` → ``x``, `` `x` `` → ``x``.  Done BEFORE leading-sigil
+       strip so opening markers are still present for pair matching.
+    3. Strip leading sigil chars (``#``, ``*``, `` ` ``, ``_``, ``~``,
+       ``>``, space) that open Markdown headers / emphasis / blockquote.
+    4. Strip surrounding whitespace.
+
+    Non-markdown text like ``2 * 3 + 1`` is left unchanged — the inline
+    patterns require matching pairs and at least one non-``*`` character
+    between them, so they don't mangle bare arithmetic operators.
+    """
+    line = raw.splitlines()[0].strip() if raw else ""
+    # Apply paired-marker removal first (while the opening markers are intact).
+    line = _MD_BOLD.sub(r"\1", line)
+    line = _MD_EM.sub(r"\1", line)
+    line = _MD_CODE.sub(r"\1", line)
+    # Strip any remaining leading sigil chars (headers, blockquote, stray markers).
+    line = _MD_LEADING_SIGILS.sub("", line)
+    return line.strip()
 
 
 def _msg_header(symbol: str, name_style: str, show_ts: bool = True) -> Text:
@@ -1230,11 +1270,11 @@ class ConversationView(Widget):
             if body_text:
                 # Append first source line (stripped of leading # / * / `) to
                 # keep the header line short and readable.
-                src_first = body_text.splitlines()[0].strip().lstrip("#* `_")
+                src_first = _plain_first_line(body_text)
                 if src_first:
                     first_line_plain = f"{first_line_plain} {src_first}"
         elif body_text:
-            first_line_plain = body_text.splitlines()[0].strip().lstrip("#* `_")
+            first_line_plain = _plain_first_line(body_text)
         else:
             first_line_plain = ""
 
@@ -1763,13 +1803,32 @@ class ConversationView(Widget):
         self._do_flush_tool_call_row(row)
 
     def _do_flush_tool_call_row(self, row: ToolCallRow) -> None:
-        """Actual write-to-RichLog + unmount; safe to call from a timer."""
+        """Actual write-to-RichLog + unmount; safe to call from a timer.
+
+        A4 (flush-indent fix): when the row has a non-empty ``label_prefix``
+        (= sub-skill nesting, e.g. ``"  └─ "``), the prefix is already baked
+        into the Rich Text returned by ``_build_line1()`` / ``_build_line2()``.
+        The live widget renders at column 0 in the DOM (no Padding); flushing
+        via ``_write_body`` would apply an extra ``_indent_body`` Padding on top
+        of the prefix, producing double-indent vs the live widget.  Use
+        ``_write_log`` (column-0, no Padding) for prefixed rows so the flushed
+        line lands at the same visual column as the live widget.
+
+        Top-level rows (empty ``label_prefix``) continue to use ``_write_body``
+        — that path is unchanged by this fix.
+        """
         try:
             line1 = row._build_line1()
             line2 = row._build_line2()
-            self._write_body(line1)
-            if line2.plain:
-                self._write_body(line2)
+            if row._label_prefix:
+                # Sub-skill row: prefix is the indent — write at col 0.
+                self._write_log(line1)
+                if line2.plain:
+                    self._write_log(line2)
+            else:
+                self._write_body(line1)
+                if line2.plain:
+                    self._write_body(line2)
             row.remove()
         except Exception:
             # Same defensive stance as finish_skill_row: a flush
