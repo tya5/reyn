@@ -1409,7 +1409,13 @@ class ConversationView(Widget):
         self._consume_empty_hint()
         # Same agent-identity styling as _render_agent_markdown (_AMBER).
         self._maybe_write_header("reyn", _GLYPH_AGENT, "bold " + _AMBER)
-        row = StreamingRow(prefix="", id=f"stream_{msg_id[:8]}")
+        # Pass the current body indent so the streaming row aligns with
+        # body text for the current timestamp-toggle state (Fix 2 / A1).
+        row = StreamingRow(
+            prefix="",
+            id=f"stream_{msg_id[:8]}",
+            indent=self._current_body_indent(),
+        )
         self._stream_rows[msg_id] = row
         self.mount(row)
         return row
@@ -1845,7 +1851,12 @@ class ConversationView(Widget):
             # Already mounted — idempotent.
             self.query_one(f"#{self._THINKING_ROW_ID}", InlineThinkingRow)
         except Exception:
-            row = InlineThinkingRow(id=self._THINKING_ROW_ID)
+            # Pass the current body indent so the spinner aligns with
+            # body text for the current timestamp-toggle state (Fix 2 / A1).
+            row = InlineThinkingRow(
+                id=self._THINKING_ROW_ID,
+                indent=self._current_body_indent(),
+            )
             self.mount(row)
 
     def stop_thinking(self) -> None:
@@ -2232,7 +2243,15 @@ class ConversationView(Widget):
         self._user_scrolled = True
 
     def scroll_page_down(self) -> None:
-        """Scroll the conv log down one page without changing focus."""
+        """Scroll the conv log down one page without changing focus.
+
+        Symmetric with ``scroll_page_up``: if we land in the middle
+        (= not at the actual tail), the scroll is still a user-initiated
+        position lock so auto-scroll must NOT yank the viewport to the
+        bottom on the next stream write. We set ``_user_scrolled = True``
+        for the mid-scroll case and only clear it when we reach the tail
+        (= re-arm auto-scroll).
+        """
         log = self._log()
         try:
             log.scroll_page_down(animate=False)
@@ -2241,10 +2260,12 @@ class ConversationView(Widget):
                 log.scroll_relative(y=log.size.height, animate=False)
             except Exception:
                 pass
-        # When we scroll back to the tail, re-arm auto-scroll.
+        # At tail → re-arm auto-scroll; mid-scroll → hold position.
         try:
             if log.scroll_y >= log.max_scroll_y - 1:
                 self._user_scrolled = False
+            else:
+                self._user_scrolled = True
         except Exception:
             pass
 
@@ -2264,15 +2285,23 @@ class ConversationView(Widget):
         self._user_scrolled = True
 
     def scroll_line_down(self) -> None:
-        """Scroll the conv log down one line without changing focus."""
+        """Scroll the conv log down one line without changing focus.
+
+        Symmetric with ``scroll_line_up``: landing anywhere above the tail
+        keeps the scroll-lock so a concurrent stream write doesn't snap
+        the viewport away from the user's read position.
+        """
         log = self._log()
         try:
             log.scroll_relative(y=1, animate=False)
         except Exception:
             pass
+        # At tail → re-arm auto-scroll; mid-scroll → hold position.
         try:
             if log.scroll_y >= log.max_scroll_y - 1:
                 self._user_scrolled = False
+            else:
+                self._user_scrolled = True
         except Exception:
             pass
 
