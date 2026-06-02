@@ -34,12 +34,14 @@ issue #427 L4 step 5) was narrowed to attached-only because:
     a "what other agents are doing" overview better than a sticky
     1-line strip
 
-Spec (= issue #427 L2 visual contract, retained):
+Spec (= issue #427 L2 visual contract; label order updated fix/tui-asyncstack-summary-primary):
 
-  ⟳ async: code_review · 12.3s      ← running task
-  ⟳ async: monitor_loop · 5m21s      ← running, longer-running
-  ⚑ async: alice (1 pending)         ← intervention-pending task
-  … +N more (panel for all)          ← overflow indicator when > _CAP
+  ⟳ code_review · 12.3s  async: <run_id_dim>   ← running task (wide)
+  ⟳ code_review · 12.3s                         ← running task (narrow, id dropped)
+  ⚑ alice (1 pending)                            ← intervention-pending task
+  … +N more (panel for all)                      ← overflow indicator when > _CAP
+
+Summary (= skill name) is the bold primary label; agent_id is dim secondary.
 
 - 1-5 entries dynamic, ``_CAP`` cap with overflow indicator
 - Sort: intervention-pending (= ⚑) on top, then running by elapsed (= shortest first)
@@ -109,16 +111,11 @@ _FLASH_DURATION_S = 1.5
 
 _RIGHT_MARGIN_CELLS = 4
 
-# Wave-11 B#5: when the row is narrow enough that summary would be
-# wiped to 0 cells, the agent_id (often a 36-char UUID) gets
-# middle-elided to free cells for the more-informative summary.
-# Below this many cells of summary budget, prefer to elide id over
-# blanking summary entirely. 8 cells fits a typical short word.
-_MIN_SUMMARY_BUDGET_CELLS = 8
-
-# Minimum cells preserved for the elided agent_id: 4 head + 1 "…"
-# + 4 tail = 9. Typical UUID head ``abcd`` + tail ``7890`` is
-# enough to disambiguate among ≤ _CAP simultaneous tasks.
+# Minimum cells preserved for the elided agent_id suffix: 4 head + 1 "…"
+# + 4 tail = 9. Typical run_id head (timestamp slice) + tail (4-hex) is
+# enough to disambiguate among ≤ _CAP simultaneous tasks when the id
+# suffix is squeezed by a narrow panel. Below this budget the suffix is
+# dropped entirely and only the summary + elapsed are shown.
 _MIN_ELIDED_ID_CELLS = 9
 
 
@@ -672,10 +669,22 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
         glyph: str,
         body_budget: int,
     ) -> None:
-        """Append one ``<glyph> async: <agent_id> · <body> · <elapsed>`` row.
+        """Append one row with summary as the primary label.
 
-        Truncation order on overflow: shrink ``summary`` first (= most
-        disposable), keep agent_id + glyph + elapsed always visible.
+        Row shape (wide): ``<glyph> <summary>  · <elapsed>  async: <agent_id>``
+        Row shape (narrow): ``<glyph> <summary>  · <elapsed>`` (agent_id elided)
+
+        Summary (= skill name) is the bold primary label — it answers
+        "what is running?" at a glance. agent_id (= timestamp + skill +
+        4-hex suffix) is dim and secondary, shown when width allows and
+        dropped first when the panel narrows. The agent_id key is never
+        lost from the widget state (``_entries`` dict is keyed by it);
+        only the rendered suffix is dropped.
+
+        Truncation order on overflow:
+          1. Drop the dim ``async: <agent_id>`` suffix entirely.
+          2. Elide summary (= right-truncate with "…") if still too wide.
+        The glyph + elapsed segment are always visible.
 
         Wave-13 T2-2: when ``entry.flashing`` is True, bypasses normal
         rendering and emits a fixed red ``✗ async: <id_short> (interrupted)``
@@ -704,50 +713,52 @@ class AsyncStackPanel(RenderableCacheMixin, Widget):
             elapsed_style = "dim"
             glyph_style = _CORAL
 
-        prefix = f"{glyph} async: {agent_id}"
-        prefix_cells = cell_len(prefix)
+        # Build the fixed-cost portions: glyph + summary label (primary)
+        # + elapsed tail. These always render; the dim agent_id suffix is
+        # added only when width is available.
+        summary_label = entry.summary or ""
+        glyph_prefix_cells = cell_len(f"{glyph} ")
         elapsed_cells = cell_len(elapsed_segment)
-        sep = "  · " if entry.summary else ""
-        sep_cells = cell_len(sep)
-
+        # Budget available for summary after glyph + elapsed are reserved.
         summary_budget = max(
-            0, body_budget - prefix_cells - sep_cells - elapsed_cells,
+            0, body_budget - glyph_prefix_cells - elapsed_cells,
         )
-        # Wave-11 B#5 + exploration finding #3 (2026-05-28): the
-        # summary (= skill name) is the most user-readable signal —
-        # ``word_stats_demo`` tells the user WHAT is running, while
-        # the agent_id (= timestamp + skill + 4-hex suffix) is mostly
-        # a unique-ish handle. So whenever rendering the full summary
-        # would require truncating it, middle-elide the agent_id
-        # first to free cells (= the head+tail preview still
-        # disambiguates among ≤ _CAP simultaneous tasks, while the
-        # full skill name lands without the ``word_stats…`` truncation
-        # the prior threshold-based logic left behind for narrow-ish
-        # widths). Identity floor is _MIN_ELIDED_ID_CELLS; below that
-        # the panel is so narrow we accept summary truncation too.
-        desired_summary_cells = cell_len(entry.summary or "")
-        if entry.summary and summary_budget < desired_summary_cells:
-            fixed_cells = cell_len(f"{glyph} async: ") + sep_cells + elapsed_cells
-            target_id_cells = max(
-                _MIN_ELIDED_ID_CELLS,
-                body_budget - fixed_cells - desired_summary_cells,
-            )
-            if target_id_cells < cell_len(agent_id):
-                agent_id = _middle_elide_id(agent_id, target_id_cells)
-                prefix = f"{glyph} async: {agent_id}"
-                prefix_cells = cell_len(prefix)
-                summary_budget = max(
-                    0, body_budget - prefix_cells - sep_cells - elapsed_cells,
-                )
-        summary_display = self._truncate_to_cells(entry.summary, summary_budget)
+
+        # Dim agent_id suffix: "  async: <agent_id>" appended when width
+        # allows. Compute its cost and decide whether it fits.
+        id_suffix_sep = "  "
+        id_label = "async: "
+        id_suffix_cells = cell_len(id_suffix_sep + id_label) + cell_len(agent_id)
+        desired_summary_cells = cell_len(summary_label)
+        # Remaining budget after summary (un-truncated) and elapsed.
+        budget_after_summary = (
+            body_budget - glyph_prefix_cells - desired_summary_cells - elapsed_cells
+        )
+        if budget_after_summary >= id_suffix_cells:
+            # Full agent_id suffix fits alongside the full summary.
+            rendered_agent_id: str | None = agent_id
+            summary_budget = desired_summary_cells  # summary fits fully
+        elif budget_after_summary >= _MIN_ELIDED_ID_CELLS + cell_len(id_suffix_sep + id_label):
+            # Elide agent_id to fit whatever gap remains — summary still full.
+            elide_budget = budget_after_summary - cell_len(id_suffix_sep + id_label)
+            rendered_agent_id = _middle_elide_id(agent_id, elide_budget)
+            summary_budget = desired_summary_cells  # summary still fits fully
+        else:
+            # Not enough room for any useful agent_id suffix — drop it.
+            # Summary gets the full remaining budget (may still truncate if
+            # the panel is very narrow, but that's the last resort).
+            rendered_agent_id = None
+            # summary_budget already set above (body minus glyph minus elapsed)
+
+        summary_display = self._truncate_to_cells(summary_label, summary_budget)
 
         t.append(f"{glyph} ", style=glyph_style)
-        t.append("async: ", style="dim " + _TEXT_MUTED)
-        t.append(agent_id, style="bold")
-        if summary_display:
-            t.append(sep, style="dim")
-            t.append(summary_display, style="dim")
+        t.append(summary_display, style="bold")
         t.append(elapsed_segment, style=elapsed_style)
+        if rendered_agent_id is not None:
+            t.append(id_suffix_sep, style="dim")
+            t.append(id_label, style="dim " + _TEXT_MUTED)
+            t.append(rendered_agent_id, style="dim " + _TEXT_MUTED)
 
     def _truncate_to_cells(self, text: str, max_cells: int) -> str:
         if max_cells <= 0:

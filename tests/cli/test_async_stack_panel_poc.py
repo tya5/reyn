@@ -196,3 +196,23 @@ async def test_panel_renders_under_app_with_multiple_entries():
         first_line = rendered.split("\n", 1)[0]
         assert "alice" in first_line
         assert "⚑" in first_line
+
+
+def test_summary_is_primary_label_uuid_style_agent_id() -> None:
+    """Tier 2b: summary is the primary label; UUID-style agent_id is dim suffix.
+
+    At default (= 80-col) budget the summary appears before the agent_id
+    in the rendered text, confirming the new label order: summary first,
+    id trailing.  The test uses ``build_lines().plain`` (public surface)
+    and does not pin exact spacing or column offsets.
+    """
+    panel = _panel()
+    run_id = "20240601T123456123456Z_code_review_a1b2"
+    summary = "code_review"
+    panel.add(run_id, summary)
+    text = panel.build_lines().plain
+    # Both the summary and the agent_id must be visible at default width.
+    assert summary in text
+    assert run_id in text
+    # Summary appears before the agent_id in the row (= primary ordering).
+    assert text.index(summary) < text.index(run_id)
