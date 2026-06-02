@@ -1834,6 +1834,26 @@ class RouterLoop:
         if not history or history[-1].get("role") != "user":
             messages.append({"role": "user", "content": user_text})
 
+        return await self.run_loop(messages, tools, _univ_enabled)
+
+    async def run_loop(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        _univ_enabled: bool,
+    ) -> "TokenUsage":
+        """#1092 PR-B (FD1, ADR-0036): the shared op-execution loop (convergence ii).
+
+        Extracted verbatim from ``run()`` so the chat ``run()`` (after its
+        chat-specific pre-loop setup) AND a phase host (via a RouterLoop built with
+        PhaseRouterLoopHost) drive the SAME loop = true convergence. The loop body
+        is unchanged; chat-specific terminals (put_outbox spawn-acks, text reply)
+        are host-polymorphic and go inert for a phase host (no-op put_outbox,
+        async_count=0). FD2: the phase transition is a SEPARATE structured-json
+        call the phase host post-pends AFTER this loop returns at end_turn — it is
+        NOT in this loop (P1/P8 preserved).
+        """
+        host = self.host
         # B28-Q2 Case A: per-turn counters for chat_turn_completed_inline.
         # _routing_decided_fired: set to True the first time routing_decided
         #   is emitted in this turn (= invoke_action or hot_list_alias path).
