@@ -316,6 +316,55 @@ class LLMCallRecorder:
                         usage=TokenUsage(prompt_tokens=0, completion_tokens=0),
                     )
 
+        result = await self._call_phase_llm_core(
+            phase=phase,
+            resolved_spec=resolved_spec,
+            resolved_model=resolved_model,
+            messages=messages,
+            tools=tools,
+            state=state,
+        )
+
+        # (A) #1225: per-step WAL record so a resume replays this act turn's
+        # tool_calls deterministically (same shape ``call`` records for the decide).
+        await self._wal_step_completed_for_llm(
+            phase=phase,
+            op_invocation_id=op_invocation_id,
+            args_hash=args_hash,
+            result={
+                "content": result.content,
+                "tool_calls": result.tool_calls,
+                "finish_reason": result.finish_reason,
+            },
+            usage=result.usage.to_dict() if result.usage else None,
+        )
+        return result
+
+    async def _call_phase_llm_core(
+        self,
+        *,
+        phase: str,
+        resolved_spec: object,
+        resolved_model: str,
+        messages: list[dict],
+        tools: list[dict],
+        state: "RunState",
+    ) -> "LLMToolCallResult":
+        """The shared 'messages-in' core of the phase native-tools LLM call.
+
+        Budget pre-check + ``llm_called`` event + ``call_llm_tools`` + cost
+        recording (``state.add_usage`` / ``_record_budget_post_llm``) +
+        ``llm_response_received`` event — the phase-flavored cost/audit
+        semantics. Used by ``call_tools`` (frame-built messages + WAL memo) AND
+        by the #1092 PR-A RouterLoop adapter (RouterLoop-supplied messages +
+        memo via the ``memo_provider`` seam). Memo (lookup/record) is NOT here —
+        it wraps this core. lead-coder STEP5 decision (#1234): phase cost
+        accounting is mandatory + events stay phase-flavored so the gate's
+        behavior-preserving contract holds at the AUDIT layer too (opt-in must
+        not be observable in the event log = P6). The adapter invokes this on
+        the memo-MISS path ONLY — resume-HIT skips the LLM call and replays
+        events from the log (ADR-0002), so no double cost/emit.
+        """
         self._check_budget_pre_llm(resolved_model)
         self._events.emit(
             "llm_called",
@@ -363,20 +412,6 @@ class LLMCallRecorder:
             completion_tokens=result.usage.completion_tokens if result.usage else None,
             cost_usd=cost_usd,
             pricing_snapshot=pricing_snapshot,
-        )
-
-        # (A) #1225: per-step WAL record so a resume replays this act turn's
-        # tool_calls deterministically (same shape ``call`` records for the decide).
-        await self._wal_step_completed_for_llm(
-            phase=phase,
-            op_invocation_id=op_invocation_id,
-            args_hash=args_hash,
-            result={
-                "content": result.content,
-                "tool_calls": result.tool_calls,
-                "finish_reason": result.finish_reason,
-            },
-            usage=result.usage.to_dict() if result.usage else None,
         )
         return result
 
