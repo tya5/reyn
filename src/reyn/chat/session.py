@@ -1222,6 +1222,7 @@ class ChatSession:
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
+        tool_calls_op_loop_skills: list[str] | None = None,  # #1212: op-loop gate for chat-run skills
         agent_id: str | None = None,
     ) -> None:
         """
@@ -1257,6 +1258,8 @@ class ChatSession:
         # through to spawned Agents AND to the router host adapter (=
         # chat-router web__fetch / file__read / mcp paths).
         self._multimodal_config = multimodal_config
+        # #1212: op-loop gate, threaded to Agents spawned for chat-run skills.
+        self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
         # Issue #383 PR-C — single MediaStore instance per ChatSession,
         # constructed from the multimodal config's storage dirs.
         # Subsequently threaded into spawned Agents (= for control-IR
@@ -3089,6 +3092,7 @@ class ChatSession:
             multimodal_config=self._multimodal_config,
             media_store=self._media_store,
             run_id=run_id,
+            tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,
         )
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:

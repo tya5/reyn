@@ -320,6 +320,7 @@ class OSRuntime:
             caller=caller,
             max_phase_visits=self._max_phase_visits,
             budget_tracker=budget_tracker,  # #1190 stage (ii): skill_node_adapt cost recording
+            tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,  # #1212 sub-skill gate
         )
 
     # ── Backward-compat properties (FP-0020 Component A) ───────────────────

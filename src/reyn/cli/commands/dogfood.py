@@ -442,6 +442,7 @@ def _build_live_runner(agent_name: str):
                 budget_tracker=budget_tracker,
                 sandbox_config=config.sandbox,
                 multimodal_config=config.multimodal,
+                tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
                 action_retrieval_config=config.action_retrieval,
             )
             s.load_history()
