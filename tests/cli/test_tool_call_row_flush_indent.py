@@ -22,6 +22,32 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+import pytest
+from textual.widgets import RichLog
+
+from reyn.chat.tui.app import ReynTUIApp
+from reyn.chat.tui.widgets import ConversationView
+
+
+def _make_app() -> ReynTUIApp:
+    return ReynTUIApp(
+        registry=None,
+        agent_name="test-agent",
+        model="test-model",
+        budget_tracker=None,
+    )
+
+
+def _line_text(log: RichLog, index: int) -> str:
+    return "".join(seg.text for seg in log.lines[index])
+
+
+def _find_line_containing(log: RichLog, needle: str) -> int:
+    for i, strip in enumerate(log.lines):
+        if needle in "".join(seg.text for seg in strip):
+            return i
+    raise AssertionError(f"{needle!r} never appeared in RichLog")
+
 
 def _row_with_prefix(label_prefix: str = "  └─ "):
     """Unmounted ToolCallRow with label_prefix for direct render testing."""
@@ -82,42 +108,39 @@ def test_top_level_row_line1_does_not_start_with_prefix() -> None:
     )
 
 
-def test_prefixed_row_flush_col_is_prefix_not_double_indent() -> None:
-    """Tier 2: A4 fix — flushed prefixed row must not accumulate double-indent.
+@pytest.mark.asyncio
+async def test_flushed_prefixed_row_lands_at_prefix_not_double_indent() -> None:
+    """Tier 2b: A4 regression guard — flushing a sub-skill ToolCallRow lands at
+    the bare ``label_prefix`` column, NOT an 8-col hanging-indent + prefix.
 
-    The live widget (pre-flush) renders at column 0 with the label_prefix
-    providing the visual indent.  After the A4 fix, the flush path calls
-    ``_write_log`` (no Padding) for prefixed rows, so the flushed line
-    matches the live rendering: leading chars are exactly the label_prefix,
-    NOT (8-col Padding spaces + label_prefix).
-
-    We verify this by asserting render_line1().plain starts with the
-    literal prefix (not with 8 spaces).  If the old code (_write_body)
-    were used, the Padding is applied OUTSIDE the Rich Text object
-    (= by the RichLog/Padding wrapper), so the plain text itself stays
-    the same — the column-position error manifests in the rendered layout.
-    The plain-text check therefore targets the baked-in prefix rather
-    than trying to observe the Padding wrapper (which is not visible in
-    `.plain`).
-
-    The structural contract verified here: label_prefix must be present
-    at position 0 of the rendered plain text (= the flush path reads the
-    same Text that the live widget renders, without any additional prefix
-    injected by ToolCallRow itself).
+    This exercises the REAL ``_do_flush_tool_call_row`` path (the fix's
+    actual code): the prefixed branch uses ``_write_log`` (no Padding).
+    Reverting that branch to ``_write_body`` would wrap the line in an
+    8-cell left ``Padding``, so the rendered RichLog line would start with
+    8 spaces — and this test would FAIL.  (The prior ``render_line1()``-only
+    check could not catch that, because the Padding lives OUTSIDE the Rich
+    Text and is not visible in ``.plain``.)
     """
-    row = _row_with_prefix("  └─ ")
-    line1 = row.render_line1()
-    plain = line1.plain
-    # The prefix appears at index 0 — not preceded by any extra whitespace
-    # that would indicate double-indenting.
-    prefix = "  └─ "
-    assert plain.startswith(prefix), (
-        f"flush line must start with bare label_prefix {prefix!r}; "
-        f"got leading chars: {plain[:20]!r}"
-    )
-    # After the prefix, the next non-space char should be the state glyph.
-    after_prefix = plain[len(prefix):]
-    first_nonspace = after_prefix.lstrip()
-    assert first_nonspace and first_nonspace[0] in ("●", "✓", "✗", "⊘"), (
-        f"first char after prefix must be a state glyph; got {after_prefix[:10]!r}"
-    )
+    app = _make_app()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        log = conv.query_one(RichLog)
+
+        row = _row_with_prefix("  └─ ")
+        conv.mount(row)
+        await pilot.pause()
+        conv._do_flush_tool_call_row(row)
+        await pilot.pause()
+
+        idx = _find_line_containing(log, "bash")
+        line = _line_text(log, idx)
+        # Bare prefix at the start — matches the live widget's column.
+        assert line.startswith("  └─ "), (
+            f"flushed prefixed row must start with the bare label_prefix; got {line!r}"
+        )
+        # Regression signal: ``_write_body`` would prepend an 8-cell Padding.
+        assert not line.startswith(" " * 8), (
+            f"flushed prefixed row must NOT carry an 8-col hanging indent "
+            f"(double-indent regression); got {line!r}"
+        )
