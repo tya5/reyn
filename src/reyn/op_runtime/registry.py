@@ -61,6 +61,8 @@ from reyn.schemas.models import (
     EditFileIROp,
     EmbedIROp,
     FileIROp,
+    GlobFilesIROp,
+    GrepFilesIROp,
     IndexDropIROp,
     IndexQueryIROp,
     IndexWriteIROp,
@@ -125,6 +127,11 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "write_file":  WriteFileIROp,
     "edit_file":   EditFileIROp,
     "delete_file": DeleteFileIROp,
+    # #1240 Wave 1.5: glob_files / grep_files fine kinds (same pattern).
+    # GLOB_FILES/GREP_FILES ToolDefinitions (tools/file.py, gates.phase=allow)
+    # route via the unified registry — same handler path chat uses.
+    "glob_files":  GlobFilesIROp,
+    "grep_files":  GrepFilesIROp,
     "mcp":         MCPIROp,
     "run_skill":   RunSkillIROp,
     "shell":       ShellIROp,
@@ -180,6 +187,10 @@ OP_PURITY: dict[str, OpPurity] = {
     "write_file":  OpPurity.side_effect,
     "edit_file":   OpPurity.side_effect,
     "delete_file": OpPurity.side_effect,
+    # #1240 Wave 1.5: glob_files / grep_files. Same conservative stance as
+    # Wave 1 fine kinds — match the coarse "file" side_effect classification.
+    "glob_files":  OpPurity.side_effect,
+    "grep_files":  OpPurity.side_effect,
     # External / unknown side-effecting.
     "mcp":         OpPurity.external,
     "shell":       OpPurity.external,
@@ -254,7 +265,7 @@ ALL_OP_KINDS: frozenset[str] = frozenset(OP_KIND_MODEL_MAP.keys())
 # ---------------------------------------------------------------------------
 
 COARSE_TO_FINE: dict[str, frozenset[str]] = {
-    "file":      frozenset({"read_file", "write_file", "edit_file", "delete_file", "list_directory"}),
+    "file":      frozenset({"read_file", "write_file", "edit_file", "delete_file", "list_directory", "glob_files", "grep_files"}),
     "mcp":       frozenset({"call_mcp_tool", "list_mcp_servers", "list_mcp_tools"}),
     "run_skill": frozenset({"invoke_skill"}),
 }
