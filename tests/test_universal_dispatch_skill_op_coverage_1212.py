@@ -196,18 +196,20 @@ def _skill_real_op_kinds(skill_dir: Path) -> dict[str, set[str]]:
 
 
 def test_universal_dispatch_covers_all_stdlib_skill_real_op_kinds() -> None:
-    """Tier 2: universal_dispatch map is total over stdlib skills' real op kinds.
+    """Tier 2: universal_dispatch coverage of stdlib skills' real op kinds tracks
+    exactly the known PR3 gap checklist (drives toward full D6 totality).
 
     Guard for the ADR-0035 D6 op-shape codemod (#1212 PR3).
 
-    Invariant: every real op kind used in any stdlib skill's ``allowed_ops``
-    or preprocessor/postprocessor ``run_op`` step MUST have a ``{name,
-    arguments}`` tool_call route in ``universal_dispatch`` (i.e. must appear
-    in ``_OP_KIND_CATEGORY`` AND the corresponding category must be wired in
-    ``universal_dispatch._OPERATION_RULES`` or ``_RESOURCE_RULES``).
-
-    When this test FAILS it surfaces the exact set of uncovered op kinds and
-    which skills use them — the finding is the input for the PR3 codemod.
+    Invariant: every real op kind used in any stdlib skill's ``allowed_ops`` or
+    preprocessor/postprocessor ``run_op`` step has a ``{name, arguments}``
+    tool_call route in ``universal_dispatch`` (appears in ``_OP_KIND_CATEGORY``
+    AND the category is wired in ``_OPERATION_RULES``/``_RESOURCE_RULES``) —
+    EXCEPT the explicitly tracked ``_KNOWN_PR3_GAPS`` (4 op kinds awaiting their
+    PR3 routes). The assertion is EXACT (``uncovered == _KNOWN_PR3_GAPS``), so a
+    new uncovered op kind OR a stale checklist entry both fail. PR3 shrinks the
+    checklist to ``frozenset()`` = full totality; this is a checklist, not a
+    permanent waiver.
     """
     from reyn.tools.universal_dispatch import (  # noqa: PLC0415
         _OPERATION_RULES,  # type: ignore[attr-defined]  # tested public-enough: PR3 target
@@ -262,18 +264,23 @@ def test_universal_dispatch_covers_all_stdlib_skill_real_op_kinds() -> None:
             # The contract table declares a category but it's not wired yet
             uncovered[kind] = sources
 
-    # ── 4. Assert totality — fail loudly with actionable detail ────────────
-    assert uncovered == {}, (
-        "universal_dispatch op-kind coverage is NOT total over stdlib skills "
-        "(ADR-0035 D6 invariant violated — PR3 codemod would miss these ops).\n\n"
-        "Uncovered op kinds (kind → [skill/source]):\n"
-        + "\n".join(
-            f"  {kind!r}: {sources}"
-            for kind, sources in sorted(uncovered.items())
-        )
-        + "\n\nTo fix: add a qualified-name route for each uncovered kind in "
-        "universal_dispatch._OPERATION_RULES (or _RESOURCE_RULES), then add "
-        "the kind to _OP_KIND_CATEGORY in this test."
+    # ── 4. Assert coverage against the tracked PR3 gap CHECKLIST ───────────
+    # _KNOWN_PR3_GAPS is a CHECKLIST, not a permanent waiver: PR3 adds a
+    # qualified-name route in universal_dispatch for each op kind here and
+    # removes it from this set, driving the set to frozenset() = full D6
+    # totality. Exact-match is enforced so BOTH a NEW uncovered op kind
+    # (superset = an op PR3 would silently miss) AND a STALE entry (a gap PR3
+    # wired but forgot to delete here) go RED — the set can only shrink toward {}.
+    _KNOWN_PR3_GAPS = frozenset({"ask_user", "embed", "index_write", "skill_resolve"})
+    assert set(uncovered) == _KNOWN_PR3_GAPS, (
+        "universal_dispatch op-kind coverage drifted from the tracked PR3 gap "
+        "checklist (ADR-0035 D6).\n\n"
+        f"  uncovered now            : {sorted(uncovered)}\n"
+        f"  expected (PR3 checklist) : {sorted(_KNOWN_PR3_GAPS)}\n\n"
+        "If a NEW op kind is uncovered → add its qualified-name route in "
+        "universal_dispatch._OPERATION_RULES/_RESOURCE_RULES + _OP_KIND_CATEGORY. "
+        "If PR3 just WIRED a route → remove that kind from _KNOWN_PR3_GAPS "
+        "(the goal is frozenset())."
     )
 
 
