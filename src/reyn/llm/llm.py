@@ -827,6 +827,37 @@ def _build_system_message(system_text: str, prompt_cache_enabled: bool) -> dict:
     }
 
 
+def build_phase_messages(
+    frame: "ContextFrame",
+    *,
+    skill_name: str = "",
+    skill_description: str = "",
+    phase_role: str | None = None,
+    project_context: str = "",
+    agent_role: str = "",
+    prompt_cache_enabled: bool = True,
+) -> list[dict]:
+    """Build the [system, user] message pair for a phase LLM call.
+
+    #1212: the SAME message construction (system prompt + frame-as-user) is shared
+    by the json-mode ``call_llm`` path and the native-tools op-loop path, so the
+    two never drift (a divergent system prompt / frame rendering would be a subtle
+    bug, and matching them is the promotion-symmetry intent).
+    """
+    system = _system_prompt(
+        skill_name=skill_name,
+        skill_description=skill_description,
+        phase_role=phase_role,
+        project_context=project_context,
+        agent_role=agent_role,
+    )
+    user_content = json.dumps(frame.model_dump(mode="json"), indent=2, ensure_ascii=False)
+    return [
+        _build_system_message(system, prompt_cache_enabled),
+        {"role": "user", "content": user_content},
+    ]
+
+
 async def call_llm(
     model: "Union[str, ModelSpec]",
     frame: ContextFrame,
@@ -880,18 +911,15 @@ async def call_llm(
                 format_refusal_message(check, agent=budget_agent),
             )
 
-    system = _system_prompt(
+    messages: list[dict] = build_phase_messages(
+        frame,
         skill_name=skill_name,
         skill_description=skill_description,
         phase_role=phase_role,
         project_context=project_context,
         agent_role=agent_role,
+        prompt_cache_enabled=prompt_cache_enabled,
     )
-    user_content = json.dumps(frame.model_dump(mode="json"), indent=2, ensure_ascii=False)
-    messages: list[dict] = [
-        _build_system_message(system, prompt_cache_enabled),
-        {"role": "user", "content": user_content},
-    ]
 
     # Build combined injection list: rollback context first, then same-phase retries
     all_injections: list[dict[str, str]] = []
