@@ -268,6 +268,7 @@ def _get_registry():
                 sandbox_config=config.sandbox,
                 multimodal_config=config.multimodal,
                 tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
+                routerloop_convergence_skills=config.routerloop_convergence_skills,
                 action_retrieval_config=config.action_retrieval,
                 embedding_config=config.embedding,
                 eager_embedding_build=_eager_embedding_build,
