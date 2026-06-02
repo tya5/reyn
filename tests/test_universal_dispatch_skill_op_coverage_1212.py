@@ -79,11 +79,11 @@ _OP_KIND_CATEGORY: dict[str, str] = {
     "mcp":           "mcp",
     # mcp install ops → "mcp" category (_OPERATION_RULES: mcp__install_*)
     "mcp_install":   "mcp",
-    # ask_user → NOT YET COVERED (no qualified name in universal_dispatch)
-    # embed     → NOT YET COVERED (no qualified name in universal_dispatch)
-    # index_write → NOT YET COVERED (no qualified name in universal_dispatch)
-    # skill_resolve → NOT YET COVERED (no qualified name in universal_dispatch)
-    # (entries above are intentionally absent — see expected-failure comment below)
+    # ask_user / embed / index_write / skill_resolve → INTENTIONAL chat-router
+    # exclusions (ADR-0035 D6 decision A, #1212). Skill-internal run_op /
+    # control-flow ops with no chat-router dispatch target — they execute in the
+    # op-loop via the OP registry (kind→IROp), not universal_dispatch. Absent
+    # here on purpose; enumerated in _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS below.
 }
 
 
@@ -196,20 +196,26 @@ def _skill_real_op_kinds(skill_dir: Path) -> dict[str, set[str]]:
 
 
 def test_universal_dispatch_covers_all_stdlib_skill_real_op_kinds() -> None:
-    """Tier 2: universal_dispatch coverage of stdlib skills' real op kinds tracks
-    exactly the known PR3 gap checklist (drives toward full D6 totality).
+    """Tier 2: every stdlib skill's real op kind is chat-router-covered OR an
+    explicit intentional exclusion (ADR-0035 D6 decision A, #1212).
 
     Guard for the ADR-0035 D6 op-shape codemod (#1212 PR3).
 
     Invariant: every real op kind used in any stdlib skill's ``allowed_ops`` or
-    preprocessor/postprocessor ``run_op`` step has a ``{name, arguments}``
-    tool_call route in ``universal_dispatch`` (appears in ``_OP_KIND_CATEGORY``
-    AND the category is wired in ``_OPERATION_RULES``/``_RESOURCE_RULES``) —
-    EXCEPT the explicitly tracked ``_KNOWN_PR3_GAPS`` (4 op kinds awaiting their
-    PR3 routes). The assertion is EXACT (``uncovered == _KNOWN_PR3_GAPS``), so a
-    new uncovered op kind OR a stale checklist entry both fail. PR3 shrinks the
-    checklist to ``frozenset()`` = full totality; this is a checklist, not a
-    permanent waiver.
+    preprocessor/postprocessor ``run_op`` step is EITHER
+      (a) chat-router-covered — appears in ``_OP_KIND_CATEGORY`` AND its category
+          is wired in ``universal_dispatch._OPERATION_RULES``/``_RESOURCE_RULES``,
+    OR
+      (b) an explicit ``_INTENTIONAL_CHAT_ROUTER_EXCLUSION`` — a skill-internal
+          ``run_op`` / control-flow op with no chat-router dispatch target (it
+          executes in the op-loop via the OP registry, kind→IROp, not the
+          chat-router table).
+    The assertion is EXACT (``uncovered == _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS``),
+    so a NEW uncovered op kind that is neither (a) nor (b) fails (= an
+    unintentional gap), and a STALE exclusion that later gained a route also
+    fails. The exclusion set is PERMANENT (not a shrink-to-``frozenset()``
+    checklist): per decision A, ``universal_dispatch`` is the chat-router surface
+    and skill-internal ops legitimately never join it.
     """
     from reyn.tools.universal_dispatch import (  # noqa: PLC0415
         _OPERATION_RULES,  # type: ignore[attr-defined]  # tested public-enough: PR3 target
@@ -264,23 +270,35 @@ def test_universal_dispatch_covers_all_stdlib_skill_real_op_kinds() -> None:
             # The contract table declares a category but it's not wired yet
             uncovered[kind] = sources
 
-    # ── 4. Assert coverage against the tracked PR3 gap CHECKLIST ───────────
-    # _KNOWN_PR3_GAPS is a CHECKLIST, not a permanent waiver: PR3 adds a
-    # qualified-name route in universal_dispatch for each op kind here and
-    # removes it from this set, driving the set to frozenset() = full D6
-    # totality. Exact-match is enforced so BOTH a NEW uncovered op kind
-    # (superset = an op PR3 would silently miss) AND a STALE entry (a gap PR3
-    # wired but forgot to delete here) go RED — the set can only shrink toward {}.
-    _KNOWN_PR3_GAPS = frozenset({"ask_user", "embed", "index_write", "skill_resolve"})
-    assert set(uncovered) == _KNOWN_PR3_GAPS, (
-        "universal_dispatch op-kind coverage drifted from the tracked PR3 gap "
-        "checklist (ADR-0035 D6).\n\n"
-        f"  uncovered now            : {sorted(uncovered)}\n"
-        f"  expected (PR3 checklist) : {sorted(_KNOWN_PR3_GAPS)}\n\n"
-        "If a NEW op kind is uncovered → add its qualified-name route in "
-        "universal_dispatch._OPERATION_RULES/_RESOURCE_RULES + _OP_KIND_CATEGORY. "
-        "If PR3 just WIRED a route → remove that kind from _KNOWN_PR3_GAPS "
-        "(the goal is frozenset())."
+    # ── 4. Assert against the PERMANENT intentional chat-router exclusion set ──
+    # ADR-0035 D6 decision (A), #1212 (durable record). These 4 op kinds are
+    # SKILL-INTERNAL run_op / control-flow ops with NO chat-router dispatch
+    # target — verified via get_default_registry().lookup() returning None for
+    # embed/index_write/skill_resolve (recall is the chat-exposed RAG macro;
+    # ask_user is control-flow). They execute in the op-loop via the OP registry
+    # (kind→IROp), not universal_dispatch (the chat-router table). So this is a
+    # PERMANENT exclusion set, NOT a shrink-to-{} checklist: universal_dispatch
+    # is the chat-router surface and skill-internal ops legitimately never join
+    # it. Exact-match is enforced so a NEW uncovered op kind absent from this set
+    # (= an unintentional gap) AND a STALE entry (an exclusion that gained a
+    # route) both go RED.
+    _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS = frozenset({
+        "ask_user",       # control-flow (user-input request); not a dispatchable action
+        "embed",          # low-level RAG primitive; chat surface is the `recall` macro
+        "index_write",    # low-level RAG write primitive; not chat-exposed
+        "skill_resolve",  # skill-internal name resolution (preprocessor run_op)
+    })
+    assert set(uncovered) == _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS, (
+        "universal_dispatch op-kind coverage drifted from the intentional "
+        "chat-router exclusion set (ADR-0035 D6 decision A, #1212).\n\n"
+        f"  uncovered now          : {sorted(uncovered)}\n"
+        f"  intentional exclusions : {sorted(_INTENTIONAL_CHAT_ROUTER_EXCLUSIONS)}\n\n"
+        "Every skill op kind must be chat-router-covered OR an explicit "
+        "intentional exclusion. A NEW uncovered op kind → it is either "
+        "chat-exposed (add its route in universal_dispatch._OPERATION_RULES/"
+        "_RESOURCE_RULES + _OP_KIND_CATEGORY) or skill-internal/control-flow "
+        "(add it here with a one-line rationale). A STALE entry (an exclusion "
+        "that gained a chat-router route) also fails — keep this set exact."
     )
 
 
