@@ -17,6 +17,7 @@ import json
 
 from pydantic import TypeAdapter
 
+from reyn.op_runtime.registry import split_tool_name
 from reyn.schemas.models import ControlIROp
 
 _CONTROL_IR_ADAPTER: TypeAdapter = TypeAdapter(ControlIROp)
@@ -37,7 +38,7 @@ def tool_call_to_control_ir_op(tool_call: dict) -> ControlIROp:
     ``ActOutput.model_validate`` failure path).
     """
     fn = tool_call.get("function") or {}
-    kind = fn.get("name") or ""
+    name = fn.get("name") or ""
     raw_args = fn.get("arguments")
     if isinstance(raw_args, str):
         args = json.loads(raw_args) if raw_args.strip() else {}
@@ -45,4 +46,9 @@ def tool_call_to_control_ir_op(tool_call: dict) -> ControlIROp:
         args = dict(raw_args)
     else:
         args = {}
+    # #1212 PR4 (D7): a verb-granular file tool-name (file__read) maps back to a
+    # `file` op with its implied `op` verb re-injected; a plain kind is unchanged.
+    kind, verb = split_tool_name(name)
+    if verb is not None:
+        args.setdefault("op", verb)
     return _CONTROL_IR_ADAPTER.validate_python({"kind": kind, **args})
