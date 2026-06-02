@@ -64,16 +64,28 @@ the frame each turn. Op results are NOT appended back as native
 already normalizes tool-extraction vs content (`llm/llm.py:741`); the transition
 call's schema enforcement suppresses the empty-stop attractor (`planner.py:101`).
 
-**D4 — combine-incapable models (e.g. flash-lite) = uniform "specify both" + the
-existing fallback.** Pass `tools=` and `response_format=` on the op-loop call; the
-existing broad `except Exception` fallback (`recorded_acompletion`,
-`llm/llm.py:771-777`, `fallback_without_response_format=True`) catches the provider
-400, drops `response_format`, and retries → `tools` + prompt-JSON degrade with the
-existing validation/repair path. **PoC-confirmed (see below).**
+**D4 / D5 — SUPERSEDED by D2 (separate-decide). Pruned (#1226, user GO (b)).**
+These two decisions assumed a *combined* op-loop call — passing `tools=` and
+`response_format=` together so one call could emit a tool_call OR a structured
+decide — which on a combine-incapable model (flash-lite) 400s and needs a degrade
+(D4: drop `response_format`, retry tools-only) plus a per-model capability cache
+(D5: remember the rejection, skip the doomed first attempt).
 
-**D5 — per-model capability cache (new).** Cache whether a model supports combined
-`tools`+`response_format` (first-call result), so subsequent calls skip the
-400→retry round-trip. Keyed on the resolved model string.
+**But the implemented op-loop is D2 separate-decide**: op-turns are **tools-only**
+(no `response_format`) and a **separate** json-mode call does the transition. It
+therefore **never combines** `tools`+`response_format`, so the D4 combined-400 never
+fires and the D5 cache is never populated. 動作確認 on real flash-lite (#1226) +
+a code/grep audit confirmed: the sole `call_llm_tools` caller (`call_tools`) passes
+no `response_format`; **no caller anywhere combines.** D4's degrade machinery + D5's
+cache were thus built-but-unreachable and an internal contradiction with D2 — so they
+were **pruned**: `capability_cache.py` removed, the `recorded_acompletion` cache
+wiring removed (the pre-#1212 json-mode `response_format` fallback is **retained** —
+it predates D5 and is still used by `call_llm`), and the `response_format` param
+dropped from `call_llm_tools` / `call_tools`.
+
+The combine investigation was still valuable: it *established* that flash-lite cannot
+combine, which is exactly why D2 chose the robust separate-decide shape. The original
+D4/D5 PoC + cache (PR1 #1219 / PR2) are retained only in git history.
 
 **D6 — op shape unification.** Align LLM-emitted ops *and* the preprocessor/
 postprocessor **literal real-op** to the `{name, arguments}` tool_call shape via a
@@ -141,7 +153,14 @@ Live calls via the litellm proxy (:4000), `gemini-2.5-flash-lite`:
   C7 run; the PoC re-confirms it.)
 
 **No design premise broke.** Capable-model combined-mode is confirmed by provider
-docs (no PoC needed). The capability cache (D5) is an optimization over a proven 400→retry.
+docs (no PoC needed).
+
+> **Outcome (#1226): combined-mode was NOT shipped.** This PoC established that
+> flash-lite *cannot* combine `tools`+`response_format` — which is precisely why the
+> implemented op-loop chose **D2 separate-decide** (tools-only op-turns + a separate
+> json transition) over a combined call. Since the shipped design never combines, the
+> D4 degrade + D5 cache were superseded and **pruned** (see D4/D5 above). The
+> investigation remains valuable as the evidence that motivated separate-decide.
 
 ## Invariants preserved
 
@@ -154,11 +173,13 @@ docs (no PoC needed). The capability cache (D5) is an optimization over a proven
 
 ## Migration — proposed PR split (dependency order; each behavior-preserving)
 
-1. **PR1 — per-model capability cache (D5).** Standalone; cache + the 400→retry it
-   short-circuits. Lowest risk, no behavior change (pure optimization).
+1. **PR1 — per-model capability cache (D5).** Landed (#1219), then **pruned (#1226)**
+   — superseded by D2 separate-decide (the op-loop never combines, so the cache was
+   never populated). See D4/D5 above.
 2. **PR2 — native-tools op-loop Phase mechanism (D1–D4).** The `stop_reason` loop +
-   the transition call + the D4 fallback wiring; gated behind the capability cache.
-   Coexists with the json-mode path (incremental, per D4-i shim, not big-bang).
+   the transition call; the op-turns are **tools-only** (D2 separate-decide), so the
+   D4 combined-fallback wiring it shipped was **pruned (#1226)** along with PR1's
+   cache. Coexists with the json-mode path (incremental, gated, not big-bang).
 3. **PR3 — op-shape codemod (D6).** Deterministic `universal_dispatch` rewrite of the
    11 skill files' real ops to `{name, arguments}`; preprocessor/postprocessor DSL
    untouched. Mechanical — Sonnet-suitable, with an AST/round-trip guard test.
