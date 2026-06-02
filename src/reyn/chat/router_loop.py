@@ -2740,6 +2740,16 @@ class RouterLoop:
         # _normalise_router_tool_result unwraps read_file / list_directory
         # to the bare-content / bare-list shapes the host adapter returned.
         "read_file", "write_file", "delete_file", "list_directory",
+        # #1092 PR-B (FD1): phase-side fine file kinds. edit_file / glob_files /
+        # grep_files are registry ToolDefinitions (tools/file.py, registered in
+        # tools/__init__.py) that the chat router never exposed as router tools
+        # (chat uses list_directory), but they are in the phase default
+        # allowed_ops (#1240). When a phase drives RouterLoop via run_loop, its
+        # op catalog advertises these, so _invoke_router_tool must route them
+        # through the same registry path — closing the dispatch gap that the
+        # obviated op-exec seam (ADR-0036) would otherwise have needed a host
+        # hook for. Chat is unaffected (chat build_tools never lists them).
+        "edit_file", "glob_files", "grep_files",
         # Phase 3.5-B-light — invoke_skill.  Handler delegates via
         # RouterCallerState.run_skill_fn (= chain_id pre-bound) so PR14
         # multi-hop chain semantics propagate into nested run_skill /
