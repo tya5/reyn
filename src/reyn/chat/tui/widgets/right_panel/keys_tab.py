@@ -37,13 +37,12 @@ _KEY_DETAILS: dict[str, str] = {
     "escape": (
         "Context-aware back/cancel:\n"
         "  • voice mode → cancel recording\n"
-        "  • error box → dismiss\n"
         "  • right panel → close (= drop focus back to input)\n"
         "  • docs filter active → clear filter"
     ),
     "ctrl+b": (
         "Open/close right panel. Opens to the most recent context tab\n"
-        "(= last skill activity → Agents; last error jump → Events)."
+        "(= last skill activity → Agents; last error received → Events)."
     ),
     "space": (
         "Toggle preview pane for cursor row. Works on Events / Agents /\n"
