@@ -1,8 +1,14 @@
 # ADR-0035: Phase op-execution via native tool_calls (Phase ↔ chat/planner unification)
 
-**Status**: Proposed (2026-06-02) — design seed for issue #1212, PoC-validated.
-Implementation wave is **user-gated** (separate GO); this ADR + PoC + the PR-split
-plan are for review only.
+**Status**: **Accepted (2026-06-02) — fully implemented.** The op-loop wave landed
+on the integration branch (PR1–5 + the D4/D5 prune) and the op-loop is **fully
+wired and usable**: reachable on every real run path (top-level via
+`Agent.from_config` + sub-skill `run_skill`/`@sub_skill` + chat), opt-in via
+`config.tool_calls_op_loop_skills`, with **json-mode-equal crash recovery**
+(deterministic act-turn memo) and **reasoning-continuity** across act turns.
+**動作確認 PASS** on real flash-lite (see below). The remaining **#1225 follow-ups
+are NOT production blockers** — they are low-value / cosmetic / vision items
+(D8 offer∩permission, per-phase tightening, (ii) literal-identity).
 **Track**: #1212 — unify the op-invocation format across Phase (skill side) and
 chat/planner (plan side) so a working plan promotes to a skill 1:1.
 **Input**: the canonical design comments D1–D8 on #1212 (user + lead-coder,
@@ -171,7 +177,43 @@ docs (no PoC needed).
 - **P7**: the executor/permission/event layers stay skill-agnostic; the change is the
   emission/offer format + the catalog granularity.
 
-## Migration — proposed PR split (dependency order; each behavior-preserving)
+## Implemented capabilities (op-loop, fully wired)
+
+- **Reachable on every run path.** A skill in `config.tool_calls_op_loop_skills` runs
+  the op-loop whether invoked top-level (`Agent.from_config` — covers swe_bench /
+  run / cron / web / mcp / eval), as a nested `run_skill` / `@sub_skill` (gate
+  propagated through `RunOrchestrator` → sub-OSRuntime), or via chat (`ChatSession` →
+  spawned Agent). Opt-in is config-driven (P7-OK — the OS holds skill names as data).
+- **Crash recovery = json-mode-equal.** The act-turn LLM call (`call_tools`) is
+  memoized parallel to the json-mode `call`, so on resume the act turn replays
+  deterministically (memo-hit, not re-decided) → the same op → `dispatch_tool`
+  memo-hit → no side-effecting op re-executes.
+- **Reasoning-continuity.** A capable model's inline content from prior act turns is
+  carried forward in `ContextFrame.act_turn_reasoning` (bounded, no compaction LLM
+  call), omitted byte-identically when empty (json-mode / first turn / weak models).
+- **Compaction preserved.** Because the op-loop accumulates results into
+  `control_ir_results`, the existing phase-axis compaction applies exactly as in
+  json-mode (regression-guarded).
+
+## 動作確認 (real-model end-to-end verification)
+
+Run on **real flash-lite** (gemini-2.5-flash-lite) post-wave, lead-coder co-verified
+(Read-backed): **① op-loop works** (native `tool_call` → op executes through the
+shared executor, permission-enforced → loop → structured transition → result
+artifact); **③ structural** (structured transition / permission enforce / P6 chain);
+**④ op-by-op, no redo/stall**; **⑤ un-opted = json-mode** (control_ir field,
+unchanged). **② combine-degrade** was found **moot** — the op-loop sends tools-only
+and never combines, so D4/D5 were pruned (#1226).
+
+## Residual note (not a limitation, forward-looking)
+
+- **Reasoning-continuity is a capable-model feature.** Weak models (e.g. flash-lite)
+  emit no inline content alongside tool_calls (`content=None`), so the carried
+  reasoning is empty for them — the field/prompt section are omitted byte-identically
+  and the behavior is unchanged. The mechanism benefits capable models that reason
+  inline across multi-op-turn sequences.
+
+## Migration — PR split (landed; dependency order, each behavior-preserving)
 
 1. **PR1 — per-model capability cache (D5).** Landed (#1219), then **pruned (#1226)**
    — superseded by D2 separate-decide (the op-loop never combines, so the cache was
