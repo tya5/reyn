@@ -1,8 +1,13 @@
 # ADR-0035: Phase op-execution via native tool_calls (Phase ↔ chat/planner unification)
 
-**Status**: Proposed (2026-06-02) — design seed for issue #1212, PoC-validated.
-Implementation wave is **user-gated** (separate GO); this ADR + PoC + the PR-split
-plan are for review only.
+**Status**: **Accepted** (2026-06-02). Implementation wave **PR1–5 + prune landed**
+on the integration branch (`feat/1212-tool-calls-unification`); **動作確認 PASS** on
+real flash-lite (op-loop end-to-end — see below). The op-loop is an **opt-in** Phase
+mechanism (`tool_calls_op_loop_skills`); **production-enablement** (gate threading +
+a real skill opt-in) is gated on **#1225** — HARD GATE: deterministic act-turn memo,
+plus D8 offer∩permission, per-phase tightening, (ii) literal-identity. D4/D5
+(combine-degrade + cache) were **superseded by D2** (separate-decide) and pruned
+(#1226).
 **Track**: #1212 — unify the op-invocation format across Phase (skill side) and
 chat/planner (plan side) so a working plan promotes to a skill 1:1.
 **Input**: the canonical design comments D1–D8 on #1212 (user + lead-coder,
@@ -170,6 +175,35 @@ docs (no PoC needed).
 - **P6**: per-op events + per-step WAL preserved (D8).
 - **P7**: the executor/permission/event layers stay skill-agnostic; the change is the
   emission/offer format + the catalog granularity.
+
+## 動作確認 (real-model end-to-end verification)
+
+Run on **real flash-lite** (gemini-2.5-flash-lite) post-wave, lead-coder co-verified
+(Read-backed) — evidence at `/tmp/reyn-1212-actverify/` (events + llm_trace + VERDICT):
+**① op-loop works** ✅ (flash-lite emits a native `tool_call` → op executes through the
+shared executor, permission-enforced → loop → structured transition → result artifact);
+**③ structural** ✅ (structured transition / permission enforce / P6 event chain; WAL
+covered by the PR5 resume test); **④ op-by-op, no redo/stall** ✅ (single-op scope);
+**⑤ un-opted = json-mode** ✅ (control_ir field, unchanged). **② combine-degrade** was
+found **moot** — the op-loop sends tools-only and never combines, so D4/D5 were pruned
+(#1226).
+
+## Known limitations
+
+- **Reasoning continuity (enablement-time design item, #1225).** Frame-fed (D2-impl)
+  discards any model reasoning / content emitted *alongside* a tool_call — only the op
+  *results* are carried forward (in `control_ir_results`). Across many op-turns the model
+  therefore loses its own reasoning continuity (it re-derives from the frame each turn
+  rather than its native tool-message history). Not problematic in the 1-op 動作確認, but
+  it could degrade complex multi-step op sequences. A **required design item for
+  production-enablement** (#1225); candidate mitigation = persist the model's reasoning on
+  the frame side so it survives the turn boundary.
+- **Compaction (positive — preserved).** Because frame-fed accumulates op results into
+  `control_ir_results`, the existing **phase-axis compaction** applies to the op-loop
+  exactly as to json-mode (older results summarised once they exceed
+  `recent_act_turns_raw`), keeping the prompt bounded across long op sequences. This is
+  part of why frame-fed is sound, and is pinned by a regression-guard test
+  (`test_op_loop_compaction_1212.py`, #1227).
 
 ## Migration — proposed PR split (dependency order; each behavior-preserving)
 
