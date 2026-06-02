@@ -430,11 +430,45 @@ def _is_empty_router_response(response: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
-class RouterLoopHost(Protocol):
-    """Abstract surface RouterLoop needs.
+class RouterLoopCore(Protocol):
+    """#1092 PR-A (ADR-0036 FD1, decision c): the NARROW core surface the
+    RouterLoop act-loop actually depends on — the members RouterLoop's loop
+    directly calls for ANY host (chat / plan-step / phase). A phase implements
+    ONLY this (via PhaseRouterLoopHost) — no chat-extra stubs. The chat
+    ``RouterHostAdapter`` is a superset and satisfies this for free.
+
+    The chat-extras (skills/agents/mcp/memory/web/file/reyn_src/embedding/
+    discovery/spawn/send_to_agent/record_plan_*) live on ``RouterLoopHost``
+    below; they are reached only via the chat-discovery setup, the chat
+    system-prompt build, or chat-dispatch handlers — a phase never reaches them
+    (its op catalog REPLACES chat-discovery, and its ops dispatch via the op
+    handlers + ``make_router_op_context``). ``get_phase_op_catalog`` is a
+    phase-only getattr-hook (not declared here — chat doesn't implement it).
+    """
+
+    agent_name: str
+    agent_role: str
+    output_language: str | None
+
+    @property
+    def events(self) -> Any:
+        """EventLog (has .emit(type: str, **data)) for tool dispatch events."""
+        ...
+
+    def resolve_model(self, name: str) -> str: ...
+    def make_router_op_context(self) -> Any: ...
+    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None: ...
+
+
+@runtime_checkable
+class RouterLoopHost(RouterLoopCore, Protocol):
+    """Abstract surface RouterLoop needs (chat-mode superset of RouterLoopCore).
 
     Implemented by RouterHostAdapter in
-    src/reyn/chat/services/router_host_adapter.py.
+    src/reyn/chat/services/router_host_adapter.py. Extends RouterLoopCore
+    (#1092 PR-A) with the chat-only methods (discovery / tool-exec primitives /
+    plan-record); the core members are inherited (the redundant re-declarations
+    below are harmless Protocol overlap, pending a follow-up cleanup).
     """
 
     # Static catalogue access
