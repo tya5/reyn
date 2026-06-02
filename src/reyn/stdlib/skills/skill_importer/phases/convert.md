@@ -455,9 +455,11 @@ allowed_ops: [<op_kinds>]
 `allowed_ops` lists the Control IR op kinds the phase actually emits. Pick
 the smallest set from `op_catalog` — narrower lists keep the LLM on task
 and reduce prompt tokens. If the source skill calls tools (HTTP fetch,
-shell, file I/O), map them to the closest reyn ops. If the phase emits no
+shell, file I/O), map them to the closest reyn ops — file I/O maps to the
+fine file kinds (read_file / write_file / edit_file / delete_file /
+glob_files / grep_files; pick what the phase needs). If the phase emits no
 side effects (pure judging/routing), use `[]`. Omit the field to inherit
-the default `[file, ask_user]`.
+the default (all fine file kinds + ask_user).
 
 If the phase has a python preprocessor (per Step 2's decision), include
 `preprocessor` and `permissions.python` blocks in the frontmatter:

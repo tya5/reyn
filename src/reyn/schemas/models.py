@@ -111,8 +111,18 @@ class Phase(BaseModel):
     # ContextFrame and is enforced at executor dispatch (defense in depth). The
     # default reflects the common case: file I/O plus user clarification. An
     # explicit empty list means "no ops" (e.g. pure routing phases).
+    # #1240 Wave 2a: the default uses the fine-grained file kinds (the faithful
+    # uniform equivalent of the legacy coarse `file` grant — same file
+    # capability), so a phase that omits allowed_ops is born fine-native, keeping
+    # the file→fine migration durable end-to-end (the legacy coarse `file` kind
+    # is dropped in Wave 2b). No existing stdlib phase omits allowed_ops, so this
+    # default change is behaviorally inert for them — it only shapes
+    # future-generated / omitting skills.
     allowed_ops: list[str] = Field(
-        default_factory=lambda: ["file", "ask_user"],
+        default_factory=lambda: [
+            "read_file", "write_file", "edit_file", "delete_file",
+            "glob_files", "grep_files", "ask_user",
+        ],
     )
     # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy for
     # ``sandboxed_exec`` ops. When set, the OS applies it to every sandboxed_exec
