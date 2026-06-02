@@ -48,10 +48,10 @@ class InterventionWidget(Widget):
     DEFAULT_CSS = f"""
     InterventionWidget {{
         background: {_IV_SURFACE};
-        border: solid $primary;
-        padding: 1 2;
+        border-left: thick $primary;
+        padding: 0 1;
         height: auto;
-        margin: 1 0;
+        margin: 1 0 0 0;
         color: {_IV_TEXT};
     }}
     InterventionWidget Label.iv-question {{
