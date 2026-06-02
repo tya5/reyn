@@ -415,7 +415,7 @@ Re-record manually if you need to use replay mode before the next live run.
 
 - `dogfood-discipline.md` — methodology (= 9 principles, A1-A5 loop, Brier scoring)
 - `dogfood-reporting.md` — reporting layer (= journal + Discussions + Issues)
-- `concepts/dogfood-scenarios.md` — YAML schema, 4-band outcome, coverage mechanics
+- `concepts/observability/dogfood-scenarios.md` — YAML schema, 4-band outcome, coverage mechanics
 - `reference/cli/dogfood.md` — CLI subcommand reference
 - `proposals/0036-dogfood-scenario-framework.md` — design rationale and open points
 - Memory `feedback_dogfood_driver_role` — autonomous driver discipline

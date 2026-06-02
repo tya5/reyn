@@ -446,4 +446,4 @@ jq '.aggregate.verified_pct' report.json
 - [`dogfood-discipline.md`](dogfood-discipline.md) — 方法論層: 9 原則フレームワーク、A1–A5 iterative loop、scenario 設計
 - [`dogfood-regression-playbook.md`](dogfood-regression-playbook.md) — ステップバイステップの実行手順、regression トリアージ、fix-wave dispatch (R2 担当)
 - [`reference/cli/dogfood.md`](../../reference/cli/dogfood.md) — CLI リファレンス: `reyn dogfood run`、`compare`、`baseline`
-- [`concepts/dogfood-scenarios.md`](../../concepts/dogfood-scenarios.md) — scenario set YAML スキーマの authority
+- [`concepts/observability/dogfood-scenarios.md`](../../concepts/observability/dogfood-scenarios.md) — scenario set YAML スキーマの authority
