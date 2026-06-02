@@ -380,6 +380,24 @@ class LLMCallRecorder:
         )
         return result
 
+    def make_phase_memo_provider(
+        self, *, phase: str, state: "RunState",
+    ) -> "_PhaseMemoProvider":
+        """#1092 PR-A (FD4): expose ``call_tools``'s WAL memo as a RouterLoop
+        ``memo_provider`` seam.
+
+        When the converged op-loop drives the shared ``RouterLoop`` (Fork 1),
+        the act-turn LLM call moves from ``call_tools`` into RouterLoop's own
+        call path; this provider relocates the SAME op_invocation_id-sequenced
+        WAL ``committed_steps`` memo (#1212 decision A) to RouterLoop's
+        ``get_recorded_result`` / ``record`` seam — keeping json-mode-equal
+        crash recovery WITHOUT a new persistence mechanism (true FD4 unify, no
+        new args_hash-only store). Bound to this recorder's WAL collaborators
+        (``_resume_plan`` / ``_state_log`` / ``_run_id`` / ``_skill_registry``)
+        and the per-run ``state`` (for ``next_llm_invocation_id``).
+        """
+        return _PhaseMemoProvider(recorder=self, phase=phase, state=state)
+
     # ── Model resolution ───────────────────────────────────────────────────────
 
     def _effective_model(self, phase_name: str) -> str:
@@ -568,3 +586,96 @@ class LLMCallRecorder:
                 chain_id=self._chain_id,
                 **check.context,
             )
+
+
+class _PhaseMemoProvider:
+    """#1092 PR-A (FD4): the phase-side ``memo_provider`` for ``RouterLoop``.
+
+    Bridges RouterLoop's args_hash-keyed memo seam (``get_recorded_result`` /
+    ``record``) onto the SAME op_invocation_id-sequenced WAL ``committed_steps``
+    the json-mode op-loop's ``LLMCallRecorder.call_tools`` uses (#1212 decision
+    A), so the RouterLoop-driven op-loop keeps json-mode-equal crash recovery.
+    Created via ``LLMCallRecorder.make_phase_memo_provider`` and reuses the
+    recorder's own WAL primitives (no duplication, no new persistence).
+
+    **op_invocation_id pairing (FD4 correctness crux).** RouterLoop calls
+    ``get_recorded_result(hash)`` exactly once per act turn, then
+    ``record(hash, result)`` only on a MISS. The id is allocated in ``get``
+    (``state.next_llm_invocation_id`` — called every turn on BOTH fresh and
+    resume) and consumed by the matching ``record``. So the id SEQUENCE is
+    driven by ``get`` and stays deterministic across fresh-vs-resume, including
+    the resume lookup-HIT path where ``record`` is skipped: the hit consumed the
+    id for its lookup, and the next turn's ``get`` advances to the next id
+    regardless. This mirrors ``call_tools``'s single ``next_llm_invocation_id``
+    per turn. Pinned by the crash-recovery round-trip test (set→crash→resume→
+    json-mode-equal, non-default values).
+
+    args_hash: RouterLoop computes the messages-based ``compute_sub_loop_args_hash``;
+    this provider stores AND looks up by that value, so a resume recomputes the
+    same hash from the same messages and the WAL match holds. (``call_tools``'s
+    frame-based ``_compute_llm_args_hash`` is moot here — an opted-in skill never
+    takes the ``call_tools`` path, so there is no cross-contamination.)
+    """
+
+    def __init__(
+        self, *, recorder: "LLMCallRecorder", phase: str, state: "RunState",
+    ) -> None:
+        self._recorder = recorder
+        self._phase = phase
+        self._state = state
+        # The id allocated by the most recent get_recorded_result, consumed by
+        # the matching record (RouterLoop's get-then-record-on-miss per turn).
+        self._pending_op_id: str | None = None
+
+    def get_recorded_result(self, args_hash: str) -> "LLMToolCallResult | None":
+        from reyn.llm.llm import LLMToolCallResult
+
+        op_id = self._state.next_llm_invocation_id(self._phase)
+        self._pending_op_id = op_id
+        resume_plan = self._recorder._resume_plan
+        if resume_plan is None:
+            return None
+        memo = _lookup_memoized_step(resume_plan, op_id, self._phase, args_hash)
+        if memo is None:
+            return None
+        stored = self._recorder._extract_memoized_llm_result(
+            memo, phase=self._phase, op_invocation_id=op_id,
+        )
+        if stored is None:
+            return None
+        self._recorder._events.emit(
+            "step_memoized",
+            run_id=self._recorder._run_id,
+            phase=self._phase,
+            op_invocation_id=op_id,
+            op_kind="llm",
+            args_hash=args_hash,
+        )
+        return LLMToolCallResult(
+            content=stored.get("content"),
+            tool_calls=stored.get("tool_calls") or [],
+            finish_reason=stored.get("finish_reason"),
+            usage=TokenUsage(prompt_tokens=0, completion_tokens=0),
+        )
+
+    async def record(
+        self, *, args_hash: str, result: "LLMToolCallResult",
+    ) -> None:
+        op_id = self._pending_op_id
+        if op_id is None:
+            # Defensive: record without a preceding get (not RouterLoop's
+            # get-then-record-on-miss flow). Allocate one so the WAL still
+            # records this turn rather than silently dropping it.
+            op_id = self._state.next_llm_invocation_id(self._phase)
+        await self._recorder._wal_step_completed_for_llm(
+            phase=self._phase,
+            op_invocation_id=op_id,
+            args_hash=args_hash,
+            result={
+                "content": result.content,
+                "tool_calls": result.tool_calls,
+                "finish_reason": result.finish_reason,
+            },
+            usage=result.usage.to_dict() if result.usage else None,
+        )
+        self._pending_op_id = None
