@@ -782,7 +782,7 @@ amortise against.
 
 - `docs/concepts/llm-invocation-surfaces.md` — the doctrine doc this ADR
   resolves; commit `1423f85`.
-- `docs/concepts/principles.md` — P3, P4, P5, P6, P7 invariants preserved
+- `docs/concepts/architecture/principles.md` — P3, P4, P5, P6, P7 invariants preserved
   by this design.
 - ADR-0001 (`0001-state-model-wal-snapshot.md`) — prior structural ADR;
   format and consequence structure reference.

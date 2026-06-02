@@ -26,7 +26,7 @@ Every event has:
 
 Every event emitted from a session whose `agent.id` is configured (in `reyn.yaml`) automatically carries an `agent_id` field in its payload. The default value is `reyn/<hostname>`. This enables RBAC and multi-agent audit trails per SOC2 / ISO 27001 / METI v1.1 requirements.
 
-See [Concepts: multi-agent](../../concepts/multi-agent.md) — "Agent ID propagation" for details.
+See [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — "Agent ID propagation" for details.
 
 ## Lifecycle events
 
@@ -42,7 +42,7 @@ See [Concepts: multi-agent](../../concepts/multi-agent.md) — "Agent ID propaga
 
 ## Plan lifecycle
 
-Plan-mode events cover the full lifetime of a parallel plan — from decomposition through step execution to aggregation or interruption. See [Concepts: plan-mode](../../concepts/plan-mode.md) for the architectural context.
+Plan-mode events cover the full lifetime of a parallel plan — from decomposition through step execution to aggregation or interruption. See [Concepts: plan-mode](../../concepts/multi-agent/plan-mode.md) for the architectural context.
 
 `plan_started` and `plan_completed` / `plan_aborted` are written to the agent WAL (`state_log.jsonl`), not the forensic event log — they appear in state recovery but not in the Events tab stream. The remaining events below are emitted to the regular events log and surface in the TUI Events tab under the `plan` filter.
 
@@ -102,7 +102,7 @@ Each Control IR op kind emits its own event:
 - `sub_skill_credential_scope` is audit-grade; used to reconstruct the credential authorisation chain across nested skill runs. Pairs with `run_skill_started` (same `skill` name).
 - `token_refresh_failed` pairs with `token_refreshed` — exactly one is emitted per `get_valid_token` call that performs a network refresh.
 
-See also: [Concepts: secret handling](../../concepts/secret-handling.md) — OAuth lifecycle and credential scoping; [Concepts: permission model](../../concepts/permission-model.md) — per-skill credential scoping; [DSL reference: `required_credentials`](../dsl/skill-md.md).
+See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — OAuth lifecycle and credential scoping; [Concepts: permission model](../../concepts/runtime/permission-model.md) — per-skill credential scoping; [DSL reference: `required_credentials`](../dsl/skill-md.md).
 
 ## Action catalog routing
 
@@ -171,4 +171,4 @@ Two consequences fall out of "every state change emits":
 
 - [run.md](../cli/run.md) — `--events` flag
 - [control-ir.md](control-ir.md) — Control IR ops
-- [Concepts: events](../../concepts/events.md)
+- [Concepts: events](../../concepts/runtime/events.md)

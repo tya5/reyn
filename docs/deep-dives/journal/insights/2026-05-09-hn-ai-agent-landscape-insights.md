@@ -194,7 +194,7 @@ Reyn の Phase model はこの定義に **構造的に完全一致**:
 価値が高い (= 「 agent とは何か」 の議論で読者が知っている語彙を借りられる)。
 
 具体的な doc 更新候補:
-- `docs/concepts/architecture.md` または `phase-vs-skill-vs-os.md` に
+- `docs/concepts/architecture/architecture.md` または `phase-vs-skill-vs-os.md` に
   「 act-sense-react loop の Reyn 実装」 section 追加
 - 引用: Tines litmus test (= public blog、 引用可能) + HN コメントの
   「 act, sense, re-act feedback loop」 表現

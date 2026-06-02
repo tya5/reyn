@@ -9,7 +9,7 @@ applies_to: [reyn chat]
 
 agent にアタッチされたインタラクティブな REPL セッションを開始します。各ユーザーターンは `skill_router` stdlib Skill を通じてディスパッチされ、意図を分類して直接返信、プロジェクト/stdlib Skill の実行、または別の agent への委任を行います。
 
-Memory の検索と書き込みはルーター Phase の内部で自動的に行われます。[コンセプト/memory](../../concepts/memory.md) を参照してください。
+Memory の検索と書き込みはルーター Phase の内部で自動的に行われます。[コンセプト/memory](../../concepts/data-retrieval/memory.md) を参照してください。
 
 ## 概要
 
@@ -76,7 +76,7 @@ reyn chat researcher
 
 ## マルチエージェントの動作
 
-ルーターがこのターンは別の agent が処理した方がよいと判断した場合、`skills_to_run` エントリーの代わりに（またはそれに加えて）`messages_to_agents` エントリーを出力します。受信 agent はリクエストを非同期に処理します。返信は発信元のチェーンに自動ルーティングされて戻ります。完全なモデルについては [コンセプト/multi-agent](../../concepts/multi-agent.md) を参照してください。
+ルーターがこのターンは別の agent が処理した方がよいと判断した場合、`skills_to_run` エントリーの代わりに（またはそれに加えて）`messages_to_agents` エントリーを出力します。受信 agent はリクエストを非同期に処理します。返信は発信元のチェーンに自動ルーティングされて戻ります。完全なモデルについては [コンセプト/multi-agent](../../concepts/multi-agent/multi-agent.md) を参照してください。
 
 ユーザーが開始したチェーンは中間の `reply_text`（発信元 agent の最初のルーターターン）を発行し、その後デリゲートのレスポンスが届いた後に最終的な統合された返信が続きます。これにより、ホップをまたいでも「作業中です」という UX が保たれます。
 
@@ -114,7 +114,7 @@ reyn chat --model strong
 - [リファレンス: profile-yaml](../dsl/profile-yaml.md)
 - [リファレンス: multi-agent 設定](../config/multi-agent.md) — `safety.loop.max_agent_hops`
 - [リファレンス: state-dir](../config/state-dir.md) — `agents/` の場所
-- [コンセプト: multi-agent](../../concepts/multi-agent.md)
-- [コンセプト: memory](../../concepts/memory.md)
-- [コンセプト: plan-mode](../../concepts/plan-mode.md)
-- [コンセプト: skill-resume](../../concepts/skill-resume.md)
+- [コンセプト: multi-agent](../../concepts/multi-agent/multi-agent.md)
+- [コンセプト: memory](../../concepts/data-retrieval/memory.md)
+- [コンセプト: plan-mode](../../concepts/multi-agent/plan-mode.md)
+- [コンセプト: skill-resume](../../concepts/skills/skill-resume.md)

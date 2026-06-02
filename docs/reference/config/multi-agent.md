@@ -74,10 +74,10 @@ safety:
 
 ## Considered but not adopted
 
-- `topology_policy` — was considered but rejected in favor of the auto-managed `_default` topology (see [concepts/topology](../../concepts/topology.md))
+- `topology_policy` — was considered but rejected in favor of the auto-managed `_default` topology (see [concepts/topology](../../concepts/multi-agent/topology.md))
 
 ## See also
 
-- [Concepts: multi-agent](../../concepts/multi-agent.md)
+- [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md)
 - [Reference: chat CLI](../cli/chat.md)
 - [Reference: events](../runtime/events.md) — `agent_message_*` events carry `chain_id` and `depth`

@@ -7,7 +7,7 @@ applies_to: [skill_improver]
 
 # `skill_improver` — review criteria
 
-Use this list when you (the `skill_improver` skill) audit an existing skill. Each criterion maps to one or more of the [P1–P8 principles](../../../concepts/principles.md). Findings should be specific, file-anchored, and actionable.
+Use this list when you (the `skill_improver` skill) audit an existing skill. Each criterion maps to one or more of the [P1–P8 principles](../../../concepts/architecture/principles.md). Findings should be specific, file-anchored, and actionable.
 
 ## Phase markdown
 

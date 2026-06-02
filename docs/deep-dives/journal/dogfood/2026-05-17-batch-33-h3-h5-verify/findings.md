@@ -181,7 +181,7 @@ Aggregate: 0 V net.
 
 ### 4.4 [MED] PLAN-STEP-PATH residual (W6, persistent from B30-MED-3)
 
-`plan_summary_across_n_files` still calls `reyn_src_read(principles.md)` (bare filename) instead of `reyn_src_read(docs/concepts/principles.md)`. The cwd injection from B29-MED-3 is present in the step system prompt but the step LLM ignores it for path resolution.
+`plan_summary_across_n_files` still calls `reyn_src_read(principles.md)` (bare filename) instead of `reyn_src_read(docs/concepts/architecture/principles.md)`. The cwd injection from B29-MED-3 is present in the step system prompt but the step LLM ignores it for path resolution.
 
 **Fix direction**: enrich plan-tool description's `steps_json` example with full-path examples, OR have the planner expand bare filenames in step descriptions before dispatch (= preprocessor-level). Both are scope-medium; the latter is more robust.
 

@@ -117,7 +117,7 @@ Work through each section in order. Each item names the failure mode it prevents
 
   At minimum, confirm that a `skill_started`, one `phase_completed` per phase,
   and a `skill_finished` event are present. Missing events indicate a phase
-  that mutated state without going through the OS ([P6](../../../concepts/principles.md#p6-events-are-the-audit-truth)).
+  that mutated state without going through the OS ([P6](../../../concepts/architecture/principles.md#p6-events-are-the-audit-truth)).
 
 - [ ] **No events have `status: error` that the skill is silently swallowing.**
 

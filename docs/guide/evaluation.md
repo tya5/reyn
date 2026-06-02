@@ -280,7 +280,7 @@ permissions:
   python.unsafe: allow
 ```
 
-See [Concepts: permission model](../concepts/permission-model.md) for the full three-layer pre-approval model.
+See [Concepts: permission model](../concepts/runtime/permission-model.md) for the full three-layer pre-approval model.
 
 ---
 
@@ -313,9 +313,9 @@ The `judge_output` rubric drives the score. Vague rubrics ("the output is good")
 
 ## See also
 
-- [Concepts: evaluation](../concepts/evaluation.md) — architecture and positioning
+- [Concepts: evaluation](../concepts/observability/evaluation.md) — architecture and positioning
 - [Reference: `reyn eval`](../reference/cli/eval.md) — full CLI flag reference
-- [Concepts: events](../concepts/events.md) — P6 event log
-- [Concepts: workspace](../concepts/workspace.md) — workspace isolation model
-- [Concepts: permission model](../concepts/permission-model.md) — non-interactive pre-approval
+- [Concepts: events](../concepts/runtime/events.md) — P6 event log
+- [Concepts: workspace](../concepts/runtime/workspace.md) — workspace isolation model
+- [Concepts: permission model](../concepts/runtime/permission-model.md) — non-interactive pre-approval
 - [Getting started: Writing an eval](getting-started/05-writing-an-eval.md) — rubric-based eval with `eval_builder`

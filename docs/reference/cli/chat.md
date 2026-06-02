@@ -9,7 +9,7 @@ applies_to: [reyn chat]
 
 Start an interactive REPL session attached to an agent. Each user turn is dispatched through the `skill_router` stdlib skill, which classifies the intent and either replies directly, runs a project / stdlib skill, or delegates to another agent.
 
-Memory recall and write happen automatically inside the router phase — see [concepts/memory](../../concepts/memory.md).
+Memory recall and write happen automatically inside the router phase — see [concepts/memory](../../concepts/data-retrieval/memory.md).
 
 ## Synopsis
 
@@ -77,11 +77,11 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/help [<cmd>]` | Slash command help — list all, or focus on one |
 | `/image <path>` | Attach an image to the next user message (multimodal input) |
 | `/list` | List running skills and pending interventions |
-| `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/memory.md)) |
+| `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/data-retrieval/memory.md)) |
 | `/pending [list\|discard <id>\|claim <id>]` | List / discard / claim stalled cross-channel ops |
 | `/plan list` | Show active plan runs (combined view: in-flight tasks + pending-resume) |
 | `/plan discard <plan_id>` | Abort a specific plan run + cleanup; notifies waiting peer agents via R-D14 |
-| `/plan resume <plan_id> --from <step_id>` | Surgical operator escape hatch; clears step results from the target step onward and re-launches with a fresh resume_plan ; see [concepts/plan-mode](../../concepts/plan-mode.md) |
+| `/plan resume <plan_id> --from <step_id>` | Surgical operator escape hatch; clears step results from the target step onward and re-launches with a fresh resume_plan ; see [concepts/plan-mode](../../concepts/multi-agent/plan-mode.md) |
 | `/quit` | Exit the chat (alias: `/exit`, Ctrl+D) |
 | `/reset confirm` | Reset in-flight skill state (snapshots + WAL; audit logs preserved) |
 | `/save [path]` | Save the conv pane to a file (auto-names if path omitted) |
@@ -96,7 +96,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 
 ## Multi-agent behavior
 
-If the router decides this turn would be better handled by another agent, it emits a `messages_to_agents` entry instead of (or in addition to) a `skills_to_run` entry. The receiving agent processes the request asynchronously; its reply is auto-routed back into the originating chain. See [concepts/multi-agent](../../concepts/multi-agent.md) for the full model.
+If the router decides this turn would be better handled by another agent, it emits a `messages_to_agents` entry instead of (or in addition to) a `skills_to_run` entry. The receiving agent processes the request asynchronously; its reply is auto-routed back into the originating chain. See [concepts/multi-agent](../../concepts/multi-agent/multi-agent.md) for the full model.
 
 A user-initiated chain emits an interim `reply_text` (the originating agent's first router turn) followed by a synthesized final reply (after delegate responses arrive). This preserves the "you'll see I'm working on it" UX even across hops.
 
@@ -134,7 +134,7 @@ reyn chat --model strong
 - [Reference: profile-yaml](../dsl/profile-yaml.md)
 - [Reference: multi-agent config](../config/multi-agent.md) — `safety.loop.max_agent_hops`
 - [Reference: state-dir](../config/state-dir.md) — `agents/` location
-- [Concepts: multi-agent](../../concepts/multi-agent.md)
-- [Concepts: memory](../../concepts/memory.md)
-- [Concepts: plan-mode](../../concepts/plan-mode.md)
-- [Concepts: skill-resume](../../concepts/skill-resume.md)
+- [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md)
+- [Concepts: memory](../../concepts/data-retrieval/memory.md)
+- [Concepts: plan-mode](../../concepts/multi-agent/plan-mode.md)
+- [Concepts: skill-resume](../../concepts/skills/skill-resume.md)

@@ -45,7 +45,7 @@ The B29-MED-3 fix (`build_plan_step_system_prompt` cwd injection at line 374 of 
 
 1. The router LLM generates plan step descriptions with bare filenames ("Read the principles.md file") extracted from the user query.
 2. Step LLMs follow their description and call `reyn_src_read("principles.md")`.
-3. `reyn_src_read` requires repo-root-relative paths (`docs/concepts/principles.md`).
+3. `reyn_src_read` requires repo-root-relative paths (`docs/concepts/architecture/principles.md`).
 
 All 3 plan steps observed across 2 plan instances (request_ids: 90f62873, 27823dfb, 1f334861) called `reyn_src_read({"path": "principles.md"})` with the same bare filename.
 

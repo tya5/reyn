@@ -11,7 +11,7 @@
 - **Without it**: the LLM has to guess which category your intent belongs to (`file` / `mcp` / `memory.entry` / …) and run `list_actions(category=[...])` to enumerate. For natural-language asks like _"find an action that converts PDF to text"_ the LLM may also try and refuse if it doesn't immediately spot a match.
 - **With it**: the LLM runs `search_actions(query="PDF to text")` and gets a top-K relevance-ranked list across every category. It can then `describe_action` or `invoke_action` directly.
 
-`action_retrieval.embedding_class` defaults to `local-mini`, so installing the `local-embed` extras is the only step required. If the extras are absent, ChatSession silently treats this as "no class configured" — `search_actions` is gated **out** of the LLM's tool list (see [visibility gate](../../concepts/universal-catalog.md#what-stays-out-of-phase-1)) and `list_actions` surfaces the hidden-state hint pointing back at this guide.
+`action_retrieval.embedding_class` defaults to `local-mini`, so installing the `local-embed` extras is the only step required. If the extras are absent, ChatSession silently treats this as "no class configured" — `search_actions` is gated **out** of the LLM's tool list (see [visibility gate](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1)) and `list_actions` surfaces the hidden-state hint pointing back at this guide.
 
 ## Path A — local sentence-transformers (recommended for first-time users)
 
@@ -89,10 +89,10 @@ If you skip both Path A and Path B and still ask the LLM to "find an action for 
 
 **Swapping classes returns stale results** — Reyn's cache stores one `model_class` at a time. Class swaps trigger automatic re-embedding on the next session, but you can force it eagerly with `reyn embeddings rebuild`.
 
-**Old `mcp.server` / `agent.peer` category mentioned by the LLM** — the LLM's training data may pre-date a Reyn collapse refactor. `list_actions(category=["mcp.server"])` post-Reyn-0.4 returns an [explicit error with a legacy → current mapping](../../concepts/universal-catalog.md#category-validation--legacy-redirect) so the LLM self-corrects in a single retry.
+**Old `mcp.server` / `agent.peer` category mentioned by the LLM** — the LLM's training data may pre-date a Reyn collapse refactor. `list_actions(category=["mcp.server"])` post-Reyn-0.4 returns an [explicit error with a legacy → current mapping](../../concepts/tools-integrations/universal-catalog.md#category-validation--legacy-redirect) so the LLM self-corrects in a single retry.
 
 ## Related
 
 - [`reyn embeddings` CLI reference](../../reference/cli/embeddings.md) — status / rebuild / clear
-- [Concepts: universal catalog](../../concepts/universal-catalog.md) — how `list_actions` / `search_actions` fit together
-- [Concepts: RAG](../../concepts/rag.md#embedding-configuration) — the underlying `embedding.classes` config map (shared with document recall)
+- [Concepts: universal catalog](../../concepts/tools-integrations/universal-catalog.md) — how `list_actions` / `search_actions` fit together
+- [Concepts: RAG](../../concepts/data-retrieval/rag.md#embedding-configuration) — the underlying `embedding.classes` config map (shared with document recall)

@@ -125,4 +125,4 @@ Brier target: ≤ 0.25 (= batch 13 0.20 から微調整)
 - batch 13 findings: `../2026-05-06-batch-13-revert-and-real-milestone/findings.md`
 - M2 audit (= B12-NEW-2/3 source): `../2026-05-06-batch-12-real-milestone/findings/B12-M2-fixture-audit.md`
 - B13-NEW-1 source: `../2026-05-06-batch-13-revert-and-real-milestone/findings/B13-S4-stability-5shot.md`
-- documented permission model: `../../en/concepts/permission-model.md`
+- documented permission model: `../../en/concepts/runtime/permission-model.md`

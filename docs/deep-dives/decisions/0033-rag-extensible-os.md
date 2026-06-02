@@ -411,7 +411,7 @@ override で `instructions_override` で trivial 化 path も用意済。
       lock / corruption hint) landed
 - [ ] Tier 2 tests (= per-op ~5 tests × 5 = ~25) + Tier 3 LLMReplay (=
       index_docs e2e fixture) pass
-- [ ] mkdocs strict pass、 新 doc page (= `docs/concepts/rag.md` (+ja) +
+- [ ] mkdocs strict pass、 新 doc page (= `docs/concepts/data-retrieval/rag.md` (+ja) +
       `docs/reference/cli/source.md` (+ja)) landed
 - [ ] memory inline behavior 不変 confirm (= 既存 dogfood scenario 1 retest)
 - [ ] Manual dogfood: Reyn 自身の src/docs を index、 recall query で動作確認

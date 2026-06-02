@@ -203,5 +203,5 @@ grep "<chain_id>" .reyn/events/**/*.jsonl
 
 - [debug-with-events.md](debug-with-events.md) — 問題の原因を探す（デバッグ用途）
 - [Reference: events](../../../reference/runtime/events.md) — イベント種別の完全一覧とフィールド定義
-- [Concepts: events](../../../concepts/events.md) — Events 設計思想（なぜすべてをイベントにするか）
+- [Concepts: events](../../../concepts/runtime/events.md) — Events 設計思想（なぜすべてをイベントにするか）
 - [Reference: Control IR](../../../reference/runtime/control-ir.md) — Control IR op の一覧

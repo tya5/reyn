@@ -129,5 +129,5 @@ The allowlist filters an existing catalogue — names that don't resolve are sil
 
 - [Reference: profile-yaml](../../../reference/dsl/profile-yaml.md) — full schema and tristate semantics
 - [Reference: agent CLI](../../../reference/cli/agent.md)
-- [Concepts: multi-agent](../../../concepts/multi-agent.md) — where allowlist sits in the architecture
+- [Concepts: multi-agent](../../../concepts/multi-agent/multi-agent.md) — where allowlist sits in the architecture
 - [How-to: build an agent team](build-an-agent-team.md) — combine restriction with topology

@@ -17,7 +17,7 @@ applies_to: [reyn.yaml, .reyn/approvals.yaml, phases/*.md]
 | 保存された承認 | `.reyn/approvals.yaml` | (Skill, op, パス) ごと |
 | プロジェクト全体の事前承認 | `reyn.yaml` の `permissions:` | op kind ごと |
 
-デフォルトは保守的です。その他はすべてオプトインです。理由については [Permission モデルのコンセプト](../../concepts/permission-model.md) を参照してください。
+デフォルトは保守的です。その他はすべてオプトインです。理由については [Permission モデルのコンセプト](../../concepts/runtime/permission-model.md) を参照してください。
 
 ## Phase で宣言する
 
@@ -107,4 +107,4 @@ reyn permissions clear     # すべて削除（確認を求める）
 - [リファレンス: permissions](../../reference/config/permissions.md)
 - [リファレンス: reyn.yaml](../../reference/config/reyn-yaml.md)
 - [リファレンス: state-dir](../../reference/config/state-dir.md)
-- [コンセプト: Permission モデル](../../concepts/permission-model.md)
+- [コンセプト: Permission モデル](../../concepts/runtime/permission-model.md)

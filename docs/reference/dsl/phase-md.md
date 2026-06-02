@@ -7,7 +7,7 @@ applies_to: [phases/*.md]
 
 # `phase.md` frontmatter
 
-Each phase lives in `phases/<phase_name>.md` under its skill directory. The YAML frontmatter declares only what the phase consumes — never what it produces, never which phase comes next ([P1](../../concepts/principles.md)).
+Each phase lives in `phases/<phase_name>.md` under its skill directory. The YAML frontmatter declares only what the phase consumes — never what it produces, never which phase comes next ([P1](../../concepts/architecture/principles.md)).
 
 ## Schema
 
@@ -53,15 +53,15 @@ preprocessor:                  # optional; deterministic pre-LLM steps
 - **`preprocessor`** — chain of deterministic steps that run before the LLM call. See `reference/dsl/preprocessor.md` (Phase 2).
 - **`allowed_ops`** — list of Control IR op kinds this phase may emit (e.g. `[file, lint]`). The OS filters the `available_control_ops` advertised to the LLM down to this set, *and* rejects any out-of-set op the LLM emits anyway with `control_ir_skipped: not_allowed_in_phase`. Default: `["file", "ask_user"]` — file I/O plus user clarification, the common case. An explicit empty list (`[]`) means "no ops" (use this for pure routing/judging phases). The narrower the list, the less context spent on op descriptions and the less room the LLM has to drift outside the phase's intent. Meta-skills (`skill_builder`, `skill_improver`, `skill_importer`) consult the ContextFrame's `op_catalog` field — a reference list of every op kind the OS supports — to choose `allowed_ops` values for the phases they generate.
 
-- **`default_sandbox_policy`** — optional mapping of [`SandboxPolicy`](../../concepts/permission-model.md) kwargs (`network`, `read_paths`, `write_paths`, `allow_subprocess`, `env_passthrough`, `timeout_seconds`). When set, the OS applies it to **every** `sandboxed_exec` op this phase runs, overriding the op's own policy fields — so the policy is deterministic and the LLM cannot weaken or strengthen it. Omitted → each op's own fields are used. This is policy only (the *what-is-allowed*); the working directory and backend are run context, not declared here. A workspace-coupled backend (e.g. a container `EnvironmentBackend`) may ignore the policy entirely when the container is itself the isolation boundary.
+- **`default_sandbox_policy`** — optional mapping of [`SandboxPolicy`](../../concepts/runtime/permission-model.md) kwargs (`network`, `read_paths`, `write_paths`, `allow_subprocess`, `env_passthrough`, `timeout_seconds`). When set, the OS applies it to **every** `sandboxed_exec` op this phase runs, overriding the op's own policy fields — so the policy is deterministic and the LLM cannot weaken or strengthen it. Omitted → each op's own fields are used. This is policy only (the *what-is-allowed*); the working directory and backend are run context, not declared here. A workspace-coupled backend (e.g. a container `EnvironmentBackend`) may ignore the policy entirely when the container is itself the isolation boundary.
 
-> **Note:** Phase-level `permissions:` was removed in the skill-only permissions migration. Declare permissions at the skill-md frontmatter instead — see [skill-md.md](skill-md.md) and [permission-model.md](../../concepts/permission-model.md).
+> **Note:** Phase-level `permissions:` was removed in the skill-only permissions migration. Declare permissions at the skill-md frontmatter instead — see [skill-md.md](skill-md.md) and [permission-model.md](../../concepts/runtime/permission-model.md).
 
 ## What MUST NOT appear
 
-- Output schema of any kind. Output is determined by the next phase's input or the skill's `final_output` ([P1](../../concepts/principles.md#p1-phase-is-stateless-and-reusable)).
-- The next phase name. The Skill graph owns transitions ([P1](../../concepts/principles.md#p1-phase-is-stateless-and-reusable)).
-- Control IR format descriptions. The OS injects available ops into the context frame ([P8](../../concepts/principles.md#p8-phase-instructions-contain-only-domain-logic)).
+- Output schema of any kind. Output is determined by the next phase's input or the skill's `final_output` ([P1](../../concepts/architecture/principles.md#p1-phase-is-stateless-and-reusable)).
+- The next phase name. The Skill graph owns transitions ([P1](../../concepts/architecture/principles.md#p1-phase-is-stateless-and-reusable)).
+- Control IR format descriptions. The OS injects available ops into the context frame ([P8](../../concepts/architecture/principles.md#p8-phase-instructions-contain-only-domain-logic)).
 
 ## Body
 
@@ -95,4 +95,4 @@ Avoid: meta-commentary, scope hedging, more than three bullets.
 
 - [skill-md.md](skill-md.md) — Skill frontmatter
 - `reference/dsl/preprocessor.md` — preprocessor steps (Phase 2)
-- [Concepts: principles P1, P8](../../concepts/principles.md)
+- [Concepts: principles P1, P8](../../concepts/architecture/principles.md)

@@ -76,4 +76,4 @@ state_dir: /var/lib/reyn/<project>
 
 - [リファレンス: state-dir](../../../reference/config/state-dir.md)
 - [リファレンス: reyn.yaml](../../../reference/config/reyn-yaml.md) — `state_dir` キー
-- [コンセプト: memory](../../../concepts/memory.md)
+- [コンセプト: memory](../../../concepts/data-retrieval/memory.md)

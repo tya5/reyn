@@ -86,4 +86,4 @@ OS の仕事は LLM 駆動の制御フローを安全にすることです。Pha
 
 - [context-frame.md](context-frame.md) — LLM が見るもの
 - [control-ir.md](control-ir.md) — Control IR op スキーマ
-- [コンセプト: principles P4](../../concepts/principles.md#p4-llm-is-a-constrained-decision-engine)
+- [コンセプト: principles P4](../../concepts/architecture/principles.md#p4-llm-is-a-constrained-decision-engine)

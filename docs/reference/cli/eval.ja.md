@@ -350,7 +350,7 @@ reyn eval spec reyn/local/my_skill/eval.md --model strong
 ## 関連情報
 
 - [run.md](run.md) — `reyn run`（基盤となる実行パス）
-- [コンセプト: 評価インフラ](../../concepts/evaluation.md) — アーキテクチャ概要と競合比較
+- [コンセプト: 評価インフラ](../../concepts/observability/evaluation.md) — アーキテクチャ概要と競合比較
 - [ガイド: 評価インフラのセットアップ](../../guide/evaluation.md) — クイックスタート、export バックエンド、CI 連携
 - [リファレンス: `reyn.yaml`](../config/reyn-yaml.md) — `eval.exporters` 設定
 - [リファレンス: control-ir](../runtime/control-ir.md) — `judge_output` op スキーマ

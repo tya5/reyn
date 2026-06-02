@@ -557,7 +557,7 @@ All empty-stop runs returned `completion_tokens=0, content=null`.
 - `src/reyn/chat/router_loop.py` — attractor impact site (line 281–287,
   empty `put_outbox` on stop-without-content)
 - `src/reyn/llm/llm.py` line 540 — `call_llm_tools` `tool_choice` parameter
-- `docs/en/concepts/principles.md` — P3, P4, P7 full rationale
+- `docs/en/concepts/architecture/principles.md` — P3, P4, P7 full rationale
 - [ADR-0012](0012-auto-resume-default.md) — skill-resume machinery (context
   for Option E scope assessment)
 - [ADR-0013](0013-exception-aware-crash-lifecycle.md) — exception-aware

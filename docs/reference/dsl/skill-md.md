@@ -63,7 +63,7 @@ imported_revision: <git-sha>
 
 ## `permissions:` (skill-level)
 
-`permissions:` in `skill.md` frontmatter is the **only** location for permission declarations. Phase-level permissions were removed in the skill-only permissions migration. See [permission-model.md](../../concepts/permission-model.md) for full semantics and capability hierarchy.
+`permissions:` in `skill.md` frontmatter is the **only** location for permission declarations. Phase-level permissions were removed in the skill-only permissions migration. See [permission-model.md](../../concepts/runtime/permission-model.md) for full semantics and capability hierarchy.
 
 ```yaml
 permissions:
@@ -99,7 +99,7 @@ permissions:
 - **`index_drop`** — `true` to allow `index_drop` Control IR ops (default `false`).
 - **`mcp_drop_server`** — `true` to allow `mcp_drop_server` Control IR ops (default `false`).
 
-The `permissions` block is the upper-bound gate: even if a phase's `allowed_ops` would permit an op, the op is rejected at dispatch if it falls outside `skill.permissions`. See [permission-model.md](../../concepts/permission-model.md) for the layered enforcement model.
+The `permissions` block is the upper-bound gate: even if a phase's `allowed_ops` would permit an op, the op is rejected at dispatch if it falls outside `skill.permissions`. See [permission-model.md](../../concepts/runtime/permission-model.md) for the layered enforcement model.
 
 ## `required_credentials:` (optional)
 
@@ -139,8 +139,8 @@ final_output: review_output
 
 ### Cross-references
 
-- [permission-model.md](../../concepts/permission-model.md) — "Per-skill credential scoping" section: threat model and deeper coverage
-- [secret-handling.md](../../concepts/secret-handling.md) — secret store overview
+- [permission-model.md](../../concepts/runtime/permission-model.md) — "Per-skill credential scoping" section: threat model and deeper coverage
+- [secret-handling.md](../../concepts/runtime/secret-handling.md) — secret store overview
 - [events.md](../runtime/events.md) — `sub_skill_credential_scope` event payload
 
 ## `postprocessor:`
@@ -165,7 +165,7 @@ postprocessor:
           html_body: { type: string }
 ```
 
-For full syntax — required fields, optional fields, step kinds, `on_error` policy, and permission gate — see [postprocessor.md](postprocessor.md). For rationale, see [Concepts: postprocessor](../../concepts/postprocessor.md).
+For full syntax — required fields, optional fields, step kinds, `on_error` policy, and permission gate — see [postprocessor.md](postprocessor.md). For rationale, see [Concepts: postprocessor](../../concepts/skills/postprocessor.md).
 
 ## Body
 
@@ -207,4 +207,4 @@ one-paragraph explainer. Two phases: `outline` produces 3 bullets;
 - [phase-md.md](phase-md.md) — Phase frontmatter
 - `reference/dsl/artifact-yaml.md` — artifact schema files (Phase 2)
 - `reference/dsl/graph.md` — graph semantics in depth (Phase 2)
-- [Concepts: P2 Skill defines structure](../../concepts/principles.md#p2-skill-defines-structure)
+- [Concepts: P2 Skill defines structure](../../concepts/architecture/principles.md#p2-skill-defines-structure)

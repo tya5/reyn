@@ -7,7 +7,7 @@ applies_to: [reyn source]
 
 # `reyn source`
 
-`reyn run index_docs` で作成された index 済み source（名前付きドキュメントコレクション）を管理します。メンタルモデルと indexing ワークフローについては [コンセプト: RAG](../../concepts/rag.md) を参照してください。
+`reyn run index_docs` で作成された index 済み source（名前付きドキュメントコレクション）を管理します。メンタルモデルと indexing ワークフローについては [コンセプト: RAG](../../concepts/data-retrieval/rag.md) を参照してください。
 
 ## 概要
 
@@ -172,7 +172,7 @@ reyn run index_docs --source my_docs --path "docs/**/*.md" --description "プロ
 
 ## 関連項目
 
-- [コンセプト: RAG](../../concepts/rag.md) — indexing ワークフロー、source モデル、chunker の概要
+- [コンセプト: RAG](../../concepts/data-retrieval/rag.md) — indexing ワークフロー、source モデル、chunker の概要
 - [`reyn run index_docs`](run.md) — source index を作成または更新する
-- [`recall` ツール](../../concepts/rag.md) — LLM 向けの retrieval ツール
-- [コンセプト: パーミッションモデル](../../concepts/permission-model.md) — `index_drop` パーミッションゲート
+- [`recall` ツール](../../concepts/data-retrieval/rag.md) — LLM 向けの retrieval ツール
+- [コンセプト: パーミッションモデル](../../concepts/runtime/permission-model.md) — `index_drop` パーミッションゲート

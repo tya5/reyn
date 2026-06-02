@@ -62,4 +62,4 @@ Two events are emitted: `user_intervention_requested` and `user_intervention_rec
 
 - [Reference: control-ir](../../reference/runtime/control-ir.md) — `ask_user`
 - [Reference: events](../../reference/runtime/events.md) — `user_intervention_*` events
-- [Concepts: principles P8](../../concepts/principles.md)
+- [Concepts: principles P8](../../concepts/architecture/principles.md)

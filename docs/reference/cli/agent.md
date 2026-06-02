@@ -9,7 +9,7 @@ applies_to: [reyn agent]
 
 Manage persistent agents — long-lived ChatSession instances each with their own profile, history, memory layer, and inbox.
 
-The auto-created `default` agent always exists; `reyn agent new` creates additional named agents. See [concepts/multi-agent](../../concepts/multi-agent.md) for the model.
+The auto-created `default` agent always exists; `reyn agent new` creates additional named agents. See [concepts/multi-agent](../../concepts/multi-agent/multi-agent.md) for the model.
 
 ## Synopsis
 
@@ -96,4 +96,4 @@ Each agent owns `.reyn/agents/<name>/`:
 - [Reference: profile-yaml](../dsl/profile-yaml.md)
 - [Reference: chat CLI](chat.md)
 - [Reference: topology CLI](topology.md)
-- [Concepts: multi-agent](../../concepts/multi-agent.md)
+- [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md)

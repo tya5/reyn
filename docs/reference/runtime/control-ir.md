@@ -257,7 +257,7 @@ Fields: `server` (required — must match a key under `mcp.servers:` in `reyn.ya
 
 The OS resolves the server's transport (`stdio`, `http`, or `sse`), dispatches via `MCPClient`, and returns the tool result. Every call emits `mcp_called`, `mcp_completed`, and (on failure) `mcp_failed` events.
 
-See [concepts/mcp.md](../../concepts/tools-integrations/mcp.md) for server configuration, transport options, and the security model.
+See [concepts/tools-integrations/mcp.md](../../concepts/tools-integrations/mcp.md) for server configuration, transport options, and the security model.
 
 ## `mcp_install`
 

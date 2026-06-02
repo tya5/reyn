@@ -7,7 +7,7 @@ applies_to: [reyn.yaml, mcp.servers, read_local_files]
 
 # MCP サーバーを使う
 
-**目的：** [MCP](../../../concepts/mcp.md) サーバーを reyn に組み込み、Skill から呼び出せるようにします。公式の `filesystem` サーバーと stdlib の `read_local_files` Skill を実例として使用します — `command` と `args` を変更するだけで他のサーバー（`git`、`github`、`fetch`、`brave-search` など）にも適用できます。
+**目的：** [MCP](../../../concepts/tools-integrations/mcp.md) サーバーを reyn に組み込み、Skill から呼び出せるようにします。公式の `filesystem` サーバーと stdlib の `read_local_files` Skill を実例として使用します — `command` と `args` を変更するだけで他のサーバー（`git`、`github`、`fetch`、`brave-search` など）にも適用できます。
 
 ## こんなときに使う
 
@@ -162,8 +162,8 @@ permissions:
 
 ## 参考
 
-- [Concepts: MCP](../../../concepts/mcp.md) — プロトコル概要、トランスポートの選択、セキュリティモデル
-- [コンセプト: シークレット管理](../../../concepts/secret-handling.md) — 認証情報のストレージと `${VAR}` interpolation
+- [Concepts: MCP](../../../concepts/tools-integrations/mcp.md) — プロトコル概要、トランスポートの選択、セキュリティモデル
+- [コンセプト: シークレット管理](../../../concepts/runtime/secret-handling.md) — 認証情報のストレージと `${VAR}` interpolation
 - [Reference: `reyn mcp`](../../../reference/cli/mcp.md) — `install`、`set-secret` などのサブコマンド
 - [Reference: `reyn secret`](../../../reference/cli/secret.md) — 認証情報の管理
 - [Reference: `reyn.yaml` § MCP servers](../../../reference/config/reyn-yaml.md#mcp-servers) — 完全なスキーマ

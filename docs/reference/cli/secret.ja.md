@@ -7,7 +7,7 @@ applies_to: [reyn secret]
 
 # `reyn secret`
 
-`~/.reyn/secrets.env` に保存されたシークレットを管理します。メンタルモデルとセキュリティの特性については [コンセプト: シークレット管理](../../concepts/secret-handling.md) を参照してください。
+`~/.reyn/secrets.env` に保存されたシークレットを管理します。メンタルモデルとセキュリティの特性については [コンセプト: シークレット管理](../../concepts/runtime/secret-handling.md) を参照してください。
 
 ## 概要
 
@@ -168,6 +168,6 @@ SLACK_BOT_TOKEN="xoxb-yyyyyyyy"
 
 ## 関連情報
 
-- [コンセプト: シークレット管理](../../concepts/secret-handling.md) — メンタルモデル、セキュリティ特性、ロードタイミング
+- [コンセプト: シークレット管理](../../concepts/runtime/secret-handling.md) — メンタルモデル、セキュリティ特性、ロードタイミング
 - [Reference: `reyn mcp`](mcp.md) — MCP サーバー固有の認証情報向け `set-secret` / `clear-secret`
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md#var-interpolation) — 設定ファイルでの `${VAR}` の使用

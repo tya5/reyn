@@ -86,4 +86,4 @@ The OS's job is to make LLM-driven control flow safe. By rejecting any output th
 
 - [context-frame.md](context-frame.md) — what the LLM sees
 - [control-ir.md](control-ir.md) — Control IR op schemas
-- [Concepts: principles P4](../../concepts/principles.md#p4-llm-is-a-constrained-decision-engine)
+- [Concepts: principles P4](../../concepts/architecture/principles.md#p4-llm-is-a-constrained-decision-engine)

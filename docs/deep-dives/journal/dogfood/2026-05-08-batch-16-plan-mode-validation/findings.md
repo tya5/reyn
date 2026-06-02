@@ -268,7 +268,7 @@ batch 16 での未観測は「code defect」でなく「coverage gap」。
 |---|---|---|
 | A16-1 | **B16-S2-1 Layer 1 fix**: `send_to_agent_impl` に per-session `asyncio.Lock` を追加 | `src/reyn/mcp_server.py:154` |
 | A16-2 | **G24 候補登録**: R1 plan-mode attractor を giveup-tracker に追記 (= tool-forcing なし環境での plan invoke 0% を正式に記録) | `docs/deep-dives/journal/dogfood/giveup-tracker.md` |
-| A16-3 | **slash-over-A2A を architectural decision として文書化**: concept doc (en + ja) に「slash コマンドは TUI/CLI 専用」を記述 | `docs/en/concepts/plan-mode.md` |
+| A16-3 | **slash-over-A2A を architectural decision として文書化**: concept doc (en + ja) に「slash コマンドは TUI/CLI 専用」を記述 | `docs/en/concepts/multi-agent/plan-mode.md` |
 
 ### MED (next batch)
 
@@ -305,7 +305,7 @@ batch 16 での未観測は「code defect」でなく「coverage gap」。
 | ADR-0023 forward replay | `docs/en/decisions/0023-plan-mode-forward-replay.md` |
 | ADR-0024 step result spill | `docs/en/decisions/0024-plan-step-result-spill.md` |
 | ADR-0025 sub-loop LLM memo | `docs/en/decisions/0025-plan-step-llm-memoization.md` |
-| plan-mode concept (en) | `docs/en/concepts/plan-mode.md` |
+| plan-mode concept (en) | `docs/en/concepts/multi-agent/plan-mode.md` |
 | dogfood discipline | `docs/en/contributing/dogfood-discipline.md` |
 
 ---

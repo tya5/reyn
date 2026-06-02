@@ -136,5 +136,5 @@ async def _notify(run_id: str, status: str, payload: dict):
 
 - `src/reyn/web/routers/a2a.py` — 既存 A2A 実装（MVP コメント参照）
 - `src/reyn/user_intervention.py` — InterventionBus の実装
-- `docs/concepts/a2a.md` — A2A 概念ドキュメント
+- `docs/concepts/multi-agent/a2a.md` — A2A 概念ドキュメント
 - ACP OpenAPI spec: https://github.com/i-am-bee/acp/blob/main/docs/spec/openapi.yaml

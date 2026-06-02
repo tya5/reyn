@@ -205,6 +205,6 @@ Until one of these fires, FP-0014's Scope A is sufficient.
   this proposal extends.
 - **ADR-0026 unified tool registry** — declarative run_op already has
   the per-call audit infrastructure this FP brings to python steps.
-- **`docs/concepts/events.md`** — events emission model.
+- **`docs/concepts/runtime/events.md`** — events emission model.
 - **`docs/reference/testing/replay.md`** — LLMReplay scope; extends
   to op-level under this FP.

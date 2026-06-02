@@ -28,7 +28,7 @@ reyn mcp clear-secret <SERVER> [<KEY>]
 - **アウトバウンドサーバー管理** — `search`、`install`、`list`、`remove`、`set-secret`、`clear-secret` は reyn がクライアントとして呼び出す MCP サーバーを管理します。
 - **インバウンドサーバーモード** — `serve` は reyn 自身のエージェントを外部の MCP クライアントに公開します。
 
-概念モデルと Two roles フレーミングについては [コンセプト: MCP](../../concepts/mcp.md) を参照してください。
+概念モデルと Two roles フレーミングについては [コンセプト: MCP](../../concepts/tools-integrations/mcp.md) を参照してください。
 
 ### Chat 側の対応 verb
 
@@ -84,7 +84,7 @@ reyn mcp install --source <SOURCE_SPEC> [--scope SCOPE] [--env KEY=VALUE ...] [-
 2. 必要なランタイム（`npx`、`uvx`、`docker` など）がインストールされているか確認します。
 3. `mcp_install` パーミッションゲートを適用します（[パーミッションとの連動: mcp_install](#permission-interaction) 参照）。
 4. 必要な認証情報（レジストリマニフェストで `isSecret` とマークされているもの）をプロンプトするか、`--env` フラグから読み取ります。
-5. 認証情報の値を `~/.reyn/secrets.env` に保存します（[コンセプト: シークレット管理](../../concepts/secret-handling.md) 参照）。
+5. 認証情報の値を `~/.reyn/secrets.env` に保存します（[コンセプト: シークレット管理](../../concepts/runtime/secret-handling.md) 参照）。
 6. 対象スコープの設定ファイルに `mcp.servers.<name>` エントリを書き込みます（シークレットは `${VAR}` 参照として記述されます）。
 7. `mcp_server_installed` 監査イベントを発行します。
 
@@ -163,7 +163,7 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
   [N] 拒否
 ```
 
-エンタープライズチームは `reyn.yaml` で `permissions.mcp_install: deny` を設定してサーバーの追加を防ぐか、`allow` でプロンプトを完全にスキップできます。詳細は [コンセプト: パーミッションモデル](../../concepts/permission-model.md) を参照してください。
+エンタープライズチームは `reyn.yaml` で `permissions.mcp_install: deny` を設定してサーバーの追加を防ぐか、`allow` でプロンプトを完全にスキップできます。詳細は [コンセプト: パーミッションモデル](../../concepts/runtime/permission-model.md) を参照してください。
 
 ---
 
@@ -270,7 +270,7 @@ reyn mcp serve [--project PATH] [--timeout SECONDS] [共通フラグ]
 
 これは Reyn の MCP client ロール（Reyn がサードパーティの MCP server を呼び出す方向）の逆です。ここでは外部 client が Reyn に呼び込む形になります。`reyn chat` と同じ `reyn.yaml` および agent registry が MCP server のバックエンドとして使われます。Permission チェック、Event 出力、通常の OS バリデーションはすべて動作します。
 
-概念モデルと Two roles フレーミングについては [コンセプト: MCP](../../concepts/mcp.md) の「ロール 2」セクションを参照してください。
+概念モデルと Two roles フレーミングについては [コンセプト: MCP](../../concepts/tools-integrations/mcp.md) の「ロール 2」セクションを参照してください。
 
 `reyn mcp serve` は stdio 上で JSON-RPC を話す server を起動します。Port は使いません。Claude Desktop、Cursor、Claude Code などの MCP client は通常 `cwd=/` で server プロセスを起動するため、client 設定の `args` リストに必ず `--project` を渡してください。それなしでは server が `reyn.yaml` を見つけられません。
 
@@ -361,9 +361,9 @@ Claude Code の `mcp.json` への組み込み（stdio transport）：
 
 ## 関連情報
 
-- [コンセプト: MCP](../../concepts/mcp.md) — 概念モデル、2 つのロール、セキュリティモデル
-- [コンセプト: シークレット管理](../../concepts/secret-handling.md) — `~/.reyn/secrets.env` と `${VAR}` interpolation
-- [コンセプト: パーミッションモデル](../../concepts/permission-model.md) — `mcp_install` パーミッション
+- [コンセプト: MCP](../../concepts/tools-integrations/mcp.md) — 概念モデル、2 つのロール、セキュリティモデル
+- [コンセプト: シークレット管理](../../concepts/runtime/secret-handling.md) — `~/.reyn/secrets.env` と `${VAR}` interpolation
+- [コンセプト: パーミッションモデル](../../concepts/runtime/permission-model.md) — `mcp_install` パーミッション
 - [Reference: `reyn secret`](secret.md) — ユニバーサルシークレット管理
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `mcp.servers:` スキーマと `permissions.mcp_install:`
 - [Reference: 共通フラグ](common-flags.md) — CLI コマンド共通フラグ

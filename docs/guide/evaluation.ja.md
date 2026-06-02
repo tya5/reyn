@@ -280,7 +280,7 @@ permissions:
   python.unsafe: allow
 ```
 
-完全な 3 層事前承認モデルについては [コンセプト: パーミッションモデル](../concepts/permission-model.md) を参照してください。
+完全な 3 層事前承認モデルについては [コンセプト: パーミッションモデル](../concepts/runtime/permission-model.md) を参照してください。
 
 ---
 
@@ -313,9 +313,9 @@ reyn events .reyn/events/<run_id>.jsonl --filter permission_denied
 
 ## 関連項目
 
-- [コンセプト: 評価インフラ](../concepts/evaluation.md) — アーキテクチャとポジショニング
+- [コンセプト: 評価インフラ](../concepts/observability/evaluation.md) — アーキテクチャとポジショニング
 - [リファレンス: `reyn eval`](../reference/cli/eval.md) — 完全な CLI フラグリファレンス
-- [コンセプト: イベント](../concepts/events.md) — P6 イベントログ
-- [コンセプト: workspace](../concepts/workspace.md) — workspace 隔離モデル
-- [コンセプト: パーミッションモデル](../concepts/permission-model.md) — 非インタラクティブ事前承認
+- [コンセプト: イベント](../concepts/runtime/events.md) — P6 イベントログ
+- [コンセプト: workspace](../concepts/runtime/workspace.md) — workspace 隔離モデル
+- [コンセプト: パーミッションモデル](../concepts/runtime/permission-model.md) — 非インタラクティブ事前承認
 - [はじめに: eval を書く](getting-started/05-writing-an-eval.md) — `eval_builder` を使った rubric ベースの eval

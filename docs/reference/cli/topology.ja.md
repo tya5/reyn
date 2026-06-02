@@ -9,7 +9,7 @@ applies_to: [reyn topology]
 
 agent の通信 Topology を管理します。どの agent がどれに送信できるかを制限する宣言的な構造です。
 
-3 種類がサポートされています: `network`（完全グラフ）、`team`（リーダー中心のスター）、`pipeline`（有向パス）。自動管理の `_default` network は、ユーザー宣言の Topology に属さないすべての agent をカバーします。空の状態では自由に動作しますが、宣言された Topology はそのルールを即座に強制します。モデルについては [コンセプト/topology](../../concepts/topology.md) を参照してください。
+3 種類がサポートされています: `network`（完全グラフ）、`team`（リーダー中心のスター）、`pipeline`（有向パス）。自動管理の `_default` network は、ユーザー宣言の Topology に属さないすべての agent をカバーします。空の状態では自由に動作しますが、宣言された Topology はそのルールを即座に強制します。モデルについては [コンセプト/topology](../../concepts/multi-agent/topology.md) を参照してください。
 
 ## 概要
 
@@ -111,6 +111,6 @@ reyn topology rm-member team_research editor
 
 ## 関連情報
 
-- [コンセプト: topology](../../concepts/topology.md) — kind のセマンティクス、`_default`、許可ルール
+- [コンセプト: topology](../../concepts/multi-agent/topology.md) — kind のセマンティクス、`_default`、許可ルール
 - [リファレンス: topology-yaml](../dsl/topology-yaml.md) — ディスク上のスキーマ
 - [リファレンス: agent CLI](agent.md)

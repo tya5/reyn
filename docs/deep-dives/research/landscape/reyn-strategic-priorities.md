@@ -134,13 +134,13 @@ based_on:
 > **docs 監査で新規追加 (2026-05-08)**
 
 - **問題**: `docs/ja/` のカバレッジが 66%（108 en → 72 ja）。特に README で言及する機能の日本語版が存在しない。
-  - `concepts/a2a.md` — README で言及、未翻訳
-  - `concepts/mcp.md` — README で言及、未翻訳
+  - `concepts/multi-agent/a2a.md` — README で言及、未翻訳
+  - `concepts/tools-integrations/mcp.md` — README で言及、未翻訳
   - `how-to/use-an-mcp-server.md` — 実装ガイドの中核、未翻訳
   - `reference/upgrade-policy.md` — バージョン移行で日本ユーザーが詰まる、未翻訳
 - **Reyn への影響**: 日本エンタープライズをターゲットとしながら、README で紹介する機能の説明が日本語で読めない状態は信頼性を損なう。日本の SIer が社内提案資料を作る際に英語ドキュメントしかない機能は説明しにくい。
 - **推奨アクション**:
-  - OSS ローンチ前に `concepts/a2a.md`・`concepts/mcp.md`・`how-to/use-an-mcp-server.md` を日本語化
+  - OSS ローンチ前に `concepts/multi-agent/a2a.md`・`concepts/tools-integrations/mcp.md`・`how-to/use-an-mcp-server.md` を日本語化
   - `reference/upgrade-policy.md` を追加
   - `decisions/` の翻訳は後回し可（設計調査者向けで初期ユーザーへの影響が低い）
 - **コスト見積**: 4 ファイル = small（1〜2 日）
@@ -251,7 +251,7 @@ based_on:
 - [ ] **Troubleshooting guide 作成**（`how-to/troubleshooting.md`）— 競合はどこも持っている。Runtime errors / permission denied / validation error の典型障害を網羅
 - [ ] **Skill Authoring Guide** — SKILL.md テンプレート・Phase Best Practices・Artifact Schema Primer・Design Patterns（Simple / Complex）
 - [ ] **Control IR ops カタログ** — `reference/runtime/control-ir.md` に全 op 種別を列挙（Phase 著者の参照用）
-- [ ] **日本語ドキュメント補完** — `concepts/a2a.md`・`concepts/mcp.md`・`how-to/use-an-mcp-server.md`・`reference/upgrade-policy.md` の日本語化
+- [ ] **日本語ドキュメント補完** — `concepts/multi-agent/a2a.md`・`concepts/tools-integrations/mcp.md`・`how-to/use-an-mcp-server.md`・`reference/upgrade-policy.md` の日本語化
 - [ ] **Skill Author Contract ドキュメント公開**（project_skill_author_contract_doc.md を完成させる）
 - [ ] ゼロテレメトリ設計を `README` と docs に明記（CrewAI との差別化として）
 - [ ] OSS ライセンス決定（MIT 推奨。Apache 2.0 も可だが Dify 前例の追加条項問題を避ける）

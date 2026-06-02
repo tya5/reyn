@@ -107,7 +107,7 @@ On next startup, `AgentRegistry.restore_all` replays the WAL, classifies each st
 
 The decomposition artifact is never re-derived via the planner LLM — re-decomposition is non-deterministic and would shuffle step IDs, breaking memoization. If the artifact is missing or corrupt, the coordinator auto-discards and surfaces an outbox notice.
 
-For the conceptual model behind this behavior, see [concepts/plan-mode.md](../../../concepts/plan-mode.md).
+For the conceptual model behind this behavior, see [concepts/multi-agent/plan-mode.md](../../../concepts/multi-agent/plan-mode.md).
 
 ## Operator intervention recipes
 
@@ -137,6 +137,6 @@ Each `plan_step_completed` event carries the `step_id`, duration, and whether th
 
 ## See also
 
-- [concepts/plan-mode.md](../../../concepts/plan-mode.md) — conceptual model: async dispatch, crash classification, resume policy, multi-plan ordering.
+- [concepts/multi-agent/plan-mode.md](../../../concepts/multi-agent/plan-mode.md) — conceptual model: async dispatch, crash classification, resume policy, multi-plan ordering.
 - [reference/cli/chat.md](../../../reference/cli/chat.md) — full slash command reference, including the `/plan` family.
 - [compose-skills-with-run-skill.md](compose-skills-with-run-skill.md) — when a single sub-skill suffices instead of a multi-step plan.

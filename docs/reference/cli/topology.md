@@ -9,7 +9,7 @@ applies_to: [reyn topology]
 
 Manage agent communication topologies — declarative structure that constrains which agent can send to which.
 
-Three kinds are supported: `network` (complete graph), `team` (leader-centric star), `pipeline` (directed path). The auto-managed `_default` network covers every agent that does NOT belong to any user-declared topology — the empty-state case behaves freely while declared topologies enforce their rules immediately. See [concepts/topology](../../concepts/topology.md) for the model.
+Three kinds are supported: `network` (complete graph), `team` (leader-centric star), `pipeline` (directed path). The auto-managed `_default` network covers every agent that does NOT belong to any user-declared topology — the empty-state case behaves freely while declared topologies enforce their rules immediately. See [concepts/topology](../../concepts/multi-agent/topology.md) for the model.
 
 ## Synopsis
 
@@ -111,6 +111,6 @@ Removing an agent via `reyn agent rm` automatically drops it from every topology
 
 ## See also
 
-- [Concepts: topology](../../concepts/topology.md) — kind semantics, `_default`, permit rules
+- [Concepts: topology](../../concepts/multi-agent/topology.md) — kind semantics, `_default`, permit rules
 - [Reference: topology-yaml](../dsl/topology-yaml.md) — on-disk schema
 - [Reference: agent CLI](agent.md)

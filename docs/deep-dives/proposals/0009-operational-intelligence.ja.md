@@ -10,7 +10,7 @@
 
 Component A — `index_events` stdlib スキル着地。P6 events を run 単位でチャンク化し RAG インデックスに書き込む。任意フェーズから `recall(sources=["events"], ...)` クエリが使用可能になった。インクリメンタル indexing は `.reyn/index/events_cursor` で管理。
 
-Component C — recall usage パターンのドキュメント着地。`docs/concepts/operational-intelligence.md` に `recall(sources=["events"])` の利用ガイドを追加。
+Component C — recall usage パターンのドキュメント着地。`docs/concepts/data-retrieval/operational-intelligence.md` に `recall(sources=["events"])` の利用ガイドを追加。
 
 Component D — `ops_report` stdlib スキル着地。events index が存在すれば preferred path として使用し、`index_events` 未実行の場合は raw events log walk にフォールバック。
 

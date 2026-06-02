@@ -74,10 +74,10 @@ safety:
 
 ## 検討したが採用しなかったもの
 
-- `topology_policy` — 検討したが、自動管理の `_default` Topology を優先して拒否しました（[コンセプト/topology](../../concepts/topology.md) を参照）。
+- `topology_policy` — 検討したが、自動管理の `_default` Topology を優先して拒否しました（[コンセプト/topology](../../concepts/multi-agent/topology.md) を参照）。
 
 ## 関連情報
 
-- [コンセプト: multi-agent](../../concepts/multi-agent.md)
+- [コンセプト: multi-agent](../../concepts/multi-agent/multi-agent.md)
 - [リファレンス: chat CLI](../cli/chat.md)
 - [リファレンス: events](../runtime/events.md) — `agent_message_*` イベントは `chain_id` と `depth` を持つ

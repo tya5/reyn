@@ -453,7 +453,7 @@ reyn dogfood publish a1b2c3d4-... --template path/to/my-template.md
 
 - [Reference: `reyn eval compare`](eval.ja.md) — スキル単位ルーブリック回帰（直交する観測面）
 - [Reference: `reyn run`](run.ja.md) — ヘッドレスなスキル実行（同じ Agent.run パス）
-- [Concepts: events](../../concepts/events.md) — P6 イベントログ
+- [Concepts: events](../../concepts/runtime/events.md) — P6 イベントログ
 - [Deep dive: dogfood discipline](../../deep-dives/contributing/dogfood-discipline.ja.md) — 4 段階アウトカム + 9 原則フレームワーク
 - [Deep dive: dogfood reporting](../../deep-dives/contributing/dogfood-reporting.ja.md) — Discussion 形式 + Issue 起票ガイド
 - [Dogfood シナリオフレームワーク](../../deep-dives/proposals/0036-dogfood-scenario-framework.md) — 完全設計仕様

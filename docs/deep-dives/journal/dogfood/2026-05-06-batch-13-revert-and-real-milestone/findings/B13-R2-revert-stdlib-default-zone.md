@@ -17,7 +17,7 @@ default read zone alongside CWD.  It also added lazy initialization helpers
 (`_STDLIB_READ_ZONE`, `_STDLIB_READ_ZONE_RESOLVED`, `_get_stdlib_read_zone()`)
 to avoid a circular import at module load time.
 
-This violates `docs/en/concepts/permission-model.md`:
+This violates `docs/en/concepts/runtime/permission-model.md`:
 
 > ### Layer 1: defaults
 > Read/glob/grep anywhere under the project root.

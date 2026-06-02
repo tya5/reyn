@@ -17,7 +17,7 @@ applies_to: [reyn.yaml, .reyn/approvals.yaml, phases/*.md]
 | Saved approvals | `.reyn/approvals.yaml` | Per (skill, op, path) |
 | Project-wide pre-approval | `reyn.yaml` `permissions:` | Per op kind |
 
-The defaults are conservative; the rest is opt-in. See the [permission model concept](../../concepts/permission-model.md) for the why.
+The defaults are conservative; the rest is opt-in. See the [permission model concept](../../concepts/runtime/permission-model.md) for the why.
 
 ## Declare in a phase
 
@@ -107,4 +107,4 @@ Without prior approval the eval case is reported as not-finished.
 - [Reference: permissions](../../reference/config/permissions.md)
 - [Reference: reyn.yaml](../../reference/config/reyn-yaml.md)
 - [Reference: state-dir](../../reference/config/state-dir.md)
-- [Concepts: permission model](../../concepts/permission-model.md)
+- [Concepts: permission model](../../concepts/runtime/permission-model.md)

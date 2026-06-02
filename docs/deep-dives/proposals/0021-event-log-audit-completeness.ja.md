@@ -51,7 +51,7 @@ self.events.emit("workflow_started",
 
 `run_id` が全イベントに付けばステップ 1〜3 が `run_id == Y` の単一フィルタに集約される。
 
-`docs/concepts/events.md` の設計ドキュメントはすでに `run_id` を安定エンベロープフィールド
+`docs/concepts/runtime/events.md` の設計ドキュメントはすでに `run_id` を安定エンベロープフィールド
 として記述している。本 FP は設計書と実装のギャップを埋める。
 
 ### クラッシュ復元との切り離し
@@ -167,7 +167,7 @@ ctx.events.emit("permission_granted",
 | `src/reyn/op_runtime/__init__.py` | `permission_denied` に `run_id`・`skill`・`phase` を追加；`permission_granted` を新設 |
 | `src/reyn/op_runtime/ask_user.py` | 両インターベンションイベントに `run_id`・`skill`・`intervention_id` を追加 |
 | `src/reyn/op_runtime/context.py` | 未保持の場合 `OpContext` に `run_id`・`skill_name` を追加 |
-| `docs/concepts/events.md` | `kind` → `type` に修正；`run_id` が一貫して存在する旨を反映 |
+| `docs/concepts/runtime/events.md` | `kind` → `type` に修正；`run_id` が一貫して存在する旨を反映 |
 
 ---
 
@@ -186,7 +186,7 @@ ctx.events.emit("permission_granted",
 | `permission_denied` に `run_id`/`skill`/`phase` を追加 | SMALL |
 | `permission_granted` イベントを新設 | SMALL |
 | インターベンションイベントに `run_id`/`skill`/`intervention_id` を追加 | SMALL |
-| `docs/concepts/events.md` 更新 | SMALL |
+| `docs/concepts/runtime/events.md` 更新 | SMALL |
 | **合計** | **SMALL** |
 
 すべて加算的な kwarg 追加——既存のコンシューマは未知のフィールドを無視するため壊れない。
@@ -198,6 +198,6 @@ ctx.events.emit("permission_granted",
 - `src/reyn/kernel/runtime.py` — `workflow_finished`・`llm_called`・`llm_response_received`
 - `src/reyn/op_runtime/__init__.py` — `permission_denied`
 - `src/reyn/op_runtime/ask_user.py` — `user_intervention_requested/received`
-- `docs/concepts/events.md` — `run_id` を安定エンベロープフィールドとして記述する設計ドキュメント
+- `docs/concepts/runtime/events.md` — `run_id` を安定エンベロープフィールドとして記述する設計ドキュメント
 - FP-0018 (`0018-event-store-backend.md`) — 将来の SQLite/DuckDB バックエンドでこの豊富なイベントが直接クエリ可能になる
 - FP-0007 (`0007-evaluation-infrastructure.md`) — eval トレース export が `run_id` 相関付きの `llm_called` から直接利益を得る

@@ -300,7 +300,7 @@ OS code changes, no new files outside the three touch points above.
 
 ## See also
 
-- [concepts/principles.md](../../concepts/principles.md) — P7 rationale and the detection rule
+- [concepts/architecture/principles.md](../../concepts/architecture/principles.md) — P7 rationale and the detection rule
 - [reference/runtime/control-ir.md](../../reference/runtime/control-ir.md) — op kind catalogue (must stay in sync)
 - [guide/for-reyn-developers/principles-and-code.md](principles-and-code.md) — how each P-principle maps to code
 - [deep-dives/contributing/testing.md](../../deep-dives/contributing/testing.md) — test tier requirements before writing tests

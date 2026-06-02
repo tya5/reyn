@@ -62,4 +62,4 @@ LLM が出力する op:
 
 - [リファレンス: control-ir](../../reference/runtime/control-ir.md) — `ask_user`
 - [リファレンス: events](../../reference/runtime/events.md) — `user_intervention_*` イベント
-- [コンセプト: principles P8](../../concepts/principles.md)
+- [コンセプト: principles P8](../../concepts/architecture/principles.md)

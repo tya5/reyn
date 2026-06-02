@@ -187,6 +187,6 @@ No token under key 'nonexistent'.
 ## 関連情報
 
 - [Reference: `reyn secret`](secret.md) — 静的な dotenv シークレットの管理
-- [コンセプト: シークレット管理](../../concepts/secret-handling.md) — OAuth ライフサイクルと認証情報のスコープ
+- [コンセプト: シークレット管理](../../concepts/runtime/secret-handling.md) — OAuth ライフサイクルと認証情報のスコープ
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `auth:` 設定ブロック
 - [Reference: Events](../runtime/events.md) — `oauth_login_started`、`oauth_login_completed`、`token_refreshed`、`token_refresh_failed`

@@ -62,5 +62,5 @@ Two-layer enforcement:
 ## See also
 
 - [Reference: agent CLI](../cli/agent.md)
-- [Concepts: multi-agent](../../concepts/multi-agent.md)
+- [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md)
 - [Reference: skill_router](../stdlib/skill_router.md) — how `available_skills` reaches the LLM

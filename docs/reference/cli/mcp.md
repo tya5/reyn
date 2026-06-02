@@ -48,7 +48,7 @@ Use cases:
 - **Outbound server management** — `search`, `install`, `list`, `remove`, `set-secret`, `clear-secret` manage the MCP servers that reyn calls as a client.
 - **Inbound server mode** — `serve` exposes reyn's own agents to external MCP clients.
 
-For the conceptual model and the Two roles framing, see [Concepts: MCP](../../concepts/mcp.md).
+For the conceptual model and the Two roles framing, see [Concepts: MCP](../../concepts/tools-integrations/mcp.md).
 
 ### Chat-side equivalents
 
@@ -104,7 +104,7 @@ reyn mcp install --source <SOURCE_SPEC> [--scope SCOPE] [--env KEY=VALUE ...] [-
 2. Checks that the required runtime (`npx`, `uvx`, `docker`, etc.) is installed.
 3. Applies the `mcp_install` permission gate (see [permission interaction](#permission-interaction-mcp_install)).
 4. Prompts for any required credentials (marked `isSecret` in the registry manifest) — or reads them from `--env` flags.
-5. Stores credential values in `~/.reyn/secrets.env` (see [Concepts: secret handling](../../concepts/secret-handling.md)).
+5. Stores credential values in `~/.reyn/secrets.env` (see [Concepts: secret handling](../../concepts/runtime/secret-handling.md)).
 6. Writes the `mcp.servers.<name>` entry to the target scope config file, with `${VAR}` references for any secrets.
 7. Emits a `mcp_server_installed` audit event.
 
@@ -183,7 +183,7 @@ Before writing anything to disk, `install` checks the `mcp_install` permission g
   [N] deny
 ```
 
-Enterprise teams can set `permissions.mcp_install: deny` in `reyn.yaml` to prevent any server additions, or `allow` to skip the prompt entirely. See [Concepts: permission model — `mcp_install`](../../concepts/permission-model.md#mcp_install-permission) for full details.
+Enterprise teams can set `permissions.mcp_install: deny` in `reyn.yaml` to prevent any server additions, or `allow` to skip the prompt entirely. See [Concepts: permission model — `mcp_install`](../../concepts/runtime/permission-model.md#mcp_install-permission) for full details.
 
 ---
 
@@ -290,7 +290,7 @@ reyn mcp serve [--project PATH] [--timeout SECONDS] [common flags]
 
 This is the inverse of Reyn's MCP-client role (where Reyn calls out to third-party MCP servers). Here, the external client calls INTO Reyn. The same `reyn.yaml` and agent registry that `reyn chat` uses backs the MCP server — permissions are checked, events are emitted, and all normal OS validation runs.
 
-For the conceptual model and the Two roles framing, see [Concepts: MCP — Role 2](../../concepts/mcp.md#role-2-mcp-server-external-clients-call-reyn).
+For the conceptual model and the Two roles framing, see [Concepts: MCP — Role 2](../../concepts/tools-integrations/mcp.md#role-2-mcp-server-external-clients-call-reyn).
 
 `reyn mcp serve` starts a JSON-RPC server that speaks over stdio. There is no port; the MCP client launches the process itself and owns the transport. Because MCP clients (Claude Desktop, Cursor, Claude Code) typically spawn the server process with `cwd=/`, always pass `--project` in the client config's `args` list — the server has no other way to locate your `reyn.yaml`.
 
@@ -381,9 +381,9 @@ Wire into Claude Code's `mcp.json` (stdio transport):
 
 ## See also
 
-- [Concepts: MCP](../../concepts/mcp.md) — conceptual model, two roles, security model
-- [Concepts: secret handling](../../concepts/secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
-- [Concepts: permission model](../../concepts/permission-model.md) — `mcp_install` permission
+- [Concepts: MCP](../../concepts/tools-integrations/mcp.md) — conceptual model, two roles, security model
+- [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
+- [Concepts: permission model](../../concepts/runtime/permission-model.md) — `mcp_install` permission
 - [Reference: `reyn secret`](secret.md) — universal secret management
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `mcp.servers:` schema and `permissions.mcp_install:`
 - [Reference: common flags](common-flags.md) — flags shared across CLI commands

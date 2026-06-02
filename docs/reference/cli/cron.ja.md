@@ -169,6 +169,6 @@ cron:
 ## 関連情報
 
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `cron:` 設定ブロック
-- [コンセプト: Operational Intelligence](../../concepts/operational-intelligence.md) — スケジュール実行のユースケース
-- [コンセプト: A2A プロトコル](../../concepts/a2a.md) — `RunRegistry` パターンと将来の Web モードステータス API
+- [コンセプト: Operational Intelligence](../../concepts/data-retrieval/operational-intelligence.md) — スケジュール実行のユースケース
+- [コンセプト: A2A プロトコル](../../concepts/multi-agent/a2a.md) — `RunRegistry` パターンと将来の Web モードステータス API
 - [Reference: `reyn run`](run.md) — ヘッドレス単発スキル実行（同じ Agent.run パス）

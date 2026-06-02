@@ -118,14 +118,14 @@ The shortcuts you reach for daily:
 
 ## A2A endpoint (advanced)
 
-The web server also exposes an [A2A](../../concepts/a2a.md) JSON-RPC endpoint for programmatic access and agent-to-agent communication:
+The web server also exposes an [A2A](../../concepts/multi-agent/a2a.md) JSON-RPC endpoint for programmatic access and agent-to-agent communication:
 
 ```
 POST http://localhost:8080/a2a/agents/<agent-name>
 ```
 
 This is useful for scripting, CI pipelines, or connecting Reyn to another agent system.
-See [concepts/a2a](../../concepts/a2a.md) for the protocol details.
+See [concepts/a2a](../../concepts/multi-agent/a2a.md) for the protocol details.
 
 ---
 
@@ -152,4 +152,4 @@ By default the server binds to `127.0.0.1` (localhost only). Run with `--host 0.
 ## See also
 
 - [Reference: CLI / chat](../../reference/cli/chat.md) — TUI slash commands
-- [Concepts: A2A](../../concepts/a2a.md) — agent-to-agent protocol
+- [Concepts: A2A](../../concepts/multi-agent/a2a.md) — agent-to-agent protocol
