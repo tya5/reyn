@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 
 from reyn.budget.budget import BudgetExceeded, format_refusal_message
 from reyn.dispatch.dispatcher import _compute_llm_args_hash, _lookup_memoized_step
-from reyn.llm.llm import call_llm
+from reyn.llm.llm import call_llm, call_llm_tools
 from reyn.llm.llm import proxy_kwargs as _proxy_kwargs
 from reyn.llm.pricing import TokenUsage, estimate_cost
 from reyn.schemas.models import ContextFrame, Skill
@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
     from reyn.events.state_log import StateLog
     from reyn.kernel.run_state import RunState
+    from reyn.llm.llm import LLMToolCallResult
     from reyn.llm.model_resolver import ModelResolver
     from reyn.skill.skill_registry import SkillRegistry
 
@@ -226,6 +227,95 @@ class LLMCallRecorder:
         )
 
         return raw
+
+    async def call_tools(
+        self,
+        phase: str,
+        frame: ContextFrame,
+        tools: list[dict],
+        state: "RunState",
+        *,
+        response_format: dict | None = None,
+    ) -> "LLMToolCallResult":
+        """#1212 PR2: native-tools variant of ``call``. Returns the raw assistant
+        message (content / tool_calls / finish_reason) for the op-loop.
+
+        Shares ``call``'s model-resolution + budget pre-check + cost-record + the
+        ``llm_called`` / ``llm_response_received`` events, and builds the [system,
+        user(frame)] messages via the SAME ``build_phase_messages`` helper as the
+        json-mode path (no drift), but calls ``call_llm_tools`` instead of
+        ``call_llm`` and — per ADR-0035 PR2 scope — **skips decide-memo and the
+        per-step WAL** (the op-EXECUTION crash-recovery WAL is owned by the
+        control_ir_executor's ``dispatch_tool``, D8; act-turn LLM memoization is a
+        PR5 decision, see ADR Open items). Un-opted skills never reach here, so the
+        json-mode ``call`` path is byte-for-byte unchanged.
+        """
+        from reyn.llm.llm import build_phase_messages
+
+        resolved_spec = self._resolver.resolve(self._effective_model(phase))
+        resolved_model = resolved_spec.model
+        phase_def = self._skill.phases.get(phase)
+
+        messages = build_phase_messages(
+            frame,
+            skill_name=self._skill.name,
+            skill_description=self._skill.description,
+            phase_role=phase_def.role if phase_def else None,
+            project_context=self._project_context,
+            agent_role=self._agent_role,
+            prompt_cache_enabled=self._prompt_cache_enabled,
+        )
+
+        self._check_budget_pre_llm(resolved_model)
+        self._events.emit(
+            "llm_called",
+            run_id=self._run_id,
+            skill=self._skill.name,
+            phase=phase,
+            model=resolved_model,
+        )
+        result = await call_llm_tools(
+            model=resolved_spec,
+            messages=messages,
+            tools=tools,
+            response_format=response_format,
+            timeout=self._llm_timeout,
+            max_retries=self._llm_max_retries,
+            prompt_cache_enabled=self._prompt_cache_enabled,
+            skill_name=self._skill.name,
+            skill_description=self._skill.description,
+            trace_caller=f"phase:{phase}",
+            event_log=self._events,
+        )
+
+        cost_usd: float | None = None
+        pricing_snapshot: dict | None = None
+        if result.usage:
+            _pricing_model = (
+                resolved_model.split("/", 1)[1]
+                if "/" in resolved_model and _proxy_kwargs()
+                else resolved_model
+            )
+            cost_usd, pricing_snapshot = estimate_cost(_pricing_model, result.usage)
+            state.add_usage(result.usage, cost_usd)
+            self._record_budget_post_llm(resolved_model, result.usage)
+        self._events.emit(
+            "llm_response_received",
+            run_id=self._run_id,
+            skill=self._skill.name,
+            phase=phase,
+            response_type="tool_calls" if result.tool_calls else "content",
+            raw={
+                "tool_calls": result.tool_calls,
+                "content": result.content,
+                "finish_reason": result.finish_reason,
+            },
+            prompt_tokens=result.usage.prompt_tokens if result.usage else None,
+            completion_tokens=result.usage.completion_tokens if result.usage else None,
+            cost_usd=cost_usd,
+            pricing_snapshot=pricing_snapshot,
+        )
+        return result
 
     # ── Model resolution ───────────────────────────────────────────────────────
 

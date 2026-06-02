@@ -44,6 +44,22 @@ op-loop call (tools=):  stop_reason=tool_use  → execute op → feed result →
 then transition call (response_format, no tools) → {control, artifact}  (structured)
 ```
 
+**D2-impl — op results are FRAME-fed, not native tool-role-threaded** (intentional,
+PR2 `kernel/phase_executor.py:_run_op_loop`). Each op turn rebuilds the phase frame
+with the accumulated `control_ir_results` and issues an **independent** `call_tools`
+([system, user(frame)] + tools) — exactly like the json-mode `_run_act_loop` rebuilds
+the frame each turn. Op results are NOT appended back as native
+`{role:assistant, tool_calls}` + `{role:tool, ...}` messages. Trade-off (deliberate):
+- **(+)** reuses the json-mode frame builder (no drift) / each call is self-contained
+  (no dangling-tool_call API hazard) / **simplifies PR5 replay** — no provider-specific
+  native tool-message is persisted, so the op-loop replays exactly like json-mode frame
+  replay (see Open items: the D8b provider-id-normalization concern is **moot**).
+- **(−)** the model loses *native* tool-call continuity across turns; it sees prior
+  results as frame context rather than its own tool-message history. Mitigated by the
+  `control_ir_results` in every frame; the residual behavioral risk (real model redoes
+  an op / stalls instead of progressing op-by-op) is settled by **動作確認** (real-model
+  op-by-op progression), not the scripted Tier-2/3 plumbing tests.
+
 **D3 — Trigger = `stop_reason`** (weak/strong, provider-common). reyn's llm layer
 already normalizes tool-extraction vs content (`llm/llm.py:741`); the transition
 call's schema enforcement suppresses the empty-stop attractor (`planner.py:101`).
@@ -149,8 +165,16 @@ docs (no PoC needed). The capability cache (D5) is an optimization over a proven
 4. **PR4 — allowed_ops tool-name granularity (D7).** Linter target swap + the 36-phase
    kind→sub-tool expansion (behavior-preserving) + offer-layer `allowed_ops ∩ permission`
    filter (D8 permission). Per-phase tightening deferred to a follow-up.
-5. **PR5 — WAL/resume loop-adaptation + replay fixtures (D8).** Resume per tool_call,
-   Tier-3 fixtures to the tool_call structure, round event carry.
+5. **PR5 — WAL/resume loop-adaptation + replay fixtures (D8).** Resume per op turn;
+   **replay fixtures track the json-mode frame shape, not a tool_call structure**
+   (frame-fed op-loop, D2-impl — the D8b provider-id normalization is moot), round
+   event carry. **Required scope
+   item — act-turn memo decision** (carried from PR2, see Open items): PR2 ships the
+   op-loop's per-tool-turn LLM call (`LLMCallRecorder.call_tools`) WITHOUT decide-memo
+   (model-resolution + budget + cost-record only); PR5 MUST decide whether act turns
+   are memoized for deterministic replay (json-mode-equal crash-recovery guarantee) or
+   left as re-decide-on-resume (weaker, divergence caveat below). Lead-coder leans
+   memoize-for-parity.
 
 ## Open items / risks
 
@@ -159,5 +183,21 @@ docs (no PoC needed). The capability cache (D5) is an optimization over a proven
   ops; pin with a coverage test before the rewrite.
 - **D7 follow-up tightening**: where to draw "actually-used tools" per phase (needs a
   usage scan), explicitly deferred so the behavior-preserving wave stays mechanical.
-- **Replay (D8b)**: native tool_call ids are provider-specific — fixtures must
-  normalize them so Tier-3 stays provider-agnostic at the replay boundary.
+- **Replay (D8b) — MOOT under the frame-fed op-loop (D2-impl).** This concern
+  assumed native tool-role messages would be threaded back into the conversation (so
+  their provider-specific `tool_call` ids would need normalizing at the replay
+  boundary). PR2 feeds op results via the rebuilt frame's `control_ir_results`
+  instead, so **no native tool-message is persisted** — the op-loop replays exactly
+  like json-mode frame replay, with no provider-id normalization needed. Retained
+  here only as the rationale trail; PR5 replay fixtures track the json-mode frame
+  shape, not a tool_call structure.
+- **Op-loop act-turn memo / resume divergence (PR2→PR5)**: PR2's `call_tools` skips
+  decide-memo — correct for normal op-loop operation (memo only matters on
+  re-run/resume). But on *resume*, an un-memoized act turn is **re-decided** by the
+  model, which may pick a *different* op than the original run. `dispatch_tool`'s WAL
+  memo is keyed on op+args (`control_ir_executor.py:128`), so a divergent re-decide
+  misses the memo and the op **re-executes** (its side-effect lands outside WAL
+  protection) — a weaker crash-recovery guarantee than json-mode (decide memoized →
+  deterministic control_ir replay → op WAL replay). PR5 decides: memoize act turns for
+  json-mode-equal determinism (lead-coder lean) vs accept re-decide divergence with a
+  documented caveat. Un-opted skills are unaffected (json-mode unchanged).

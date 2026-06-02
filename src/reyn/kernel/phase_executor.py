@@ -151,6 +151,7 @@ class PhaseExecutor:
         build_frame_fn,
         phase_compaction_engine: "CompactionEngine | None" = None,
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
+        op_loop_enabled: bool = False,
     ) -> None:
         self._llm_caller = llm_caller
         self._control_ir_executor = control_ir_executor
@@ -175,6 +176,12 @@ class PhaseExecutor:
         # _run_act_loop so RunOrchestrator can snapshot them at A → B
         # transition (= `rollback_state.snapshot_phase_history`).
         self._last_control_ir_results: list[dict] = []
+        # #1212 PR2: when True, this skill is opted into the native-tools op-loop
+        # (_run_op_loop) instead of the json-mode act loop (_run_act_loop). The OS
+        # decides the mechanism (P3); the gate is a config-held list of skill names
+        # (tool_calls_op_loop_skills) resolved at PhaseExecutor construction. Default
+        # False = json-mode, byte-for-byte unchanged.
+        self._op_loop_enabled = op_loop_enabled
 
     # ── #1135(b): raw-output capture on phase-output validation failure ───────
 
@@ -419,6 +426,172 @@ class PhaseExecutor:
             raise ValueError(str(exc)) from exc
 
         return result, output
+
+    # ── Op loop (#1212 native-tools, gated) ────────────────────────────────────
+
+    async def _run_op_loop(
+        self,
+        phase: str,
+        artifact: dict,
+        candidates: list[CandidateOutput],
+        output_language: str | None,
+        max_act_turns: int,
+        max_phase_retries: int,
+        artifact_path: str | None,
+        state: "RunState",
+        rollback_context: dict | None = None,
+    ) -> tuple[dict, list[dict]]:
+        """#1212 PR2: native-tools op-loop — gated variant of _run_act_loop (D1–D4).
+
+        Same per-turn frame rebuild / phase-axis compaction / rollback-history
+        restore / phase-budget check as the json-mode act loop, but a phase's ops are
+        emitted as native ``tool_calls`` and run through the SHARED
+        control_ir_executor (D8 — same dispatch / permission / events / WAL) instead
+        of the json-mode ``control_ir`` field. The model signals "done with ops" by
+        emitting zero tool_calls; a separate json-mode transition ``call`` then yields
+        the raw {control, artifact}. Reached only for skills opted into
+        ``tool_calls_op_loop_skills`` (gate) — un-opted skills stay on _run_act_loop
+        with zero change.
+
+        INTENTIONAL DESIGN — op results are FRAME-fed, not native-tool-role-threaded
+        (ADR-0035 D2-impl). Each turn rebuilds the frame with the accumulated
+        ``control_ir_results`` and issues an INDEPENDENT ``call_tools`` (no growing
+        ``{role:assistant,tool_calls}`` + ``{role:tool,...}`` history is threaded back),
+        exactly mirroring how json-mode _run_act_loop rebuilds the frame each turn.
+        Trade-off: (+) reuses the json-mode frame builder (no drift) / each call is
+        self-contained (no dangling-tool_call API hazard) / PR5 replay = json-mode
+        frame replay (provider tool_call-id normalization is moot); (−) the model loses
+        native cross-turn tool-call continuity (mitigated — prior results are in every
+        frame). The residual "real model progresses op-by-op (no redo/stall)" risk is
+        settled by 動作確認, not the scripted plumbing tests.
+
+        PR2-scope simplifications vs _run_act_loop (deferred follow-ups; safe because
+        the path is opt-in): the on-demand ``compact`` op, the max-act-turns safety
+        intervention (``handle_limit_exceeded``), and rollback-reason injection into
+        act turns are json-mode-only here — the op-loop caps act turns then forces the
+        json transition. Act-turn LLM memo / resume divergence = PR5 (ADR Open items).
+        """
+        from reyn.kernel.control_ir_executor import _build_phase_tool_catalog
+        from reyn.kernel.op_loop import tool_call_to_control_ir_op
+
+        if rollback_context and rollback_context.get("previous_control_ir_results"):
+            control_ir_results: list[dict] = list(
+                rollback_context["previous_control_ir_results"]
+            )
+        else:
+            control_ir_results = []
+
+        phase_def = self._skill.phases.get(phase)
+        phase_decl = self._skill.permissions
+        allowed_ops = set(phase_def.allowed_ops) if phase_def is not None else None
+        catalog = _build_phase_tool_catalog(allowed_ops or set())
+        tools = [{"type": "function", **entry} for entry in catalog.values()]
+
+        act_turn_count = 0
+        first_call = True
+
+        while True:
+            effective_max_act_turns = state.effective_act_turn_cap(phase, max_act_turns)
+            remaining = (
+                effective_max_act_turns - act_turn_count
+                if effective_max_act_turns > 0
+                else None
+            )
+            force_decide = remaining is not None and remaining <= 0
+
+            # Phase-axis compaction (same policy as json-mode _run_act_loop).
+            if (
+                self._phase_compaction_engine is not None
+                and self._phase_compaction_cfg is not None
+                and len(control_ir_results)
+                > self._phase_compaction_cfg.recent_act_turns_raw
+            ):
+                from reyn.services.compaction.engine import (
+                    compact_control_ir_results,
+                )
+                n_recent = self._phase_compaction_cfg.recent_act_turns_raw
+                recent = control_ir_results[-n_recent:]
+                older = control_ir_results[:-n_recent]
+                older_compacted = await compact_control_ir_results(
+                    older,
+                    engine=self._phase_compaction_engine,
+                    cfg=self._phase_compaction_cfg,
+                    events=self._events,
+                    phase=phase,
+                )
+                control_ir_results = older_compacted + recent
+
+            frame = self._build_frame(
+                phase, artifact, candidates, output_language,
+                control_ir_results=control_ir_results,
+                artifact_path=artifact_path,
+                remaining_act_turns=remaining,
+                force_decide=force_decide,
+            )
+
+            await self._check_phase_budget(phase, state)
+
+            # Budget exhausted → force the json-mode transition (decide) now.
+            if force_decide:
+                raw = await self._llm_caller.call(
+                    phase, frame, None,
+                    rollback_context if first_call else None, state,
+                )
+                self._last_control_ir_results = control_ir_results
+                return raw, []
+
+            result = await self._llm_caller.call_tools(phase, frame, tools, state)
+
+            if not result.tool_calls:
+                # Decide turn: model emitted no ops → separate json-mode transition.
+                decide_frame = self._build_frame(
+                    phase, artifact, candidates, output_language,
+                    control_ir_results=control_ir_results,
+                    artifact_path=artifact_path,
+                    remaining_act_turns=remaining,
+                    force_decide=True,
+                )
+                raw = await self._llm_caller.call(
+                    phase, decide_frame, None,
+                    rollback_context if first_call else None, state,
+                )
+                self._last_control_ir_results = control_ir_results
+                return raw, []
+
+            first_call = False
+            act_turn_count += 1
+
+            ops = []
+            invalid: list[str] = []
+            for tc in result.tool_calls:
+                try:
+                    ops.append(tool_call_to_control_ir_op(tc))
+                except Exception as exc:  # noqa: BLE001 — invalid op shape
+                    invalid.append(str(exc))
+            if invalid:
+                # Mirror json-mode's act_ops validation_error event (the model is
+                # told via the next frame's results that the op did not run).
+                self._events.emit(
+                    "validation_error", phase=phase,
+                    error=f"invalid tool_call op(s): {'; '.join(invalid)}",
+                )
+
+            ir_results = await self._control_ir_executor.execute(
+                ops, phase=phase, decl=phase_decl, allowed_ops=allowed_ops,
+                default_sandbox_policy=(
+                    phase_def.default_sandbox_policy if phase_def is not None else None
+                ),
+            )
+            control_ir_results = control_ir_results + ir_results
+            self._events.emit(
+                "act_executed",
+                phase=phase,
+                op_count=len(ops),
+                op_kinds=[op.kind for op in ops],
+                act_turn=act_turn_count,
+                ops=[op.model_dump() for op in ops],
+                results=ir_results,
+            )
 
     # ── Act loop ──────────────────────────────────────────────────────────────
 
@@ -707,7 +880,11 @@ class PhaseExecutor:
         phase_def = self._skill.phases[phase]
         max_act_turns = phase_def.max_act_turns if phase_def.max_act_turns > 0 else 10
 
-        raw, prior_attempts = await self._run_act_loop(
+        # #1212 PR2: gated dispatch. Opted-in skills run the native-tools op-loop;
+        # the default json-mode act loop is unchanged. Both return (raw_decide, prior)
+        # and feed the same decide-with-retry path (transition stays json-mode).
+        act_loop = self._run_op_loop if self._op_loop_enabled else self._run_act_loop
+        raw, prior_attempts = await act_loop(
             phase, artifact, candidates, output_language,
             max_act_turns, max_phase_retries, artifact_path,
             state,

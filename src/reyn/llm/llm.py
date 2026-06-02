@@ -827,6 +827,37 @@ def _build_system_message(system_text: str, prompt_cache_enabled: bool) -> dict:
     }
 
 
+def build_phase_messages(
+    frame: "ContextFrame",
+    *,
+    skill_name: str = "",
+    skill_description: str = "",
+    phase_role: str | None = None,
+    project_context: str = "",
+    agent_role: str = "",
+    prompt_cache_enabled: bool = True,
+) -> list[dict]:
+    """Build the [system, user] message pair for a phase LLM call.
+
+    #1212: the SAME message construction (system prompt + frame-as-user) is shared
+    by the json-mode ``call_llm`` path and the native-tools op-loop path, so the
+    two never drift (a divergent system prompt / frame rendering would be a subtle
+    bug, and matching them is the promotion-symmetry intent).
+    """
+    system = _system_prompt(
+        skill_name=skill_name,
+        skill_description=skill_description,
+        phase_role=phase_role,
+        project_context=project_context,
+        agent_role=agent_role,
+    )
+    user_content = json.dumps(frame.model_dump(mode="json"), indent=2, ensure_ascii=False)
+    return [
+        _build_system_message(system, prompt_cache_enabled),
+        {"role": "user", "content": user_content},
+    ]
+
+
 async def call_llm(
     model: "Union[str, ModelSpec]",
     frame: ContextFrame,
@@ -880,18 +911,15 @@ async def call_llm(
                 format_refusal_message(check, agent=budget_agent),
             )
 
-    system = _system_prompt(
+    messages: list[dict] = build_phase_messages(
+        frame,
         skill_name=skill_name,
         skill_description=skill_description,
         phase_role=phase_role,
         project_context=project_context,
         agent_role=agent_role,
+        prompt_cache_enabled=prompt_cache_enabled,
     )
-    user_content = json.dumps(frame.model_dump(mode="json"), indent=2, ensure_ascii=False)
-    messages: list[dict] = [
-        _build_system_message(system, prompt_cache_enabled),
-        {"role": "user", "content": user_content},
-    ]
 
     # Build combined injection list: rollback context first, then same-phase retries
     all_injections: list[dict[str, str]] = []
@@ -1068,6 +1096,7 @@ async def call_llm_tools(
     messages: list[dict],            # OpenAI-format messages (role/content/tool_calls/tool_call_id)
     tools: list[dict],               # OpenAI-format tools array
     tool_choice: str = "auto",       # "auto" | "required" | "none" (note: "none" not Gemini-safe)
+    response_format: dict | None = None,  # #1212 D4: opt-in uniform tools+rf; None = chat default
     timeout: float | None = None,
     max_retries: int = 1,
     skill_name: str = "router",      # for budget/event tagging
@@ -1182,7 +1211,10 @@ async def call_llm_tools(
         **spec_kwargs,
         # Gemini-safe forced settings override spec_kwargs:
         "stream": False,             # Gemini #21041: streaming + tools bug
-        # No response_format: incompatible with tools= on most providers
+        # response_format is OPT-IN (#1212 D4): threaded separately to the
+        # chokepoint below (not here) WITH the fallback, so a provider that
+        # rejects tools+response_format (e.g. Gemini 400) degrades to tools-only
+        # via the PR1 capability cache. Default None = chat behavior (tools only).
         # No thinking kwargs: disabled by default on all providers
         **extra,
     }
@@ -1214,6 +1246,9 @@ async def call_llm_tools(
         return await recorded_acompletion(
             model=_model, messages=_messages, purpose=purpose,
             recorder=None, extra_kwargs=_kw,
+            # #1212 D4: opt-in response_format with the cache-backed degrade.
+            response_format=response_format,
+            fallback_without_response_format=response_format is not None,
         )
 
     response = await _llm_call_with_retry(_tools_call, effective_model, event_log)
