@@ -94,19 +94,23 @@ class PhaseRouterLoopHost:
         return self._resolve_model_fn(name)
 
     def make_router_op_context(self) -> Any:
-        """Phase ``OpContext`` factory — STUB in PR-A (returns None); wired in PR-B.
+        """Phase ``OpContext`` factory for the registry tool-dispatch handlers.
 
         RouterLoop's ``op_context_factory`` (= this method) feeds the registry
         tool-dispatch handlers (``REGISTRY_DISPATCH_TOOLS`` path). With the op-exec
         seam obviated (see module docstring), phase ops route through that same
-        registry path, so this MUST return a real phase ``OpContext`` (carrying the
-        phase ``PermissionDecl`` / ``allowed_ops`` / sandbox policy) for the handlers
-        to enforce phase permissions — the role the obviated seam's
-        ``control_ir_executor`` dispatch played. PR-A is inert (this host is not yet
-        wired into ``PhaseExecutor``), so the None stub is never reached; PR-B
-        implements it as part of the convergence wiring.
+        registry path, so this returns the SAME phase ``OpContext`` the json-mode
+        op-loop builds — delegated to ``ControlIRExecutor._build_ctx`` with the
+        phase ``PermissionDecl`` + sandbox policy so the registry handlers enforce
+        phase permissions identically to ``control_ir_executor.execute`` (the role
+        the obviated seam played). Single-sourced via the executor so there is no
+        second permission/sandbox provisioning path to drift (P3/P5).
         """
-        return None
+        return self._control_ir_executor._build_ctx(
+            self._decl,
+            self._phase,
+            default_sandbox_policy=self._default_sandbox_policy,
+        )
 
     async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
         """Phase NO-OP — a concept-absent legitimate no-op (P-clean).
