@@ -1,26 +1,33 @@
-"""Tier 2: universal_dispatch coverage guard for the D6 op-shape codemod (#1212 PR3).
+"""Tier 2: universal_dispatch chat-router coverage guard for stdlib op kinds (#1212 PR3).
 
-Guard invariant (ADR-0035 §"Open items"):
-  The ``universal_dispatch`` op-kind→tool-call mapping MUST be total over
-  the real op kinds that stdlib skills actually reference.  This test fails
-  loudly when a skill uses a real op kind that has no ``{name, arguments}``
-  tool_call route in ``universal_dispatch``, so the PR3 codemod cannot
-  silently miss an op.
+Guard invariant (ADR-0035 D6):
+  Every real op kind a stdlib skill references must be EITHER chat-router-covered
+  by ``universal_dispatch`` OR an explicit ``_INTENTIONAL_CHAT_ROUTER_EXCLUSION``.
+  This fails loudly when a skill gains a new op kind that is neither — an
+  unintentional gap in the chat-router surface.
 
-Scope (per D6 correction, 2026-06-02):
-  - IN: real op kinds found in ``allowed_ops`` frontmatter and
-    preprocessor/postprocessor ``run_op`` step ``op.kind`` literals.
-  - OUT: DSL step types ``iterate`` / ``validate`` / ``python`` /
-    ``lint_plan`` — these are OS-deterministic, never LLM-emitted,
-    and are explicitly out of scope for the D6 codemod.
+Scope axis (per D6 corrections, 2026-06-02 — decision A + scope (i)):
+  The dividing line is **LLM-emitted vs OS-deterministic**, NOT "wraps a real op":
+  - LLM-emitted ops already unified to the native ``{name, arguments}`` tool_call
+    shape by the PR2 op-loop (they execute via the OP registry, kind→IROp).
+  - OS-deterministic literals are intentionally left as ``{kind, ...}`` and are
+    OUT of scope for any shape codemod:
+      · DSL step types ``iterate`` / ``validate`` / ``python`` / ``lint_plan``;
+      · **``run_op`` step ``op:`` literals** — these are authored by the skill,
+        never emitted by an LLM, and (like the DSL above) keep the ``{kind, ...}``
+        ControlIROp shape. Rewriting them to ``{name, arguments}`` was the
+        retracted D6 framing: it is churn without an emission benefit and would
+        require a ``RunOpStep.op`` model change (it rejects the tool_call shape).
+  This test therefore checks op-kind chat-router COVERAGE, not literal shape: it
+  scans ``allowed_ops`` + ``run_op`` ``op.kind`` only to enumerate which op kinds
+  a skill uses, then asserts each is covered-or-excluded.
 
 Coverage contract:
-  For every real op kind k used by any stdlib skill, there must exist at
-  least one qualified name in ``universal_dispatch._OPERATION_RULES`` (or
-  ``_RESOURCE_RULES``) whose category unambiguously covers k.  The explicit
-  op_kind → category correspondence is defined in ``_OP_KIND_CATEGORY`` below
-  and IS the codemod contract: PR3 will rewrite each op kind to the
-  corresponding qualified name(s).
+  For every real op kind k a stdlib skill uses, either a qualified name in
+  ``universal_dispatch._OPERATION_RULES`` / ``_RESOURCE_RULES`` covers its
+  category (``_OP_KIND_CATEGORY`` declares the correspondence), or k is listed in
+  ``_INTENTIONAL_CHAT_ROUTER_EXCLUSIONS`` (skill-internal / control-flow, no
+  chat-router target). PR3 makes ZERO catalog change — decision A.
 
 Load strategy: reads skill files from disk via YAML + frontmatter parsing
 (real data, no hardcoded copies).
