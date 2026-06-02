@@ -6,18 +6,29 @@ proven narrow ``_PlanStepHost`` (``chat/planner.py``) shape but is
 TERMINAL-VALUED: a phase has no parent chat host to delegate to, and — per
 #1212 PR3 decision A — no skills / agents / mcp / universal catalog.
 
-It owns BOTH halves of the convergence seam:
+It owns the catalog-source REPLACE seam:
 
 - ``get_phase_op_catalog`` — the catalog-source REPLACE seam (``RouterLoop.run``
   uses this INSTEAD of chat-discovery ``build_tools`` when present).
-- ``execute_phase_op`` — the op-execution seam (``RouterLoop._execute_tool``
-  delegates every phase tool call here). It converts the native tool call to a
-  ``ControlIROp`` and runs it through the SHARED ``control_ir_executor`` so
-  dispatch / permission / events / WAL match the json-mode op-loop exactly.
 
-RouterLoop stays generic (P7): it holds no phase op-kind strings. This host is
-the chat-vs-phase polymorphism point — the same role ``RouterHostAdapter``
-(chat) and ``_PlanStepHost`` (plan-step) play for their loops.
+The earlier op-execution seam (``execute_phase_op`` / ``RouterLoop._execute_tool``
+host delegation, #1234 FD1 beta) was OBVIATED by the #1240 catalog axis: a phase's
+op tool NAMES are now the unified fine registry kinds (``read_file`` … plus
+``invoke_skill`` / ``call_mcp_tool``), so ``RouterLoop._invoke_router_tool`` routes
+them through its existing ``REGISTRY_DISPATCH_TOOLS`` registry path — no
+phase-specific exec hook needed (RouterLoop still holds no phase op-kind strings,
+P7). The convergence wiring (PR-B) closes the two residuals this leaves:
+(1) add ``edit_file`` / ``glob_files`` / ``grep_files`` to ``REGISTRY_DISPATCH_TOOLS``
+(registry ToolDefs that chat never exposed as router tools), and
+(2) implement :meth:`make_router_op_context` to return a phase ``OpContext``
+(carrying the phase ``PermissionDecl`` / ``allowed_ops`` / sandbox policy) so the
+registry handlers enforce phase permissions — the role the obviated seam's
+``control_ir_executor`` dispatch played.
+
+This host is the chat-vs-phase polymorphism point — the same role
+``RouterHostAdapter`` (chat) and ``_PlanStepHost`` (plan-step) play for their loops.
+It is INERT until ``PhaseExecutor`` wires it in (PR-B); today's phase act-loop still
+runs the json-mode ``_run_op_loop`` unchanged.
 """
 
 from __future__ import annotations
@@ -83,13 +94,17 @@ class PhaseRouterLoopHost:
         return self._resolve_model_fn(name)
 
     def make_router_op_context(self) -> Any:
-        """Vestigial for phase — returns None.
+        """Phase ``OpContext`` factory — STUB in PR-A (returns None); wired in PR-B.
 
-        RouterLoop's ``op_context_factory`` (= this method) feeds its CHAT
-        tool-dispatch handlers (file / web / mcp), which phase ops BYPASS: a
-        phase op routes via :meth:`execute_phase_op` → ``control_ir_executor``,
-        which builds its OWN ``OpContext`` internally. So this is never reached
-        on the phase path; it exists only to satisfy ``RouterLoopCore``.
+        RouterLoop's ``op_context_factory`` (= this method) feeds the registry
+        tool-dispatch handlers (``REGISTRY_DISPATCH_TOOLS`` path). With the op-exec
+        seam obviated (see module docstring), phase ops route through that same
+        registry path, so this MUST return a real phase ``OpContext`` (carrying the
+        phase ``PermissionDecl`` / ``allowed_ops`` / sandbox policy) for the handlers
+        to enforce phase permissions — the role the obviated seam's
+        ``control_ir_executor`` dispatch played. PR-A is inert (this host is not yet
+        wired into ``PhaseExecutor``), so the None stub is never reached; PR-B
+        implements it as part of the convergence wiring.
         """
         return None
 
@@ -117,39 +132,3 @@ class PhaseRouterLoopHost:
 
         catalog = _build_phase_tool_catalog(self._allowed_ops or set())
         return [{"type": "function", **entry} for entry in catalog.values()]
-
-    # ── op-execution seam ─────────────────────────────────────────────────
-
-    async def execute_phase_op(self, *, name: str, args: dict) -> Any:
-        """Run one phase op through the SHARED control_ir_executor.
-
-        Converts the native tool call to a ``ControlIROp`` then dispatches via
-        ``control_ir_executor.execute`` — the same dispatch / permission /
-        events / WAL path the json-mode op-loop uses (``_run_op_loop`` @
-        ``execute(ops, ...)``). On an invalid op shape it MIRRORS the json-mode
-        per-turn validation (emit ``validation_error`` + return an error result
-        the model sees in the next turn's message history) rather than crashing
-        the loop.
-        """
-        from reyn.kernel.op_loop import tool_call_to_control_ir_op
-
-        try:
-            op = tool_call_to_control_ir_op(
-                {"function": {"name": name, "arguments": args}}
-            )
-        except Exception as exc:  # noqa: BLE001 — invalid op shape (mirror json-mode)
-            self._events.emit(
-                "validation_error",
-                phase=self._phase,
-                error=f"invalid tool_call op: {exc}",
-            )
-            return {"status": "error", "kind": "invalid_op", "error": str(exc)}
-
-        results = await self._control_ir_executor.execute(
-            [op],
-            phase=self._phase,
-            decl=self._decl,
-            allowed_ops=self._allowed_ops,
-            default_sandbox_policy=self._default_sandbox_policy,
-        )
-        return results[0] if results else {}

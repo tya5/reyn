@@ -81,6 +81,28 @@ Tier-2 test asserts this is **not load-bearing** (phase accumulates op-results i
 PhaseRouterLoopHost (6 core impls + `get_phase_op_catalog`, zero chat-extra stubs). Throwaway-free,
 chat-unaffected, P7-aligned (no chat-tool-exec baked into the loop).
 
+**#1240 update — op-execution seam OBVIATED (rebased PR-A, e2e flow-trace on post-catalog-axis main).**
+An interim FD1-beta detour added an `execute_phase_op` host hook (RouterLoop delegates phase tool calls to
+the host's `control_ir_executor`) because back then RouterLoop's `_invoke_router_tool` routed only chat
+`REGISTRY_DISPATCH_TOOLS` names while phase op-kinds (`file__read`/`exec`) hit "unhandled tool". The #1240
+catalog axis dissolved that: phase op tool NAMES are now the unified fine registry kinds (`read_file` …
+`grep_files`, `invoke_skill`, `call_mcp_tool`), which `_invoke_router_tool` already routes via its
+`REGISTRY_DISPATCH_TOOLS` registry path — vindicating FD1's "dispatch is ALREADY shared" precision. So the
+op-exec seam is DROPPED and **PhaseRouterLoopHost is catalog-only** (`get_phase_op_catalog` + the 6
+`RouterLoopCore` members). Dispatch returns to the FD1 design: phase ops dispatch via `dispatch_tool` /
+registry, with the phase `OpContext` supplied by `make_router_op_context` (the "op-execution bridge" named
+above) — NOT a phase-specific exec hook.
+
+PR-A is **inert** (PhaseRouterLoopHost is not yet wired into `PhaseExecutor`; `_run_op_loop` still runs).
+Two residuals close in **PR-B** (the convergence wiring), verified against current main:
+1. add `edit_file` / `glob_files` / `grep_files` to `REGISTRY_DISPATCH_TOOLS` (router_loop.py) — registry
+   ToolDefs that chat never exposed as router tools but are now in the phase default `allowed_ops`
+   (root-fix = extend the existing registry-uniform path, NOT revive the host exec hook).
+2. implement `PhaseRouterLoopHost.make_router_op_context` to return a phase `OpContext` (carrying the phase
+   `PermissionDecl` / `allowed_ops` / sandbox policy) so the registry handlers enforce phase permissions —
+   the provisioning role the obviated seam's `control_ir_executor` dispatch played (PR-A stubs it as None,
+   never reached while inert).
+
 ### FD2 — RouterLoop is json-mode-free; the structured transition stays a separable post-pend (肝)
 *(3-source locked: user direction + primary-evidence + e2e §3a.)* RouterLoop runs ops native-tools
 (`call_llm_tools`, `tool_choice=auto`), ends on `end_turn`. The phase **then** does its structured-transition
