@@ -53,6 +53,7 @@ models:
 | `project_context_path` | string | Markdown file injected into every phase system prompt. Default `REYN.md`. |
 | `shell_allowed` | bool | Pre-approve the `shell` op so it is not gated per-call. Default `false`. |
 | `api_base` | string | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
+| `tool_calls_op_loop_skills` | list | **Transitional (#1212).** Skill names opted into the native-tools op-loop phase mechanism (ops emitted as native `tool_calls` and run through the shared executor) instead of the json-mode `control_ir` batch. Default empty = all skills use json-mode (unchanged). Removed once the op-loop becomes the default. |
 
 ## `models` block
 

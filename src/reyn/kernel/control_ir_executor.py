@@ -55,22 +55,44 @@ def _build_phase_tool_catalog(allowed_ops: set[str]) -> dict[str, dict]:
     Returns a dict[str, dict] in litellm tools= entry shape:
         {op_kind: {"function": {"name": op_kind, "parameters": <json schema>}}}
     """
+    from reyn.op_runtime.registry import split_tool_name
     from reyn.tools import get_default_registry
     registry = get_default_registry()
 
     catalog: dict[str, dict] = {}
-    for kind in allowed_ops:
+    for name in allowed_ops:
+        # #1212 PR4 (D7): a verb-granular file tool-name (file__read) resolves to
+        # the `file` schema; the verb is implied by the tool name, so its `op`
+        # field is dropped from the offered parameters (the conversion re-injects
+        # it). All other names are kinds (tool-name == kind).
+        kind, verb = split_tool_name(name)
         tool_def = registry.lookup(kind)
         if tool_def is None or tool_def.gates.phase != "allow":
-            catalog[kind] = {"function": {"name": kind}}
+            catalog[name] = {"function": {"name": name}}
             continue
-        catalog[kind] = {
+        params = dict(tool_def.parameters)
+        if verb is not None:
+            params = _drop_schema_property(params, "op")
+        catalog[name] = {
             "function": {
-                "name": kind,
-                "parameters": dict(tool_def.parameters),
+                "name": name,
+                "parameters": params,
             }
         }
     return catalog
+
+
+def _drop_schema_property(schema: dict, prop: str) -> dict:
+    """Return a copy of a JSON-schema object with ``prop`` removed from
+    ``properties`` and ``required`` (used to hide an implied field)."""
+    out = dict(schema)
+    props = out.get("properties")
+    if isinstance(props, dict) and prop in props:
+        out["properties"] = {k: v for k, v in props.items() if k != prop}
+    req = out.get("required")
+    if isinstance(req, list) and prop in req:
+        out["required"] = [r for r in req if r != prop]
+    return out
 
 
 class ControlIRExecutor:
@@ -447,10 +469,14 @@ class ControlIRExecutor:
         _registry = get_default_registry()
 
         # Lazy import to avoid module-init cycles.
-        from reyn.op_runtime.registry import is_op_allowed
+        # #1212 PR4 (D7): op-aware allowance — gates a file op by its verb
+        # (file__read) when allowed_ops is verb-granular, while a coarse `file`
+        # entry still allows every verb (behavior-preserving). Non-file ops are
+        # unchanged (delegates to is_op_allowed on op.kind).
+        from reyn.op_runtime.registry import is_op_instance_allowed
 
         for op_idx, op in enumerate(ops):
-            if allowed_ops is not None and not is_op_allowed(op.kind, allowed_ops):
+            if allowed_ops is not None and not is_op_instance_allowed(op, allowed_ops):
                 self.events.emit(
                     "control_ir_skipped",
                     kind=op.kind, reason="not_allowed_in_phase",

@@ -88,6 +88,7 @@ class OSRuntime:
         workspace_state_dir: "Path | None" = None,
         phase_compaction_engine: "CompactionEngine | None" = None,
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
+        tool_calls_op_loop_skills: list[str] | None = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -98,6 +99,9 @@ class OSRuntime:
         self._chain_id = chain_id
         self._budget_tracker = budget_tracker
         self._budget_skill_name = skill_name or skill.name
+        # #1212: retained so sub-skill runs (run_skill / @sub_skill nodes) inherit
+        # the same op-loop gate — a sub-skill named in the list also op-loops.
+        self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
         self.events = EventLog(
             subscribers=subscribers, run_id=run_id, plan_step=plan_step,
         )
@@ -282,6 +286,10 @@ class OSRuntime:
             build_frame_fn=self.build_frame,
             phase_compaction_engine=self._phase_compaction_engine,  # PR-N8
             phase_compaction_cfg=self._phase_compaction_cfg,        # PR-N8
+            # #1212 PR2: OS-decided mechanism gate (P3). The config holds opted-in
+            # skill names as data (P7-OK); this skill runs the native-tools op-loop
+            # iff its name is listed. Default empty = json-mode (zero change).
+            op_loop_enabled=skill.name in (tool_calls_op_loop_skills or ()),
         )
         # FP-0020 Component D: phase sequence + transitions + rollback + skill-node
         # dispatch + resume + SkillRegistry lifecycle extracted to RunOrchestrator.
@@ -312,6 +320,7 @@ class OSRuntime:
             caller=caller,
             max_phase_visits=self._max_phase_visits,
             budget_tracker=budget_tracker,  # #1190 stage (ii): skill_node_adapt cost recording
+            tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,  # #1212 sub-skill gate
         )
 
     # ── Backward-compat properties (FP-0020 Component A) ───────────────────
@@ -447,6 +456,7 @@ class OSRuntime:
         artifact_path: str | None = None,
         remaining_act_turns: int | None = None,
         force_decide: bool = False,
+        act_turn_reasoning: list[str] | None = None,
     ) -> ContextFrame:
         effective_model = self._effective_model(current_phase)
         phase_def = self.skill.phases[current_phase]
@@ -532,6 +542,7 @@ class OSRuntime:
             model_resolved=model_resolved,
             events=self.events,
             control_ir_results=control_ir_results,
+            act_turn_reasoning=act_turn_reasoning or [],
             artifact_path=resolved_artifact_path,
             remaining_act_turns=remaining_act_turns,
             offload_dir=offload_dir,

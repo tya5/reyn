@@ -67,6 +67,17 @@
 
 
 # -----------------------------------------------------------------------------
+# tool_calls_op_loop_skills: TRANSITIONAL (#1212). Skill names opted into the
+# native-tools op-loop phase mechanism — their ops are emitted as native
+# tool_calls and run through the shared executor instead of the json-mode
+# control_ir batch. Default empty = every skill uses json-mode (unchanged).
+# Removed once the op-loop becomes the default.
+# -----------------------------------------------------------------------------
+# tool_calls_op_loop_skills:
+#   - my_skill
+
+
+# -----------------------------------------------------------------------------
 # permissions: pre-approved permission grants — same structure as phase
 # frontmatter ``permissions:`` block, but value is always ``allow``. Lets the
 # operator pre-approve specific tools so the router doesn't gate them at

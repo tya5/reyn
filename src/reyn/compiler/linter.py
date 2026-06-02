@@ -13,7 +13,7 @@ from pathlib import Path
 
 import jsonschema
 
-from reyn.op_runtime.registry import ALL_OP_KINDS as _KNOWN_OP_KINDS
+from reyn.op_runtime.registry import ALL_TOOL_NAMES as _KNOWN_ALLOWED_OPS_NAMES
 
 from .parser import _split_frontmatter, parse_artifact
 
@@ -156,12 +156,13 @@ def _lint_allowed_ops(path: Path, fm: dict) -> list[LintIssue]:
                 f"allowed_ops[{i}] must be a string op kind, got {type(val).__name__}",
             ))
             continue
-        if val not in _KNOWN_OP_KINDS:
+        if val not in _KNOWN_ALLOWED_OPS_NAMES:
             issues.append(LintIssue(
                 "warning", path,
-                f"allowed_ops[{i}]='{val}' is not a known Control IR op kind. "
-                f"Known kinds: {sorted(_KNOWN_OP_KINDS)}. "
-                f"Unknown kinds will be silently filtered out at runtime.",
+                f"allowed_ops[{i}]='{val}' is not a known Control IR op kind or "
+                f"file verb tool-name (e.g. file__read). "
+                f"Known names: {sorted(_KNOWN_ALLOWED_OPS_NAMES)}. "
+                f"Unknown names will be silently filtered out at runtime.",
             ))
         if val in seen:
             issues.append(LintIssue(
