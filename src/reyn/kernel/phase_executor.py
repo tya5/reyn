@@ -469,7 +469,20 @@ class PhaseExecutor:
         the path is opt-in): the on-demand ``compact`` op, the max-act-turns safety
         intervention (``handle_limit_exceeded``), and rollback-reason injection into
         act turns are json-mode-only here — the op-loop caps act turns then forces the
-        json transition. Act-turn LLM memo / resume divergence = PR5 (ADR Open items).
+        json transition.
+
+        RESUME SEMANTICS (#1212 PR5, decision B). ``call_tools`` skips LLM memo/WAL, so
+        on crash-resume an act turn is **re-decided** (the LLM is re-called) rather than
+        replayed. The op-EXECUTION layer is still WAL-protected: ``dispatch_tool``
+        memoizes each op on (op+args), so a *deterministic* re-decide (same op) memo-hits
+        and does NOT re-execute. Only a *divergent* re-decide (different op) misses the
+        memo and re-executes the new op (its side-effect lands outside WAL protection) —
+        a weaker crash-recovery guarantee than json-mode, accepted as opt-in-safe because
+        the op-loop is not production-reachable (no caller threads
+        ``tool_calls_op_loop_skills`` into the runtime). **HARD GATE**: the deterministic
+        act-turn memo (A) — memoize ``call_tools`` parallel to ``call`` so the tool_call
+        sequence replays exactly — MUST land before any production op-loop opt-in. See
+        ADR-0035 Open items.
         """
         from reyn.kernel.control_ir_executor import _build_phase_tool_catalog
         from reyn.kernel.op_loop import tool_call_to_control_ir_op
