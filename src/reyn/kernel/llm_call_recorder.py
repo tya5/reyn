@@ -234,8 +234,6 @@ class LLMCallRecorder:
         frame: ContextFrame,
         tools: list[dict],
         state: "RunState",
-        *,
-        response_format: dict | None = None,
     ) -> "LLMToolCallResult":
         """#1212 PR2: native-tools variant of ``call``. Returns the raw assistant
         message (content / tool_calls / finish_reason) for the op-loop.
@@ -278,7 +276,6 @@ class LLMCallRecorder:
             model=resolved_spec,
             messages=messages,
             tools=tools,
-            response_format=response_format,
             timeout=self._llm_timeout,
             max_retries=self._llm_max_retries,
             prompt_cache_enabled=self._prompt_cache_enabled,

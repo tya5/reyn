@@ -768,32 +768,17 @@ async def recorded_acompletion(
             call_kwargs["response_format"] = rf
         return await litellm.acompletion(model=effective_model, messages=messages, **call_kwargs)
 
-    # #1212 D5: per-(model, call-shape) capability cache. If this model+shape is
-    # already known to reject response_format, skip the doomed attempt and go
-    # straight to the no-response_format call (only on the fallback-enabled path,
-    # so non-fallback callers keep their exact raise-on-error semantics). Pure
-    # optimization — the fallback below still handles a first/uncached 400.
-    from reyn.llm.capability_cache import (
-        record_response_format_support,
-        response_format_supported,
-    )
-
-    has_tools = bool(base_kwargs.get("tools"))
-    rf = response_format
-    if (
-        response_format is not None
-        and fallback_without_response_format
-        and response_format_supported(effective_model, has_tools=has_tools) is False
-    ):
-        rf = None
-
+    # response_format fallback (predates #1212): on a provider that rejects
+    # response_format, retry once without it. Used by the json-mode path
+    # (call_llm passes fallback_without_response_format=True). The #1212 op-loop
+    # uses tools-only op-turns + a separate json transition (ADR-0035 D2
+    # separate-decide) and never combines tools+response_format, so the
+    # per-(model, call-shape) combine-degrade cache (D5) was superseded and
+    # pruned (#1226, user GO).
     try:
-        response = await _once(rf)
-        if rf is not None and fallback_without_response_format:
-            record_response_format_support(effective_model, has_tools=has_tools, supported=True)
+        response = await _once(response_format)
     except Exception:
-        if rf is not None and fallback_without_response_format:
-            record_response_format_support(effective_model, has_tools=has_tools, supported=False)
+        if response_format is not None and fallback_without_response_format:
             response = await _once(None)
         else:
             raise
@@ -1096,7 +1081,6 @@ async def call_llm_tools(
     messages: list[dict],            # OpenAI-format messages (role/content/tool_calls/tool_call_id)
     tools: list[dict],               # OpenAI-format tools array
     tool_choice: str = "auto",       # "auto" | "required" | "none" (note: "none" not Gemini-safe)
-    response_format: dict | None = None,  # #1212 D4: opt-in uniform tools+rf; None = chat default
     timeout: float | None = None,
     max_retries: int = 1,
     skill_name: str = "router",      # for budget/event tagging
@@ -1211,10 +1195,6 @@ async def call_llm_tools(
         **spec_kwargs,
         # Gemini-safe forced settings override spec_kwargs:
         "stream": False,             # Gemini #21041: streaming + tools bug
-        # response_format is OPT-IN (#1212 D4): threaded separately to the
-        # chokepoint below (not here) WITH the fallback, so a provider that
-        # rejects tools+response_format (e.g. Gemini 400) degrades to tools-only
-        # via the PR1 capability cache. Default None = chat behavior (tools only).
         # No thinking kwargs: disabled by default on all providers
         **extra,
     }
@@ -1239,16 +1219,14 @@ async def call_llm_tools(
         # #1190: route through the single cost-observability chokepoint.
         # recorder=None — call_llm_tools keeps its own record below; the
         # chokepoint re-derives proxy kwargs (idempotent) so only the
-        # pre-built tools/tool_choice/response_format kwargs flow as extras.
+        # pre-built tools/tool_choice kwargs flow as extras. The op-loop is
+        # tools-only (ADR-0035 D2 separate-decide) — no response_format here.
         _kw = dict(call_kwargs)
         _model = _kw.pop("model")
         _messages = _kw.pop("messages")
         return await recorded_acompletion(
             model=_model, messages=_messages, purpose=purpose,
             recorder=None, extra_kwargs=_kw,
-            # #1212 D4: opt-in response_format with the cache-backed degrade.
-            response_format=response_format,
-            fallback_without_response_format=response_format is not None,
         )
 
     response = await _llm_call_with_retry(_tools_call, effective_model, event_log)
