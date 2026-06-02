@@ -49,6 +49,7 @@ key off registry names.
 """
 from __future__ import annotations
 
+import typing as _t
 from enum import Enum
 
 from pydantic import BaseModel
@@ -262,3 +263,65 @@ def is_op_allowed(op_kind: str, allowed_ops: set[str] | frozenset[str]) -> bool:
         if fine_set is not None and op_kind in fine_set:
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# #1212 PR4 (D7): op-native file verb granularity
+# ---------------------------------------------------------------------------
+# `file` is the ONLY op kind with a genuine tool-verb axis (FileIROp.op:
+# read / write / edit / delete / glob / grep / …); every other op kind is
+# single-verb, so its tool-name == its kind (a no-op under granularity).
+# Decision (a), #1212: the chat-router taxonomy (web__fetch / mcp__call_tool)
+# is deliberately NOT adopted as the allowed_ops vocabulary — that is a separate
+# surface (PR3 decision A). The verb set is derived from the model so it never
+# drifts from FileIROp.
+_FILE_VERBS: frozenset[str] = frozenset(
+    a
+    for a in _t.get_args(OP_KIND_MODEL_MAP["file"].model_fields["op"].annotation)
+    if isinstance(a, str)
+)
+FILE_VERB_TOOL_NAMES: frozenset[str] = frozenset(f"file__{v}" for v in _FILE_VERBS)
+
+# Every name the linter / catalog may legitimately see in allowed_ops.
+ALL_TOOL_NAMES: frozenset[str] = ALL_OP_KINDS | FILE_VERB_TOOL_NAMES
+
+
+def op_tool_name(kind: str, op: str | None = None) -> str:
+    """Canonical op-native tool-name (D7).
+
+    ``file`` + a verb → ``file__<verb>``; every other kind → the kind itself
+    (single-verb, tool-name == kind).
+    """
+    if kind == "file" and op:
+        return f"file__{op}"
+    return kind
+
+
+def split_tool_name(tool_name: str) -> tuple[str, str | None]:
+    """Inverse of :func:`op_tool_name`: split a tool-name into ``(kind, verb)``.
+
+    ``"file__read"`` → ``("file", "read")``; a plain kind (``"web_fetch"``) →
+    ``("web_fetch", None)``. Used by the op-loop catalog + conversion to map a
+    verb-granular file tool back to a ``file`` op with its ``op`` field.
+    """
+    if tool_name.startswith("file__"):
+        return "file", tool_name[len("file__"):]
+    return tool_name, None
+
+
+def is_op_instance_allowed(op: object, allowed_ops: set[str] | frozenset[str]) -> bool:
+    """Op-aware allowance (D7): gate a ControlIROp *instance* against an
+    ``allowed_ops`` set that may mix coarse kinds and file verb-level tool-names.
+
+    - **file op**: allowed iff coarse ``"file"`` is in ``allowed_ops`` (legacy —
+      every verb, behavior-preserving for existing ``allowed_ops: [file]``
+      frontmatter) OR ``file__<op.op>`` is in ``allowed_ops`` (per-verb
+      tightening, the D7/P4 precision win — e.g. read but not delete).
+    - **any other op**: delegates to ``is_op_allowed(op.kind, ...)`` unchanged.
+    """
+    kind = getattr(op, "kind", None) or ""
+    if kind == "file":
+        if "file" in allowed_ops:
+            return True
+        return op_tool_name("file", getattr(op, "op", None)) in allowed_ops
+    return is_op_allowed(kind, allowed_ops)

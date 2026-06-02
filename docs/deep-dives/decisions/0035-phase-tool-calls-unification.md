@@ -162,9 +162,21 @@ docs (no PoC needed). The capability cache (D5) is an optimization over a proven
 3. **PR3 — op-shape codemod (D6).** Deterministic `universal_dispatch` rewrite of the
    11 skill files' real ops to `{name, arguments}`; preprocessor/postprocessor DSL
    untouched. Mechanical — Sonnet-suitable, with an AST/round-trip guard test.
-4. **PR4 — allowed_ops tool-name granularity (D7).** Linter target swap + the 36-phase
-   kind→sub-tool expansion (behavior-preserving) + offer-layer `allowed_ops ∩ permission`
-   filter (D8 permission). Per-phase tightening deferred to a follow-up.
+4. **PR4 — allowed_ops op-native file verb granularity (D7).** Shipped scope =
+   the **mechanism only**: `file` (the lone op kind with a real tool-verb axis)
+   gains `file__<verb>` granularity — gating (`is_op_instance_allowed`, op-aware),
+   catalog (`file__verb` drops the implied `op`), conversion, and the linter
+   target swap (`ALL_TOOL_NAMES`). Coarse `file` stays behavior-preserving (all
+   verbs); all other kinds are single-verb (no-op); the chat-router taxonomy is
+   NOT adopted (decision A). **Deferred follow-ups** (#1212 rationale, tracked
+   pre-close): (a) **offer-layer `allowed_ops ∩ permission` filter (D8)** — there
+   is no clean kind-level permission-granted set at offer time (grants are
+   per-key, arg-dependent, interactive), and the enforce layer already gates, so
+   the offer-filter is marginal; (b) **per-phase frontmatter expansion** — under
+   the D7 mechanism a coarse `file` is identical to the all-verbs expansion
+   (cosmetic), and the only meaningful change is narrowing, which is
+   non-behavior-preserving = the deliberate per-phase tightening (= the
+   P4-precision win) phases opt into later.
 5. **PR5 — WAL/resume loop-adaptation + replay fixtures (D8).** Resume per op turn;
    **replay fixtures track the json-mode frame shape, not a tool_call structure**
    (frame-fed op-loop, D2-impl — the D8b provider-id normalization is moot), round
