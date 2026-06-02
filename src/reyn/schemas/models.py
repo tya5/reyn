@@ -260,6 +260,44 @@ class FileIROp(BaseModel):
     header: str | None = None        # optional preamble prepended before the entries (e.g. "# Memory Index\n\n")
 
 
+# ── #1240 Wave 1: fine-grained file ops (phase = chat-tools subset) ──────────
+# These fine kinds let phase Control IR emit the SAME tool names the chat
+# catalog uses (read_file/write_file/edit_file/delete_file) instead of the
+# coarse ``{kind:"file", op:<verb>}`` envelope — the catalog axis of the #1240
+# 2-axis unification. Execution stays unified and there is NO backend
+# duplication: the op_runtime fine handlers are thin adapters that build the
+# coarse ``FileIROp`` and reuse the single ``file.handle()`` backend (same
+# permission / WAL path). The coarse ``FileIROp`` is retained for
+# behavior-preserving compat (Wave 2 migrates skills' ``allowed_ops`` to fine
+# names + drops the coarse phase-only ToolDefinition).
+
+
+class ReadFileIROp(BaseModel):
+    kind: Literal["read_file"]
+    path: str
+    offset: int | None = None        # line number to start reading from (0-indexed); None = beginning
+    limit: int | None = None         # number of lines to read; None = all
+
+
+class WriteFileIROp(BaseModel):
+    kind: Literal["write_file"]
+    path: str
+    content: str
+
+
+class EditFileIROp(BaseModel):
+    kind: Literal["edit_file"]
+    path: str
+    old_string: str                  # exact text to replace (must be unique unless replace_all=True)
+    new_string: str                  # replacement text
+    replace_all: bool = False        # replace all occurrences instead of requiring uniqueness
+
+
+class DeleteFileIROp(BaseModel):
+    kind: Literal["delete_file"]
+    path: str
+
+
 class MCPIROp(BaseModel):
     kind: Literal["mcp"]
     server: str
@@ -553,7 +591,10 @@ class CompactIROp(BaseModel):
 #   sandboxed_exec, judge_output, skill_resolve, compact.
 ControlIROp = Annotated[
     Union[
-        FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp,
+        FileIROp,
+        # #1240 Wave 1: fine-grained file ops (coarse FileIROp retained for compat).
+        ReadFileIROp, WriteFileIROp, EditFileIROp, DeleteFileIROp,
+        MCPIROp, AskUserIROp, ShellIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
         EmbedIROp, IndexWriteIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
         SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,

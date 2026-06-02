@@ -488,7 +488,16 @@ class ControlIRExecutor:
                 })
                 continue
 
-            op_args = op.model_dump(exclude={"kind"})
+            # #1240 Wave 1: exclude None so unset optional fields are OMITTED
+            # rather than sent as JSON null. The coarse FILE_OP schema tolerates
+            # null, but the fine-grained ToolDefinition schemas (read_file etc.)
+            # type optional fields strictly (e.g. offset: integer), and a model
+            # default of None dumps to null which fails strict validation. Omit
+            # matches how the chat LLM emits these args (absent when unset);
+            # handlers rebuild the op from args with the same defaults, so this
+            # is functionally identical for coarse ops (only the memoization
+            # args_hash shifts, consistently for record + lookup).
+            op_args = op.model_dump(exclude={"kind"}, exclude_none=True)
 
             async def _invoker(args: dict, _op=op, _ctx=ctx, _name=op.kind) -> Any:
                 # ADR-0026 Phase 4 step 2: dispatch via the unified

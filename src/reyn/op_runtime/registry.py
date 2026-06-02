@@ -57,6 +57,8 @@ from pydantic import BaseModel
 from reyn.schemas.models import (
     AskUserIROp,
     CompactIROp,
+    DeleteFileIROp,
+    EditFileIROp,
     EmbedIROp,
     FileIROp,
     IndexDropIROp,
@@ -66,6 +68,7 @@ from reyn.schemas.models import (
     LintIROp,
     MCPInstallIROp,
     MCPIROp,
+    ReadFileIROp,
     RecallIROp,
     RunSkillIROp,
     SandboxedExecIROp,
@@ -73,6 +76,7 @@ from reyn.schemas.models import (
     SkillResolveIROp,
     WebFetchIROp,
     WebSearchIROp,
+    WriteFileIROp,
 )
 
 
@@ -113,6 +117,14 @@ class OpPurity(str, Enum):
 
 OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "file":        FileIROp,
+    # #1240 Wave 1: fine-grained file kinds (phase = chat-tools subset). Listed
+    # alongside the coarse "file" (coarse+fine union; coarse retained for compat).
+    # control_ir_executor routes each via the registry (READ_FILE/WRITE_FILE/...
+    # ToolDefinitions, gates.phase=allow) — no separate op_runtime handler.
+    "read_file":   ReadFileIROp,
+    "write_file":  WriteFileIROp,
+    "edit_file":   EditFileIROp,
+    "delete_file": DeleteFileIROp,
     "mcp":         MCPIROp,
     "run_skill":   RunSkillIROp,
     "shell":       ShellIROp,
@@ -159,6 +171,15 @@ OP_PURITY: dict[str, OpPurity] = {
     "web_search":  OpPurity.world,
     # Side effect (workspace mutation; file/write/delete fall here).
     "file":        OpPurity.side_effect,
+    # #1240 Wave 1: fine-grained file kinds. Match the coarse "file"
+    # classification (side_effect) for behavior-preservation across the
+    # migration — the coarse kind is uniformly side_effect regardless of verb,
+    # so the fine kinds keep that conservative stance. (A read_file→world
+    # accuracy refinement is a separate decision, out of pivot scope.)
+    "read_file":   OpPurity.side_effect,
+    "write_file":  OpPurity.side_effect,
+    "edit_file":   OpPurity.side_effect,
+    "delete_file": OpPurity.side_effect,
     # External / unknown side-effecting.
     "mcp":         OpPurity.external,
     "shell":       OpPurity.external,
@@ -233,7 +254,7 @@ ALL_OP_KINDS: frozenset[str] = frozenset(OP_KIND_MODEL_MAP.keys())
 # ---------------------------------------------------------------------------
 
 COARSE_TO_FINE: dict[str, frozenset[str]] = {
-    "file":      frozenset({"read_file", "write_file", "delete_file", "list_directory"}),
+    "file":      frozenset({"read_file", "write_file", "edit_file", "delete_file", "list_directory"}),
     "mcp":       frozenset({"call_mcp_tool", "list_mcp_servers", "list_mcp_tools"}),
     "run_skill": frozenset({"invoke_skill"}),
 }
