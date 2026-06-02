@@ -39,7 +39,11 @@ _USAGE = (
 )
 
 
-@slash("tasks", summary="Unified view of running async tasks (skills + plans)")
+@slash(
+    "tasks",
+    summary="Unified view of running async tasks (skills + plans)",
+    usage="/tasks [list|status <run_id>|kill <run_id>]",
+)
 async def tasks_cmd(session: "ChatSession", args: str) -> None:
     parts = args.strip().split(maxsplit=1)
     if not parts or parts[0] == "list":

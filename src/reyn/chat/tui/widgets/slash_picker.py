@@ -312,9 +312,12 @@ class SlashPicker(RenderableCacheMixin, Static):
             # Selection caret
             row.append("▌ " if is_sel else "  ",
                        style=_CORAL if is_sel else _BG_HEADER)
-            # Command name
+            # Command name + optional dim alias hint (e.g. "  ·img")
             name = f"/{cmd.name}".ljust(name_col)
             row.append(name, style=f"bold {_CORAL}" if is_sel else _TEXT_BRIGHT)
+            if cmd.aliases:
+                alias_hint = " ·" + "/".join(cmd.aliases)
+                row.append(alias_hint, style="dim " + _TEXT_DIM)
             row.append("  ")
             # Summary (truncated to fit the row)
             summary = cmd.summary
