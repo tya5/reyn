@@ -453,6 +453,18 @@ class PhaseExecutor:
         ``tool_calls_op_loop_skills`` (gate) — un-opted skills stay on _run_act_loop
         with zero change.
 
+        INTENTIONAL DESIGN — op results are FRAME-fed, not native-tool-role-threaded
+        (ADR-0035 D2-impl). Each turn rebuilds the frame with the accumulated
+        ``control_ir_results`` and issues an INDEPENDENT ``call_tools`` (no growing
+        ``{role:assistant,tool_calls}`` + ``{role:tool,...}`` history is threaded back),
+        exactly mirroring how json-mode _run_act_loop rebuilds the frame each turn.
+        Trade-off: (+) reuses the json-mode frame builder (no drift) / each call is
+        self-contained (no dangling-tool_call API hazard) / PR5 replay = json-mode
+        frame replay (provider tool_call-id normalization is moot); (−) the model loses
+        native cross-turn tool-call continuity (mitigated — prior results are in every
+        frame). The residual "real model progresses op-by-op (no redo/stall)" risk is
+        settled by 動作確認, not the scripted plumbing tests.
+
         PR2-scope simplifications vs _run_act_loop (deferred follow-ups; safe because
         the path is opt-in): the on-demand ``compact`` op, the max-act-turns safety
         intervention (``handle_limit_exceeded``), and rollback-reason injection into
