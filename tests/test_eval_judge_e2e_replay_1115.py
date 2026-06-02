@@ -71,10 +71,12 @@ def test_eval_judge_cross_workspace_artifact_handle_e2e(tmp_path: Path, monkeypa
     abs_path = str(producer.resolve_artifact_handle(handle))
 
     # Run the real judge_phase skill: act turn reads the handed path, decide turn
-    # emits the verdict. The LLM is scripted; the file.read is the boundary.
+    # emits the verdict. The LLM is scripted; the read_file op is the boundary.
+    # #1240 Wave 2a: judge_phase migrated allowed_ops file→fine, so the scripted
+    # op is the fine read_file kind (was the coarse {kind:file, op:read}).
     judge_skill = load_dsl_skill(stdlib_root() / "skills" / "judge_phase" / "skill.md")
     script = [
-        {"type": "act", "ops": [{"kind": "file", "op": "read", "path": abs_path}]},
+        {"type": "act", "ops": [{"kind": "read_file", "path": abs_path}]},
         {
             "type": "decide",
             "control": {
