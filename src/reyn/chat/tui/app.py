@@ -172,8 +172,9 @@ class ReynTUIApp(App):
         Binding("f4", "focus_async_stack", "Focus async strip", priority=True, show=False),
         # W13 T2-1: F7 keyboard drill for the most-recent failed ToolCallRow.
         # F4 is reserved for async-stack panel focus (Wave-9 / keys_tab
-        # description); F5/F6 reserved for conv-pane error-jump (#586).
-        # F7 is the first free function key after those reservations.
+        # description). F5/F6 are FREE since #1217 removed the conv-pane
+        # error-jump (#586) — available for reuse.
+        # F7 follows historically.
         Binding("f7", "drill_failed_tool", "Toggle most-recent failed tool row", priority=True, show=False),
         # F9: toggle timestamp prefix (HH:MM) in conv pane headers.
         # With ts hidden, body indent shrinks col 8 → col 2, reclaiming

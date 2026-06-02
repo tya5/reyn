@@ -732,7 +732,7 @@ class RightPanel(Widget):
             # this, the panel was a Tab/Shift+Tab focus trap (those keys
             # cycle tabs, never exit), and Esc was a silent no-op because
             # the App's escape binding is gated by ``check_action`` which
-            # returns False when nothing else (recording, error box) is
+            # returns False when nothing else (recording) is
             # interceptable. Tab cycling stays; this is purely the exit.
             # A-F4 (wave-8): when the docs tab has an active filter,
             # Esc clears the filter in place instead of dropping focus
