@@ -725,17 +725,42 @@ class PhaseExecutor:
         # tool_calls, returning control here for the FD2 decide.
         await routerloop.run_loop(messages, tools, False)
 
-        # FD2: reconstruct control_ir_results from the native tool-role turns so the
-        # SEPARATE json decide frame carries the op outcomes (P1/P8 — transition is
-        # post-pended here, never inside run_loop).
+        # FD2: build the SEPARATE json decide frame from the native turns so it is
+        # INFORMATION-EQUIVALENT to the #1212 _run_op_loop decide frame (P1/P8 —
+        # transition post-pended here, never inside run_loop). Two structural pieces
+        # the json-mode decide frame relies on (their absence is the #1092 dogfood
+        # reliability regression: a context-inadequate decide frame, not a model-axis
+        # limit — the weak model fumbles the decide because it sees LESS than json-mode):
+        #   (a) act_turn_reasoning — the model's inline content from the native
+        #       assistant turns (reasoning continuity, exactly what _run_op_loop
+        #       carries forward across act turns), and
+        #   (b) control_ir_results in the RAW op-result shape — unwrapping
+        #       dispatch_tool's {"status": "ok", "data": <op result>} envelope so the
+        #       outcomes render the same way the json-mode op-loop renders them.
         control_ir_results: list[dict] = list(prior_results)
+        act_turn_reasoning: list[str] = []
         for _m in messages:
-            if _m.get("role") == "tool":
+            _role = _m.get("role")
+            if _role == "assistant":
+                _ac = _m.get("content")
+                if isinstance(_ac, str) and _ac:
+                    act_turn_reasoning.append(_ac)
+            elif _role == "tool":
                 _content = _m.get("content")
                 try:
-                    control_ir_results.append(_json.loads(_content))
+                    _parsed = _json.loads(_content)
                 except (TypeError, ValueError):
-                    control_ir_results.append({"result": _content})
+                    _parsed = {"result": _content}
+                if (
+                    isinstance(_parsed, dict)
+                    and "data" in _parsed
+                    and set(_parsed) <= {"status", "data", "error"}
+                ):
+                    _parsed = _parsed["data"]
+                control_ir_results.append(_parsed)
+        if self._phase_compaction_cfg is not None:
+            _keep = self._phase_compaction_cfg.recent_act_turns_raw
+            act_turn_reasoning = act_turn_reasoning[-_keep:]
         self._last_control_ir_results = control_ir_results
 
         decide_frame = self._build_frame(
@@ -744,6 +769,7 @@ class PhaseExecutor:
             artifact_path=artifact_path,
             remaining_act_turns=0,
             force_decide=True,
+            act_turn_reasoning=act_turn_reasoning,
         )
         raw = await self._llm_caller.call(
             phase, decide_frame, None, rollback_context, state,
