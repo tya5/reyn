@@ -288,7 +288,11 @@ class ControlIRExecutor:
                 example={"kind": "sandboxed_exec", "argv": ["python", "-m", "pytest", "-x", "--tb=short"]},
             ),
             *([ControlIROpSpec(
-                kind="mcp",
+                # #1240 Wave 2b (A)-alias: advertise as "call_mcp_tool" (chat name)
+                # — the op-loop and json-mode parse paths rewrite this to "mcp"
+                # before ControlIROp validation.  allowed_ops=[mcp] still works
+                # via _PHASE_TOOL_NAME_ALIAS in build_frame.
+                kind="call_mcp_tool",
                 description=(
                     "Call a tool on a configured MCP server (HTTP transport). "
                     "server: the server name as defined in mcp.servers config. "
@@ -296,10 +300,10 @@ class ControlIRExecutor:
                     "args: arguments dict to pass to the tool. "
                     "Returns: content (text), raw (full MCP result). "
                     "Status: enabled — this op's presence in op_catalog means "
-                    "mcp permission is verified for this phase. Issue mcp ops "
+                    "mcp permission is verified for this phase. Issue call_mcp_tool ops "
                     "directly; do not abort on permission concerns."
                 ),
-                example={"kind": "mcp", "server": "my_tool", "tool": "search", "args": {"query": "hello"}},
+                example={"kind": "call_mcp_tool", "server": "my_tool", "tool": "search", "args": {"query": "hello"}},
             )] if self._mcp_servers else []),
             ControlIROpSpec(
                 kind="lint",
@@ -311,7 +315,11 @@ class ControlIRExecutor:
                 example={"kind": "lint", "skill_path": "reyn/local/my_skill"},
             ),
             ControlIROpSpec(
-                kind="run_skill",
+                # #1240 Wave 2b (A)-alias: advertise as "invoke_skill" (chat name)
+                # — the op-loop and json-mode parse paths rewrite this to "run_skill"
+                # before ControlIROp validation.  allowed_ops=[run_skill] still
+                # works via _PHASE_TOOL_NAME_ALIAS in build_frame.
+                kind="invoke_skill",
                 description=(
                     "Run a reyn skill in-process and return its final output. "
                     "skill: skill name (resolved via search path) or path to skill.md. "
@@ -322,7 +330,7 @@ class ControlIRExecutor:
                     "phase_artifacts (list of {phase, artifact, path} for each intermediate phase output), "
                     "token_usage (prompt_tokens, completion_tokens)."
                 ),
-                example={"kind": "run_skill", "skill": "my_skill", "input": {"type": "user_message", "data": {"text": "hello"}}},
+                example={"kind": "invoke_skill", "skill": "my_skill", "input": {"type": "user_message", "data": {"text": "hello"}}},
             ),
             ControlIROpSpec(
                 kind="web_fetch",

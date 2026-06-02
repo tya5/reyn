@@ -115,17 +115,21 @@ def test_shell_op_description_carries_positive_affirmation(tmp_path: Path) -> No
 
 
 def test_mcp_op_description_is_positive_frame(tmp_path: Path) -> None:
-    """Tier 2: mcp op description (when servers configured) has no failure-mode caveat."""
+    """Tier 2: call_mcp_tool op description (when servers configured) has no failure-mode caveat.
+
+    #1240 Wave 2b: available_ops() advertises "call_mcp_tool" (chat name alias)
+    instead of "mcp" (execution op kind).  Pin updated accordingly.
+    """
     # mcp_servers shape: ControlIRExecutor.__init__ reads .get("servers", {}),
     # so the canonical input is {"servers": {<name>: <config>}}.
     executor = _build_executor(
         tmp_path,
         mcp_servers={"servers": {"github": {"transport": "stdio"}}},
     )
-    mcp_specs = [s for s in executor.available_ops() if s.kind == "mcp"]
+    mcp_specs = [s for s in executor.available_ops() if s.kind == "call_mcp_tool"]
     # unpack-enforcement (= behavior pin, not size pin)
     (mcp_spec,) = mcp_specs
-    _assert_no_misleading_caveat(mcp_spec.description, "mcp")
+    _assert_no_misleading_caveat(mcp_spec.description, "call_mcp_tool")
 
 
 def test_mcp_install_tool_description_is_positive_frame() -> None:

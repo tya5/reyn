@@ -1,6 +1,7 @@
 """mcp_* ToolDefinitions — Wave 2 of M3 (ADR-0026 M3) + Type C closure.
 
-Three capabilities are registered here:
+Four capabilities are registered here (MCP_OP coarse ToolDef dropped in
+#1240 Wave 2b — see end of file):
 
   CALL_MCP_TOOL    — gates.router=allow, gates.phase=allow
   LIST_MCP_SERVERS — gates.router=allow, gates.phase=allow  (Type C closure)
@@ -10,12 +11,12 @@ Three capabilities are registered here:
 Per ADR-0026 Open Q #6, router-side fine-grained names are canonical:
 call_mcp_tool / list_mcp_servers / list_mcp_tools / describe_mcp_tool.
 
-## Phase-side dispatch status (post-FP-0039 audit, 2026-05-18)
+## Phase-side dispatch status (post-#1240 Wave 2b)
 
-All four ToolDefinitions have gates.phase="allow".  The coarse-kind path
-(= ``op.kind="mcp"`` → CALL_MCP_TOOL semantics via MCPIROp) is wired
-end-to-end through ``invoke_tool(get_default_registry(), op.kind, ...)``
-in ``ControlIRExecutor._invoker``.
+All four ToolDefinitions have gates.phase="allow".  The coarse MCP_OP
+ToolDef (kind="mcp") is dropped; phase advertises "call_mcp_tool" via
+available_ops() and the (A)-alias rewrites it to "mcp" at the parse
+boundary.  Dispatch falls to op_runtime/mcp.py via execute_op fallback.
 
 The fine-grained discovery names (``list_mcp_servers`` / ``list_mcp_tools``
 / ``describe_mcp_tool``) are NOT in ``OP_KIND_MODEL_MAP``, so phase Control
@@ -472,61 +473,13 @@ DESCRIBE_MCP_TOOL = ToolDefinition(
 )
 
 
-# ── Coarse-name "mcp" ToolDefinition (phase-side, ADR-0026 Phase 4) ───────────
-#
-# Phase Control IR uses ``kind: "mcp"`` for invoking an MCP server tool.
-# Semantically equivalent to ``call_mcp_tool`` (= server / tool / args), but
-# registered under the ``mcp`` name to match Control IR ``kind`` values
-# without forcing existing skills to migrate. Router-side stays on the
-# fine-grained ``call_mcp_tool`` ToolDefinition.
-
-def _build_mcp_parameters() -> dict[str, Any]:
-    """Derive parameters from MCPIROp schema (= same as op-runtime expectation)."""
-    from reyn.schemas.models import MCPIROp
-    schema = MCPIROp.model_json_schema()
-    required = [f for f in schema.get("required", []) if f != "kind"]
-    properties = {k: v for k, v in schema.get("properties", {}).items() if k != "kind"}
-    return {"type": "object", "properties": properties, **({"required": required} if required else {})}
-
-
-_MCP_OP_DESCRIPTION = (
-    "Invoke an MCP server tool (= phase-side coarse op).  Builds an "
-    "MCPIROp(server, tool, args) and dispatches via op_runtime.mcp; "
-    "permission gating consults the phase's permissions.mcp allowlist."
-)
-
-
-async def _handle_mcp_op(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Coarse handler for the phase-side ``mcp`` op.  Delegates to op_runtime."""
-    from reyn.op_runtime.context import OpContext
-    from reyn.op_runtime.mcp import handle as mcp_handle
-    from reyn.permissions.permissions import PermissionDecl
-    from reyn.schemas.models import MCPIROp
-
-    op = MCPIROp(kind="mcp", **{k: v for k, v in args.items() if k != "kind"})
-
-    _op_ctx = (
-        ctx.phase_state.op_context if ctx.phase_state is not None else None
-    )
-    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
-        legacy_ctx = _op_ctx
-    else:
-        legacy_ctx = OpContext(
-            workspace=ctx.workspace,
-            events=ctx.events,
-            permission_decl=PermissionDecl(mcp=[op.server]),
-            permission_resolver=ctx.permission_resolver,
-            skill_name="",
-        )
-    return await mcp_handle(op=op, ctx=legacy_ctx, caller="control_ir")
-
-
-MCP_OP = ToolDefinition(
-    name="mcp",
-    description=_MCP_OP_DESCRIPTION,
-    parameters=_build_mcp_parameters(),
-    gates=ToolGates(router="deny", phase="allow"),
-    handler=_handle_mcp_op,
-    category="io",
-    purity="external",
-)
+# #1240 Wave 2b: MCP_OP (the coarse phase-side ToolDefinition under the name
+# "mcp") is DROPPED.  Phase Control IR now advertises the chat name
+# "call_mcp_tool" via available_ops() (ControlIROpSpec with kind="call_mcp_tool"),
+# which aliases to op kind "mcp" at the parse boundary.  Dispatch falls to the
+# legacy execute_op path (op_runtime/mcp.py register("mcp")).
+# allowed_ops=[mcp] continues to match the call_mcp_tool spec via
+# _PHASE_TOOL_NAME_ALIAS in runtime.build_frame.
+# KEPT: CALL_MCP_TOOL (router+phase, gates.phase="allow") is the canonical
+# phase-advertised ToolDefinition.  The call_mcp_tool handler (phase path) builds
+# MCPIROp and delegates to op_runtime.mcp.handle directly.

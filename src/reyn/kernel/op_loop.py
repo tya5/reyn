@@ -17,7 +17,7 @@ import json
 
 from pydantic import TypeAdapter
 
-from reyn.op_runtime.registry import split_tool_name
+from reyn.op_runtime.registry import _PHASE_TOOL_NAME_ALIAS, split_tool_name
 from reyn.schemas.models import ControlIROp
 
 _CONTROL_IR_ADAPTER: TypeAdapter = TypeAdapter(ControlIROp)
@@ -31,6 +31,11 @@ def tool_call_to_control_ir_op(tool_call: dict) -> ControlIROp:
     provider's JSON string (or already a dict) of op fields. The op is built by
     validating ``{"kind": <name>, **args}`` against the ``ControlIROp``
     discriminated union (``discriminator="kind"``).
+
+    #1240 Wave 2b (A)-alias: the phase catalog advertises chat names
+    ("invoke_skill" / "call_mcp_tool") as the tool names; the LLM emits those
+    names in tool_calls.  Map them back to the execution op kind before
+    ControlIROp validation so the discriminated union resolves correctly.
 
     Raises ``json.JSONDecodeError`` on malformed arguments and
     ``pydantic.ValidationError`` on an unknown kind / invalid fields — both are
@@ -51,4 +56,6 @@ def tool_call_to_control_ir_op(tool_call: dict) -> ControlIROp:
     kind, verb = split_tool_name(name)
     if verb is not None:
         args.setdefault("op", verb)
+    # #1240 Wave 2b (A)-alias: chat name → op kind before validation.
+    kind = _PHASE_TOOL_NAME_ALIAS.get(kind, kind)
     return _CONTROL_IR_ADAPTER.validate_python({"kind": kind, **args})

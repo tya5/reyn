@@ -67,14 +67,13 @@ def get_default_registry() -> ToolRegistry:
         READ_FILE,
         WRITE_FILE,
     )
-    from reyn.tools.invoke_skill import INVOKE_SKILL, RUN_SKILL_OP
+    from reyn.tools.invoke_skill import INVOKE_SKILL
     from reyn.tools.lint import LINT
     from reyn.tools.mcp import (
         CALL_MCP_TOOL,
         DESCRIBE_MCP_TOOL,
         LIST_MCP_SERVERS,
         LIST_MCP_TOOLS,
-        MCP_OP,
     )
     from reyn.tools.mcp_drop import MCP_DROP_SERVER_OP
     from reyn.tools.mcp_install import MCP_INSTALL_OP
@@ -179,14 +178,12 @@ def get_default_registry() -> ToolRegistry:
     registry.register(REYN_SRC_GLOB)
     registry.register(REYN_SRC_GREP)
     # ── Phase-only coarse-name ops (gates.router=deny, gates.phase=allow) ─
-    # ADR-0026 Phase 4: Control IR ``kind: mcp/run_skill`` values map
-    # 1:1 to these coarse ToolDefinitions; ControlIRExecutor dispatches via
-    # the registry by op.kind name.  Router-side stays on the fine-grained
-    # equivalents (call_mcp_tool, invoke_skill).
-    # NOTE: FILE_OP coarse ToolDefinition dropped — all file ops now use fine
-    # kinds (read_file/write_file/edit_file/delete_file/glob_files/grep_files).
-    registry.register(MCP_OP)
-    registry.register(RUN_SKILL_OP)
+    # #1240 Wave 2b: MCP_OP + RUN_SKILL_OP coarse ToolDefinitions dropped.
+    # Phase advertises "call_mcp_tool" / "invoke_skill" via available_ops();
+    # the (A)-alias in _PHASE_TOOL_NAME_ALIAS rewrites to "mcp"/"run_skill"
+    # at the parse boundary.  Dispatch falls to the legacy execute_op path
+    # (op_runtime/mcp.py + op_runtime/run_skill.py via register("mcp"/"run_skill")).
+    # NOTE: FILE_OP coarse ToolDefinition was dropped in the previous Wave 2b step.
     registry.register(MCP_INSTALL_OP)
     # FP-0034 §D23: mcp_drop_server is router+phase callable (= dual gate).
     # Reachable via universal_action ``mcp.operation__drop_server`` AND

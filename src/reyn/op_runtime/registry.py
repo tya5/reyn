@@ -301,6 +301,26 @@ def is_op_allowed(op_kind: str, allowed_ops: set[str] | frozenset[str]) -> bool:
 ALL_TOOL_NAMES: frozenset[str] = ALL_OP_KINDS
 
 
+# ---------------------------------------------------------------------------
+# _PHASE_TOOL_NAME_ALIAS — chat-name → op-kind mapping (#1240 Wave 2b)
+# ---------------------------------------------------------------------------
+# Phase-advertised chat names ("invoke_skill" / "call_mcp_tool") alias to the
+# canonical execution op kinds ("run_skill" / "mcp").  The phase frame shows
+# the chat names so phase = chat-tools subset (catalog-axis goal); parse
+# boundaries in op_loop + json-mode rewrite them to the op kind BEFORE
+# ControlIROp validation.  The build_frame allowed-ops filter applies this
+# alias so allowed_ops=[run_skill] matches the advertised invoke_skill spec.
+# Execution backends (op_runtime/run_skill.py, op_runtime/mcp.py) and
+# ControlIROp models (RunSkillIROp, MCPIROp) are UNCHANGED — they continue
+# to use the op-kind names.
+# ---------------------------------------------------------------------------
+
+_PHASE_TOOL_NAME_ALIAS: dict[str, str] = {
+    "invoke_skill": "run_skill",
+    "call_mcp_tool": "mcp",
+}
+
+
 def split_tool_name(tool_name: str) -> tuple[str, str | None]:
     """Split a tool-name into ``(kind, verb)``.
 
