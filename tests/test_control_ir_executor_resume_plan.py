@@ -99,11 +99,12 @@ def test_resume_plan_is_propagated_to_dispatch_context(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     # The args_hash must match what dispatch_tool computes for the op.
-    # ControlIRExecutor passes op.model_dump(exclude={"kind"}) as args.
+    # ControlIRExecutor passes op.model_dump(exclude={"kind"}, exclude_none=True)
+    # as args (#1240 Wave 1: None optionals are omitted, not sent as null).
     op = FileIROp(
         kind="file", op="write", path="x.txt", content="fresh",
     )
-    op_args = op.model_dump(exclude={"kind"})
+    op_args = op.model_dump(exclude={"kind"}, exclude_none=True)
     args_hash = _compute_args_hash(op_args)
 
     plan = _plan_with([
