@@ -287,6 +287,9 @@ class InputBar(Widget):
         duplicate ``UserSubmitted`` message (= double LLM call, doubled
         cost, conv-pane noise). The ``.in-flight`` CSS class dims the
         TextArea text and the hint footer so the lock is visible.
+        The hint footer text also swaps to an explicit blocked-state
+        message (``⟳ responding — Ctrl+C to cancel``) so the user
+        gets clear feedback when Enter is silently swallowed.
 
         Idempotent — calling with the same value is a no-op. The lock
         is set by ``_submit`` immediately after a successful post, and
@@ -300,6 +303,16 @@ class InputBar(Widget):
             self.add_class("in-flight")
         else:
             self.remove_class("in-flight")
+        # Refresh hint text to reflect the new in-flight state.
+        try:
+            w = self.size.width
+        except Exception:
+            w = 0
+        try:
+            label = self.query_one("#hints", Label)
+            label.update(self._build_hint(w))
+        except Exception:
+            pass
 
     def set_disconnected(self, disconnected: bool) -> None:
         """Mark the InputBar as permanently disconnected (Wave-13 T1-3).
@@ -645,6 +658,7 @@ class InputBar(Widget):
         matches = [
             c for c in self._slash_commands
             if c.name.startswith(token)
+            or any(a.startswith(token) for a in c.aliases)
         ]
         # Unknown-command in-input feedback: when the token is
         # non-empty (= the user is actively typing a command name)
@@ -853,6 +867,11 @@ class InputBar(Widget):
     )
     _HINT_MID = "  Enter send │ Ctrl+J nl │ Ctrl+C cancel"
     _HINT_MIN = "  Enter │ Ctrl+C"
+    # Shown in place of the normal hint while an LLM turn is in-flight.
+    # Swaps out "Enter send" (= misleading when Enter is blocked) for an
+    # explicit blocked-state message so the user understands why pressing
+    # Enter does nothing.
+    _HINT_IN_FLIGHT = "  ⟳ responding — Ctrl+C to cancel"
 
     # Cell width below which _HINT_MID is used instead of _HINT_FULL.
     _HINT_FULL_MIN_WIDTH = 55
@@ -885,6 +904,13 @@ class InputBar(Widget):
         #
         # A4: progressive field drop at narrow widths. See class-level
         # _HINT_* constants for rationale and threshold values.
+        #
+        # B3: while in-flight, replace the full/mid/min hint with a
+        # blocked-state message (``_HINT_IN_FLIGHT``) so pressing Enter
+        # during an active LLM turn gives the user explicit feedback
+        # that they're blocked — not that the UI is broken.
+        if getattr(self, "_in_flight", False):
+            return self._HINT_IN_FLIGHT
         if width > 0 and width < self._HINT_MID_MIN_WIDTH:
             return self._HINT_MIN
         if width > 0 and width < self._HINT_FULL_MIN_WIDTH:
