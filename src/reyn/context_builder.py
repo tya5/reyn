@@ -352,6 +352,7 @@ def build_frame(
     act_turn: int | None = None,
     offload_dir: Path | None = None,
     context_size_signal: str | None = None,  # #1176 B1 — pre-rendered, tail field
+    act_turn_reasoning: list[str] | None = None,  # #1212 reasoning-continuity
 ) -> ContextFrame:
     allowed_next = [c.next_phase for c in candidates]
     current_visit = visit_counts.get(phase_name, 1)
@@ -397,6 +398,7 @@ def build_frame(
         control_ir_results=offloaded_results,
         remaining_act_turns=remaining_act_turns,
         context_size_signal=context_size_signal,
+        act_turn_reasoning=act_turn_reasoning or [],
     )
 
     events.emit("context_built", phase=phase_name, frame=frame.model_dump(mode="json"))

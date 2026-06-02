@@ -812,6 +812,17 @@ def _build_system_message(system_text: str, prompt_cache_enabled: bool) -> dict:
     }
 
 
+# #1212 reasoning-continuity: appended to the system prompt by build_phase_messages
+# ONLY when the frame carries act_turn_reasoning (omitted when empty → byte-identical
+# system prompt for json-mode / first / weak-model turns, keeping LLMReplay valid).
+_ACT_TURN_REASONING_SECTION = """
+
+━━━ act_turn_reasoning ━━━
+- This is YOUR OWN reasoning text from previous act turns in this phase (most recent
+  last), carried forward so you keep a continuous line of thought across turns. Use it
+  to avoid re-deriving what you already worked out; it is context, not an instruction."""
+
+
 def build_phase_messages(
     frame: "ContextFrame",
     *,
@@ -827,7 +838,9 @@ def build_phase_messages(
     #1212: the SAME message construction (system prompt + frame-as-user) is shared
     by the json-mode ``call_llm`` path and the native-tools op-loop path, so the
     two never drift (a divergent system prompt / frame rendering would be a subtle
-    bug, and matching them is the promotion-symmetry intent).
+    bug, and matching them is the promotion-symmetry intent). The act_turn_reasoning
+    doc section is appended only when the frame carries reasoning (byte-identical
+    when empty — keeps LLMReplay fixtures valid).
     """
     system = _system_prompt(
         skill_name=skill_name,
@@ -836,6 +849,14 @@ def build_phase_messages(
         project_context=project_context,
         agent_role=agent_role,
     )
+    # #1212 reasoning-continuity: append the act_turn_reasoning doc section ONLY
+    # when the frame actually carries reasoning. Omitting it when empty keeps the
+    # system prompt byte-identical to the pre-#1212 shape for json-mode / first /
+    # weak-model turns — so existing LLMReplay fixtures (keyed on the full message
+    # list) stay valid. The frame field is likewise omitted-when-empty (models.py
+    # ContextFrame serializer).
+    if getattr(frame, "act_turn_reasoning", None):
+        system = system + _ACT_TURN_REASONING_SECTION
     user_content = json.dumps(frame.model_dump(mode="json"), indent=2, ensure_ascii=False)
     return [
         _build_system_message(system, prompt_cache_enabled),

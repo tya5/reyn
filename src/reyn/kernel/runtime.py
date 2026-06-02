@@ -456,6 +456,7 @@ class OSRuntime:
         artifact_path: str | None = None,
         remaining_act_turns: int | None = None,
         force_decide: bool = False,
+        act_turn_reasoning: list[str] | None = None,
     ) -> ContextFrame:
         effective_model = self._effective_model(current_phase)
         phase_def = self.skill.phases[current_phase]
@@ -541,6 +542,7 @@ class OSRuntime:
             model_resolved=model_resolved,
             events=self.events,
             control_ir_results=control_ir_results,
+            act_turn_reasoning=act_turn_reasoning or [],
             artifact_path=resolved_artifact_path,
             remaining_act_turns=remaining_act_turns,
             offload_dir=offload_dir,

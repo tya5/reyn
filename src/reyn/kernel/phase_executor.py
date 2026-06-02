@@ -490,6 +490,9 @@ class PhaseExecutor:
             )
         else:
             control_ir_results = []
+        # #1212 reasoning-continuity: the model's inline content from prior act
+        # turns, carried forward so a capable model keeps its reasoning thread.
+        act_turn_reasoning: list[str] = []
 
         phase_def = self._skill.phases.get(phase)
         phase_decl = self._skill.permissions
@@ -537,6 +540,7 @@ class PhaseExecutor:
                 artifact_path=artifact_path,
                 remaining_act_turns=remaining,
                 force_decide=force_decide,
+                act_turn_reasoning=act_turn_reasoning,
             )
 
             await self._check_phase_budget(phase, state)
@@ -552,6 +556,16 @@ class PhaseExecutor:
 
             result = await self._llm_caller.call_tools(phase, frame, tools, state)
 
+            # #1212 reasoning-continuity: carry the model's inline content (its
+            # reasoning emitted alongside the tool_calls) forward, bounded to the
+            # last recent_act_turns_raw entries (config-consistent; no LLM call).
+            # Empty for weak models that emit no inline content (e.g. flash-lite).
+            if result.content:
+                act_turn_reasoning.append(result.content)
+                if self._phase_compaction_cfg is not None:
+                    _keep = self._phase_compaction_cfg.recent_act_turns_raw
+                    act_turn_reasoning = act_turn_reasoning[-_keep:]
+
             if not result.tool_calls:
                 # Decide turn: model emitted no ops → separate json-mode transition.
                 decide_frame = self._build_frame(
@@ -560,6 +574,7 @@ class PhaseExecutor:
                     artifact_path=artifact_path,
                     remaining_act_turns=remaining,
                     force_decide=True,
+                    act_turn_reasoning=act_turn_reasoning,
                 )
                 raw = await self._llm_caller.call(
                     phase, decide_frame, None,
