@@ -4,7 +4,7 @@ name: apply
 input: plan
 role: implementer
 model_class: standard
-allowed_ops: [file, sandboxed_exec]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, sandboxed_exec]
 max_act_turns: 30
 # FP-0008 #1115 Stage 2: policy for this phase's sandboxed_exec ops (e.g.
 # python -m py_compile syntax checks), winning over op fields. Permissive —

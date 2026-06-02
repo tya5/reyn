@@ -4,7 +4,7 @@ name: design_artifacts
 input: skill_structure
 role: schema_designer
 model_class: standard
-allowed_ops: [file]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files]
 preprocessor:
   - type: lint_plan
     over: data

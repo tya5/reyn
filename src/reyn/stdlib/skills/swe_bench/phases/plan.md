@@ -4,7 +4,7 @@ name: plan
 input: exploration | verify_state
 role: architect
 model_class: standard
-allowed_ops: [file, grep]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files]
 max_act_turns: 15
 ---
 

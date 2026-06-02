@@ -5,7 +5,7 @@ input: selected_candidate
 role: skill_converter
 can_finish: true
 max_act_turns: 6
-allowed_ops: [file, lint, web_fetch]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, lint, web_fetch]
 preprocessor:
   - type: python
     module: ./detect_reference_format.py
