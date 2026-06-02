@@ -88,6 +88,7 @@ class OSRuntime:
         workspace_state_dir: "Path | None" = None,
         phase_compaction_engine: "CompactionEngine | None" = None,
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
+        tool_calls_op_loop_skills: list[str] | None = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -282,6 +283,10 @@ class OSRuntime:
             build_frame_fn=self.build_frame,
             phase_compaction_engine=self._phase_compaction_engine,  # PR-N8
             phase_compaction_cfg=self._phase_compaction_cfg,        # PR-N8
+            # #1212 PR2: OS-decided mechanism gate (P3). The config holds opted-in
+            # skill names as data (P7-OK); this skill runs the native-tools op-loop
+            # iff its name is listed. Default empty = json-mode (zero change).
+            op_loop_enabled=skill.name in (tool_calls_op_loop_skills or ()),
         )
         # FP-0020 Component D: phase sequence + transitions + rollback + skill-node
         # dispatch + resume + SkillRegistry lifecycle extracted to RunOrchestrator.

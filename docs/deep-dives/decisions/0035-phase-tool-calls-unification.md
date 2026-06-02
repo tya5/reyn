@@ -150,7 +150,13 @@ docs (no PoC needed). The capability cache (D5) is an optimization over a proven
    kind→sub-tool expansion (behavior-preserving) + offer-layer `allowed_ops ∩ permission`
    filter (D8 permission). Per-phase tightening deferred to a follow-up.
 5. **PR5 — WAL/resume loop-adaptation + replay fixtures (D8).** Resume per tool_call,
-   Tier-3 fixtures to the tool_call structure, round event carry.
+   Tier-3 fixtures to the tool_call structure, round event carry. **Required scope
+   item — act-turn memo decision** (carried from PR2, see Open items): PR2 ships the
+   op-loop's per-tool-turn LLM call (`LLMCallRecorder.call_tools`) WITHOUT decide-memo
+   (model-resolution + budget + cost-record only); PR5 MUST decide whether act turns
+   are memoized for deterministic replay (json-mode-equal crash-recovery guarantee) or
+   left as re-decide-on-resume (weaker, divergence caveat below). Lead-coder leans
+   memoize-for-parity.
 
 ## Open items / risks
 
@@ -161,3 +167,13 @@ docs (no PoC needed). The capability cache (D5) is an optimization over a proven
   usage scan), explicitly deferred so the behavior-preserving wave stays mechanical.
 - **Replay (D8b)**: native tool_call ids are provider-specific — fixtures must
   normalize them so Tier-3 stays provider-agnostic at the replay boundary.
+- **Op-loop act-turn memo / resume divergence (PR2→PR5)**: PR2's `call_tools` skips
+  decide-memo — correct for normal op-loop operation (memo only matters on
+  re-run/resume). But on *resume*, an un-memoized act turn is **re-decided** by the
+  model, which may pick a *different* op than the original run. `dispatch_tool`'s WAL
+  memo is keyed on op+args (`control_ir_executor.py:128`), so a divergent re-decide
+  misses the memo and the op **re-executes** (its side-effect lands outside WAL
+  protection) — a weaker crash-recovery guarantee than json-mode (decide memoized →
+  deterministic control_ir replay → op WAL replay). PR5 decides: memoize act turns for
+  json-mode-equal determinism (lead-coder lean) vs accept re-decide divergence with a
+  documented caveat. Un-opted skills are unaffected (json-mode unchanged).
