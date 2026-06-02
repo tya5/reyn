@@ -130,28 +130,32 @@ nav:
               - guide/for-reyn-developers/write-replay-tests.md
   - Reference:
       - CLI:
-          - reference/cli/run.md
-          - reference/cli/dogfood.md
-          - reference/cli/eval.md
-          - reference/cli/lint.md
-          - reference/cli/chat.md
-          - reference/cli/skill.md
-          - reference/cli/skills.md
-          - reference/cli/mcp.md
-          - reference/cli/secret.md
-          - reference/cli/auth.md
-          - reference/cli/cron.md
-          - reference/cli/source.md
-          - reference/cli/agent.md
-          - reference/cli/topology.md
-          - reference/cli/web.md
-          - reference/cli/events.md
-          - reference/cli/memory.md
-          - reference/cli/permissions.md
-          - reference/cli/config.md
-          - reference/cli/init.md
-          - reference/cli/embeddings.md
-          - reference/cli/common-flags.md
+          - Running Reyn:
+              - reference/cli/run.md
+              - reference/cli/chat.md
+              - reference/cli/skill.md
+              - reference/cli/skills.md
+              - reference/cli/eval.md
+              - reference/cli/dogfood.md
+              - reference/cli/lint.md
+              - reference/cli/web.md
+          - Multi-agent & tools:
+              - reference/cli/agent.md
+              - reference/cli/topology.md
+              - reference/cli/mcp.md
+              - reference/cli/embeddings.md
+          - Configuration & auth:
+              - reference/cli/config.md
+              - reference/cli/permissions.md
+              - reference/cli/secret.md
+              - reference/cli/auth.md
+              - reference/cli/init.md
+          - Session & ops:
+              - reference/cli/events.md
+              - reference/cli/memory.md
+              - reference/cli/cron.md
+              - reference/cli/source.md
+              - reference/cli/common-flags.md
       - DSL:
           - reference/dsl/skill-md.md
           - reference/dsl/phase-md.md
@@ -175,18 +179,22 @@ nav:
           - reference/builtin-models.md
       - Stdlib:
           - reference/stdlib/index.md
-          - reference/stdlib/skill_builder.md
-          - reference/stdlib/skill_improver.md
-          - reference/stdlib/skill_importer.md
-          - reference/stdlib/eval.md
-          - reference/stdlib/eval_builder.md
-          - reference/stdlib/skill_router.md
-          - reference/stdlib/direct_llm.md
-          - reference/stdlib/index_docs.md
-          - reference/stdlib/index_events.md
-          - reference/stdlib/judge_phase.md
-          - reference/stdlib/ops_report.md
-          - reference/stdlib/word_stats_demo.md
+          - Routing:
+              - reference/stdlib/skill_router.md
+              - reference/stdlib/direct_llm.md
+          - Skill authoring:
+              - reference/stdlib/skill_builder.md
+              - reference/stdlib/skill_improver.md
+              - reference/stdlib/skill_importer.md
+          - Evaluation & judgment:
+              - reference/stdlib/eval.md
+              - reference/stdlib/eval_builder.md
+              - reference/stdlib/judge_phase.md
+          - Data & ops:
+              - reference/stdlib/index_docs.md
+              - reference/stdlib/index_events.md
+              - reference/stdlib/ops_report.md
+              - reference/stdlib/word_stats_demo.md
       - Testing:
           - reference/testing/replay.md
           - reference/test-tier-audit.md
