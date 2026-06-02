@@ -691,10 +691,17 @@ class ContextFrame(BaseModel):
         window) so a frame without a signal serializes byte-identically to the
         pre-#1176 shape — keeps the LLM-facing JSON and LLMReplay fixture keys
         stable. When the window is filling the signal rides in the volatile tail.
+        #1212: same treatment for ``act_turn_reasoning`` — omit when empty so the
+        op-loop (and json-mode) frames stay byte-identical to the pre-#1212 shape
+        for every turn that carries no carried reasoning (json-mode, first turn,
+        and weak models like flash-lite that emit no inline content). The field
+        only rides the JSON when a capable model actually produced reasoning.
         All other fields are untouched (default serialization)."""
         data = handler(self)
         if data.get("context_size_signal") is None:
             data.pop("context_size_signal", None)
+        if not data.get("act_turn_reasoning"):
+            data.pop("act_turn_reasoning", None)
         return data
 
 
