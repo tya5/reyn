@@ -157,26 +157,31 @@ nav:
               - reference/cli/source.md
               - reference/cli/common-flags.md
       - DSL:
-          - reference/dsl/skill-md.md
-          - reference/dsl/phase-md.md
-          - reference/dsl/artifact-yaml.md
-          - reference/dsl/preprocessor.md
-          - reference/dsl/postprocessor.md
-          - reference/dsl/graph.md
-          - reference/dsl/profile-yaml.md
-          - reference/dsl/topology-yaml.md
+          - Schema:
+              - reference/dsl/skill-md.md
+              - reference/dsl/phase-md.md
+              - reference/dsl/artifact-yaml.md
+              - reference/dsl/graph.md
+          - Execution:
+              - reference/dsl/preprocessor.md
+              - reference/dsl/postprocessor.md
+          - Multi-agent:
+              - reference/dsl/profile-yaml.md
+              - reference/dsl/topology-yaml.md
       - Runtime:
           - reference/runtime/context-frame.md
           - reference/runtime/llm-output-contract.md
           - reference/runtime/control-ir.md
           - reference/runtime/events.md
       - Config:
-          - reference/config/reyn-yaml.md
-          - reference/config/permissions.md
-          - reference/config/budget.md
-          - reference/config/state-dir.md
-          - reference/config/multi-agent.md
-          - reference/builtin-models.md
+          - Core:
+              - reference/config/reyn-yaml.md
+              - reference/config/permissions.md
+              - reference/config/budget.md
+          - Infrastructure:
+              - reference/config/state-dir.md
+              - reference/config/multi-agent.md
+              - reference/builtin-models.md
       - Stdlib:
           - reference/stdlib/index.md
           - Routing:
