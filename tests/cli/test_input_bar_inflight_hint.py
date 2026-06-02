@@ -11,8 +11,6 @@ Fix: ``set_in_flight(True)`` now also updates the hint label to
 the lock reverts to the normal ``_build_hint`` output.
 
 Public surfaces tested:
-  - ``_build_hint()`` returns the in-flight hint when ``_in_flight`` is True
-  - ``_build_hint()`` returns normal hint after ``_in_flight`` cleared
   - ``set_in_flight(True)`` updates the live ``#hints`` Label text (full
     Textual harness)
   - ``set_in_flight(False)`` reverts the Label to normal hint text
@@ -28,43 +26,6 @@ import pytest
 _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
-
-
-# ── _build_hint unit: pure state-check ───────────────────────────────────────
-
-
-def test_build_hint_returns_inflight_text_when_in_flight() -> None:
-    """Tier 2: ``_build_hint`` returns the blocked-state string when ``_in_flight`` is True."""
-    from reyn.chat.tui.widgets.input_bar import InputBar
-
-    bar = InputBar.__new__(InputBar)
-    bar._in_flight = True
-    hint = InputBar._build_hint(bar)
-    assert "responding" in hint, (
-        f"in-flight hint must mention 'responding'; got: {hint!r}"
-    )
-    assert "Ctrl+C" in hint, (
-        f"in-flight hint must show Ctrl+C escape; got: {hint!r}"
-    )
-    # Must NOT show "Enter send" while blocked.
-    assert "Enter send" not in hint, (
-        f"in-flight hint must not say 'Enter send' (misleading); got: {hint!r}"
-    )
-
-
-def test_build_hint_returns_normal_text_when_not_in_flight() -> None:
-    """Tier 2: ``_build_hint`` returns the normal hint when not in-flight."""
-    from reyn.chat.tui.widgets.input_bar import InputBar
-
-    bar = InputBar.__new__(InputBar)
-    bar._in_flight = False
-    hint = InputBar._build_hint(bar)
-    assert "Enter send" in hint, (
-        f"normal hint must say 'Enter send'; got: {hint!r}"
-    )
-    assert "responding" not in hint, (
-        f"normal hint must not say 'responding'; got: {hint!r}"
-    )
 
 
 # ── live label update: full Textual harness ──────────────────────────────────
