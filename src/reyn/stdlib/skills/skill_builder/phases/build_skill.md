@@ -120,7 +120,7 @@ input: {input_artifact}
 role: {role}
 model_class: {model_class}
 can_finish: true
-allowed_ops: {allowed_ops as inline YAML list, e.g. [file] or [file, ask_user]}
+allowed_ops: {allowed_ops as inline YAML list, e.g. [read_file, write_file] or [read_file, write_file, ask_user]}
 preprocessor:
   - type: python
     module: {step.module}
@@ -140,9 +140,10 @@ permissions:
 ```
 Omit `can_finish` line if the phase cannot finish.
 Omit `model_class` line if the phase should use the runtime default (standard).
-Omit `allowed_ops` line if the plan didn't specify it (the runtime default
-`[file, ask_user]` will apply). Otherwise transcribe the value verbatim from
-the plan, including the explicit empty list `[]` for pure decision phases.
+Omit `allowed_ops` line if the plan didn't specify it (the runtime default —
+the fine file kinds `[read_file, write_file, edit_file, delete_file, glob_files,
+grep_files, ask_user]` — will apply). Otherwise transcribe the value verbatim
+from the plan, including the explicit empty list `[]` for pure decision phases.
 Omit `preprocessor` and `permissions` blocks entirely when the phase has no
 preprocessor steps. When present, **each preprocessor python step MUST have a
 matching permissions.python entry** (same module + function); without it the

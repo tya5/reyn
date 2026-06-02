@@ -4,7 +4,7 @@ name: plan_improvements
 input: iteration_state
 role: app_architect
 model_class: strong
-allowed_ops: [file]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files]
 ---
 
 Design concrete, minimal DSL file changes that will improve the target skill's score on the next iteration.

@@ -4,7 +4,7 @@ name: prepare
 input: user_message | improvement_session
 role: meta_coordinator
 model_class: standard
-allowed_ops: [file, ask_user, run_skill]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, ask_user, run_skill]
 ---
 
 Validate the user's request and produce a fully-populated `improvement_session` for the loop.

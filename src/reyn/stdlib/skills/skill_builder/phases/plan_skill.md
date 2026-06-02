@@ -130,11 +130,15 @@ phases: array of phase definitions, each with:
   - can_finish: true only if this phase may end the workflow
   - allowed_ops: list of Control IR op kinds this phase may emit. Pick the
       smallest subset of `op_catalog` that the phase actually needs.
-      Common patterns:
-        - generation/transformation phases that read or write files: [file]
-        - interactive phases that may need to ask the user: [file, ask_user]
-          (this is the implicit default; you can omit `allowed_ops` for these)
-        - orchestrator phases that invoke sub-skills: [run_skill] or [file, run_skill]
+      Common patterns (use the fine-grained file op kinds — read_file / write_file /
+      edit_file / delete_file / glob_files / grep_files — picking only the ones the
+      phase needs):
+        - phases that read files: [read_file] (+ grep_files / glob_files to search/find)
+        - generation/transformation phases that read and write files: [read_file, write_file]
+          (add edit_file / delete_file as the phase needs)
+        - interactive phases that may need to ask the user: [read_file, write_file, ask_user]
+          (omitting `allowed_ops` gives the implicit default: all fine file kinds + ask_user)
+        - orchestrator phases that invoke sub-skills: [run_skill] or [read_file, write_file, run_skill]
         - pure decision/review phases that only produce a verdict artifact: []
         - phases that fetch external data: [web_fetch] or [web_search, web_fetch]
       Narrower lists are better — they prevent the LLM from drifting outside

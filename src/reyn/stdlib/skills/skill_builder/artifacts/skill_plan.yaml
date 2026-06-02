@@ -54,11 +54,14 @@ schema:
               Control IR op kinds this phase may emit. Pick the smallest set
               from `op_catalog` that the phase actually needs — narrower lists
               prevent the LLM from drifting outside the phase's intent and
-              reduce prompt tokens. Common patterns: [file] for read/write
-              phases, [file, ask_user] (the implicit default) for interactive
-              phases, [run_skill] for orchestrator phases, [] for pure
-              decision phases that emit no side effects (e.g. routing,
-              judging). Omit the field to inherit the default [file, ask_user].
+              reduce prompt tokens. Use the fine-grained file op kinds
+              (read_file / write_file / edit_file / delete_file / glob_files /
+              grep_files), picking only what the phase needs. Common patterns:
+              [read_file, write_file] for read/write phases, [read_file,
+              write_file, ask_user] for interactive phases, [run_skill] for
+              orchestrator phases, [] for pure decision phases that emit no side
+              effects (e.g. routing, judging). Omit the field to inherit the
+              default (all fine file kinds + ask_user).
           preprocessor:
             type: array
             description: |

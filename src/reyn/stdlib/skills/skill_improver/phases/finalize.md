@@ -4,7 +4,7 @@ name: finalize
 input: improvement_result
 role: finalizer
 can_finish: true
-allowed_ops: [file]
+allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files]
 preprocessor:
   # FP-0006 Component B — snapshot the pre-apply skill.md to
   # .reyn/skill-versions/<name>/v<N>.md BEFORE copy-back happens.
