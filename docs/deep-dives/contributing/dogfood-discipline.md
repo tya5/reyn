@@ -191,7 +191,7 @@ See: `feedback_observe_before_speculate_llm.md`
 
 The classification question for every fix: "Is this structural preparation, post-call rescue, or a gray-zone prompt rule?" The answer determines the correct fix layer.
 
-See: `feedback_reyn_care_boundary.md`, [care-boundary.md](../concepts/care-boundary.md)
+See: `feedback_reyn_care_boundary.md`, [care-boundary.md](../concepts/architecture/care-boundary.md)
 
 ---
 

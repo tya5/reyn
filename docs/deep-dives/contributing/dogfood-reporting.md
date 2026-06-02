@@ -446,4 +446,4 @@ jq '.aggregate.verified_pct' report.json
 - [`dogfood-discipline.md`](dogfood-discipline.md) — methodology layer: 9-principle framework, A1–A5 iterative loop, scenario design
 - [`dogfood-regression-playbook.md`](dogfood-regression-playbook.md) — step-by-step run procedure, regression triage, fix-wave dispatch (R2 owns)
 - [`reference/cli/dogfood.md`](../../reference/cli/dogfood.md) — CLI reference: `reyn dogfood run`, `compare`, `baseline`
-- [`concepts/dogfood-scenarios.md`](../../concepts/dogfood-scenarios.md) — scenario set YAML schema authority
+- [`concepts/observability/dogfood-scenarios.md`](../../concepts/observability/dogfood-scenarios.md) — scenario set YAML schema authority

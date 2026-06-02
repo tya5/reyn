@@ -191,7 +191,7 @@ See: `feedback_observe_before_speculate_llm.md`
 
 すべての fix に対する分類質問: 「これは structural な準備か、post-call rescue か、gray-zone の prompt rule か?」 答えが正しい fix layer を決定します。
 
-See: `feedback_reyn_care_boundary.md`、[care-boundary.md](../concepts/care-boundary.md)
+See: `feedback_reyn_care_boundary.md`、[care-boundary.md](../concepts/architecture/care-boundary.md)
 
 ---
 

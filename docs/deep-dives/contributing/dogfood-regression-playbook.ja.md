@@ -346,7 +346,7 @@ ls -lt dogfood/fixtures/chat_router_smoke/
 
 - `dogfood-discipline.md` — 方法論 (= 9 原則、A1-A5 ループ、Brier スコアリング)
 - `dogfood-reporting.md` — レポーティングレイヤー (= journal + Discussions + Issues)
-- `concepts/dogfood-scenarios.md` — YAML スキーマ、4 バンド結果、カバレッジメカニズム
+- `concepts/observability/dogfood-scenarios.md` — YAML スキーマ、4 バンド結果、カバレッジメカニズム
 - `reference/cli/dogfood.md` — CLI サブコマンドリファレンス
 - `proposals/0036-dogfood-scenario-framework.md` — 設計根拠とオープンポイント
 - Memory `feedback_dogfood_driver_role` — 自律ドライバーの規律
