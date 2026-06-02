@@ -430,11 +430,45 @@ def _is_empty_router_response(response: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
-class RouterLoopHost(Protocol):
-    """Abstract surface RouterLoop needs.
+class RouterLoopCore(Protocol):
+    """#1092 PR-A (ADR-0036 FD1, decision c): the NARROW core surface the
+    RouterLoop act-loop actually depends on — the members RouterLoop's loop
+    directly calls for ANY host (chat / plan-step / phase). A phase implements
+    ONLY this (via PhaseRouterLoopHost) — no chat-extra stubs. The chat
+    ``RouterHostAdapter`` is a superset and satisfies this for free.
+
+    The chat-extras (skills/agents/mcp/memory/web/file/reyn_src/embedding/
+    discovery/spawn/send_to_agent/record_plan_*) live on ``RouterLoopHost``
+    below; they are reached only via the chat-discovery setup, the chat
+    system-prompt build, or chat-dispatch handlers — a phase never reaches them
+    (its op catalog REPLACES chat-discovery, and its ops dispatch via the op
+    handlers + ``make_router_op_context``). ``get_phase_op_catalog`` is a
+    phase-only getattr-hook (not declared here — chat doesn't implement it).
+    """
+
+    agent_name: str
+    agent_role: str
+    output_language: str | None
+
+    @property
+    def events(self) -> Any:
+        """EventLog (has .emit(type: str, **data)) for tool dispatch events."""
+        ...
+
+    def resolve_model(self, name: str) -> str: ...
+    def make_router_op_context(self) -> Any: ...
+    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None: ...
+
+
+@runtime_checkable
+class RouterLoopHost(RouterLoopCore, Protocol):
+    """Abstract surface RouterLoop needs (chat-mode superset of RouterLoopCore).
 
     Implemented by RouterHostAdapter in
-    src/reyn/chat/services/router_host_adapter.py.
+    src/reyn/chat/services/router_host_adapter.py. Extends RouterLoopCore
+    (#1092 PR-A) with the chat-only methods (discovery / tool-exec primitives /
+    plan-record); the core members are inherited (the redundant re-declarations
+    below are harmless Protocol overlap, pending a follow-up cleanup).
     """
 
     # Static catalogue access
@@ -1483,6 +1517,13 @@ class RouterLoop:
         """
         self._total_usage = TokenUsage()
         host = self.host
+        # #1092 PR-A (FD1, ADR-0036): catalog-source REPLACE seam. A phase host
+        # supplies its op tool catalog (allowed_ops via _build_phase_tool_catalog),
+        # which REPLACES chat-discovery — a phase has no skills/agents/mcp/universal
+        # (#1212 PR3 decision A). getattr-fallback so chat / plan-step hosts (no such
+        # method) keep the existing chat-discovery tool-build byte-identically.
+        _phase_op_catalog_getter = getattr(host, "get_phase_op_catalog", None)
+        _phase_op_catalog = _phase_op_catalog_getter() if _phase_op_catalog_getter else None
         all_skills = host.list_available_skills()
         # FP-0024 Component A — BM25 skill pre-filter.
         # Narrow available_skills to top-K BM25 keyword matches when the
@@ -1678,17 +1719,24 @@ class RouterLoop:
         # the window is ample (then compact stays hidden + the SP header is
         # omitted); non-None when filling (compact tool + header appear together).
         _ctx_signal = _render_context_size_signal_for_host(host)
-        tools = build_tools(
-            skills_for_tools,
-            host.list_available_agents(),
-            file_permissions=host.get_file_permissions(),
-            mcp_servers=host.get_mcp_servers(),
-            web_fetch_allowed=host.get_web_fetch_allowed(),
-            universal_wrappers_enabled=_univ_enabled,
-            search_actions_visible=_search_visible,
-            hot_list_aliases=_hot_list_aliases,
-            compact_visible=_ctx_signal is not None,
-        )
+        if _phase_op_catalog is not None:
+            # #1092 PR-A (FD1): phase op catalog REPLACES chat-discovery. The
+            # chat-discovery setup above ran on the phase host's stubs
+            # (empty skills/agents/mcp, universal off) — harmless; its build_tools
+            # result is discarded here in favor of the op catalog.
+            tools = list(_phase_op_catalog)
+        else:
+            tools = build_tools(
+                skills_for_tools,
+                host.list_available_agents(),
+                file_permissions=host.get_file_permissions(),
+                mcp_servers=host.get_mcp_servers(),
+                web_fetch_allowed=host.get_web_fetch_allowed(),
+                universal_wrappers_enabled=_univ_enabled,
+                search_actions_visible=_search_visible,
+                hot_list_aliases=_hot_list_aliases,
+                compact_visible=_ctx_signal is not None,
+            )
         # D2-wrapper scope expansion (B38): propagate schemas for ALL
         # session-visible actions into invoke_action's description so the
         # LLM can see canonical arg key names when it routes via the wrapper,
