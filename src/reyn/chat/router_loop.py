@@ -2630,6 +2630,22 @@ class RouterLoop:
         except (json.JSONDecodeError, KeyError):
             args = {}
 
+        # #1092 PR-A (FD1, ADR-0036): op-EXECUTION seam, symmetric to the
+        # catalog-source REPLACE seam in run(). A phase host supplies its op
+        # catalog (get_phase_op_catalog) AND owns op execution
+        # (execute_phase_op → the shared control_ir_executor: same dispatch /
+        # permission / events / WAL the json-mode op-loop uses). Because the
+        # phase host REPLACES the whole catalog with its op catalog, EVERY tool
+        # call in phase mode is a control-IR op-kind, so all calls delegate to
+        # the host. RouterLoop stays generic — it holds NO phase op-kind strings
+        # (`file__read` / `exec` / ...), keeping P7 (no skill/op-specific
+        # strings in OS code) intact. chat / plan-step hosts do not implement
+        # the method (getattr → None), so their dispatch path below is
+        # byte-identical.
+        _exec_phase_op = getattr(self.host, "execute_phase_op", None)
+        if _exec_phase_op is not None:
+            return await _exec_phase_op(name=name, args=args)
+
         if name not in self._catalog and "__" in name:
             name, args = self._maybe_salvage_qualified_direct_call(name, args)
 
