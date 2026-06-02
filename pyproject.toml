@@ -148,7 +148,14 @@ pythonpath = ["src"]
 # dogfood/scripts/ runners on isolated tmp copies. They MUST NOT
 # be collected by the project's main pytest suite — the placeholder
 # stubs (= NotImplementedError) would fail CI at collection time.
-norecursedirs = ["dogfood/fixtures", ".reyn", "reyn-worktrees"]
+#
+# .claude/worktrees/ holds transient git worktrees created by the Agent
+# tool's `isolation: "worktree"` mode (gitignored, local-only). Each is a
+# full copy of the tree at some other branch state, so a rootdir
+# `pytest -q` would otherwise collect tens of thousands of stale-import
+# test modules. Declaring an explicit norecursedirs drops pytest's default
+# `.*` dotdir exclusion, so `.claude` (and `.reyn`) must be listed back.
+norecursedirs = ["dogfood/fixtures", ".reyn", ".claude", "reyn-worktrees"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
