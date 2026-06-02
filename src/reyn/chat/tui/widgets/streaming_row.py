@@ -125,9 +125,22 @@ class StreamingRow(Widget):
     }}
     """
 
-    def __init__(self, *, prefix: str = "", id: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        prefix: str = "",
+        id: str | None = None,
+        indent: int | None = None,
+    ) -> None:
         super().__init__(id=id)
         self._prefix = prefix
+        # When the caller supplies an explicit indent (e.g. the current
+        # _current_body_indent() from ConversationView at stream-open time)
+        # we use it; otherwise we fall back to the DEFAULT_CSS value
+        # (_BODY_INDENT_COLS = 8 = ts-on).  This makes the streaming row
+        # align with the surrounding body text even when the user has toggled
+        # timestamps off (Fix 2 / A1).
+        self._indent: int = indent if indent is not None else _BODY_INDENT_COLS
         # Running concatenation. Previously ``_chunks: list[str]`` was joined
         # via ``"".join(...)`` inside every render flush — that's O(N) per
         # flush and ``_flush_render`` fires at ~60 fps, so the total cost
@@ -179,8 +192,18 @@ class StreamingRow(Widget):
 
         If seal() was already called before we mounted (very fast stream),
         complete the Markdown swap now that the DOM is ready.
+
+        Also applies the dynamic left-padding to the inner Static so the
+        streaming body aligns with surrounding RichLog body text at the
+        current timestamp-toggle state.
         """
         self._mounted = True
+        # Apply the caller-supplied indent to the inner Static widget.
+        # DEFAULT_CSS bakes in _BODY_INDENT_COLS (8, ts-on); when ts is off
+        # the caller passes indent=2 so the live row matches the rest of
+        # the body (Fix 2 / A1).
+        if self._static is not None and self._indent != _BODY_INDENT_COLS:
+            self._static.styles.padding = (0, 0, 0, self._indent)
         self._interval_handle = self.set_interval(_RENDER_INTERVAL_S, self._flush_render)
         if self._sealed:
             # seal() ran before we were mounted — apply the Markdown swap now,
@@ -296,6 +319,11 @@ class StreamingRow(Widget):
             md_widget = Markdown(full, id=f"{row_id}_markdown")
             self.mount(prefix_widget, md_widget)
             prefix_widget.update(Text(self._prefix, style="bold " + _AMBER))
+            # Apply the same dynamic indent to the sealed Markdown so the
+            # brief flash between seal() and end_stream()'s row.remove()
+            # stays aligned with the streaming Static (Fix 2 / A1).
+            if self._indent != _BODY_INDENT_COLS:
+                md_widget.styles.padding = (0, 0, 0, self._indent)
         except Exception:
             # Graceful fallback: freeze raw Rich text in the existing Static.
             if self._static is not None:
@@ -375,6 +403,15 @@ class StreamingRow(Widget):
     def height_dirty(self, value: bool) -> None:
         """Allow tests to reset the flag to establish a clean baseline."""
         self._height_dirty = value
+
+    @property
+    def body_indent(self) -> int:
+        """The left-padding column in use for the streaming body.
+
+        Exposed so tests can assert the indent matches the conversation's
+        current timestamp state without reading private ``_indent``.
+        """
+        return self._indent
 
     def build_renderable(self) -> "Text":
         """Public alias for ``_build_renderable()``.
