@@ -89,7 +89,6 @@ class OSRuntime:
         phase_compaction_engine: "CompactionEngine | None" = None,
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
         tool_calls_op_loop_skills: list[str] | None = None,
-        routerloop_convergence_skills: list[str] | None = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -100,12 +99,11 @@ class OSRuntime:
         self._chain_id = chain_id
         self._budget_tracker = budget_tracker
         self._budget_skill_name = skill_name or skill.name
-        # #1212: retained so sub-skill runs (run_skill / @sub_skill nodes) inherit
-        # the same op-loop gate — a sub-skill named in the list also op-loops.
+        # Retained so sub-skill runs (run_skill / @sub_skill nodes) inherit the same
+        # op-loop gate — a sub-skill named in the list also op-loops. A listed skill
+        # runs the converged op-loop (phase drives the shared RouterLoop.run_loop,
+        # #1092); un-listed skills run json-mode unchanged.
         self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
-        # #1092 PR-B (FD1): skills opted into the converged op-loop (phase drives the
-        # shared RouterLoop.run_loop). Same data-driven P7-OK gate shape as #1212.
-        self._routerloop_convergence_skills = list(routerloop_convergence_skills or [])
         self.events = EventLog(
             subscribers=subscribers, run_id=run_id, plan_step=plan_step,
         )
@@ -290,13 +288,10 @@ class OSRuntime:
             build_frame_fn=self.build_frame,
             phase_compaction_engine=self._phase_compaction_engine,  # PR-N8
             phase_compaction_cfg=self._phase_compaction_cfg,        # PR-N8
-            # #1212 PR2: OS-decided mechanism gate (P3). The config holds opted-in
-            # skill names as data (P7-OK); this skill runs the native-tools op-loop
-            # iff its name is listed. Default empty = json-mode (zero change).
+            # OS-decided mechanism gate (P3). The config holds opted-in skill names
+            # as data (P7-OK); this skill runs the converged native-tools op-loop
+            # (#1092) iff its name is listed. Default empty = json-mode (zero change).
             op_loop_enabled=skill.name in (tool_calls_op_loop_skills or ()),
-            # #1092 PR-B: converged op-loop gate (takes precedence over op_loop_enabled).
-            routerloop_convergence_enabled=skill.name
-            in (routerloop_convergence_skills or ()),
         )
         # FP-0020 Component D: phase sequence + transitions + rollback + skill-node
         # dispatch + resume + SkillRegistry lifecycle extracted to RunOrchestrator.
@@ -327,8 +322,7 @@ class OSRuntime:
             caller=caller,
             max_phase_visits=self._max_phase_visits,
             budget_tracker=budget_tracker,  # #1190 stage (ii): skill_node_adapt cost recording
-            tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,  # #1212 sub-skill gate
-            routerloop_convergence_skills=self._routerloop_convergence_skills,  # #1092 PR-B
+            tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,  # converged op-loop sub-skill gate
         )
 
     # ── Backward-compat properties (FP-0020 Component A) ───────────────────

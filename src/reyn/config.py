@@ -1555,18 +1555,12 @@ class ReynConfig:
     tool_calls_op_loop_skills: list[str] = field(
         default_factory=list,
         metadata={"desc": (
-            "TRANSITIONAL (#1212): skill names opted into the native-tools op-loop "
-            "execution path. Skills not listed use the default json-mode execution "
-            "path, unchanged. Removed once the op-loop becomes the default."
-        )},
-    )
-    routerloop_convergence_skills: list[str] = field(
-        default_factory=list,
-        metadata={"desc": (
-            "TRANSITIONAL (#1092 PR-B): skill names opted into the converged op-loop "
-            "(phase act-loop drives the shared RouterLoop.run_loop). Takes precedence "
-            "over tool_calls_op_loop_skills. Skills not listed are unchanged. Removed "
-            "once convergence becomes the default."
+            "TRANSITIONAL: skill names opted into the native-tools op-loop — the "
+            "phase act-loop drives the shared RouterLoop.run_loop (the converged "
+            "op-loop, #1092). Skills not listed use the default json-mode execution "
+            "path, unchanged. Removed once the op-loop becomes the default. (#1092 "
+            "PR-C-3 merged the former separate routerloop_convergence_skills gate "
+            "into this one — the converged path is now the op-loop's implementation.)"
         )},
     )
     # LiteLLM proxy: non-secret base URL only.
@@ -2085,9 +2079,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         },
         tool_calls_op_loop_skills=[
             str(s) for s in (merged.get("tool_calls_op_loop_skills") or [])
-        ],
-        routerloop_convergence_skills=[
-            str(s) for s in (merged.get("routerloop_convergence_skills") or [])
         ],
         api_base=str(merged.get("api_base") or ""),
         # prompt_cache_enabled / project_context_path were declared as
