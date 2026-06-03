@@ -1903,13 +1903,29 @@ class RouterLoop:
             result = None
             args_hash: str | None = None
             if self._memo_provider is not None:
-                from reyn.plan.sub_loop_memo import compute_sub_loop_args_hash
-                args_hash = compute_sub_loop_args_hash(
-                    model=resolved_model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                )
+                # #1092 PR-C-2.6: the memo key is host-delegated when the host
+                # supplies ``compute_memo_key`` (the phase host strips volatile frame
+                # fields — current_datetime — so a later-time crash-resume HITS instead
+                # of MISSING + re-invoking). Chat hosts don't implement it (getattr →
+                # None), so the key falls back to the message-based hash, byte-identical.
+                # The SAME key is used for lookup AND record (below), so run-1's record
+                # and run-2's resume lookup stay consistent.
+                _memo_key_fn = getattr(self.host, "compute_memo_key", None)
+                if _memo_key_fn is not None:
+                    args_hash = _memo_key_fn(
+                        model=resolved_model,
+                        messages=messages,
+                        tools=tools,
+                        tool_choice="auto",
+                    )
+                else:
+                    from reyn.plan.sub_loop_memo import compute_sub_loop_args_hash
+                    args_hash = compute_sub_loop_args_hash(
+                        model=resolved_model,
+                        messages=messages,
+                        tools=tools,
+                        tool_choice="auto",
+                    )
                 memo = self._memo_provider.get_recorded_result(args_hash)
                 if memo is not None:
                     host.events.emit(
