@@ -204,3 +204,93 @@ def test_converged_compaction_summary_memo_hits_on_resume(tmp_path, monkeypatch)
         "the converged compaction summary must memo-HIT on resume (no re-summarize) — "
         f"resume re-called the summariser: run1={run1_summaries} total={summary_calls['n']}"
     )
+
+
+class _JsonModeActsThenFinish:
+    """json-mode act-loop: 2 act turns (each a write_file op) then a finish decide.
+    Two accumulated control_ir_results (> recent_act_turns_raw=1) → _run_act_loop's
+    per-turn compaction fires. Fresh per run; deterministic replay."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(self, model, frame, *a, **k):  # noqa: ANN001, ANN002, ANN003
+        i = self.calls
+        self.calls += 1
+        if i < 2:
+            return LLMCallResult(
+                data={"type": "act", "ops": [
+                    {"kind": "write_file", "path": ".reyn/j%d.txt" % i, "content": "x"},
+                ]},
+                usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
+            )
+        return LLMCallResult(data=_FINISH, usage=TokenUsage(prompt_tokens=20, completion_tokens=10))
+
+
+def _jsonmode_skill() -> Skill:
+    draft = Phase(
+        name="draft", instructions="d",
+        input_schema={"type": "object", "properties": {}},
+        allowed_ops=["write_file"], max_act_turns=6,
+    )
+    return Skill(
+        name="jsonmode_compaction_resume", entry_phase="draft", phases={"draft": draft},
+        graph=SkillGraph(transitions={}, can_finish_phases=["draft"]),
+        final_output_schema={"type": "object", "properties": {}},
+        final_output_name="result",
+    )
+
+
+def test_jsonmode_compaction_summary_memo_hits_on_resume(tmp_path, monkeypatch) -> None:
+    """Tier 2: the json-mode _run_act_loop compaction summary memo-HITS on resume —
+    the JSON-MODE site's resume wiring threads the summary_memo (verify-each-site, the
+    #1248/C-3 site-wiring discipline; the converged mirror is the sibling test)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(_models, "datetime", _FrozenClock)
+    wal = tmp_path / ".reyn" / "wal.jsonl"
+
+    summary_calls = {"n": 0}
+
+    async def _changing_summary(model, messages, **kw):  # noqa: ANN001, ANN003
+        summary_calls["n"] += 1
+        return _SummaryResp(f"COMPACTED_V{summary_calls['n']}")
+    monkeypatch.setattr(litellm, "acompletion", _changing_summary)
+
+    # ── Run 1: json-mode 2 act-turns → per-turn compaction fires → summary recorded ─
+    monkeypatch.setattr(lcr, "call_llm", _JsonModeActsThenFinish())
+    eng, cfg = _engine_cfg()
+    sl1 = StateLog(wal)
+    rt1 = OSRuntime(
+        _jsonmode_skill(), model="stub/model", run_id="jsoncompsum",
+        state_log=sl1, phase_compaction_engine=eng, phase_compaction_cfg=cfg,
+    )  # NOT in tool_calls_op_loop_skills → json-mode path
+    r1 = asyncio.run(rt1.run({"type": "input", "data": {}}))
+    assert r1.ok, f"run 1 must complete; got {r1.status}"
+    assert "phase_act_results_compacted" in [e.type for e in rt1.events.all()], (
+        "run 1 (json-mode) must fire per-turn compaction"
+    )
+    run1_summaries = summary_calls["n"]
+    assert run1_summaries >= 1, f"run 1 must summarise at least once; got {run1_summaries}"
+
+    # ── Run 2: resume — act-loop replays, compaction re-fires, summary MEMO-HITS ───
+    committed = _committed_steps_from_wal(sl1)
+    plan = ResumePlan(
+        run_id="jsoncompsum", skill_name="jsonmode_compaction_resume",
+        skill_input={"type": "input", "data": {}}, current_phase="draft",
+        last_phase_artifact_path=None, awaiting_intervention_id=None,
+        committed_steps=committed,
+    )
+    monkeypatch.setattr(lcr, "call_llm", _JsonModeActsThenFinish())
+    eng2, cfg2 = _engine_cfg()
+    sl2 = StateLog(wal)
+    rt2 = OSRuntime(
+        _jsonmode_skill(), model="stub/model", run_id="jsoncompsum",
+        state_log=sl2, resume_plan=plan,
+        phase_compaction_engine=eng2, phase_compaction_cfg=cfg2,
+    )
+    r2 = asyncio.run(rt2.run({"type": "input", "data": {}}))
+    assert r2.ok, f"resume must complete; got {r2.status}"
+    assert summary_calls["n"] == run1_summaries, (
+        "the json-mode compaction summary must memo-HIT on resume (no re-summarize) — "
+        f"resume re-called the summariser: run1={run1_summaries} total={summary_calls['n']}"
+    )
