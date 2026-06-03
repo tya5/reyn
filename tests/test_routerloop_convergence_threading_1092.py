@@ -4,7 +4,7 @@ config → Agent → OSRuntime → PhaseExecutor (the real run path).
 Commit 2b wired ``routerloop_convergence_enabled`` at the OSRuntime↔PhaseExecutor
 seam, but a direct-kwarg test would reproduce the #1248 advertise/wire-path trap:
 it would pass with the production config→runtime PRODUCER missing. This pins the
-full path: a skill named in ``config.routerloop_convergence_skills``, run via
+full path: a skill named in ``config.tool_calls_op_loop_skills``, run via
 ``Agent.from_config(config)`` (the hub for swe_bench / run / cron / web / mcp /
 eval), actually reaches ``PhaseExecutor._run_routerloop_op_loop`` (asserted via the
 ``phase_routerloop_op_loop_started`` event, the distinguishing marker vs the #1212
@@ -84,7 +84,7 @@ def _event_kinds(subscribers_sink: list) -> list[str]:
 
 
 def test_from_config_gate_reaches_converged_op_loop(tmp_path, monkeypatch) -> None:
-    """Tier 2: a skill in config.routerloop_convergence_skills, run via
+    """Tier 2: a skill in config.tool_calls_op_loop_skills, run via
     Agent.from_config, reaches the CONVERGED op-loop (RouterLoop.run_loop)."""
     monkeypatch.chdir(tmp_path)
     tools_calls: list[int] = []
@@ -92,7 +92,7 @@ def test_from_config_gate_reaches_converged_op_loop(tmp_path, monkeypatch) -> No
     _patch_llms(monkeypatch, tools_calls, decide_calls)
     sink: list = []
 
-    config = ReynConfig(routerloop_convergence_skills=[_SKILL_NAME])
+    config = ReynConfig(tool_calls_op_loop_skills=[_SKILL_NAME])
     agent = Agent.from_config(
         config, shell_allowed=False, model="stub/model", subscribers=[sink.append],
     )
@@ -100,7 +100,7 @@ def test_from_config_gate_reaches_converged_op_loop(tmp_path, monkeypatch) -> No
 
     assert result.ok, f"run must complete; got {result.status}"
     assert "phase_routerloop_op_loop_started" in _event_kinds(sink), (
-        "config.routerloop_convergence_skills must thread Agent.from_config → "
+        "config.tool_calls_op_loop_skills must thread Agent.from_config → "
         "OSRuntime → PhaseExecutor._run_routerloop_op_loop (the converged path), "
         "not stay on the #1212 phase-native path"
     )
@@ -119,7 +119,7 @@ def test_from_config_unlisted_skill_no_convergence(tmp_path, monkeypatch) -> Non
     _patch_llms(monkeypatch, tools_calls, decide_calls)
     sink: list = []
 
-    config = ReynConfig(routerloop_convergence_skills=[])  # nothing opted in
+    config = ReynConfig(tool_calls_op_loop_skills=[])  # nothing opted in
     agent = Agent.from_config(
         config, shell_allowed=False, model="stub/model", subscribers=[sink.append],
     )
@@ -183,7 +183,7 @@ def test_converged_op_loop_dispatches_phase_op_not_unknown_tool(tmp_path, monkey
         final_output_schema={"type": "object", "properties": {}},
         final_output_name="result",
     )
-    config = ReynConfig(routerloop_convergence_skills=[_SKILL_NAME])
+    config = ReynConfig(tool_calls_op_loop_skills=[_SKILL_NAME])
     agent = Agent.from_config(
         config, shell_allowed=False, model="stub/model", subscribers=[sink.append],
     )
@@ -271,7 +271,7 @@ def test_converged_decide_frame_information_equivalent_to_json_op_loop(tmp_path,
         final_output_schema={"type": "object", "properties": {}},
         final_output_name="result",
     )
-    config = ReynConfig(routerloop_convergence_skills=[_SKILL_NAME])
+    config = ReynConfig(tool_calls_op_loop_skills=[_SKILL_NAME])
     agent = Agent.from_config(config, shell_allowed=False, model="stub/model")
     result = asyncio.run(agent.run(skill, {"type": "input", "data": {}}))
 

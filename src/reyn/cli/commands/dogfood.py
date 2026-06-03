@@ -443,7 +443,6 @@ def _build_live_runner(agent_name: str):
                 sandbox_config=config.sandbox,
                 multimodal_config=config.multimodal,
                 tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
-                routerloop_convergence_skills=config.routerloop_convergence_skills,
                 action_retrieval_config=config.action_retrieval,
             )
             s.load_history()

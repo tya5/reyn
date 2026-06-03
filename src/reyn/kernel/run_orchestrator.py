@@ -119,11 +119,9 @@ class RunOrchestrator:
         max_phase_visits: int,
         budget_tracker: object | None = None,  # #1190 stage (ii): skill_node_adapt cost recording
         tool_calls_op_loop_skills: list[str] | None = None,  # #1212: gate, propagated to sub-skills
-        routerloop_convergence_skills: list[str] | None = None,  # #1092 PR-B: convergence gate
     ) -> None:
         self._budget_tracker = budget_tracker
         self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
-        self._routerloop_convergence_skills = list(routerloop_convergence_skills or [])
         self._phase_executor = phase_executor
         self._skill = skill
         self._workspace = workspace
@@ -262,7 +260,6 @@ class RunOrchestrator:
             safety=self._safety,
             recorder=self._budget_tracker,
             tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,  # #1212 sub-skill gate
-            routerloop_convergence_skills=self._routerloop_convergence_skills,  # #1092 PR-B
             # #1190 stage (iii) Part 4: attribute skill_node adaptation to the
             # run's agent (caller "agents/<name>" → "<name>").
             recorder_agent=(

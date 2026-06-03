@@ -26,10 +26,12 @@ Falsification: reverting the host hook (RouterLoop falls back to the raw-message
 the memo MISSES → ``call_tools`` re-invokes → this test FAILS, proving it gates on
 the datetime-robust key.
 
-NOTE (scope): this branches from main WITHOUT PR-C-2.5's op-dispatch WAL memo, so
-on resume the op re-dispatches (idempotent write to ``.reyn/``). This test gates
-the LLM-memo robustness ONLY; the full json-mode-equal crash-resume (op memo-HIT,
-no re-execution) holds once BOTH PR-C-2.5 and PR-C-2.6 land — the C-3 retire gate.
+★ C-3 RETIRE GATE: with BOTH PR-C-2.5 (op-dispatch WAL memo) and PR-C-2.6
+(datetime-robust LLM memo) on main, this asserts the FULL json-mode-equal
+crash-resume — on a later-time resume the act turn memo-HITS (no re-invoke) AND
+the op memo-HITS (no re-execution). That combined property is what gates retiring
+the frame-fed ``_run_op_loop``: the converged op-loop now serves the same
+crash-recovery guarantee the retired path did.
 
 Real OSRuntime + real ControlIRExecutor + real WAL; the only scripted seam is the
 module-level ``call_llm`` / ``call_llm_tools`` provider boundary.
@@ -166,7 +168,7 @@ def test_converged_act_turn_memo_hits_across_datetime_change(tmp_path, monkeypat
     sl1 = StateLog(wal)
     rt1 = OSRuntime(
         _skill(), model="stub/model", run_id="converged_dt_run",
-        state_log=sl1, routerloop_convergence_skills=[_SKILL_NAME],
+        state_log=sl1, tool_calls_op_loop_skills=[_SKILL_NAME],
     )
     r1 = asyncio.run(rt1.run({"type": "input", "data": {}}))
     assert r1.ok, f"run 1 must complete; got {r1.status}"
@@ -196,7 +198,7 @@ def test_converged_act_turn_memo_hits_across_datetime_change(tmp_path, monkeypat
     rt2 = OSRuntime(
         _skill(), model="stub/model", run_id="converged_dt_run",
         state_log=sl2, resume_plan=plan,
-        routerloop_convergence_skills=[_SKILL_NAME],
+        tool_calls_op_loop_skills=[_SKILL_NAME],
     )
     r2 = asyncio.run(rt2.run({"type": "input", "data": {}}))
     assert r2.ok, f"resume must complete; got {r2.status}"
@@ -217,4 +219,20 @@ def test_converged_act_turn_memo_hits_across_datetime_change(tmp_path, monkeypat
     assert llm_memos, (
         "the act-turn llm call must emit step_memoized on resume (memo-HIT); "
         f"got step_memoized op_kinds={[e.data.get('op_kind') for e in rt2.events.all() if e.type == 'step_memoized']}"
+    )
+    # ★ FULL json-mode-equal crash-resume (the C-3 retire gate). With BOTH PR-C-2.5
+    # (op-dispatch WAL memo) and PR-C-2.6 (datetime-robust LLM memo) on main, the
+    # write_file op the replayed act turn produced ALSO memo-HITS dispatch_tool on
+    # the later-time resume — so the side-effecting op does NOT re-execute. This is
+    # the property that gates retiring the frame-fed _run_op_loop: the converged
+    # op-loop serves the same crash-recovery guarantee end-to-end (act-turn replay
+    # determinism AND op no-re-execution) across a real wall-clock-advancing resume.
+    op_memos = [
+        e for e in rt2.events.all()
+        if e.type == "step_memoized" and e.data.get("tool") == "write_file"
+    ]
+    assert op_memos, (
+        "the converged op-loop's write_file op must memo-HIT dispatch_tool on a "
+        "later-time resume (no re-execution) — the full json-mode-equal crash-resume "
+        f"gate; step_memoized tools={[e.data.get('tool') for e in rt2.events.all() if e.type == 'step_memoized']}"
     )

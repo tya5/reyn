@@ -67,22 +67,15 @@
 
 
 # -----------------------------------------------------------------------------
-# tool_calls_op_loop_skills: TRANSITIONAL (#1212). Skill names opted into the
-# native-tools op-loop phase mechanism — their ops are emitted as native
-# tool_calls and run through the shared executor instead of the json-mode
-# control_ir batch. Default empty = every skill uses json-mode (unchanged).
-# Removed once the op-loop becomes the default.
+# tool_calls_op_loop_skills: TRANSITIONAL. Skill names opted into the native-tools
+# op-loop phase mechanism — the phase act-loop drives the shared RouterLoop.run_loop
+# (the converged op-loop, #1092): ops are emitted as native tool_calls, run through
+# the shared executor, and threaded as native tool-role message-history. Default
+# empty = every skill uses json-mode (unchanged). Removed once the op-loop becomes
+# the default. (#1092 PR-C-3 merged the former separate routerloop_convergence_skills
+# gate into this one — the converged path is now the op-loop's implementation.)
 # -----------------------------------------------------------------------------
 # tool_calls_op_loop_skills:
-#   - my_skill
-# -----------------------------------------------------------------------------
-# routerloop_convergence_skills: TRANSITIONAL (#1092 PR-B). Skill names opted into
-# the converged op-loop — their phase act-loop drives the shared RouterLoop.run_loop
-# (op results thread as native tool-role message-history). Takes precedence over
-# tool_calls_op_loop_skills. Default empty = every skill unchanged. Removed once
-# convergence becomes the default.
-# -----------------------------------------------------------------------------
-# routerloop_convergence_skills:
 #   - my_skill
 
 

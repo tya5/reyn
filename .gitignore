@@ -69,3 +69,6 @@ spike_results/
 /chainlit.md
 /.chainlit/
 /public/
+
+# Local dogfood/MCP sandbox scratch (traces, replay fixtures, test.db) — never commit
+.mcp-sandbox/

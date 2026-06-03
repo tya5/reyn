@@ -25,7 +25,7 @@ This test pins the restored guarantee end-to-end through the real OSRuntime:
 
 Real OSRuntime + real ControlIRExecutor + real WAL (StateLog); the only scripted
 seam is the module-level ``call_llm`` / ``call_llm_tools`` provider boundary (the
-sanctioned pattern). The ``routerloop_convergence_skills`` gate routes this skill
+sanctioned pattern). The ``tool_calls_op_loop_skills`` gate routes this skill
 to the converged op-loop (on this branch the two gates still co-exist; #1092 PR-C-3
 merges them).
 
@@ -166,7 +166,7 @@ def test_converged_op_dispatch_memoized_on_resume(tmp_path, monkeypatch) -> None
     sl1 = StateLog(wal)
     rt1 = OSRuntime(
         _skill(), model="stub/model", run_id="converged_resume_run",
-        state_log=sl1, routerloop_convergence_skills=[_SKILL_NAME],
+        state_log=sl1, tool_calls_op_loop_skills=[_SKILL_NAME],
     )
     r1 = asyncio.run(rt1.run({"type": "input", "data": {}}))
     assert r1.ok, f"run 1 must complete; got {r1.status}"
@@ -197,7 +197,7 @@ def test_converged_op_dispatch_memoized_on_resume(tmp_path, monkeypatch) -> None
     rt2 = OSRuntime(
         _skill(), model="stub/model", run_id="converged_resume_run",
         state_log=sl2, resume_plan=plan,
-        routerloop_convergence_skills=[_SKILL_NAME],
+        tool_calls_op_loop_skills=[_SKILL_NAME],
     )
     r2 = asyncio.run(rt2.run({"type": "input", "data": {}}))
     assert r2.ok, f"resume must complete; got {r2.status}"

@@ -150,7 +150,7 @@ def test_converged_op_loop_records_and_replays_deterministically(tmp_path, monke
     # minimal phase prompt is smaller; caching is also irrelevant to the replay
     # key (the key hashes messages, not cache directives).
     config = ReynConfig(
-        routerloop_convergence_skills=[_SKILL_NAME], prompt_cache_enabled=False,
+        tool_calls_op_loop_skills=[_SKILL_NAME], prompt_cache_enabled=False,
     )
     agent = Agent.from_config(
         config, shell_allowed=False, model=_MODEL, subscribers=[sink.append],
