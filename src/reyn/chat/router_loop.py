@@ -1442,6 +1442,13 @@ class RouterLoop:
         self.max_iterations = max_iterations
         self.router_model = router_model
         self.budget = budget
+        # #1092 PR-C-2.5: phase-relative op-dispatch counter for crash-resume WAL
+        # memoization. Only advanced when the host opts a dispatch into phase-memo
+        # mode (``host.op_dispatch_memo()`` non-None); chat hosts never do, so this
+        # stays 0 and the chat dispatch path is byte-identical. The counter +
+        # ``phase`` form the ``op_invocation_id`` (``<phase>.<idx>``) that
+        # ``dispatch_tool`` memoizes against committed WAL steps on resume.
+        self._phase_op_idx = 0
         # When set, RouterLoop skips ``build_system_prompt(host=...)`` and uses
         # this string verbatim as the system message. Plan executor uses this
         # to inject a step-specific narrow prompt (= "you are executing step X
@@ -2662,6 +2669,38 @@ class RouterLoop:
 
         if name not in self._catalog and "__" in name:
             name, args = self._maybe_salvage_qualified_direct_call(name, args)
+
+        # #1092 PR-C-2.5: phase-mode op-dispatch WAL memoization. A phase host
+        # returns the per-phase resume wiring; chat hosts don't implement the hook
+        # (getattr → None), so the chat dispatch path below is byte-identical
+        # (``caller_kind="router"``, no state_log/skill_run_id → no WAL step).
+        memo = getattr(self.host, "op_dispatch_memo", lambda: None)()
+        if memo is not None:
+            # Phase op: thread state_log + skill_run_id + resume_plan + a
+            # phase-relative op_invocation_id into dispatch_tool so the op WAL-step
+            # records (and memo-HITS on resume — no re-execution). This restores the
+            # json-mode-equal crash-resume HARD GATE (#1225 Decision A) for the
+            # converged op-loop, which the registry dispatch otherwise bypassed.
+            op_invocation_id = f"{memo['phase'] or 'phase'}.{self._phase_op_idx}"
+            self._phase_op_idx += 1
+            dctx = DispatchContext(
+                caller_kind="skill_phase",
+                caller_id=self.host.agent_name,
+                chain_id=self.chain_id,
+                tool_catalog=self._catalog,
+                events=self.host.events,
+                state_log=memo["state_log"],
+                skill_run_id=memo["skill_run_id"],
+                phase=memo["phase"],
+                resume_plan=memo["resume_plan"],
+            )
+            return await dispatch_tool(
+                name=name,
+                args=args,
+                ctx=dctx,
+                invoker=functools.partial(self._invoke_router_tool, name),
+                op_invocation_id=op_invocation_id,
+            )
 
         dctx = DispatchContext(
             caller_kind="router",
