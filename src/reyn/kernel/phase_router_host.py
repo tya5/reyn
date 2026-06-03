@@ -112,6 +112,36 @@ class PhaseRouterLoopHost:
             default_sandbox_policy=self._default_sandbox_policy,
         )
 
+    def op_dispatch_memo(self) -> dict | None:
+        """Phase-mode op-dispatch WAL-memoization context (#1092 PR-C-2.5).
+
+        ``RouterLoop._execute_tool`` consults this hook to decide whether a phase
+        op dispatch is crash-resume memoized. A phase host returns the per-phase
+        WAL wiring (``state_log`` + ``skill_run_id`` + ``resume_plan`` + ``phase``)
+        so the dispatch threads them into ``dispatch_tool`` (with a phase-relative
+        ``op_invocation_id``), reproducing the json-mode-equal crash-resume HARD
+        GATE (#1225 Decision A): on resume the op memo-HITS and does not
+        re-execute. Single-sourced from the shared ``ControlIRExecutor`` so there
+        is no second resume-wiring path to drift (P5/P6).
+
+        Chat hosts do NOT implement this method — ``RouterLoop._execute_tool``
+        getattr-guards it to ``None``, leaving the chat dispatch path byte-identical
+        (``caller_kind="router"``, no WAL step). Returns ``None`` here too when the
+        executor has no WAL wired (state_log/skill_run_id absent = non-resumable run),
+        so a non-resumable phase run also stays on the plain dispatch path.
+        """
+        cie = self._control_ir_executor
+        state_log = getattr(cie, "_state_log", None)
+        skill_run_id = getattr(cie, "_skill_run_id", None)
+        if state_log is None or skill_run_id is None:
+            return None
+        return {
+            "state_log": state_log,
+            "skill_run_id": skill_run_id,
+            "resume_plan": getattr(cie, "_resume_plan", None),
+            "phase": self._phase,
+        }
+
     # ── Chat-discovery methods (phase = empty) ────────────────────────────
     # #1092 PR-C-0: ``RouterLoop._build_router_caller_state`` calls these EAGERLY
     # while building the per-dispatch RouterCallerState (router_loop.py). A phase
