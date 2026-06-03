@@ -64,6 +64,7 @@ class PhaseRouterLoopHost:
         compaction_engine: Any = None,
         compaction_cfg: Any = None,
         check_phase_budget_fn: Callable[[], Any] | None = None,
+        summary_memo: Any = None,
     ) -> None:
         self._control_ir_executor = control_ir_executor
         self._events = events
@@ -84,6 +85,8 @@ class PhaseRouterLoopHost:
         # check (PhaseExecutor._check_phase_budget bound to this phase + state).
         # None for chat hosts → the per-turn enforcement hook is a no-op.
         self._check_phase_budget_fn = check_phase_budget_fn
+        # #1267: WAL-memo seam for the in-loop (C-4b) compaction summary call.
+        self._summary_memo = summary_memo
 
     # ── RouterLoopCore identity / static config ───────────────────────────
 
@@ -284,6 +287,7 @@ class PhaseRouterLoopHost:
         older_results = [{"result": messages[i].get("content")} for i in older_idxs]
         compacted = await compact_control_ir_results(
             older_results, engine=engine, cfg=cfg, events=self._events, phase=self._phase,
+            summary_memo=self._summary_memo,
         )
         if not compacted or compacted == older_results:
             # Identity (LLM error or under the engine's own threshold) → no change.

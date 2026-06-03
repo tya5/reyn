@@ -74,7 +74,7 @@ class _ControlIRResultsHolder:
         self._results = list(results)
 
 
-def _make_phase_compact_now(holder, engine, cfg, events, phase):
+def _make_phase_compact_now(holder, engine, cfg, events, phase, summary_memo=None):
     """Build the phase-axis ``compact_now`` callback (#1176 B1).
 
     On-demand counterpart to the act loop's automatic compaction: it compacts
@@ -107,6 +107,7 @@ def _make_phase_compact_now(holder, engine, cfg, events, phase):
         if older:
             older_compacted = await compact_control_ir_results(
                 older, engine=engine, cfg=cfg, events=events, phase=phase,
+                summary_memo=summary_memo,
             )
             holder.set(older_compacted + recent)
         # else: nothing older to compact — no-op (still report the live window).
@@ -154,6 +155,10 @@ class PhaseExecutor:
         op_loop_enabled: bool = False,
     ) -> None:
         self._llm_caller = llm_caller
+        # #1267: WAL-memo seam for the phase compaction summary call (shared by all
+        # compact_control_ir_results sites — json-mode / converged / on-demand). Built
+        # from the recorder's WAL primitives; getattr-guarded for non-recorder fakes.
+        self._summary_memo = getattr(llm_caller, "make_summary_memo", lambda: None)()
         self._control_ir_executor = control_ir_executor
         self._events = events
         self._skill = skill
@@ -498,6 +503,7 @@ class PhaseExecutor:
             # the converged op-loop limit-checks each turn like _run_act_loop (the
             # host's ``check_phase_budget`` hook → this bound _check_phase_budget).
             check_phase_budget_fn=lambda: self._check_phase_budget(phase, state),
+            summary_memo=self._summary_memo,
         )
         tools = host.get_phase_op_catalog()
         # P6 audit + the distinguishing marker for the converged op-loop (vs the
@@ -631,6 +637,7 @@ class PhaseExecutor:
                 older,
                 engine=self._phase_compaction_engine,
                 cfg=self._phase_compaction_cfg,
+                summary_memo=self._summary_memo,
                 events=self._events,
                 phase=phase,
             )
@@ -717,6 +724,7 @@ class PhaseExecutor:
                     older,
                     engine=self._phase_compaction_engine,
                     cfg=self._phase_compaction_cfg,
+                    summary_memo=self._summary_memo,
                     events=self._events,
                     phase=phase,
                 )
@@ -864,6 +872,7 @@ class PhaseExecutor:
                 _make_phase_compact_now(
                     _holder, self._phase_compaction_engine,
                     self._phase_compaction_cfg, self._events, phase,
+                    self._summary_memo,
                 )
                 if self._phase_compaction_engine is not None
                 and self._phase_compaction_cfg is not None
