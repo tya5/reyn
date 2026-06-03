@@ -33,6 +33,7 @@ runs the json-mode ``_run_op_loop`` unchanged.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
 
@@ -141,6 +142,81 @@ class PhaseRouterLoopHost:
             "resume_plan": getattr(cie, "_resume_plan", None),
             "phase": self._phase,
         }
+
+    def compute_memo_key(
+        self, *, model: str, messages: list[dict], tools: Any, tool_choice: Any,
+    ) -> str:
+        """#1092 PR-C-2.6: datetime-robust act-turn memo key for the converged op-loop.
+
+        RouterLoop keys the act-turn LLM memo on ``compute_sub_loop_args_hash(messages)``
+        (``get_recorded_result`` / ``record``). For the converged op-loop the seed
+        ``user`` message embeds the whole ``ContextFrame`` as JSON (``build_phase_messages``
+        → ``json.dumps(frame.model_dump())``), INCLUDING the volatile ``current_datetime``.
+        A real crash-resume happens at a LATER wall-clock time, so the raw-message hash
+        would differ → the memo MISSES → the act turn re-invokes → a non-deterministic
+        model can diverge → the op re-executes (the PR5 HARD GATE breaks). The frame-fed
+        op-loop avoided this by hashing the FRAME with volatile fields stripped
+        (``_compute_llm_args_hash`` / ``_LLM_VOLATILE_FRAME_FIELDS``).
+
+        This restores that property at the message layer: strip the SAME volatile frame
+        fields from any ``user`` message carrying a frame JSON, then hash. The phase-layer
+        knowledge (which fields are volatile) lives HERE — RouterLoop stays frame-agnostic
+        (P7). Chat hosts do NOT implement this method; RouterLoop getattr-guards it and
+        falls back to ``compute_sub_loop_args_hash`` → chat memo key byte-identical.
+        """
+        from reyn.dispatch.dispatcher import (
+            _LLM_VOLATILE_FRAME_FIELDS,
+            _LLM_VOLATILE_NESTED_FIELDS,
+        )
+        from reyn.plan.sub_loop_memo import compute_sub_loop_args_hash
+
+        robust = [
+            self._strip_volatile_frame_fields(
+                m, _LLM_VOLATILE_FRAME_FIELDS, _LLM_VOLATILE_NESTED_FIELDS,
+            )
+            for m in messages
+        ]
+        return compute_sub_loop_args_hash(
+            model=model, messages=robust, tools=tools, tool_choice=tool_choice,
+        )
+
+    @staticmethod
+    def _strip_volatile_frame_fields(
+        msg: dict, volatile: "frozenset[str]", nested: "frozenset[str]",
+    ) -> dict:
+        """Return ``msg`` with volatile frame fields removed if it carries a frame JSON.
+
+        Mirrors ``_compute_llm_args_hash``'s top-level + nested exclusion. A message is
+        treated as a frame carrier only when it is a ``user`` message whose ``content``
+        is a JSON object string mentioning ``current_datetime`` — so non-frame messages
+        (tool results, the system prompt, assistant turns) are returned untouched.
+        Re-serialised deterministically (``sort_keys``) so the stripped content is
+        identical across the run-1 / run-2 boundary regardless of the original key order.
+        """
+        if msg.get("role") != "user":
+            return msg
+        content = msg.get("content")
+        if not isinstance(content, str) or "current_datetime" not in content:
+            return msg
+        try:
+            frame = json.loads(content)
+        except (TypeError, ValueError):
+            return msg
+        if not isinstance(frame, dict):
+            return msg
+        cleaned: dict = {}
+        for k, v in frame.items():
+            if k in volatile:
+                continue
+            if isinstance(v, dict):
+                v = {
+                    sk: sv for sk, sv in v.items()
+                    if f"{k}.{sk}" not in nested
+                }
+            cleaned[k] = v
+        new_msg = dict(msg)
+        new_msg["content"] = json.dumps(cleaned, sort_keys=True, ensure_ascii=False)
+        return new_msg
 
     # ── Chat-discovery methods (phase = empty) ────────────────────────────
     # #1092 PR-C-0: ``RouterLoop._build_router_caller_state`` calls these EAGERLY
