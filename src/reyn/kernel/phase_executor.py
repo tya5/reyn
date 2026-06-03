@@ -757,6 +757,14 @@ class PhaseExecutor:
                     and set(_parsed) <= {"status", "data", "error"}
                 ):
                     _parsed = _parsed["data"]
+                if not isinstance(_parsed, dict):
+                    # #1092 PR-C-0: normalized op results are not always dicts — e.g.
+                    # read_file is unwrapped to bare-content (a str) by
+                    # _normalise_router_tool_result. control_ir_results is typed
+                    # list[dict] (ContextFrame), so wrap non-dict outcomes. (Masked on
+                    # main while the eager-discovery AttributeError killed dispatch
+                    # before any real op result existed; the host fix unmasks it.)
+                    _parsed = {"result": _parsed}
                 control_ir_results.append(_parsed)
         if self._phase_compaction_cfg is not None:
             _keep = self._phase_compaction_cfg.recent_act_turns_raw

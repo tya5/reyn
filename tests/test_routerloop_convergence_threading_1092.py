@@ -199,6 +199,22 @@ def test_converged_op_loop_dispatches_phase_op_not_unknown_tool(tmp_path, monkey
         "a phase op tool_call must route through the converged path's ctx.tool_catalog, "
         "not be rejected as unknown_tool (the native-dispatch catalog gap)"
     )
+    # #1092 PR-C-0 false-green fix: the op must DISPATCH SUCCESSFULLY through the FULL
+    # converged path — RouterLoop._build_router_caller_state (called per dispatch) is
+    # part of it. The earlier assertion only excluded ``unknown_tool``; a tool_failed
+    # for ANOTHER reason (the eager ``list_available_skills`` AttributeError that died
+    # before the gate, caught by sandbox_2 dogfood) slipped through. Pin the op
+    # actually running: no tool_failed / AttributeError. (Falsified: reverting the
+    # PR-C-0 host fix makes this FAIL.)
+    assert "tool_failed" not in _event_kinds(sink), (
+        "the phase op must dispatch through the FULL converged path (incl. "
+        "_build_router_caller_state) without failing — a tool_failed here means the op "
+        "died before the permission gate (e.g. the eager chat-discovery AttributeError)"
+    )
+    assert "AttributeError" not in repr(sink), (
+        "no AttributeError from the converged dispatch path (RouterLoopCore host "
+        "completeness / getattr-guard, #1092 PR-C-0)"
+    )
 
 
 def test_converged_decide_frame_information_equivalent_to_json_op_loop(tmp_path, monkeypatch) -> None:
