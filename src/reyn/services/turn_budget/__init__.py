@@ -13,17 +13,21 @@ the force-close call, and the handoff persist/re-entry land in later PRs and are
 wired through the shared ``RouterLoop`` (chat/plan/phase all route through it).
 """
 from reyn.services.turn_budget.engine import (
+    DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS,
     TurnBudget,
     TurnBudgetEngine,
     assert_turn_budget_bounds,
+    build_default_turn_budget_engine,
     compute_turn_budget,
     wrap_up_system_prompt,
 )
 
 __all__ = [
+    "DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS",
     "TurnBudget",
     "TurnBudgetEngine",
     "assert_turn_budget_bounds",
+    "build_default_turn_budget_engine",
     "compute_turn_budget",
     "wrap_up_system_prompt",
 ]

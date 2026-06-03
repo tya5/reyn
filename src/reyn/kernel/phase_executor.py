@@ -476,6 +476,7 @@ class PhaseExecutor:
 
         from reyn.chat.router_loop import RouterLoop
         from reyn.kernel.phase_router_host import PhaseRouterLoopHost
+        from reyn.services.turn_budget import build_default_turn_budget_engine
 
         phase_def = self._skill.phases.get(phase)
         allowed_ops = set(phase_def.allowed_ops) if phase_def is not None else set()
@@ -504,6 +505,20 @@ class PhaseExecutor:
             # host's ``check_phase_budget`` hook → this bound _check_phase_budget).
             check_phase_budget_fn=lambda: self._check_phase_budget(phase, state),
             summary_memo=self._summary_memo,
+            # #1092 C2: activate the cumulative-axis force-close trigger for the
+            # phase. The TurnBudgetEngine is built from the SAME resolved phase
+            # model the compaction engine budgets against (not the cosmetic
+            # run-loop router_model), via the SHARED reserve helper so chat/plan
+            # reuse it rework-free in PR-F. use_chars4=True keeps every term but
+            # T_max model-independent. None when the phase has no compaction
+            # wired (no T_max basis) → the trigger stays inert.
+            turn_budget_engine=(
+                build_default_turn_budget_engine(
+                    self._phase_compaction_engine.model, use_chars4=True
+                )
+                if self._phase_compaction_engine is not None
+                else None
+            ),
         )
         tools = host.get_phase_op_catalog()
         # P6 audit + the distinguishing marker for the converged op-loop (vs the

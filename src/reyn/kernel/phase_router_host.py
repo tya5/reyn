@@ -65,6 +65,7 @@ class PhaseRouterLoopHost:
         compaction_cfg: Any = None,
         check_phase_budget_fn: Callable[[], Any] | None = None,
         summary_memo: Any = None,
+        turn_budget_engine: Any = None,
     ) -> None:
         self._control_ir_executor = control_ir_executor
         self._events = events
@@ -87,6 +88,9 @@ class PhaseRouterLoopHost:
         self._check_phase_budget_fn = check_phase_budget_fn
         # #1267: WAL-memo seam for the in-loop (C-4b) compaction summary call.
         self._summary_memo = summary_memo
+        # #1092 C2: cumulative-axis force-close engine (TurnBudgetEngine). None
+        # → the ``should_force_close`` trigger is inert (no phase force-close).
+        self._turn_budget_engine = turn_budget_engine
 
     # ── RouterLoopCore identity / static config ───────────────────────────
 
@@ -319,6 +323,38 @@ class PhaseRouterLoopHost:
         if self._check_phase_budget_fn is None:
             return
         await self._check_phase_budget_fn()
+
+    async def should_force_close(self, messages: list[dict], *, model: str) -> bool:
+        """#1092 C2: the layer-1 force-close trigger for the phase axis.
+
+        ``RouterLoop.run_loop`` consults this each turn AFTER compaction (so it
+        sees the shrunk content). Chat/plan hosts don't implement it (getattr →
+        no-op → byte-identical). Returns True when the accumulated current-turn
+        *content* (every non-system turn — the wrap-up SP swaps the system turn
+        at force-close time, so it is excluded from the content measure) has
+        reached the TurnBudgetEngine's layer-1 threshold. When the engine is
+        absent (not activated) → always False.
+
+        On True, RouterLoop swaps the act-turn call for the wrap-up (force-close)
+        call — a terminal finish (PR-C), which the phase-axis shrink-retry (PR-B)
+        wraps and PR-D's handoff will re-enter from.
+        """
+        engine = self._turn_budget_engine
+        if engine is None:
+            return False
+        from reyn.services.compaction.engine import estimate_tokens_for_turn
+
+        # use_chars4 makes the estimate model-independent (len/4 + fixed image
+        # cost), so the cosmetic run-loop ``model`` (= phase name, not the real
+        # model) is harmless here AND it matches how the engine measured its
+        # own threshold terms (the engine is built use_chars4=True against the
+        # real resolved model, which only governs T_max).
+        content_tokens = sum(
+            estimate_tokens_for_turn(m, model, use_chars4=True)
+            for m in messages
+            if isinstance(m, dict) and m.get("role") != "system"
+        )
+        return engine.should_force_close(content_tokens)
 
     # ── Chat-discovery methods (phase = empty) ────────────────────────────
     # #1092 PR-C-0: ``RouterLoop._build_router_caller_state`` calls these EAGERLY

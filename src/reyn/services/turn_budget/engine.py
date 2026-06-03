@@ -223,3 +223,47 @@ class TurnBudgetEngine:
         more normal increment plus the wrap-up call would risk overflow.
         """
         return content_tokens >= self._budget.force_close_threshold
+
+
+# Cross-axis default reserves for the layer-1 force-close threshold (#1092 C2).
+# Shared by ALL axes (phase now; chat/plan in PR-F) so the threshold shape never
+# diverges per-axis. ``output_reserve`` = tokens kept for the wrap-up call's
+# generated consolidation; a wrap-up hand-off is short (essence, not volume —
+# see the wrap-up SP), so a small fixed reserve suffices. A config field can
+# override this later if a model needs it.
+DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS = 2048
+
+
+def build_default_turn_budget_engine(
+    model: str,
+    *,
+    resolver: "ModelResolver | None" = None,
+    use_chars4: bool = False,
+) -> TurnBudgetEngine:
+    """Construct a TurnBudgetEngine with the shared cross-axis default reserves.
+
+    The two reserves are:
+    - ``offload_cap`` — the post-offload per-result inline ceiling (#1093,
+      ``context_builder.MAX_OFFLOADED_INLINE_BYTES``) converted to tokens: the
+      largest a single tool_result can re-add as the "one more turn" increment
+      once offload has capped it.
+    - ``output_reserve`` — :data:`DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS`.
+
+    Building every axis through THIS helper keeps the threshold shape identical
+    across chat/plan/phase (no per-axis drift); PR-F reuses it verbatim. The
+    import of the offload ceiling is local to avoid a module-load cycle.
+    """
+    from reyn.context_builder import MAX_OFFLOADED_INLINE_BYTES
+
+    # The offload ceiling is a BYTE bound; convert to the model's tokens so it is
+    # comparable with the (token-denominated) threshold. Measured once at build.
+    offload_cap = estimate_tokens(
+        "x" * MAX_OFFLOADED_INLINE_BYTES, model, use_chars4=use_chars4
+    )
+    return TurnBudgetEngine(
+        model,
+        output_reserve=DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS,
+        offload_cap=offload_cap,
+        resolver=resolver,
+        use_chars4=use_chars4,
+    )

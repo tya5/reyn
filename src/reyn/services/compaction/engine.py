@@ -783,6 +783,14 @@ class CompactionEngine:
         """Read-only access to the computed budget values."""
         return self._budgets
 
+    @property
+    def model(self) -> str:
+        """The RESOLVED LiteLLM model string (#1172) this engine budgets against.
+        A public accessor so siblings (e.g. #1092 turn_budget) can derive their
+        own budgets from the SAME resolved phase model rather than the cosmetic
+        run-loop router_model."""
+        return self._model
+
     async def _acompletion(self, messages: list[dict], *, response_format: dict | None = None):
         """Single LLM call via the cost-observability chokepoint (#1190).
 
