@@ -27,6 +27,7 @@ from reyn.index.source_manifest import get_source_manifest
 from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
+from reyn.services.turn_budget import wrap_up_system_prompt
 
 if TYPE_CHECKING:
     from reyn.config import SkillSearchConfig
@@ -423,6 +424,28 @@ def _is_empty_router_response(response: Any) -> bool:
     content = getattr(response, "content", None) or ""
     tool_calls = getattr(response, "tool_calls", None) or []
     return finish == "stop" and not content.strip() and not tool_calls
+
+
+# Provider context-length errors arrive as litellm exceptions with varied class
+# names/messages; the chat session classifies them by keyword on the message
+# (session.py:5381-5384). #1092 PR-B reuses the SAME keyword set for the phase
+# force-close shrink-retry. NOTE: this list is currently duplicated here +
+# twice in session.py — a future cleanup should lift one shared
+# ``is_context_overflow_error`` (e.g. next to ``ContextOverflowError`` in
+# services/compaction); kept local here to avoid a session.py refactor in PR-B.
+_CONTEXT_OVERFLOW_KEYWORDS = (
+    "context", "token", "length", "limit", "too long", "too large",
+)
+
+
+def _is_context_overflow_error(exc: BaseException) -> bool:
+    """True when *exc* looks like a provider context-length overflow.
+
+    Keyword match on the stringified exception — the same heuristic the chat
+    session uses to convert litellm errors into ``ContextOverflowError``.
+    """
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _CONTEXT_OVERFLOW_KEYWORDS)
 
 
 # ---------------------------------------------------------------------------
@@ -2673,6 +2696,107 @@ class RouterLoop:
     # Keep backward-compat alias (tests and callers that reference the old name
     # will still work; the alias delegates to the unified implementation).
     _dedupe_async_tool_calls = _dedupe_tool_calls_round
+
+    def _build_force_close_messages(self, messages: list[dict]) -> list[dict]:
+        """#1092 PR-B: rebuild ``messages`` for the wrap-up (force-close) call.
+
+        The main system turn is replaced by the axis-independent wrap-up SP
+        (``services/turn_budget``); all non-system turns (the working history)
+        are kept verbatim so the model consolidates them. Any pre-existing
+        system turn(s) are dropped (the wrap-up SP is the only system context
+        for this call). Pure — no I/O — so it is unit-testable in isolation.
+        """
+        non_system = [m for m in messages if m.get("role") != "system"]
+        return [
+            {"role": "system", "content": wrap_up_system_prompt()},
+            *non_system,
+        ]
+
+    async def _force_close_call(
+        self,
+        messages: list[dict],
+        *,
+        resolved_model: str,
+    ) -> "LLMToolCallResult":
+        """#1092 PR-B (force-close call): turn the CURRENT turn into a clean
+        ``finish`` instead of letting it overflow the cumulative budget.
+
+        Invoked by the per-turn trigger (PR-C, ``maybe_force_close``) when the
+        accumulated turn content reaches the headroom threshold. This is NOT a
+        truncate (§3): it swaps the main system prompt for the wrap-up SP and
+        ADVERTISES NO TOOLS (``tools=[]``), so the model cannot continue the
+        task and the small consolidation output makes ``finish_reason=stop`` the
+        natural outcome. ``tool_choice`` stays ``"auto"`` (``"none"`` is not
+        Gemini-safe) — moot with an empty tools list. The working history is
+        preserved; only the system turn is replaced (the wrap-up SP tells the
+        model to consolidate that history into a hand-off).
+
+        This method is the single wrap-up call; the layer-2 retry-guarantee
+        (overflow → host-delegated compaction shrink → retry, monotonic) wraps
+        it in a follow-up commit of this same PR. Additive + unwired here, so the
+        chat/phase loops stay byte-identical until PR-C wires the trigger.
+        """
+        _llm = self._llm_caller or call_llm_tools
+        wrap_messages = self._build_force_close_messages(messages)
+        return await _llm(
+            model=resolved_model,
+            messages=wrap_messages,
+            tools=[],            # continuation suppression: no tool to call
+            tool_choice="auto",  # "none" is not Gemini-safe; moot with tools=[]
+            skill_name="router",
+            budget=self.budget,
+            budget_agent=self.host.agent_name,
+            trace_caller="router_force_close",
+        )
+
+    async def _force_close_call_with_retry(
+        self,
+        messages: list[dict],
+        *,
+        resolved_model: str,
+    ) -> "LLMToolCallResult":
+        """#1092 PR-B layer-2 (PHASE axis): the force-close call, made robust to
+        its OWN overflow via overflow → host shrink → retry, monotonic to the
+        floor (§5 layer-2 retry-guarantee).
+
+        Axis split (B′, lead-coder confirmed): the CHAT axis does NOT use this —
+        a chat force-close overflow propagates to the session's existing outer
+        ``retry_loop`` (the proven head/middle/tail shrink), so the shrink hook
+        is phase-host-only and ``getattr``-guarded; when absent (chat host) the
+        overflow is re-raised to that outer loop. The PHASE host drives
+        ``run_loop`` directly with no such wrapper, so it shrinks in-loop here via
+        ``maybe_compact_messages`` (the SAME hook json-mode parity uses).
+
+        Monotonic termination: each shrink that changes the messages strictly
+        reduces them; when the host can shrink no further it returns the messages
+        unchanged (identity) = the FLOOR. Until PR-D wires the handoff, reaching
+        the floor RAISES (floor-abort) — PR-D replaces that terminal with the
+        consolidate+hand-off (the §2 "UnrecoveredError → 区切って継続" swap), and
+        PR-E establishes by construction that the floor always fits the wrap-up
+        call (floor_content + T_wrap_SP + output_reserve ≤ T_max), so the
+        replacement is total.
+        """
+        shrink = getattr(self.host, "maybe_compact_messages", None)
+        cur = messages
+        while True:
+            try:
+                return await self._force_close_call(
+                    cur, resolved_model=resolved_model,
+                )
+            except Exception as exc:  # noqa: BLE001
+                if not _is_context_overflow_error(exc):
+                    raise
+                if shrink is None:
+                    # Chat host: no in-loop shrink — propagate to the outer
+                    # session retry_loop (B′ axis-inherited path).
+                    raise
+                shrunk = await shrink(cur, model=resolved_model)
+                if shrunk is cur or shrunk == cur:
+                    # Floor: the host can shrink no further. Pre-PR-D this is a
+                    # genuine terminal → re-raise (floor-abort). PR-D replaces it
+                    # with the handoff.
+                    raise
+                cur = shrunk
 
     async def _execute_tool(self, tc: dict) -> dict:
         """Dispatch one tool call via dispatch_tool (cross-cutting concerns).
