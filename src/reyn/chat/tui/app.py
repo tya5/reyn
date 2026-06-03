@@ -1030,8 +1030,14 @@ class ReynTUIApp(App):
                 # would leave the input bar locked until the next
                 # stream_end (which may never come for a pure slash
                 # turn).
+                # B5: also refresh the hint so the pending-image badge
+                # updates after ``/image`` queues an image (or any other
+                # slash that mutates the queue). refresh_hint() is cheap
+                # (one property read + Label.update) and idempotent.
                 try:
-                    self.query_one("#inputbar", InputBar).set_in_flight(False)
+                    bar = self.query_one("#inputbar", InputBar)
+                    bar.set_in_flight(False)
+                    bar.refresh_hint()
                 except Exception:
                     pass
         else:
