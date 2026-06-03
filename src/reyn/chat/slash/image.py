@@ -21,8 +21,12 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from reyn.chat.slash import reply, reply_error, slash
+
+if TYPE_CHECKING:
+    from reyn.chat.session import ChatSession
 
 # Mirror op_runtime/file._IMAGE_EXTENSIONS so the slash command accepts
 # the same set #365 accepts via `file__read`.
@@ -48,11 +52,87 @@ def _file_size_human(n: int) -> str:
     return f"{n} bytes"
 
 
+# Maximum number of completions surfaced in the picker — keeps the
+# dropdown bounded so a directory with thousands of entries doesn't
+# overwhelm the display.
+_COMPLETER_MAX = 20
+
+
+def _image_path_completer(
+    session: "ChatSession", arg_partial: str = "",
+) -> list[str]:
+    """Filesystem path completer for ``/image <path>``.
+
+    Expands ``~``, splits ``arg_partial`` into a directory part + a
+    basename prefix, lists entries in that directory, and returns:
+    - Directories with a trailing ``/`` (so the user can keep navigating).
+    - Image files whose extension is in ``_IMAGE_EXTENSIONS``
+      (case-insensitive, same set the command itself accepts).
+
+    Results are sorted and capped at ``_COMPLETER_MAX``. Any filesystem
+    error returns ``[]`` — a broken completer must not break the picker.
+    ``session`` is accepted for the CompleterFn contract but unused
+    (filesystem completion is session-independent).
+    """
+    try:
+        expanded = arg_partial.expandtabs() if hasattr(arg_partial, "expandtabs") else arg_partial
+        # Split into dir part + basename prefix.  When there is no slash
+        # the user hasn't chosen a directory yet — use CWD.
+        p = Path(expanded).expanduser() if expanded else Path("")
+        if expanded.endswith("/"):
+            # Trailing slash → the user has chosen this directory; list its
+            # contents (no basename prefix to filter by). Without this case
+            # ``Path("<dir>/").parent`` would resolve to the PARENT of <dir>
+            # and ``.name`` to <dir>'s own name, listing the parent instead
+            # of descending into the chosen directory.
+            dir_part = p
+            prefix = ""
+        elif "/" in expanded or expanded.startswith("~"):
+            # Separate the already-typed directory from the prefix being
+            # completed.  ``parent`` resolves to ``"."`` for bare names.
+            dir_part = p.parent
+            prefix = p.name
+        else:
+            dir_part = Path(".")
+            prefix = expanded
+
+        # Resolve to an absolute path so relative refs work from CWD.
+        abs_dir = (Path.cwd() / dir_part).resolve()
+        if not abs_dir.is_dir():
+            return []
+
+        results: list[str] = []
+        for entry in sorted(abs_dir.iterdir()):
+            name = entry.name
+            if not name.startswith(prefix):
+                continue
+            if entry.is_dir():
+                # Append trailing slash so the user can immediately
+                # continue typing into the chosen directory.
+                candidate = str(dir_part / name) + "/"
+                # Normalise "./<name>/" → "<name>/"
+                if candidate.startswith("./"):
+                    candidate = candidate[2:]
+                results.append(candidate)
+            elif entry.is_file() and _mime_for_path(entry) is not None:
+                candidate = str(dir_part / name)
+                if candidate.startswith("./"):
+                    candidate = candidate[2:]
+                results.append(candidate)
+            if len(results) >= _COMPLETER_MAX:
+                break
+
+        return results
+    except Exception:
+        return []
+
+
 @slash(
     "image",
     summary="Send an image (png/jpg/gif/webp/svg/jpeg)",
     usage="/image <path>",
     aliases=("img",),
+    completer=_image_path_completer,
 )
 async def image_cmd(session: object, args: str) -> None:
     path_str = args.strip()

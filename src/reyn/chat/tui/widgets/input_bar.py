@@ -909,21 +909,50 @@ class InputBar(Widget):
         # blocked-state message (``_HINT_IN_FLIGHT``) so pressing Enter
         # during an active LLM turn gives the user explicit feedback
         # that they're blocked — not that the UI is broken.
+        #
+        # B5: in-flight takes precedence over the image badge — the
+        # blocked-state message already says Ctrl+C to cancel, so
+        # adding a badge during a live turn would just be noise. When
+        # NOT in-flight, append the pending-images count badge so the
+        # user can see how many images are queued while composing a
+        # long prompt. One cheap property read; no I/O.
         if getattr(self, "_in_flight", False):
             return self._HINT_IN_FLIGHT
         if width > 0 and width < self._HINT_MID_MIN_WIDTH:
-            return self._HINT_MIN
-        if width > 0 and width < self._HINT_FULL_MIN_WIDTH:
-            return self._HINT_MID
-        return self._HINT_FULL
+            base = self._HINT_MIN
+        elif width > 0 and width < self._HINT_FULL_MIN_WIDTH:
+            base = self._HINT_MID
+        else:
+            base = self._HINT_FULL
+        # Append the pending-image badge when the session has queued
+        # images. Reads via the same app._get_session() path that
+        # _run_completer uses (line 722); guard with try/except so a
+        # missing / detached session never breaks the footer.
+        pending = 0
+        try:
+            session = self.app._get_session()  # type: ignore[attr-defined]
+            if session is not None:
+                pending = len(session.pending_user_images)
+        except Exception:
+            pass
+        if pending > 0:
+            label_word = "image" if pending == 1 else "images"
+            base = f"{base} │ 📎 {pending} {label_word}"
+        return base
 
-    def _update_hint(self) -> None:
-        """Recompute and push the hint label text from the current widget width.
+    def refresh_hint(self) -> None:
+        """Rebuild and push the ``#hints`` Label text from the current state.
 
-        Called from on_resize (= terminal resize) so the footer degrades
-        gracefully instead of silently clipping keys at narrow widths.
-        Width is read from ``self.size.width`` after layout; falls back
-        to 0 (= full hint) when the size is not yet known.
+        Public entry-point for callers that need to poke the badge after
+        an external state change — specifically:
+          (a) after ``/image`` queues a new image (badge count rises), and
+          (b) after a user message is sent (queue drains to 0, badge clears).
+
+        Both are one-shot events that happen in ``app.py``'s slash
+        ``finally`` block and the ``on_input_bar_user_submitted`` handler
+        respectively, so this is called at exactly those two points — no
+        polling, no per-keystroke overhead. Width is read from the live
+        widget size (falls back to 0 = full hint when not yet mounted).
         """
         try:
             w = self.size.width
@@ -934,6 +963,16 @@ class InputBar(Widget):
             label.update(self._build_hint(w))
         except Exception:
             pass
+
+    def _update_hint(self) -> None:
+        """Recompute and push the hint label text from the current widget width.
+
+        Called from on_resize (= terminal resize) so the footer degrades
+        gracefully instead of silently clipping keys at narrow widths.
+        Width is read from ``self.size.width`` after layout; falls back
+        to 0 (= full hint) when the size is not yet known.
+        """
+        self.refresh_hint()
 
     def on_resize(self, event: events.Resize) -> None:
         """Recompute the footer hint whenever the terminal is resized.
