@@ -19,7 +19,11 @@ contract only: the function's input dict shape and return dict shape.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from reyn.stdlib.skills.eval.postprocessor import compute_eval_score
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _wrap(criteria, *, run_status: str = "finished", **extra) -> dict:
@@ -240,3 +244,51 @@ def test_vacuous_pass_provides_required_string_fallbacks() -> None:
     out = compute_eval_score(art)
     assert isinstance(out["weakest_phase"], str) and out["weakest_phase"]
     assert isinstance(out["summary"], str) and out["summary"]
+
+
+# ── spec_path nullable (#1250 regression) ────────────────────────────────────
+
+
+def test_null_spec_path_validates_against_step_output_schema() -> None:
+    """Tier 2: compute_eval_score output carrying spec_path=None passes the
+    python step's output_schema validation — the exact #1250 boundary.
+
+    #1250 root cause: a direct-chat eval (target with no spec.md) →
+    the LLM emits ``spec_path: null`` in eval_result_raw → compute_eval_score
+    passes it through unchanged (it is a pass-through reference field) →
+    the python step's output_schema declared ``spec_path: {type: string}``
+    so jsonschema rejected the present null with "None is not of type
+    'string'" (OutputSchemaViolation), failing the whole eval run at the
+    postprocessor even though target + judge finished.
+
+    The fix makes spec_path nullable in the schema (= complete the B49
+    W2-S5 nullable migration, which had only relaxed eval_result_raw /
+    case_run_result). It is NOT a guard-fill: ``_ensure_required_strings``
+    correctly leaves spec_path untouched because null is the meaningful
+    "no spec" signal (filling it would fabricate a path).
+
+    Falsification: revert spec_path to ``{type: string}`` in skill.md's
+    step output_schema → ``jsonschema.Draft7Validator(...).validate(out)``
+    raises here and this test fails.
+    """
+    import jsonschema
+    import yaml
+
+    skill_md = (
+        _REPO_ROOT / "src" / "reyn" / "stdlib" / "skills" / "eval" / "skill.md"
+    )
+    fm = yaml.safe_load(skill_md.read_text(encoding="utf-8").split("---", 2)[1])
+    py_step = next(
+        s for s in fm["postprocessor"]["steps"] if s["type"] == "python"
+    )
+    step_schema = py_step["output_schema"]
+
+    out = compute_eval_score(_wrap(
+        [_crit(met=True, required=True)],
+        spec_path=None,   # direct-chat eval: input carried no spec.md
+    ))
+    # The pass-through null survives — the guard does NOT fill it.
+    assert out["spec_path"] is None
+    # The runtime validates the step result with exactly this validator
+    # (preprocessor_executor.py: Draft7Validator(step.output_schema)).
+    jsonschema.Draft7Validator(step_schema).validate(out)

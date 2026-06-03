@@ -39,8 +39,13 @@ schema:
         Name of the phase with the lowest score (passed through from
         eval_result_raw). Empty string when no phases were judged.
     spec_path:
-      type: string
-      description: Path to the eval spec being run.
+      # Nullable to mirror eval_result_raw / case_run_result (B49 W2-S5):
+      # the LLM emits null when the input carried no spec (= direct chat
+      # eval). This caller-facing schema was missed by that migration (#1250).
+      type: [string, "null"]
+      description: |
+        Path to the eval spec being run. Null when the input carried no
+        spec_path (= direct chat eval without a spec.md reference).
     summary:
       type: string
       description: |

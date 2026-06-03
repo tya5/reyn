@@ -23,9 +23,17 @@ schema:
       type: string
       description: Name of the phase with the lowest pass rate.
     spec_path:
-      type: string
-      description: Path to the eval spec that was run.
+      # Nullable + non-required to match the canonical eval skill-local
+      # eval_result / eval_result_raw / case_run_result (B49 W2-S5): the
+      # LLM emits null when the input carried no spec (= direct chat eval).
+      # This shared-stdlib copy is shadowed by the skill-local one for the
+      # eval skill, but is kept consistent so any future skill resolving
+      # `eval_result` via the stdlib fallback does not re-hit #1250.
+      type: [string, "null"]
+      description: Path to the eval spec that was run (null = direct chat eval, no spec).
     summary:
       type: string
       description: Prose summary of results highlighting key failures or successes.
-  required: [passed, overall_score, passed_criteria, total_criteria, weakest_phase, spec_path, summary]
+  # spec_path is NOT required: pass-through reference, null on direct chat
+  # eval (matches eval skill-local eval_result / eval_result_raw, B49 W2-S5).
+  required: [passed, overall_score, passed_criteria, total_criteria, weakest_phase, summary]
