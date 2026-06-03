@@ -1331,6 +1331,7 @@ async def compact_control_ir_results(
     cfg: "PhaseActResultsCompactionConfig",
     events: "EventLog",
     phase: str | None = None,
+    summary_memo: "Any" = None,
 ) -> list[dict]:
     """Return a list with ``older_results`` summarised into a single
     ``__compacted_phase_results__`` placeholder entry.
@@ -1399,23 +1400,41 @@ async def compact_control_ir_results(
     # Serialise older_results for the LLM call.
     older_text = json.dumps(older_results, ensure_ascii=False, indent=1)
 
-    # Step 4 + 5: call LLM summariser, then hard-truncate.
+    # #1267: content args_hash for the summary memo. The summary is a PURE FUNCTION
+    # of (model, older_text) + the fixed system prompt, and ``older_results`` are
+    # op-result dicts with NO volatile fields that re-accumulate deterministically on
+    # resume (op results are memoized) — so this key is resume-stable. When a
+    # ``summary_memo`` is wired (phase paths), the summary LLM call is WAL-memoized so
+    # a compaction×resume HITS (no re-summarize → downstream act-turn memo stays
+    # stable → no op re-execution). recorded_acompletion is UNCHANGED (memo-wrap only).
+    import hashlib as _hashlib
+    summary_args_hash = _hashlib.sha256(
+        f"{model}\x00{older_text}".encode()
+    ).hexdigest()[:16]
+
+    # Step 4 + 5: call LLM summariser (or memo-replay it), then hard-truncate.
     summary_text: str
     try:
-        from reyn.llm.llm import recorded_acompletion
-        response = await recorded_acompletion(
-            model=model,
-            messages=[
-                {"role": "system", "content": _PHASE_COMPACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": older_text},
-            ],
-            purpose="compaction",
-            recorder=getattr(engine, "_recorder", None),
-            agent=getattr(engine, "_recorder_agent", None),
-        )
-        raw_summary = (response.choices[0].message.content or "").strip()
-        if not raw_summary:
-            raise ValueError("phase act_results compaction LLM returned empty response")
+        raw_summary: str | None = None
+        if summary_memo is not None:
+            raw_summary = await summary_memo.lookup_summary(phase, summary_args_hash)
+        if raw_summary is None:
+            from reyn.llm.llm import recorded_acompletion
+            response = await recorded_acompletion(
+                model=model,
+                messages=[
+                    {"role": "system", "content": _PHASE_COMPACTION_SYSTEM_PROMPT},
+                    {"role": "user", "content": older_text},
+                ],
+                purpose="compaction",
+                recorder=getattr(engine, "_recorder", None),
+                agent=getattr(engine, "_recorder_agent", None),
+            )
+            raw_summary = (response.choices[0].message.content or "").strip()
+            if not raw_summary:
+                raise ValueError("phase act_results compaction LLM returned empty response")
+            if summary_memo is not None:
+                await summary_memo.record_summary(phase, summary_args_hash, raw_summary)
         # Bound the summary to the engine's body_budget (Axis 9 pattern).
         summary_text = hard_truncate_summary(
             raw_summary,

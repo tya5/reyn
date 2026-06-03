@@ -476,6 +476,22 @@ class LLMCallRecorder:
         """
         return _PhaseMemoProvider(recorder=self, phase=phase, state=state)
 
+    def make_summary_memo(self) -> "_SummaryMemo":
+        """#1267: WAL-memo seam for the phase compaction summary LLM call.
+
+        ``compact_control_ir_results`` (used by json-mode ``_run_act_loop`` and the
+        converged ``_run_routerloop_op_loop`` / C-4b host) summarises older op-results
+        via a non-WAL-memoized ``recorded_acompletion`` call — so on a compaction×resume
+        it re-summarized non-deterministically and the downstream act-turn memo drifted
+        (the #1267 idempotency hole). This seam memoizes that summary against the SAME
+        WAL ``committed_steps`` (op_invocation_id ``f"{phase}.compaction"`` + a content
+        args_hash of (model, older_text), unique-by-content so it never collides with
+        the act-turn id sequence) — so the resume HITS the recorded summary. Reuses
+        this recorder's WAL primitives; no new persistence. No phase/state binding (the
+        phase is passed per call), so one instance serves every compaction in the run.
+        """
+        return _SummaryMemo(recorder=self)
+
     def build_phase_op_loop_messages(
         self, *, phase: str, frame: "ContextFrame",
     ) -> list[dict]:
@@ -781,3 +797,41 @@ class _PhaseMemoProvider:
             usage=result.usage.to_dict() if result.usage else None,
         )
         self._pending_op_id = None
+
+
+class _SummaryMemo:
+    """#1267: WAL-memo for the phase compaction summary call (``make_summary_memo``).
+
+    ``lookup_summary`` / ``record_summary`` bridge the compaction summary onto the
+    SAME WAL ``committed_steps`` the act-turn memos use, keyed by
+    ``op_invocation_id=f"{phase}.compaction"`` + a CONTENT args_hash (of model +
+    older_text). The fixed op_invocation_id is unique-by-content (the args_hash
+    discriminates) and does NOT consume the ``next_llm_invocation_id`` sequence, so it
+    never interleaves with the act-turn ids. On resume the recorded summary is reused
+    (HIT) → no re-summarize → the downstream act-turn memo stays stable (#1267).
+    """
+
+    def __init__(self, *, recorder: "LLMCallRecorder") -> None:
+        self._recorder = recorder
+
+    async def lookup_summary(self, phase: "str | None", args_hash: str) -> "str | None":
+        resume_plan = self._recorder._resume_plan
+        if resume_plan is None:
+            return None
+        op_id = f"{phase or 'phase'}.compaction"
+        memo = _lookup_memoized_step(resume_plan, op_id, phase or "", args_hash)
+        if memo is None:
+            return None
+        result = memo.result
+        if isinstance(result, dict):
+            return result.get("summary")
+        return result if isinstance(result, str) else None
+
+    async def record_summary(self, phase: "str | None", args_hash: str, summary: str) -> None:
+        op_id = f"{phase or 'phase'}.compaction"
+        await self._recorder._wal_step_completed_for_llm(
+            phase=phase or "",
+            op_invocation_id=op_id,
+            args_hash=args_hash,
+            result={"summary": summary},
+        )
