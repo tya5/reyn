@@ -47,7 +47,11 @@ postprocessor:
           overall_score:   {type: number, minimum: 0.0, maximum: 1.0}
           passed:          {type: boolean}
           weakest_phase:   {type: string}
-          spec_path:       {type: string}
+          # spec_path is nullable: the LLM emits null when the input
+          # carried no spec (= direct chat eval). Mirrors the
+          # eval_result_raw / case_run_result nullable shape (B49 W2-S5);
+          # this output_schema was missed by that migration (#1250).
+          spec_path:       {type: [string, "null"]}
           summary:         {type: string}
 graph:
   run_target: [evaluate]

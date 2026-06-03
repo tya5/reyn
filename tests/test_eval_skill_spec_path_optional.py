@@ -172,6 +172,80 @@ def test_compiled_postprocessor_output_schema_is_envelope_shaped():
     )
 
 
+def _allows_null(type_decl) -> bool:
+    """A JSON-schema ``type`` declaration permits null iff it is the list
+    form containing "null" (e.g. ``["string", "null"]``)."""
+    return isinstance(type_decl, list) and "null" in type_decl
+
+
+# ---------------------------------------------------------------------------
+# spec_path TYPE must allow null (#1250 — completes the B49 W2-S5 migration)
+# ---------------------------------------------------------------------------
+#
+# B49 W2-S5 removed spec_path from `required` (tested above) but left the
+# property TYPE as a bare `string` in two of the four declarations. Removing
+# it from `required` is insufficient: a PRESENT `spec_path: null` (which the
+# LLM legitimately emits on a direct-chat eval) still fails the type
+# constraint ("None is not of type 'string'"). #1250. The eval_result_raw.yaml
+# comment records exactly this: "Required-list removal in PR #403 alone was
+# insufficient because this property-level type constraint still rejected
+# null." These tests pin the TYPE (not just `required`) across ALL spec_path
+# declarations so the migration cannot be left half-applied again.
+
+
+def test_step_output_schema_spec_path_type_allows_null():
+    """Tier 2: (#1250) the python step's output_schema must declare
+    spec_path with a nullable type — the validation that actually fired
+    in the dogfood trace (python_step_failed / compute_eval_score /
+    OutputSchemaViolation)."""
+    fm = _parse_skill_md_frontmatter(_EVAL_SKILL_DIR / "skill.md")
+    py_step = next(s for s in fm["postprocessor"]["steps"] if s["type"] == "python")
+    spec_type = py_step["output_schema"]["properties"]["spec_path"]["type"]
+    assert _allows_null(spec_type), (
+        f"step output_schema spec_path.type must allow null "
+        f'(e.g. ["string", "null"]); got {spec_type!r}. #1250: a present '
+        f"spec_path=null (direct-chat eval) is rejected otherwise."
+    )
+
+
+def test_eval_result_artifact_spec_path_type_allows_null():
+    """Tier 2: (#1250) the caller-facing eval_result artifact (skill-local,
+    = the one the compiler resolves) must declare spec_path nullable."""
+    art = _load_yaml(_EVAL_SKILL_DIR / "artifacts" / "eval_result.yaml")
+    spec_type = art["schema"]["properties"]["spec_path"]["type"]
+    assert _allows_null(spec_type), (
+        f"eval_result spec_path.type must allow null; got {spec_type!r}."
+    )
+
+
+def test_all_spec_path_schema_declarations_allow_null():
+    """Tier 2: (#1250 consumer-audit gate) EVERY spec_path schema
+    declaration across the eval skill artifacts AND the shared stdlib
+    artifact must allow null — so the nullable migration cannot be left
+    partially applied (the original B49 bug: 2 of 4 declarations missed).
+
+    Covers: eval_result_raw, case_run_result, eval skill-local eval_result,
+    and the shared stdlib/artifacts/eval_result (shadowed by the skill-local
+    copy for the eval skill, but kept consistent so a future skill resolving
+    `eval_result` via the stdlib fallback does not re-hit #1250)."""
+    _REPO = Path(__file__).resolve().parent.parent
+    decls = {
+        "eval_result_raw": _EVAL_SKILL_DIR / "artifacts" / "eval_result_raw.yaml",
+        "case_run_result": _EVAL_SKILL_DIR / "artifacts" / "case_run_result.yaml",
+        "eval_result (skill-local)": _EVAL_SKILL_DIR / "artifacts" / "eval_result.yaml",
+        "eval_result (stdlib)": _REPO / "src" / "reyn" / "stdlib" / "artifacts" / "eval_result.yaml",
+    }
+    offenders = {}
+    for label, path in decls.items():
+        spec_type = _load_yaml(path)["schema"]["properties"]["spec_path"]["type"]
+        if not _allows_null(spec_type):
+            offenders[label] = spec_type
+    assert not offenders, (
+        f"these spec_path declarations do NOT allow null (#1250 — partial "
+        f"nullable migration): {offenders}"
+    )
+
+
 def test_skill_md_final_output_keeps_other_required_fields():
     """Tier 2: regression guard for the caller-facing schema.
     Scoring fields (``passed`` / ``overall_score`` / ``passed_criteria``
