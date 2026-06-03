@@ -494,6 +494,10 @@ class PhaseExecutor:
             # converged op-loop's in-loop message-history (json-mode parity).
             compaction_engine=self._phase_compaction_engine,
             compaction_cfg=self._phase_compaction_cfg,
+            # #1092 PR-C-5 (2): wire per-turn phase wall-clock budget enforcement so
+            # the converged op-loop limit-checks each turn like _run_act_loop (the
+            # host's ``check_phase_budget`` hook → this bound _check_phase_budget).
+            check_phase_budget_fn=lambda: self._check_phase_budget(phase, state),
         )
         tools = host.get_phase_op_catalog()
         # P6 audit + the distinguishing marker for the converged op-loop (vs the
@@ -519,6 +523,23 @@ class PhaseExecutor:
         messages = self._llm_caller.build_phase_op_loop_messages(
             phase=phase, frame=seed_frame,
         )
+        # #1092 PR-C-5 (3): surface the rollback REASON to the converged op-loop.
+        # json-mode's _run_act_loop injects it into the act frame (via call_llm's
+        # rollback_context, llm.py); the converged op-loop turns (call_llm_tools) do
+        # NOT carry rollback_context — only the FD2 decide does. Append the rejection
+        # feedback as a seed user turn (same wording as json-mode) so the op-loop
+        # ADAPTS its op-gathering to the feedback, not just the final decide. The
+        # restored prior_results (above) already prevent redo; this adds the "why".
+        if rollback_context and rollback_context.get("reason"):
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"Your previous output was rolled back by "
+                    f"[{rollback_context.get('rollback_from', '?')}]: "
+                    f"{rollback_context['reason']}\n"
+                    "Please revise your output to address the feedback."
+                ),
+            })
 
         routerloop = RouterLoop(
             host=host,
