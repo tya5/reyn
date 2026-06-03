@@ -577,6 +577,35 @@ class PhaseExecutor:
         if self._phase_compaction_cfg is not None:
             _keep = self._phase_compaction_cfg.recent_act_turns_raw
             act_turn_reasoning = act_turn_reasoning[-_keep:]
+        # #1092 PR-C-4a: phase-axis compaction for the converged op-loop. Recovers
+        # the AUTOMATIC control_ir_results compaction the json-mode _run_act_loop
+        # does (and which the retired frame-fed _run_op_loop did — tested by the
+        # now-deleted compaction_1212; this is the C-4a coverage-recovery). When the
+        # accumulated op results exceed the recent-raw window, summarise the OLDER
+        # results via the SHARED ``compact_control_ir_results`` (CompactionEngine)
+        # before the FD2 decide frame — same older/recent split + best-effort
+        # (never raises; LLM error → phase_act_results_compaction_failed + identity)
+        # as _run_act_loop, emitting ``phase_act_results_compacted``. Phase-layer
+        # only (RouterLoop untouched → chat byte-identical). NOTE: this bounds the
+        # DECIDE-frame results; in-loop message-history bounding is the separate
+        # (B) concern (sufficiency-verified against RouterLoop retry-shrink).
+        if (
+            self._phase_compaction_engine is not None
+            and self._phase_compaction_cfg is not None
+            and len(control_ir_results) > self._phase_compaction_cfg.recent_act_turns_raw
+        ):
+            from reyn.services.compaction.engine import compact_control_ir_results
+            n_recent = self._phase_compaction_cfg.recent_act_turns_raw
+            recent = control_ir_results[-n_recent:]
+            older = control_ir_results[:-n_recent]
+            older_compacted = await compact_control_ir_results(
+                older,
+                engine=self._phase_compaction_engine,
+                cfg=self._phase_compaction_cfg,
+                events=self._events,
+                phase=phase,
+            )
+            control_ir_results = older_compacted + recent
         self._last_control_ir_results = control_ir_results
 
         decide_frame = self._build_frame(
