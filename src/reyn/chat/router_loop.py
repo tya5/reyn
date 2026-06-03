@@ -27,6 +27,7 @@ from reyn.index.source_manifest import get_source_manifest
 from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
+from reyn.services.turn_budget import wrap_up_system_prompt
 
 if TYPE_CHECKING:
     from reyn.config import SkillSearchConfig
@@ -2673,6 +2674,58 @@ class RouterLoop:
     # Keep backward-compat alias (tests and callers that reference the old name
     # will still work; the alias delegates to the unified implementation).
     _dedupe_async_tool_calls = _dedupe_tool_calls_round
+
+    def _build_force_close_messages(self, messages: list[dict]) -> list[dict]:
+        """#1092 PR-B: rebuild ``messages`` for the wrap-up (force-close) call.
+
+        The main system turn is replaced by the axis-independent wrap-up SP
+        (``services/turn_budget``); all non-system turns (the working history)
+        are kept verbatim so the model consolidates them. Any pre-existing
+        system turn(s) are dropped (the wrap-up SP is the only system context
+        for this call). Pure — no I/O — so it is unit-testable in isolation.
+        """
+        non_system = [m for m in messages if m.get("role") != "system"]
+        return [
+            {"role": "system", "content": wrap_up_system_prompt()},
+            *non_system,
+        ]
+
+    async def _force_close_call(
+        self,
+        messages: list[dict],
+        *,
+        resolved_model: str,
+    ) -> "LLMToolCallResult":
+        """#1092 PR-B (force-close call): turn the CURRENT turn into a clean
+        ``finish`` instead of letting it overflow the cumulative budget.
+
+        Invoked by the per-turn trigger (PR-C, ``maybe_force_close``) when the
+        accumulated turn content reaches the headroom threshold. This is NOT a
+        truncate (§3): it swaps the main system prompt for the wrap-up SP and
+        ADVERTISES NO TOOLS (``tools=[]``), so the model cannot continue the
+        task and the small consolidation output makes ``finish_reason=stop`` the
+        natural outcome. ``tool_choice`` stays ``"auto"`` (``"none"`` is not
+        Gemini-safe) — moot with an empty tools list. The working history is
+        preserved; only the system turn is replaced (the wrap-up SP tells the
+        model to consolidate that history into a hand-off).
+
+        This method is the single wrap-up call; the layer-2 retry-guarantee
+        (overflow → host-delegated compaction shrink → retry, monotonic) wraps
+        it in a follow-up commit of this same PR. Additive + unwired here, so the
+        chat/phase loops stay byte-identical until PR-C wires the trigger.
+        """
+        _llm = self._llm_caller or call_llm_tools
+        wrap_messages = self._build_force_close_messages(messages)
+        return await _llm(
+            model=resolved_model,
+            messages=wrap_messages,
+            tools=[],            # continuation suppression: no tool to call
+            tool_choice="auto",  # "none" is not Gemini-safe; moot with tools=[]
+            skill_name="router",
+            budget=self.budget,
+            budget_agent=self.host.agent_name,
+            trace_caller="router_force_close",
+        )
 
     async def _execute_tool(self, tc: dict) -> dict:
         """Dispatch one tool call via dispatch_tool (cross-cutting concerns).
