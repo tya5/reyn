@@ -119,3 +119,115 @@ async def test_force_close_drops_extra_system_turns() -> None:
     systems = [m for m in sent if m.get("role") == "system"]
     # Exactly one system turn — the wrap-up SP — and no other (sp1/sp2 dropped).
     assert systems == [{"role": "system", "content": wrap_up_system_prompt()}]
+
+
+# ── layer-2 phase shrink-retry (#1092 PR-B 2/2) ──────────────────────────────
+
+
+class _ShrinkHost(FakeRouterHost):
+    """FakeRouterHost + a phase-style maybe_compact_messages that drops the
+    oldest tool message each call, and returns the messages UNCHANGED once there
+    are no tool messages left (= the floor)."""
+
+    async def maybe_compact_messages(
+        self, messages: list[dict], *, model: str
+    ) -> list[dict]:
+        tool_idxs = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+        if not tool_idxs:
+            return messages  # floor — nothing left to shrink
+        drop = tool_idxs[0]
+        return [m for i, m in enumerate(messages) if i != drop]
+
+
+class _OverflowThenFinishLLM:
+    """Real callable: raises a context-overflow-looking error ``overflow_count``
+    times, then returns ``result``. Records each call."""
+
+    def __init__(self, overflow_count: int, result: LLMToolCallResult) -> None:
+        self._remaining = overflow_count
+        self._result = result
+        self.call_count: int = 0
+
+    async def __call__(self, **kwargs: Any) -> LLMToolCallResult:
+        self.call_count += 1
+        if self._remaining > 0:
+            self._remaining -= 1
+            raise RuntimeError("litellm: this model's maximum context length / too large")
+        return self._result
+
+
+def _retry_loop(host: FakeRouterHost, llm) -> RouterLoop:
+    return RouterLoop(host=host, chain_id="chain-fc-retry", max_iterations=5,
+                      llm_caller=llm)
+
+
+def _msgs_with_tools(n: int) -> list[dict]:
+    base = [{"role": "system", "content": "sp"}, {"role": "user", "content": "u"}]
+    return base + [
+        {"role": "tool", "content": f"result {i}", "tool_call_id": f"t{i}"}
+        for i in range(n)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_phase_shrink_retry_recovers_after_overflow() -> None:
+    """Tier 2: a phase force-close call that overflows once is recovered by one
+    host shrink + retry, returning the finish — the layer-2 guarantee in action."""
+    llm = _OverflowThenFinishLLM(overflow_count=1, result=_finish("HANDOFF"))
+    loop = _retry_loop(_ShrinkHost(), llm)
+    result = await loop._force_close_call_with_retry(
+        _msgs_with_tools(3), resolved_model="gpt-4o-mini"
+    )
+    assert result.content == "HANDOFF"
+    assert llm.call_count == 2  # initial overflow + one successful retry
+
+
+@pytest.mark.asyncio
+async def test_phase_shrink_retry_floor_aborts() -> None:
+    """Tier 2: when the call keeps overflowing, the host shrinks monotonically to
+    the floor (no tool messages → identity); at the floor the overflow re-raises
+    (floor-abort, pre-PR-D). Bounded by construction — the shrink strictly
+    reduces each step, so the loop cannot spin."""
+    llm = _OverflowThenFinishLLM(overflow_count=99, result=_finish())
+    loop = _retry_loop(_ShrinkHost(), llm)
+    with pytest.raises(RuntimeError):
+        await loop._force_close_call_with_retry(
+            _msgs_with_tools(2), resolved_model="gpt-4o-mini"
+        )
+    # 2 tool messages → 2 successful shrinks + the floor attempt = 3 LLM calls.
+    assert llm.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_chat_host_without_shrink_reraises_overflow() -> None:
+    """Tier 2: (B′ axis split) a host with NO maybe_compact_messages (= chat)
+    re-raises the overflow immediately — it propagates to the session's outer
+    retry_loop, NOT an in-loop shrink. No retry here."""
+    llm = _OverflowThenFinishLLM(overflow_count=1, result=_finish())
+    loop = _retry_loop(FakeRouterHost(), llm)  # no maybe_compact_messages
+    with pytest.raises(RuntimeError):
+        await loop._force_close_call_with_retry(
+            _msgs_with_tools(2), resolved_model="gpt-4o-mini"
+        )
+    assert llm.call_count == 1  # no retry — straight to the outer loop
+
+
+@pytest.mark.asyncio
+async def test_non_overflow_error_is_not_retried() -> None:
+    """Tier 2: a non-overflow exception is re-raised immediately — the shrink
+    path is ONLY for context-overflow, never a blanket retry."""
+    class _BoomLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def __call__(self, **kwargs: Any) -> LLMToolCallResult:
+            self.calls += 1
+            raise ValueError("unrelated boom")
+
+    llm = _BoomLLM()
+    loop = _retry_loop(_ShrinkHost(), llm)
+    with pytest.raises(ValueError):
+        await loop._force_close_call_with_retry(
+            _msgs_with_tools(3), resolved_model="gpt-4o-mini"
+        )
+    assert llm.calls == 1  # no shrink, no retry

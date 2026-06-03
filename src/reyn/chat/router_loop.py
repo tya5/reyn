@@ -426,6 +426,28 @@ def _is_empty_router_response(response: Any) -> bool:
     return finish == "stop" and not content.strip() and not tool_calls
 
 
+# Provider context-length errors arrive as litellm exceptions with varied class
+# names/messages; the chat session classifies them by keyword on the message
+# (session.py:5381-5384). #1092 PR-B reuses the SAME keyword set for the phase
+# force-close shrink-retry. NOTE: this list is currently duplicated here +
+# twice in session.py — a future cleanup should lift one shared
+# ``is_context_overflow_error`` (e.g. next to ``ContextOverflowError`` in
+# services/compaction); kept local here to avoid a session.py refactor in PR-B.
+_CONTEXT_OVERFLOW_KEYWORDS = (
+    "context", "token", "length", "limit", "too long", "too large",
+)
+
+
+def _is_context_overflow_error(exc: BaseException) -> bool:
+    """True when *exc* looks like a provider context-length overflow.
+
+    Keyword match on the stringified exception — the same heuristic the chat
+    session uses to convert litellm errors into ``ContextOverflowError``.
+    """
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _CONTEXT_OVERFLOW_KEYWORDS)
+
+
 # ---------------------------------------------------------------------------
 # Host protocol
 # ---------------------------------------------------------------------------
@@ -2726,6 +2748,55 @@ class RouterLoop:
             budget_agent=self.host.agent_name,
             trace_caller="router_force_close",
         )
+
+    async def _force_close_call_with_retry(
+        self,
+        messages: list[dict],
+        *,
+        resolved_model: str,
+    ) -> "LLMToolCallResult":
+        """#1092 PR-B layer-2 (PHASE axis): the force-close call, made robust to
+        its OWN overflow via overflow → host shrink → retry, monotonic to the
+        floor (§5 layer-2 retry-guarantee).
+
+        Axis split (B′, lead-coder confirmed): the CHAT axis does NOT use this —
+        a chat force-close overflow propagates to the session's existing outer
+        ``retry_loop`` (the proven head/middle/tail shrink), so the shrink hook
+        is phase-host-only and ``getattr``-guarded; when absent (chat host) the
+        overflow is re-raised to that outer loop. The PHASE host drives
+        ``run_loop`` directly with no such wrapper, so it shrinks in-loop here via
+        ``maybe_compact_messages`` (the SAME hook json-mode parity uses).
+
+        Monotonic termination: each shrink that changes the messages strictly
+        reduces them; when the host can shrink no further it returns the messages
+        unchanged (identity) = the FLOOR. Until PR-D wires the handoff, reaching
+        the floor RAISES (floor-abort) — PR-D replaces that terminal with the
+        consolidate+hand-off (the §2 "UnrecoveredError → 区切って継続" swap), and
+        PR-E establishes by construction that the floor always fits the wrap-up
+        call (floor_content + T_wrap_SP + output_reserve ≤ T_max), so the
+        replacement is total.
+        """
+        shrink = getattr(self.host, "maybe_compact_messages", None)
+        cur = messages
+        while True:
+            try:
+                return await self._force_close_call(
+                    cur, resolved_model=resolved_model,
+                )
+            except Exception as exc:  # noqa: BLE001
+                if not _is_context_overflow_error(exc):
+                    raise
+                if shrink is None:
+                    # Chat host: no in-loop shrink — propagate to the outer
+                    # session retry_loop (B′ axis-inherited path).
+                    raise
+                shrunk = await shrink(cur, model=resolved_model)
+                if shrunk is cur or shrunk == cur:
+                    # Floor: the host can shrink no further. Pre-PR-D this is a
+                    # genuine terminal → re-raise (floor-abort). PR-D replaces it
+                    # with the handoff.
+                    raise
+                cur = shrunk
 
     async def _execute_tool(self, tc: dict) -> dict:
         """Dispatch one tool call via dispatch_tool (cross-cutting concerns).
