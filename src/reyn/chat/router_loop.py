@@ -1933,6 +1933,22 @@ class RouterLoop:
             _compact_fn = getattr(self.host, "maybe_compact_messages", None)
             if _compact_fn is not None:
                 messages = await _compact_fn(messages, model=resolved_model)
+            # #1092 PR-C: layer-1 force-close trigger — checked AFTER compaction
+            # (so it sees the shrunk content). A host implements
+            # ``should_force_close`` to decide, from the current accumulated turn
+            # content, whether the CUMULATIVE budget is reached; if so this turn is
+            # force-closed (a clean wrap-up finish) instead of risking overflow.
+            # getattr-guarded → chat/plan hosts that don't implement it → no
+            # force-close (byte-identical). LOOP-FREE by construction: the
+            # force-close result is a finish (no tool_calls) → the loop's terminal
+            # path ends the turn; it is NOT a revert-to-normal that could churn,
+            # and the layer-1 threshold sits ``offload_cap`` below the overflow
+            # point so it fires gracefully BEFORE the layer-2 floor.
+            _force_close_fn = getattr(self.host, "should_force_close", None)
+            _force_close_now = bool(
+                _force_close_fn is not None
+                and await _force_close_fn(messages, model=resolved_model)
+            )
             # ADR-0025: memo lookup — a recorded LLMToolCallResult for
             # this exact (model, messages, tools, tool_choice) tuple
             # short-circuits the call. Used by plan-mode resume so a
@@ -1976,24 +1992,42 @@ class RouterLoop:
                     )
                     result = memo
             if result is None:
-                # Tier 2 testability: tests inject a real-fake callable via
-                # ``_llm_caller`` (= no unittest.mock.patch needed). None
-                # falls through to the module-level ``call_llm_tools`` so
-                # production callers don't have to know about the seam.
-                _llm = self._llm_caller or call_llm_tools
-                result = await _llm(
-                    model=resolved_model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice="auto",
-                    skill_name="router",
-                    budget=self.budget,
-                    budget_agent=host.agent_name,
-                    trace_caller="router",
-                )
+                if _force_close_now:
+                    # #1092 PR-C: replace the normal act-turn call with the wrap-up
+                    # (force-close) call — swaps the SP for the wrap-up SP +
+                    # suppresses tools, so the result is a finish the loop's
+                    # terminal path consumes (no continuation). The phase-axis
+                    # layer-2 shrink-retry (PR-B) wraps it; chat re-raises to its
+                    # outer retry_loop (B′). P6 audit event before the call.
+                    host.events.emit(
+                        "force_close_triggered",
+                        chain_id=self.chain_id,
+                        iteration=_iteration,
+                    )
+                    result = await self._force_close_call_with_retry(
+                        messages, resolved_model=resolved_model,
+                    )
+                else:
+                    # Tier 2 testability: tests inject a real-fake callable via
+                    # ``_llm_caller`` (= no unittest.mock.patch needed). None
+                    # falls through to the module-level ``call_llm_tools`` so
+                    # production callers don't have to know about the seam.
+                    _llm = self._llm_caller or call_llm_tools
+                    result = await _llm(
+                        model=resolved_model,
+                        messages=messages,
+                        tools=tools,
+                        tool_choice="auto",
+                        skill_name="router",
+                        budget=self.budget,
+                        budget_agent=host.agent_name,
+                        trace_caller="router",
+                    )
                 # Record the fresh result for future resume hit. Defensive:
-                # never let recording failure break the loop.
-                if self._memo_provider is not None and args_hash is not None:
+                # never let recording failure break the loop. NOT for a
+                # force-close result — it is a terminal wrap-up, not a normal
+                # act-turn to replay as-is on resume.
+                if not _force_close_now and self._memo_provider is not None and args_hash is not None:
                     try:
                         await self._memo_provider.record(
                             args_hash=args_hash, result=result,
