@@ -523,7 +523,10 @@ class PhaseExecutor:
         routerloop = RouterLoop(
             host=host,
             chain_id=self._run_id or phase,
-            max_iterations=max_act_turns,
+            # #1092 PR-C-5 (4): use the EFFECTIVE act-turn cap (resume-adjusted), not
+            # the raw max_act_turns, so the converged op-loop force-closes
+            # json-mode-equally (mirrors _run_act_loop's state.effective_act_turn_cap).
+            max_iterations=state.effective_act_turn_cap(phase, max_act_turns),
             # cosmetic: the phase llm_caller resolves the phase model itself.
             router_model=phase,
             budget=getattr(state, "budget", None),
