@@ -79,7 +79,15 @@ def _image_path_completer(
         # Split into dir part + basename prefix.  When there is no slash
         # the user hasn't chosen a directory yet — use CWD.
         p = Path(expanded).expanduser() if expanded else Path("")
-        if "/" in expanded or expanded.startswith("~"):
+        if expanded.endswith("/"):
+            # Trailing slash → the user has chosen this directory; list its
+            # contents (no basename prefix to filter by). Without this case
+            # ``Path("<dir>/").parent`` would resolve to the PARENT of <dir>
+            # and ``.name`` to <dir>'s own name, listing the parent instead
+            # of descending into the chosen directory.
+            dir_part = p
+            prefix = ""
+        elif "/" in expanded or expanded.startswith("~"):
             # Separate the already-typed directory from the prefix being
             # completed.  ``parent`` resolves to ``"."`` for bare names.
             dir_part = p.parent

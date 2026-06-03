@@ -34,7 +34,13 @@ def _label_text(label) -> str:
 
 
 class _FakeSession:
-    """Minimal session stub exposing only ``pending_user_images``."""
+    """Minimal session stub exposing ``pending_user_images``.
+
+    The app's mount path calls a few session methods while wiring up the
+    UI (e.g. ``register_intervention_listener``); they are stubbed as
+    no-ops so ``app.run_test()`` mounts cleanly with this stub injected
+    via ``_get_session``. The badge logic only reads ``pending_user_images``.
+    """
 
     def __init__(self, pending: int = 0) -> None:
         self._queue: list[dict] = [{"type": "image"} for _ in range(pending)]
@@ -42,6 +48,12 @@ class _FakeSession:
     @property
     def pending_user_images(self) -> list[dict]:
         return self._queue
+
+    def __getattr__(self, name: str):
+        # Any session method the app mount touches that the badge test
+        # doesn't care about (register_intervention_listener, etc.) is a
+        # harmless no-op — keeps the stub minimal without whack-a-mole.
+        return lambda *a, **k: None
 
 
 @pytest.mark.asyncio
