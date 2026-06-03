@@ -152,6 +152,7 @@ class PhaseExecutor:
         phase_compaction_engine: "CompactionEngine | None" = None,
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
         op_loop_enabled: bool = False,
+        routerloop_convergence_enabled: bool = False,
     ) -> None:
         self._llm_caller = llm_caller
         self._control_ir_executor = control_ir_executor
@@ -182,6 +183,11 @@ class PhaseExecutor:
         # (tool_calls_op_loop_skills) resolved at PhaseExecutor construction. Default
         # False = json-mode, byte-for-byte unchanged.
         self._op_loop_enabled = op_loop_enabled
+        # #1092 PR-B (FD1): when True, the phase act-loop drives the SHARED
+        # RouterLoop.run_loop (true convergence, ii) — op results thread as native
+        # tool-role history, dispatch/memo reuse RouterLoop. Takes precedence over
+        # the #1212 phase-native _run_op_loop gate. Default False = unchanged.
+        self._routerloop_convergence_enabled = routerloop_convergence_enabled
 
     # ── #1135(b): raw-output capture on phase-output validation failure ───────
 
@@ -618,6 +624,158 @@ class PhaseExecutor:
                 results=ir_results,
             )
 
+    # ── Converged op loop (#1092 PR-B, RouterLoop.run_loop) ──────────────────────
+
+    async def _run_routerloop_op_loop(
+        self,
+        phase: str,
+        artifact: dict,
+        candidates: list[CandidateOutput],
+        output_language: str | None,
+        max_act_turns: int,
+        max_phase_retries: int,
+        artifact_path: str | None,
+        state: "RunState",
+        rollback_context: dict | None = None,
+    ) -> tuple[dict, list[dict]]:
+        """#1092 PR-B (FD1, ADR-0036): CONVERGED op-loop — the phase act-loop drives
+        the SHARED ``RouterLoop.run_loop`` (true convergence, ii).
+
+        vs ``_run_op_loop`` (#1212, phase-native frame-fed): this path builds a
+        ``RouterLoop`` with a ``PhaseRouterLoopHost`` and drives its extracted
+        ``run_loop``, so op results thread as NATIVE ``{assistant,tool_calls}`` +
+        ``{tool,...}`` message-history (the frame-fed → native reversal), and
+        dispatch / memo / compaction reuse the shared loop. Phase ops dispatch via
+        RouterLoop's ``REGISTRY_DISPATCH_TOOLS`` registry path (op-exec seam
+        obviated by #1240, ADR-0036); the phase ``OpContext`` is provisioned by
+        ``host.make_router_op_context`` (= ``_build_ctx``) so permission/sandbox
+        gates enforce identically to ``control_ir_executor.execute``.
+
+        FD2 (P1/P8): the transition decide is a SEPARATE structured-json ``call``
+        AFTER ``run_loop`` returns at end_turn — it is NOT in the loop. Chat-specific
+        terminals inside ``run_loop`` (put_outbox spawn-acks / text reply) go inert
+        for the phase host (no-op ``put_outbox``, ``async_count == 0`` because phase
+        op kinds are not async ``dispatch_kind``). Gated
+        (``routerloop_convergence_enabled``); un-opted skills are byte unchanged.
+        """
+        import json as _json
+
+        from reyn.chat.router_loop import RouterLoop
+        from reyn.kernel.phase_router_host import PhaseRouterLoopHost
+
+        phase_def = self._skill.phases.get(phase)
+        allowed_ops = set(phase_def.allowed_ops) if phase_def is not None else set()
+        decl = self._skill.permissions
+        sandbox = phase_def.default_sandbox_policy if phase_def is not None else None
+        cie = self._control_ir_executor
+
+        host = PhaseRouterLoopHost(
+            control_ir_executor=cie,
+            events=self._events,
+            phase=phase,
+            decl=decl,
+            allowed_ops=allowed_ops,
+            default_sandbox_policy=sandbox,
+            agent_name=self._skill.name,
+            agent_role=(phase_def.role if phase_def is not None else phase),
+            output_language=output_language,
+            resolve_model_fn=lambda name: cie._resolver.resolve(name).model,
+        )
+        tools = host.get_phase_op_catalog()
+        # P6 audit + the distinguishing marker for the converged path (vs the
+        # #1212 phase-native _run_op_loop) — consumed by the full-path test and
+        # the dogfood host-polymorphism trace.
+        self._events.emit(
+            "phase_routerloop_op_loop_started",
+            phase=phase,
+            tool_count=len(tools),
+        )
+
+        prior_results = (
+            list(rollback_context["previous_control_ir_results"])
+            if rollback_context and rollback_context.get("previous_control_ir_results")
+            else []
+        )
+        seed_frame = self._build_frame(
+            phase, artifact, candidates, output_language,
+            control_ir_results=prior_results,
+            artifact_path=artifact_path,
+            remaining_act_turns=max_act_turns,
+        )
+        messages = self._llm_caller.build_phase_op_loop_messages(
+            phase=phase, frame=seed_frame,
+        )
+
+        routerloop = RouterLoop(
+            host=host,
+            chain_id=self._run_id or phase,
+            max_iterations=max_act_turns,
+            # cosmetic: the phase llm_caller resolves the phase model itself.
+            router_model=phase,
+            budget=getattr(state, "budget", None),
+            memo_provider=self._llm_caller.make_phase_memo_provider(
+                phase=phase, state=state,
+            ),
+            llm_caller=self._llm_caller.make_phase_llm_caller(
+                phase=phase, state=state,
+            ),
+        )
+        # Drive the SHARED op-execution loop. Op results thread into ``messages``
+        # as native tool-role turns; the model signals end_turn by emitting no
+        # tool_calls, returning control here for the FD2 decide.
+        await routerloop.run_loop(messages, tools, False)
+
+        # FD2: build the SEPARATE json decide frame from the native turns so it is
+        # INFORMATION-EQUIVALENT to the #1212 _run_op_loop decide frame (P1/P8 —
+        # transition post-pended here, never inside run_loop). Two structural pieces
+        # the json-mode decide frame relies on (their absence is the #1092 dogfood
+        # reliability regression: a context-inadequate decide frame, not a model-axis
+        # limit — the weak model fumbles the decide because it sees LESS than json-mode):
+        #   (a) act_turn_reasoning — the model's inline content from the native
+        #       assistant turns (reasoning continuity, exactly what _run_op_loop
+        #       carries forward across act turns), and
+        #   (b) control_ir_results in the RAW op-result shape — unwrapping
+        #       dispatch_tool's {"status": "ok", "data": <op result>} envelope so the
+        #       outcomes render the same way the json-mode op-loop renders them.
+        control_ir_results: list[dict] = list(prior_results)
+        act_turn_reasoning: list[str] = []
+        for _m in messages:
+            _role = _m.get("role")
+            if _role == "assistant":
+                _ac = _m.get("content")
+                if isinstance(_ac, str) and _ac:
+                    act_turn_reasoning.append(_ac)
+            elif _role == "tool":
+                _content = _m.get("content")
+                try:
+                    _parsed = _json.loads(_content)
+                except (TypeError, ValueError):
+                    _parsed = {"result": _content}
+                if (
+                    isinstance(_parsed, dict)
+                    and "data" in _parsed
+                    and set(_parsed) <= {"status", "data", "error"}
+                ):
+                    _parsed = _parsed["data"]
+                control_ir_results.append(_parsed)
+        if self._phase_compaction_cfg is not None:
+            _keep = self._phase_compaction_cfg.recent_act_turns_raw
+            act_turn_reasoning = act_turn_reasoning[-_keep:]
+        self._last_control_ir_results = control_ir_results
+
+        decide_frame = self._build_frame(
+            phase, artifact, candidates, output_language,
+            control_ir_results=control_ir_results,
+            artifact_path=artifact_path,
+            remaining_act_turns=0,
+            force_decide=True,
+            act_turn_reasoning=act_turn_reasoning,
+        )
+        raw = await self._llm_caller.call(
+            phase, decide_frame, None, rollback_context, state,
+        )
+        return raw, []
+
     # ── Act loop ──────────────────────────────────────────────────────────────
 
     async def _run_act_loop(
@@ -928,10 +1086,17 @@ class PhaseExecutor:
         phase_def = self._skill.phases[phase]
         max_act_turns = phase_def.max_act_turns if phase_def.max_act_turns > 0 else 10
 
-        # #1212 PR2: gated dispatch. Opted-in skills run the native-tools op-loop;
-        # the default json-mode act loop is unchanged. Both return (raw_decide, prior)
-        # and feed the same decide-with-retry path (transition stays json-mode).
-        act_loop = self._run_op_loop if self._op_loop_enabled else self._run_act_loop
+        # Gated dispatch. All three return (raw_decide, prior) and feed the same
+        # decide-with-retry path (transition stays json-mode = FD2).
+        #   #1092 PR-B: converged op-loop (phase drives shared RouterLoop.run_loop).
+        #   #1212 PR2:  phase-native frame-fed op-loop (native-tools request only).
+        #   default:    json-mode act loop, byte-for-byte unchanged.
+        if self._routerloop_convergence_enabled:
+            act_loop = self._run_routerloop_op_loop
+        elif self._op_loop_enabled:
+            act_loop = self._run_op_loop
+        else:
+            act_loop = self._run_act_loop
         raw, prior_attempts = await act_loop(
             phase, artifact, candidates, output_language,
             max_act_turns, max_phase_retries, artifact_path,

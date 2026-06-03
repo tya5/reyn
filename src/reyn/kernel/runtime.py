@@ -89,6 +89,7 @@ class OSRuntime:
         phase_compaction_engine: "CompactionEngine | None" = None,
         phase_compaction_cfg: "PhaseActResultsCompactionConfig | None" = None,
         tool_calls_op_loop_skills: list[str] | None = None,
+        routerloop_convergence_skills: list[str] | None = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -102,6 +103,9 @@ class OSRuntime:
         # #1212: retained so sub-skill runs (run_skill / @sub_skill nodes) inherit
         # the same op-loop gate — a sub-skill named in the list also op-loops.
         self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
+        # #1092 PR-B (FD1): skills opted into the converged op-loop (phase drives the
+        # shared RouterLoop.run_loop). Same data-driven P7-OK gate shape as #1212.
+        self._routerloop_convergence_skills = list(routerloop_convergence_skills or [])
         self.events = EventLog(
             subscribers=subscribers, run_id=run_id, plan_step=plan_step,
         )
@@ -290,6 +294,9 @@ class OSRuntime:
             # skill names as data (P7-OK); this skill runs the native-tools op-loop
             # iff its name is listed. Default empty = json-mode (zero change).
             op_loop_enabled=skill.name in (tool_calls_op_loop_skills or ()),
+            # #1092 PR-B: converged op-loop gate (takes precedence over op_loop_enabled).
+            routerloop_convergence_enabled=skill.name
+            in (routerloop_convergence_skills or ()),
         )
         # FP-0020 Component D: phase sequence + transitions + rollback + skill-node
         # dispatch + resume + SkillRegistry lifecycle extracted to RunOrchestrator.
@@ -321,6 +328,7 @@ class OSRuntime:
             max_phase_visits=self._max_phase_visits,
             budget_tracker=budget_tracker,  # #1190 stage (ii): skill_node_adapt cost recording
             tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,  # #1212 sub-skill gate
+            routerloop_convergence_skills=self._routerloop_convergence_skills,  # #1092 PR-B
         )
 
     # ── Backward-compat properties (FP-0020 Component A) ───────────────────

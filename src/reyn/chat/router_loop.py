@@ -1834,6 +1834,36 @@ class RouterLoop:
         if not history or history[-1].get("role") != "user":
             messages.append({"role": "user", "content": user_text})
 
+        return await self.run_loop(messages, tools, _univ_enabled)
+
+    async def run_loop(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        _univ_enabled: bool,
+    ) -> "TokenUsage":
+        """#1092 PR-B (FD1, ADR-0036): the shared op-execution loop (convergence ii).
+
+        Extracted verbatim from ``run()`` so the chat ``run()`` (after its
+        chat-specific pre-loop setup) AND a phase host (via a RouterLoop built with
+        PhaseRouterLoopHost) drive the SAME loop = true convergence. The loop body
+        is unchanged; chat-specific terminals (put_outbox spawn-acks, text reply)
+        are host-polymorphic and go inert for a phase host (no-op put_outbox,
+        async_count=0). FD2: the phase transition is a SEPARATE structured-json
+        call the phase host post-pends AFTER this loop returns at end_turn — it is
+        NOT in this loop (P1/P8 preserved).
+        """
+        host = self.host
+        # #1092 PR-B: keep the DISPATCH catalog (``self._catalog``, consumed by
+        # ``_execute_tool`` → ``dispatch_tool``'s ``name in ctx.tool_catalog`` gate)
+        # in lockstep with the ADVERTISED ``tools=``. For the chat ``run()`` path
+        # this is idempotent (run() already set it from the same post-exclude
+        # ``tools``). For a phase host that drives ``run_loop`` directly (bypassing
+        # run()'s pre-loop setup), this is the ONLY place it gets set — without it
+        # a native tool_call (read_file …) advertised to the model is rejected as
+        # ``unknown_tool`` (the native-dispatch catalog gap caught by #1092 dogfood).
+        self._catalog = {t["function"]["name"]: t for t in tools}
+        self._tool_names = frozenset(self._catalog.keys())
         # B28-Q2 Case A: per-turn counters for chat_turn_completed_inline.
         # _routing_decided_fired: set to True the first time routing_decided
         #   is emitted in this turn (= invoke_action or hot_list_alias path).
@@ -2720,6 +2750,16 @@ class RouterLoop:
         # _normalise_router_tool_result unwraps read_file / list_directory
         # to the bare-content / bare-list shapes the host adapter returned.
         "read_file", "write_file", "delete_file", "list_directory",
+        # #1092 PR-B (FD1): phase-side fine file kinds. edit_file / glob_files /
+        # grep_files are registry ToolDefinitions (tools/file.py, registered in
+        # tools/__init__.py) that the chat router never exposed as router tools
+        # (chat uses list_directory), but they are in the phase default
+        # allowed_ops (#1240). When a phase drives RouterLoop via run_loop, its
+        # op catalog advertises these, so _invoke_router_tool must route them
+        # through the same registry path — closing the dispatch gap that the
+        # obviated op-exec seam (ADR-0036) would otherwise have needed a host
+        # hook for. Chat is unaffected (chat build_tools never lists them).
+        "edit_file", "glob_files", "grep_files",
         # Phase 3.5-B-light — invoke_skill.  Handler delegates via
         # RouterCallerState.run_skill_fn (= chain_id pre-bound) so PR14
         # multi-hop chain semantics propagate into nested run_skill /

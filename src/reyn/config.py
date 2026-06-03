@@ -1560,6 +1560,15 @@ class ReynConfig:
             "path, unchanged. Removed once the op-loop becomes the default."
         )},
     )
+    routerloop_convergence_skills: list[str] = field(
+        default_factory=list,
+        metadata={"desc": (
+            "TRANSITIONAL (#1092 PR-B): skill names opted into the converged op-loop "
+            "(phase act-loop drives the shared RouterLoop.run_loop). Takes precedence "
+            "over tool_calls_op_loop_skills. Skills not listed are unchanged. Removed "
+            "once convergence becomes the default."
+        )},
+    )
     # LiteLLM proxy: non-secret base URL only.
     # API keys must be set as environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
     # — never stored in config files.
@@ -2076,6 +2085,9 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         },
         tool_calls_op_loop_skills=[
             str(s) for s in (merged.get("tool_calls_op_loop_skills") or [])
+        ],
+        routerloop_convergence_skills=[
+            str(s) for s in (merged.get("routerloop_convergence_skills") or [])
         ],
         api_base=str(merged.get("api_base") or ""),
         # prompt_cache_enabled / project_context_path were declared as

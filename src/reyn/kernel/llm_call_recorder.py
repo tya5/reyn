@@ -476,6 +476,30 @@ class LLMCallRecorder:
         """
         return _PhaseMemoProvider(recorder=self, phase=phase, state=state)
 
+    def build_phase_op_loop_messages(
+        self, *, phase: str, frame: "ContextFrame",
+    ) -> list[dict]:
+        """#1092 PR-B (FD1): the seed ``[system, user(frame)]`` messages for the
+        converged op-loop.
+
+        The phase host drives ``RouterLoop.run_loop`` with these as the starting
+        message list (RouterLoop then threads ``{assistant, tool_calls}`` +
+        ``{tool, ...}`` turns natively). Single-sourced via the SAME
+        ``build_phase_messages`` helper that the json-mode ``call_tools`` uses, so
+        the SP + frame seed never drift between the two op-loop paths.
+        """
+        from reyn.llm.llm import build_phase_messages
+        phase_def = self._skill.phases.get(phase)
+        return build_phase_messages(
+            frame,
+            skill_name=self._skill.name,
+            skill_description=self._skill.description,
+            phase_role=phase_def.role if phase_def else None,
+            project_context=self._project_context,
+            agent_role=self._agent_role,
+            prompt_cache_enabled=self._prompt_cache_enabled,
+        )
+
     # ── Model resolution ───────────────────────────────────────────────────────
 
     def _effective_model(self, phase_name: str) -> str:

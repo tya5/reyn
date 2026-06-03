@@ -54,6 +54,7 @@ models:
 | `shell_allowed` | bool | Pre-approve the `shell` op so it is not gated per-call. Default `false`. |
 | `api_base` | string | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
 | `tool_calls_op_loop_skills` | list | **Transitional (#1212).** Skill names opted into the native-tools op-loop phase mechanism (ops emitted as native `tool_calls` and run through the shared executor) instead of the json-mode `control_ir` batch. Default empty = all skills use json-mode (unchanged). Removed once the op-loop becomes the default. |
+| `routerloop_convergence_skills` | list | **Transitional (#1092 PR-B).** Skill names opted into the converged op-loop — the phase act-loop drives the shared `RouterLoop.run_loop` (op results thread as native tool-role message-history). Takes precedence over `tool_calls_op_loop_skills`. Default empty = every skill unchanged. Removed once convergence becomes the default. |
 
 ## `models` block
 

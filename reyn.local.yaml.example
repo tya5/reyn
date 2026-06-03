@@ -75,6 +75,15 @@
 # -----------------------------------------------------------------------------
 # tool_calls_op_loop_skills:
 #   - my_skill
+# -----------------------------------------------------------------------------
+# routerloop_convergence_skills: TRANSITIONAL (#1092 PR-B). Skill names opted into
+# the converged op-loop — their phase act-loop drives the shared RouterLoop.run_loop
+# (op results thread as native tool-role message-history). Takes precedence over
+# tool_calls_op_loop_skills. Default empty = every skill unchanged. Removed once
+# convergence becomes the default.
+# -----------------------------------------------------------------------------
+# routerloop_convergence_skills:
+#   - my_skill
 
 
 # -----------------------------------------------------------------------------

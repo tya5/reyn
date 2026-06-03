@@ -67,6 +67,7 @@ class Agent:
         environment_backend: "EnvironmentBackend | None" = None,
         sandbox_backend: "SandboxBackend | None" = None,
         tool_calls_op_loop_skills: list[str] | None = None,
+        routerloop_convergence_skills: list[str] | None = None,
     ) -> None:
         self.model = model
         # FP-0008 #1132: the events audit log lives under state_dir. Honor an
@@ -84,6 +85,9 @@ class Agent:
         # #1212: skills opted into the native-tools op-loop (config-driven gate,
         # threaded to OSRuntime so the op-loop is reachable on the real run path).
         self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
+        # #1092 PR-B: skills opted into the converged op-loop (config-driven gate,
+        # threaded to OSRuntime so the converged path is reachable on the real run).
+        self._routerloop_convergence_skills = list(routerloop_convergence_skills or [])
         self._safety = safety or SafetyConfig()
         self._resolver = resolver or ModelResolver({})
         self._permission_resolver = permission_resolver
@@ -219,6 +223,7 @@ class Agent:
             environment_backend=environment_backend,
             sandbox_backend=sandbox_backend,
             tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
+            routerloop_convergence_skills=config.routerloop_convergence_skills,
         )
 
     @property
@@ -313,6 +318,7 @@ class Agent:
             workspace_base_dir=self._workspace_base_dir,
             workspace_state_dir=self._workspace_state_dir,
             tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,
+            routerloop_convergence_skills=self._routerloop_convergence_skills,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 
