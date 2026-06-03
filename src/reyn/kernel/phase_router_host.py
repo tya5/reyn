@@ -63,6 +63,7 @@ class PhaseRouterLoopHost:
         resolve_model_fn: Callable[[str], str],
         compaction_engine: Any = None,
         compaction_cfg: Any = None,
+        check_phase_budget_fn: Callable[[], Any] | None = None,
     ) -> None:
         self._control_ir_executor = control_ir_executor
         self._events = events
@@ -79,6 +80,10 @@ class PhaseRouterLoopHost:
         # when the phase has no compaction wired → the hook is a no-op.
         self._compaction_engine = compaction_engine
         self._compaction_cfg = compaction_cfg
+        # #1092 PR-C-5 (2): async callable that runs the phase wall-clock budget
+        # check (PhaseExecutor._check_phase_budget bound to this phase + state).
+        # None for chat hosts → the per-turn enforcement hook is a no-op.
+        self._check_phase_budget_fn = check_phase_budget_fn
 
     # ── RouterLoopCore identity / static config ───────────────────────────
 
@@ -293,6 +298,23 @@ class PhaseRouterLoopHost:
         for i in older_idxs[1:]:
             new[i] = {**messages[i], "content": "[compacted — folded into the earlier summary]"}
         return new
+
+    async def check_phase_budget(self) -> None:
+        """#1092 PR-C-5 (2): per-turn phase wall-clock budget enforcement for the
+        converged op-loop. ``RouterLoop.run_loop`` calls this at the top of each
+        iteration (before the act-turn LLM call); chat hosts don't implement it
+        (getattr-guarded → no-op → chat byte-identical).
+
+        Delegates to the bound ``PhaseExecutor._check_phase_budget(phase, state)``
+        (the SAME enforcement the json-mode ``_run_act_loop`` runs before each
+        call_llm): it RAISES ``PhaseBudgetExceededError`` when the phase exceeds its
+        wall-clock budget, unless ``safety.on_limit`` approves a continuation
+        (extension granted + clock reset). Without this, a runaway converged phase
+        would never be limit-checked — the #1128 safety-net gap this closes.
+        """
+        if self._check_phase_budget_fn is None:
+            return
+        await self._check_phase_budget_fn()
 
     # ── Chat-discovery methods (phase = empty) ────────────────────────────
     # #1092 PR-C-0: ``RouterLoop._build_router_caller_state`` calls these EAGERLY

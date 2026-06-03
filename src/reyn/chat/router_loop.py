@@ -1894,6 +1894,14 @@ class RouterLoop:
 
         for _iteration in range(self.max_iterations):
             resolved_model = host.resolve_model(self.router_model)
+            # #1092 PR-C-5 (2): per-turn phase wall-clock budget enforcement. A phase
+            # host implements ``check_phase_budget`` (RAISES PhaseBudgetExceededError
+            # when over budget, unless on_limit grants an extension) — the same
+            # enforcement json-mode runs before each call_llm. Chat hosts don't
+            # implement it (getattr → None) → no-op, chat byte-identical.
+            _budget_fn = getattr(self.host, "check_phase_budget", None)
+            if _budget_fn is not None:
+                await _budget_fn()
             # #1092 PR-C-4b: per-turn in-loop message-history compaction. A phase
             # host implements ``maybe_compact_messages`` to proactively bound the
             # converged op-loop's growing native tool-message history (json-mode
