@@ -489,6 +489,11 @@ class PhaseExecutor:
             agent_role=(phase_def.role if phase_def is not None else phase),
             output_language=output_language,
             resolve_model_fn=lambda name: cie._resolver.resolve(name).model,
+            # #1092 PR-C-4b: wire the phase compaction engine/cfg so the host's
+            # per-turn ``maybe_compact_messages`` hook can proactively bound the
+            # converged op-loop's in-loop message-history (json-mode parity).
+            compaction_engine=self._phase_compaction_engine,
+            compaction_cfg=self._phase_compaction_cfg,
         )
         tools = host.get_phase_op_catalog()
         # P6 audit + the distinguishing marker for the converged op-loop (vs the

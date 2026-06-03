@@ -1894,6 +1894,14 @@ class RouterLoop:
 
         for _iteration in range(self.max_iterations):
             resolved_model = host.resolve_model(self.router_model)
+            # #1092 PR-C-4b: per-turn in-loop message-history compaction. A phase
+            # host implements ``maybe_compact_messages`` to proactively bound the
+            # converged op-loop's growing native tool-message history (json-mode
+            # parity). Chat hosts don't implement it (getattr → None) → no-op, so
+            # the chat loop is byte-identical.
+            _compact_fn = getattr(self.host, "maybe_compact_messages", None)
+            if _compact_fn is not None:
+                messages = await _compact_fn(messages, model=resolved_model)
             # ADR-0025: memo lookup — a recorded LLMToolCallResult for
             # this exact (model, messages, tools, tool_choice) tuple
             # short-circuits the call. Used by plan-mode resume so a

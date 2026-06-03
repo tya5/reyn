@@ -61,6 +61,8 @@ class PhaseRouterLoopHost:
         agent_role: str,
         output_language: str | None,
         resolve_model_fn: Callable[[str], str],
+        compaction_engine: Any = None,
+        compaction_cfg: Any = None,
     ) -> None:
         self._control_ir_executor = control_ir_executor
         self._events = events
@@ -72,6 +74,11 @@ class PhaseRouterLoopHost:
         self._agent_role = agent_role
         self._output_language = output_language
         self._resolve_model_fn = resolve_model_fn
+        # #1092 PR-C-4b: phase compaction engine + config for the per-turn in-loop
+        # message-history compaction hook (``maybe_compact_messages``). Both None
+        # when the phase has no compaction wired → the hook is a no-op.
+        self._compaction_engine = compaction_engine
+        self._compaction_cfg = compaction_cfg
 
     # ── RouterLoopCore identity / static config ───────────────────────────
 
@@ -217,6 +224,75 @@ class PhaseRouterLoopHost:
         new_msg = dict(msg)
         new_msg["content"] = json.dumps(cleaned, sort_keys=True, ensure_ascii=False)
         return new_msg
+
+    async def maybe_compact_messages(self, messages: list[dict], *, model: str) -> list[dict]:
+        """#1092 PR-C-4b: per-turn in-loop message-history compaction for the
+        converged op-loop. ``RouterLoop.run_loop`` calls this at the top of each
+        iteration; chat hosts do NOT implement it (getattr-guarded → no-op → chat
+        byte-identical).
+
+        WHY: the converged op-loop threads op results as native ``tool`` messages
+        that accumulate linearly (measured ~unbounded, +N tok/op, no proactive
+        bound — RouterLoop's retry-shrink/voluntary-compact are overflow-only
+        last-resorts). This recovers json-mode's PROACTIVE per-turn bounding (the
+        json-mode act loop summarises older control_ir_results once they exceed
+        ``recent_act_turns_raw``).
+
+        HOW (validity-preserving, no structural mutation): when the serialised
+        history exceeds the phase compaction trigger, the OLDER ``tool`` messages'
+        result CONTENTS (beyond the last ``recent_act_turns_raw``) are folded into
+        one summary via the SHARED ``compact_control_ir_results`` (the SAME engine
+        primitive C-4a / the json-mode loop use — no bespoke compaction logic);
+        the summary replaces the FIRST older tool message's content and the rest
+        get a tiny marker. NO messages are added/removed and NO
+        assistant↔tool pairing / role-alternation changes — so tool_call_id pairing
+        stays API-valid across providers, and the only delta is shrunk ``tool``
+        contents (token bound).
+
+        CRASH-RESUME (scoped, json-mode-parity per #1267): the compaction summary
+        is a non-WAL-memoized LLM call (shared engine), so compaction×resume has the
+        SAME pre-existing memo-drift as json-mode (tracked #1267, NOT introduced
+        here). The no-compaction window keeps op + LLM memo-HIT (#1263 / #1264).
+        Best-effort: ``compact_control_ir_results`` never raises (LLM error →
+        identity + ``phase_act_results_compaction_failed``).
+        """
+        engine = self._compaction_engine
+        cfg = self._compaction_cfg
+        if engine is None or cfg is None:
+            return messages
+
+        from reyn.services.compaction.engine import compact_control_ir_results
+
+        n_recent = getattr(cfg, "recent_act_turns_raw", 1)
+        tool_idxs = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+        if len(tool_idxs) <= n_recent:
+            # Not enough older tool results to fold — leave the history as-is.
+            return messages
+        older_idxs = tool_idxs[:-n_recent] if n_recent > 0 else tool_idxs
+
+        # Fold the OLDER tool-result contents into one summary via the SHARED
+        # primitive (wrap each content as a result dict so the engine sees a list).
+        # ``compact_control_ir_results`` applies its OWN token threshold (the same
+        # gate json-mode uses) and returns identity — without an LLM call — when the
+        # older slice is under it, so calling it each turn is cheap until the history
+        # actually grows past the threshold.
+        older_results = [{"result": messages[i].get("content")} for i in older_idxs]
+        compacted = await compact_control_ir_results(
+            older_results, engine=engine, cfg=cfg, events=self._events, phase=self._phase,
+        )
+        if not compacted or compacted == older_results:
+            # Identity (LLM error or under the engine's own threshold) → no change.
+            return messages
+        summary = compacted[0].get("summary") if isinstance(compacted[0], dict) else None
+        if not summary:
+            return messages
+
+        new = list(messages)
+        first = older_idxs[0]
+        new[first] = {**messages[first], "content": f"[earlier tool results compacted: {summary}]"}
+        for i in older_idxs[1:]:
+            new[i] = {**messages[i], "content": "[compacted — folded into the earlier summary]"}
+        return new
 
     # ── Chat-discovery methods (phase = empty) ────────────────────────────
     # #1092 PR-C-0: ``RouterLoop._build_router_caller_state`` calls these EAGERLY
