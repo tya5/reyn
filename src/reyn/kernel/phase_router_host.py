@@ -112,6 +112,21 @@ class PhaseRouterLoopHost:
             default_sandbox_policy=self._default_sandbox_policy,
         )
 
+    # ── Chat-discovery methods (phase = empty) ────────────────────────────
+    # #1092 PR-C-0: ``RouterLoop._build_router_caller_state`` calls these EAGERLY
+    # while building the per-dispatch RouterCallerState (router_loop.py). A phase
+    # has no skills/agents catalog (#1212 PR3 decision A — the catalog is the
+    # phase op tools via ``get_phase_op_catalog``), so they return empty. The
+    # eager call is also getattr-guarded on the RouterLoop side (defence in depth);
+    # implementing them here makes the "phase has no chat discovery" contract
+    # explicit rather than relying on the guard's default.
+
+    def list_available_skills(self) -> list:
+        return []
+
+    def list_available_agents(self) -> list:
+        return []
+
     async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
         """Phase NO-OP — a concept-absent legitimate no-op (P-clean).
 

@@ -2937,8 +2937,13 @@ class RouterLoop:
             describe_skill_fn=self._describe_skill,
             list_agents_fn=self._list_agents,
             describe_agent_fn=self._describe_agent,
-            available_skills=list(self.host.list_available_skills()),
-            available_agents=list(self.host.list_available_agents()),
+            # getattr-guarded (symmetric with ``op_context_factory`` below, #1092
+            # PR-C-0): a RouterLoopCore host that is not the chat RouterHostAdapter
+            # (e.g. PhaseRouterLoopHost — a phase has no skills/agents catalog) need
+            # not implement these chat-discovery methods. Without the guard the
+            # eager call AttributeError'd every op dispatch on the converged path.
+            available_skills=list(getattr(self.host, "list_available_skills", list)()),
+            available_agents=list(getattr(self.host, "list_available_agents", list)()),
             # Async dispatch (= activated handlers)
             send_to_agent=_send_to_agent_bound,
             dispatch_plan_tool=_dispatch_plan_bound,
