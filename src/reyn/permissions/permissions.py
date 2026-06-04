@@ -1124,15 +1124,26 @@ class PermissionResolver:
         if self._saved.get("web.fetch") or self._session.get("web.fetch"):
             return
 
-        # Did the skill declare this host explicitly or via wildcard?
-        has_specific = any(
-            isinstance(e, dict) and e.get("host") == host for e in decl.http_get
+        # #1199 S3.1b-2c-2: the host-MEMBERSHIP decision (specific OR wildcard)
+        # routes through the unified model (NETWORK_HOST axis) — pure decl
+        # membership (no approval_check; the config/persisted/legacy approvals are
+        # the separate disjuncts above). Byte-identical to the prior
+        # `has_specific OR has_wildcard`. This is the seam S3.1c uses to ∩
+        # SandboxLayer.network (closing the gap where a sandboxed skill's http_get
+        # is not network-bound today). has_wildcard stays local for the prompt label.
+        from reyn.permissions.effective import (
+            AgentLayer,
+            CapabilityAxis,
+            EffectivePermission,
         )
+
         has_wildcard = any(
             isinstance(e, dict) and e.get("host") == "*" for e in decl.http_get
         )
 
-        if has_specific or has_wildcard:
+        if EffectivePermission([AgentLayer(decl)]).allows(
+            CapabilityAxis.NETWORK_HOST, host
+        ):
             # Need to prompt — either startup_guard was skipped (=
             # non-interactive run with a still-unapproved specific decl)
             # or this is the wildcard JIT path.
