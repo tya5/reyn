@@ -1255,6 +1255,17 @@ class ChatSession:
         # workspace's own default) → unchanged behaviour. The sibling exec seam
         # (sandbox_backend string via sandbox_config) already flows agent-level.
         environment_backend: "EnvironmentBackend | None" = None,
+        # #1200 PR-F2 (exec seam): the agent's SandboxBackend INSTANCE, set on the
+        # chat router OpContext so sandboxed_exec runs on the SAME backend as the
+        # OSRuntime path (sandboxed_exec.py: `ctx.sandbox_backend or
+        # get_default_backend(...)`). REQUIRED — without it chat falls to
+        # get_default_backend (rebuild-per-call, no docker) → a DIFFERENT backend
+        # than the FS seam → single-shared-sandbox violation. For a docker agent
+        # this is the SAME object as environment_backend (DockerEnvironmentBackend
+        # satisfies both protocols). None → unchanged (get_default_backend). This
+        # is the INSTANCE; the `sandbox_backend` STRING (exec-tool gating) still
+        # flows separately via sandbox_config.
+        sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
         embedding_config: "EmbeddingConfig | None" = None,
@@ -1295,6 +1306,10 @@ class ChatSession:
         # (passed to the router Workspace in make_router_op_context). None →
         # HostBackend default.
         self._environment_backend = environment_backend
+        # #1200 PR-F2: agent SandboxBackend instance for the chat exec seam (set
+        # on the router OpContext). None → get_default_backend. The INSTANCE, not
+        # the sandbox_config.backend STRING (exec-tool gating).
+        self._sandbox_backend = sandbox_backend
         # Issue #364 — multi-modal cluster: media-size gate config plumbed
         # through to spawned Agents AND to the router host adapter (=
         # chat-router web__fetch / file__read / mcp paths).
@@ -4736,6 +4751,9 @@ class ChatSession:
             mcp_servers=self._mcp_servers_flat(),
             run_id=None,  # FP-0021: chat router is outside run scope
             agent_id=self._agent_id,  # FP-0016 E
+            # #1200 PR-F2 (exec seam): run chat sandboxed_exec on the agent's
+            # SandboxBackend instance (None → get_default_backend, unchanged).
+            sandbox_backend=self._sandbox_backend,
         )
 
     async def _file_op(self, op_dict: dict) -> dict:
