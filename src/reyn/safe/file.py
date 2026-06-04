@@ -72,20 +72,31 @@ _context_initialised: bool = False
 
 # #571 collapse arc Phase 2: canonical paths whose write must go through
 # a specific op handler (= mcp_install / mcp_drop_server / cron_register
-# / index_drop). Listing one of these in ``_write_paths`` via a parent
-# directory (e.g. ``.reyn/``) is no longer enough; the path must appear
-# in ``_write_paths`` *exactly* (= via an explicit ``file.write: [{path:
-# ...}]`` decl, or via the bool-axis compat shim that auto-expands to
-# the same entry).
+# / index_drop) or, for ``.reyn/approvals.yaml``, the runtime
+# approval-decision flow (#1199). Listing one of these in ``_write_paths``
+# via a parent directory (e.g. ``.reyn/``) is no longer enough; the path
+# must appear in ``_write_paths`` *exactly* (= via an explicit
+# ``file.write: [{path: ...}]`` decl, or via the bool-axis compat shim
+# that auto-expands to the same entry).
+#
+# #1199 (safe.file side): ``.reyn/approvals.yaml`` is the persisted
+# approval store, written ONLY via the gated approval-decision mechanism.
+# Without this carve-out on the safe.file enforcement path, a safe-mode
+# python step could inject an approval via the broad ``.reyn/`` zone —
+# bypassing the user-approval gate + audit (the subprocess always receives
+# ``.reyn/`` in its write_paths, see preprocessor_executor). The parent
+# permissions.py gate alone did not cover this enforcement path.
 #
 # Mirrors ``reyn.permissions.permissions._CANONICAL_PROTECTED_WRITE_PATHS``
-# — keep the two lists in sync. They live in two modules because this
-# one runs in the python-harness subprocess where importing the parent's
-# permissions module is not always available.
+# — keep the two lists in sync (drift-guarded by
+# ``test_canonical_protected_lists_stay_in_sync``). They live in two
+# modules because this one runs in the python-harness subprocess where
+# importing the parent's permissions module is not always available.
 _CANONICAL_PROTECTED_WRITE_PATHS = (
     ".reyn/mcp.yaml",
     ".reyn/cron.yaml",
     ".reyn/index/sources.yaml",
+    ".reyn/approvals.yaml",
 )
 
 
