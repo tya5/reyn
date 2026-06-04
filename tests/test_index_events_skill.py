@@ -25,14 +25,38 @@ from pathlib import Path
 import pytest
 
 from reyn.context_builder import ARTIFACT_REF_THRESHOLD
+from reyn.embedding import register_provider
+from reyn.embedding.provider import EmbedBatchResult
+from reyn.safe import embed_index as ei
 from reyn.safe import file as sf
 from reyn.stdlib.skills.index_events.chunkers import (
     advance_cursor,
     collect_run_chunks,
     read_cursor,
     resolve_scan_context,
+    run_advance_cursor,
     run_collect_chunks,
 )
+
+
+class _FakeEmbedProvider:
+    """Deterministic embedding provider (no API) for run_collect_chunks tests."""
+
+    def __init__(self, config: dict | None = None) -> None:
+        self._batch_size = 100
+
+    async def embed(self, texts: list[str], model: str) -> EmbedBatchResult:
+        return EmbedBatchResult(
+            vectors=[[float(len(t)), 0.0, 0.0, 0.0] for t in texts],
+            model=model or "fake-embed",
+            total_tokens=sum(len(t) for t in texts),
+        )
+
+    def estimate_tokens(self, texts: list[str]) -> int:
+        return sum(len(t) for t in texts)
+
+    def get_dimension(self, model: str) -> int:
+        return 4
 
 
 @pytest.fixture(autouse=True)
@@ -51,10 +75,16 @@ def _safe_file_context(tmp_path: Path):
         read_paths=[str(tmp_path)],
         write_paths=[str(tmp_path)],
     )
+    # #1303 Stage I: run_collect_chunks streams into reyn.safe.embed_index;
+    # wire a deterministic fake provider (workspace_root defaults to cwd).
+    register_provider("fake_ev", _FakeEmbedProvider)
+    ei._reset_context()
+    ei._set_context(provider_name="fake_ev")
     yield
     sf._read_paths = ()
     sf._write_paths = ()
     sf._context_initialised = False
+    ei._reset_context()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -383,9 +413,14 @@ def test_index_events_skill_has_postprocessor():
     assert skill.postprocessor is not None
     assert isinstance(skill.postprocessor, Postprocessor)
     step_types = [s.type for s in skill.postprocessor.steps]
-    assert step_types == ["python", "run_op", "run_op", "python"], (
-        f"Expected [python, run_op, run_op, python] steps, got: {step_types}"
+    # #1303 Stage I folded the embed + index_write run-ops into run_collect_chunks;
+    # only safe-python steps remain (collect + advance_cursor).
+    assert all(t == "python" for t in step_types), (
+        f"Expected only python steps post-cutover, got: {step_types}"
     )
+    fns = [s.function for s in skill.postprocessor.steps]
+    assert "run_collect_chunks" in fns
+    assert "run_advance_cursor" in fns
 
 
 def test_index_events_skill_postprocessor_output():
@@ -514,8 +549,8 @@ def test_run_collect_chunks_reglobs_files_internally(tmp_path, monkeypatch):
         }
     }
 
-    # run_collect_chunks writes to cwd-relative artifacts/event_chunks.jsonl
-    # Change cwd to tmp_path so the re-glob and output path are correct
+    # run_collect_chunks re-globs + streams to embed_index (cwd-relative).
+    # Change cwd to tmp_path so the re-glob and .reyn/index output are correct.
     original_cwd = os.getcwd()
     os.chdir(str(tmp_path))
     try:
@@ -527,6 +562,56 @@ def test_run_collect_chunks_reglobs_files_internally(tmp_path, monkeypatch):
         f"Expected 1 chunk from re-glob, got {result['chunk_count']}. "
         f"Skipped: {result['skipped_runs']}, filtered: {result['filtered_runs']}"
     )
+    # #1303 Stage I: the chunk landed in the events index (no intermediate file).
+    assert result["embedded"] == 1
+    assert not (tmp_path / "artifacts" / "event_chunks.jsonl").exists()
+    import asyncio
+
+    from reyn.index import SqliteIndexBackend
+
+    stat = asyncio.run(SqliteIndexBackend(workspace_root=tmp_path).stat("events"))
+    assert stat["chunk_count"] == 1
+
+
+def test_run_collect_chunks_resume_skips_reembed(tmp_path, monkeypatch):
+    """Tier 2: ★resume through the index_events chunker path — a second pass
+    over the same events re-embeds nothing (existing_hashes pre-embed skip)."""
+    events_dir = tmp_path / ".reyn" / "events" / "2026-05"
+    events_dir.mkdir(parents=True)
+    (events_dir / "rc.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in _run_events(skill="s", run_id="r1")) + "\n",
+        encoding="utf-8",
+    )
+    artifact = {"data": {"since": "1970-01-01T00:00:00Z", "mode": "append"}}
+    monkeypatch.chdir(str(tmp_path))
+
+    first = run_collect_chunks(artifact)
+    assert first["embedded"] == 1
+
+    second = run_collect_chunks({"data": {"since": "1970-01-01T00:00:00Z", "mode": "append"}})
+    assert second["embedded"] == 0
+    assert second["skipped_embed"] == 1
+
+
+def test_run_advance_cursor_uses_chunk_stats_max(tmp_path, monkeypatch):
+    """Tier 2: run_advance_cursor advances from data.chunk_stats.max_completed_at
+    (the value run_collect_chunks tracked inline) — no intermediate file read."""
+    monkeypatch.chdir(str(tmp_path))
+    (tmp_path / ".reyn" / "index").mkdir(parents=True)
+    artifact = {
+        "data": {
+            "chunk_stats": {
+                "chunk_count": 2,
+                "skipped_runs": 0,
+                "filtered_runs": 0,
+                "max_completed_at": "2026-05-15T10:00:00Z",
+            }
+        }
+    }
+    result = run_advance_cursor(artifact)
+    assert result["new_cursor"] == "2026-05-15T10:00:00Z"
+    assert result["indexed_runs"] == 2
+    assert read_cursor(".reyn/index/events_cursor") == "2026-05-15T10:00:00Z"
 
 
 # ── TODO(fp-0009): Tier 3 e2e ─────────────────────────────────────────────────

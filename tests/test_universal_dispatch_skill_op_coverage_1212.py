@@ -299,7 +299,10 @@ def test_universal_dispatch_covers_all_stdlib_skill_real_op_kinds() -> None:
     # route) both go RED.
     _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS = frozenset({
         "ask_user",       # control-flow (user-input request); not a dispatchable action
-        "embed",          # low-level RAG primitive; chat surface is the `recall` macro
+        # #1303 Stage I: "embed" / "index_write" run-ops removed from index_docs +
+        # index_events (chunkers now stream into reyn.safe.embed_index), so no
+        # stdlib skill declares them any more — they drop out of the skill op-kind
+        # scan entirely (the ops still exist in the OS registry until S-I.5).
         # #1240 Wave 2b: coarse "file" kind dropped from OP_KIND_MODEL_MAP and the
         # LLM-facing catalog. It is still used in OS-deterministic preprocessor
         # run_op steps (skill_improver copy_to_work/finalize) because PreprocessorExecutor
@@ -308,7 +311,6 @@ def test_universal_dispatch_covers_all_stdlib_skill_real_op_kinds() -> None:
         # not a chat-router dispatch target. Migration to fine-kind run_op is a
         # separate work item (requires wiring PreprocessorExecutor → ToolRegistry).
         "file",           # legacy coarse kind; still in OS-deterministic preprocessor run_ops
-        "index_write",    # low-level RAG write primitive; not chat-exposed
         "skill_resolve",  # skill-internal name resolution (preprocessor run_op)
     })
     assert set(uncovered) == _INTENTIONAL_CHAT_ROUTER_EXCLUSIONS, (
@@ -366,8 +368,9 @@ def test_skill_real_op_kind_scanner_finds_known_ops() -> None:
     spot_checks = {
         "read_file",     # many skills, allowed_ops
         "sandboxed_exec", # swe_bench, allowed_ops + run_op preprocessor
-        "embed",         # index_docs + index_events, run_op postprocessor
-        "index_write",   # index_docs + index_events, run_op postprocessor
+        # #1303 Stage I removed the "embed" / "index_write" run-ops from
+        # index_docs + index_events (chunkers stream into reyn.safe.embed_index),
+        # so no stdlib skill declares them any more.
         "recall",        # ops_report + skill_improver, run_op preprocessor
         "skill_resolve", # eval_builder + skill_improver, run_op preprocessor
     }

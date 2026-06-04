@@ -38,11 +38,11 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
+from reyn.safe import embed_index as _embed_index
 from reyn.safe import file as _safe_file
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-_CHUNKS_JSONL_PATH = "artifacts/event_chunks.jsonl"
 _ERROR_EXCERPT_MAX = 200
 _EPOCH_ISO = "1970-01-01T00:00:00Z"
 
@@ -246,12 +246,22 @@ def run_collect_chunks(artifact: dict) -> dict:
     leading to hallucinated file paths and chunk_count=0). File discovery is
     purely deterministic and belongs in the postprocessor, not in LLM context.
 
-    Writes chunks to artifacts/event_chunks.jsonl for the embed op.
+    Streams chunks straight into reyn.safe.embed_index (provider-direct
+    embed+index, #1303 Stage I — no intermediate event_chunks.jsonl, the old
+    embed + index_write run-ops folded in). Tracks the max completed_at while
+    streaming so run_advance_cursor can advance the cursor from data (it no
+    longer re-reads a file).
+
     Returns summary dict placed at data.chunk_stats:
         {
-            "chunk_count":   int,
-            "skipped_runs":  int,
-            "filtered_runs": int,
+            "chunk_count":      int,   # = embedded + skipped_embed
+            "skipped_runs":     int,
+            "filtered_runs":    int,
+            "embedded":         int,
+            "skipped_embed":    int,
+            "written":          int,
+            "skipped_write":    int,
+            "max_completed_at": str,   # for run_advance_cursor
         }
     """
     data = artifact.get("data") or {}
@@ -268,45 +278,60 @@ def run_collect_chunks(artifact: dict) -> dict:
     events_root = ".reyn/events"
     file_paths = _discover_event_files(events_root)
 
-    _safe_file.mkdir(_dirname(_CHUNKS_JSONL_PATH), parents=True, exist_ok=True)
+    # Mutable holder updated by the generator as it streams (so the counts +
+    # cursor are available after embed_and_index drains the generator).
+    acc = {"skipped_runs": 0, "filtered_runs": 0, "max_dt": None, "max_ts": ""}
 
-    chunk_count = 0
-    skipped_runs = 0
-    filtered_runs = 0
-    chunk_index = 0
-    records: list[str] = []
+    def _gen_chunks():
+        chunk_index = 0
+        for run_id, events, source_file in _stream_runs(file_paths):
+            result = _build_chunk(run_id, events, source_file, since_dt, skill_filter)
+            if result is None:
+                acc["skipped_runs"] += 1
+                continue
+            if result.get("_filtered"):
+                acc["filtered_runs"] += 1
+                continue
+            result["metadata"]["chunk_index"] = chunk_index
+            # Track max completed_at (same field + datetime compare the old
+            # _find_max_cursor_from_chunks used, now computed inline).
+            extra = result["metadata"].get("extra") or {}
+            completed_at = str(extra.get("ended_at") or extra.get("completed_at") or "")
+            if completed_at:
+                dt = _parse_iso_safe(completed_at)
+                if dt and (acc["max_dt"] is None or dt > acc["max_dt"]):
+                    acc["max_dt"] = dt
+                    acc["max_ts"] = completed_at
+            yield {"text": result["text"], "metadata": result["metadata"]}
+            chunk_index += 1
 
-    for run_id, events, source_file in _stream_runs(file_paths):
-        result = _build_chunk(run_id, events, source_file, since_dt, skill_filter)
-        if result is None:
-            skipped_runs += 1
-            continue
-        if result.get("_filtered"):
-            filtered_runs += 1
-            continue
-        result["metadata"]["chunk_index"] = chunk_index
-        record = {
-            "text": result["text"],
-            "metadata": result["metadata"],
-        }
-        records.append(json.dumps(record, ensure_ascii=False))
-        chunk_count += 1
-        chunk_index += 1
-
-    _safe_file.write(_CHUNKS_JSONL_PATH, "\n".join(records) + ("\n" if records else ""))
+    stats = _embed_index.embed_and_index(
+        _gen_chunks(),
+        "events",
+        "standard",
+        mode="append",
+        description="P6 event runs indexed by index_events skill",
+    )
 
     return {
-        "chunk_count": chunk_count,
-        "skipped_runs": skipped_runs,
-        "filtered_runs": filtered_runs,
+        "chunk_count": stats["embedded"] + stats["skipped_embed"],
+        "skipped_runs": acc["skipped_runs"],
+        "filtered_runs": acc["filtered_runs"],
+        "embedded": stats["embedded"],
+        "skipped_embed": stats["skipped_embed"],
+        "written": stats["written"],
+        "skipped_write": stats["skipped_write"],
+        "max_completed_at": acc["max_ts"],
     }
 
 
 def run_advance_cursor(artifact: dict) -> dict:
     """Postprocessor python step: advance .reyn/index/events_cursor.
 
-    Reads the max completed_at from written event_chunks.jsonl, then calls
-    advance_cursor() to write the new value atomically.
+    Reads the max completed_at from ``data.chunk_stats`` (computed inline by
+    run_collect_chunks while it streamed the chunks — #1303 Stage I removed the
+    intermediate file it used to re-read), then calls advance_cursor() to write
+    the new value atomically.
 
     Returns summary placed at data.cursor_result:
         {
@@ -325,7 +350,7 @@ def run_advance_cursor(artifact: dict) -> dict:
     filtered_runs = int(chunk_stats.get("filtered_runs") or 0)
 
     cursor_path = ".reyn/index/events_cursor"
-    new_cursor = _find_max_cursor_from_chunks()
+    new_cursor = str(chunk_stats.get("max_completed_at") or "")
     if not new_cursor:
         existing = read_cursor(cursor_path)
         new_cursor = existing if existing else _EPOCH_ISO
@@ -663,35 +688,6 @@ def _discover_event_files(events_root: str) -> list[str]:
     pattern = f"{events_root}/**/*.jsonl"
     matches = _glob_mod.glob(pattern, recursive=True)
     return sorted(m for m in matches if _is_regular_file(m))
-
-
-def _find_max_cursor_from_chunks() -> str | None:
-    """Read the just-written event_chunks.jsonl and find the max completed_at."""
-    if not _path_exists_safe(_CHUNKS_JSONL_PATH):
-        return None
-    try:
-        content = _safe_file.read(_CHUNKS_JSONL_PATH)
-    except (OSError, PermissionError):
-        return None
-    max_ts: str | None = None
-    max_dt: datetime | None = None
-    for line in content.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            record = json.loads(line)
-            meta = record.get("metadata") or {}
-            extra = meta.get("extra") or {}
-            completed_at = str(extra.get("ended_at") or extra.get("completed_at") or "")
-            if completed_at:
-                dt = _parse_iso_safe(completed_at)
-                if dt and (max_dt is None or dt > max_dt):
-                    max_dt = dt
-                    max_ts = completed_at
-        except Exception:
-            continue
-    return max_ts
 
 
 def _parse_iso_safe(ts: str) -> datetime | None:
