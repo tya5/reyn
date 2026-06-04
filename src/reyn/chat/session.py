@@ -1695,11 +1695,31 @@ class ChatSession:
             get_router_host=lambda: self._router_host,
         )
 
+        # #1092 PR-F1 (chat activation): build the chat axis's turn_budget engine
+        # off the RESOLVED model (#1172-safe — resolve self.model exactly as the
+        # CompactionEngine does; never hand the cosmetic class to the budget).
+        # try_build_* returns None (NOT raise) when the model's context is too
+        # small to satisfy the by-construction force-close floor (output_reserve +
+        # offload_cap < threshold) — a small-context model is a legitimate chat
+        # session that simply cannot support force-close, so it degrades to the
+        # pre-force-close path (no cap, no handoff) rather than failing __init__.
+        # ADDITIVE: the engine's sole consumer is
+        # RouterHostAdapter.wrap_up_output_reserve, inert until the F2 handoff
+        # calls _force_close_call — chat stays REACTIVE-only (see the property's
+        # docstring for the deliberate per-axis choice).
+        from reyn.services.turn_budget import try_build_default_turn_budget_engine
+        _chat_turn_budget_engine = try_build_default_turn_budget_engine(
+            self._resolver.resolve(self.model).model,
+            use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
+        )
+
         # PR-refactor-session-1 wave 3 PR3: RouterHostAdapter — concrete
         # RouterLoopHost implementation extracted from ChatSession. Constructed
         # last in __init__ because it receives callbacks that reference self
         # (all of which are bound methods, resolved at call time not here).
         self._router_host = RouterHostAdapter(
+            # #1092 PR-F1: the chat turn_budget engine (resolved-model, asserted).
+            turn_budget_engine=_chat_turn_budget_engine,
             agent_name=self.agent_name,
             agent_role=self._agent_role,
             output_language=self.output_language,
