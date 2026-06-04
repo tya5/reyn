@@ -50,12 +50,10 @@ from reyn.schemas.models import (
     CompactIROp,
     DeleteFileIROp,
     EditFileIROp,
-    EmbedIROp,
     GlobFilesIROp,
     GrepFilesIROp,
     IndexDropIROp,
     IndexQueryIROp,
-    IndexWriteIROp,
     JudgeOutputIROp,
     LintIROp,
     MCPInstallIROp,
@@ -131,9 +129,9 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "web_fetch":   WebFetchIROp,
     "web_search":  WebSearchIROp,
     "mcp_install": MCPInstallIROp,
-    # ADR-0033: RAG-extensible OS — embed / index_* / recall ops
-    "embed":       EmbedIROp,
-    "index_write": IndexWriteIROp,
+    # ADR-0033: RAG-extensible OS — index_* / recall ops.
+    # #1303 Stage I: embed + index_write deleted (chunkers stream into
+    # reyn.safe.embed_index; recall embeds provider-direct).
     "index_query": IndexQueryIROp,
     "recall":      RecallIROp,
     "index_drop":  IndexDropIROp,
@@ -186,15 +184,11 @@ OP_PURITY: dict[str, OpPurity] = {
     "ask_user":    OpPurity.side_effect,
     # MCP server install: writes config + secrets, runs registry fetch.
     "mcp_install": OpPurity.side_effect,
-    # ADR-0033 RAG ops:
-    # - embed: external API call (LiteLLM passthrough), token cost.
-    "embed":       OpPurity.external,
-    # - index_write: writes to backend SQLite / future plugins.
-    "index_write": OpPurity.side_effect,
+    # ADR-0033 RAG ops (#1303 Stage I: embed + index_write deleted):
     # - index_query: read-only, depends on backend state (= world).
     "index_query": OpPurity.world,
-    # - recall: macro op dispatching embed + index_query, treated as external
-    #   (sub-ops emit their own events for trace fidelity).
+    # - recall: macro op — embeds the query provider-direct, then dispatches
+    #   index_query sub-ops (which emit their own events); external.
     "recall":      OpPurity.external,
     # - index_drop: deletes backend collection + manifest entry.
     "index_drop":  OpPurity.side_effect,

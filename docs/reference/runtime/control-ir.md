@@ -28,10 +28,8 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
 | `mcp_drop_server` | Remove an MCP server from project/local/user config (inverse of `mcp_install`) | `permissions.mcp_drop_server: true` in skill frontmatter |
-| `embed` | Embed texts or artifact chunks via a LiteLLM embedding model | none (embedding API cost) |
-| `index_write` | Write embedded chunks to an index backend (SQLite) | none |
 | `index_query` | Semantic vector search over one indexed source | none |
-| `recall` | Macro: embed → index_query per source → merge top-K | none |
+| `recall` | Macro: embed query (provider-direct) → index_query per source → merge top-K | none (embedding API cost) |
 | `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
 | `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
 | `skill_resolve` | Resolve a skill name to its on-disk path (read-only) | none |
@@ -291,81 +289,13 @@ Handler lifecycle:
 5. Writes `mcp.servers.<name>` to the target scope config file
 6. Emits `mcp_server_installed` event (P6) — key names only, no values
 
-## `embed`
-
-Embeds texts (or a JSONL artifact) into vectors using a LiteLLM-backed embedding model. Two input forms:
-
-**Form A — inline** (small payload, e.g. recall query):
-```json
-{
-  "kind": "embed",
-  "texts": ["What is the capital of France?"],
-  "model": "standard"
-}
-```
-
-**Form B — artifact reference** (large payload, e.g. indexing many chunks):
-```json
-{
-  "kind": "embed",
-  "input_artifact": "chunks.jsonl",
-  "text_field": "text",
-  "output_artifact": "embedded_chunks.jsonl",
-  "model": "standard"
-}
-```
-
-Exactly one of `texts` / `input_artifact` must be provided. Fields:
-
-- `texts` (list[str], Form A) — inline texts to embed.
-- `input_artifact` (str, Form B) — workspace-relative JSONL path; each line must have a `text_field` key.
-- `text_field` (str, default `"text"`) — field name to embed in Form B.
-- `output_artifact` (str, Form B) — workspace-relative JSONL path for output vectors. Idempotent: lines whose `content_hash` already exists are skipped.
-- `model` (str, default `"standard"`) — model class or LiteLLM string, resolved via `reyn.yaml embedding.classes`.
-
-Returns: Form A → `{"kind": "embed", "vectors": [[float, ...]]}`. Form B → `{"kind": "embed", "status": "ok", "embedded": int, "skipped": int}`.
-
-Events: `embed_progress` (Form B only, per batch — `embedded`, `skipped` cumulative counts).
-
-## `index_write`
-
-Writes embedded chunks to a named SQLite index backend. Two input forms:
-
-**Form A — inline**:
-```json
-{
-  "kind": "index_write",
-  "source": "project_docs",
-  "chunks": [
-    {"text": "...", "vector": [0.1, 0.2, ...], "metadata": {"path": "README.md"}}
-  ],
-  "mode": "append"
-}
-```
-
-**Form B — artifact reference**:
-```json
-{
-  "kind": "index_write",
-  "source": "project_docs",
-  "input_artifact": "embedded_chunks.jsonl",
-  "mode": "replace",
-  "description": "Project documentation index",
-  "path": "docs/**/*.md"
-}
-```
-
-Fields:
-
-- `source` (str, required) — logical source name. Maps to `.reyn/index/<source>/index.db`.
-- `chunks` (list[dict], Form A) — inline list of `{text, vector, metadata}` objects.
-- `input_artifact` (str, Form B) — workspace-relative JSONL path.
-- `mode` (`"append" | "replace"`, default `"append"`) — `"replace"` drops the source first.
-- `embedding_model` (str, optional) — override the embedding model recorded in chunk metadata.
-- `description` (str, optional) — human-readable description stored in source manifest (shown in router system prompt).
-- `path` (str, optional) — original glob or path stored in source manifest.
-
-Returns: `{"kind": "index_write", "source": str, "chunks_written": int, "chunks_skipped": int}`.
+> **#1303 Stage I**: the `embed` and `index_write` control-IR ops were removed.
+> Embedding + index writing are now done **provider-direct** inside
+> `reyn.safe.embed_index` (the index_docs / index_events chunkers stream their
+> chunks into it) and inside the `recall` op (query embedding). The
+> `EmbeddingProvider` and `SqliteIndexBackend` primitives are unchanged — only
+> the run-op wrappers are gone. Skills no longer emit `kind: embed` /
+> `kind: index_write`.
 
 ## `index_query`
 

@@ -117,12 +117,13 @@ from . import ask_user as _ask_user  # noqa: F401, E402
 # #272/#1128: voluntary LLM-initiated compaction op.
 from . import compact as _compact  # noqa: F401, E402
 
-# ADR-0033: RAG-extensible OS — embed / index_* / recall ops
-from . import embed as _embed  # noqa: F401, E402
+# ADR-0033: RAG-extensible OS — index_* / recall ops.
+# #1303 Stage I: embed + index_write run-ops deleted (folded into
+# reyn.safe.embed_index; recall embeds provider-direct). index_query +
+# index_drop + recall remain.
 from . import file as _file  # noqa: F401, E402
 from . import index_drop as _index_drop  # noqa: F401, E402
 from . import index_query as _index_query  # noqa: F401, E402
-from . import index_write as _index_write  # noqa: F401, E402
 from . import judge_output as _judge_output  # noqa: F401, E402
 from . import lint as _lint  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402

@@ -20,10 +20,10 @@ the parse boundary; ControlIRExecutor._invoker then calls
 registry.lookup("mcp") / registry.lookup("run_skill") which returns None
 (coarse ToolDef dropped), so execute_op fallback runs.
 
-The 6 RAG / internal kinds (embed / index_* / judge_output / skill_resolve)
+The RAG / internal kinds (index_* / judge_output / skill_resolve)
 intentionally stay on the legacy path and are documented in this test's
 expected-legacy set so adding them later is an explicit change, not a
-silent one.
+silent one. (#1303 Stage I deleted embed + index_write entirely.)
 """
 from __future__ import annotations
 
@@ -77,10 +77,10 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
 # "call_mcp_tool" / "invoke_skill" which alias to these op kinds at parse.
 # registry.lookup("mcp") / registry.lookup("run_skill") → None → execute_op.
 _LEGACY_ONLY_KINDS: frozenset[str] = frozenset({
-    "embed",
+    # #1303 Stage I: "embed" + "index_write" deleted from OP_KIND_MODEL_MAP
+    # (folded into reyn.safe.embed_index; recall embeds provider-direct).
     "index_drop",
     "index_query",
-    "index_write",
     "judge_output",
     "mcp",
     "run_skill",
