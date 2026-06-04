@@ -92,9 +92,9 @@ def test_prefixed_row_line1_starts_with_label_prefix() -> None:
 def test_top_level_row_line1_does_not_start_with_prefix() -> None:
     """Tier 2: _build_line1() on a top-level row has NO label_prefix leading text.
 
-    Verifies the non-prefix path is unchanged: no extra whitespace is
-    prepended by ToolCallRow itself; the hanging-indent comes from the
-    flush path (_write_body Padding) in the conv pane.
+    Verifies the row's own text is col-0 origin (no self-indent). Per #1245
+    the flush path now writes top-level rows via ``_write_log`` (col 0) too,
+    matching the live widget — see ``test_flushed_toplevel_tool_row_lands_at_col0``.
     """
     row = _row_no_prefix()
     line1_plain = row.render_line1().plain
@@ -143,4 +143,63 @@ async def test_flushed_prefixed_row_lands_at_prefix_not_double_indent() -> None:
         assert not line.startswith(" " * 8), (
             f"flushed prefixed row must NOT carry an 8-col hanging indent "
             f"(double-indent regression); got {line!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_flushed_toplevel_tool_row_lands_at_col0() -> None:
+    """Tier 2b: #1245 regression guard — a flushed TOP-LEVEL ToolCallRow lands
+    at col 0, matching the live widget (CSS ``padding: 0 0``), NOT col 8.
+
+    Exercises the real ``_do_flush_tool_call_row`` path. Before #1245 the
+    top-level branch used ``_write_body`` → an 8-cell hanging-indent Padding
+    the live row never had → the row jumped right at seal. Reverting to
+    ``_write_body`` makes the flushed line start with 8 spaces → this FAILS.
+    """
+    app = _make_app()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        log = conv.query_one(RichLog)
+
+        row = _row_no_prefix()
+        conv.mount(row)
+        await pilot.pause()
+        conv._do_flush_tool_call_row(row)
+        await pilot.pause()
+
+        idx = _find_line_containing(log, "bash")
+        line = _line_text(log, idx)
+        # Live ToolCallRow renders at col 0; the flushed line must match.
+        assert not line.startswith(" "), (
+            f"flushed top-level tool row must start at col 0 (no leading "
+            f"space, no 8-cell hanging indent); got {line!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_flushed_skill_row_lands_at_col0() -> None:
+    """Tier 2b: #1245 regression guard — a finished SkillActivityRow flushes at
+    col 0, matching the live widget (CSS ``padding: 0 0``), NOT col 8.
+
+    Before #1245 ``finish_skill_row`` used ``_write_body`` → an 8-cell
+    hanging-indent → the finished breadcrumb jumped right at seal. Reverting
+    to ``_write_body`` makes the flushed line start with 8 spaces → FAILS.
+    """
+    app = _make_app()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        log = conv.query_one(RichLog)
+
+        conv.start_skill_row("run-xyz", "code_review")
+        await pilot.pause()
+        conv.finish_skill_row("run-xyz", success=True)
+        await pilot.pause()
+
+        idx = _find_line_containing(log, "code_review")
+        line = _line_text(log, idx)
+        assert not line.startswith(" "), (
+            f"flushed skill row must start at col 0 (no leading space); "
+            f"got {line!r}"
         )
