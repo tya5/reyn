@@ -1,7 +1,8 @@
 """Tier 2: recall macro op handler OS invariants (ADR-0033 Phase 1).
 
-Tests use FakeEmbeddingProvider (monkeypatched into embed handler) and real
-SqliteIndexBackend for end-to-end recall dispatch.
+Tests use FakeEmbeddingProvider (monkeypatched into the recall handler's
+provider-direct embed call, #1303 S-I.4) and a real SqliteIndexBackend for
+end-to-end recall dispatch.
 """
 from __future__ import annotations
 
@@ -85,8 +86,8 @@ def _chunk(text: str, vec: list[float], ch: str) -> ChunkRecord:
 async def test_recall_happy_path_returns_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall macro embeds query, queries source, returns merged top-K."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.embed as _embed_mod
-    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.op_runtime.recall as _recall_mod
+    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -116,8 +117,8 @@ async def test_recall_happy_path_returns_chunks(tmp_path: Path, monkeypatch: pyt
 async def test_recall_empty_sources_returns_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall with empty sources list returns fallback immediately."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.embed as _embed_mod
-    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.op_runtime.recall as _recall_mod
+    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -141,8 +142,8 @@ async def test_recall_empty_sources_returns_fallback(tmp_path: Path, monkeypatch
 async def test_recall_merges_multiple_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall merges chunks from multiple sources, sorted by score."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.embed as _embed_mod
-    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.op_runtime.recall as _recall_mod
+    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -170,8 +171,8 @@ async def test_recall_merges_multiple_sources(tmp_path: Path, monkeypatch: pytes
 async def test_recall_top_k_limits_merged_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: recall top_k limits total chunks returned across all sources."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.embed as _embed_mod
-    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.op_runtime.recall as _recall_mod
+    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -199,8 +200,8 @@ async def test_recall_top_k_limits_merged_results(tmp_path: Path, monkeypatch: p
 async def test_recall_mode_all_semantic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: when all sources return semantic results, mode='semantic'."""
     fake = FakeEmbeddingProvider()
-    import reyn.op_runtime.embed as _embed_mod
-    monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
+    import reyn.op_runtime.recall as _recall_mod
+    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
     monkeypatch.chdir(tmp_path)
@@ -220,3 +221,36 @@ async def test_recall_mode_all_semantic(tmp_path: Path, monkeypatch: pytest.Monk
     assert result.get("status") != "error", result
     # s1 has content, embed returns a vector → semantic
     assert result["mode"] == "semantic"
+
+
+@pytest.mark.asyncio
+async def test_recall_embed_failure_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 2: a provider-direct embed failure → graceful fallback (empty
+    chunks, mode=fallback) + a recall_embed_failed event (#1303 S-I.4 replaced
+    the embed sub-op error-status check with a try/except around provider.embed)."""
+    class _RaisingProvider:
+        def __init__(self) -> None:
+            self._batch_size = 10
+
+        async def embed(self, texts: list[str], model: str) -> Any:
+            raise RuntimeError("embedding endpoint down")
+
+        def estimate_tokens(self, texts: list[str]) -> int:
+            return 0
+
+        def get_dimension(self, model: str) -> int:
+            return 3
+
+    import reyn.op_runtime.recall as _recall_mod
+    monkeypatch.setattr(_recall_mod, "get_provider", lambda *a, **kw: _RaisingProvider())
+    monkeypatch.chdir(tmp_path)
+
+    ctx = _make_ctx(tmp_path)
+    op = RecallIROp(
+        kind="recall", query="q", sources=["s1"], top_k=5, embedding_model="standard",
+    )
+    result = await execute_op(op, ctx, caller="control_ir")
+
+    assert result["chunks"] == []
+    assert result["mode"] == "fallback"
+    assert any(e.type == "recall_embed_failed" for e in ctx.events.all())
