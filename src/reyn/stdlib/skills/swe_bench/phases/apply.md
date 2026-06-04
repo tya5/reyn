@@ -50,6 +50,18 @@ preprocessor:
       on_error: skip
     into: data._edit_regions
     on_error: skip
+  # #1216: deterministically DROP not-locatable edits (a region with count 0 =
+  # anchor not found) from the actionable plan + record them in `not_locatable`,
+  # so the apply model has no anchored region to blind-edit from (a structural
+  # close, not reliant on the model honouring a "skip count-0" instruction —
+  # the #1216 run2 failure was the model ignoring exactly that instruction).
+  - type: python
+    module: ./drop_not_locatable.py
+    function: drop_not_locatable
+    mode: safe
+    into: data
+    output_schema:
+      type: object
 ---
 
 Implement the edit plan by modifying the repository files.
@@ -72,10 +84,12 @@ For each edit, check its `_edit_regions` entry:
 
 - **One match** → use the matched line and its surrounding context as the basis
   for the edit's `old_string` (copy the exact current text).
-- **No match** (`count` is 0 / empty) → the anchor was not found, so the edit
-  site is not located. Do NOT guess or fabricate an `old_string` — that produces
-  a no-op or wrong edit. Skip this edit, note the file as not-locatable, and
-  proceed; the verify phase will surface the gap for a re-plan.
+- **No match** (`count` is 0) → you will NOT see such an edit: the OS
+  preprocessor has already **removed** every not-locatable edit (region count 0)
+  from your plan and recorded it under `not_locatable`. So every edit you receive
+  has a real region — never fabricate an `old_string` for an anchor you cannot
+  see in a region (the removed ones are handled deterministically; the verify
+  phase surfaces the `not_locatable` gap for a re-plan).
 - **Multiple matches** (`count` > 1) → the anchor was not unique. Use the match
   whose surrounding context best fits the plan's `description` for that edit.
 
