@@ -2007,6 +2007,14 @@ class RouterLoop:
                     result = await self._force_close_call_with_retry(
                         messages, resolved_model=resolved_model,
                     )
+                    # #1092 PR-D1 (detect): hand the consolidation to the host so
+                    # the OS can persist it as a checkpoint + (PR-D2) re-enter.
+                    # getattr-guarded → chat hosts don't implement it (their
+                    # handoff is the outer retry_loop terminal, PR-F) → no-op,
+                    # byte-identical.
+                    _record_fc = getattr(host, "record_force_close", None)
+                    if _record_fc is not None:
+                        _record_fc(result)
                 else:
                     # Tier 2 testability: tests inject a real-fake callable via
                     # ``_llm_caller`` (= no unittest.mock.patch needed). None
