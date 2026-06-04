@@ -1,19 +1,36 @@
 """recall macro op handler — embed query → iterate index_query → merge top-K.
 
-Dispatches sub-ops (embed + index_query) via the OS execute_op path so
-events are emitted per sub-op (P6 audit trail, same pattern as iterate.py
-which also calls sub-op handlers via execute_op).
+The query embedding is computed **provider-direct** (#1303 S-I.4 — mirrors
+``ActionEmbeddingIndex``); it no longer dispatches an ``embed`` sub-op. The
+``index_query`` sub-ops still go through ``execute_op`` (P6 per-source events).
 
 ADR-0033 §2.1: macro op, OpPurity.external.
 """
 from __future__ import annotations
 
+import os
 from typing import Literal
 
-from reyn.schemas.models import EmbedIROp, IndexQueryIROp, RecallIROp
+from reyn.embedding import get_provider
+from reyn.schemas.models import IndexQueryIROp, RecallIROp
 
 from . import execute_op, register
 from .context import OpContext
+
+
+def _resolve_provider():
+    """Resolve the embedding provider the same way the old embed op did
+    (env override + reyn.yaml embedding config); kept inline so recall has no
+    dependency on the embed op (which #1303 S-I.5 deletes)."""
+    name = os.environ.get("REYN_EMBEDDING_PROVIDER", "litellm")
+    if name == "litellm":
+        try:
+            from reyn.config import load_config
+            cfg = load_config().embedding
+        except Exception:
+            cfg = None
+        return get_provider(name, config=cfg or {})
+    return get_provider(name, config={})
 
 
 async def handle(
@@ -24,7 +41,7 @@ async def handle(
     """Execute a recall macro op (ADR-0033 §2.1).
 
     Steps:
-      1. Embed the query text via embed sub-op (Form A inline).
+      1. Embed the query text provider-direct (#1303 S-I.4).
       2. For each source, run index_query sub-op.
       3. Merge all top-K chunks globally by score, return top_k.
 
@@ -34,24 +51,19 @@ async def handle(
     if not op.sources:
         return {"chunks": [], "mode": "fallback"}
 
-    # ── 1. Embed query ────────────────────────────────────────────────────────
-    embed_op = EmbedIROp(
-        kind="embed",
-        texts=[op.query],
-        model=op.embedding_model,
-    )
-    embed_result = await execute_op(embed_op, ctx, caller=caller)
-
-    if embed_result.get("status") in ("error", "denied", "skipped"):
-        # Embed failed — fallback to empty result
+    # ── 1. Embed query (provider-direct; was an embed sub-op) ─────────────────
+    try:
+        provider = _resolve_provider()
+        embed_result = await provider.embed([op.query], op.embedding_model)
+        vectors = embed_result.get("vectors", [])
+    except Exception as exc:  # provider/config failure → graceful fallback
         ctx.events.emit(
             "recall_embed_failed",
             query=op.query,
-            error=embed_result.get("error", "unknown"),
+            error=str(exc),
         )
         return {"chunks": [], "mode": "fallback"}
 
-    vectors = embed_result.get("vectors", [])
     if not vectors:
         return {"chunks": [], "mode": "fallback"}
 
