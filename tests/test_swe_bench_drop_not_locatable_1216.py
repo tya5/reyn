@@ -122,8 +122,8 @@ def test_apply_preprocessor_drops_and_records_not_locatable(tmp_path: Path) -> N
     # removed too (so surviving edits stay index-aligned with their regions), and
     # only the locatable edit's count>=1 region remains.
     regions = data["_edit_regions"]
-    assert len(regions) == 1
-    assert regions[0]["count"] >= 1
+    (region_only,) = regions  # exactly the locatable edit's region survives the lockstep drop
+    assert region_only["count"] >= 1
 
 
 def test_apply_preprocessor_mid_plan_drop_realigns_regions(tmp_path: Path) -> None:
@@ -155,10 +155,11 @@ def test_apply_preprocessor_mid_plan_drop_realigns_regions(tmp_path: Path) -> No
     # count-0 region = no misalignment), and each surviving edit pairs with ITS OWN
     # region (not the dropped mid-plan one).
     regions = data["_edit_regions"]
-    assert len(regions) == 2
-    assert all(r["count"] >= 1 for r in regions)
-    assert "ANCHOR-ALPHA-AAA" in str(regions[0].get("matches"))
-    assert "ANCHOR-OMEGA-ZZZ" in str(regions[1].get("matches"))
+    region_alpha, region_omega = regions  # exactly 2 survive the mid-plan count-0 drop
+    assert region_alpha["count"] >= 1
+    assert region_omega["count"] >= 1
+    assert "ANCHOR-ALPHA-AAA" in str(region_alpha.get("matches"))
+    assert "ANCHOR-OMEGA-ZZZ" in str(region_omega.get("matches"))
 
 
 def test_apply_preprocessor_all_locatable_keeps_all(tmp_path: Path) -> None:
