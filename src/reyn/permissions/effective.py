@@ -137,8 +137,15 @@ class AgentLayer:
                 )
             )
         if axis is CapabilityAxis.NETWORK_HOST:
-            return any(e.get("host") == value for e in d.http_get) or self._approved(
-                axis, value
+            # #1199 S3.1b-2c-2: faithful to require_http_get's membership decision —
+            # a specific declared host OR the "*" wildcard (host set unknown at
+            # write-time). The intricate resolution flow (config-deny tiers /
+            # startup_guard host-prompt / legacy compat / per-host persistence)
+            # stays in require_http_get as the non-∩ flow; this axis is just the
+            # decl membership (so S3.1c can ∩ SandboxLayer.network).
+            return (
+                any(e.get("host") in (value, "*") for e in d.http_get)
+                or self._approved(axis, value)
             )
         if axis is CapabilityAxis.SUBPROCESS:
             return bool(d.shell)
