@@ -646,6 +646,41 @@ class RunOrchestrator:
                     rollback_context=rollback_context,
                 )
 
+                # #1092 PR-D2 (handoff re-entry): if the phase FORCE-CLOSED, RE-ENTER
+                # the SAME phase (OS-internal, current_phase HELD — no graph edge,
+                # P7-clean) with the consolidation injected as
+                # ``previous_control_ir_results`` (the rollback seam). This REPLACES
+                # the FD2-from-partial outcome (D1's fallback): the partial decide is
+                # discarded; the re-entered phase continues from the consolidated
+                # checkpoint + a fresh (raw-discarded) frame → below the force-close
+                # threshold → converges. Bounded by the EXISTING ``max_phase_visits``
+                # loop limit (the re-entry goes through enter_phase → begin_phase
+                # visit++) — no new cap (the force-close re-entry is just another
+                # phase visit; PR-E adds the by-construction floor+monotonic guarantee
+                # that makes the visit-cap-abort unreachable in well-configured cases).
+                _fc_ckpt = self._phase_executor._last_force_close_checkpoint
+                if _fc_ckpt is not None:
+                    self._phase_executor._last_force_close_checkpoint = None
+                    self._state.rollback.arm_force_close_reentry([
+                        {"result": (
+                            "[Prior work in this phase was consolidated before this "
+                            "continuation — do not repeat it]\n" + _fc_ckpt["consolidation"]
+                        )},
+                    ])
+                    self._events.emit(
+                        "phase_force_close_reentered",
+                        phase=current_phase,
+                        checkpoint_path=_fc_ckpt["path"],
+                    )
+                    await self._enter_phase_fn(current_phase, artifact)
+                    if self._skill_registry:
+                        await self._skill_registry.advance_phase(
+                            run_id=self._run_id,
+                            next_phase=current_phase,
+                            last_phase_artifact_path=artifact_path,
+                        )
+                    continue
+
                 current_def = self._skill.phases.get(current_phase)
                 current_decl = self._skill.permissions
                 current_allowed = set(current_def.allowed_ops) if current_def is not None else None
