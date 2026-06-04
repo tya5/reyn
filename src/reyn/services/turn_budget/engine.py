@@ -294,3 +294,34 @@ def build_default_turn_budget_engine(
         resolver=resolver,
         use_chars4=use_chars4,
     )
+
+
+def try_build_default_turn_budget_engine(
+    model: str,
+    *,
+    resolver: "ModelResolver | None" = None,
+    use_chars4: bool = False,
+) -> "TurnBudgetEngine | None":
+    """:func:`build_default_turn_budget_engine`, but returns ``None`` instead of
+    raising when the model's context is too small to satisfy the by-construction
+    force-close floor (``output_reserve + offload_cap < force_close_threshold``).
+
+    Such a model genuinely CANNOT support force-close termination by construction
+    (there is no room for a capped consolidation plus a working increment below
+    the threshold) — that is a property of the model's small context, NOT a
+    misconfiguration. So a caller that activates force-close opportunistically
+    (e.g. a chat/plan session that may run on any model) degrades to its
+    pre-force-close path (no wrap-up cap, no handoff — the existing retry_loop
+    terminal) rather than failing to construct. Where a non-viable config IS a bug
+    (the reserves were mis-set for a known large model), call
+    ``build_default_turn_budget_engine`` directly so the assert still fires.
+
+    The viability gate is exactly the engine's own construction-time
+    ``assert_turn_budget_bounds`` — caught here so the result is None, not a raise;
+    no bounds logic is duplicated (which would drift from the engine's measure)."""
+    try:
+        return build_default_turn_budget_engine(
+            model, resolver=resolver, use_chars4=use_chars4
+        )
+    except AssertionError:
+        return None

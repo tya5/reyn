@@ -19,6 +19,7 @@ from reyn.services.turn_budget.engine import (
     assert_turn_budget_bounds,
     build_default_turn_budget_engine,
     compute_turn_budget,
+    try_build_default_turn_budget_engine,
     wrap_up_system_prompt,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "assert_turn_budget_bounds",
     "build_default_turn_budget_engine",
     "compute_turn_budget",
+    "try_build_default_turn_budget_engine",
     "wrap_up_system_prompt",
 ]

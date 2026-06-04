@@ -226,7 +226,17 @@ class RouterHostAdapter:
         # When None, only the user-global ~/.reyn/config.yaml is watched.
         # ChatSession passes the project root so all 3 tiers are covered.
         project_root: Path | None = None,
+        # #1092 PR-F1 (chat activation): the shared turn_budget engine the chat
+        # axis budgets against. Built by ChatSession via
+        # build_default_turn_budget_engine off the CompactionEngine's RESOLVED
+        # model (#1172-safe). Sole consumer (for now) is wrap_up_output_reserve —
+        # which hard-caps the force-close wrap-up call's output. None = no engine
+        # (legacy / test paths) → no cap (== pre-PR-F behaviour). ADDITIVE: chat
+        # never calls _force_close_call until the F2 handoff lands, so wiring the
+        # reserve here is inert until then.
+        turn_budget_engine: Any = None,
     ) -> None:
+        self._turn_budget_engine = turn_budget_engine
         self._agent_name = agent_name
         self._agent_role = agent_role
         self.output_language = output_language
@@ -315,6 +325,28 @@ class RouterHostAdapter:
         self._compact_now = compact_now
         # #272/#1128 context-size signal: live budget provider (or None).
         self._context_window_status = context_window_status
+
+    @property
+    def wrap_up_output_reserve(self) -> int | None:
+        """#1092 PR-F1: the force-close wrap-up call's OUTPUT budget
+        (``output_reserve``), or None when the chat axis has no turn_budget engine.
+        ``RouterLoop._force_close_call`` passes it as ``max_tokens`` to HARD-CAP the
+        consolidation ≤ output_reserve — the by-construction guarantee that the
+        re-injected handoff stays below threshold (``assert_turn_budget_bounds``,
+        run at engine construction, enforces output_reserve + offload_cap <
+        threshold). Mirrors ``PhaseRouterLoopHost.wrap_up_output_reserve``.
+
+        NOTE — chat deliberately exposes ONLY this (the wrap-up cap), not
+        ``should_force_close``: chat is REACTIVE-only. Unlike a phase (task
+        execution — proactively force-closing to wrap-up-and-continue is correct
+        because the phase has a goal), chat is a *live conversation* where a
+        proactive mid-turn force-close would truncate the user's conversation
+        prematurely. So chat handles growth via the bounded ``retry_loop`` shrink
+        and force-closes only at the last-resort floor-exhausted terminal (the F2
+        handoff). This is a deliberate per-axis architectural choice
+        (failure-mode separation), NOT a missing proactive trigger."""
+        engine = self._turn_budget_engine
+        return engine.budget.output_reserve if engine is not None else None
 
     # --- RouterLoopHost identity attributes ---
 
