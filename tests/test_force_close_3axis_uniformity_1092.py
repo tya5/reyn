@@ -61,15 +61,17 @@ def test_chat_and_phase_activate_via_try_build_not_build_default() -> None:
         )
 
 
-def test_plan_does_not_wire_turn_budget_engine() -> None:
-    """Tier 2: plan is the articulated third failure-mode — step-scoped with no
-    force-close, so it does NOT build a turn_budget engine (neither helper). Its
-    cumulative content is bounded by fresh-history-per-step + FP-0031, not by the
-    force-close handoff (verified primary-evidence; activation tracked as #1285,
-    escalated-as-tracked — picked up if plan-step overflow is observed)."""
+def test_plan_wires_turn_budget_engine() -> None:
+    """Tier 2: #1285 (#1092 plan-axis activation) — plan NOW builds a turn_budget
+    engine and wires it into ``_PlanStepHost``, so a long plan step force-closes
+    (PR1 FLOOR: the bounded wrap-up consolidation becomes the step output; PR2
+    re-enters the same step from it). Uses ``try_build`` (not ``build_default``)
+    so a small-context model that cannot satisfy the by-construction floor
+    DEGRADES to None (force-close inert) — uniform with phase (PR-F3) + chat (F1):
+    all three axes now wire the engine. (Was deferred at #1092 wave time; this
+    test flipped when #1285 landed.)"""
     called = _called_names(_planner_mod)
-    assert "try_build_default_turn_budget_engine" not in called
-    assert "build_default_turn_budget_engine" not in called
+    assert "try_build_default_turn_budget_engine" in called
 
 
 # ── invariant 2: by-construction floor holds per axis ────────────────────────
