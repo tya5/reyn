@@ -1,23 +1,20 @@
 name: index_summary
 description: |
   Caller-facing summary of a completed index_docs run. Returned by the
-  skill postprocessor after chunk + embed + index_write pipeline completes.
+  skill postprocessor after the chunk → provider-direct embed+index pipeline
+  completes.
 
-  Fields are nested under their respective postprocessor step outputs:
-  - chunk_stats: result of write_chunks_with_lock (python step)
-  - embed_result: result of embed op
-  - index_result: result of index_write op
+  #1303 Stage I: embedding + index writing are folded into the single
+  write_chunks_with_lock step (it streams chunks into reyn.safe.embed_index),
+  so all run counts now live under one ``chunk_stats`` sub-dict — the separate
+  ``embed_result`` (embed op) and ``index_result`` (index_write op) groups are
+  gone with the run-ops.
 
   The source field and strategy fields (boundary, max_chunk_size_tokens) are
   echoed from the LLM's chunk_strategy decision artifact.
-
-  Bug note (batch 17 S2): the original schema had top-level required fields
-  (chunk_count, embedded_count, etc.) but the postprocessor steps write into
-  data.chunk_stats, data.embed_result, data.index_result sub-dicts.
-  Schema updated to match actual postprocessor output structure.
 schema:
   type: object
-  required: [source, chunk_stats, embed_result, index_result]
+  required: [source, chunk_stats]
   properties:
     source:
       type: string
@@ -31,41 +28,28 @@ schema:
     chunk_stats:
       type: object
       required: [chunk_count, source_lock_acquired]
-      description: Result of the write_chunks_with_lock python step.
+      description: Result of the write_chunks_with_lock step (chunk + embed + index).
       properties:
         chunk_count:
           type: integer
           minimum: 0
-          description: Total chunks produced by the chunker step.
+          description: Total chunks produced (= embedded + skipped_embed).
         source_lock_acquired:
           type: boolean
           description: Whether the source-level lock was acquired.
-        chunks_path:
-          type: string
-          description: Path to chunks.jsonl within the workspace.
-    embed_result:
-      type: object
-      required: [embedded_count, skipped_count]
-      description: Result of the embed op.
-      properties:
-        embedded_count:
+        embedded:
           type: integer
           minimum: 0
-          description: Chunks that were embedded (new or changed).
-        skipped_count:
+          description: Chunks newly embedded this run.
+        skipped_embed:
           type: integer
           minimum: 0
-          description: Chunks skipped (content_hash already in output_artifact).
-    index_result:
-      type: object
-      required: [written]
-      description: Result of the index_write op.
-      properties:
+          description: Chunks skipped before embedding (content_hash already indexed = resume).
         written:
           type: integer
           minimum: 0
           description: Chunks written to the index backend.
-        skipped:
+        skipped_write:
           type: integer
           minimum: 0
-          description: Chunks skipped by index_write (duplicate content_hash).
+          description: Chunks skipped at write time (duplicate content_hash).

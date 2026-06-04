@@ -3,7 +3,8 @@
 Covers:
   - skill.md parses and compiles without errors
   - entry_phase, graph, final_output_name correctness
-  - Skill.postprocessor steps = python → embed_run_op → index_write_run_op
+  - Skill.postprocessor steps = python (extract_and_split) → python
+    (write_chunks_with_lock, which embeds+indexes provider-direct) — #1303 S-I
   - Permissions declare python/trusted for all three chunker functions
   - input_schema validates correctly (required fields, mode default)
   - chunk_strategy artifact declares passthrough + strategy fields
@@ -18,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from reyn.compiler.loader import load_dsl_skill
-from reyn.schemas.models import Postprocessor, PythonStep, RunOpStep, Skill
+from reyn.schemas.models import Postprocessor, PythonStep, Skill
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -173,20 +174,19 @@ def test_index_docs_postprocessor_output_name():
     assert skill.postprocessor.output_name == "index_summary"
 
 
-def test_index_docs_postprocessor_four_steps():
-    """Tier 2: postprocessor has steps: python → python → run_op → run_op.
-
-    Post-FP-0042 Phase 2.2: both python steps now run mode: safe via
-    chunkers_safe.py (= extract_and_split + write_chunks_with_lock).
-    Steps 2 and 3 are the existing embed and index_write run_ops.
+def test_index_docs_postprocessor_no_run_ops():
+    """Tier 2: the postprocessor has no run_op steps — #1303 Stage I folded the
+    embed + index_write run-ops into the write_chunks_with_lock python step,
+    which streams chunks into reyn.safe.embed_index.
     """
     skill = _load()
     steps = skill.postprocessor.steps
     assert steps, "expected postprocessor steps to be present"
-    assert steps[0].type == "python"
-    assert steps[1].type == "python"
-    assert steps[2].type == "run_op"
-    assert steps[3].type == "run_op"
+    # The cutover removed both run_op steps; only safe-python steps remain.
+    assert all(s.type == "python" for s in steps), "no run_op steps should remain"
+    fns = [s.function for s in steps if isinstance(s, PythonStep)]
+    assert "extract_and_split" in fns
+    assert "write_chunks_with_lock" in fns
 
 
 def test_index_docs_postprocessor_step0_is_extract_and_split():
@@ -199,42 +199,13 @@ def test_index_docs_postprocessor_step0_is_extract_and_split():
 
 
 def test_index_docs_postprocessor_step1_is_write_chunks_with_lock():
-    """Tier 2: postprocessor step[1] calls write_chunks_with_lock (safe, reyn.safe.file + reyn.safe.process)."""
+    """Tier 2: postprocessor step[1] calls write_chunks_with_lock — the safe
+    step that now also embeds + indexes (streams to reyn.safe.embed_index)."""
     skill = _load()
     step = skill.postprocessor.steps[1]
     assert isinstance(step, PythonStep)
     assert step.function == "write_chunks_with_lock"
     assert step.into == "data.chunk_stats"
-
-
-def test_index_docs_postprocessor_step2_is_embed_op():
-    """Tier 2: postprocessor step[2] is a run_op wrapping an embed op."""
-    skill = _load()
-    step = skill.postprocessor.steps[2]
-    assert isinstance(step, RunOpStep)
-    assert step.op.kind == "embed"
-    assert step.op.input_artifact == "artifacts/chunks.jsonl"
-    assert step.op.output_artifact == "artifacts/chunks_with_vectors.jsonl"
-
-
-def test_index_docs_postprocessor_step3_is_index_write_op():
-    """Tier 2: postprocessor step[3] is a run_op wrapping an index_write op."""
-    skill = _load()
-    step = skill.postprocessor.steps[3]
-    assert isinstance(step, RunOpStep)
-    assert step.op.kind == "index_write"
-    assert step.op.input_artifact == "artifacts/chunks_with_vectors.jsonl"
-
-
-def test_index_docs_postprocessor_step3_args_from():
-    """Tier 2: index_write run_op uses args_from to inject source + mode from artifact."""
-    skill = _load()
-    step = skill.postprocessor.steps[3]
-    assert isinstance(step, RunOpStep)
-    assert "source" in step.args_from
-    assert "mode" in step.args_from
-    assert step.args_from["source"] == "data.source"
-    assert step.args_from["mode"] == "data.mode"
 
 
 # ---------------------------------------------------------------------------
@@ -315,11 +286,12 @@ def test_index_docs_chunk_strategy_boundary_has_enum():
 
 
 def test_index_docs_postprocessor_output_schema_has_required_fields():
-    """Tier 2: postprocessor output_schema includes source + nested step result groups.
+    """Tier 2: postprocessor output_schema includes source + the chunk_stats
+    result group.
 
-    Schema updated in batch 17 dogfood (commit 0c50a20) to match actual
-    postprocessor step output shape: nested chunk_stats / embed_result /
-    index_result groups under data, not flat chunk_count / embedded_count.
+    #1303 Stage I: the embed + index_write run-ops folded into
+    write_chunks_with_lock, so all run counts live under one chunk_stats group
+    (the separate embed_result / index_result groups are gone).
     """
     skill = _load()
     schema = skill.postprocessor.output_schema
@@ -328,13 +300,14 @@ def test_index_docs_postprocessor_output_schema_has_required_fields():
     else:
         data_props = schema.get("properties", {})
 
-    for field in ("source", "chunk_stats", "embed_result", "index_result"):
+    for field in ("source", "chunk_stats"):
         assert field in data_props, (
             f"Required field '{field}' missing from postprocessor output schema"
         )
+    # The old run-op result groups are gone.
+    assert "embed_result" not in data_props
+    assert "index_result" not in data_props
 
     chunk_stats_props = data_props["chunk_stats"].get("properties", {})
-    assert "chunk_count" in chunk_stats_props, "chunk_stats.chunk_count missing"
-
-    embed_props = data_props["embed_result"].get("properties", {})
-    assert "embedded_count" in embed_props, "embed_result.embedded_count missing"
+    for f in ("chunk_count", "embedded", "skipped_embed", "written"):
+        assert f in chunk_stats_props, f"chunk_stats.{f} missing"

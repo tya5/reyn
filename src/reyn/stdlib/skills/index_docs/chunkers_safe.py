@@ -27,6 +27,7 @@ import json
 import re
 import time as _time
 
+from reyn.safe import embed_index as _embed_index
 from reyn.safe import file as _safe_file
 from reyn.safe import process as _safe_process
 
@@ -70,19 +71,20 @@ def extract_and_split(artifact: dict) -> list:
 # ─── write_chunks_with_lock ─────────────────────────────────────────────────
 
 
-_CHUNKS_JSONL_PATH = "artifacts/chunks.jsonl"
-
-
 def write_chunks_with_lock(artifact: dict) -> dict:
     """Postprocessor python step (mode: safe): source-level advisory lock +
-    chunked JSONL write.
+    provider-direct embed+index (#1303 Stage I).
 
     Receives the artifact after ``extract_and_split`` has placed the ordered
     file list at ``data.chunk_list``. Acquires the source-level lock under
     ``.reyn/index/<source>/.lock`` (= default-zone write), reads each source
     file's content (= default-zone read, granted by ``preprocessor_executor``
-    via CWD), splits into chunks per strategy, writes ``artifacts/chunks.jsonl``
-    (= requires ``permissions.file.write: artifacts``), releases the lock.
+    via CWD), splits into chunks per strategy, and **streams** the chunks
+    straight into :func:`reyn.safe.embed_index.embed_and_index` — which embeds
+    them provider-direct and writes the vectors to
+    ``.reyn/index/<source>/index.db`` (default-zone write) — then releases the
+    lock. There is no intermediate ``<cwd>/artifacts/*.jsonl`` file: the old
+    ``embed`` + ``index_write`` run-ops are folded into this one step.
 
     The lock is recovered as stale when the holder PID is no longer alive
     (= ``reyn.safe.process.pid_alive`` returns False), matching the
@@ -92,9 +94,12 @@ def write_chunks_with_lock(artifact: dict) -> dict:
 
     Returns:
         {
-            "chunk_count":          int,
+            "chunk_count":          int,   # = embedded + skipped_embed
             "source_lock_acquired": bool,
-            "chunks_path":          str,
+            "embedded":             int,   # chunks newly embedded
+            "skipped_embed":        int,   # chunks skipped pre-embed (resume)
+            "written":              int,   # chunks written to the index
+            "skipped_write":        int,   # dup content_hash at write time
         }
     """
     data = artifact.get("data") or {}
@@ -106,6 +111,9 @@ def write_chunks_with_lock(artifact: dict) -> dict:
         "preserve_parent_context": bool(data.get("preserve_parent_context", True)),
     }
     source = str(data.get("source") or "unknown")
+    mode = str(data.get("mode") or "append")
+    description = data.get("description")
+    path = data.get("path")
     chunk_list = data.get("chunk_list") or []
     file_paths: list[str] = []
     seen: set[str] = set()
@@ -144,33 +152,43 @@ def write_chunks_with_lock(artifact: dict) -> dict:
     lock_acquired = True
 
     try:
-        chunk_count = _write_chunks_jsonl_from_paths(file_paths, strategy)
+        stats = _embed_index.embed_and_index(
+            _iter_chunks_from_paths(file_paths, strategy),
+            source,
+            "standard",
+            mode=mode,
+            description=description if isinstance(description, str) else None,
+            path=path if isinstance(path, str) else None,
+        )
     finally:
         _safe_file.delete(lock_path, missing_ok=True)
 
     return {
-        "chunk_count": chunk_count,
+        "chunk_count": stats["embedded"] + stats["skipped_embed"],
         "source_lock_acquired": lock_acquired,
-        "chunks_path": _CHUNKS_JSONL_PATH,
+        "embedded": stats["embedded"],
+        "skipped_embed": stats["skipped_embed"],
+        "written": stats["written"],
+        "skipped_write": stats["skipped_write"],
     }
 
 
-# ─── JSONL writer + split helpers ───────────────────────────────────────────
+# ─── chunk generator + split helpers ────────────────────────────────────────
 #
 # Originally duplicated from the (now-deleted) ``chunkers.py``
 # ``apply_strategy`` codepath; kept here as the canonical home. Pure regex
 # + string ops, no external dependencies.
 
 
-def _write_chunks_jsonl_from_paths(file_paths: list[str], strategy: dict) -> int:
-    """Chunk an ordered list of file paths and write artifacts/chunks.jsonl.
+def _iter_chunks_from_paths(file_paths: list[str], strategy: dict):
+    """Yield chunk dicts (``{text, metadata}``) from an ordered file list.
 
-    Reads source files via :mod:`reyn.safe.file`; writes the JSONL output
-    via the same. The output path ``artifacts/chunks.jsonl`` is outside
-    the default ``.reyn/`` write zone and is granted explicitly in
-    skill.md via ``permissions.file.write: artifacts``.
-
-    Returns the number of chunks written (= one JSONL row per chunk).
+    Reads source files via :mod:`reyn.safe.file` and streams the chunks
+    straight into :func:`reyn.safe.embed_index.embed_and_index` — no
+    intermediate JSONL file (#1303 Stage I). A generator so a bulk index
+    holds only one embed batch in memory at a time. Pure regex + string ops,
+    no external dependencies. Unreadable files are silently skipped (matches
+    the legacy OSError-swallowing read loop).
     """
     boundary = strategy["boundary"]
     max_size = strategy["max_chunk_size_tokens"]
@@ -178,10 +196,7 @@ def _write_chunks_jsonl_from_paths(file_paths: list[str], strategy: dict) -> int
     overlap = strategy.get("overlap_ratio", 0.0)
     preserve = strategy.get("preserve_parent_context", True)
 
-    _safe_file.mkdir("artifacts", parents=True, exist_ok=True)
-
     chunk_idx = 0
-    chunk_records: list[str] = []
     for file_path in file_paths:
         try:
             text = _safe_file.read(file_path)
@@ -195,20 +210,14 @@ def _write_chunks_jsonl_from_paths(file_paths: list[str], strategy: dict) -> int
                 "source_path": file_path,
                 "source_type": suffix_no_dot(file_path) or "unknown",
                 "content_hash": content_hash,
-                "embedding_model": "",   # filled in by embed op
+                "embedding_model": "",   # filled in by embed_and_index
                 "chunk_index": chunk_idx,
                 "size_tokens": approx_tokens(chunk_text),
                 "parent_context": parent_ctx if preserve else None,
                 "extra": {},
             }
-            record = {"text": chunk_text, "metadata": metadata}
-            chunk_records.append(json.dumps(record, ensure_ascii=False))
+            yield {"text": chunk_text, "metadata": metadata}
             chunk_idx += 1
-
-    # Single write to keep the file atomic-ish (= no partial JSONL on
-    # mid-write crash; the prior unsafe-mode version streamed line-by-line).
-    _safe_file.write(_CHUNKS_JSONL_PATH, "\n".join(chunk_records) + ("\n" if chunk_records else ""))
-    return chunk_idx
 
 
 def suffix_no_dot(path: str) -> str:

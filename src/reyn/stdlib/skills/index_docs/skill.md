@@ -6,8 +6,8 @@ description: |
 
   Phase 1 (LLM): inspect file samples + cost preflight, decide a chunk
   strategy, or abort if cost is unexpectedly high.
-  Phase 2 (Skill.postprocessor): deterministic chunk → embed → index_write
-  pipeline; LLM is not involved.
+  Phase 2 (Skill.postprocessor): deterministic chunk → provider-direct
+  embed+index pipeline; LLM is not involved.
 
   Override the chunkers module for project-specific formats (Python AST,
   custom Markdown, etc.) via `extends: stdlib/index_docs` + module override.
@@ -17,7 +17,7 @@ final_output_description: |
   LLM-contract artifact: chunking strategy decision (boundary, chunk size,
   overlap, parent context flag) plus echoed passthrough fields (source,
   path, description, mode). The skill postprocessor uses this to run the
-  deterministic chunk → embed → index_write pipeline.
+  deterministic chunk → provider-direct embed+index pipeline.
 finish_criteria:
   - File samples and cost preflight were reviewed
   - A chunk_strategy was decided (or abort was issued for high-cost inputs)
@@ -48,23 +48,16 @@ permissions:
       function: extract_and_split
       mode: safe
       timeout: 30
-    # FP-0042 Phase 2.2 (2026-05-23): write_chunks_with_lock migrated to
-    # chunkers_safe.py (mode: safe). Source file reads + lock + jsonl
-    # write all go through reyn.safe.file; PID identity + liveness go
-    # through reyn.safe.process. The artifacts/ write zone below grants
-    # the chunks.jsonl output (= outside the default .reyn/ zone).
+    # #1303 Stage I (2026-06-04): write_chunks_with_lock streams chunks
+    # straight into reyn.safe.embed_index (provider-direct embed+index) —
+    # no intermediate JSONL file. Source reads go through reyn.safe.file;
+    # PID identity + liveness through reyn.safe.process; embed+index writes
+    # land under .reyn/index/<source>/ (default write zone). No out-of-zone
+    # file.write grant is needed (the old `artifacts` grant is dropped).
     - module: ./chunkers_safe.py
       function: write_chunks_with_lock
       mode: safe
       timeout: 300
-  # FP-0042 Phase 2.2: write_chunks_with_lock writes the chunked JSONL
-  # output to ``<cwd>/artifacts/chunks.jsonl`` — outside the default
-  # ``.reyn/`` write zone, so it needs an explicit grant. The lock file
-  # at ``.reyn/index/<source>/.lock`` does not need a declaration (=
-  # default-zone write).
-  file.write:
-    - path: artifacts
-      scope: recursive
 postprocessor:
   output_schema: index_summary
   steps:
@@ -81,7 +74,9 @@ postprocessor:
           required: [source_path]
           properties:
             source_path: {type: string}
-    # Step 2: safe — lock + file content read + .jsonl write via reyn.safe.file.
+    # Step 2: safe — lock + file content read + provider-direct embed+index
+    # (streams chunks into reyn.safe.embed_index; folds the old embed +
+    # index_write run-ops, no intermediate file). #1303 Stage I.
     - type: python
       module: ./chunkers_safe.py
       function: write_chunks_with_lock
@@ -93,26 +88,10 @@ postprocessor:
         properties:
           chunk_count:          {type: integer, minimum: 0}
           source_lock_acquired: {type: boolean}
-          chunks_path:          {type: string}
-    - type: run_op
-      into: data.embed_result
-      op:
-        kind: embed
-        input_artifact: artifacts/chunks.jsonl
-        output_artifact: artifacts/chunks_with_vectors.jsonl
-      args_from: {}
-    - type: run_op
-      into: data.index_result
-      op:
-        kind: index_write
-        source: __placeholder__
-        input_artifact: artifacts/chunks_with_vectors.jsonl
-        mode: append
-      args_from:
-        source: data.source
-        mode: data.mode
-        description: data.description
-        path: data.path
+          embedded:             {type: integer, minimum: 0}
+          skipped_embed:        {type: integer, minimum: 0}
+          written:              {type: integer, minimum: 0}
+          skipped_write:        {type: integer, minimum: 0}
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---
@@ -135,14 +114,15 @@ the LLM has decided the chunking strategy.
 2. **Skill.postprocessor** (deterministic, LLM not involved):
    - `extract_and_split` (python step, safe): enumerates source files via
      glob; no file content read
-   - `write_chunks_with_lock` (python step, safe): reads each source file
-     via `reyn.safe.file`, splits into chunks per strategy, acquires
-     source-level advisory lock (UX gap fix D), writes
-     `artifacts/chunks.jsonl` to the workspace
-   - `embed` (run_op): reads `chunks.jsonl`, embeds via LiteLLM, writes
-     `artifacts/chunks_with_vectors.jsonl` (progress events = UX gap fix C)
-   - `index_write` (run_op): reads `chunks_with_vectors.jsonl`, writes to
-     `SqliteIndexBackend`, updates `SourceManifest`
+   - `write_chunks_with_lock` (python step, safe): acquires the source-level
+     advisory lock (UX gap fix D), reads each source file via `reyn.safe.file`,
+     splits into chunks per strategy, and **streams** the chunks into
+     `reyn.safe.embed_index.embed_and_index` — which embeds them provider-direct
+     and writes the vectors to `SqliteIndexBackend`
+     (`.reyn/index/<source>/index.db`), then updates `SourceManifest`. No
+     intermediate file (#1303 Stage I folds the old `embed` + `index_write`
+     run-ops into this step). Resume = DB-as-checkpoint: already-indexed
+     `content_hash`es are skipped before embedding.
 
 ## Input
 
@@ -164,9 +144,11 @@ flag-form CLI wrapper is tracked as carry-over but not implemented in 1.0.
 
 `index_summary` with:
 - `source` — the indexed source name
-- `chunk_count` — total chunks produced
-- `embedded_count` / `skipped_count` — embed op results
-- `written_count` — chunks written to the index backend
+- `chunk_stats` — the write_chunks_with_lock result:
+  - `chunk_count` — total chunks produced (= `embedded` + `skipped_embed`)
+  - `embedded` / `skipped_embed` — newly embedded vs skipped pre-embed (resume)
+  - `written` / `skipped_write` — written to the index vs dup `content_hash`
+  - `source_lock_acquired` — whether the source lock was held
 - `boundary` / `max_chunk_size_tokens` — strategy used
 
 ## Override pattern (ADR-0033 §2.1)
@@ -199,12 +181,16 @@ postprocessor:
       into: data.chunk_stats
       mode: safe
       output_schema: ...
-    # embed + index_write steps unchanged (inherited)
+    # embed+index happen inside write_chunks_with_lock (it streams chunks
+    # into reyn.safe.embed_index) — no separate embed / index_write steps.
 ```
 
-The pre-FP-0042 single-step `apply_strategy` override path was retired in
-Phase 2.8 — projects that previously overrode it should split into the
-two-step chain above.
+A project chunker override should call
+`reyn.safe.embed_index.embed_and_index(chunks, source, "standard", mode=...,
+description=..., path=...)` from its `write_chunks_with_lock` so the
+provider-direct embed+index, DB-checkpoint resume, and SourceManifest upsert
+are preserved. The pre-FP-0042 single-step `apply_strategy` override path was
+retired in Phase 2.8.
 
 ## Cost preflight (UX gap fix B)
 
@@ -220,5 +206,8 @@ with a `SourceLockedError` (= clear error message listing the holder PID).
 
 ## Progress feedback (UX gap fix C)
 
-The `embed` op handler emits `embed_progress` events per batch, available
-in the event log and surfaced by the TUI's cost/progress tab.
+Per-batch `embed_progress` events came from the old `embed` op. With embedding
+folded into the safe-mode `write_chunks_with_lock` step (which runs in the
+python-harness subprocess), per-batch progress does not currently cross the
+subprocess boundary — tracked as a follow-up (#1306). Phase-1 `cost_preflight`
+(the cost the LLM approves up front) is unchanged.

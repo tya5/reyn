@@ -26,13 +26,22 @@ Design (ADR-0033 op-separation reasons preserved internally)
   the write so the per-turn router system prompt reflects the latest chunk
   count / model (mirrors the old ``index_write`` op).
 
-Permission / config context
----------------------------
-Mirrors :mod:`reyn.safe.file` / :mod:`reyn.safe.http`: the parent wires the
-workspace root + embedding config via :func:`_set_context` before the user
-step runs (the python harness does this). Writes land only under
-``<workspace_root>/.reyn/index/`` (the default write zone), so the safe-mode
-step needs no out-of-zone declaration.
+Config context (self-sufficient — #1303 S-I.2 fork (B))
+-------------------------------------------------------
+This module resolves its own workspace root + embedding config, mirroring the
+old embed op's self-loading (``op_runtime/embed.py``), so the python harness
+needs **no** extra wiring:
+
+- **workspace_root** defaults to ``Path.cwd()``. The chunker subprocess runs
+  in the workspace, and ``cwd == workspace`` is the established contract — the
+  chunker already writes ``.reyn/index/<source>/.lock`` relative to cwd. All
+  index writes land under ``<cwd>/.reyn/index/`` (the default write zone), so
+  the safe-mode step needs no out-of-zone declaration.
+- **provider / embedding config** come from ``REYN_EMBEDDING_PROVIDER`` +
+  ``load_config().embedding`` (byte-identical to the old embed op).
+
+:func:`_set_context` overrides these for tests; any field left ``None`` keeps
+the default resolution. :func:`_reset_context` restores the defaults.
 
 Internal layering
 -----------------
@@ -44,6 +53,7 @@ validator only rejects *user-code* imports outside the allowlist, and
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -55,42 +65,69 @@ from reyn.index.source_manifest import SourceEntry, get_source_manifest
 
 # ── Internal state ─────────────────────────────────────────────────────────
 #
-# Set once at python-harness start-up via :func:`_set_context` (mirrors
-# ``reyn.safe.file`` / ``reyn.safe.http``'s module-globals contract).
+# All ``None`` = use the self-sufficient defaults (cwd / env / lazy config).
+# :func:`_set_context` overrides any subset for tests; :func:`_reset_context`
+# restores the defaults. Mirrors the module-globals contract of
+# ``reyn.safe.file`` / ``reyn.safe.http``, but defaulting (not requiring) so
+# the harness needs no wiring (#1303 S-I.2 fork (B)).
 
 _workspace_root: Path | None = None
-_embedding_config: dict = {}
-_provider_name: str = "litellm"
-_context_initialised: bool = False
+_embedding_config: dict | None = None
+_provider_name: str | None = None
 
 
 def _set_context(
     *,
-    workspace_root: str | Path,
+    workspace_root: str | Path | None = None,
     embedding_config: dict | None = None,
-    provider_name: str = "litellm",
+    provider_name: str | None = None,
 ) -> None:
-    """Wire the workspace root + embedding config into this module.
+    """Override the self-sufficient defaults (test / explicit-wiring hook).
 
-    Called by the python harness before the user step runs. Tests that
-    exercise the API directly call this to establish a controlled context.
-    Idempotent — overwrites the previous context.
+    Any argument left ``None`` keeps the default resolution for that field.
     """
-    global _workspace_root, _embedding_config, _provider_name, _context_initialised
-    _workspace_root = Path(workspace_root)
-    _embedding_config = dict(embedding_config or {})
-    _provider_name = provider_name
-    _context_initialised = True
+    global _workspace_root, _embedding_config, _provider_name
+    if workspace_root is not None:
+        _workspace_root = Path(workspace_root)
+    if embedding_config is not None:
+        _embedding_config = dict(embedding_config)
+    if provider_name is not None:
+        _provider_name = provider_name
 
 
-def _require_context() -> Path:
-    if not _context_initialised or _workspace_root is None:
-        raise RuntimeError(
-            "reyn.safe.embed_index: context not initialised. The parent "
-            "process must call _set_context(workspace_root=...) before the "
-            "safe-mode step runs (the python harness wires this)."
-        )
-    return _workspace_root
+def _reset_context() -> None:
+    """Clear all overrides → back to the self-sufficient defaults."""
+    global _workspace_root, _embedding_config, _provider_name
+    _workspace_root = None
+    _embedding_config = None
+    _provider_name = None
+
+
+def _resolve() -> tuple[Path, str, dict]:
+    """Resolve (workspace_root, provider_name, embedding_config), defaulting to
+    the self-sufficient sources when not overridden:
+      - workspace_root: ``Path.cwd()`` (cwd == workspace contract).
+      - provider_name: ``REYN_EMBEDDING_PROVIDER`` env (default ``"litellm"``).
+      - embedding_config: ``load_config().embedding`` for litellm (mirrors the
+        old embed op); ``{}`` otherwise.
+    """
+    ws = _workspace_root if _workspace_root is not None else Path.cwd()
+    pname = (
+        _provider_name
+        if _provider_name is not None
+        else os.environ.get("REYN_EMBEDDING_PROVIDER", "litellm")
+    )
+    if _embedding_config is not None:
+        cfg = _embedding_config
+    elif pname == "litellm":
+        try:
+            from reyn.config import load_config
+            cfg = load_config().embedding or {}
+        except Exception:
+            cfg = {}
+    else:
+        cfg = {}
+    return ws, pname, cfg
 
 
 # ── Core ───────────────────────────────────────────────────────────────────
@@ -115,8 +152,8 @@ async def embed_and_index_async(
 
     Returns ``{embedded, skipped_embed, written, skipped_write}``.
     """
-    workspace_root = _require_context()
-    provider = get_provider(_provider_name, config=_embedding_config)
+    workspace_root, provider_name, embedding_config = _resolve()
+    provider = get_provider(provider_name, config=embedding_config)
     backend = SqliteIndexBackend(workspace_root=workspace_root)
 
     # Resume key: hashes already indexed (skip BEFORE embedding = cost save).
@@ -251,4 +288,9 @@ def embed_and_index(
     )
 
 
-__all__ = ["embed_and_index", "embed_and_index_async", "_set_context"]
+__all__ = [
+    "embed_and_index",
+    "embed_and_index_async",
+    "_set_context",
+    "_reset_context",
+]
