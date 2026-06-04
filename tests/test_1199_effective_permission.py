@@ -79,20 +79,25 @@ def test_falsification_removing_a_layer_regrants_a_denied_capability() -> None:
 # ── zone is the agent-layer baseline (∪), not a separate ∩ restrictor ─────────
 
 
-def test_zone_is_agent_baseline_grants_beyond_zone_survive() -> None:
-    """Tier 2: the default zone is folded into the agent layer (∪ baseline) — a
-    decl grant OUTSIDE the zone is permitted (it is NOT cancelled by a separate
-    zone ∩ restrictor). This is what the byte-identical requirement forces."""
+def test_file_axes_are_decl_less_zone_or_approved() -> None:
+    """Tier 2: #1199 S3.1c-1 — the FILE axes are decl-less (zone OR approved). The
+    default zone is the agent baseline; a file decl grant is NOT auto-honored (the
+    prior decl-grant disjunct is gone). An out-of-zone path needs an approval."""
     # .reyn/ is the default write zone → allowed with no decl grant.
-    agent = AgentLayer(PermissionDecl())
-    assert agent.allows(AX.FILE_WRITE, ".reyn/x.txt") is True
-    # an absolute path outside the zone → needs a decl grant.
-    outside = "/tmp/reyn-s31a-test/out.txt"
+    assert AgentLayer(PermissionDecl()).allows(AX.FILE_WRITE, ".reyn/x.txt") is True
+    # an absolute path outside the zone → denied even WITH a decl grant (decl-less).
+    outside = "/tmp/reyn-s31c1-test/out.txt"
     assert AgentLayer(PermissionDecl()).allows(AX.FILE_WRITE, outside) is False
-    granted = AgentLayer(
+    declared = AgentLayer(
         PermissionDecl(file_write=[{"path": outside, "scope": "just_path"}])
     )
-    assert granted.allows(AX.FILE_WRITE, outside) is True  # decl grant beyond zone survives
+    assert declared.allows(AX.FILE_WRITE, outside) is False  # decl no longer auto-grants
+    # an approval (folded into the layer) DOES grant it.
+    approved = AgentLayer(
+        PermissionDecl(),
+        approval_check=lambda axis, value: str(value) == outside,
+    )
+    assert approved.allows(AX.FILE_WRITE, outside) is True
 
 
 # ── unconstrained axis = ⊤ (a layer never narrows axes it doesn't own) ────────

@@ -738,6 +738,18 @@ async def _run_single_task(
                 # unsafe_python (identical to the prior batch-built one, which used
                 # the same _build_permission_resolver). interactive=False: a
                 # benchmark subprocess is non-interactive.
+                # #1199 S3.1c-1: the benchmark runs non-interactive in an
+                # isolated, ephemeral per-task workspace clone — the operator's
+                # explicit benchmark invocation IS the grant. With the
+                # non-interactive decl auto-grant removed (S3.1c-1), a
+                # benchmarked skill that declares out-of-zone file paths (e.g.
+                # swe_bench's file.read/write: "*") needs a config-grant to be
+                # approved without an interactive prompt. Scope it to the
+                # benchmark's isolated workspace (same procedure as the
+                # shell_allowed / unsafe_python pre-approvals above). setdefault
+                # preserves any explicit operator setting.
+                session.config.permissions.setdefault("file.read", "allow")
+                session.config.permissions.setdefault("file.write", "allow")
                 agent = Agent.from_config(
                     session.config,
                     shell_allowed=shell_allowed,

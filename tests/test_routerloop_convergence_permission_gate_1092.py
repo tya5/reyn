@@ -1,16 +1,20 @@
 """Tier 2: #1092 PR-B bar-2 — the converged path's make_router_op_context provisions a
-REAL phase OpContext, so a phase op is GATED by the phase PermissionDecl.
+REAL phase OpContext (real resolver + real decl), so a phase op is permission-GATED.
 
 This closes the #1248 advertise/wire-path silent-FAIL class for the converged op-loop at
 unit level (the bar-2 dogfood bar, made sandbox_2-independent): when a phase drives the
 shared RouterLoop, op dispatch reaches the registry handler, which builds its OpContext
 from ``ctx.router_state.op_context_factory`` (= PhaseRouterLoopHost.make_router_op_context).
-If that factory returned None / an empty PermissionDecl, the handler would fall back to an
-empty decl and silently auto-permit (the #1248 trap). This test proves the factory yields
-the real phase ``PermissionDecl`` + a real (non-None) ``PermissionResolver``, and that a
-write the decl does NOT allow is actually DENIED — routed through the SAME registry handler
-the converged run_loop dispatches to (``_handle_write`` → ``_build_legacy_op_context`` →
+If that factory returned None / an empty PermissionDecl + a None resolver, the handler
+would fall back and silently auto-permit (the #1248 trap). This test proves the factory
+yields the real phase ``PermissionDecl`` + a real (non-None) ``PermissionResolver``, and
+that an UNPERMITTED write is actually DENIED — routed through the SAME registry handler the
+converged run_loop dispatches to (``_handle_write`` → ``_build_legacy_op_context`` →
 ``op_context_factory()`` → ``execute_op`` → ``require_file_write``).
+
+#1199 S3.1c-1: the file gates are decl-less (zone OR approved), so the permission
+decision keys on the resolver's zone/config/approval (config-grant is the out-of-zone
+falsification control here), not on the phase decl's file_write list.
 
 Mock-free: real Workspace + real PermissionResolver + real PhaseRouterLoopHost +
 ControlIRExecutor + the real registry handler.
@@ -30,11 +34,17 @@ from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.workspace.workspace import Workspace
 
 
-def _converged_host(tmp_path: Path, *, decl: PermissionDecl) -> PhaseRouterLoopHost:
-    """Build the converged-path host with a REAL resolver + the given phase decl."""
+def _converged_host(
+    tmp_path: Path, *, decl: PermissionDecl, config: dict | None = None,
+) -> PhaseRouterLoopHost:
+    """Build the converged-path host with a REAL resolver + the given phase decl.
+
+    ``config`` seeds the resolver's config-level permissions (e.g.
+    ``{"file.write": "allow"}``) — the post-#1199-S3.1c-1 grant mechanism for
+    out-of-zone writes (files are decl-less: zone OR approved)."""
     events = EventLog()
     resolver = PermissionResolver(
-        config_permissions={}, project_root=tmp_path, interactive=False,
+        config_permissions=config or {}, project_root=tmp_path, interactive=False,
     )
     ws = Workspace(events, permission_resolver=resolver, base_dir=tmp_path)
     cie = ControlIRExecutor(
@@ -91,18 +101,21 @@ def test_make_router_op_context_provisions_real_phase_context(tmp_path) -> None:
     )
 
 
-def test_converged_dispatch_denies_write_outside_phase_decl(tmp_path) -> None:
-    """Tier 2: a write the phase PermissionDecl does NOT allow is DENIED when dispatched
-    through the converged path's registry handler (the bar-2 enforcement claim).
+def test_converged_dispatch_denies_unpermitted_write(tmp_path) -> None:
+    """Tier 2: a write that is NOT permitted is DENIED when dispatched through the
+    converged path's registry handler (the bar-2 enforcement claim — the converged
+    provisioning is not auto-permit, the #1248 guard).
 
-    Falsification: adding ``denied`` to ``decl.file_write`` (see the sibling
-    ``..._allows...`` test) makes the SAME write succeed — so this assertion gates on the
-    decl, not on an unrelated failure.
+    Falsification: granting it via config (see the sibling ``..._allows...`` test)
+    makes the SAME write succeed — so this assertion gates on the permission
+    decision, not on an unrelated failure.
+
+    #1199 S3.1c-1: files are decl-less (zone OR approved), so an out-of-zone path
+    is denied with an empty resolver config regardless of the phase decl.
     """
-    decl = PermissionDecl()  # empty write allowlist → nothing declared writable
-    host = _converged_host(tmp_path, decl=decl)
-    # A project-relative path OUTSIDE the default write zone (.reyn/) — denied unless the
-    # phase decl declares it (so the DECL is the gating factor, not the absolute-path rule).
+    decl = PermissionDecl()
+    host = _converged_host(tmp_path, decl=decl)  # no config grant
+    # A project-relative path OUTSIDE the default write zone (.reyn/, reyn/).
     denied = "data/bar2_gate.txt"
 
     result = _dispatch_write(host, denied)
@@ -114,18 +127,21 @@ def test_converged_dispatch_denies_write_outside_phase_decl(tmp_path) -> None:
     assert not (tmp_path / denied).exists(), "the denied write must NOT have touched the filesystem"
 
 
-def test_converged_dispatch_allows_write_declared_in_phase_decl(tmp_path) -> None:
-    """Tier 2: the SAME write SUCCEEDS once the phase PermissionDecl declares the path
-    writable — proving the previous denial gates on the decl (the falsification control),
-    and that the converged provisioning is not deny-all."""
+def test_converged_dispatch_allows_permitted_write(tmp_path) -> None:
+    """Tier 2: the SAME write SUCCEEDS once it is permitted (config grants
+    ``file.write: allow``) — proving the previous denial gates on the permission
+    decision (the falsification control), and that the converged provisioning is
+    not deny-all. (#1199 S3.1c-1: config-approval is the out-of-zone grant; the
+    decl alone no longer auto-grants files.)"""
     target = "data/bar2_gate.txt"  # same path as the denial test
-    decl = PermissionDecl(file_write=[{"path": target, "scope": "just_path"}])
-    host = _converged_host(tmp_path, decl=decl)
+    host = _converged_host(
+        tmp_path, decl=PermissionDecl(), config={"file.write": "allow"},
+    )
 
     result = _dispatch_write(host, target)
 
     blob = json.dumps(result, default=str)
     assert "denied" not in blob and "permission" not in blob, (
-        f"a write declared in the phase decl must NOT be denied; got {result!r}"
+        f"a permitted write must NOT be denied; got {result!r}"
     )
     assert (tmp_path / target).exists(), "the allowed write should have been performed"

@@ -32,7 +32,6 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 from reyn.permissions.permissions import (
-    _decl_covers_path,
     _in_default_read_zone,
     _in_default_write_zone,
 )
@@ -77,18 +76,23 @@ class AgentLayer:
     """The GRANT layer: the skill's ``PermissionDecl`` over the default-zone
     baseline, faithful to the ``require_*`` gate logic (reuses the same helpers).
 
-    Two pieces of runtime state are folded IN here (#1199 S3.1b ② — NOT a
-    top-level ``approved OR effective`` disjunct, which would let an approval
-    re-grant what a downstream Sandbox/Profile layer denies = a grant-back hole in
-    the full ∩):
+    Runtime approvals are folded IN here (#1199 S3.1b ② — NOT a top-level
+    ``approved OR effective`` disjunct, which would let an approval re-grant what
+    a downstream Sandbox/Profile layer denies = a grant-back hole in the full ∩):
 
     - ``approval_check(axis, value) -> bool``: the startup/config approvals
       (``_is_config_approved`` / ``_is_path_approved_for``). Folded into the agent
       allow-set, so ``effective = AgentLayer(…, approvals) ∩ Sandbox ∩ Profile``
       lets the conjunction restrict approvals too (grant-back forbidden preserved).
-    - ``interactive``: in interactive mode the file decl-grant disjunct is gated
-      off (the user approves at startup, tracked via ``approval_check``); only
-      non-interactive mode honors the declared paths directly (require_file_*).
+
+    #1199 S3.1c-1: the FILE axes are **decl-less** — a file path is permitted iff
+    it is in the default zone OR explicitly approved. The skill's declared file
+    paths are NOT auto-granted (the prior non-interactive ``decl_covers`` disjunct
+    + the ``include_decl`` flag are gone). This resolves the S3.1b-2 transitional
+    divergence: ``require_file_*`` (op-runtime) and ``is_read/write_allowed``
+    (Workspace) now make the SAME decision. A non-interactive declared-but-
+    unapproved path therefore denies (the operator pre-approves via reyn.yaml or
+    runs interactively). Non-file axes still consult the decl below.
     """
 
     def __init__(
@@ -96,20 +100,9 @@ class AgentLayer:
         decl: "PermissionDecl",
         *,
         approval_check: "Any" = None,
-        interactive: bool = False,
-        include_decl: bool = True,
     ) -> None:
         self._decl = decl
         self._approval_check = approval_check
-        self._interactive = interactive
-        # #1199 S3.1b-2: per-gate decl inclusion. The op-runtime file gates
-        # (require_file_read/write) honor the skill's declared paths (decl-full);
-        # the Workspace FS gates (is_read/write_allowed) do NOT (decl-less). This
-        # flag preserves that PRE-EXISTING divergence byte-identically (each gate
-        # keeps its current decision). TRANSITIONAL — removed in S3.1c when the
-        # divergence is reconciled (lead-coder-driven via the file.write
-        # declaration-semantics doc-check).
-        self._include_decl = include_decl
 
     def _approved(self, axis: CapabilityAxis, value: Any) -> bool:
         return bool(self._approval_check and self._approval_check(axis, value))
@@ -117,24 +110,16 @@ class AgentLayer:
     def allows(self, axis: CapabilityAxis, value: Any) -> bool:
         d = self._decl
         if axis is CapabilityAxis.FILE_READ:
+            # #1199 S3.1c-1: decl-less — zone OR approved (no decl auto-grant).
             return (
                 _in_default_read_zone(str(value))
                 or self._approved(axis, value)
-                or (
-                    self._include_decl
-                    and not self._interactive
-                    and _decl_covers_path(d.file_read, str(value))
-                )
             )
         if axis is CapabilityAxis.FILE_WRITE:
+            # #1199 S3.1c-1: decl-less — zone OR approved (no decl auto-grant).
             return (
                 _in_default_write_zone(str(value))
                 or self._approved(axis, value)
-                or (
-                    self._include_decl
-                    and not self._interactive
-                    and _decl_covers_path(d.file_write, str(value))
-                )
             )
         if axis is CapabilityAxis.NETWORK_HOST:
             # #1199 S3.1b-2c-2: faithful to require_http_get's membership decision —
@@ -268,12 +253,11 @@ class EffectivePermission:
         sandbox_policy: "SandboxPolicy | None" = None,
         profile: "AgentProfile | None" = None,
         approval_check: "Any" = None,
-        interactive: bool = False,
     ) -> "EffectivePermission":
-        """Build from the four inputs (zone + approvals folded into the agent
+        """Build from the inputs (zone + approvals folded into the agent
         layer; ② grant-back-safe). Build per op-context (Q3)."""
         return cls([
-            AgentLayer(decl, approval_check=approval_check, interactive=interactive),
+            AgentLayer(decl, approval_check=approval_check),
             SandboxLayer(sandbox_policy),
             ProfileLayer(profile),
         ])

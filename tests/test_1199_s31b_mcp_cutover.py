@@ -54,10 +54,8 @@ def test_approval_folded_inside_agent_layer_is_restricted_by_conjunction() -> No
     # grant-back hole the fold-inside design closes.)
 
 
-def test_interactive_mode_gates_the_decl_file_grant() -> None:
-    """Tier 2: in interactive mode the decl file-grant disjunct is OFF (the user
-    approves at startup, tracked via approval_check); non-interactive honors the
-    declared paths directly (faithful to require_file_* `not self._interactive`)."""
-    decl = PermissionDecl(file_write=[{"path": "/tmp/declared.txt", "scope": "just_path"}])
-    assert AgentLayer(decl, interactive=False).allows(AX.FILE_WRITE, "/tmp/declared.txt") is True
-    assert AgentLayer(decl, interactive=True).allows(AX.FILE_WRITE, "/tmp/declared.txt") is False
+# #1199 S3.1c-1: the interactive-gated decl file-grant disjunct was removed — the
+# FILE axes are decl-less (zone OR approved) in every mode, so there is no
+# interactive-vs-non-interactive difference to gate. This test (which pinned the
+# now-removed `not self._interactive AND decl_covers` disjunct) is deleted; the
+# decl-less behavior is pinned in test_1199_s31c1_swebench_only.
