@@ -1053,3 +1053,151 @@ def test_plan_invalid_retry_directive_handles_empty_input():
     out_none = _build_plan_invalid_retry_directive(None)  # type: ignore[arg-type]
     assert "failed validation:" in out_empty
     assert "failed validation:" in out_none
+
+
+# ── #1285 PR2: plan-axis force-close re-entry (Q-A re-enter-same-step) ────────
+# Force-close is simulated by the fake RouterLoop calling
+# ``host.record_force_close(...)`` (the cumulative-axis trigger), which is what
+# the real RouterLoop.run_loop does on threshold — so these tests exercise
+# execute_plan's re-entry control-flow deterministically without a real LLM.
+
+
+@pytest.mark.asyncio
+async def test_plan_step_force_close_reenters_same_step_and_converges():
+    """Tier 2: #1285 PR2 — a step that force-closes once re-enters the SAME step
+    from the bounded consolidation (continuation, NOT restart) and converges; the
+    re-entry's user turn carries the consolidation text."""
+    import reyn.chat.planner as planner_mod
+    from reyn.chat.planner import execute_plan
+
+    calls: list[str] = []
+
+    class _ForceCloseOnceLoop:
+        def __init__(self, *, host, **kwargs):
+            self.host = host
+
+        async def run(self, *, user_text, history):
+            calls.append(user_text)
+            _n = len(calls)
+            if _n == 1:  # first turn-set of s1 → force-close (cumulative)
+                self.host.record_force_close(
+                    type("FC", (), {"content": "CONSOLIDATED-WORK-XYZ"})()
+                )
+                return None
+            await self.host.put_outbox(kind="agent", text="done", meta={})
+            return None
+
+    orig = planner_mod.RouterLoop
+    planner_mod.RouterLoop = _ForceCloseOnceLoop  # type: ignore[assignment]
+    try:
+        host = _SimpleHost()
+        plan = Plan(
+            goal="g",
+            steps=(
+                PlanStep(id="s1", description="long step", tools=()),
+                PlanStep(id="s2", description="synth", tools=(), depends_on=("s1",)),
+            ),
+        )
+        result = await execute_plan(plan, parent_host=host, chain_id="c0")
+    finally:
+        planner_mod.RouterLoop = orig
+
+    # Re-entered once (s1 ran twice) then converged → s1 not a failure.
+    assert "s1" not in result.step_failures
+    # Q2 continuation: a re-entry user turn carries the consolidation, so the step
+    # CONTINUES from it (not a from-scratch restart) — proves the force-close
+    # re-entry seeded the consolidation rather than re-issuing the original task.
+    assert any("CONSOLIDATED-WORK-XYZ" in c for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_plan_step_force_close_reentry_bounded_by_cap():
+    """Tier 2: #1285 PR2 — a step that force-closes EVERY turn re-enters up to the
+    cap then terminates at the FLOOR (bounded, never infinite)."""
+    import reyn.chat.planner as planner_mod
+    from reyn.chat.planner import (
+        _PLAN_STEP_MAX_FORCE_CLOSE_REENTRIES,
+        execute_plan,
+    )
+
+    calls: list[str] = []
+
+    class _AlwaysForceCloseLoop:
+        def __init__(self, *, host, **kwargs):
+            self.host = host
+
+        async def run(self, *, user_text, history):
+            calls.append(user_text)
+            self.host.record_force_close(type("FC", (), {"content": "C"})())
+            return None
+
+    orig = planner_mod.RouterLoop
+    planner_mod.RouterLoop = _AlwaysForceCloseLoop  # type: ignore[assignment]
+    try:
+        host = _SimpleHost()
+        plan = Plan(
+            goal="g",
+            steps=(
+                PlanStep(id="s1", description="irreducible step", tools=()),
+                PlanStep(id="s2", description="synth", tools=(), depends_on=("s1",)),
+            ),
+        )
+        await execute_plan(plan, parent_host=host, chain_id="c0")
+    finally:
+        planner_mod.RouterLoop = orig
+
+    # Each step force-closes cap times then FLOOR-terminates (cap+1 calls/step);
+    # 2 steps → bounded total, proving no infinite re-entry (the test returning at
+    # all proves finite; the exact count proves it is the cap that bounds it).
+    _n_calls = len(calls)
+    assert _n_calls == 2 * (_PLAN_STEP_MAX_FORCE_CLOSE_REENTRIES + 1)
+
+
+@pytest.mark.asyncio
+async def test_plan_step_force_close_and_transient_compose():
+    """Tier 2: #1285 PR2 Q4 — force-close (cumulative) and FP-0031 transient retry
+    COMPOSE with separate counters: a step that force-closes once AND transient-
+    fails once on the re-entered turn-set still completes (attempt reset to 0 on
+    the force-close re-entry, then the transient retry succeeds — the two triggers
+    never conflate)."""
+    import reyn.chat.planner as planner_mod
+    from reyn.chat.planner import execute_plan
+
+    calls: list[str] = []
+
+    class _ComposeLoop:
+        def __init__(self, *, host, **kwargs):
+            self.host = host
+
+        async def run(self, *, user_text, history):
+            calls.append(user_text)
+            n = len(calls)
+            if n == 1:  # s1 turn-set 1 → force-close (cumulative trigger)
+                self.host.record_force_close(type("FC", (), {"content": "C1"})())
+                return None
+            if n == 2:  # s1 re-entered turn-set → transient failure (FP-0031 trigger)
+                raise RuntimeError("transient on the re-entered turn-set")
+            await self.host.put_outbox(kind="agent", text="done", meta={})
+            return None
+
+    orig = planner_mod.RouterLoop
+    planner_mod.RouterLoop = _ComposeLoop  # type: ignore[assignment]
+    try:
+        host = _SimpleHost()
+        plan = Plan(
+            goal="g",
+            steps=(
+                PlanStep(id="s1", description="force-close then transient", tools=()),
+                PlanStep(id="s2", description="synth", tools=(), depends_on=("s1",)),
+            ),
+        )
+        result = await execute_plan(plan, parent_host=host, chain_id="c0", retry_limit=3)
+    finally:
+        planner_mod.RouterLoop = orig
+
+    # Composed: force-close re-entry (fc_reentries=1) AND a transient retry
+    # (attempt 0→1 after the force-close reset) both fired, and s1 still completed.
+    assert "s1" not in result.step_failures
+    # call 2 = the force-close re-entry (continuation carries the consolidation);
+    # the transient on it is retried (FP-0031) without consuming a force-close.
+    assert "C1" in calls[1]

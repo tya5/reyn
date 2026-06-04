@@ -91,6 +91,25 @@ _PLAN_MAX_STEPS = 7
 # Overridable via ``reyn.yaml plan.retry_limit``.
 _PLAN_STEP_RETRY_LIMIT = 3
 
+# #1285 PR2 (#1092 plan-axis force-close re-entry): defensive cap on force-close
+# re-entries per step. by-construction termination (PR1 assert_turn_budget_bounds:
+# progress_margin > 0 ⇒ each re-entry makes progress) already guarantees finite
+# re-entries; this is a generous backstop — on cap the step terminates best-effort
+# at the last consolidation (the PR1 FLOOR). DISTINCT from _PLAN_STEP_RETRY_LIMIT
+# (FP-0031 transient-failure retry) — the two counters never conflate.
+_PLAN_STEP_MAX_FORCE_CLOSE_REENTRIES = 8
+
+# Continuation framing for a force-close re-entry: the bounded wrap-up
+# consolidation is handed back as the next user turn so the re-entered step
+# CONTINUES from it (not a restart). run() builds [system(goal), user(this)];
+# {consolidation} is filled per re-entry.
+_PLAN_STEP_FORCE_CLOSE_CONTINUE_TEMPLATE = (
+    "The work on this step so far has been consolidated below (the working "
+    "context reached its size limit and was wrapped up). Continue from this "
+    "consolidation toward completing the step — do NOT restart from scratch.\n\n"
+    "--- Consolidation of work so far ---\n{consolidation}"
+)
+
 # B42-NF-W6-1: continuation directive passed to RouterLoop's empty-stop
 # retry path. RouterLoop only consults this when the
 # ``REYN_EMPTY_STOP_RETRY=1`` env var is set, so the production code wires
@@ -1131,6 +1150,14 @@ async def execute_plan(
             step_succeeded = False
             desc_preview = (step.description or step.id)[:60]
             attempt = 0
+            # #1285 PR2 (#1092 plan-axis re-entry, Q-A): force-close re-entry
+            # state, DISTINCT from FP-0031 ``attempt`` (cumulative-context vs
+            # transient-failure trigger — never conflated). On force-close the
+            # step re-enters the SAME step from the bounded consolidation
+            # (continuation, not restart), bounded by the by-construction floor
+            # (PR1 assert_turn_budget_bounds) + the defensive cap above.
+            fc_reentries = 0
+            _seed_user_text = step.description
             # Issue #214 (= #180 #2 split): set the plan_step contextvar
             # for the duration of this step's sub-loop. The ContextVar
             # propagates through any asyncio.Task the sub-loop spawns
@@ -1148,13 +1175,47 @@ async def execute_plan(
                         step_id=step.id,
                     ):
                         sub_usage = await sub_loop.run(
-                            user_text=step.description, history=[],
+                            user_text=_seed_user_text, history=[],
                         )
                     if sub_usage is not None:
                         total_usage.prompt_tokens += sub_usage.prompt_tokens
                         total_usage.completion_tokens += sub_usage.completion_tokens
+                    # #1285 PR2: force-close re-entry (the no-exception success
+                    # path — mutually exclusive with the transient-retry except
+                    # branch below). If the step force-closed and the re-entry cap
+                    # is not yet hit, re-enter the SAME step from the bounded
+                    # consolidation (continuation via the next user turn, NOT a
+                    # restart). ``attempt`` RESETS to 0 (fresh transient-retry
+                    # budget for the re-entered turn-set); ``fc_reentries`` is the
+                    # SEPARATE force-close counter (never conflated with attempt).
+                    # On cap → fall through to the FLOOR (the last consolidation is
+                    # the step output via the capture below).
+                    _fc = narrow_host.forced_close_result
+                    if _fc is not None and fc_reentries < _PLAN_STEP_MAX_FORCE_CLOSE_REENTRIES:
+                        fc_reentries += 1
+                        _seed_user_text = _PLAN_STEP_FORCE_CLOSE_CONTINUE_TEMPLATE.format(
+                            consolidation=(getattr(_fc, "content", None) or ""),
+                        )
+                        attempt = 0  # reset transient-retry budget for the re-entry
+                        narrow_host = _PlanStepHost(
+                            plan=plan, step=step,
+                            prior_results=step_results, parent=parent_host,
+                            turn_budget_engine=_plan_turn_budget_engine,
+                        )
+                        sub_loop = RouterLoop(
+                            host=narrow_host,
+                            chain_id=chain_id,
+                            max_iterations=step_max_iterations or _PLAN_STEP_MAX_ITERATIONS,
+                            router_model=router_model,
+                            budget=budget,
+                            system_prompt_override=sys_prompt,
+                            exclude_tools={"plan"},
+                            memo_provider=memo_provider,
+                            empty_stop_retry_directive=_PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE,
+                        )
+                        continue  # re-enter — does NOT consume the FP-0031 attempt budget
                     step_succeeded = True
-                    break  # success — exit retry loop
+                    break  # success (or force-close cap reached → FLOOR) — exit retry loop
                 except _PLAN_RETRY_EXCLUDED as exc:
                     raise  # delegate to safety layer / abort path
                 except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
