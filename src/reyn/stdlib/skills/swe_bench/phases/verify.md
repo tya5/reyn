@@ -192,15 +192,26 @@ Inspect the test runner's exit code and output and record the verdict:
   record a concise `failure_summary`: which test names failed, the assertion
   error messages, and any relevant tracebacks.
 
+When `tests_passed = false`, check the input for a non-empty `not_locatable`
+list (anchors the apply phase could not locate in the target file). When it is
+non-empty you MUST **append** those anchors to `failure_summary` — for example:
+"Not locatable: <anchors>. Choose different anchors or edit locations." Append
+this to the test-failure diagnosis; do not replace it. This hands the
+unlocatable anchors to a revised fix so it does not reissue the same edit.
+
 Whether the tests passed or failed, the verdict is captured in `tests_passed`
-+ `failure_summary` — the downstream phase consumes that outcome. The skill
-always carries the best-effort patch forward, even when the tests did not pass
++ `failure_summary`, which the downstream phase consumes. The skill always
+carries the best-effort patch forward, even when the tests did not pass
 (matching SWE-bench harness expectations).
+
+When `tests_passed = false` and `attempt` is still below the maximum (3), the
+fix did not work but attempts remain: the outcome warrants revising the fix and
+trying again, so make `failure_summary` precise enough to guide that revision.
 
 ## Retry limit
 
-If `attempt` has reached the maximum allowed (3 by default), set
-`tests_passed = false` and record the best-effort outcome — the skill reports
+If `attempt` has reached the maximum allowed (3 by default), the revision
+budget is spent: record the best-effort outcome as final — the skill reports
 the patch even when the tests did not pass, matching SWE-bench harness
 expectations.
 

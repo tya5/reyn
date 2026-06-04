@@ -19,8 +19,8 @@ graph:
   setup:   [explore]
   explore: [plan]
   plan:    [apply]
-  apply:   [verify, plan]
-  verify:  [report]
+  apply:   [verify]
+  verify:  [report, plan]
   report:  []
 routing:
   intents: [task]

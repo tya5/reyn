@@ -120,6 +120,13 @@ For non-Python files, skip this step.
 
 Collect the repository-relative paths of all files that were modified.
 
+If your input carries a `not_locatable` list (edits the preprocessor dropped
+because their anchor matched no region in the target file), preserve each
+dropped edit's `anchor` in your output. This hands the unlocatable anchors to a
+possible re-plan so it can choose different anchors instead of reissuing the
+same edit. When the list is absent or empty (every planned edit was locatable),
+record an empty list.
+
 ## When to transition
 
 After all edits are applied (and syntax is clean if applicable), transition to

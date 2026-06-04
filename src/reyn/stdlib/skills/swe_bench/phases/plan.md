@@ -50,6 +50,11 @@ When re-planning (attempt > 1), first read the previous plan and the verify
 failure summary from the workspace.  Avoid repeating edits that already
 failed without changing the approach.
 
+Set this plan's `attempt` to the input `verify_state`'s `attempt` + 1 (a plan
+built from `exploration` is `attempt = 1`). Advancing the counter each re-plan
+is what lets the verify-phase retry limit bound the loop — a plan that does not
+increment would let the cycle run unbounded.
+
 ## Step 2 — Re-read targeted code sections (if needed)
 
 If the verify failure summary points to a code region not covered in the
