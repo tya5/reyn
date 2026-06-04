@@ -9,6 +9,7 @@ from reyn.schemas.models import WebFetchIROp, WebSearchIROp
 
 from . import register
 from .context import OpContext
+from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 
 
 class _TextExtractor(html.parser.HTMLParser):
@@ -227,8 +228,11 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
                 "kind": "web_fetch", "url": op.url, "status": "error",
                 "error": f"web_fetch: cannot resolve host from URL {op.url!r}",
             }
+        # #1199 S3.1c-2: fold the phase sandbox policy into the http gate's ∩ —
+        # a sandbox with network:false vetoes the fetch (overrides config-allow).
         await ctx.permission_resolver.require_http_get(
             ctx.permission_decl, host, ctx.intervention_bus, ctx.skill_name,
+            sandbox_policy=_sandbox_policy_from_ctx(ctx),
         )
 
     ctx.events.emit("web_fetch_started", url=op.url)

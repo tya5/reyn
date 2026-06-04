@@ -10,6 +10,7 @@ from reyn.schemas.models import FileIROp
 
 from . import register
 from .context import OpContext
+from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 
 _WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index", "mkdir", "move"})
 _READ_OPS = frozenset({"read", "glob", "grep", "stat"})
@@ -154,21 +155,28 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
     # `regenerate_index` the file actually written is `output_path`, not
     # `path`; everything else writes to `path`.
     if ctx.permission_resolver is not None:
+        # #1199 S3.1c-2: fold the phase sandbox policy into the file gate's ∩ —
+        # the path must also fall within the policy's read/write path caps. None
+        # (no phase default_sandbox_policy) → SandboxLayer is ⊤ (unchanged).
+        _sandbox = _sandbox_policy_from_ctx(ctx)
         if op.op in _WRITE_OPS:
             write_target = op.output_path if op.op == "regenerate_index" and op.output_path else op.path
             ctx.permission_resolver.require_file_write(
                 ctx.permission_decl, write_target, ctx.skill_name,
+                sandbox_policy=_sandbox,
             )
             # move also writes to dest_path — gate both source (= the file
             # being effectively deleted) and dest (= the file being created).
             if op.op == "move" and op.dest_path:
                 ctx.permission_resolver.require_file_write(
                     ctx.permission_decl, op.dest_path, ctx.skill_name,
+                    sandbox_policy=_sandbox,
                 )
         elif op.op in _READ_OPS:
             # read / glob / grep / stat — gate against read scope
             ctx.permission_resolver.require_file_read(
                 ctx.permission_decl, op.path, ctx.skill_name,
+                sandbox_policy=_sandbox,
             )
 
     if op.op == "write":
