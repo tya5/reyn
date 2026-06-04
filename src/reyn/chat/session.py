@@ -1248,6 +1248,13 @@ class ChatSession:
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
         sandbox_config: "SandboxConfig | None" = None,
+        # #1200 PR-F1 (agent-level-uniform backend, FS seam): the agent's
+        # EnvironmentBackend INSTANCE, threaded to the chat Workspace so chat's
+        # file ops run on the SAME backend as the OSRuntime path (and plan, which
+        # delegates tool exec to chat via _PlanStepHost). None → HostBackend (the
+        # workspace's own default) → unchanged behaviour. The sibling exec seam
+        # (sandbox_backend string via sandbox_config) already flows agent-level.
+        environment_backend: "EnvironmentBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
         embedding_config: "EmbeddingConfig | None" = None,
@@ -1284,6 +1291,10 @@ class ChatSession:
         # Plumbed through to spawned Agents so sandboxed_exec backend selection
         # honors the operator's declared policy.
         self._sandbox_config = sandbox_config
+        # #1200 PR-F1: agent EnvironmentBackend instance for the chat FS seam
+        # (passed to the router Workspace in make_router_op_context). None →
+        # HostBackend default.
+        self._environment_backend = environment_backend
         # Issue #364 — multi-modal cluster: media-size gate config plumbed
         # through to spawned Agents AND to the router host adapter (=
         # chat-router web__fetch / file__read / mcp paths).
@@ -4712,6 +4723,9 @@ class ChatSession:
             events=self._chat_events,
             permission_resolver=self._perm,
             skill_name="chat_router",
+            # #1200 PR-F1 (FS seam): run chat file ops on the agent's
+            # EnvironmentBackend instance (None → Workspace's HostBackend default).
+            environment_backend=self._environment_backend,
         )
         return OpContext(
             workspace=workspace,

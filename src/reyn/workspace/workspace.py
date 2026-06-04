@@ -61,6 +61,13 @@ class Workspace:
         self._perm = permission_resolver
         self._skill_name = skill_name
 
+    @property
+    def backend(self) -> "EnvironmentBackend":
+        """The EnvironmentBackend this workspace's IO runs on (#1200): the
+        injected instance, or the default HostBackend. Read-only — for wiring
+        verification (e.g. confirming chat/plan/phase share one agent backend)."""
+        return self._backend
+
     def resolve_artifact_handle(self, handle: str) -> Path:
         """Resolve a state_dir-relative artifact handle to an absolute path.
 
