@@ -71,34 +71,66 @@ class LayerView(Protocol):
 
 class AgentLayer:
     """The GRANT layer: the skill's ``PermissionDecl`` over the default-zone
-    baseline. File axes allow the default zone ∪ the declared paths (faithful to
-    ``require_file_read`` / ``require_file_write`` — reuses the same helpers).
-    Startup-approval grants are runtime state, not part of this static
-    projection (S3.1b decides whether to fold them in)."""
+    baseline, faithful to the ``require_*`` gate logic (reuses the same helpers).
 
-    def __init__(self, decl: "PermissionDecl") -> None:
+    Two pieces of runtime state are folded IN here (#1199 S3.1b ② — NOT a
+    top-level ``approved OR effective`` disjunct, which would let an approval
+    re-grant what a downstream Sandbox/Profile layer denies = a grant-back hole in
+    the full ∩):
+
+    - ``approval_check(axis, value) -> bool``: the startup/config approvals
+      (``_is_config_approved`` / ``_is_path_approved_for``). Folded into the agent
+      allow-set, so ``effective = AgentLayer(…, approvals) ∩ Sandbox ∩ Profile``
+      lets the conjunction restrict approvals too (grant-back forbidden preserved).
+    - ``interactive``: in interactive mode the file decl-grant disjunct is gated
+      off (the user approves at startup, tracked via ``approval_check``); only
+      non-interactive mode honors the declared paths directly (require_file_*).
+    """
+
+    def __init__(
+        self,
+        decl: "PermissionDecl",
+        *,
+        approval_check: "Any" = None,
+        interactive: bool = False,
+    ) -> None:
         self._decl = decl
+        self._approval_check = approval_check
+        self._interactive = interactive
+
+    def _approved(self, axis: CapabilityAxis, value: Any) -> bool:
+        return bool(self._approval_check and self._approval_check(axis, value))
 
     def allows(self, axis: CapabilityAxis, value: Any) -> bool:
         d = self._decl
         if axis is CapabilityAxis.FILE_READ:
-            return _in_default_read_zone(str(value)) or _decl_covers_path(
-                d.file_read, str(value)
+            return (
+                _in_default_read_zone(str(value))
+                or self._approved(axis, value)
+                or (not self._interactive and _decl_covers_path(d.file_read, str(value)))
             )
         if axis is CapabilityAxis.FILE_WRITE:
-            return _in_default_write_zone(str(value)) or _decl_covers_path(
-                d.file_write, str(value)
+            return (
+                _in_default_write_zone(str(value))
+                or self._approved(axis, value)
+                or (not self._interactive and _decl_covers_path(d.file_write, str(value)))
             )
         if axis is CapabilityAxis.NETWORK_HOST:
-            return any(e.get("host") == value for e in d.http_get)
+            return any(e.get("host") == value for e in d.http_get) or self._approved(
+                axis, value
+            )
         if axis is CapabilityAxis.SUBPROCESS:
             return bool(d.shell)
         if axis is CapabilityAxis.MCP:
-            # decl grant: the per-skill mcp list (allowed_mcp is the additional
-            # per-agent allowlist, projected on the profile layer's MCP axis).
-            return value in d.mcp
+            # #1199 S3.1b: faithful to require_mcp (permissions.py:1248+1253) —
+            # the per-skill grant (``decl.mcp``) AND the per-skill allowlist
+            # (``decl.allowed_mcp``: None = no restriction). The per-AGENT
+            # allowlist (AgentProfile.allowed_mcp) is the separate ProfileLayer.
+            in_grant = value in d.mcp
+            in_allowlist = d.allowed_mcp is None or value in d.allowed_mcp
+            return in_grant and in_allowlist
         if axis is CapabilityAxis.SECRET_WRITE:
-            return value in d.secret_write
+            return value in d.secret_write or self._approved(axis, value)
         if axis is CapabilityAxis.PYTHON:
             # value = (module, function)
             return any(
@@ -196,10 +228,13 @@ class EffectivePermission:
         decl: "PermissionDecl",
         sandbox_policy: "SandboxPolicy | None" = None,
         profile: "AgentProfile | None" = None,
+        approval_check: "Any" = None,
+        interactive: bool = False,
     ) -> "EffectivePermission":
-        """Build from the four inputs (zone folded into the agent layer)."""
+        """Build from the four inputs (zone + approvals folded into the agent
+        layer; ② grant-back-safe). Build per op-context (Q3)."""
         return cls([
-            AgentLayer(decl),
+            AgentLayer(decl, approval_check=approval_check, interactive=interactive),
             SandboxLayer(sandbox_policy),
             ProfileLayer(profile),
         ])
