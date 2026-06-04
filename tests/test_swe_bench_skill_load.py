@@ -149,14 +149,17 @@ def test_swe_bench_graph_transitions():
     assert t.get("setup") == ["explore"], f"setup transitions: {t.get('setup')}"
     assert t.get("explore") == ["plan"], f"explore transitions: {t.get('explore')}"
     assert t.get("plan") == ["apply"], f"plan transitions: {t.get('plan')}"
-    assert sorted(t.get("apply", [])) == ["plan", "verify"], (
+    # apply → verify only: the former apply → plan edge was un-satisfiable
+    # (apply emits apply_state; plan accepts exploration|verify_state) and was
+    # removed when the re-plan loop landed — re-plan runs through verify → plan.
+    assert sorted(t.get("apply", [])) == ["verify"], (
         f"apply transitions: {t.get('apply')}"
     )
-    # verify → report only: report is the sole satisfiable transition (it
-    # accepts verify_state). The former verify → apply edge required a `plan`
-    # artifact (edits/rationale) that verify cannot emit (un-satisfiable); the
-    # re-plan loop is a tracked enhancement, not yet wired.
-    assert sorted(t.get("verify", [])) == ["report"], (
+    # verify → {report, plan}: report terminates with the best-effort patch;
+    # plan is the re-plan loop edge (verify emits verify_state, which plan
+    # accepts) — taken on test failure while attempts remain, bounded by the
+    # verify retry limit.
+    assert sorted(t.get("verify", [])) == ["plan", "report"], (
         f"verify transitions: {t.get('verify')}"
     )
     assert t.get("report", []) == [], f"report transitions: {t.get('report')}"

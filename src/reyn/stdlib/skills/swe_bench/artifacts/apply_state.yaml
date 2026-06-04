@@ -15,6 +15,15 @@ schema:
       type: integer
       minimum: 1
       description: Which attempt number this is (matches the plan.attempt that was executed).
+    not_locatable:
+      type: array
+      items:
+        type: string
+      description: >-
+        Anchors of edits that were dropped at apply because their anchor matched
+        no region in the target file (count 0). Recorded so a re-plan can choose
+        different anchors/locations instead of reissuing the same unlocatable
+        edit. Empty when every planned edit was locatable.
   required:
     - instance_id
     - files_edited
