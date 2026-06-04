@@ -1041,6 +1041,16 @@ def _iv_meta(iv: "UserIntervention") -> dict:
     return out
 
 
+# #1092 PR-F2b: max force-close handoffs per user turn. ONE is enough by
+# construction — after a handoff the F2a reset slices [consolidation (≤
+# output_reserve < threshold)] + new turn, which fits for any turn whose NEW
+# message fits the post-consolidation budget (the normal case). The only input a
+# 2nd handoff couldn't help is a single new message too large to ever fit — so at
+# the cap we raise the genuine dead-end. This is chat's bounded analogue of
+# phase's max_phase_visits (25), made tight (1) by the by-construction floor.
+_MAX_FORCE_CLOSE_HANDOFFS = 1
+
+
 def _is_force_close_consolidation(summary: "ChatMessage") -> bool:
     """#1092 PR-F2a: True iff a ``summary`` turn is a force-close handoff
     consolidation — identified by the dedicated ``consolidation`` structured
@@ -5435,11 +5445,64 @@ class ChatSession:
         # the assembled history fits before the router LLM call.
         # ISSUE #5: pass user_text so Axis-11 new_msg_budget check fires.
         await self._maybe_force_compact_for_router(new_msg_text=user_text)
-        history = self._build_history_for_router()
 
-        # PR-N6: wrap loop.run() to detect context overflow and invoke
-        # retry_loop. The retry_loop is the bounded shrink mechanism;
-        # keep _maybe_force_compact_for_router unchanged (= pre-frame guard).
+        from reyn.services.compaction.engine import (
+            ContextOverflowError as _ContextOverflowError,
+        )
+
+        # #1092 PR-F2b: bounded force-close handoff loop. _router_run_with_shrink
+        # runs the router with the reactive retry_loop shrink; if even the floor
+        # overflows it raises _ContextOverflowError. On that terminal we force-
+        # close: consolidate the (floor) context into a capped summary (≤
+        # output_reserve) + install it covers-all — firing F2a's durable
+        # covers-respecting reset so the re-entry slices [consolidation] + new
+        # turns, NOT the raw head/tail that just overflowed. By construction
+        # (F1 max_tokens cap + F2a true-reset) a normal turn converges in ONE
+        # handoff; cap=1 backstops the irreducible single-oversized-message
+        # dead-end (no infinite loop) — the chat analogue of phase's
+        # max_phase_visits, except the by-construction floor makes 1 enough.
+        _handoffs = 0
+        while True:
+            try:
+                router_usage = await self._router_run_with_shrink(loop, user_text)
+                break
+            except _ContextOverflowError as _overflow_exc:
+                _reserve = getattr(
+                    self._router_host, "wrap_up_output_reserve", None
+                )
+                if _reserve is None or _handoffs >= _MAX_FORCE_CLOSE_HANDOFFS:
+                    # force-close unavailable (sub-viable model → no cap wired) OR
+                    # cap reached (the new message is irreducibly too large to fit
+                    # even after a full consolidation) → genuine dead-end.
+                    self._chat_events.emit(
+                        "router_context_overflow_unrecovered",
+                        error=repr(_overflow_exc),
+                    )
+                    raise
+                await self._force_close_handoff(loop, user_text)
+                _handoffs += 1
+
+        # F4 Bug 2 / F4 Bug 1: accumulate router LLM usage (with proxy-prefix
+        # stripping) into per-session totals via the gateway.
+        if router_usage is not None:
+            self._budget.add_router_usage(
+                usage=router_usage,
+                resolver=self._resolver,
+                router_model_name=loop.router_model,
+            )
+
+    async def _router_run_with_shrink(self, loop, user_text: str) -> "Any":
+        """#1092 PR-F2b: run the router once with the reactive bounded-shrink
+        ``retry_loop`` (PR-N6 / #1125). Returns the router usage, or raises
+        ``_ContextOverflowError`` when even the floor overflows (the terminal the
+        F2b handoff loop catches to force-close). Rebuilds the history each call
+        so a force-close re-entry sees the post-handoff (F2a-reset) slice.
+
+        Extracted from ``_run_router_loop`` so the handoff loop can re-invoke it
+        across a force-close. No ``router_context_overflow_unrecovered`` event
+        here — the caller emits it ONLY when it actually gives up (cap reached /
+        sub-viable model), so a recoverable handoff is not mislogged as a dead-end.
+        """
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
         )
@@ -5447,31 +5510,18 @@ class ChatSession:
             UnrecoveredError as _UnrecoveredError,
         )
 
+        history = self._build_history_for_router()
         try:
-            router_usage = await loop.run(user_text=user_text, history=history)
+            return await loop.run(user_text=user_text, history=history)
         except Exception as _exc:
-            # Detect litellm context-length errors and convert to ContextOverflowError.
             _exc_str = str(_exc).lower()
-            _is_overflow = any(
+            if not any(
                 kw in _exc_str
                 for kw in ("context", "token", "length", "limit", "too long", "too large")
-            )
-            if not _is_overflow:
+            ):
                 raise
-            # PR-N6 / #1125 Item 2: overflow detected — recover via the bounded
-            # adaptive-shrink retry_loop (replaces the prior degraded
-            # compact-once). The session now exposes the
-            # head/summary/raw_middle/tail decomposition retry_loop needs
-            # (_decompose_history_for_retry), so it can fold raw_middle into the
-            # running summary and monotonically shrink head/tail until the call
-            # fits — the "never dead-end" continuity guarantee. The pre-frame
-            # guard (_maybe_force_compact_for_router) already ran and populated
-            # engine.budgets; retry_loop is the reactive safety net when the
-            # guard's estimate under-counted. UnrecoveredError (all shrink paths
-            # exhausted) is the chat axis's fail-fast surface.
             self._chat_events.emit(
-                "router_context_overflow_detected",
-                error=repr(_exc),
+                "router_context_overflow_detected", error=repr(_exc)
             )
             from reyn.services.compaction.engine import retry_loop as _retry_loop
             engine = self._compaction_controller._engine
@@ -5481,16 +5531,8 @@ class ChatSession:
             _new_msg = {"role": "user", "content": user_text}
 
             async def _router_main_call(*, SP, head, summary, tail, new_msg):
-                # Rebuild the router prompt from the (possibly shrunk)
-                # decomposition retry_loop hands back each iteration.
                 _msgs = list(head)
                 if summary:
-                    # Render the structured summary via the SAME renderer that
-                    # produced the persisted summary.content (= the normal path's
-                    # bridge text), so the recovery prompt's summary bridge is
-                    # byte-identical to what _build_history_for_router would send.
-                    # retry_loop still folds raw_middle into the *structured*
-                    # dict (its immutable base); only the bridge text is rendered.
                     _summary_text = _render_summary_for_storage(summary)
                     _msgs.append({
                         "role": "assistant",
@@ -5523,21 +5565,86 @@ class ChatSession:
                     learner=self._token_learner,
                     main_call=_router_main_call,
                 )
-                router_usage = _shim.usage
+                return _shim.usage
             except (_ContextOverflowError, _UnrecoveredError) as _retry_exc:
-                self._chat_events.emit(
-                    "router_context_overflow_unrecovered",
-                    error=repr(_retry_exc),
-                )
                 raise _ContextOverflowError(
-                    f"Router context overflow unrecovered after bounded shrink: {_retry_exc}"
+                    f"Router context overflow after bounded shrink: {_retry_exc}"
                 ) from _retry_exc
 
-        # F4 Bug 2 / F4 Bug 1: accumulate router LLM usage (with proxy-prefix
-        # stripping) into per-session totals via the gateway.
-        if router_usage is not None:
-            self._budget.add_router_usage(
-                usage=router_usage,
-                resolver=self._resolver,
-                router_model_name=loop.router_model,
-            )
+    async def _force_close_handoff(self, loop, user_text: str) -> None:
+        """#1092 PR-F2b: at the overflow terminal, consolidate the working context
+        into a capped force-close summary and install it covers-all — firing F2a's
+        durable covers-respecting reset so the re-entry slices ``[consolidation] +
+        new turn`` instead of the raw head/tail that just overflowed. The
+        consolidation is hard-capped ≤ output_reserve (F1) and made to fit by the
+        bounded fallback in ``_force_close_wrap_up``. Emits a P6
+        ``router_force_close_handoff`` event. ``user_text`` is unused here (the new
+        message is re-applied by the loop's next ``_router_run_with_shrink``); kept
+        for symmetry / future audit.
+        """
+        resolved_model = self._resolver.resolve(self.model).model
+        consolidation = await self._force_close_wrap_up(loop, resolved_model)
+        covers = max(self._next_seq - 1, 0)
+        structured = {"consolidation": consolidation}
+        msg = ChatMessage(
+            role="summary",
+            content=_render_summary_for_storage(structured),
+            ts=_now_iso(),
+            meta={"structured": structured, "covers_through_seq": covers},
+        )
+        self._append_history(msg)
+        self._chat_events.emit(
+            "router_force_close_handoff",
+            covers_through_seq=covers,
+            consolidation_chars=len(consolidation),
+        )
+
+    async def _force_close_wrap_up(self, loop, resolved_model: str) -> str:
+        """#1092 PR-F2b (Fork 1 — wrap-up-fits): produce the capped consolidation
+        via the force-close wrap-up call, made to FIT by a bounded fallback that
+        shrinks the input if the wrap-up itself would overflow — the chat analogue
+        of phase's ``_force_close_call_with_retry`` (chat's wrap-up runs OUTSIDE
+        retry_loop, so it has no built-in recovery). Input candidates, decreasing:
+        ``[summary + raw_middle + tail]`` → ``[summary + tail]`` → ``[summary]``.
+        If even summary-only overflows, the model is RUNTIME sub-viable (distinct
+        from the config-time ``try_build``=None gate — the engine IS wired here) →
+        raise, which the handoff loop surfaces as a genuine dead-end.
+        """
+        from reyn.services.compaction.engine import (
+            ContextOverflowError as _ContextOverflowError,
+        )
+
+        _head, _raw_middle, _tail, _summary_dict = (
+            self._decompose_history_for_retry()
+        )
+        _summary_msg: list[dict] = []
+        if _summary_dict:
+            _summary_msg = [{
+                "role": "assistant",
+                "content": (
+                    "[summary of earlier conversation]\n"
+                    + _render_summary_for_storage(_summary_dict)
+                ),
+            }]
+        _candidates = [
+            _summary_msg + _raw_middle + _tail,
+            _summary_msg + _tail,
+            _summary_msg,
+        ]
+        _last_exc: "Exception | None" = None
+        for _inp in _candidates:
+            try:
+                _result = await loop._force_close_call(
+                    _inp, resolved_model=resolved_model
+                )
+                return _result.content or ""
+            except Exception as _exc:
+                if not any(kw in str(_exc).lower() for kw in (
+                    "context", "token", "length", "limit", "too long", "too large",
+                )):
+                    raise
+                _last_exc = _exc
+        raise _ContextOverflowError(
+            "force-close wrap-up overflowed even at summary-only "
+            f"(runtime sub-viable model): {_last_exc}"
+        )
