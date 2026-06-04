@@ -114,9 +114,25 @@ The flags layer second-line defenses on top of the preprocessor:
 tolerates off-by-N context line counts, and `--whitespace=fix`
 forgives trailing-space drift.
 
-If `git apply` STILL fails after preprocessor sanitization + robust
-flags, treat this as a verify execution failure (not a test failure):
-set `tests_passed = false` and record the failure in `failure_summary`
+Apply the test_patch **once** — do not re-apply it. A second apply of an
+already-applied patch returns non-zero ("patch does not apply") purely
+because the patch is *already in the tree* (idempotency), NOT because it
+failed to apply; reading that second non-zero as an apply failure is a
+mis-diagnosis.
+
+If `git apply` returns non-zero, FIRST determine whether the patch is
+**already applied** before treating it as a failure — reverse-check it:
+
+```
+git apply --reverse --check .reyn/swe_bench_test.patch
+```
+
+If the reverse-check succeeds (returncode 0), the test_patch is already in
+the tree — **proceed to Step 2 and run the tests**; do NOT set
+`tests_passed = false`. Only a patch that is **neither applicable nor
+already-applied** (the `--reverse --check` also returns non-zero) is a
+genuine verify execution failure (not a test failure): set
+`tests_passed = false` and record the failure in `failure_summary`
 (= include the exact stderr from git apply, NOT a vague "patch failed"
 summary). The tests could not be evaluated, so this is not a pass.
 
