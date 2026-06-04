@@ -2,10 +2,12 @@
 
 Verifies the OS-invariants introduced by Phase 2:
 
-1. The three canonical protected paths (.reyn/mcp.yaml / .reyn/cron.yaml /
-   .reyn/index/sources.yaml) are excepted from the broad `.reyn/`
-   default write zone — direct `safe.file.write` to them requires an
-   explicit `file.write: [{path: ...}]` declaration.
+1. The canonical protected paths (.reyn/mcp.yaml / .reyn/cron.yaml /
+   .reyn/index/sources.yaml / .reyn/approvals.yaml) are excepted from the
+   broad `.reyn/` default write zone — direct `safe.file.write` to them
+   requires an explicit `file.write: [{path: ...}]` declaration. The
+   approvals.yaml entry (#1199) must hold on BOTH the permissions.py and
+   safe.file enforcement copies (drift-guarded).
 2. The bool-axis compat shim in `PermissionDecl.from_dict` expands each
    set bool axis (mcp_install / mcp_drop_server / cron_register /
    index_drop) into the equivalent `file.write` entry, so existing
@@ -195,4 +197,43 @@ def test_safe_file_check_write_still_allows_non_canonical_under_reyn(tmp_path, m
     )
     # Cursor file under .reyn/index/ but NOT sources.yaml → still allowed.
     safe_file._check_write(str(tmp_path / ".reyn" / "index" / "events_cursor"))
-    safe_file._check_write(str(tmp_path / ".reyn" / "approvals.yaml"))
+    # A scratch state file directly under .reyn/ (not a protected path).
+    safe_file._check_write(str(tmp_path / ".reyn" / "chunk_cache.json"))
+
+
+def test_safe_file_check_write_rejects_approvals_yaml(tmp_path, monkeypatch):
+    """Tier 2: #1199 security fix (safe.file side) — a safe-mode file.write to the
+    persisted approval store (.reyn/approvals.yaml) covered only by the broad
+    .reyn/ zone is DENIED, closing the approval-injection bypass on the
+    python-harness enforcement path. The parent permissions.py gate alone left
+    this open: the subprocess always receives .reyn/ in its write_paths.
+
+    Falsification contrast: a non-protected sibling under .reyn/ stays writable
+    in-zone — the denial is specific to the protected-path list.
+    """
+    monkeypatch.chdir(tmp_path)
+    from reyn.safe import file as safe_file
+
+    safe_file._set_permission_context(
+        read_paths=[str(tmp_path)],
+        write_paths=[str(tmp_path / ".reyn"), str(tmp_path / "reyn")],
+    )
+    with pytest.raises(PermissionError, match="canonical protected path"):
+        safe_file._check_write(str(tmp_path / ".reyn" / "approvals.yaml"))
+    # contrast: a non-protected .reyn/ scratch path is NOT denied (in default zone).
+    safe_file._check_write(str(tmp_path / ".reyn" / "scratch_state.json"))
+
+
+def test_canonical_protected_lists_stay_in_sync():
+    """Tier 2: the two _CANONICAL_PROTECTED_WRITE_PATHS copies must not drift.
+
+    permissions.permissions and safe.file each define the list — the safe
+    module runs in the python-harness subprocess and cannot import the parent
+    permissions module, so the constant is duplicated. This drift-guard pins
+    them equal, so any future add/remove of a protected path must touch BOTH
+    copies. Closes the recurrence class behind the #1199 gap, where
+    approvals.yaml was added to the parent list only.
+    """
+    from reyn.safe.file import _CANONICAL_PROTECTED_WRITE_PATHS as safe_paths
+
+    assert _CANONICAL_PROTECTED_WRITE_PATHS == safe_paths
