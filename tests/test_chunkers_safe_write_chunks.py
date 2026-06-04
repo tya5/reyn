@@ -1,15 +1,15 @@
-"""Tier 2 — chunkers_safe.write_chunks_with_lock contract tests (FP-0042 Phase 2.2).
+"""Tier 2 — chunkers_safe.write_chunks_with_lock contract tests.
 
-Tests the safe-mode postprocessor step that replaced chunkers.py's
-unsafe-mode ``write_chunks_with_lock`` (= advisory lock + chunked
-JSONL write). Coverage mirrors the lock-discipline tests previously
-exercised against the deprecated ``apply_strategy`` so the contract
-stays observably stable across the migration.
+Tests the safe-mode postprocessor step: advisory lock + provider-direct
+embed+index. #1303 Stage I folded the old `embed` + `index_write` run-ops
+into this step — it now streams chunks into `reyn.safe.embed_index` (no
+intermediate `artifacts/chunks.jsonl`) which embeds them and writes the
+vectors to `.reyn/index/<source>/index.db`. Lock-discipline coverage is
+preserved across the cutover.
 
-The function reads source files + writes ``artifacts/chunks.jsonl`` +
-acquires ``.reyn/index/<source>/.lock`` — all through reyn.safe.file.
-The autouse fixture sets a permission context that grants reads
-under tmp_path and writes under tmp_path/.reyn/ + tmp_path/artifacts/.
+The function reads source files via reyn.safe.file (granted under tmp_path)
+and the embed+index writes go to `<cwd>/.reyn/index/` via SqliteIndexBackend.
+A deterministic fake embedding provider avoids any litellm API call.
 """
 from __future__ import annotations
 
@@ -20,7 +20,37 @@ from pathlib import Path
 
 import pytest
 
+from reyn.embedding import register_provider
+from reyn.embedding.provider import EmbedBatchResult
+from reyn.index import SqliteIndexBackend
+from reyn.index.source_manifest import get_source_manifest
+from reyn.safe import embed_index as ei
 from reyn.safe import file as sf
+
+
+class _FakeEmbedProvider:
+    """Deterministic embedding provider (no API)."""
+
+    def __init__(self, config: dict | None = None) -> None:
+        self._batch_size = 100
+
+    async def embed(self, texts: list[str], model: str) -> EmbedBatchResult:
+        return EmbedBatchResult(
+            vectors=[[float(len(t)), 0.0, 0.0, 0.0] for t in texts],
+            model=model or "fake-embed",
+            total_tokens=sum(len(t) for t in texts),
+        )
+
+    def estimate_tokens(self, texts: list[str]) -> int:
+        return sum(len(t) for t in texts)
+
+    def get_dimension(self, model: str) -> int:
+        return 4
+
+
+class _RaisingEmbedProvider(_FakeEmbedProvider):
+    async def embed(self, texts: list[str], model: str) -> EmbedBatchResult:
+        raise RuntimeError("embed boom")
 
 
 def _load_chunkers_safe():
@@ -41,35 +71,35 @@ _C = _load_chunkers_safe()
 
 
 @pytest.fixture(autouse=True)
-def _reset_safe_file_context():
-    """Reset reyn.safe.file's module-global permission context per test."""
+def _reset_contexts():
+    """Reset reyn.safe.file + reyn.safe.embed_index module-global contexts."""
+    register_provider("fake_cs", _FakeEmbedProvider)
     sf._read_paths = ()
     sf._write_paths = ()
     sf._context_initialised = False
+    ei._reset_context()
     yield
     sf._read_paths = ()
     sf._write_paths = ()
     sf._context_initialised = False
+    ei._reset_context()
 
 
 @pytest.fixture
 def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Wire a sandbox tmpdir: cwd here, safe.file context grants reads
-    under tmp_path and writes under tmp_path/.reyn + tmp_path/artifacts.
+    under tmp_path and writes under tmp_path/.reyn, and embed_index uses the
+    deterministic fake provider (index writes land at <cwd>/.reyn/index/).
 
-    Mirrors how the production preprocessor_executor wires the
-    subprocess's permission context (= CWD as default read zone;
-    .reyn/ as default write zone; plus explicit artifacts/ from
-    skill.md).
+    Mirrors how production wires the safe-mode step (= CWD as default read
+    zone; .reyn/ as default write zone; embed_index self-sufficient via cwd).
     """
     monkeypatch.chdir(tmp_path)
     sf._set_permission_context(
         read_paths=[str(tmp_path)],
-        write_paths=[
-            str(tmp_path / ".reyn"),
-            str(tmp_path / "artifacts"),
-        ],
+        write_paths=[str(tmp_path / ".reyn")],
     )
+    ei._set_context(provider_name="fake_cs")  # workspace_root defaults to cwd
     return tmp_path
 
 
@@ -97,9 +127,11 @@ def _strategy_payload(*, source: str, file_paths: list[str]) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_write_chunks_writes_jsonl_under_artifacts(sandbox: Path):
-    """Tier 2: write_chunks_with_lock writes artifacts/chunks.jsonl with one
-    JSON object per line, summary dict reflects the count."""
+def test_write_chunks_builds_index(sandbox: Path):
+    """Tier 2: write_chunks_with_lock embeds + writes chunks straight to the
+    SQLite index (no intermediate JSONL); the summary reflects the counts."""
+    import asyncio
+
     md = sandbox / "doc.md"
     md.write_text("Hello world.\n\nSecond paragraph.\n", encoding="utf-8")
 
@@ -110,17 +142,36 @@ def test_write_chunks_writes_jsonl_under_artifacts(sandbox: Path):
 
     assert result["chunk_count"] > 0
     assert result["source_lock_acquired"] is True
-    assert result["chunks_path"] == "artifacts/chunks.jsonl"
+    assert result["embedded"] == result["chunk_count"]
+    assert result["written"] == result["chunk_count"]
 
-    chunks_path = sandbox / "artifacts" / "chunks.jsonl"
-    assert chunks_path.exists()
-    lines = [json.loads(l) for l in chunks_path.read_text().splitlines() if l.strip()]
-    assert len(lines) == result["chunk_count"]
-    for ln in lines:
-        assert "text" in ln
-        assert "metadata" in ln
-        assert "content_hash" in ln["metadata"]
-        assert "source_path" in ln["metadata"]
+    # No intermediate file; the chunks landed in the index.
+    assert not (sandbox / "artifacts" / "chunks.jsonl").exists()
+    stat = asyncio.run(SqliteIndexBackend(workspace_root=sandbox).stat("s1"))
+    assert stat["chunk_count"] == result["chunk_count"]
+
+    # SourceManifest upsert (router system-prompt rebuild reflects the run).
+    entry = asyncio.run(get_source_manifest(sandbox).get("s1"))
+    assert entry is not None
+    assert entry.chunk_count == result["chunk_count"]
+    assert entry.description == "test docs"
+
+
+def test_write_chunks_resume_skips_reembed(sandbox: Path):
+    """Tier 2: ★resume through the chunker path — a second run over the same
+    source re-embeds nothing (existing_hashes pre-embed skip)."""
+    md = sandbox / "doc.md"
+    md.write_text("Hello world.\n\nSecond paragraph.\n\nThird.\n", encoding="utf-8")
+    artifact = _make_artifact(_strategy_payload(source="r1", file_paths=[str(md)]))
+
+    first = _C.write_chunks_with_lock(artifact)
+    assert first["embedded"] > 0
+
+    second = _C.write_chunks_with_lock(
+        _make_artifact(_strategy_payload(source="r1", file_paths=[str(md)]))
+    )
+    assert second["embedded"] == 0
+    assert second["skipped_embed"] == first["chunk_count"]
 
 
 def test_write_chunks_lock_released_on_success(sandbox: Path):
@@ -138,16 +189,21 @@ def test_write_chunks_lock_released_on_success(sandbox: Path):
 
 
 def test_write_chunks_lock_released_on_error(sandbox: Path):
-    """Tier 2: the .lock file is deleted even if the chunking raises.
+    """Tier 2: the .lock file is deleted even if embed+index raises.
 
-    Simulate an inner failure by passing a non-list ``chunk_list`` (=
-    the iteration over ``data.chunk_list`` raises). The lock acquire
-    happens before that, so the ``finally`` block must reap it.
+    Inject a failing provider so embed_and_index raises *inside* the try
+    block (after the lock is acquired); the ``finally`` must reap the lock.
     """
-    artifact = _make_artifact(_strategy_payload(source="err_test", file_paths=[]))
-    artifact["data"]["chunk_list"] = 42  # not iterable as a list of dicts
+    register_provider("raising_cs", _RaisingEmbedProvider)
+    ei._set_context(provider_name="raising_cs")
 
-    with pytest.raises(Exception):
+    md = sandbox / "doc.md"
+    md.write_text("some content here", encoding="utf-8")
+    artifact = _make_artifact(
+        _strategy_payload(source="err_test", file_paths=[str(md)])
+    )
+
+    with pytest.raises(Exception, match="embed boom"):
         _C.write_chunks_with_lock(artifact)
 
     lock_path = sandbox / ".reyn" / "index" / "err_test" / ".lock"
@@ -228,9 +284,11 @@ def test_write_chunks_takes_over_corrupted_lock(sandbox: Path):
 def test_write_chunks_skips_unreadable_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Tier 2: a source path outside the declared read zone is silently
     skipped (matches the legacy OSError-swallowing read loop). When all
-    inputs are denied, the JSONL is empty and chunk_count is 0.
+    inputs are denied, no chunks are produced and chunk_count is 0.
     """
+    register_provider("fake_cs", _FakeEmbedProvider)
     monkeypatch.chdir(tmp_path)
+    ei._set_context(provider_name="fake_cs")
     grant = tmp_path / "ok"
     grant.mkdir()
     denied = tmp_path / "denied"
@@ -244,10 +302,7 @@ def test_write_chunks_skips_unreadable_files(tmp_path: Path, monkeypatch: pytest
         # files in tmp_path/denied/ stay unreadable, which is the path under
         # test.
         read_paths=[str(grant), str(tmp_path / ".reyn")],
-        write_paths=[
-            str(tmp_path / ".reyn"),
-            str(tmp_path / "artifacts"),
-        ],
+        write_paths=[str(tmp_path / ".reyn")],
     )
 
     artifact = _make_artifact(
@@ -256,9 +311,7 @@ def test_write_chunks_skips_unreadable_files(tmp_path: Path, monkeypatch: pytest
     result = _C.write_chunks_with_lock(artifact)
 
     assert result["chunk_count"] == 0
-    chunks_path = tmp_path / "artifacts" / "chunks.jsonl"
-    # Output file is written (possibly empty) — the writer always produces it.
-    assert chunks_path.exists()
+    assert result["embedded"] == 0
 
 
 # ---------------------------------------------------------------------------
