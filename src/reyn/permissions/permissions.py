@@ -1243,14 +1243,28 @@ class PermissionResolver:
     async def require_mcp(
         self, decl: PermissionDecl, server: str, bus: RequestBus,
     ) -> None:
-        # PR37: per-agent allowlist check (narrower than project config).
-        # None means no per-agent restriction; list means server must be in it.
-        if decl.allowed_mcp is not None and server not in decl.allowed_mcp:
-            raise PermissionError(
-                f"MCP server {server!r} not in allowed_mcp for caller "
-                f"(agent allowlist exhausted)"
-            )
-        if server not in decl.mcp:
+        # #1199 S3.1b (the migration anchor): the static MCP authority —
+        # decl.mcp ∩ decl.allowed_mcp — now flows through the unified
+        # EffectivePermission model (AgentLayer.MCP), the single conjunctive-∩
+        # source, instead of two inline checks. Byte-identical DECISION; the two
+        # diagnostics below are preserved (same messages + order). Local import
+        # avoids the effective.py → permissions.py circular. The interactive
+        # _approve prompt remains the separate runtime gate (not part of the ∩).
+        from reyn.permissions.effective import (
+            AgentLayer,
+            CapabilityAxis,
+            EffectivePermission,
+        )
+
+        if not EffectivePermission([AgentLayer(decl)]).allows(
+            CapabilityAxis.MCP, server
+        ):
+            # PR37: per-agent allowlist check (narrower than project config).
+            if decl.allowed_mcp is not None and server not in decl.allowed_mcp:
+                raise PermissionError(
+                    f"MCP server {server!r} not in allowed_mcp for caller "
+                    f"(agent allowlist exhausted)"
+                )
             raise PermissionError(
                 f"MCP server {server!r} not declared in skill permissions. "
                 f"Add `permissions:\\n  mcp: [{server}]` to the skill.md frontmatter."
