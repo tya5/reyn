@@ -1,7 +1,8 @@
 name: index_events_summary
 description: |
   Caller-facing summary of a completed index_events run. Returned by the
-  skill postprocessor after chunk → embed → index_write pipeline completes.
+  skill postprocessor after the chunk → provider-direct embed+index pipeline
+  completes.
 
   Fields mirror the incremental processing results: how many runs were
   indexed, skipped (incomplete), or filtered out, plus the new cursor
@@ -46,7 +47,11 @@ schema:
             in Phase 1.
     chunk_stats:
       type: object
-      description: Result of the collect_chunks python step.
+      description: |
+        Result of the run_collect_chunks step (chunk + provider-direct
+        embed+index). #1303 Stage I folded the embed + index_write run-ops
+        into this step, so the embed/index counts live here (the separate
+        embed_result / index_result groups are gone with the run-ops).
       properties:
         chunk_count:
           type: integer
@@ -57,23 +62,18 @@ schema:
         filtered_runs:
           type: integer
           minimum: 0
-    embed_result:
-      type: object
-      description: Result of the embed op.
-      properties:
-        embedded_count:
+        embedded:
           type: integer
           minimum: 0
-        skipped_count:
+        skipped_embed:
           type: integer
           minimum: 0
-    index_result:
-      type: object
-      description: Result of the index_write op.
-      properties:
         written:
           type: integer
           minimum: 0
-        skipped:
+        skipped_write:
           type: integer
           minimum: 0
+        max_completed_at:
+          type: string
+          description: Max completed_at of the indexed batch (fed to run_advance_cursor).

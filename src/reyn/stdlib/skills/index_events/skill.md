@@ -6,8 +6,8 @@ description: |
   (FP-0009 Component A).
 
   Phase 1 (LLM): resolve cursor + discover event files, narrate indexing range.
-  Phase 2 (Skill.postprocessor): deterministic chunk → embed → index_write →
-  cursor-advance pipeline; LLM is not involved.
+  Phase 2 (Skill.postprocessor): deterministic chunk → provider-direct
+  embed+index → cursor-advance pipeline; LLM is not involved.
 
   Incremental via .reyn/index/events_cursor — only new runs (since last index)
   are processed on each invocation. Failed runs carry truncated error summaries.
@@ -17,7 +17,7 @@ final_output_description: |
   LLM-contract artifact: echoes back the resolved since timestamp, inventory
   summary (count + ts range), optional skill filter, and mode. The skill
   postprocessor re-globs event files deterministically and uses `since` to
-  run the deterministic chunk → embed → index_write pipeline.
+  run the deterministic chunk → provider-direct embed+index pipeline.
 finish_criteria:
   - Preprocessor-resolved scan context was reviewed
   - scan_plan artifact echoes since, event_files_count, skill_filter, and mode
@@ -34,8 +34,10 @@ permissions:
     # File reads / writes / stat / glob go through reyn.safe.file; the
     # atomic cursor update uses reyn.safe.file.write_atomic. Event-file
     # reads under .reyn/events/ + cursor reads/writes under
-    # .reyn/index/events_cursor are inside the default zones; the chunks
-    # JSONL output below requires the explicit artifacts/ grant.
+    # .reyn/index/events_cursor are inside the default zones. #1303 Stage I:
+    # run_collect_chunks now streams chunks into reyn.safe.embed_index (which
+    # writes under .reyn/index/, default zone) — no out-of-zone JSONL output,
+    # so the old file.write:artifacts grant is dropped.
     - module: ./chunkers.py
       function: resolve_scan_context
       mode: safe
@@ -48,16 +50,13 @@ permissions:
       function: run_advance_cursor
       mode: safe
       timeout: 10
-  # FP-0042 Phase 2.3: run_collect_chunks writes the chunked JSONL output
-  # to ``<cwd>/artifacts/event_chunks.jsonl`` — outside the default
-  # ``.reyn/`` write zone, so it needs an explicit grant.
-  file.write:
-    - path: artifacts
-      scope: recursive
 postprocessor:
   output_schema: index_events_summary
   steps:
-    # Step 1: safe — walk events_root, group by run, produce chunks.jsonl
+    # Step 1: safe — walk events_root, group by run, and stream the chunks
+    # into reyn.safe.embed_index (provider-direct embed+index to the "events"
+    # source; folds the old embed + index_write run-ops, no intermediate
+    # file). #1303 Stage I.
     - type: python
       module: ./chunkers.py
       function: run_collect_chunks
@@ -67,28 +66,15 @@ postprocessor:
         type: object
         required: [chunk_count, skipped_runs, filtered_runs]
         properties:
-          chunk_count:    {type: integer, minimum: 0}
-          skipped_runs:   {type: integer, minimum: 0}
-          filtered_runs:  {type: integer, minimum: 0}
-    # Step 2: embed the chunks.jsonl artifact
-    - type: run_op
-      into: data.embed_result
-      op:
-        kind: embed
-        input_artifact: artifacts/event_chunks.jsonl
-        output_artifact: artifacts/event_chunks_with_vectors.jsonl
-      args_from: {}
-    # Step 3: write to "events" index source
-    - type: run_op
-      into: data.index_result
-      op:
-        kind: index_write
-        source: events
-        input_artifact: artifacts/event_chunks_with_vectors.jsonl
-        mode: append
-        description: "P6 event runs indexed by index_events skill"
-      args_from: {}
-    # Step 4: advance cursor to max completed_at of this batch
+          chunk_count:      {type: integer, minimum: 0}
+          skipped_runs:     {type: integer, minimum: 0}
+          filtered_runs:    {type: integer, minimum: 0}
+          embedded:         {type: integer, minimum: 0}
+          skipped_embed:    {type: integer, minimum: 0}
+          written:          {type: integer, minimum: 0}
+          skipped_write:    {type: integer, minimum: 0}
+          max_completed_at: {type: string}
+    # Step 2: advance cursor to max completed_at of this batch
     - type: python
       module: ./chunkers.py
       function: run_advance_cursor
@@ -110,8 +96,10 @@ required_credentials: []
 ## Overview
 
 `index_events` indexes the P6 event log at run granularity (1 run = 1 chunk)
-into the existing RAG infrastructure (ADR-0033). Uses `embed` / `index_write`
-/ `recall` ops — zero OS changes. Incremental via `.reyn/index/events_cursor`.
+into the existing RAG infrastructure (ADR-0033). The chunker streams runs into
+`reyn.safe.embed_index` (provider-direct embed+index; #1303 Stage I folded the
+old `embed` / `index_write` run-ops) and `recall` reads it back. Incremental
+via `.reyn/index/events_cursor`.
 
 ## Execution flow
 
@@ -122,12 +110,15 @@ into the existing RAG infrastructure (ADR-0033). Uses `embed` / `index_write`
      into the `scan_plan` artifact and finishes immediately
 
 2. **Skill.postprocessor** (deterministic, LLM not involved):
-   - `collect_run_chunks` (python step, unsafe): walks `.reyn/events/` from
-     cursor, groups events by run boundary, writes `artifacts/event_chunks.jsonl`
-   - `embed` (run_op): embeds each chunk's text field
-   - `index_write` (run_op): writes to `events` index source
-   - `advance_cursor` (python step, unsafe): writes max completed_at to
-     `.reyn/index/events_cursor`
+   - `run_collect_chunks` (python step, safe): walks `.reyn/events/` from the
+     cursor, groups events by run boundary, and **streams** the chunks into
+     `reyn.safe.embed_index.embed_and_index` — which embeds them provider-direct
+     and writes the vectors to the `events` index source
+     (`.reyn/index/events/index.db`), tracking the max `completed_at`. No
+     intermediate file (#1303 Stage I folds the old `embed` + `index_write`
+     run-ops into this step). Resume = DB-as-checkpoint.
+   - `run_advance_cursor` (python step, safe): writes the max `completed_at`
+     (from `data.chunk_stats`) to `.reyn/index/events_cursor`
 
 ## Input
 
