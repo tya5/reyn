@@ -521,7 +521,7 @@ class PhaseExecutor:
 
         from reyn.chat.router_loop import RouterLoop
         from reyn.kernel.phase_router_host import PhaseRouterLoopHost
-        from reyn.services.turn_budget import build_default_turn_budget_engine
+        from reyn.services.turn_budget import try_build_default_turn_budget_engine
 
         phase_def = self._skill.phases.get(phase)
         allowed_ops = set(phase_def.allowed_ops) if phase_def is not None else set()
@@ -557,8 +557,12 @@ class PhaseExecutor:
             # reuse it rework-free in PR-F. use_chars4=True keeps every term but
             # T_max model-independent. None when the phase has no compaction
             # wired (no T_max basis) → the trigger stays inert.
+            # #1092 PR-F3: try_build (not build_default) so a small-context phase
+            # model that cannot satisfy the by-construction floor DEGRADES (None →
+            # force-close inert) rather than crashing phase construction with the
+            # assert — uniform with the chat axis (F1) across all three axes.
             turn_budget_engine=(
-                build_default_turn_budget_engine(
+                try_build_default_turn_budget_engine(
                     self._phase_compaction_engine.model, use_chars4=True
                 )
                 if self._phase_compaction_engine is not None
