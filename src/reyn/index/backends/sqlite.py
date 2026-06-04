@@ -182,6 +182,31 @@ class SqliteIndexBackend:
         return WriteResult(written=written, skipped=skipped)
 
     # ------------------------------------------------------------------
+    # existing_hashes (pre-embed resume key)
+    # ------------------------------------------------------------------
+
+    async def existing_hashes(self, source: str) -> set[str]:
+        """Return the set of ``content_hash`` values already indexed for *source*.
+
+        This is the **pre-embed** resume key (#1303 Stage I): the caller
+        skips chunks whose hash is already present *before* embedding, so a
+        re-run or crash-resume does not re-embed already-indexed content (=
+        the cost-save). It is distinct from :meth:`write`'s ``INSERT OR
+        IGNORE``, which dedups *after* the vector has already been computed
+        (no cost save). Returns an empty set when the source DB is absent.
+        """
+        db_file = _db_path(self._root, source)
+        if not db_file.exists():
+            return set()
+        conn = sqlite3.connect(str(db_file), check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        try:
+            rows = conn.execute("SELECT content_hash FROM chunks").fetchall()
+        finally:
+            conn.close()
+        return {r[0] for r in rows if r[0]}
+
+    # ------------------------------------------------------------------
     # query
     # ------------------------------------------------------------------
 
