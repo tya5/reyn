@@ -89,30 +89,24 @@ def _host(turn_budget_engine) -> PhaseRouterLoopHost:
     )
 
 
-def _small_threshold_engine(threshold_tokens: int) -> TurnBudgetEngine:
-    """A TurnBudgetEngine whose threshold is a small testable value (large
-    reserves pull it down), so a small message can cross it."""
-    eng = build_default_turn_budget_engine(_MODEL, use_chars4=True)
-    t_max = eng.budget.max_input
-    t_wrap = eng.budget.T_wrap_SP
-    # threshold = t_max - t_wrap - output_reserve - offload_cap
-    offload_cap = 1
-    output_reserve = t_max - t_wrap - offload_cap - threshold_tokens
-    return TurnBudgetEngine(
-        _MODEL, output_reserve=output_reserve, offload_cap=offload_cap,
-        use_chars4=True,
-    )
+def _phase_engine() -> TurnBudgetEngine:
+    """A REAL, non-degenerate engine (gpt-3.5-turbo, threshold ~9968 tok). PR-E's
+    by-construction assert (threshold > output_reserve + offload_cap) forbids the
+    old large-reserve low-threshold trick, so firing tests use the real threshold
+    + threshold-sized content (the D2 integration pattern)."""
+    return build_default_turn_budget_engine("gpt-3.5-turbo", use_chars4=True)
 
 
 @pytest.mark.asyncio
 async def test_phase_host_fires_above_threshold_inert_without_engine() -> None:
     """Tier 2: should_force_close fires when non-system content ≥ threshold, and
     a host without an engine is inert (False)."""
-    eng = _small_threshold_engine(threshold_tokens=50)
+    eng = _phase_engine()
+    t = eng.budget.force_close_threshold
     host = _host(eng)
-    # content_tokens ≈ chars/4 (use_chars4). Build a user turn above/below 50 tok.
-    above = [{"role": "user", "content": "x" * (60 * 4)}]   # ~60 tok ≥ 50
-    below = [{"role": "user", "content": "x" * (40 * 4)}]   # ~40 tok < 50
+    # content_tokens ≈ chars/4 (use_chars4). Size a user turn just above/below t.
+    above = [{"role": "user", "content": "x" * ((t + 500) * 4)}]   # > t tok
+    below = [{"role": "user", "content": "x" * ((t - 500) * 4)}]   # < t tok
     assert await host.should_force_close(above, model="p") is True
     assert await host.should_force_close(below, model="p") is False
     # inert without an engine.
@@ -123,12 +117,14 @@ async def test_phase_host_fires_above_threshold_inert_without_engine() -> None:
 async def test_phase_host_excludes_system_turn_from_content() -> None:
     """Tier 2: the system turn is excluded from the content measure (the wrap-up
     SP swaps it at force-close time). A huge system turn alone does not trip it."""
-    eng = _small_threshold_engine(threshold_tokens=50)
+    eng = _phase_engine()
+    t = eng.budget.force_close_threshold
     host = _host(eng)
-    # A large SYSTEM turn + a tiny user turn → content (user only) stays under.
+    # A large SYSTEM turn (well over threshold) + a tiny user turn → content
+    # (user only) stays under, so it does NOT trip.
     msgs = [
-        {"role": "system", "content": "x" * (10_000 * 4)},  # excluded
-        {"role": "user", "content": "x" * (10 * 4)},        # ~10 tok < 50
+        {"role": "system", "content": "x" * ((t + 2000) * 4)},  # excluded
+        {"role": "user", "content": "x" * (100 * 4)},           # ~100 tok < t
     ]
     assert await host.should_force_close(msgs, model="p") is False
 
@@ -172,12 +168,13 @@ async def test_over_threshold_content_actually_fires_force_close_via_run_loop() 
     drives the REAL threshold-backed trigger so run_loop SWAPS to the force-close
     call (tools=[], trace_caller=router_force_close). Confirms force-close actually
     FIRES end-to-end, not just should_force_close=True in isolation."""
-    eng = _small_threshold_engine(threshold_tokens=20)
+    eng = _phase_engine()
+    t = eng.budget.force_close_threshold
     llm = _CapturingLLM()
     loop = RouterLoop(
         host=_ThresholdHost(eng), chain_id="c2-live", max_iterations=3,
         llm_caller=llm,
     )
-    await loop.run("x" * (40 * 4), [])  # ~40-tok user turn ≥ 20-tok threshold
+    await loop.run("x" * ((t + 500) * 4), [])  # over-threshold user turn → fires
     assert llm.last_kwargs["trace_caller"] == "router_force_close"
     assert llm.last_kwargs["tools"] == []

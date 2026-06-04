@@ -374,6 +374,18 @@ class PhaseRouterLoopHost:
         None if the phase did not force-close."""
         return self._forced_close_result
 
+    @property
+    def wrap_up_output_reserve(self) -> int | None:
+        """#1092 PR-E: the wrap-up call's OUTPUT budget (``output_reserve``), or
+        None when the phase has no force-close engine. ``RouterLoop._force_close_call``
+        passes it as ``max_tokens`` to HARD-CAP the consolidation ≤ output_reserve —
+        the by-construction guarantee that the re-injected checkpoint stays below
+        the threshold (assert_turn_budget_bounds enforces output_reserve + offload_cap
+        < threshold). Chat hosts don't implement this → no cap (their handoff is the
+        outer retry_loop terminal, PR-F)."""
+        engine = self._turn_budget_engine
+        return engine.budget.output_reserve if engine is not None else None
+
     # ── Chat-discovery methods (phase = empty) ────────────────────────────
     # #1092 PR-C-0: ``RouterLoop._build_router_caller_state`` calls these EAGERLY
     # while building the per-dispatch RouterCallerState (router_loop.py). A phase
