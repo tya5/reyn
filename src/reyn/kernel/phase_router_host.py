@@ -91,6 +91,10 @@ class PhaseRouterLoopHost:
         # #1092 C2: cumulative-axis force-close engine (TurnBudgetEngine). None
         # → the ``should_force_close`` trigger is inert (no phase force-close).
         self._turn_budget_engine = turn_budget_engine
+        # #1092 PR-D1: the consolidation finish of a force-close in this run_loop
+        # (set via ``record_force_close``), read by PhaseExecutor after the loop
+        # to persist the checkpoint. None = the phase did not force-close.
+        self._forced_close_result: Any = None
 
     # ── RouterLoopCore identity / static config ───────────────────────────
 
@@ -355,6 +359,20 @@ class PhaseRouterLoopHost:
             if isinstance(m, dict) and m.get("role") != "system"
         )
         return engine.should_force_close(content_tokens)
+
+    def record_force_close(self, result: Any) -> None:
+        """#1092 PR-D1: ``RouterLoop.run_loop`` hands the force-close consolidation
+        finish here so the OS (PhaseExecutor) can persist it as a checkpoint after
+        the loop. Stored, not acted on (P3 — the OS executes the handoff). Chat
+        hosts don't implement this (their handoff is the outer retry_loop terminal,
+        PR-F)."""
+        self._forced_close_result = result
+
+    @property
+    def forced_close_result(self) -> Any:
+        """The consolidation finish of a force-close in the last run_loop, or
+        None if the phase did not force-close."""
+        return self._forced_close_result
 
     # ── Chat-discovery methods (phase = empty) ────────────────────────────
     # #1092 PR-C-0: ``RouterLoop._build_router_caller_state`` calls these EAGERLY

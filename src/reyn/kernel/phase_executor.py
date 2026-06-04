@@ -49,6 +49,45 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
+
+def persist_force_close_checkpoint(
+    *,
+    workspace,
+    events,
+    phase: str,
+    skill_name: str,
+    run_id: str | None,
+    forced_close_result,
+) -> "str | None":
+    """#1092 PR-D1: persist a force-close consolidation as a checkpoint artifact
+    (P5) + emit a P6 event. Returns the artifact path, or ``None`` if the phase
+    did not force-close (``forced_close_result is None``).
+
+    ADDITIVE: the caller keeps the FD2-from-partial outcome (= C2 behaviour) — the
+    persisted checkpoint stays unconsumed until PR-D2 switches the outcome to
+    re-enter the same phase from it (the rollback ``previous_control_ir_results``
+    seam). Pure aside from the workspace write + event emit, so it is unit-testable
+    with a real Workspace + EventLog.
+    """
+    if forced_close_result is None:
+        return None
+    checkpoint = {
+        "type": "force_close_checkpoint",
+        "data": {
+            "consolidation": getattr(forced_close_result, "content", None) or "",
+            "phase": phase,
+        },
+    }
+    path = workspace.store_artifact(phase, checkpoint, skill_name=skill_name)
+    events.emit(
+        "phase_force_close_checkpoint_persisted",
+        phase=phase,
+        checkpoint_path=path,
+        chain_id=run_id or phase,
+    )
+    return path
+
+
 # FP-0008 #1135(b): inline cap for the raw LLM output captured on a phase-output
 # validation failure. Larger payloads are offloaded (size axis, non-history) so
 # the P6 events audit log never balloons.
@@ -583,6 +622,23 @@ class PhaseExecutor:
         # as native tool-role turns; the model signals end_turn by emitting no
         # tool_calls, returning control here for the FD2 decide.
         await routerloop.run_loop(messages, tools, False)
+
+        # #1092 PR-D1 (handoff persist — ADDITIVE): if this phase FORCE-CLOSED
+        # (the cumulative-axis trigger fired and run_loop ran the wrap-up call),
+        # persist the consolidation as a checkpoint artifact (P5) + emit a P6
+        # event. ADDITIVE: the FD2-from-partial outcome below is KEPT as the
+        # fallback (= C2 behaviour, a valid artifact), so the checkpoint is
+        # unconsumed until PR-D2 switches the outcome to re-enter from it (no
+        # broken intermediate). ``record_force_close`` is host-only (chat hosts
+        # don't set it → forced_close_result is None → no-op).
+        persist_force_close_checkpoint(
+            workspace=self._control_ir_executor.workspace,
+            events=self._events,
+            phase=phase,
+            skill_name=self._skill.name,
+            run_id=self._run_id,
+            forced_close_result=getattr(host, "forced_close_result", None),
+        )
 
         # FD2: build the SEPARATE json decide frame from the native turns so it is
         # INFORMATION-EQUIVALENT to the json-mode act loop's decide frame (P1/P8 —
