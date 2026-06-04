@@ -54,13 +54,27 @@ def drop_not_locatable(data: Mapping[str, Any]) -> dict:
     edits = inner.get("edits") or []
     regions = inner.get("_edit_regions") or []
 
-    actionable: list[Any] = []
+    # Filter ``edits`` AND ``_edit_regions`` in LOCKSTEP. apply.md Step 1 pairs
+    # ``edits[i] ↔ _edit_regions[i]`` by plan-order index, so dropping a mid-plan
+    # not-locatable edit from ``edits`` alone would shift every surviving edit
+    # onto the wrong region (a locatable edit could inherit a dropped count-0
+    # region and look not-locatable). Keep the two lists index-aligned by
+    # appending an actionable edit's region only when the edit is kept.
+    actionable_edits: list[Any] = []
+    actionable_regions: list[Any] = []
     not_locatable: list[Any] = list(inner.get("not_locatable") or [])
     for i, edit in enumerate(edits):
         region = regions[i] if i < len(regions) else None
-        if _count(region) and _count(region) > 0:  # count is a positive int
-            actionable.append(edit)
+        c = _count(region)
+        if c and c > 0:  # count is a positive int
+            actionable_edits.append(edit)
+            actionable_regions.append(region)
         else:
             not_locatable.append(edit)
 
-    return {**inner, "edits": actionable, "not_locatable": not_locatable}
+    return {
+        **inner,
+        "edits": actionable_edits,
+        "_edit_regions": actionable_regions,
+        "not_locatable": not_locatable,
+    }

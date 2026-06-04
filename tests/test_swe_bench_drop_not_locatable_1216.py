@@ -118,10 +118,47 @@ def test_apply_preprocessor_drops_and_records_not_locatable(tmp_path: Path) -> N
         f"the count-0 edit must be recorded in not_locatable; got {not_locatable}"
     )
 
-    # Regions are preserved (the drop partitions edits, it does not discard the
-    # grep evidence): both entries still present, count 1 then count 0.
+    # Regions are filtered in LOCKSTEP with edits: the dropped count-0 region is
+    # removed too (so surviving edits stay index-aligned with their regions), and
+    # only the locatable edit's count>=1 region remains.
     regions = data["_edit_regions"]
-    assert regions[0]["count"] >= 1 and regions[1]["count"] == 0
+    assert len(regions) == 1
+    assert regions[0]["count"] >= 1
+
+
+def test_apply_preprocessor_mid_plan_drop_realigns_regions(tmp_path: Path) -> None:
+    """Tier 2: a count-0 edit in the MIDDLE of the plan — surviving edits still pair
+    with their OWN regions (the lockstep filter; guards the index-shift bug where
+    edits is filtered but _edit_regions is not, so e2 would inherit the dropped
+    count-0 region — #1292 review catch)."""
+    body = (
+        "".join(f"# filler {i}\n" for i in range(120))
+        + "    alpha = first()  # ANCHOR-ALPHA-AAA\n"
+        + "".join(f"# mid {i}\n" for i in range(120))
+        + "    omega = last()  # ANCHOR-OMEGA-ZZZ\n"
+        + "".join(f"# trailer {i}\n" for i in range(120))
+    )
+    data = _run_apply_preprocessor(
+        tmp_path,
+        body,
+        [
+            {"file": "pkg/mod.py", "description": "a", "anchor": "ANCHOR-ALPHA-AAA"},   # count>=1
+            {"file": "pkg/mod.py", "description": "gap", "anchor": "NONEXISTENT-MID-QQQ"},  # count 0, MID-plan
+            {"file": "pkg/mod.py", "description": "o", "anchor": "ANCHOR-OMEGA-ZZZ"},   # count>=1
+        ],
+    )
+
+    assert [e["anchor"] for e in data["edits"]] == ["ANCHOR-ALPHA-AAA", "ANCHOR-OMEGA-ZZZ"]
+    assert [e["anchor"] for e in (data.get("not_locatable") or [])] == ["NONEXISTENT-MID-QQQ"]
+
+    # Lockstep: regions filtered with edits → 2 entries, both count>=1 (NO surviving
+    # count-0 region = no misalignment), and each surviving edit pairs with ITS OWN
+    # region (not the dropped mid-plan one).
+    regions = data["_edit_regions"]
+    assert len(regions) == 2
+    assert all(r["count"] >= 1 for r in regions)
+    assert "ANCHOR-ALPHA-AAA" in str(regions[0].get("matches"))
+    assert "ANCHOR-OMEGA-ZZZ" in str(regions[1].get("matches"))
 
 
 def test_apply_preprocessor_all_locatable_keeps_all(tmp_path: Path) -> None:
