@@ -171,27 +171,38 @@ def test_apply_preprocessor_populates_region_for_unique_anchor(tmp_path: Path) -
 
 
 def test_apply_preprocessor_anchor_not_found_is_graceful(tmp_path: Path) -> None:
-    """Tier 2: an anchor absent from the file → count 0, no crash (apply must not blind-edit)."""
+    """Tier 2: an anchor absent from the file → count 0 → #1216 drops it from the
+    actionable plan + records it in ``not_locatable`` (apply must not blind-edit).
+
+    Reconciled with the #1216 lockstep drop (the preprocessor now removes a count-0
+    edit AND its region together, so the not-found anchor is surfaced via
+    ``not_locatable`` rather than as a surviving count-0 ``_edit_regions`` entry —
+    leaving a count-0 region in-band caused the #1292 index-shift bug)."""
     data = _run_apply_preprocessor(
         tmp_path,
         _big_body("    real_line = 1  # ACTUAL"),
         [{"file": "pkg/mod.py", "description": "x", "anchor": "NONEXISTENT-ANCHOR-QQQ"}],
     )
-    assert data["_edit_regions"][0]["count"] == 0  # one entry per edit (empty → IndexError)
+    assert data["edits"] == []  # the sole not-locatable edit is dropped from actionable
+    assert data["_edit_regions"] == []  # its count-0 region is dropped in lockstep
+    assert [e["anchor"] for e in (data.get("not_locatable") or [])] == ["NONEXISTENT-ANCHOR-QQQ"]
 
 
 def test_apply_preprocessor_empty_anchor_is_not_locatable(tmp_path: Path) -> None:
     """Tier 2: an empty anchor → count 0 (NOT match-all), so the edit is not-locatable.
 
     Guards the #1214 review finding: an empty regex would match every line and
-    wrongly look like a multi-match; the never-match sentinel keeps count at 0.
+    wrongly look like a multi-match; the never-match sentinel keeps count at 0,
+    so the edit is dropped+recorded as not-locatable (#1216), not mis-treated as
+    a match.
     """
     data = _run_apply_preprocessor(
         tmp_path,
         _big_body("    real_line = 1  # ACTUAL"),
         [{"file": "pkg/mod.py", "description": "x", "anchor": ""}],
     )
-    assert data["_edit_regions"][0]["count"] == 0
+    assert data["edits"] == []  # never-match sentinel → count 0 → dropped, not match-all
+    assert [e["anchor"] for e in (data.get("not_locatable") or [])] == [""]
 
 
 def test_apply_preprocessor_multi_match_surfaces_count(tmp_path: Path) -> None:

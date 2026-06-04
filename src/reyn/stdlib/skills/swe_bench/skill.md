@@ -67,6 +67,13 @@ permissions:
       function: escape_anchors
       mode: safe
       timeout: 5
+    # #1216: deterministically drops not-locatable edits (region count 0) from
+    # the actionable plan + records them in `not_locatable`, post the iterate-grep.
+    # Mode: safe — pure data transform, no filesystem/subprocess/env.
+    - module: ./drop_not_locatable.py
+      function: drop_not_locatable
+      mode: safe
+      timeout: 5
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---
