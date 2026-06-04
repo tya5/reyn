@@ -57,6 +57,10 @@ class CapabilityAxis(Enum):
     SECRET_WRITE = "secret_write"
     PYTHON = "python"
     ENV = "env"
+    # #1199 S3.1b-2c: the per-skill tool allowlist (decl.tool) — a distinct
+    # capability axis (gated by require_tool) not in the original 9; added here
+    # for the require_tool cutover.
+    TOOL = "tool"
 
 
 class LayerView(Protocol):
@@ -147,7 +151,18 @@ class AgentLayer:
             in_allowlist = d.allowed_mcp is None or value in d.allowed_mcp
             return in_grant and in_allowlist
         if axis is CapabilityAxis.SECRET_WRITE:
-            return value in d.secret_write or self._approved(axis, value)
+            # #1199 S3.1b-2c: faithful to require_secret_write — a specific key OR
+            # the "*" wildcard (runtime-determined keys, gated by the per-value
+            # op-execution prompt). _approved kept for symmetry (no current
+            # secret approval source, but harmless).
+            return (
+                value in d.secret_write
+                or "*" in d.secret_write
+                or self._approved(axis, value)
+            )
+        if axis is CapabilityAxis.TOOL:
+            # #1199 S3.1b-2c: the per-skill tool allowlist (require_tool).
+            return value in d.tool
         if axis is CapabilityAxis.PYTHON:
             # value = (module, function)
             return any(

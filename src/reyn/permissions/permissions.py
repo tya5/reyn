@@ -1215,7 +1215,19 @@ class PermissionResolver:
         ``"GITHUB_TOKEN"`` and ``"*"`` is functionally equivalent to
         just ``"*"`` but conveys intent more clearly.
         """
-        if key in decl.secret_write or "*" in decl.secret_write:
+        # #1199 S3.1b-2c: the static secret-write authority (specific key OR "*"
+        # wildcard) flows through the unified model (SECRET_WRITE axis).
+        # Byte-identical. The operator's per-value op-execution prompt (for the
+        # wildcard) is the separate runtime gate, unchanged.
+        from reyn.permissions.effective import (
+            AgentLayer,
+            CapabilityAxis,
+            EffectivePermission,
+        )
+
+        if EffectivePermission([AgentLayer(decl)]).allows(
+            CapabilityAxis.SECRET_WRITE, key
+        ):
             return
         raise PermissionError(
             f"Secret-store write of key {key!r} not declared in skill permissions. "
@@ -1289,7 +1301,18 @@ class PermissionResolver:
     async def require_shell(
         self, decl: PermissionDecl, cmd: str, bus: "RequestBus | None",
     ) -> None:
-        if not decl.shell:
+        # #1199 S3.1b-2c: the static shell authority (decl.shell) flows through the
+        # unified model (SUBPROCESS axis). Byte-identical; the _approve prompt
+        # remains the separate runtime gate.
+        from reyn.permissions.effective import (
+            AgentLayer,
+            CapabilityAxis,
+            EffectivePermission,
+        )
+
+        if not EffectivePermission([AgentLayer(decl)]).allows(
+            CapabilityAxis.SUBPROCESS, None
+        ):
             raise PermissionError(
                 f"shell access not declared in skill permissions. "
                 f"Add `permissions:\\n  shell: true` to the skill.md frontmatter."
@@ -1424,7 +1447,17 @@ class PermissionResolver:
     async def require_tool(
         self, decl: PermissionDecl, tool: str, bus: RequestBus,
     ) -> None:
-        if tool not in decl.tool:
+        # #1199 S3.1b-2c: the static tool authority (decl.tool) flows through the
+        # unified model (TOOL axis). Byte-identical; the _approve prompt remains.
+        from reyn.permissions.effective import (
+            AgentLayer,
+            CapabilityAxis,
+            EffectivePermission,
+        )
+
+        if not EffectivePermission([AgentLayer(decl)]).allows(
+            CapabilityAxis.TOOL, tool
+        ):
             raise PermissionError(
                 f"tool {tool!r} not declared in skill permissions. "
                 f"Add `permissions:\\n  tool: [{tool}]` to the skill.md frontmatter."
