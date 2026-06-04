@@ -975,13 +975,31 @@ class PermissionResolver:
         startup, decline is tracked in ``_session``, and is respected
         by ``_is_path_approved_for`` above.
         """
-        if _in_default_read_zone(path):
-            return
-        if self._is_config_approved("file.read"):
-            return
-        if self._is_path_approved_for(path, skill_name, "file.read"):
-            return
-        if not self._interactive and _decl_covers_path(decl.file_read, path):
+        # #1199 S3.1b-2b: the op-runtime read gate — DECL-FULL EffectivePermission
+        # (include_decl=True; the skill's declared paths are honored in
+        # non-interactive mode). Byte-identical: zone OR config-approved OR
+        # path-approved OR (non-interactive AND decl_covers). Approvals fold
+        # INSIDE the layer (② grant-back-safe); interactive mode gates the decl
+        # disjunct, faithful to the prior logic.
+        from reyn.permissions.effective import (
+            AgentLayer,
+            CapabilityAxis,
+            EffectivePermission,
+        )
+
+        def _approved(axis: object, value: object) -> bool:
+            return self._is_config_approved("file.read") or self._is_path_approved_for(
+                str(value), skill_name, "file.read"
+            )
+
+        if EffectivePermission([
+            AgentLayer(
+                decl,
+                approval_check=_approved,
+                interactive=self._interactive,
+                include_decl=True,
+            )
+        ]).allows(CapabilityAxis.FILE_READ, path):
             return
         raise PermissionError(
             f"read from '{path}' was not approved. "
@@ -1005,13 +1023,29 @@ class PermissionResolver:
         rationale (= PR #1004 class N=2 trigger; wiring gap that
         leaves declared intent un-honored in batch mode).
         """
-        if _in_default_write_zone(path):
-            return
-        if self._is_config_approved("file.write"):
-            return
-        if self._is_path_approved_for(path, skill_name, "file.write"):
-            return
-        if not self._interactive and _decl_covers_path(decl.file_write, path):
+        # #1199 S3.1b-2b: the op-runtime write gate — DECL-FULL EffectivePermission
+        # (include_decl=True). Byte-identical: zone OR config-approved OR
+        # path-approved OR (non-interactive AND decl_covers). Approvals fold INSIDE
+        # the layer (② grant-back-safe); interactive mode gates the decl disjunct.
+        from reyn.permissions.effective import (
+            AgentLayer,
+            CapabilityAxis,
+            EffectivePermission,
+        )
+
+        def _approved(axis: object, value: object) -> bool:
+            return self._is_config_approved("file.write") or self._is_path_approved_for(
+                str(value), skill_name, "file.write"
+            )
+
+        if EffectivePermission([
+            AgentLayer(
+                decl,
+                approval_check=_approved,
+                interactive=self._interactive,
+                include_decl=True,
+            )
+        ]).allows(CapabilityAxis.FILE_WRITE, path):
             return
         raise PermissionError(
             f"write to '{path}' was not approved. "
@@ -1200,14 +1234,28 @@ class PermissionResolver:
 
         Allowed if: the path is in the default read zone (under CWD), OR config
         grants `file.read: allow`, OR a per-skill approval covers it.
+
+        #1199 S3.1b-2b (the Workspace read gate): routed through the unified
+        EffectivePermission model — DECL-LESS AgentLayer (the Workspace gate never
+        honored the skill's declared paths; the op-runtime ``require_file_read``
+        decl-full path is the separate divergent gate, preserved + reconciled in
+        S3.1c). Byte-identical: zone OR config-approved OR path-approved.
         """
-        if _in_default_read_zone(path):
-            return True
-        if self._is_config_approved("file.read"):
-            return True
-        if skill_name and self._is_path_approved_for(path, skill_name, "file.read"):
-            return True
-        return False
+        from reyn.permissions.effective import (
+            AgentLayer,
+            CapabilityAxis,
+            EffectivePermission,
+        )
+
+        def _approved(axis: object, value: object) -> bool:
+            return self._is_config_approved("file.read") or (
+                bool(skill_name)
+                and self._is_path_approved_for(str(value), skill_name, "file.read")
+            )
+
+        return EffectivePermission([
+            AgentLayer(PermissionDecl(), approval_check=_approved, include_decl=False)
+        ]).allows(CapabilityAxis.FILE_READ, path)
 
     def is_write_allowed(self, path: str, skill_name: str = "") -> bool:
         """Check if writing `path` is allowed.
