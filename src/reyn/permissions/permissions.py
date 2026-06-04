@@ -75,6 +75,14 @@ _CANONICAL_PROTECTED_WRITE_PATHS = (
     ".reyn/mcp.yaml",
     ".reyn/cron.yaml",
     ".reyn/index/sources.yaml",
+    # #1199 security fix: the persisted approval store. It is written ONLY via
+    # the gated approval-decision mechanism (``_persist`` — which also emits the
+    # state_change audit signal). Without this carve-out it sits in the broad
+    # ``.reyn/`` default write zone, so a safe-mode file.write could inject an
+    # approval directly: bypassing the user-approval gate + the audit, and (since
+    # approvals load once into ``self._saved`` at startup) silently activating a
+    # never-approved grant on the NEXT run = approval-audit bypass.
+    ".reyn/approvals.yaml",
 )
 
 

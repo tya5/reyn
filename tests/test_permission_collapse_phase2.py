@@ -50,7 +50,8 @@ def test_other_reyn_paths_still_in_default_zone(tmp_path, monkeypatch):
     for rel in (
         ".reyn/index/events_cursor",
         ".reyn/index/chunks.jsonl",
-        ".reyn/approvals.yaml",
+        # #1199: .reyn/approvals.yaml MOVED to the protected set (was here) —
+        # see test_require_file_write_rejects_approvals_yaml.
         ".reyn/events.jsonl",
         ".reyn/scratch/anything.txt",
         "reyn/local/whatever.py",
@@ -68,6 +69,23 @@ def test_require_file_write_rejects_canonical_without_decl(tmp_path, monkeypatch
     decl = PermissionDecl()  # no axes set
     with pytest.raises(PermissionError, match="was not approved"):
         resolver.require_file_write(decl, ".reyn/mcp.yaml", "skill_x")
+
+
+def test_require_file_write_rejects_approvals_yaml(tmp_path, monkeypatch):
+    """Tier 2: #1199 security fix — a broad-zone file.write to the persisted approval
+    store (.reyn/approvals.yaml) is DENIED without an explicit decl, closing the
+    approval-injection persistence attack (a direct write would otherwise bypass the
+    user-approval gate + audit and silently activate on next startup).
+
+    Falsification contrast: a non-protected sibling under .reyn/ (scratch) is still
+    allowed in-zone — so the denial is specific to the protected-path list, not a
+    blanket .reyn/ write block."""
+    monkeypatch.chdir(tmp_path)
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
+    with pytest.raises(PermissionError, match="was not approved"):
+        resolver.require_file_write(PermissionDecl(), ".reyn/approvals.yaml", "skill_x")
+    # contrast: a non-protected .reyn/ path is NOT denied (in default zone).
+    resolver.require_file_write(PermissionDecl(), ".reyn/scratch/notes.txt", "skill_x")
 
 
 def test_require_file_write_accepts_canonical_after_session_approval(tmp_path, monkeypatch):
