@@ -135,55 +135,9 @@ def _in_default_read_zone(path_str: str) -> bool:
         return False
 
 
-def _decl_covers_path(entries: list[dict], path: str) -> bool:
-    """Whether the skill's declared file_read / file_write entries cover ``path``.
-
-    Used by ``require_file_read`` / ``require_file_write`` in non-interactive
-    mode to honor skill declarations directly (FP-0008 PR-H, 2026-05-28).
-
-    Matching rules:
-
-    - ``path == "*"`` in any entry → wildcard, matches anything.
-    - Empty / missing entry path → skip the entry.
-    - ``scope: "recursive"`` → matches the declared path itself OR any
-      descendant resolved-path.
-    - ``scope: "just_path"`` (default) → matches the resolved declared path
-      exactly.
-
-    Returns False on any resolution error so the caller can fall through
-    to the standard PermissionError.
-    """
-    if not entries:
-        return False
-    try:
-        p_resolved = Path(path).expanduser().resolve()
-    except Exception:
-        return False
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        decl_path = entry.get("path", "")
-        scope = entry.get("scope", "just_path")
-        if not decl_path:
-            continue
-        if decl_path == "*":
-            return True
-        try:
-            decl_resolved = Path(decl_path).expanduser().resolve()
-        except Exception:
-            continue
-        if scope == "recursive":
-            if p_resolved == decl_resolved:
-                return True
-            try:
-                p_resolved.relative_to(decl_resolved)
-                return True
-            except ValueError:
-                pass
-        else:  # just_path
-            if p_resolved == decl_resolved:
-                return True
-    return False
+# #1199 S3.1c-1: _decl_covers_path was removed — the non-interactive decl
+# auto-grant it served (FP-0008 PR-H) is gone (file gates are decl-less:
+# zone OR approved). swe_bench now uses an explicit config-grant.
 
 
 @dataclass
@@ -966,21 +920,15 @@ class PermissionResolver:
         Default zone (CWD and below) is always granted.
         Outside CWD, the path must have been approved at startup or via config.
 
-        FP-0008 PR-H (2026-05-28): in non-interactive mode where the
-        startup guard cannot prompt the user, honor the skill's
-        declared paths directly. This brings runtime into alignment
-        with declared intent for batch/cron/CI workflows. Same class
-        of wiring-gap fix as PR #1004 (= Tool→OpContext bridge).
-        Interactive mode is unchanged — the user may decline at
-        startup, decline is tracked in ``_session``, and is respected
-        by ``_is_path_approved_for`` above.
+        #1199 S3.1c-1: this gate is **decl-less** (zone OR approved) — the same
+        decision ``is_read_allowed`` makes (divergence resolved). A skill's
+        declared path is NOT auto-granted; it must be in the default zone or
+        approved (interactively at startup, or via config). A non-interactive
+        declared-but-unapproved path therefore denies — the operator pre-approves
+        (reyn.yaml ``permissions.file.read: allow``) or runs interactively.
         """
-        # #1199 S3.1b-2b: the op-runtime read gate — DECL-FULL EffectivePermission
-        # (include_decl=True; the skill's declared paths are honored in
-        # non-interactive mode). Byte-identical: zone OR config-approved OR
-        # path-approved OR (non-interactive AND decl_covers). Approvals fold
-        # INSIDE the layer (② grant-back-safe); interactive mode gates the decl
-        # disjunct, faithful to the prior logic.
+        # #1199 S3.1c-1: decl-less EffectivePermission (zone OR approved).
+        # Approvals fold INSIDE the layer (② grant-back-safe).
         from reyn.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
@@ -993,22 +941,17 @@ class PermissionResolver:
             )
 
         if EffectivePermission([
-            AgentLayer(
-                decl,
-                approval_check=_approved,
-                interactive=self._interactive,
-                include_decl=True,
-            )
+            AgentLayer(decl, approval_check=_approved)
         ]).allows(CapabilityAxis.FILE_READ, path):
             return
         raise PermissionError(
-            f"read from '{path}' was not approved. "
-            f"Declare it in the skill.md frontmatter:\n"
-            f"  permissions:\n"
-            f"    file.read:\n"
-            f"      - path: {path}\n"
-            f"        scope: just_path\n"
-            f"Then re-run — the startup guard will ask for approval before execution starts."
+            f"read from '{path}' was not approved (declared but not granted).\n"
+            f"Why: it is outside the default read zone (CWD) and has no approval; "
+            f"the skill's declaration alone does not auto-grant it.\n"
+            f"Options:\n"
+            f"  - pre-approve in reyn.yaml: permissions.file.read: allow (or the "
+            f"specific path), then re-run; or\n"
+            f"  - run interactively so the startup guard can prompt for approval."
         )
 
     def require_file_write(self, decl: PermissionDecl, path: str, skill_name: str = "") -> None:
@@ -1017,16 +960,13 @@ class PermissionResolver:
         Default zone (.reyn/, reyn/) is always granted.
         Outside the default zone, the path must have been approved at startup.
 
-        FP-0008 PR-H (2026-05-28): in non-interactive mode where the
-        startup guard cannot prompt the user, honor the skill's
-        declared paths directly. See ``require_file_read`` for the
-        rationale (= PR #1004 class N=2 trigger; wiring gap that
-        leaves declared intent un-honored in batch mode).
+        #1199 S3.1c-1: decl-less (zone OR approved) — the same decision
+        ``is_write_allowed`` makes (divergence resolved). A declared path is not
+        auto-granted; a non-interactive declared-but-unapproved path denies (the
+        operator pre-approves via reyn.yaml or runs interactively).
         """
-        # #1199 S3.1b-2b: the op-runtime write gate — DECL-FULL EffectivePermission
-        # (include_decl=True). Byte-identical: zone OR config-approved OR
-        # path-approved OR (non-interactive AND decl_covers). Approvals fold INSIDE
-        # the layer (② grant-back-safe); interactive mode gates the decl disjunct.
+        # #1199 S3.1c-1: decl-less EffectivePermission (zone OR approved).
+        # Approvals fold INSIDE the layer (② grant-back-safe).
         from reyn.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
@@ -1039,22 +979,17 @@ class PermissionResolver:
             )
 
         if EffectivePermission([
-            AgentLayer(
-                decl,
-                approval_check=_approved,
-                interactive=self._interactive,
-                include_decl=True,
-            )
+            AgentLayer(decl, approval_check=_approved)
         ]).allows(CapabilityAxis.FILE_WRITE, path):
             return
         raise PermissionError(
-            f"write to '{path}' was not approved. "
-            f"Declare it in the skill.md frontmatter:\n"
-            f"  permissions:\n"
-            f"    file.write:\n"
-            f"      - path: {path}\n"
-            f"        scope: just_path\n"
-            f"Then re-run — the startup guard will ask for approval before execution starts."
+            f"write to '{path}' was not approved (declared but not granted).\n"
+            f"Why: it is outside the default write zone (.reyn/, reyn/) and has no "
+            f"approval; the skill's declaration alone does not auto-grant it.\n"
+            f"Options:\n"
+            f"  - pre-approve in reyn.yaml: permissions.file.write: allow (or the "
+            f"specific path), then re-run; or\n"
+            f"  - run interactively so the startup guard can prompt for approval."
         )
 
     async def require_http_get(
@@ -1258,11 +1193,11 @@ class PermissionResolver:
         Allowed if: the path is in the default read zone (under CWD), OR config
         grants `file.read: allow`, OR a per-skill approval covers it.
 
-        #1199 S3.1b-2b (the Workspace read gate): routed through the unified
-        EffectivePermission model — DECL-LESS AgentLayer (the Workspace gate never
-        honored the skill's declared paths; the op-runtime ``require_file_read``
-        decl-full path is the separate divergent gate, preserved + reconciled in
-        S3.1c). Byte-identical: zone OR config-approved OR path-approved.
+        #1199 S3.1b-2b / S3.1c-1 (the Workspace read gate): routed through the
+        unified EffectivePermission model — a decl-less AgentLayer (zone OR
+        approved). As of S3.1c-1 the op-runtime ``require_file_read`` gate is ALSO
+        decl-less, so the two now make the SAME decision (the S3.1b-2 transitional
+        divergence is resolved).
         """
         from reyn.permissions.effective import (
             AgentLayer,
@@ -1277,7 +1212,7 @@ class PermissionResolver:
             )
 
         return EffectivePermission([
-            AgentLayer(PermissionDecl(), approval_check=_approved, include_decl=False)
+            AgentLayer(PermissionDecl(), approval_check=_approved)
         ]).allows(CapabilityAxis.FILE_READ, path)
 
     def is_write_allowed(self, path: str, skill_name: str = "") -> bool:
@@ -1286,12 +1221,12 @@ class PermissionResolver:
         Allowed if: default write zone, OR config grants `file.write: allow`, OR
         a per-skill approval covers it.
 
-        #1199 S3.1b-2a (the Workspace write gate): routed through the unified
-        EffectivePermission model — the single conjunctive-∩ source. Byte-identical:
-        a DECL-LESS AgentLayer (``include_decl=False`` — the Workspace gate never
-        honored the skill's declared paths; the op-runtime ``require_file_write``
-        decl-full path is the separate, divergent gate, preserved + reconciled in
-        S3.1c). The config/path approvals fold INSIDE the layer (② grant-back-safe).
+        #1199 S3.1b-2a / S3.1c-1 (the Workspace write gate): routed through the
+        unified EffectivePermission model — the single conjunctive-∩ source. A
+        decl-less AgentLayer (zone OR approved). As of S3.1c-1 the op-runtime
+        ``require_file_write`` gate is ALSO decl-less, so the two now make the
+        SAME decision (the S3.1b-2 transitional divergence is resolved). The
+        config/path approvals fold INSIDE the layer (② grant-back-safe).
         """
         from reyn.permissions.effective import (
             AgentLayer,
@@ -1306,7 +1241,7 @@ class PermissionResolver:
             )
 
         return EffectivePermission([
-            AgentLayer(PermissionDecl(), approval_check=_approved, include_decl=False)
+            AgentLayer(PermissionDecl(), approval_check=_approved)
         ]).allows(CapabilityAxis.FILE_WRITE, path)
 
     async def require_shell(

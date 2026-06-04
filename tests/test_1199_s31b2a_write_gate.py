@@ -1,10 +1,10 @@
-"""Tier 2: is_write_allowed cutover + the include_decl divergence flag (#1199 S3.1b-2a).
+"""Tier 2: is_write_allowed cutover (#1199 S3.1b-2a).
 
 The Workspace write gate (is_write_allowed) is routed through EffectivePermission
-with a DECL-LESS AgentLayer (include_decl=False) — byte-identical, preserving the
-pre-existing divergence from the op-runtime decl-full require_file_write
-(reconciled later in S3.1c). The broad byte-identical guard is the workspace +
-permission suites; these pin the flag mechanism + the cutover directly.
+with a decl-less AgentLayer (zone OR approved). #1199 S3.1c-1 made the op-runtime
+require_file_write decl-less too, so the two now agree (divergence resolved; the
+former include_decl flag is gone). These pin the is_write_allowed cutover; the
+divergence resolution is pinned in test_1199_s31c1_swebench_only.
 """
 from __future__ import annotations
 
@@ -17,17 +17,10 @@ from tests.test_permissions import _make_resolver
 AX = CapabilityAxis
 
 
-def test_include_decl_flag_controls_decl_disjunct() -> None:
-    """Tier 2: include_decl gates the file decl-grant disjunct — the mechanism
-    that preserves the Workspace(decl-less) vs op-runtime(decl-full) divergence
-    byte-identically. Same decl, opposite decisions for an out-of-zone declared
-    path."""
-    out = "/tmp/s31b2a-declared.txt"  # outside the default write zone
-    decl = PermissionDecl(file_write=[{"path": out, "scope": "just_path"}])
-    # op-runtime (decl-full): the declared path is honored
-    assert AgentLayer(decl, include_decl=True).allows(AX.FILE_WRITE, out) is True
-    # Workspace (decl-less): the declared path is NOT honored (preserved divergence)
-    assert AgentLayer(decl, include_decl=False).allows(AX.FILE_WRITE, out) is False
+# #1199 S3.1c-1: the include_decl flag (which gated the file decl-grant disjunct
+# to preserve the transitional Workspace-vs-op-runtime divergence) was removed —
+# files are decl-less everywhere now, so both gates agree. The flag test is
+# deleted; the divergence resolution is pinned in test_1199_s31c1_swebench_only.
 
 
 def test_is_write_allowed_reproduces_current_logic(tmp_path: Path) -> None:

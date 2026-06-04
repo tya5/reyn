@@ -1,11 +1,11 @@
 """Tier 2: is_read_allowed + require_file_read/write cutovers (#1199 S3.1b-2b).
 
-Continues the S3.1b-2 A-discipline through the unified model: the Workspace read
-gate (is_read_allowed) is DECL-LESS (include_decl=False); the op-runtime file
-gates (require_file_read/write) are DECL-FULL (include_decl=True, honoring the
-skill's declared paths in non-interactive mode). Each gate's broad byte-identical
-guard is its existing permission/workspace suite; these pin the divergence
-directly. (require_file_* are sync.)
+These gates route through the unified model. #1199 S3.1c-1 made them all
+DECL-LESS (zone OR approved) — the op-runtime require_file_* gates no longer
+honor declared paths, matching is_read/write_allowed (the S3.1b-2 transitional
+divergence is resolved). The decl-less behavior + divergence resolution are
+pinned in test_1199_s31c1_swebench_only; these keep the cutover invariants.
+(require_file_* are sync.)
 """
 from __future__ import annotations
 
@@ -16,27 +16,10 @@ import pytest
 from reyn.permissions.permissions import PermissionDecl
 from tests.test_permissions import _make_resolver
 
-
-def test_require_file_write_decl_full_honors_declared_path(tmp_path: Path) -> None:
-    """Tier 2: the op-runtime require_file_write is DECL-FULL — a non-interactive
-    skill's declared out-of-zone path is honored (the decl-full side of the
-    divergence; the Workspace is_write_allowed denies the same path)."""
-    r = _make_resolver(tmp_path)  # non-interactive
-    out = "/tmp/s31b2b-declared.txt"
-    decl = PermissionDecl(file_write=[{"path": out, "scope": "just_path"}])
-    r.require_file_write(decl, out)  # declared → honored (no raise)
-    with pytest.raises(PermissionError, match="was not approved"):
-        r.require_file_write(PermissionDecl(), out)  # not declared → raises
-
-
-def test_require_file_read_decl_full_honors_declared_path(tmp_path: Path) -> None:
-    """Tier 2: require_file_read decl-full, same shape (FILE_READ)."""
-    r = _make_resolver(tmp_path)
-    out = "/tmp/s31b2b-read-declared.txt"
-    decl = PermissionDecl(file_read=[{"path": out, "scope": "just_path"}])
-    r.require_file_read(decl, out)
-    with pytest.raises(PermissionError, match="was not approved"):
-        r.require_file_read(PermissionDecl(), out)
+# #1199 S3.1c-1: the require_file_read/write decl-full auto-grant was removed —
+# both gates are now decl-less (zone OR approved). The tests that pinned the old
+# decl-full "honors declared path" behavior are deleted here; the new decl-less
+# behavior + the divergence resolution are pinned in test_1199_s31c1_swebench_only.
 
 
 def test_is_read_allowed_reproduces_current_logic(tmp_path: Path) -> None:
