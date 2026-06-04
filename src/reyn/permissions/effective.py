@@ -93,10 +93,19 @@ class AgentLayer:
         *,
         approval_check: "Any" = None,
         interactive: bool = False,
+        include_decl: bool = True,
     ) -> None:
         self._decl = decl
         self._approval_check = approval_check
         self._interactive = interactive
+        # #1199 S3.1b-2: per-gate decl inclusion. The op-runtime file gates
+        # (require_file_read/write) honor the skill's declared paths (decl-full);
+        # the Workspace FS gates (is_read/write_allowed) do NOT (decl-less). This
+        # flag preserves that PRE-EXISTING divergence byte-identically (each gate
+        # keeps its current decision). TRANSITIONAL — removed in S3.1c when the
+        # divergence is reconciled (lead-coder-driven via the file.write
+        # declaration-semantics doc-check).
+        self._include_decl = include_decl
 
     def _approved(self, axis: CapabilityAxis, value: Any) -> bool:
         return bool(self._approval_check and self._approval_check(axis, value))
@@ -107,13 +116,21 @@ class AgentLayer:
             return (
                 _in_default_read_zone(str(value))
                 or self._approved(axis, value)
-                or (not self._interactive and _decl_covers_path(d.file_read, str(value)))
+                or (
+                    self._include_decl
+                    and not self._interactive
+                    and _decl_covers_path(d.file_read, str(value))
+                )
             )
         if axis is CapabilityAxis.FILE_WRITE:
             return (
                 _in_default_write_zone(str(value))
                 or self._approved(axis, value)
-                or (not self._interactive and _decl_covers_path(d.file_write, str(value)))
+                or (
+                    self._include_decl
+                    and not self._interactive
+                    and _decl_covers_path(d.file_write, str(value))
+                )
             )
         if axis is CapabilityAxis.NETWORK_HOST:
             return any(e.get("host") == value for e in d.http_get) or self._approved(

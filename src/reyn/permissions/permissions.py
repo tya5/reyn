@@ -1214,14 +1214,29 @@ class PermissionResolver:
 
         Allowed if: default write zone, OR config grants `file.write: allow`, OR
         a per-skill approval covers it.
+
+        #1199 S3.1b-2a (the Workspace write gate): routed through the unified
+        EffectivePermission model — the single conjunctive-∩ source. Byte-identical:
+        a DECL-LESS AgentLayer (``include_decl=False`` — the Workspace gate never
+        honored the skill's declared paths; the op-runtime ``require_file_write``
+        decl-full path is the separate, divergent gate, preserved + reconciled in
+        S3.1c). The config/path approvals fold INSIDE the layer (② grant-back-safe).
         """
-        if _in_default_write_zone(path):
-            return True
-        if self._is_config_approved("file.write"):
-            return True
-        if skill_name and self._is_path_approved_for(path, skill_name, "file.write"):
-            return True
-        return False
+        from reyn.permissions.effective import (
+            AgentLayer,
+            CapabilityAxis,
+            EffectivePermission,
+        )
+
+        def _approved(axis: object, value: object) -> bool:
+            return self._is_config_approved("file.write") or (
+                bool(skill_name)
+                and self._is_path_approved_for(str(value), skill_name, "file.write")
+            )
+
+        return EffectivePermission([
+            AgentLayer(PermissionDecl(), approval_check=_approved, include_decl=False)
+        ]).allows(CapabilityAxis.FILE_WRITE, path)
 
     async def require_shell(
         self, decl: PermissionDecl, cmd: str, bus: "RequestBus | None",
