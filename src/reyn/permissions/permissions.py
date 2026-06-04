@@ -49,6 +49,8 @@ from reyn.user_intervention import (
 )
 
 if TYPE_CHECKING:
+    from reyn.sandbox.policy import SandboxPolicy
+
     from .models import Skill
 
 
@@ -914,7 +916,14 @@ class PermissionResolver:
 
     # ── Public check methods ──────────────────────────────────────────────────
 
-    def require_file_read(self, decl: PermissionDecl, path: str, skill_name: str = "") -> None:
+    def require_file_read(
+        self,
+        decl: PermissionDecl,
+        path: str,
+        skill_name: str = "",
+        *,
+        sandbox_policy: "SandboxPolicy | None" = None,
+    ) -> None:
         """
         Raise PermissionError if read/glob/grep access to path is not allowed.
         Default zone (CWD and below) is always granted.
@@ -926,13 +935,21 @@ class PermissionResolver:
         approved (interactively at startup, or via config). A non-interactive
         declared-but-unapproved path therefore denies — the operator pre-approves
         (reyn.yaml ``permissions.file.read: allow``) or runs interactively.
+
+        #1199 S3.1c-2: ``sandbox_policy`` (the phase ``default_sandbox_policy``,
+        passed by the op handler) folds in the SandboxLayer ∩ — the path must
+        ALSO fall within the policy's ``read_paths`` caps. ``None`` (the OS's own
+        in-process ops / non-sandboxed callers) → SandboxLayer is ⊤ (unchanged).
+        ProfileLayer is omitted: it constrains only skill/mcp, never files (⊤).
         """
-        # #1199 S3.1c-1: decl-less EffectivePermission (zone OR approved).
-        # Approvals fold INSIDE the layer (② grant-back-safe).
+        # #1199 S3.1c-1/-2: decl-less AgentLayer ∩ SandboxLayer (zone OR approved,
+        # then narrowed by the sandbox path caps). Approvals fold INSIDE the agent
+        # layer (② grant-back-safe).
         from reyn.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,
+            SandboxLayer,
         )
 
         def _approved(axis: object, value: object) -> bool:
@@ -941,7 +958,8 @@ class PermissionResolver:
             )
 
         if EffectivePermission([
-            AgentLayer(decl, approval_check=_approved)
+            AgentLayer(decl, approval_check=_approved),
+            SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_READ, path):
             return
         raise PermissionError(
@@ -954,7 +972,14 @@ class PermissionResolver:
             f"  - run interactively so the startup guard can prompt for approval."
         )
 
-    def require_file_write(self, decl: PermissionDecl, path: str, skill_name: str = "") -> None:
+    def require_file_write(
+        self,
+        decl: PermissionDecl,
+        path: str,
+        skill_name: str = "",
+        *,
+        sandbox_policy: "SandboxPolicy | None" = None,
+    ) -> None:
         """
         Raise PermissionError if write/edit/delete access to path is not allowed.
         Default zone (.reyn/, reyn/) is always granted.
@@ -964,13 +989,19 @@ class PermissionResolver:
         ``is_write_allowed`` makes (divergence resolved). A declared path is not
         auto-granted; a non-interactive declared-but-unapproved path denies (the
         operator pre-approves via reyn.yaml or runs interactively).
+
+        #1199 S3.1c-2: ``sandbox_policy`` folds in the SandboxLayer ∩ — the path
+        must ALSO fall within the policy's ``write_paths`` caps. ``None`` → ⊤
+        (unchanged). ProfileLayer omitted (⊤ for files).
         """
-        # #1199 S3.1c-1: decl-less EffectivePermission (zone OR approved).
-        # Approvals fold INSIDE the layer (② grant-back-safe).
+        # #1199 S3.1c-1/-2: decl-less AgentLayer ∩ SandboxLayer (zone OR approved,
+        # then narrowed by the sandbox path caps). Approvals fold INSIDE the agent
+        # layer (② grant-back-safe).
         from reyn.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
             EffectivePermission,
+            SandboxLayer,
         )
 
         def _approved(axis: object, value: object) -> bool:
@@ -979,7 +1010,8 @@ class PermissionResolver:
             )
 
         if EffectivePermission([
-            AgentLayer(decl, approval_check=_approved)
+            AgentLayer(decl, approval_check=_approved),
+            SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_WRITE, path):
             return
         raise PermissionError(
@@ -998,6 +1030,8 @@ class PermissionResolver:
         host: str,
         bus: "RequestBus | None" = None,
         skill_name: str = "",
+        *,
+        sandbox_policy: "SandboxPolicy | None" = None,
     ) -> None:
         """Gate HTTP access to ``host`` (#571 Phase 7 unification).
 
@@ -1041,6 +1075,30 @@ class PermissionResolver:
             raise PermissionError(
                 f"HTTP access to host {host!r} denied by config "
                 f"(http.get.{host}: deny)."
+            )
+
+        # #1199 S3.1c-2: SandboxLayer ∩ network. The sandbox is a RESTRICT layer,
+        # so it must veto BEFORE the AgentLayer GRANT tiers below (config-allow /
+        # persisted / legacy) — a config-allowed host must NOT bypass a sandbox
+        # that disallows network. Placed after config-DENY (deny still wins) and
+        # before every allow tier. ``None`` (non-sandboxed callers) → no veto.
+        from reyn.permissions.effective import (
+            CapabilityAxis as _AX,
+        )
+        from reyn.permissions.effective import (
+            EffectivePermission as _EP,
+        )
+        from reyn.permissions.effective import (
+            SandboxLayer as _SL,
+        )
+
+        if not _EP([_SL(sandbox_policy)]).allows(_AX.NETWORK_HOST, host):
+            raise PermissionError(
+                f"HTTP access to host {host!r} denied by the active sandbox "
+                f"policy (network access is disabled). This is a sandbox "
+                f"restriction — it overrides any config/declared allow. Adjust "
+                f"the phase ``default_sandbox_policy`` (``network: true``) if the "
+                f"host should be reachable."
             )
 
         # Config-tier allow short-circuits everything (= operator's

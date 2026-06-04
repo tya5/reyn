@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.sandbox import SandboxBackend
+    from reyn.sandbox.policy import SandboxPolicy
     from reyn.schemas.models import Skill
     from reyn.secrets.store import ScopedSecretStore
     from reyn.user_intervention import RequestBus
@@ -163,3 +164,19 @@ class OpContext:
     # (= not inside a plan step). Shape: ``{"n_done": int, "n_total": int,
     # "step_id": str}``.
     plan_step: dict | None = None
+
+
+def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":
+    """Build the phase ``SandboxPolicy`` from ``ctx.default_sandbox_policy``
+    (the dict declared in phase frontmatter), or ``None`` when unset.
+
+    #1199 S3.1c-2: the file / http gates fold this into their SandboxLayer ∩.
+    Mirrors the conversion ``sandboxed_exec`` already uses
+    (``SandboxPolicy(**ctx.default_sandbox_policy)``) so the SAME phase policy
+    governs both the sandboxed_exec subprocess and the OS's in-process file/http
+    ops. ``None`` → the SandboxLayer is ⊤ (non-sandboxed callers unchanged)."""
+    if ctx.default_sandbox_policy is None:
+        return None
+    from reyn.sandbox.policy import SandboxPolicy
+
+    return SandboxPolicy(**ctx.default_sandbox_policy)
