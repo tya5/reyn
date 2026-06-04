@@ -479,54 +479,10 @@ class ChunkMetadata(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)  # skill-defined fields
 
 
-class EmbedIROp(BaseModel):
-    """Convert texts to embedding vectors (ADR-0033 §2.1).
-
-    Hybrid input form:
-      - Form A (inline): `texts: list[str]`, returns `vectors` inline.
-      - Form B (artifact reference): `input_artifact` JSONL path +
-        `output_artifact` JSONL path. Op handler streams input, batches
-        embed calls, writes vectors back to output_artifact. Idempotent
-        re-run via output_artifact `content_hash` skip.
-    Exactly one of `texts` / `input_artifact` must be set.
-    """
-    kind: Literal["embed"]
-    # Form A: inline (= small payload, e.g. recall query embedding)
-    texts: list[str] | None = None
-    # Form B: artifact reference (= large payload, e.g. indexing 100K chunks)
-    input_artifact: str | None = None      # workspace-relative JSONL path
-    text_field: str = "text"               # field in JSONL to embed
-    output_artifact: str | None = None     # workspace-relative JSONL path
-    # Embedding model spec — resolved via `reyn.yaml embedding.classes` map
-    # or passed directly (e.g. "openai/text-embedding-3-small").
-    model: str = "standard"
-
-
-class IndexWriteIROp(BaseModel):
-    """Write chunks (with vectors) to an index backend (ADR-0033 §2.1).
-
-    Hybrid input form:
-      - Form A (inline): `chunks` list of {text, vector, metadata}.
-      - Form B (artifact reference): `input_artifact` JSONL path with
-        text + vector + metadata zipped per line.
-    Exactly one of `chunks` / `input_artifact` must be set.
-    """
-    kind: Literal["index_write"]
-    source: str                            # logical source name
-    chunks: list[dict[str, Any]] | None = None        # Form A
-    input_artifact: str | None = None                  # Form B
-    mode: Literal["append", "replace"] = "append"
-    # Optional override; defaults to ChunkMetadata.embedding_model in chunks
-    embedding_model: str | None = None
-    # SourceManifest carriers (= populated by the index_docs skill so the
-    # router system prompt's "Indexed sources" section displays the
-    # user-provided semantic description and original glob path, rather
-    # than the placeholder "Index of source '<name>'" / "(unknown)".
-    # B21-S0-1 fix: without these the LLM cannot evaluate which indexed
-    # source to recall against and falls back to file_read with a
-    # hallucinated path.
-    description: str | None = None
-    path: str | None = None
+# #1303 Stage I: EmbedIROp + IndexWriteIROp deleted. The chunkers stream into
+# reyn.safe.embed_index (provider.embed + SqliteIndexBackend directly) and
+# recall embeds the query provider-direct, so neither run-op has any caller.
+# EmbeddingProvider / SqliteIndexBackend / IndexQueryIROp / RecallIROp remain.
 
 
 class IndexQueryIROp(BaseModel):
@@ -635,7 +591,7 @@ ControlIROp = Annotated[
         GlobFilesIROp, GrepFilesIROp,
         MCPIROp, AskUserIROp, ShellIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
-        EmbedIROp, IndexWriteIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
+        IndexQueryIROp, RecallIROp, IndexDropIROp,
         SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,
     ],
     Field(discriminator="kind"),

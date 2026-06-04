@@ -1,5 +1,6 @@
-"""Tier 2: ``index_query`` / ``index_drop`` / ``index_write`` handlers
+"""Tier 2: ``index_query`` / ``index_drop`` handlers
 raise a clear ValueError when ``ctx.workspace`` is None.
+(#1303 Stage I deleted the ``index_write`` op.)
 
 Pinned invariant:
 
@@ -34,9 +35,8 @@ import pytest
 from reyn.op_runtime.context import OpContext
 from reyn.op_runtime.index_drop import handle as index_drop_handle
 from reyn.op_runtime.index_query import handle as index_query_handle
-from reyn.op_runtime.index_write import handle as index_write_handle
 from reyn.permissions.permissions import PermissionDecl
-from reyn.schemas.models import IndexDropIROp, IndexQueryIROp, IndexWriteIROp
+from reyn.schemas.models import IndexDropIROp, IndexQueryIROp
 
 
 class _NullEventLog:
@@ -129,35 +129,13 @@ def test_index_drop_raises_clear_value_error_when_workspace_none():
 
 
 # ---------------------------------------------------------------------------
-# index_write
-# ---------------------------------------------------------------------------
-
-
-def test_index_write_raises_clear_value_error_when_workspace_none():
-    """Tier 2: index_write handler raises a clear ``ValueError``
-    when workspace is None. (B48-NF-W2-S7 fix)"""
-    op = IndexWriteIROp(
-        kind="index_write",
-        source="test_source",
-        chunks=[{"id": "c1", "content": "test", "metadata": {}}],
-    )
-    ctx = _make_ctx_no_workspace()
-
-    with pytest.raises(ValueError, match="index_write") as exc_info:
-        asyncio.run(index_write_handle(op, ctx, caller="control_ir"))
-
-    msg = str(exc_info.value)
-    assert "workspace" in msg.lower()
-    assert "OpContext" in msg
-
-
-# ---------------------------------------------------------------------------
 # Regression guard: AttributeError no longer surfaces
 # ---------------------------------------------------------------------------
+# (#1303 Stage I deleted the index_write op; index_query + index_drop remain.)
 
 
 def test_no_attribute_error_on_workspace_none_for_any_index_op():
-    """Tier 2: across all 3 handlers, the opaque
+    """Tier 2: across the index handlers, the opaque
     ``AttributeError: 'NoneType' object has no attribute 'base_dir'``
     must NOT be raised — the new ValueError guard takes precedence."""
     ctx = _make_ctx_no_workspace()
