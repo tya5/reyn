@@ -485,6 +485,7 @@ class _PlanStepHost:
         step: PlanStep,
         prior_results: dict[str, str],
         parent: RouterLoopHost,
+        turn_budget_engine: Any = None,
     ):
         self._plan = plan
         self._step = step
@@ -494,6 +495,16 @@ class _PlanStepHost:
         # Captured by put_outbox; the executor reads this after RouterLoop
         # finishes to collect this step's text contribution.
         self._captured_text: str = ""
+        # #1285 (#1092 plan-axis force-close, PR1): the cumulative-current-turn
+        # TurnBudgetEngine for this step. None → should_force_close is inert
+        # (byte-identical to pre-#1285). A plan step is goal-bearing + autonomous
+        # (no user mid-step), so it mirrors the PHASE axis (PROACTIVE force-close),
+        # not chat's REACTIVE handoff.
+        self._turn_budget_engine = turn_budget_engine
+        # Set by record_force_close when run_loop fires the wrap-up; the planner
+        # reads forced_close_result after the step's run() to use the bounded
+        # consolidation as the step's output (PR1 FLOOR; PR2 re-enters from it).
+        self._forced_close_result: Any = None
 
     # ── RouterLoopHost-required attributes (= identity / static config) ────
 
@@ -565,6 +576,54 @@ class _PlanStepHost:
         # Project context narrowed out by default — plan steps work from
         # the step description, not from project-wide background.
         return ""
+
+    # ── Cumulative-axis force-close (#1285 / #1092 plan axis, PR1 FLOOR) ───
+    # Mirrors the PHASE host (PhaseRouterLoopHost) force-close interface: a
+    # plan step is goal-bearing + autonomous (no user mid-step), so it uses
+    # PROACTIVE force-close (not chat's REACTIVE handoff). When the engine is
+    # absent (not activated), should_force_close is always False = byte-
+    # identical to pre-#1285. ORTHOGONAL to FP-0031-C/D: force-close is the
+    # *cumulative-context* trigger; FP-0031 is the *transient-failure* trigger.
+
+    async def should_force_close(self, messages: list[dict], *, model: str) -> bool:
+        """Layer-1 force-close trigger for the plan axis. RouterLoop.run_loop
+        consults this each turn AFTER compaction; True when the accumulated
+        current-turn content (non-system turns; the wrap-up SP swaps the system
+        turn at force-close time) has reached the TurnBudgetEngine threshold.
+        Engine absent → always False (inert)."""
+        engine = self._turn_budget_engine
+        if engine is None:
+            return False
+        from reyn.services.compaction.engine import estimate_tokens_for_turn
+
+        content_tokens = sum(
+            estimate_tokens_for_turn(m, model, use_chars4=True)
+            for m in messages
+            if isinstance(m, dict) and m.get("role") != "system"
+        )
+        return engine.should_force_close(content_tokens)
+
+    def record_force_close(self, result: Any) -> None:
+        """RouterLoop.run_loop hands the force-close consolidation finish here;
+        the planner reads ``forced_close_result`` after the step's run() to use
+        the bounded consolidation as the step output (PR1 FLOOR). Stored, not
+        acted on (P3 — the planner drives the handoff)."""
+        self._forced_close_result = result
+
+    @property
+    def forced_close_result(self) -> Any:
+        """The consolidation finish of a force-close in the last run, or None."""
+        return self._forced_close_result
+
+    @property
+    def wrap_up_output_reserve(self) -> int | None:
+        """The wrap-up call's OUTPUT budget (``output_reserve``), or None when no
+        engine. RouterLoop._force_close_call passes it as ``max_tokens`` to
+        HARD-CAP the consolidation ≤ output_reserve — the by-construction
+        guarantee (assert_turn_budget_bounds: output_reserve + offload_cap <
+        threshold)."""
+        engine = self._turn_budget_engine
+        return engine.budget.output_reserve if engine is not None else None
 
     # ── Memory file paths (kept for read_memory_body / remember_*) ────────
 
@@ -885,6 +944,22 @@ async def execute_plan(
             )
             _effective_engine = None
 
+    # #1285 (#1092 plan-axis force-close, PR1): build the cumulative-current-turn
+    # TurnBudgetEngine once for all steps (same router_model + resolver).
+    # try_build (not build_default) so a small-context model that cannot satisfy
+    # the by-construction floor DEGRADES to None (force-close inert) rather than
+    # crashing — uniform with phase (PR-F3) + chat (F1). Threaded into each
+    # step's _PlanStepHost below; orthogonal to step-result compaction above.
+    from reyn.services.turn_budget import try_build_default_turn_budget_engine
+    _plan_turn_budget_engine = try_build_default_turn_budget_engine(
+        router_model,
+        # getattr: test/narrow hosts may lack ``resolver`` — mirror the lazy
+        # compaction-engine build above which tolerates the same. try_build then
+        # degrades to None (force-close inert) rather than crashing plan exec.
+        resolver=getattr(parent_host, "resolver", None),
+        use_chars4=True,
+    )
+
     # ADR-0022: allocate plan_id + record plan_started in WAL. plan_id is
     # uuid4-hex[:8] following the existing run_id allocation precedent.
     # The exception-aware finally clause mirrors ADR-0013's runtime
@@ -1007,6 +1082,7 @@ async def execute_plan(
                 )
             narrow_host = _PlanStepHost(
                 plan=plan, step=step, prior_results=step_results, parent=parent_host,
+                turn_budget_engine=_plan_turn_budget_engine,
             )
             sys_prompt = build_plan_step_system_prompt(
                 plan, step, step_results,
@@ -1112,6 +1188,7 @@ async def execute_plan(
                         narrow_host = _PlanStepHost(
                             plan=plan, step=step,
                             prior_results=step_results, parent=parent_host,
+                            turn_budget_engine=_plan_turn_budget_engine,
                         )
                         sub_loop = RouterLoop(
                             host=narrow_host,
@@ -1193,6 +1270,16 @@ async def execute_plan(
                 continue
 
             text = narrow_host.captured_text
+            # #1285 (#1092 plan-axis force-close, PR1 FLOOR): if this step
+            # force-closed (the cumulative-current-turn trigger fired), the
+            # bounded wrap-up consolidation went to record_force_close, NOT the
+            # normal put_outbox capture — so captured_text may be empty/stale.
+            # Use the consolidation as the step's contribution: the step ends
+            # bounded with a clean summary instead of overflowing. (PR2 re-enters
+            # the SAME step from this consolidation; PR1 is the proven floor.)
+            _fc_result = narrow_host.forced_close_result
+            if _fc_result is not None:
+                text = getattr(_fc_result, "content", None) or text
             step_results[step.id] = text
             try:
                 await parent_host.record_plan_step_completed(
