@@ -91,6 +91,19 @@ class RollbackState:
         self.pending_ctx = None
         return ctx
 
+    def arm_force_close_reentry(self, checkpoint_results: list[dict]) -> None:
+        """#1092 PR-D2: arm a force-close SELF re-entry of the current phase.
+
+        Sets the pending ctx so the next loop iteration's ``take_pending_ctx()``
+        hands ``checkpoint_results`` to PhaseExecutor as
+        ``previous_control_ir_results`` (the SAME injection slot rollback uses →
+        restored into the seed frame). This is NOT a rollback (no phase change, no
+        no-progress sentinel) — it is the OS-internal re-entry of the same phase
+        with the consolidated checkpoint injected, bounded by the existing
+        ``max_phase_visits`` loop limit (the re-entry goes through enter_phase).
+        """
+        self.pending_ctx = {"previous_control_ir_results": list(checkpoint_results)}
+
     def consume_no_progress(self, phase: str, output_data: Any) -> str | None:
         """Check & clear the no-progress sentinel for `phase`.
 

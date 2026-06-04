@@ -220,6 +220,12 @@ class PhaseExecutor:
         # _run_act_loop so RunOrchestrator can snapshot them at A → B
         # transition (= `rollback_state.snapshot_phase_history`).
         self._last_control_ir_results: list[dict] = []
+        # #1092 PR-D2 (re-entry signal): set after a phase FORCE-CLOSES to
+        # ``{"path": <checkpoint artifact handle>, "consolidation": <text>}`` so
+        # RunOrchestrator can re-enter the SAME phase with the checkpoint injected
+        # as ``previous_control_ir_results`` (the rollback seam, no graph self-edge).
+        # None when the phase did not force-close. Reset per phase execution.
+        self._last_force_close_checkpoint: dict | None = None
         # When True, this skill is opted into the native-tools op-loop — the phase
         # act-loop drives the SHARED ``RouterLoop.run_loop`` (the converged op-loop,
         # #1092): op results thread as native tool-role history and dispatch / memo /
@@ -631,13 +637,24 @@ class PhaseExecutor:
         # unconsumed until PR-D2 switches the outcome to re-enter from it (no
         # broken intermediate). ``record_force_close`` is host-only (chat hosts
         # don't set it → forced_close_result is None → no-op).
-        persist_force_close_checkpoint(
+        _fc_result = getattr(host, "forced_close_result", None)
+        _ckpt_path = persist_force_close_checkpoint(
             workspace=self._control_ir_executor.workspace,
             events=self._events,
             phase=phase,
             skill_name=self._skill.name,
             run_id=self._run_id,
-            forced_close_result=getattr(host, "forced_close_result", None),
+            forced_close_result=_fc_result,
+        )
+        # #1092 PR-D2 (re-entry signal): expose the checkpoint to RunOrchestrator,
+        # which re-enters the SAME phase with it injected as
+        # ``previous_control_ir_results`` (the rollback seam). None when not
+        # force-closed → the orchestrator falls through to the normal transition
+        # (= D1 additive behaviour preserved until the orchestrator consumes this).
+        self._last_force_close_checkpoint = (
+            {"path": _ckpt_path, "consolidation": getattr(_fc_result, "content", None) or ""}
+            if _ckpt_path is not None
+            else None
         )
 
         # FD2: build the SEPARATE json decide frame from the native turns so it is
