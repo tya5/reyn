@@ -10,6 +10,8 @@ reyn's permission system gates four kinds of capability: file paths, shell, MCP 
 
 ## Three layers, in order
 
+> **Note:** These three layers describe how a capability gets *authorized* — the grant hierarchy. A separate orthogonal model — [the conjunctive restrict layers](#effective-permission-conjunctive-restrict-model) — describes how active runtime restrictions are combined at gate time. Both use the word "layers" but answer different questions; see the end of this page for the distinction.
+
 ```
 ┌──────────────────────────────┐  always allowed; nothing to declare
 │  defaults (read-only project)│
@@ -27,6 +29,17 @@ reyn's permission system gates four kinds of capability: file paths, shell, MCP 
 ### Layer 1: defaults
 
 Read/glob/grep anywhere under the project root. Write/edit/delete only under `.reyn/` or `reyn/`. No shell, no MCP, no Python.
+
+**Exception — protected write paths:** Four paths inside `.reyn/` are carved out from the default write grant because each backs a capability-gated operation that carries its own approval gate and audit event. Allowing direct writes to these paths via the broad `.reyn/` zone would bypass those controls — a skill could silently register a new capability without going through the intended authorization flow.
+
+| Protected path | Backs |
+|---|---|
+| `.reyn/approvals.yaml` | The persistent approval store — only the runtime authorization flow writes here |
+| `.reyn/mcp.yaml` | MCP server configuration |
+| `.reyn/cron.yaml` | Cron job registry |
+| `.reyn/index/sources.yaml` | Index source registry |
+
+A skill that legitimately needs to write one of these paths must declare it explicitly (e.g. `file.write: [{path: ".reyn/mcp.yaml"}]` in `skill.md` frontmatter) and obtain the corresponding approval. The intended route for these operations is the appropriate gated op handler — not direct file writes.
 
 ### Layer 2: skill declarations
 
@@ -453,6 +466,38 @@ grep '"sub_skill_credential_scope"' .reyn/events.jsonl
 The event payload contains `skill` (sub-skill name) and `allowed_keys` (sorted
 list, or `["*"]` for unrestricted). This makes every sub-skill credential grant
 auditable and replay-capable (P6).
+
+## Effective permission: conjunctive restrict model {#effective-permission-conjunctive-restrict-model}
+
+The authorization layers above answer: *"has this capability been granted?"* A separate orthogonal question is: *"given all active restrictions, is this capability allowed right now?"* The conjunctive restrict model handles the second.
+
+At gate time, a capability is permitted only if **every** active layer allows it:
+
+```
+effective = AgentLayer ∩ SandboxLayer ∩ ProfileLayer
+allows(axis, value) = all(layer.allows(axis, value) for layer in layers)
+```
+
+### The three restrict layers
+
+| Layer | What it models | Role |
+|---|---|---|
+| **AgentLayer** | Skill declaration + default zone baseline + runtime approvals | Grant layer |
+| **SandboxLayer** | Runtime sandbox caps (paths, network, subprocess, env) | Restrict-only |
+| **ProfileLayer** | Agent-level allowlists (skills, MCP servers) | Restrict-only |
+
+`SandboxLayer` and `ProfileLayer` are **restrict-only**: they can narrow a permission, but cannot re-grant something the `AgentLayer` denied. This is a structural property of the conjunction (`all(...)`) — no layer's `False` can be overridden by any other layer.
+
+### How the two "layer" concepts relate
+
+Two distinct concepts both use the word "layers" in this document. They answer different questions:
+
+| Concept | Question | Direction |
+|---|---|---|
+| Authorization 3 layers (grant hierarchy, top of page) | How does a capability get granted? | Hierarchical grant |
+| Conjunctive restrict layers (this section) | Given current runtime restrictions, is the capability allowed? | Intersect — can only narrow |
+
+They operate in sequence: authorization resolution (AgentLayer) determines whether the skill's declaration and approvals cover a capability; then the conjunctive intersection applies any active sandbox or profile restrictions. An approved capability can still be denied by `SandboxLayer` or `ProfileLayer` — grant-back is forbidden.
 
 ## What the permission system is NOT
 
