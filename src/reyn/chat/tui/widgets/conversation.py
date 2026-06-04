@@ -418,6 +418,11 @@ class ConversationView(Widget):
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
         self._stream_rows: dict[str, StreamingRow] = {}
+        # Grouping decision captured at stream-START (guardrail ①, #1253).
+        # Maps msg_id → is_new_turn bool, populated in begin_stream and consumed
+        # in end_stream / end_stream_cancelled so the header is written with
+        # stream-start timing (not seal-time).
+        self._stream_new_turn: dict[str, bool] = {}
         self._skill_rows: dict[str, SkillActivityRow] = {}
         # Issue #427 step 4: per-tool_call inline rows keyed by op_id
         # (= dispatch_tool's args_hash, propagated via forwarder OutboxMessage
@@ -1042,6 +1047,7 @@ class ConversationView(Widget):
         symbol: str,
         name_style: str,
         body_text: Text,
+        is_new_turn: bool | None = None,
     ) -> None:
         """Write header + body inline (#646 Claude Code style) with col-8 hanging indent.
 
@@ -1064,12 +1070,22 @@ class ConversationView(Widget):
 
         This is the load-bearing writer for ``render_user_message`` and
         ``_render_agent_markdown`` (plain-text first-line path).
+
+        ``is_new_turn`` (#1253 Plan A guardrail ①):
+          - ``None`` (default): call ``_check_new_turn`` + update
+            ``_last_speaker`` / ``_last_speaker_at`` as usual (non-streaming
+            callers: ``render_user_message``, ``_render_agent_markdown``).
+          - A bool: use it directly. Do NOT call ``_check_new_turn`` (skip its
+            side-effects) and do NOT update ``_last_speaker`` /
+            ``_last_speaker_at`` (the streaming caller already anchored them in
+            ``begin_stream``).
         """
-        now = time.time()
         log = self._log()
-        is_new_turn = self._check_new_turn(speaker, log)
-        self._last_speaker = speaker
-        self._last_speaker_at = now
+        if is_new_turn is None:
+            now = time.time()
+            is_new_turn = self._check_new_turn(speaker, log)
+            self._last_speaker = speaker
+            self._last_speaker_at = now
 
         indent = self._current_body_indent()
 
@@ -1445,10 +1461,23 @@ class ConversationView(Widget):
     # ── streaming support ─────────────────────────────────────────────────────
 
     def begin_stream(self, msg_id: str, agent_name: str = "") -> StreamingRow:
-        """Start a streaming agent message row. Returns the row widget."""
+        """Start a streaming agent message row. Returns the row widget.
+
+        #1253 Plan A (guardrail ①): capture the grouping decision at START
+        so that the inline header written at seal-time reflects the stream-start
+        timing, not the (potentially different) seal timing.  The date-separator
+        and turn-anchor side-effects of ``_check_new_turn`` fire here; the
+        actual header write is deferred to ``end_stream`` via
+        ``_commit_stream_inline``.
+        """
         self._consume_empty_hint()
-        # Same agent-identity styling as _render_agent_markdown (_AMBER).
-        self._maybe_write_header("reyn", _GLYPH_AGENT, "bold " + _AMBER)
+        # Capture grouping decision NOW (stream-start timing) and anchor
+        # _last_speaker / _last_speaker_at so same-window consecutive streams
+        # group correctly.
+        log = self._log()
+        is_new_turn = self._check_new_turn("reyn", log)
+        self._last_speaker = "reyn"
+        self._last_speaker_at = time.time()
         # Pass the current body indent so the streaming row aligns with
         # body text for the current timestamp-toggle state (Fix 2 / A1).
         row = StreamingRow(
@@ -1457,6 +1486,7 @@ class ConversationView(Widget):
             indent=self._current_body_indent(),
         )
         self._stream_rows[msg_id] = row
+        self._stream_new_turn[msg_id] = is_new_turn
         self.mount(row)
         return row
 
@@ -1465,12 +1495,43 @@ class ConversationView(Widget):
         if row is not None:
             row.append(text)
 
+    def _commit_stream_inline(self, full: str, is_new_turn: bool) -> None:
+        """Commit the sealed streaming reply as inline ``HH:MM ⏺ first-line`` form.
+
+        #1253 Plan A: called from ``end_stream`` with the grouping decision
+        captured at stream-START.
+
+        /copy preservation: records the FULL reply in ``_recent_replies`` here
+        (NOT just the rest after the first line) so ``last_reply_text()``
+        returns the whole thing.  Using ``_write_agent_markdown(rest)`` would
+        record only the body minus the first line, which would truncate the
+        /copy result.
+        """
+        # /copy: record full reply first.
+        self._recent_replies.append(full)
+        if len(self._recent_replies) > _RECENT_REPLIES_MAX:
+            self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
+
+        first_line_plain = _plain_first_line(full)
+        self._maybe_write_inline_header_body(
+            "reyn", _GLYPH_AGENT, "bold " + _AMBER, Text(first_line_plain),
+            is_new_turn=is_new_turn,
+        )
+
+        body_lines = full.splitlines()
+        if len(body_lines) > 1:
+            rest = "\n".join(body_lines[1:])
+            # Render rest as Markdown at col-8 WITHOUT re-recording in
+            # _recent_replies (already recorded `full` above).
+            self._write_body(RichMarkdown(rest))
+
     def end_stream(self, msg_id: str) -> str:
         """Seal the stream and flush the final content INTO the RichLog inline,
         then remove the transient StreamingRow widget so the bottom of the
         pane stays empty (or holds the next streaming row).
 
-        Replies render full inline regardless of length (Claude-Code-style).
+        Replies render inline as ``HH:MM ⏺ <first-line>`` with grouping
+        captured at stream-start (#1253 Plan A).
         """
         row = self._stream_rows.pop(msg_id, None)
         if row is None:
@@ -1480,9 +1541,11 @@ class ConversationView(Widget):
         row.seal()
         self.stop_thinking()  # unmount inline spinner (turn reply started)
         self.hide_status()
+        # Pop the stream-start grouping decision (default True = new turn).
+        is_new_turn = self._stream_new_turn.pop(msg_id, True)
         if full:
             try:
-                self._write_agent_markdown(full)
+                self._commit_stream_inline(full, is_new_turn)
             except Exception:
                 self._log().write(Text(full))
         self._log().write(Text(""))
@@ -1527,6 +1590,9 @@ class ConversationView(Widget):
         row.seal()
         self.stop_thinking()  # unmount inline spinner (cancelled stream)
         self.hide_status()
+        # Pop (and discard) the stream-start grouping decision so the dict
+        # doesn't leak entries when the stream is cancelled (#1253).
+        self._stream_new_turn.pop(msg_id, None)
         if full:
             # Wave-10 G-F10: stash the partial in the recent-replies ring
             # buffer so ``/copy`` after a cancel returns the fragment the
