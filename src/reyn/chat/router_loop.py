@@ -2780,8 +2780,21 @@ class RouterLoop:
         """
         _llm = self._llm_caller or call_llm_tools
         wrap_messages = self._build_force_close_messages(messages)
+        # #1092 PR-E (by-construction floor): HARD-CAP the wrap-up output at
+        # output_reserve via max_tokens, so the consolidation is ≤ output_reserve
+        # by construction (not just by the wrap-up SP's "be concise"). With
+        # assert_turn_budget_bounds (output_reserve + offload_cap < threshold), the
+        # re-injected checkpoint then provably sits below the threshold → the
+        # re-entry makes progress → termination. The cap rides ModelSpec.kwargs →
+        # call_llm_tools' spec.kwargs → litellm (llm.py). Host-provided
+        # (``wrap_up_output_reserve``); chat hosts return None → no cap (PR-F).
+        _model: Any = resolved_model
+        _reserve = getattr(self.host, "wrap_up_output_reserve", None)
+        if _reserve is not None:
+            from reyn.llm.model_resolver import ModelSpec
+            _model = ModelSpec(model=resolved_model, kwargs={"max_tokens": int(_reserve)})
         return await _llm(
-            model=resolved_model,
+            model=_model,
             messages=wrap_messages,
             tools=[],            # continuation suppression: no tool to call
             tool_choice="auto",  # "none" is not Gemini-safe; moot with tools=[]

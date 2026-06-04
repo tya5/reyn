@@ -91,6 +91,17 @@ class TurnBudget:
     offload_cap: int          # max tokens one post-offload increment can add
     force_close_threshold: int  # max accumulated turn-content tokens before close
 
+    @property
+    def progress_margin(self) -> int:
+        """#1092 PR-E: tokens of NEW-work head-room a force-close re-entry has —
+        i.e. ``force_close_threshold − output_reserve − offload_cap`` (the
+        consolidation is hard-capped ≤ output_reserve; offload_cap is one working
+        increment). The by-construction termination guarantee is exactly
+        ``progress_margin > 0``: each re-entry makes a full increment of new
+        progress below threshold, so a finite-work phase converges in FEW
+        re-entries. Enforced at construction by :func:`assert_turn_budget_bounds`."""
+        return self.force_close_threshold - self.output_reserve - self.offload_cap
+
 
 def compute_turn_budget(
     model: str,
@@ -161,12 +172,28 @@ def assert_turn_budget_bounds(tb: TurnBudget) -> None:
         f"TurnBudget reserves must be non-negative; got output_reserve="
         f"{tb.output_reserve}, offload_cap={tb.offload_cap}"
     )
-    assert tb.force_close_threshold > 0, (
-        f"TurnBudget.force_close_threshold must be > 0 — "
-        f"max_input({tb.max_input}) − T_wrap_SP({tb.T_wrap_SP}) − "
-        f"output_reserve({tb.output_reserve}) − offload_cap({tb.offload_cap}) = "
-        f"{tb.force_close_threshold} ≤ 0 would force-close every turn. "
-        f"Lower the reserves or use a larger-context model."
+    # #1092 PR-E (by-construction termination — LOCKED #1092 issuecomment-4618222625):
+    # the threshold must leave room for the re-injected consolidation (hard-capped
+    # ≤ output_reserve by the wrap-up call's max_tokens) PLUS a full working
+    # increment (offload_cap) below it. Then every force-close re-entry makes a
+    # full increment of NEW progress (not just the minimal ≥1 op that
+    # output_reserve<threshold alone gives — that is fragile, re-entering close to
+    # the visit cap), so a finite-work phase converges to a genuine finish in FEW
+    # re-entries — making the max_phase_visits abort UNREACHABLE for a
+    # well-configured / finite-work phase (a pathological infinite-work phase that
+    # never completes is still backstopped by the visit cap). Strictly implies
+    # threshold > 0 AND no wrap-up overflow (consolidation + T_wrap_SP +
+    # output_reserve ≤ T_max). A config where it fails is rejected at construction
+    # (degenerate → fail-fast).
+    assert tb.force_close_threshold > tb.output_reserve + tb.offload_cap, (
+        f"TurnBudget.force_close_threshold ({tb.force_close_threshold}) must exceed "
+        f"output_reserve ({tb.output_reserve}) + offload_cap ({tb.offload_cap}) = "
+        f"{tb.output_reserve + tb.offload_cap} so a force-close re-entry makes a full "
+        f"increment of progress (the consolidation, hard-capped ≤ output_reserve, "
+        f"plus one increment fit below the threshold). Otherwise the re-entry cannot "
+        f"reliably progress and would force-close-loop toward max_phase_visits — a "
+        f"by-construction termination gap. Lower the reserves or use a larger-context "
+        f"model."
     )
 
 
