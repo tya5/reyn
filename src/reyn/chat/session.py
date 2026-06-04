@@ -1041,6 +1041,19 @@ def _iv_meta(iv: "UserIntervention") -> dict:
     return out
 
 
+def _is_force_close_consolidation(summary: "ChatMessage") -> bool:
+    """#1092 PR-F2a: True iff a ``summary`` turn is a force-close handoff
+    consolidation — identified by the dedicated ``consolidation`` structured
+    field (set by the F2b handoff). This is the GATE for the durable
+    covers-respecting reset in :meth:`ChatSession._build_history_for_router`:
+    when present, the slicer drops the covered raw head/tail and slices
+    ``[consolidation] + post-consolidation turns``. Normal compaction summaries
+    lack the field → the slicer keeps its head/tail+bridge behaviour unchanged
+    (normal chat stays byte-identical)."""
+    structured = (summary.meta or {}).get("structured") or {}
+    return bool(structured.get("consolidation"))
+
+
 def _render_summary_for_storage(structured: dict) -> str:
     """Render a chat_summary structured dict to a quick-display text blob.
 
@@ -1049,6 +1062,13 @@ def _render_summary_for_storage(structured: dict) -> str:
     form for LLM consumption — this is for human consumption only.
     """
     parts: list[str] = []
+    # #1092 PR-F2a: a force-close handoff consolidation carries its (free-text)
+    # body in the dedicated ``consolidation`` field — render it verbatim and
+    # first (it IS the conversation's carried-forward essence). Absent on normal
+    # compaction summaries → no output change for them (byte-identical).
+    consolidation = (structured.get("consolidation") or "").strip()
+    if consolidation:
+        parts.append(consolidation)
     topic = (structured.get("topic_arc") or "").strip()
     if topic:
         parts.append(f"[topic] {topic}")
@@ -4911,6 +4931,40 @@ class ChatSession:
             m for m in self.history
             if m.role in ("user", "assistant", "tool", "agent")
         ]
+
+        # #1092 PR-F2a: durable force-close reset. When the latest summary is a
+        # force-close handoff consolidation (covers-all), the conversation
+        # overflowed even when shrunk to its floor — so the slicer DROPS the
+        # covered raw head/tail permanently and slices [consolidation bridge] +
+        # the turns appended AFTER the consolidation. This is DURABLE (re-applied
+        # every turn, not a one-shot override): the next user turn slices
+        # [consolidation] + recent turns, never re-slicing the dropped raw
+        # head/tail → no immediate re-overflow. Position-based (turns after the
+        # consolidation in history order), NOT seq>covers — assistant/tool turns
+        # keep seq=0 (only user/agent get a monotonic seq), so a seq filter would
+        # wrongly drop post-handoff assistant replies. GATED to force-close
+        # consolidations only (the dedicated `consolidation` field) — normal
+        # compaction summaries fall through to the unchanged head/tail+bridge
+        # path below, so normal chat stays byte-identical.
+        _fc_summary = self._latest_summary()
+        if _fc_summary is not None and _is_force_close_consolidation(_fc_summary):
+            _idx = next(
+                (i for i, m in enumerate(self.history) if m is _fc_summary), -1
+            )
+            _post = [
+                m for m in self.history[_idx + 1:]
+                if m.role in ("user", "assistant", "tool", "agent")
+            ]
+            _summary_text = (
+                _fc_summary.content if isinstance(_fc_summary.content, str)
+                else json.dumps(_fc_summary.content, ensure_ascii=False)
+            )
+            _bridge = [ChatMessage(
+                role="assistant",
+                content=f"[summary of earlier conversation]\n{_summary_text}",
+                ts=_fc_summary.ts,
+            )]
+            return [self._serialise_turn(m) for m in (_bridge + _post)]
 
         # Resolve token budgets from the compaction engine.
         _ctrl = getattr(self, "_compaction_controller", None)
