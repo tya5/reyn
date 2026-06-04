@@ -28,6 +28,16 @@ reyn's permission system gates four kinds of capability: file paths, shell, MCP 
 
 Read/glob/grep anywhere under the project root. Write/edit/delete only under `.reyn/` or `reyn/`. No shell, no MCP, no Python.
 
+**Protected write paths (carve-out from the default zone):** Three paths inside `.reyn/` are excluded from the broad default write grant:
+
+- `.reyn/mcp.yaml` — MCP server configuration
+- `.reyn/cron.yaml` — cron job registry
+- `.reyn/index/sources.yaml` — index source registry
+
+These are the backing stores for capability-gated operations (MCP server install/remove, cron registration, index source management). Each operation goes through a dedicated op handler that validates input, emits an audit event, and enforces its own approval gate. Allowing direct writes via the broad `.reyn/` default zone would bypass both the gate and the audit trail — a skill could silently register a new capability without going through the intended approval flow.
+
+Skills that legitimately need to write these paths must declare them explicitly via `file.write: [{path: ".reyn/mcp.yaml"}]` (or equivalent for the other paths) in `skill.md` frontmatter and obtain the corresponding approval. The canonical route for these operations is the appropriate gated op handler, not direct file writes.
+
 ### Layer 2: skill declarations
 
 A skill that needs something outside the defaults declares it in its `skill.md` frontmatter. At skill startup, the runtime shows a single approval prompt:
