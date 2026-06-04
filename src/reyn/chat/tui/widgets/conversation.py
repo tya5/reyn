@@ -1820,15 +1820,18 @@ class ConversationView(Widget):
         try:
             line1 = row._build_line1()
             line2 = row._build_line2()
-            if row._label_prefix:
-                # Sub-skill row: prefix is the indent — write at col 0.
-                self._write_log(line1)
-                if line2.plain:
-                    self._write_log(line2)
-            else:
-                self._write_body(line1)
-                if line2.plain:
-                    self._write_body(line2)
+            # #1245: flush at col 0 (``_write_log``, no Padding) for ALL rows
+            # so the flushed line lands at the same column as the LIVE widget
+            # (ToolCallRow CSS = ``padding: 0 0`` = col 0). ``_write_body``
+            # would add an 8-cell hanging-indent the live row never had,
+            # jumping the row right at seal (the top-level mismatch tracked
+            # in #1245). Any ``label_prefix`` (sub-skill nesting) is already
+            # baked into the Rich Text by ``_build_line1`` / ``_build_line2``,
+            # so the col-0 write preserves it (prefix = the visual indent) —
+            # this generalises the #1242 prefixed-row fix to top-level rows.
+            self._write_log(line1)
+            if line2.plain:
+                self._write_log(line2)
             row.remove()
         except Exception:
             # Same defensive stance as finish_skill_row: a flush
@@ -1871,7 +1874,12 @@ class ConversationView(Widget):
         row.finish(success=success, reason=reason, aborted=aborted)
         try:
             finished_text = row._build_finished()
-            self._write_body(finished_text)
+            # #1245: flush at col 0 to match the LIVE SkillActivityRow (CSS
+            # ``padding: 0 0``). ``_write_body``'s 8-cell hanging-indent
+            # jumped the finished breadcrumb right at seal. Any
+            # ``label_prefix`` is baked into ``_build_finished``'s Text, so
+            # the col-0 write preserves it.
+            self._write_log(finished_text)
             row.remove()
         except Exception:
             # If anything in the flush path fails, leave the row mounted
