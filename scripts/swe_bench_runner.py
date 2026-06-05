@@ -34,12 +34,86 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 # Required keys every SWE-bench instance must carry.
 _REQUIRED_FIELDS = ("instance_id", "repo", "base_commit", "problem_statement")
+
+# ── reyn-in-container venv provisioning (#183 / #1356 honored) ────────────────
+#
+# #1356 routes a python preprocessor step's harness subprocess through the
+# sandbox backend — for `--env-backend=docker` that is a `docker exec` INTO the
+# swebench instance image. The image's testbed conda python is repo-pinned
+# (e.g. astropy = 3.9) and reyn needs >=3.11, so the harness cannot run there.
+# Per the owner directive we provision a python3.11 venv WITH reyn inside the
+# container (OpenHands-style: framework python separate from the repo env), and
+# point the harness at it via REYN_HARNESS_PYTHON (the only OS-side change — a
+# general 1-line env override in PythonRunner; this script is OS-change-free).
+# pytest (sandboxed_exec) stays on the testbed conda — the agent's repo tests
+# need the repo env, not the venv.
+#
+# Recipe (primary-evidence: real `docker run` on astropy-13453):
+#   - base python3.11 already in the image (`/opt/miniconda3/bin/python3.11`);
+#   - the container reaches PyPI (no wheelhouse needed) — `pip install` works;
+#   - `pip install -e` on the :ro reyn mount FAILS (editable build can't write
+#     to read-only source) → install reyn's deps explicitly + put reyn itself on
+#     the path via a `.pth` to the bind-mounted source (no PYTHONPATH threading,
+#     so container_backend.run is untouched). Deps are version-pinned by
+#     reyn's own pyproject (read at runtime — no hardcoded drift).
+_CONTAINER_REYN_MOUNT = "/reyn"            # host reyn repo, bind-mounted :ro
+_CONTAINER_VENV = "/opt/reyn-venv"
+_CONTAINER_PY311 = "/opt/miniconda3/bin/python3.11"
+_CONTAINER_HARNESS_PYTHON = f"{_CONTAINER_VENV}/bin/python"
+# reyn's pyproject lists test/lint tooling alongside runtime deps; the harness
+# needs only the runtime set, so these dev tools are skipped (faster setup).
+_DEV_ONLY_DEPS = frozenset(
+    {"pytest", "pytest-cov", "pytest-xdist", "pytest-asyncio", "ruff", "mypy", "pre-commit"}
+)
+
+
+def _reyn_repo_root() -> Path:
+    """The host reyn repo root (this script lives in <root>/scripts/)."""
+    return Path(__file__).resolve().parent.parent
+
+
+def reyn_runtime_deps(pyproject_text: str) -> list[str]:
+    """Parse reyn's runtime dependencies from pyproject text (dev tools dropped).
+
+    Pure (text in → list out) so it is unit-testable without the file or tomllib
+    version specifics. Version pins are preserved verbatim from pyproject.
+    """
+    import tomllib
+
+    data = tomllib.loads(pyproject_text)
+    out = []
+    for dep in data.get("project", {}).get("dependencies", []):
+        # strip the version/extras to get the bare distribution name for the filter
+        name = dep.split(">=")[0].split("==")[0].split("[")[0].split("<")[0].strip()
+        if name.lower() not in _DEV_ONLY_DEPS:
+            out.append(dep)
+    return out
+
+
+def provision_command(deps: list[str]) -> str:
+    """The `bash -lc` body that builds the in-container reyn venv (pure → str).
+
+    Builds a python3.11 venv, installs reyn's runtime deps (version-pinned), and
+    puts reyn itself on sys.path via a `.pth` to the bind-mounted source — so
+    `<venv>/bin/python -m reyn.kernel._python_harness` imports reyn with no
+    PYTHONPATH threading. Each dep is shell-quoted (version specs contain `>`)."""
+    deps_arg = " ".join(shlex.quote(d) for d in deps)
+    return (
+        "set -e; "
+        f"{_CONTAINER_PY311} -m venv {_CONTAINER_VENV}; "
+        f"{_CONTAINER_VENV}/bin/pip install --quiet {deps_arg}; "
+        f"echo {_CONTAINER_REYN_MOUNT}/src "
+        f"> \"$({_CONTAINER_VENV}/bin/python -c 'import site; print(site.getsitepackages()[0])')/reyn.pth\""
+    )
 
 
 # ── pure helpers (testable without subprocess) ──────────────────────────────
@@ -179,6 +253,7 @@ def run_reyn(
     *,
     reyn_cmd: list[str] | None = None,
     timeout: int = 600,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Shell out to ``reyn run swe_bench`` and return a result dict.
 
@@ -210,6 +285,7 @@ def run_reyn(
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"timeout after {timeout}s"}
@@ -291,9 +367,17 @@ def run_reyn_in_container(
         f"[swe_bench_runner] docker run image={image} name={name} (instance={instance_id})",
         file=sys.stderr,
     )
+    reyn_root = str(_reyn_repo_root())
     try:
         start = runner(
-            [docker_bin, "run", "-d", "--name", name, image, "sleep", "infinity"],
+            # #183: bind-mount the host reyn repo :ro so the in-container venv can
+            # put reyn on its path (.pth → /reyn/src); the harness imports reyn
+            # there. The repo's own files stay at repo_dir (/testbed), untouched.
+            [
+                docker_bin, "run", "-d", "--name", name,
+                "-v", f"{reyn_root}:{_CONTAINER_REYN_MOUNT}:ro",
+                image, "sleep", "infinity",
+            ],
             timeout=300,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -305,6 +389,21 @@ def run_reyn_in_container(
         }
 
     try:
+        # #183: provision the python3.11 venv with reyn inside the container so the
+        # #1356-routed python-step harness can run (the testbed conda is repo-pinned
+        # < 3.11). pytest stays on the testbed conda. Requires container→PyPI access.
+        deps = reyn_runtime_deps((_reyn_repo_root() / "pyproject.toml").read_text())
+        print(f"[swe_bench_runner] provisioning reyn venv in {name} ({len(deps)} deps)", file=sys.stderr)
+        prov = runner(
+            [docker_bin, "exec", name, "bash", "-lc", provision_command(deps)],
+            timeout=600,
+        )
+        if getattr(prov, "returncode", 1) != 0:
+            return {
+                "ok": False,
+                "error": f"venv provisioning failed (rc={prov.returncode}): {(prov.stderr or '')[:400]}",
+            }
+
         base = reyn_base if reyn_base is not None else ["reyn", "run", "swe_bench"]
         full_cmd = [
             *base,
@@ -313,7 +412,10 @@ def run_reyn_in_container(
             "--repo-dir", repo_dir,
             "--state-dir", host_state,
         ]
-        return run_reyn(instance, reyn_cmd=full_cmd, timeout=timeout)
+        # #183: point the #1356 harness subprocess at the in-container venv python
+        # (read by PythonRunner's REYN_HARNESS_PYTHON override — the only OS change).
+        run_env = {**os.environ, "REYN_HARNESS_PYTHON": _CONTAINER_HARNESS_PYTHON}
+        return run_reyn(instance, reyn_cmd=full_cmd, timeout=timeout, env=run_env)
     finally:
         try:
             rm = runner([docker_bin, "rm", "-f", name], timeout=120)
