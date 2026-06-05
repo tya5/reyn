@@ -13,6 +13,7 @@ import pytest
 
 from reyn.environment.container_launcher import (
     DEFAULT_IMAGE,
+    REYN_BASE_IMAGE,
     WORKSPACE_DEST_DEFAULT,
     ContainerLauncher,
     LaunchConfig,
@@ -123,7 +124,8 @@ def test_launch_returns_container_id():
     """Tier 2: launch returns the trimmed container id from docker run stdout."""
     runner = _FakeRunner([_ok(b"abc123\n")])
     launcher = ContainerLauncher(runner=runner)
-    cid = launcher.launch(LaunchConfig(workspace_root="/tmp/ws"))
+    # Non-base image → ensure_image is a no-op, so the first call is docker run.
+    cid = launcher.launch(LaunchConfig(workspace_root="/tmp/ws", image="img:test"))
     assert cid == "abc123"
     assert runner.calls[0][:3] == ["docker", "run", "-d"]
 
@@ -132,14 +134,18 @@ def test_launch_nonzero_raises():
     """Tier 2: a non-zero docker run exit raises RuntimeError."""
     runner = _FakeRunner([SandboxResult(returncode=1, stdout=b"", stderr=b"boom")])
     with pytest.raises(RuntimeError, match="launch failed"):
-        ContainerLauncher(runner=runner).launch(LaunchConfig(workspace_root="/tmp/ws"))
+        ContainerLauncher(runner=runner).launch(
+            LaunchConfig(workspace_root="/tmp/ws", image="img:test")
+        )
 
 
 def test_launch_empty_id_raises():
     """Tier 2: an empty container id raises rather than returning a bad handle."""
     runner = _FakeRunner([_ok(b"   \n")])
     with pytest.raises(RuntimeError, match="empty container id"):
-        ContainerLauncher(runner=runner).launch(LaunchConfig(workspace_root="/tmp/ws"))
+        ContainerLauncher(runner=runner).launch(
+            LaunchConfig(workspace_root="/tmp/ws", image="img:test")
+        )
 
 
 def test_launch_persistent_reuses_existing():
@@ -159,7 +165,11 @@ def test_launch_runs_setup_command():
     """Tier 2: setup_command runs (docker exec) inside the container after launch."""
     runner = _FakeRunner([_ok(b"cid\n"), _ok(b"")])  # run, then exec
     launcher = ContainerLauncher(runner=runner)
-    launcher.launch(LaunchConfig(workspace_root="/tmp/ws", setup_command="pip install x"))
+    launcher.launch(
+        LaunchConfig(
+            workspace_root="/tmp/ws", image="img:test", setup_command="pip install x"
+        )
+    )
     assert runner.calls[1][:3] == ["docker", "exec", "cid"]
     assert "pip install x" in runner.calls[1]
 
@@ -169,3 +179,59 @@ def test_teardown_removes_container():
     runner = _FakeRunner([_ok(b"")])
     assert ContainerLauncher(runner=runner).teardown("cid") is True
     assert runner.calls[0] == ["docker", "rm", "-f", "cid"]
+
+
+# ─── ensure_image (bundled reyn base, build-on-demand) ─────────────────────────
+
+
+def test_ensure_image_builds_base_when_absent():
+    """Tier 2: a missing reyn base image is built from the bundled Dockerfile."""
+    runner = _FakeRunner([
+        SandboxResult(returncode=1, stdout=b"", stderr=b"No such image"),  # inspect
+        _ok(b""),  # build
+    ])
+    ContainerLauncher(runner=runner).ensure_image(REYN_BASE_IMAGE)
+    assert runner.calls[0][:3] == ["docker", "image", "inspect"]
+    build = runner.calls[1]
+    assert build[:4] == ["docker", "build", "-t", REYN_BASE_IMAGE]
+    assert "-f" in build and build[-1].endswith("environment")  # context = dockerfile dir
+
+
+def test_ensure_image_skips_build_when_present():
+    """Tier 2: a present reyn base image is a no-op (inspect succeeds, no build)."""
+    runner = _FakeRunner([_ok(b"sha256:...")])  # inspect succeeds
+    ContainerLauncher(runner=runner).ensure_image(REYN_BASE_IMAGE)
+    assert all("build" not in c[:2] for c in runner.calls)
+    (only_call,) = runner.calls
+    assert only_call[:3] == ["docker", "image", "inspect"]
+
+
+def test_ensure_image_noop_for_non_base_image():
+    """Tier 2: a non-base image is left to docker run to pull — ensure does nothing."""
+    runner = _FakeRunner([])
+    ContainerLauncher(runner=runner).ensure_image("python:3.12-slim")
+    assert runner.calls == []
+
+
+def test_ensure_image_build_failure_raises():
+    """Tier 2: a failed base-image build raises RuntimeError."""
+    runner = _FakeRunner([
+        SandboxResult(returncode=1, stdout=b"", stderr=b"absent"),  # inspect
+        SandboxResult(returncode=1, stdout=b"", stderr=b"build broke"),  # build
+    ])
+    with pytest.raises(RuntimeError, match="base image build failed"):
+        ContainerLauncher(runner=runner).ensure_image(REYN_BASE_IMAGE)
+
+
+def test_launch_builds_base_image_then_runs():
+    """Tier 2: launching with the default (base) image builds it on demand first."""
+    runner = _FakeRunner([
+        SandboxResult(returncode=1, stdout=b"", stderr=b"absent"),  # inspect
+        _ok(b""),  # build
+        _ok(b"cid42\n"),  # run
+    ])
+    cid = ContainerLauncher(runner=runner).launch(LaunchConfig(workspace_root="/tmp/ws"))
+    assert cid == "cid42"
+    assert runner.calls[0][:3] == ["docker", "image", "inspect"]
+    assert runner.calls[1][:2] == ["docker", "build"]
+    assert runner.calls[2][:3] == ["docker", "run", "-d"]

@@ -37,14 +37,25 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from reyn.environment.container_backend import SyncRunner, _sync_runner
 from reyn.sandbox.backend import SandboxResult
 
-# Configurable default generic image (#1324 owner decision (A): a sensible
-# minimal default, extended at runtime via setup_command). Override per run via
-# --image / operator config. A purpose-built reyn base image is a #1324 follow-up.
-DEFAULT_IMAGE = "python:3.12-slim"
+# The bundled reyn base image (#1324): a minimal generic agent runtime built ON
+# DEMAND from reyn_base.Dockerfile (local-build, no registry). The tag is local
+# (not registry-qualified); a registry-published variant is a #1324 follow-up.
+REYN_BASE_IMAGE = "reyn-base:local"
+
+# Default image for a launched container = the bundled reyn base, extended at
+# runtime via setup_command (#1324 owner decision (A)). Override per run via
+# --image / operator config.
+DEFAULT_IMAGE = REYN_BASE_IMAGE
+
+
+def _reyn_base_dockerfile() -> Path:
+    """Path to the bundled reyn base Dockerfile (shipped as package data)."""
+    return Path(__file__).parent / "reyn_base.Dockerfile"
 
 # Fixed in-container mount destination for the workspace (override-able via
 # LaunchConfig.workspace_dest). The agent's repo_dir resolves here.
@@ -187,6 +198,7 @@ class ContainerLauncher:
             if existing:
                 return existing
 
+        self.ensure_image(config.image)
         argv = build_docker_run_argv(config, docker_bin=self.docker_bin)
         res = self._runner(argv, timeout=timeout)
         if res.returncode != 0:
@@ -208,6 +220,35 @@ class ContainerLauncher:
             [self.docker_bin, "rm", "-f", container_id], timeout=timeout
         )
         return res.returncode == 0
+
+    def ensure_image(self, image: str, *, timeout: int = 600) -> None:
+        """Build the bundled reyn base image on demand if it is missing.
+
+        Only the bundled local tag (:data:`REYN_BASE_IMAGE`) is built here — any
+        other ``image`` is left to ``docker run`` to pull. A present image is a
+        no-op (``docker image inspect`` succeeds). Raises ``RuntimeError`` if the
+        build fails. The build timeout is generous (apt layers).
+        """
+        if image != REYN_BASE_IMAGE:
+            return
+        inspect = self._runner(
+            [self.docker_bin, "image", "inspect", image], timeout=timeout
+        )
+        if inspect.returncode == 0:
+            return  # already built
+        dockerfile = _reyn_base_dockerfile()
+        res = self._runner(
+            [
+                self.docker_bin, "build", "-t", image,
+                "-f", str(dockerfile), str(dockerfile.parent),
+            ],
+            timeout=timeout,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(
+                f"reyn base image build failed (rc={res.returncode}): "
+                f"{res.stderr.decode(errors='replace')[:400]}"
+            )
 
     def _existing_container(self, name: str, *, timeout: int) -> str | None:
         """Return the id of a running container with ``name``, or None."""
