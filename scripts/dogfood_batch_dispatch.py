@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -274,7 +275,29 @@ def setup_worktree(worker: WorkerSpec, head: str, repo_root: Path) -> None:
     )
     if worker.compaction_grant:
         runner_grants = runner_grants + compaction_block
-    if "Dogfood worker env grants" not in text:
+    if worker.enforcement_profile:
+        # #1335 strict-permission / enforcement profile: REAL gates, NO routing
+        # blanket grants. Strip the swe_bench `file.write: allow` from the copied
+        # source and do NOT inject the routing runner grants (which would disable
+        # Seatbelt via `backend: noop` + blanket-grant file.write / web.fetch and
+        # defeat the very gates these scenarios test). Enabling grants the
+        # scenarios need to REACH a gate (tool availability) are unaffected — the
+        # default sandbox backend (auto → Seatbelt/Landlock) + the unmodified
+        # permission resolver are what each scenario exercises.
+        text = re.sub(
+            r"(?m)^permissions:[ \t]*\n(?:[ \t]+file\.write:[ \t]*allow[ \t]*\n)",
+            "permissions: {}\n",
+            text,
+        )
+        text = (
+            text.rstrip()
+            + "\n\n# ── #1335 enforcement profile ─────────────────────────\n"
+            + "# Auto-prepared by dogfood_batch_dispatch.py: the routing blanket\n"
+            + "# grants (broad file-write / noop sandbox backend / web-fetch) are\n"
+            + "# intentionally ABSENT so the permission resolver + Seatbelt/Landlock\n"
+            + "# gates are enforced for real.\n"
+        )
+    elif "Dogfood worker env grants" not in text:
         text = text.rstrip() + "\n" + runner_grants
     dst.write_text(text)
 
