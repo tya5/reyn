@@ -6,6 +6,42 @@ role: architect
 model_class: standard
 allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files]
 max_act_turns: 15
+# #1366 — deterministic plan-time region scaffolding (plan-layer analogue of the
+# apply #1209 block). BEFORE the LLM enters this phase, the OS places the
+# problem-relevant regions of the candidate files into context: extract code
+# symbols from the problem_statement (the legitimate task input — NOT test_patch,
+# which would deepen leakage), then grep each symbol in the explore relevant_files.
+# So the model copies a real `anchor` from a region it actually sees instead of
+# fabricating one for a truncated-out-of-view large file (the apply-starvation
+# root cause, surfaced one layer up). Deterministic (P5), never LLM-mutated.
+# `extract_problem_symbols` returns [{file, symbol, symbol_re}] (cartesian of
+# relevant_files x symbols); the iterate step greps each into `_plan_regions`.
+preprocessor:
+  - type: python
+    module: ./extract_problem_symbols.py
+    function: extract_problem_symbols
+    mode: safe
+    into: data._plan_symbols
+    output_schema:
+      type: array
+  - type: iterate
+    over: data._plan_symbols
+    apply:
+      type: run_op
+      op:
+        kind: file
+        op: grep
+        path: "__placeholder__"
+        pattern: "__placeholder__"
+        output_mode: content
+        context_before: 40
+        context_after: 40
+      args_from:
+        path: "_iter.item.file"
+        pattern: "_iter.item.symbol_re"
+      on_error: skip
+    into: data._plan_regions
+    on_error: skip
 ---
 
 Produce a concrete edit plan: a list of files to change and a description of
@@ -54,6 +90,26 @@ Set this plan's `attempt` to the input `verify_state`'s `attempt` + 1 (a plan
 built from `exploration` is `attempt = 1`). Advancing the counter each re-plan
 is what lets the verify-phase retry limit bound the loop — a plan that does not
 increment would let the cycle run unbounded.
+
+## Step 1.5 — Ground your anchors in the pre-fetched regions
+
+The OS has already placed the problem-relevant code regions of the candidate
+files into your input under `_plan_regions` — a `grep` of the symbols named in
+the problem statement (with surrounding context) against the explore phase's
+relevant files. Use these regions as the source of truth for the exact current
+text when you choose each edit's `anchor`:
+
+- Copy each `anchor` VERBATIM from a line you can see in a `_plan_regions` entry
+  (or from a targeted read you issue) — never reconstruct it from memory. A
+  fabricated anchor finds nothing at apply and the edit is dropped.
+- If `_plan_regions` is empty or does not cover the region you need (the problem
+  statement may not have named the target symbols), issue a targeted `read`
+  (with `offset`/`limit`) or `grep` for that file to bring the region into view
+  before writing the anchor. A bounded read stays in context (it is not
+  offloaded out of view).
+
+This is the same grounding discipline the apply phase uses; doing it here means
+the anchors you emit are guaranteed to exist in the file.
 
 ## Step 2 — Re-read targeted code sections (if needed)
 

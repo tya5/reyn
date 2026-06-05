@@ -55,6 +55,16 @@ def _get_at_path_parts(schema: dict, parts: list[str], original_path: str) -> An
                     return _get_at_path_parts(branch, parts, original_path)
                 except PreprocessorTypeError:
                     continue
+            # A prior preprocessor step's `into` writes the new field at the
+            # union ROOT (via _set_at_path, which adds a sibling `properties`
+            # alongside the anyOf/oneOf) rather than inside a branch. Fall through
+            # to root-level properties so a step can iterate/read a field an
+            # earlier step added when the phase input is a union (e.g. a phase
+            # whose input is `exploration | verify_state`). Without this, into→
+            # iterate round-trips only work for single-type inputs.
+            props = schema.get("properties")
+            if isinstance(props, dict) and part in props:
+                return _get_at_path_parts(props[part], rest, original_path)
             raise PreprocessorTypeError(
                 f"Path '{original_path}': segment '{part}' not found in any "
                 f"{keyword} branch. Branches tried: {len(schema[keyword])}"

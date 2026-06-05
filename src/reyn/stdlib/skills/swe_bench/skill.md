@@ -74,6 +74,15 @@ permissions:
       function: drop_not_locatable
       mode: safe
       timeout: 5
+    # #1366: extracts problem_statement code-symbols (NOT test_patch — avoids
+    # deepening leakage) and pairs them with the explore relevant_files, so the
+    # plan preprocessor's iterate-grep can place the problem-relevant regions
+    # into context before the plan LLM (plan-layer analogue of #1209). Mode: safe
+    # — uses only re + json (PURE_STDLIB_ALLOWLIST), pure data transform.
+    - module: ./extract_problem_symbols.py
+      function: extract_problem_symbols
+      mode: safe
+      timeout: 5
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---
