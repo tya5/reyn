@@ -45,12 +45,3 @@ def test_require_secret_write_cutover_reproduces_logic(tmp_path: Path) -> None:
         r.require_secret_write(PermissionDecl(), "K")                      # undeclared → raise
 
 
-def test_require_shell_gate_denies_when_undeclared(tmp_path: Path) -> None:
-    """Tier 2: require_shell's model gate (SUBPROCESS = decl.shell) denies before
-    the _approve prompt when shell is not declared. (The shell=True + _approve flow
-    is covered by the broad permission suite.)"""
-    import asyncio
-
-    r = _make_resolver(tmp_path)
-    with pytest.raises(PermissionError, match="not declared"):
-        asyncio.run(r.require_shell(PermissionDecl(shell=False), "ls", None))

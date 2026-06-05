@@ -25,7 +25,7 @@ from reyn.schemas.models import SandboxedExecIROp
 from reyn.workspace.workspace import Workspace
 
 
-def _executor(tmp_path: Path, *, shell_allowed: bool = False) -> ControlIRExecutor:
+def _executor(tmp_path: Path) -> ControlIRExecutor:
     events = EventLog()
     ws = Workspace(events=events)
     return ControlIRExecutor(
@@ -35,7 +35,6 @@ def _executor(tmp_path: Path, *, shell_allowed: bool = False) -> ControlIRExecut
             config_permissions={}, project_root=tmp_path, interactive=False
         ),
         skill_name="t",
-        shell_allowed=shell_allowed,
     )
 
 
@@ -50,12 +49,6 @@ def test_sandboxed_exec_is_advertised(tmp_path: Path) -> None:
         "available_ops() must advertise sandboxed_exec — without it a phase that "
         "lists it in allowed_ops gets the op filtered to nothing."
     )
-
-
-def test_sandboxed_exec_advertised_regardless_of_shell_allowed(tmp_path: Path) -> None:
-    """Tier 2: sandboxed_exec is advertised even when shell is off (it is not the shell op)."""
-    assert _spec(_executor(tmp_path, shell_allowed=False), "sandboxed_exec") is not None
-    assert _spec(_executor(tmp_path, shell_allowed=True), "sandboxed_exec") is not None
 
 
 def test_sandboxed_exec_description_requires_argv_list_not_command_string(tmp_path: Path) -> None:

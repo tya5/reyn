@@ -275,7 +275,6 @@ def _run_case(
     # #997 dir2: config-derived permission/runtime bundle via from_config.
     agent = Agent.from_config(
         session.config,
-        shell_allowed=False,
         model=model,
         resolver=session.resolver,
         safety=session.safety_for(argparse.Namespace()),
@@ -848,7 +847,6 @@ def _run_spec_case(
     # #997 dir2: config-derived permission/runtime bundle via from_config.
     agent = Agent.from_config(
         session.config,
-        shell_allowed=False,
         model=model,
         resolver=session.resolver,
         safety=session.safety_for(args),

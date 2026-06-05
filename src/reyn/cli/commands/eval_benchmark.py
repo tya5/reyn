@@ -359,15 +359,6 @@ def register_benchmark(eval_sub) -> None:
         help="Model override (default: from reyn.yaml)",
     )
     p.add_argument(
-        "--allow-shell", dest="allow_shell", action="store_true",
-        help=(
-            "Enable the 'shell' Control IR op for every task in this batch. "
-            "Required when the target skill declares `permissions.shell: true` "
-            "(e.g. `swe_bench`, which checks out repos + runs tests). "
-            "Off by default for safety; matches `reyn run --allow-shell`."
-        ),
-    )
-    p.add_argument(
         "--allow-unsafe-python", "--allow-untrusted-python",
         dest="allow_unsafe_python", action="store_true",
         help=(
@@ -679,7 +670,6 @@ async def _run_single_task(
     session,
     run_dir: Path,
     semaphore: asyncio.Semaphore,
-    shell_allowed: bool = False,
     unsafe_python: bool = False,
     python_allowed_modules: list[str] | None = None,
     clone_task_repo: bool = False,
@@ -687,9 +677,9 @@ async def _run_single_task(
 ) -> dict:
     """Run a single task under the semaphore; return a result record.
 
-    ``shell_allowed`` + ``unsafe_python`` are derived once at batch start
-    (= from ``--allow-shell`` / ``--allow-unsafe-python``) and threaded through
-    every task; ``Agent.from_config`` then derives the permission_resolver (and
+    ``unsafe_python`` is derived once at batch start (= from
+    ``--allow-unsafe-python``) and threaded through every task;
+    ``Agent.from_config`` then derives the permission_resolver (and
     the rest of the runtime bundle) per task so the Agent's op_catalog exposes
     the shell op uniformly (#997 dir2 — the benchmark cannot omit the bundle).
     Without this, the LLM doesn't see ``shell`` in the catalog and hallucinates
@@ -733,9 +723,9 @@ async def _run_single_task(
                 # mcp_servers, python_allowed_modules, prompt_cache_enabled,
                 # sandbox_config, resolver) is derived from config inside
                 # from_config — the benchmark cannot omit it (this WAS the FP-0008
-                # gap: a missing permission_resolver/shell_allowed left shell out
+                # gap: a missing permission_resolver left a declared op out
                 # of the catalog, the LLM hallucinated a fake schema). The
-                # permission resolver is derived per task from shell_allowed +
+                # permission resolver is derived per task from
                 # unsafe_python (identical to the prior batch-built one, which used
                 # the same _build_permission_resolver). interactive=False: a
                 # benchmark subprocess is non-interactive.
@@ -747,7 +737,7 @@ async def _run_single_task(
                 # swe_bench's file.read/write: "*") needs a config-grant to be
                 # approved without an interactive prompt. Scope it to the
                 # benchmark's isolated workspace (same procedure as the
-                # shell_allowed / unsafe_python pre-approvals above). setdefault
+                # unsafe_python pre-approvals above). setdefault
                 # preserves any explicit operator setting.
                 session.config.permissions.setdefault("file.read", "allow")
                 session.config.permissions.setdefault("file.write", "allow")
@@ -775,7 +765,6 @@ async def _run_single_task(
                     )
                 agent = Agent.from_config(
                     session.config,
-                    shell_allowed=shell_allowed,
                     model=model,
                     resolver=session.resolver,
                     safety=session.safety_for(argparse.Namespace()),
@@ -928,13 +917,12 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
     session = session_mod.Session.from_args(args)
     model = getattr(args, "model", None) or session.config.model
 
-    # Derive shell_allowed + unsafe_python once at batch start and thread them
+    # Derive unsafe_python once at batch start and thread it
     # through every task; Agent.from_config derives the permission_resolver (+
     # the rest of the runtime bundle) per task (#997 dir2). Without the right
-    # shell_allowed the Agent's OS runtime keeps `shell` out of the op_catalog
+    # the Agent's OS runtime keeps undeclared ops out of the op_catalog
     # and the LLM hallucinates a fake schema on every retry — see
     # _run_single_task docstring.
-    shell_allowed = session.shell_allowed_for(args)
     unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
     clone_task_repo = bool(getattr(args, "clone_task_repo", False))
 
@@ -1020,7 +1008,6 @@ async def _run_benchmark_async(args: argparse.Namespace) -> None:
                 session=session,
                 run_dir=run_dir,
                 semaphore=semaphore,
-                shell_allowed=shell_allowed,
                 unsafe_python=unsafe_python,
                 clone_task_repo=clone_task_repo,
                 verify_tier=verify_tier,

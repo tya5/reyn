@@ -65,7 +65,6 @@ def _make_cron_runner():
         # empty ModelResolver() default) so class-name model resolution works.
         agent = Agent.from_config(
             cfg,
-            shell_allowed=False,
             interactive=False,
             project_context=project_context,
             caller="cron",

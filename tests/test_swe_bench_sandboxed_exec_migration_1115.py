@@ -51,14 +51,6 @@ def test_exec_phases_use_sandboxed_exec() -> None:
         )
 
 
-def test_skill_no_longer_declares_shell_permission() -> None:
-    """Tier 2: skill.permissions.shell is removed (no phase emits kind: shell)."""
-    skill = _skill()
-    assert skill.permissions.shell is False, (
-        "swe_bench.permissions.shell must be removed after the sandboxed_exec "
-        "migration — no phase emits the shell op."
-    )
-
 
 def test_no_phase_body_embeds_control_ir_shell_json() -> None:
     """Tier 2: no phase body embeds a Control-IR shell JSON literal (P8 cleanup).

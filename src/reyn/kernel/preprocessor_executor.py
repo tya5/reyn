@@ -166,7 +166,6 @@ class PreprocessorExecutor:
             state_dir_strategy="preprocessor",
             preprocessor_phase_name=phase.name,
             preprocessor_step_index=step_index,
-            shell_allowed=True,  # gating handled by permission_resolver.require_shell
             mcp_servers={},
             mcp_clients={},
             intervention_bus=None,  # ask_user is forbidden in preprocessor

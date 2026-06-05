@@ -16,7 +16,6 @@ models:
   strong:   openai/gpt-4o
 
 # output_language: en          # en | ja | zh | ...
-# shell_allowed: false         # allow 'shell' Control IR op (meta-apps only)
 
 # ───────────────────────────────────────────────────────────────────────────
 # Pre-approved permissions for chat / skill ops.

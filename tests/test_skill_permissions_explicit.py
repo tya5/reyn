@@ -85,12 +85,6 @@ def test_explicit_skill_permissions_mcp() -> None:
     assert skill.permissions.mcp == ["override"]
 
 
-def test_explicit_skill_permissions_shell_true() -> None:
-    """Tier 2: Explicit skill.permissions.shell=True propagates."""
-    skill = _build(["a", "b"], skill_permissions={"shell": True})
-    assert skill.permissions.shell is True
-
-
 def test_explicit_skill_permissions_python_used_directly() -> None:
     """Tier 2: Explicit skill.permissions.python is used verbatim."""
     skill = _build(
@@ -121,6 +115,5 @@ def test_explicit_skill_permissions_file_write() -> None:
 def test_no_skill_permissions_yields_empty_decl() -> None:
     """Tier 2: Absent skill.permissions → empty PermissionDecl (no phase fallback)."""
     skill = _build(["a", "b"], skill_permissions=None)
-    assert skill.permissions.shell is False
     assert skill.permissions.mcp == []
     assert skill.permissions.tool == []

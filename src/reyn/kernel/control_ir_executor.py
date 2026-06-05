@@ -83,7 +83,6 @@ class ControlIRExecutor:
         workspace: Workspace,
         events: EventLog,
         intervention_bus: RequestBus | None = None,
-        shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
         max_phase_visits: int = 25,
@@ -108,7 +107,6 @@ class ControlIRExecutor:
         self._budget_tracker = budget_tracker
         self._intervention_bus = intervention_bus
         self._max_phase_visits = max_phase_visits
-        self._shell_allowed = shell_allowed
         self._resolver = resolver or ModelResolver({})
         self._perm = permission_resolver
         self._skill_name = skill_name
@@ -229,7 +227,7 @@ class ControlIRExecutor:
 
         These specs flow into ContextFrame.available_control_ops; the LLM picks
         from this list when emitting `control_ir`. Op kinds are filtered per
-        runtime config (shell_allowed, mcp_servers configured) and per phase by
+        runtime config (mcp_servers configured) and per phase by
         ``allowed_ops`` in ``build_frame``.
         """
         return [
@@ -251,10 +249,8 @@ class ControlIRExecutor:
                     "required": True,
                 },
             ),
-            # #1352-A: the deprecated `shell` op (raw subprocess) was removed;
-            # use `sandboxed_exec` below. `self._shell_allowed` plumbing is left
-            # in place (now harmless-dead — it gates nothing) pending the layer-3
-            # follow-up that retires the --allow-shell flag + permissions.shell.
+            # #1352-A/L3: the deprecated `shell` op (raw subprocess) was removed;
+            # use `sandboxed_exec` below.
             ControlIROpSpec(
                 kind="sandboxed_exec",
                 description=(
@@ -370,7 +366,6 @@ class ControlIRExecutor:
             max_phase_visits=self._max_phase_visits,
             sub_state_dir_override=None,
             state_dir_strategy="control_ir",
-            shell_allowed=self._shell_allowed,
             mcp_servers=self._mcp_servers,
             mcp_clients=self._mcp_clients,
             intervention_bus=self._intervention_bus,

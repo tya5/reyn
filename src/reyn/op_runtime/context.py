@@ -55,8 +55,7 @@ class OpContext:
     preprocessor_phase_name: str = ""
     preprocessor_step_index: int = 0
 
-    # Shell / MCP
-    shell_allowed: bool = False
+    # MCP
     mcp_servers: dict = field(default_factory=dict)
     # Mutable cache for MCP HTTP clients keyed by server name
     mcp_clients: dict = field(default_factory=dict)

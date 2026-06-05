@@ -117,7 +117,7 @@ def test_no_warning_when_dot_reyn_config_absent(tmp_path, monkeypatch, capsys):
 def test_reyn_local_yaml_still_loaded(tmp_path, monkeypatch):
     """Tier 2: reyn.local.yaml is loaded and overrides reyn.yaml (3-layer cascade intact)."""
     reyn_yaml = tmp_path / "reyn.yaml"
-    _write_yaml(reyn_yaml, {"model": "standard", "shell_allowed": False})
+    _write_yaml(reyn_yaml, {"model": "standard"})
 
     local_yaml = tmp_path / "reyn.local.yaml"
     _write_yaml(local_yaml, {"model": "strong"})
@@ -130,7 +130,6 @@ def test_reyn_local_yaml_still_loaded(tmp_path, monkeypatch):
     assert cfg.model == "strong", (
         f"Expected 'strong' from reyn.local.yaml, got {cfg.model!r}."
     )
-    assert cfg.shell_allowed is False  # reyn.yaml value preserved
 
 
 # ---------------------------------------------------------------------------

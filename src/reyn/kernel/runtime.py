@@ -60,7 +60,6 @@ class OSRuntime:
         subscribers: list[Callable] | None = None,
         intervention_bus: "RequestBus | None" = None,
         run_id: str | None = None,
-        shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
         safety: "SafetyConfig | None" = None,
@@ -191,7 +190,6 @@ class OSRuntime:
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             intervention_bus=intervention_bus,
-            shell_allowed=shell_allowed,
             resolver=self._resolver,
             permission_resolver=permission_resolver,
             max_phase_visits=self._max_phase_visits,
@@ -505,8 +503,8 @@ class OSRuntime:
             if _PHASE_TOOL_NAME_ALIAS.get(op.kind, op.kind) in allowed
         ]
         # #997: wiring-gap detection. A phase that declares an op in allowed_ops
-        # which the executor does NOT advertise (e.g. `shell` while
-        # shell_allowed=False, `mcp` with no servers configured) has that op
+        # which the executor does NOT advertise (e.g. `mcp` with no servers
+        # configured) has that op
         # filtered to nothing — the LLM sees the phase instruction referencing
         # the op but no schema, and hallucinates a fake one (the FP-0008 / #1133
         # failure class). Surface it as a P6 event so the trace tool catches the

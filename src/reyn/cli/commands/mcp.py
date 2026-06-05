@@ -660,7 +660,6 @@ def run_install(args: argparse.Namespace) -> None:
     # #997 dir2: config-derived permission/runtime bundle wired by from_config.
     agent = Agent.from_config(
         config,
-        shell_allowed=False,
         resolver=resolver,
         strict=False,
         subscribers=[logger],

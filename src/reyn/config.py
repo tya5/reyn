@@ -1576,10 +1576,6 @@ class ReynConfig:
         default=None,
         metadata={"desc": "Language code injected into the context frame for all LLM outputs."},
     )
-    shell_allowed: bool = field(
-        default=False,
-        metadata={"desc": "Allow the shell Control IR op globally. Equivalent to --allow-shell on every run."},
-    )
     models: dict[str, str | dict] = field(
         default_factory=dict,
         metadata={"desc": "Map of model class names to LiteLLM model strings."},
@@ -2020,7 +2016,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     # skip the language directive) from "user explicitly set it" (= str,
     # router prompt enforces it strictly). See `ReynConfig.output_language`.
     merged: dict = {"model": "standard",
-                    "shell_allowed": False, "models": {}, "permissions": {},
+                    "models": {}, "permissions": {},
                     "mcp": {}}
 
     # User global
@@ -2104,7 +2100,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     return ReynConfig(
         model=str(merged.get("model", "standard")),
         output_language=output_language,
-        shell_allowed=bool(merged.get("shell_allowed", False)),
         models={
             str(k): (v if isinstance(v, dict) else str(v))
             for k, v in (merged.get("models") or {}).items()

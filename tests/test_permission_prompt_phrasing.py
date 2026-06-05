@@ -79,24 +79,7 @@ async def test_require_web_fetch_prompt_is_natural(tmp_path) -> None:
     assert "web.fetch" not in iv.prompt
 
 
-# ── 2. require_shell uses natural prompt ─────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_require_shell_prompt_is_natural(tmp_path) -> None:
-    """Tier 2: require_shell passes a natural-language user_prompt."""
-    r = _resolver(tmp_path)
-    bus = _RecordingBus(answer_id="no")
-    try:
-        await r.require_shell(PermissionDecl(shell=True), "ls -la", bus)
-    except PermissionError:
-        pass
-    (iv,) = bus.captured  # exactly one intervention requested
-    assert iv.prompt == "Allow running this shell command?"
-    assert "ls -la" in iv.detail
-
-
-# ── 3. End-to-end announce: meta.prompt carries natural phrasing ────────
+# ── 2. End-to-end announce: meta.prompt carries natural phrasing ────────
 
 
 async def _capture_announce(iv: UserIntervention) -> OutboxMessage:

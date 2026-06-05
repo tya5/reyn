@@ -83,5 +83,3 @@ class Session:
     def limits_for(self, args: argparse.Namespace) -> SafetyConfig:
         return self.safety_for(args)
 
-    def shell_allowed_for(self, args: argparse.Namespace) -> bool:
-        return bool(getattr(args, "allow_shell", False)) or self.config.shell_allowed

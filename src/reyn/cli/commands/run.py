@@ -61,12 +61,6 @@ def register(sub) -> None:
                        "Enable strict schema validation: enforce required fields at every nesting depth. "
                        "Default (lenient) only enforces required at the top level of each artifact."
                    ))
-    p.add_argument("--allow-shell", dest="allow_shell", action="store_true",
-                   help=(
-                       "Enable the 'shell' Control IR op, which allows the LLM to execute shell commands. "
-                       "Required for meta-apps that invoke sub-processes (e.g. app_improver). "
-                       "Off by default for safety."
-                   ))
     # FP-0014: --allow-untrusted-python renamed → --allow-unsafe-python.
     # Both flags target the same dest so legacy invocations keep working
     # during the Track A → B transition. New code should use the new flag.
@@ -145,7 +139,6 @@ def run(args: argparse.Namespace) -> None:
     # naturally. Reyn explicitly does not fall back to a regional default
     # (= no silent "ja" default) — the project targets a global audience.
     output_language = session.output_language_for(args)
-    shell_allowed = session.shell_allowed_for(args)
     safety = session.safety_for(args)
 
     unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
@@ -170,7 +163,6 @@ def run(args: argparse.Namespace) -> None:
     # passed here.
     agent = Agent.from_config(
         session.config,
-        shell_allowed=shell_allowed,
         model=model,
         safety=safety,
         resolver=session.resolver,
@@ -418,13 +410,11 @@ def _parse_cli_input(raw: str, *, default_type: str | None = None) -> dict:
     return parsed
 
 
-def _build_permission_resolver(config, shell_allowed: bool, unsafe_python: bool = False):
+def _build_permission_resolver(config, unsafe_python: bool = False):
     from reyn.config import _find_project_root
     from reyn.permissions.permissions import PermissionResolver
     project_root = _find_project_root(Path.cwd())
     perm_config = getattr(config, "permissions", {}) or {}
-    if shell_allowed and "shell" not in perm_config:
-        perm_config = dict(perm_config, shell="allow")
     return PermissionResolver(
         config_permissions=perm_config,
         project_root=project_root,
