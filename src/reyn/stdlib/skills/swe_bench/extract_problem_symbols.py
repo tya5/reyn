@@ -187,4 +187,18 @@ def extract_problem_symbols(data: Mapping[str, Any]) -> list[dict]:
     for f in files:
         for sym in symbols:
             out.append({"file": f, "symbol": sym, "symbol_re": re.escape(sym)})
+            # #1375 D1: also grep the METHOD DEFINITION whose name contains the
+            # symbol (e.g. `formats` -> `def _set_col_formats`, `write` -> `def
+            # write`). The plain symbol grep matches many incidental lines (early
+            # docstrings/imports) and the gold fix often lives inside a method the
+            # problem statement names only obliquely; the def-grep surfaces that
+            # method's body precisely (astropy-13453: `def write` @~340 carries
+            # the gold `_set_col_formats()` site, which the plain `write` matches
+            # missed). Skip dotted symbols (a method name has no dot).
+            if "." not in sym:
+                out.append({
+                    "file": f,
+                    "symbol": f"{sym} (def)",
+                    "symbol_re": r"def\s+\w*" + re.escape(sym) + r"\w*\s*\(",
+                })
     return out
