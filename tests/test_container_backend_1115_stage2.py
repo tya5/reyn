@@ -172,6 +172,49 @@ def test_run_is_login_shell_docker_exec_no_bridge(tmp_path: Path) -> None:
         assert bridge_token not in joined, f"bridge step {bridge_token!r} must be absent"
 
 
+def test_run_adds_i_flag_only_when_stdin_provided(tmp_path: Path) -> None:
+    """Tier 2: run() builds `docker exec -i` when stdin is provided, so the
+    in-container process receives it — the python-step harness reads its JSON
+    request on stdin, and without `-i` docker exec drops the host-piped stdin so
+    the harness sees EOF ("harness received empty stdin"; the #183 re-smoke bug).
+    Falsification pair: with no stdin (sandboxed_exec) there is no `-i` (unchanged).
+
+    The fake-backend unit (test_python_step_os_sandbox_1352b) recorded a backend
+    that never docker-execs, so it could not catch this argv-construction gap —
+    the real e2e re-smoke did; this pins it.
+    """
+    calls: list[list[str]] = []
+
+    async def _record_runner(argv, *, stdin=None, timeout=None) -> SandboxResult:
+        calls.append(argv)
+        return SandboxResult(returncode=0, stdout=b"ok", stderr=b"")
+
+    import asyncio
+
+    be = DockerEnvironmentBackend(
+        container="testc", repo_dir="/testbed", runner=_record_runner,
+    )
+
+    # with stdin → `-i` immediately after "exec" (so docker forwards stdin)
+    asyncio.run(
+        be.run(
+            ["python", "-m", "reyn.kernel._python_harness"],
+            SandboxPolicy(timeout_seconds=30),
+            stdin=b'{"req": 1}',
+        )
+    )
+    [with_stdin] = calls
+    assert with_stdin[:3] == ["docker", "exec", "-i"], (
+        f"a stdin-carrying exec must use `docker exec -i`: {with_stdin}"
+    )
+
+    # falsification: no stdin → no `-i` (sandboxed_exec path unchanged)
+    calls.clear()
+    asyncio.run(be.run(["pytest", "-x"], SandboxPolicy(timeout_seconds=30)))
+    [no_stdin] = calls
+    assert "-i" not in no_stdin, f"a stdin-less exec must NOT use `-i`: {no_stdin}"
+
+
 def test_run_argv_passed_as_positional_params_not_interpolated(tmp_path: Path) -> None:
     """Tier 2: (b/argv-safe) shell-special chars in argv survive verbatim — the
     login-shell wrapper forwards them as positional params, never interpolated.

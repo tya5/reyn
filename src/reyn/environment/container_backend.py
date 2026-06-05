@@ -343,8 +343,15 @@ class DockerEnvironmentBackend:
         # ``bash -lc 'exec "$@"' reyn-exec <argv>`` passes argv as positional
         # params ($1..), NOT spliced into the script text, so there is no
         # shell-injection / quoting surface (``"$@"`` re-exec is argv-faithful).
+        # `-i` keeps stdin open through `docker exec` so a process that reads
+        # stdin (the python-step harness reads its JSON request there) receives
+        # it — without `-i`, docker exec drops the host-piped stdin and the
+        # in-container process sees EOF ("harness received empty stdin"). Mirrors
+        # the `_py` FS-helper above; only when stdin is provided (sandboxed_exec
+        # passes none → unchanged).
         exec_argv = [
-            self.docker_bin, "exec", "-w", self.repo_dir, self.container,
+            self.docker_bin, "exec", *(["-i"] if stdin is not None else []),
+            "-w", self.repo_dir, self.container,
             "bash", "-lc", 'exec "$@"', "reyn-exec", *argv,
         ]
         return await self._runner(exec_argv, stdin=stdin, timeout=policy.timeout_seconds)
