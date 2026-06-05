@@ -292,6 +292,12 @@ python -m pytest tests/test_replay_my_area.py -v
 Commit the new fixture alongside the prompt change. Reviewers can diff the
 `prompt_preview` field in the JSONL to see what changed.
 
+> **Warning — `-k` filtered runs exclude replay tests.** If your local test run uses
+> `-k some_keyword` that does not match replay test names, replay tests are silently
+> skipped and the run appears green. This masks broken fixtures until CI runs the
+> full suite. Always run the full replay suite (`pytest tests/test_replay_*.py -v`)
+> after any change to phase instructions, tool catalog, or LLM-call boundaries.
+
 ---
 
 ## NEVER rules for replay tests
