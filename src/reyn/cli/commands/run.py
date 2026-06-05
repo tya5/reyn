@@ -271,6 +271,17 @@ def _build_environment_backend(args: argparse.Namespace, *, launcher=None):
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            if state_path is None:
+                # baked-repo model: no bind mount, so OS state cannot be made
+                # coherent with the in-container repo FS. Warn that state will
+                # land on the repo FS (lost on container death) unless host-side.
+                print(
+                    "Warning: --env-backend=docker --container without --state-dir: "
+                    "OS state (events/artifacts) will live on the in-container repo "
+                    "FS and is lost on container death. Pass --state-dir for a "
+                    "host-side state directory.",
+                    file=sys.stderr,
+                )
             backend = DockerEnvironmentBackend(container=container, repo_dir=repo_dir)
             return backend, Path(repo_dir), state_path, None
 
@@ -283,7 +294,12 @@ def _build_environment_backend(args: argparse.Namespace, *, launcher=None):
             LaunchConfig,
             parse_mount_spec,
         )
-        workspace_root = str(_find_project_root(Path.cwd()))
+        # _find_project_root returns None when no reyn.yaml is found up the tree;
+        # fall back to cwd so the mount source + state_dir are a real host path
+        # (NOT the bogus "None/.reyn" that str(None) would produce). The global
+        # cwd-vs-project_root resolution refinement is #1316 (separate slice).
+        project_root = _find_project_root(Path.cwd())
+        workspace_root = str(project_root if project_root is not None else Path.cwd())
         try:
             mounts = [parse_mount_spec(m) for m in (getattr(args, "mounts", None) or [])]
         except ValueError as exc:
@@ -307,7 +323,13 @@ def _build_environment_backend(args: argparse.Namespace, *, launcher=None):
             container=container_id, repo_dir=WORKSPACE_DEST_DEFAULT
         )
         cleanup = None if keep else (lambda: launcher.teardown(container_id))
-        return backend, Path(WORKSPACE_DEST_DEFAULT), state_path, cleanup
+        # part2 (slice-2): in the workspace-mount model the host workspace_root is
+        # bind-mounted at /workspace, so the OS state dir defaults to the HOST
+        # workspace_root/.reyn — that same dir appears in-container at
+        # /workspace/.reyn, keeping OS index/approvals and the agent FS coherent
+        # (the bind-mount's purpose). An explicit --state-dir still wins.
+        launch_state_path = state_path or (Path(workspace_root) / ".reyn")
+        return backend, Path(WORKSPACE_DEST_DEFAULT), launch_state_path, cleanup
 
     # argparse `choices` prevents this, but stay defensive.
     print(f"Error: unknown --env-backend '{backend_kind}'.", file=sys.stderr)

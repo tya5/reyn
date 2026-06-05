@@ -108,14 +108,16 @@ def test_docker_attach_satisfies_both_protocols() -> None:
     assert isinstance(backend, SandboxBackend), "must satisfy the exec seam Protocol"
 
 
-def test_docker_attach_without_state_dir_keeps_base_dir() -> None:
-    """Tier 2: --state-dir omitted → state_dir None (host default), backend + base_dir set."""
+def test_docker_attach_without_state_dir_keeps_base_dir(capsys) -> None:
+    """Tier 2: --state-dir omitted (attach/baked-repo) → state_dir None + a warning
+    that OS state lands on the in-container repo FS."""
     backend, base_dir, state_dir, _c = _build_environment_backend(
         _args(env_backend="docker", container="c", repo_dir="/testbed")
     )
     assert backend is not None
     assert base_dir == Path("/testbed")
     assert state_dir is None
+    assert "without --state-dir" in capsys.readouterr().err
 
 
 def test_docker_attach_missing_repo_dir_exits() -> None:
@@ -142,6 +144,46 @@ def test_docker_launch_builds_backend_and_cleanup() -> None:
     assert callable(cleanup)
     cleanup()
     assert fake.torn_down == ["fakecid"]
+
+
+def test_docker_launch_defaults_state_dir_to_workspace_root_reyn(tmp_path, monkeypatch) -> None:
+    """Tier 2: part2 — launch without --state-dir defaults state_dir to the HOST
+    workspace_root/.reyn (the bind-mounted dir → coherent with /workspace/.reyn).
+
+    Deterministic: chdir into a tmp project root carrying a reyn.yaml so
+    _find_project_root resolves to tmp_path (not the ambient cwd)."""
+    (tmp_path / "reyn.yaml").write_text("")
+    monkeypatch.chdir(tmp_path)
+    fake = _FakeLauncher()
+    _b, _bd, state_dir, _c = _build_environment_backend(
+        _args(env_backend="docker"), launcher=fake
+    )
+    assert state_dir == tmp_path.resolve() / ".reyn"
+
+
+def test_docker_launch_state_dir_falls_back_to_cwd_without_reyn_yaml(
+    tmp_path, monkeypatch
+) -> None:
+    """Tier 2: part2/bug1 — with no reyn.yaml up the tree _find_project_root
+    returns None; state_dir must fall back to cwd/.reyn (a real host path), NOT
+    the bogus 'None/.reyn' that str(None) produced. Reproduce-first for the
+    #1328-origin latent bug part2 exposed."""
+    monkeypatch.chdir(tmp_path)  # tmp_path has no reyn.yaml here or above
+    fake = _FakeLauncher()
+    _b, _bd, state_dir, _c = _build_environment_backend(
+        _args(env_backend="docker"), launcher=fake
+    )
+    assert state_dir == tmp_path.resolve() / ".reyn"
+    assert "None" not in str(state_dir)
+
+
+def test_docker_launch_explicit_state_dir_wins() -> None:
+    """Tier 2: part2 — an explicit --state-dir overrides the mount-coherent default."""
+    fake = _FakeLauncher()
+    _b, _bd, state_dir, _c = _build_environment_backend(
+        _args(env_backend="docker", state_dir="/host/s"), launcher=fake
+    )
+    assert state_dir == Path("/host/s")
 
 
 def test_docker_launch_uses_image_and_mounts() -> None:
