@@ -329,6 +329,26 @@ The execution surfaces that perform side-effects, ordered by enforcement strengt
 - **Safe-mode python** is honor-system: AST validation prevents `import os`, and `reyn.safe.*` checks declared paths / hosts / keys. A motivated user with `mode: unsafe` access can bypass; a non-motivated `mode: safe` author cannot accidentally bypass via normal coding patterns.
 - **Unsafe-mode python** is trust-by-declaration: the operator approves `--allow-unsafe-python` at runtime and accepts that the step has full host access.
 
+### Sandbox scoping model (sandboxed_exec)
+
+The `sandboxed_exec` policy (`SandboxPolicy`) is scoped **per axis**. The axes are deliberately asymmetric — each set to the tightness that actually buys safety:
+
+| Axis | Policy | Rationale |
+|---|---|---|
+| write | tight workspace-allowlist (`write_paths`) | The hard guard — bounds what a process can persist. |
+| network | tight (off by default / allowlist) | The exfiltration gate — a process may read widely but cannot send anything out. |
+| exec | controlled (`allow_subprocess`) | Bounds child-process spawning (advisory under Seatbelt). |
+| read | **broad-allow by default** + optional sensitive deny-list | The strict read-allowlist was abolished (#1199 realignment). |
+
+**Why broad read is safe.** The network gate, not the read surface, is the exfiltration control. With network off by default a process may read widely but cannot send data out. A broad read surface also removes the system-path enumeration (`/usr`, `/lib`, dyld cache, …) that every binary needs just to load — enumeration that, when missing, broke the Landlock backend on Linux. This matches industry practice: Codex defaults to broad read + network-off on Linux; Claude Code treats read-restriction as secondary ("affects functionality") behind its write / network guards.
+
+**Defense-in-depth deny-list.** `read_deny_paths` (default: OS-level credential stores — `~/.ssh`, `~/.aws`, `~/.gnupg`, …) carves sensitive locations out of the broad read surface.
+
+**Residual risk (backend asymmetry).** The deny-list is enforceable only where the backend can express a deny-after-allow rule:
+
+- **Seatbelt (macOS / SBPL)** — last-match-wins, so a broad `(allow file-read*)` followed by `(deny file-read* …)` enforces the deny-list.
+- **Landlock (Linux)** — allowlist-only (path-beneath grants; you cannot carve a subpath out of an allowed parent), so the deny-list is **not enforceable**; broad read is a single read rule on `/`. On Linux a compromised in-sandbox process can therefore *read* the sensitive paths the deny-list names — but it stays bounded by the network gate (no exfiltration) and the write / exec guards. The deny-list is defense-in-depth, not the primary boundary; the primary boundary (write-allowlist + network-off) holds identically on both backends.
+
 ## Industry comparison
 
 | Platform | Declaration shape | Runtime ask | Granularity | Enforcement |

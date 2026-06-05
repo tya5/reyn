@@ -33,19 +33,10 @@ from reyn.sandbox.policy import SandboxPolicy
 
 _logger = logging.getLogger(__name__)
 
-# SBPL always-allowed system paths required for dynamic library loading and
-# basic process bootstrap. Without these, virtually every binary segfaults.
-_ALWAYS_READ_SUBPATHS: tuple[str, ...] = (
-    "/usr/lib",
-    "/System/Library",
-    "/usr/bin",
-    "/bin",
-    "/usr/share",
-    # dyld cache lives under /private/var/db/dyld on modern macOS; without
-    # read access the dynamic linker can't map shared cache and binaries
-    # abort at libc init.
-    "/private/var/db/dyld",
-)
+# #1199 realignment: the broad ``(allow file-read*)`` rule below subsumes the
+# old explicit system-path allowlist (/usr/lib, /System/Library, dyld cache,
+# …) that dynamic-library loading and process bootstrap required. With a broad
+# read surface there is no system-path enumeration to maintain.
 
 
 def _sbpl_quote(s: str) -> str:
@@ -76,34 +67,38 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         "; binary under (deny default). Without it, even /bin/echo aborts at",
         "; libc init (SIGABRT) on macOS 26+.",
         '(import "bsd.sb")',
-        "",
-        "; — system libraries (dyld cache + framework load paths) —",
     ]
-
-    # Always-allowed read paths for dylib / process bootstrap.
-    system_subpaths = " ".join(
-        f"(subpath {_sbpl_quote(p)})" for p in _ALWAYS_READ_SUBPATHS
-    )
-    lines.append(f"(allow file-read* {system_subpaths})")
 
     # Always-allowed process-exec: without this, sandbox-exec cannot even
     # execvp() the target binary under (deny default) (macOS 26+ is strict).
-    # The filesystem restrictions above still bound what the exec'd process
-    # can read/write/network; we just don't gate the exec syscall itself.
     # process-fork is similarly needed by virtually every interpreter / runtime
     # bootstrap (e.g. CRT init); policy.allow_subprocess remains advisory.
+    lines.append("")
     lines.append("(allow process-exec*)")
     lines.append("(allow process-fork)")
 
-    # User-declared read paths.
-    if policy.read_paths:
-        lines.append("")
-        lines.append("; — policy read_paths —")
-        for raw in policy.read_paths:
-            resolved = str(Path(raw).resolve(strict=False))
-            lines.append(f"(allow file-read* (subpath {_sbpl_quote(resolved)}))")
+    # #1199 realignment — broad read surface. The strict read-allowlist was
+    # abolished: reads are broad by default (this subsumes the old system-path
+    # bootstrap allowlist AND policy.read_paths). Safety comes from the network
+    # gate (off unless policy.network): a process may read widely but cannot
+    # exfiltrate.
+    lines.append("")
+    lines.append("; — broad read (the network gate is the exfiltration guard) —")
+    lines.append("(allow file-read*)")
 
-    # User-declared write paths (write implies read in SBPL).
+    # Defense-in-depth: deny sensitive paths from the broad read surface. SBPL
+    # is last-match-wins, so these (deny ...) rules placed AFTER the broad allow
+    # take precedence for the listed paths.
+    if policy.read_deny_paths:
+        lines.append("")
+        lines.append("; — sensitive read deny-list (defense-in-depth) —")
+        for raw in policy.read_deny_paths:
+            resolved = str(Path(raw).expanduser().resolve(strict=False))
+            lines.append(f"(deny file-read* (subpath {_sbpl_quote(resolved)}))")
+
+    # User-declared write paths. write implies read: the file-read* re-allow is
+    # placed AFTER the deny-list intentionally, so an explicit write target is
+    # readable even if it falls under a denied prefix (an explicit grant wins).
     if policy.write_paths:
         lines.append("")
         lines.append("; — policy write_paths —")
