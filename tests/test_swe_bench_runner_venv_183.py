@@ -63,12 +63,13 @@ def test_provision_command_builds_venv_pip_and_pth() -> None:
     """Tier 1: the provision body creates a 3.11 venv, pip-installs the deps
     (each shell-quoted — version specs contain `>`), and puts reyn on the path via
     a .pth to the bind-mounted source (no PYTHONPATH threading)."""
-    cmd = provision_command(["litellm>=1.0", "pydantic>=2.0"])
+    cmd = provision_command(["litellm>=1.0", "pydantic>=2.0"], "/host/repo/src")
     assert "python3.11 -m venv /opt/reyn-venv" in cmd
     assert "/opt/reyn-venv/bin/pip install" in cmd
     # version specs are shell-quoted so bash does not treat `>` as a redirect
     assert "'litellm>=1.0'" in cmd and "'pydantic>=2.0'" in cmd
-    assert "reyn.pth" in cmd and "/reyn/src" in cmd
+    # the .pth points at the reyn source at its host-absolute path (same-path mount)
+    assert "reyn.pth" in cmd and "/host/repo/src" in cmd
 
 
 # ── Tier 2: container integration (injected docker_runner + reyn shim) ────────
@@ -115,9 +116,12 @@ def test_container_mounts_reyn_and_provisions_venv(tmp_path: Path) -> None:
     )
 
     run_call = next(c for c in docker.calls if c[:2] == ["docker", "run"])
-    # the reyn repo is bind-mounted read-only at /reyn
-    assert any(a.startswith("-v") or a == "-v" for a in run_call)
-    assert any(a.endswith(":/reyn:ro") for a in run_call), f"missing :ro reyn mount: {run_call}"
+    # the reyn repo is bind-mounted read-only at its OWN host path (same-path
+    # mount) so host-absolute paths (module + .pth) resolve inside the container
+    mount = run_call[run_call.index("-v") + 1]
+    src, dst, mode = mount.rsplit(":", 2)
+    assert src == dst, f"reyn must be same-path mounted (host==container): {mount}"
+    assert mode == "ro", f"reyn mount must be read-only: {mount}"
 
     exec_call = next((c for c in docker.calls if c[:2] == ["docker", "exec"]), None)
     assert exec_call is not None, "a docker exec must provision the venv"
