@@ -26,6 +26,7 @@ from reyn.kernel.runtime_types import (
     RunResult,
     WorkflowAbortedError,
 )
+from reyn.op_runtime.context import resolve_sandbox_policy_source
 from reyn.safety.limit_handler import (
     handle_limit_exceeded,
     reset_run_extensions,
@@ -119,8 +120,10 @@ class RunOrchestrator:
         max_phase_visits: int,
         budget_tracker: object | None = None,  # #1190 stage (ii): skill_node_adapt cost recording
         tool_calls_op_loop_skills: list[str] | None = None,  # #1212: gate, propagated to sub-skills
+        agent_sandbox_policy: dict | None = None,  # #1326: agent-level (operator) sandbox policy
     ) -> None:
         self._budget_tracker = budget_tracker
+        self._agent_sandbox_policy = agent_sandbox_policy
         self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
         self._phase_executor = phase_executor
         self._skill = skill
@@ -411,6 +414,7 @@ class RunOrchestrator:
                 caller=self._caller,
                 state_log=self._state_log,
                 skill_run_id=self._run_id,
+                agent_sandbox_policy=self._agent_sandbox_policy,  # #1326
             )
             post_artifact, post_usage = await post_executor.run(
                 finish_artifact, output_language, resume_plan=resume_plan,
@@ -688,8 +692,9 @@ class RunOrchestrator:
                 decide_results = await self._phase_executor._control_ir_executor.execute(
                     output.ops, phase=current_phase, decl=current_decl,
                     allowed_ops=current_allowed,
-                    default_sandbox_policy=(
-                        current_def.default_sandbox_policy if current_def is not None else None
+                    default_sandbox_policy=resolve_sandbox_policy_source(
+                        self._agent_sandbox_policy,
+                        current_def.default_sandbox_policy if current_def is not None else None,
                     ),
                 )
                 if decide_results:
