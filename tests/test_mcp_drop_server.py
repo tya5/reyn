@@ -470,3 +470,73 @@ def test_mcp_drop_server_tool_scope_enum_three_tiers() -> None:
 
     scope_prop = MCP_DROP_SERVER_OP.parameters["properties"]["scope"]
     assert set(scope_prop["enum"]) == {"local", "project", "user"}
+
+
+# ── #1352-C: SandboxLayer ∩ threaded into the mcp file-write gate ──────────
+
+
+def test_mcp_drop_server_sandbox_policy_denies_out_of_cap_write(tmp_path: Path) -> None:
+    """Tier 2: #1352-C reproduce-first — the drop handler threads the agent sandbox
+    policy into require_file_write, so a write to the config path OUTSIDE the
+    policy's write_paths cap is DENIED (SandboxLayer ∩) even when the permission
+    layer GRANTS it. FAILS pre-C (sandbox_policy not threaded → SandboxLayer ⊤
+    → the permission grant alone lets the write through)."""
+    import dataclasses
+
+    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+
+    cfg_path = tmp_path / "reyn.local.yaml"
+    _seed_config(cfg_path, {"filesystem": {"command": "npx", "args": ["-y", "@mcp/fs"]}})
+
+    # Permission layer GRANTS the write to the config path (so the test isolates
+    # the SandboxLayer denial, not a permission denial).
+    resolver = _resolver(tmp_path)
+    canonical = str(cfg_path)
+    resolver.session_approve_path(canonical, "test_mcp_drop_server", "file.write")
+    decl = PermissionDecl(file_write=[{"path": canonical, "scope": "just_path"}])
+    base_ctx = _make_op_ctx(tmp_path, permission_decl=decl, resolver=resolver)
+
+    # Operator sandbox policy: write only under a dir that EXCLUDES reyn.local.yaml.
+    ctx = dataclasses.replace(
+        base_ctx,
+        default_sandbox_policy={"write_paths": [str(tmp_path / "allowed_only")]},
+    )
+
+    op = MCPDropServerIROp(
+        kind="mcp_drop_server", server="filesystem", scope="local", clear_secrets=False,
+    )
+    with pytest.raises(PermissionError):
+        _run(drop_handle(op=op, ctx=ctx, caller="control_ir"))
+
+
+def test_mcp_drop_server_realistic_workspace_default_allows_config_write(tmp_path: Path) -> None:
+    """Tier 2: #1352-C regression guard — under the REALISTIC chat/phase concrete
+    default (write_paths=[workspace.base_dir], as #1347 sets for chat), the mcp
+    config write to base_dir/reyn.local.yaml is UNDER the cap, so the SandboxLayer
+    ∩ added by #1352-C does NOT deny it. Guards against a latent regression where
+    threading sandbox_policy would block legitimate in-workspace config writes."""
+    import dataclasses
+
+    from reyn.op_runtime.mcp_drop_server import handle as drop_handle
+
+    cfg_path = tmp_path / "reyn.local.yaml"
+    _seed_config(cfg_path, {"filesystem": {"command": "npx", "args": ["-y", "@mcp/fs"]}})
+
+    resolver = _resolver(tmp_path)
+    canonical = str(cfg_path)
+    resolver.session_approve_path(canonical, "test_mcp_drop_server", "file.write")
+    decl = PermissionDecl(file_write=[{"path": canonical, "scope": "just_path"}])
+    base_ctx = _make_op_ctx(tmp_path, permission_decl=decl, resolver=resolver)
+
+    # Realistic default: write cap == the workspace base_dir (tmp_path). The
+    # config path (tmp_path/reyn.local.yaml) is UNDER it → ∩ must allow.
+    ctx = dataclasses.replace(
+        base_ctx,
+        default_sandbox_policy={"write_paths": [str(tmp_path)]},
+    )
+
+    op = MCPDropServerIROp(
+        kind="mcp_drop_server", server="filesystem", scope="local", clear_secrets=False,
+    )
+    result = _run(drop_handle(op=op, ctx=ctx, caller="control_ir"))
+    assert result["status"] == "ok"  # NOT denied — config write is in-workspace

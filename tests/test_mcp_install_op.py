@@ -589,3 +589,38 @@ def test_mcp_install_op_registered_in_default_registry():
     assert tool is not None
     assert tool.gates.phase == "allow"
     assert tool.gates.router == "deny"
+
+
+# ── #1352-C: SandboxLayer ∩ threaded into the mcp_install file-write gate ──
+
+
+def test_mcp_install_sandbox_policy_denies_out_of_cap_write(tmp_path, monkeypatch):
+    """Tier 2: #1352-C reproduce-first — the install handler threads the agent
+    sandbox policy into require_file_write, so the config write OUTSIDE the
+    policy's write_paths cap is DENIED (SandboxLayer ∩) even when the permission
+    layer GRANTS it. network=True isolates the denial to the write cap (not the
+    http gate). FAILS pre-C (sandbox_policy not threaded → SandboxLayer ⊤)."""
+    import dataclasses
+
+    monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/npx")
+    resolver = _make_resolver(tmp_path)
+    decl = _phase5_install_decl(resolver)  # permission layer GRANTS file.write + http.get
+    bus = _AutoApproveInterventionBus()
+    base_ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
+
+    # Operator sandbox policy: network ON (so the http gate is not the cause),
+    # write only under a dir that EXCLUDES the .reyn/mcp.yaml config path.
+    ctx = dataclasses.replace(
+        base_ctx,
+        default_sandbox_policy={"network": True, "write_paths": [str(tmp_path / "allowed_only")]},
+    )
+
+    op = MCPInstallIROp(
+        kind="mcp_install",
+        server_id="io.github.modelcontextprotocol/server-filesystem",
+        scope="local",
+    )
+
+    with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
+        with pytest.raises(PermissionError):
+            _run(mcp_install_handle(op, ctx, "control_ir"))
