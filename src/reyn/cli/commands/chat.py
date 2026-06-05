@@ -11,6 +11,10 @@ import shutil
 import sys
 from pathlib import Path
 
+from reyn.cli.env_backend import (
+    build_environment_backend,
+    register_env_backend_args,
+)
 from reyn.llm.llm import run_async
 
 from ..common_args import add_common_args
@@ -107,6 +111,8 @@ def register(sub) -> None:
             "local file access render in 'remote — limited' v1 mode."
         ),
     )
+    # #1289: per-frontend container-chat — same --env-backend surface as `reyn run`.
+    register_env_backend_args(p)
     add_common_args(p)
     p.set_defaults(func=run)
 
@@ -278,6 +284,15 @@ def run(args: argparse.Namespace) -> None:
 
     project_context = load_project_context(session_cfg.config, project_root)
 
+    # #1289: build the agent-level EnvironmentBackend (host / docker attach|launch)
+    # and pass the SAME instance to BOTH ChatSession seams (FS environment_backend
+    # + exec sandbox_backend) — the #1200 single-shared-sandbox invariant. A
+    # launched container is torn down at process exit.
+    env_backend, _ws_base_dir, _ws_state_dir, env_cleanup = build_environment_backend(args)
+    if env_cleanup is not None:
+        import atexit
+        atexit.register(env_cleanup)
+
     def _session_factory(profile: AgentProfile):
         # Captured CLI defaults — registry doesn't need to know them.
         s = ChatSession(
@@ -305,6 +320,9 @@ def run(args: argparse.Namespace) -> None:
             embedding_config=session_cfg.config.embedding,
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
+            # #1289: same backend instance to both seams (single-shared-sandbox).
+            environment_backend=env_backend,
+            sandbox_backend=env_backend,
         )
         s.load_history()
         return s

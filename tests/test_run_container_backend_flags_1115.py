@@ -22,7 +22,9 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.commands.run import _build_environment_backend
+from reyn.cli.env_backend import (
+    build_environment_backend as _build_environment_backend,
+)
 
 
 def _args(**kw) -> argparse.Namespace:
