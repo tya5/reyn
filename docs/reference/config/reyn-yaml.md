@@ -339,11 +339,12 @@ When `sandbox.policy` is present, these mirror the `SandboxPolicy` fields. Unkno
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `network` | bool | `false` | Allow outbound network from the sandboxed process. |
-| `read_paths` | list[string] | `[]` | Filesystem paths the process may read (glob patterns OK). |
-| `write_paths` | list[string] | `[]` | Filesystem paths the process may write. |
-| `allow_subprocess` | bool | `false` | Whether the process may spawn children. |
-| `env_passthrough` | list[string] | `[]` | Env-var names that pass through to the sandboxed process. |
+| `network` | bool | `false` | Allow outbound network from the sandboxed process. The primary exfiltration gate. |
+| `write_paths` | list[string] | `[]` | Filesystem paths the process may write (tight guard). Write implies read for these paths. |
+| `read_deny_paths` | list[string] | `[]` | Sensitive paths to DENY from the broad read surface (defense-in-depth). Enforced only on backends that support deny-after-allow rules (Seatbelt); not enforceable on allowlist-only backends (Landlock). |
+| `read_paths` | list[string] | `[]` | **Legacy.** Formerly the strict read allowlist. Reads are broad by default under the current scoping model; this field now documents intended read targets only. |
+| `allow_subprocess` | bool | `false` | Whether the process may spawn children. Advisory under Seatbelt. |
+| `env_passthrough` | list[string] | `[]` | Env-var names that pass through to the sandboxed process. `PATH` is always passed through. |
 | `timeout_seconds` | int | `60` | Wall-clock cap enforced by the backend. |
 
 See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) for the op schema and backend selection details.

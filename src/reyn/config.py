@@ -990,10 +990,11 @@ class SandboxConfig:
             production environments). ``'ignore'`` silently falls back.
             Allowed: ``{'warn', 'error', 'ignore'}``.
         policy:
-            #1326 — the agent-level (operator) sandbox policy: a mapping of
-            ``SandboxPolicy`` kwargs (``network`` / ``read_paths`` /
-            ``write_paths`` / ``allow_subprocess`` / ``env_passthrough`` /
-            ``timeout_seconds``). When set it is the deterministic policy the OS
+            The agent-level (operator) sandbox policy: a mapping of
+            ``SandboxPolicy`` kwargs (``network`` / ``write_paths`` /
+            ``read_deny_paths`` / ``read_paths`` / ``allow_subprocess`` /
+            ``env_passthrough`` / ``timeout_seconds``). When set it is the
+            deterministic policy the OS
             applies to sandboxed ops + the SandboxLayer of the permission ∩ —
             WINNING over op-declared fields (the LLM cannot widen it). ``None``
             (absent) means *no agent-level restriction* — the SandboxLayer stays
