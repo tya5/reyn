@@ -146,16 +146,35 @@ def test_docker_launch_builds_backend_and_cleanup() -> None:
     assert fake.torn_down == ["fakecid"]
 
 
-def test_docker_launch_defaults_state_dir_to_workspace_root_reyn() -> None:
+def test_docker_launch_defaults_state_dir_to_workspace_root_reyn(tmp_path, monkeypatch) -> None:
     """Tier 2: part2 — launch without --state-dir defaults state_dir to the HOST
-    workspace_root/.reyn (the bind-mounted dir → coherent with /workspace/.reyn)."""
-    from reyn.config import _find_project_root
+    workspace_root/.reyn (the bind-mounted dir → coherent with /workspace/.reyn).
 
+    Deterministic: chdir into a tmp project root carrying a reyn.yaml so
+    _find_project_root resolves to tmp_path (not the ambient cwd)."""
+    (tmp_path / "reyn.yaml").write_text("")
+    monkeypatch.chdir(tmp_path)
     fake = _FakeLauncher()
     _b, _bd, state_dir, _c = _build_environment_backend(
         _args(env_backend="docker"), launcher=fake
     )
-    assert state_dir == _find_project_root(Path.cwd()) / ".reyn"
+    assert state_dir == tmp_path.resolve() / ".reyn"
+
+
+def test_docker_launch_state_dir_falls_back_to_cwd_without_reyn_yaml(
+    tmp_path, monkeypatch
+) -> None:
+    """Tier 2: part2/bug1 — with no reyn.yaml up the tree _find_project_root
+    returns None; state_dir must fall back to cwd/.reyn (a real host path), NOT
+    the bogus 'None/.reyn' that str(None) produced. Reproduce-first for the
+    #1328-origin latent bug part2 exposed."""
+    monkeypatch.chdir(tmp_path)  # tmp_path has no reyn.yaml here or above
+    fake = _FakeLauncher()
+    _b, _bd, state_dir, _c = _build_environment_backend(
+        _args(env_backend="docker"), launcher=fake
+    )
+    assert state_dir == tmp_path.resolve() / ".reyn"
+    assert "None" not in str(state_dir)
 
 
 def test_docker_launch_explicit_state_dir_wins() -> None:

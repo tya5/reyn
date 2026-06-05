@@ -294,7 +294,12 @@ def _build_environment_backend(args: argparse.Namespace, *, launcher=None):
             LaunchConfig,
             parse_mount_spec,
         )
-        workspace_root = str(_find_project_root(Path.cwd()))
+        # _find_project_root returns None when no reyn.yaml is found up the tree;
+        # fall back to cwd so the mount source + state_dir are a real host path
+        # (NOT the bogus "None/.reyn" that str(None) would produce). The global
+        # cwd-vs-project_root resolution refinement is #1316 (separate slice).
+        project_root = _find_project_root(Path.cwd())
+        workspace_root = str(project_root if project_root is not None else Path.cwd())
         try:
             mounts = [parse_mount_spec(m) for m in (getattr(args, "mounts", None) or [])]
         except ValueError as exc:
