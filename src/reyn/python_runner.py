@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -73,10 +74,22 @@ class PythonRunner:
     """
 
     def __init__(self, python_executable: str | None = None) -> None:
-        # Default to the same interpreter reyn itself is running under;
-        # this means whatever venv the user has activated for reyn is also
-        # what the user code runs against (consistent imports / 3rd-party).
-        self.python_executable = python_executable or sys.executable
+        # Which interpreter runs the harness subprocess. Resolution order:
+        #   1. the explicit ``python_executable`` argument (caller override);
+        #   2. the ``REYN_HARNESS_PYTHON`` environment variable — an operator
+        #      override for the reyn-runtime python that runs ``_python_harness``;
+        #      useful whenever the harness must run under a different interpreter
+        #      than the one reyn is launched with (e.g. a backend whose default
+        #      interpreter cannot host reyn, so a separate reyn-capable venv is
+        #      provisioned and pointed at here);
+        #   3. otherwise the same interpreter reyn itself is running under, so
+        #      whatever venv the user activated for reyn is also what user code
+        #      runs against (consistent imports / 3rd-party).
+        self.python_executable = (
+            python_executable
+            or os.environ.get("REYN_HARNESS_PYTHON")
+            or sys.executable
+        )
 
     async def run(
         self,
