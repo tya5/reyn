@@ -163,6 +163,7 @@ class RouterHostAdapter:
         # whether to expose ``exec__sandboxed_exec``. Default None hides
         # the exec category (= noop / no sandbox configured).
         sandbox_backend: str | None = None,
+        sandbox_policy: dict | None = None,
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
         # ChatSession passes the session-scoped tracker; None when wrappers are
         # off or hot_list_n == 0.
@@ -302,6 +303,10 @@ class RouterHostAdapter:
         self._embedding_model_class = embedding_model_class
         # FP-0034 Phase 2
         self._sandbox_backend = sandbox_backend
+        # #1339 / sandbox-model completion: the operator's reyn.yaml
+        # sandbox.policy (dict | None) used to resolve the concrete agent-level
+        # policy onto the router OpContext (None → the default policy).
+        self._sandbox_policy = sandbox_policy
         # FP-0034 Phase 2 step 5
         self._action_usage_tracker = action_usage_tracker
         self._uncompacted_tool_call_records_fn = uncompacted_tool_call_records_fn
@@ -1384,6 +1389,7 @@ class RouterHostAdapter:
         """
         from reyn.op_runtime.context import OpContext
         from reyn.permissions.permissions import PermissionDecl
+        from reyn.sandbox.policy import resolve_sandbox_policy
         from reyn.workspace.workspace import Workspace
 
         file_perms = self._get_file_permissions_for_router() or {}
@@ -1450,4 +1456,11 @@ class RouterHostAdapter:
             media_store=self._media_store,
             # #272/#1128: voluntary-compaction capability for the compact op.
             compact_now=self._compact_now,
+            # #1339 / sandbox-model completion: resolve the operator-or-default
+            # sandbox policy onto the router OpContext (was None → the handler
+            # fell back to LLM-set op fields = the sandbox-escape gap).
+            default_sandbox_policy=resolve_sandbox_policy(
+                self._sandbox_policy,
+                write_paths=[str(workspace.base_dir)],
+            ),
         )

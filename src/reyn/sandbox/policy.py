@@ -66,3 +66,33 @@ class SandboxPolicy:
     allow_subprocess: bool = False
     env_passthrough: list[str] = field(default_factory=list)
     timeout_seconds: int = 60
+
+
+# ── default sandbox policy resolution (#1339 / sandbox-model completion) ──────
+#
+# The network default lives in ONE place so the owner can flip it trivially
+# (no hardcode scatter). Owner decision 2026-06-05: default ON (the operator,
+# not the LLM, owns the policy; an operator who wants isolation sets it off via
+# reyn.yaml sandbox.policy). Used by both the chat factories and MCP wrap.
+DEFAULT_SANDBOX_NETWORK: bool = True
+
+
+def resolve_sandbox_policy(
+    config_policy: dict | None, *, write_paths: list[str] | None = None
+) -> dict:
+    """Resolve the effective agent-level sandbox policy as a dict.
+
+    Returns the operator-declared ``reyn.yaml sandbox.policy`` mapping when set;
+    otherwise a concrete DEFAULT (never None) so the op_runtime handler always
+    applies an operator-or-default policy and the LLM-supplied op fields are
+    never used as the sandbox policy (closes #1339). The default = broad-read
+    (no read_paths) + the sensitive deny-list + ``network`` from
+    :data:`DEFAULT_SANDBOX_NETWORK` + ``write_paths`` tight to the workspace.
+    """
+    if config_policy is not None:
+        return dict(config_policy)
+    return {
+        "network": DEFAULT_SANDBOX_NETWORK,
+        "write_paths": list(write_paths or []),
+        "read_deny_paths": list(DEFAULT_SENSITIVE_READ_DENY),
+    }

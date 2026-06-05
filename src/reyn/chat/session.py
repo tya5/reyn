@@ -1824,6 +1824,13 @@ class ChatSession:
                 self._sandbox_config.backend if self._sandbox_config is not None
                 else None
             ),
+            # #1339 / sandbox-model completion: thread the operator sandbox
+            # policy so make_router_op_context resolves a concrete agent-level
+            # policy onto the router OpContext (closes the chat-factory wiring gap).
+            sandbox_policy=(
+                self._sandbox_config.policy if self._sandbox_config is not None
+                else None
+            ),
             # Issue #364 multi-modal cluster: media-size gate config.
             multimodal_config=self._multimodal_config,
             # Issue #383 PR-C: shared MediaStore for image + tool-result storage.
@@ -4682,6 +4689,7 @@ class ChatSession:
         """
         from reyn.op_runtime.context import OpContext
         from reyn.permissions.permissions import PermissionDecl
+        from reyn.sandbox.policy import resolve_sandbox_policy
         from reyn.workspace.workspace import Workspace
 
         file_perms = self._get_file_permissions_for_router() or {}
@@ -4754,6 +4762,17 @@ class ChatSession:
             # #1200 PR-F2 (exec seam): run chat sandboxed_exec on the agent's
             # SandboxBackend instance (None → get_default_backend, unchanged).
             sandbox_backend=self._sandbox_backend,
+            # #1339 / sandbox-model completion: resolve the operator-or-default
+            # sandbox policy onto the chat OpContext (was None → the op_runtime
+            # handler fell back to the LLM-set op fields = the sandbox-escape
+            # gap). Always a concrete policy now → the LLM cannot set the sandbox
+            # axes via sandboxed_exec.
+            default_sandbox_policy=resolve_sandbox_policy(
+                self._sandbox_config.policy
+                if getattr(self, "_sandbox_config", None) is not None
+                else None,
+                write_paths=[str(workspace.base_dir)],
+            ),
         )
 
     async def _file_op(self, op_dict: dict) -> dict:
