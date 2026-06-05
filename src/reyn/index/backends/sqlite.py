@@ -53,6 +53,30 @@ def _db_path(workspace_root: Path, source: str) -> Path:
     return workspace_root / ".reyn" / "index" / source / "index.db"
 
 
+def _within_paths(path: Path, roots: "list[str]") -> bool:
+    """True if ``path`` is one of ``roots`` or a descendant (resolved). #1199
+    S3.4 Part1 — the sandbox write_paths cap check for the host-direct index
+    write. Mirrors the resolved-path-under match in permissions/effective.py
+    (replicated here so reyn.index does not depend on reyn.permissions)."""
+    try:
+        p = Path(path).expanduser().resolve()
+    except Exception:
+        return False
+    for root in roots:
+        try:
+            r = Path(root).expanduser().resolve()
+        except Exception:
+            continue
+        if p == r:
+            return True
+        try:
+            p.relative_to(r)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def _open_db(db_file: Path) -> sqlite3.Connection:
     db_file.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_file), check_same_thread=False)
@@ -87,10 +111,24 @@ class SqliteIndexBackend:
     Args:
         workspace_root: Root directory of the Reyn workspace.  Defaults to
             ``Path.cwd()`` so tests can instantiate without explicit wiring.
+        sandbox_write_paths: #1199 S3.4 Part1 — when set (the phase sandbox
+            policy's ``write_paths``, forwarded into the safe-mode subprocess
+            where this backend's write bypasses ``require_file_*``), ``write``
+            self-gates the DB path against the cap before opening it. ``None`` =
+            no sandbox cap (in-process callers, which are already gated at the
+            op layer). The SQLite I/O itself stays host-direct (random-access /
+            lock cannot go on the read_file/write_file abstraction); only the
+            path is checked, before ``sqlite3.connect``.
     """
 
-    def __init__(self, workspace_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        workspace_root: Path | None = None,
+        *,
+        sandbox_write_paths: "list[str] | None" = None,
+    ) -> None:
         self._root = workspace_root if workspace_root is not None else Path.cwd()
+        self._sandbox_write_paths = sandbox_write_paths
 
     # ------------------------------------------------------------------
     # write
@@ -103,6 +141,19 @@ class SqliteIndexBackend:
         mode: Literal["append", "replace"],
     ) -> WriteResult:
         db_file = _db_path(self._root, source)
+        # #1199 S3.4 Part1: SandboxLayer ∩ for the host-direct index write —
+        # gate the DB path against the phase sandbox write_paths cap BEFORE the
+        # connection opens (mirrors S3.1c-2's _path_under restrict-only).
+        if self._sandbox_write_paths is not None and not _within_paths(
+            db_file, self._sandbox_write_paths
+        ):
+            raise PermissionError(
+                f"index write to {str(db_file)!r} denied by the active sandbox "
+                f"policy (path outside write_paths={self._sandbox_write_paths!r}). "
+                f"This is a sandbox restriction on the OS's host-direct index "
+                f"write. Adjust the phase default_sandbox_policy write_paths if "
+                f"the index should be writable here."
+            )
         conn = _open_db(db_file)
         written = 0
         skipped = 0

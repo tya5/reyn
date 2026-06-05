@@ -87,6 +87,7 @@ class PythonRunner:
         file_read_paths: list[str] | None = None,
         file_write_paths: list[str] | None = None,
         http_hosts: list[str] | None = None,
+        sandbox_write_paths: list[str] | None = None,
     ) -> Any:
         """Execute `function` in `module` against `artifact`.
 
@@ -119,6 +120,11 @@ class PythonRunner:
             # #571 Phase 3: host allowlist for reyn.safe.http gating.
             "http_hosts": list(http_hosts or []),
         }
+        # #1199 S3.4 Part1: forward the phase sandbox write_paths cap (only when
+        # set) so reyn.safe.embed_index's host-direct index write self-gates. None
+        # (no phase sandbox policy) → key omitted → harness leaves the cap unset.
+        if sandbox_write_paths is not None:
+            request["sandbox_write_paths"] = list(sandbox_write_paths)
 
         try:
             proc = subprocess.run(

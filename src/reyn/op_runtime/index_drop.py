@@ -18,7 +18,7 @@ from reyn.index.source_manifest import get_source_manifest
 from reyn.schemas.models import IndexDropIROp
 
 from . import register
-from .context import OpContext
+from .context import OpContext, sandbox_policy_from_ctx
 
 
 async def handle(
@@ -51,9 +51,20 @@ async def handle(
     # and the per-source distinction was operator-UX rather than
     # security).
     if ctx.permission_resolver is not None:
+        sandbox_policy = sandbox_policy_from_ctx(ctx)
         sources_yaml = workspace_root / ".reyn" / "index" / "sources.yaml"
         ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(sources_yaml), ctx.skill_name,
+            sandbox_policy=sandbox_policy,
+        )
+        # #1199 S3.4 Part1: gate the actual deletion target — the source dir —
+        # not just the manifest, so the destructive drop respects the phase
+        # sandbox write_paths cap (S3.1c-2 ∩). The SQLite/dir removal stays
+        # host-direct; the gate fires before backend.drop opens/removes it.
+        source_dir = workspace_root / ".reyn" / "index" / op.source
+        ctx.permission_resolver.require_file_write(
+            ctx.permission_decl, str(source_dir), ctx.skill_name,
+            sandbox_policy=sandbox_policy,
         )
 
     backend = SqliteIndexBackend(workspace_root=workspace_root)
