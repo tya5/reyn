@@ -271,6 +271,17 @@ def _build_environment_backend(args: argparse.Namespace, *, launcher=None):
                     file=sys.stderr,
                 )
                 sys.exit(1)
+            if state_path is None:
+                # baked-repo model: no bind mount, so OS state cannot be made
+                # coherent with the in-container repo FS. Warn that state will
+                # land on the repo FS (lost on container death) unless host-side.
+                print(
+                    "Warning: --env-backend=docker --container without --state-dir: "
+                    "OS state (events/artifacts) will live on the in-container repo "
+                    "FS and is lost on container death. Pass --state-dir for a "
+                    "host-side state directory.",
+                    file=sys.stderr,
+                )
             backend = DockerEnvironmentBackend(container=container, repo_dir=repo_dir)
             return backend, Path(repo_dir), state_path, None
 
@@ -307,7 +318,13 @@ def _build_environment_backend(args: argparse.Namespace, *, launcher=None):
             container=container_id, repo_dir=WORKSPACE_DEST_DEFAULT
         )
         cleanup = None if keep else (lambda: launcher.teardown(container_id))
-        return backend, Path(WORKSPACE_DEST_DEFAULT), state_path, cleanup
+        # part2 (slice-2): in the workspace-mount model the host workspace_root is
+        # bind-mounted at /workspace, so the OS state dir defaults to the HOST
+        # workspace_root/.reyn — that same dir appears in-container at
+        # /workspace/.reyn, keeping OS index/approvals and the agent FS coherent
+        # (the bind-mount's purpose). An explicit --state-dir still wins.
+        launch_state_path = state_path or (Path(workspace_root) / ".reyn")
+        return backend, Path(WORKSPACE_DEST_DEFAULT), launch_state_path, cleanup
 
     # argparse `choices` prevents this, but stay defensive.
     print(f"Error: unknown --env-backend '{backend_kind}'.", file=sys.stderr)
