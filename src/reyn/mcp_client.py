@@ -338,10 +338,12 @@ class MCPClient:
 
         Seatbelt (macOS): returns ``("sandbox-exec", ["-f", <profile>, command,
         *args])`` with a generated SBPL profile (a temp ``.sb`` unlinked in
-        ``close``). MCP stdio is persistent, so the wrap is at the COMMAND level
-        (the backend's one-shot ``run()`` does not fit). Other backends
-        (landlock/docker) are not yet wrapped here (#1344 follow-up) — the server
-        then runs UNSANDBOXED with a warning (never silently).
+        ``close``). Landlock (Linux, #1344 follow-up E): returns the
+        ``reyn.sandbox.landlock_exec`` re-exec shim argv (the COMMAND-level
+        analog — Landlock has no CLI wrapper). MCP stdio is persistent, so the
+        wrap is at the COMMAND level (the backend's one-shot ``run()`` does not
+        fit). Other backends (docker) are not yet wrapped here — the server then
+        runs UNSANDBOXED with a warning (never silently).
         """
         from reyn.sandbox import get_default_backend
 
@@ -362,10 +364,18 @@ class MCPClient:
             fh.close()
             self._sandbox_profile_path = fh.name
             return "sandbox-exec", ["-f", fh.name, command, *args]
+        if name == "landlock" and available:
+            # #1344 follow-up E: the Landlock re-exec shim restricts itself then
+            # execs the target (Linux-validation-pending — see landlock_exec).
+            from reyn.sandbox.landlock_exec import build_landlock_exec_argv
+
+            return build_landlock_exec_argv(
+                self._build_mcp_sandbox_policy(), command, args
+            )
         warnings.warn(
             f"MCP stdio server {command!r} runs UNSANDBOXED "
-            f"(sandbox backend={name or 'none'}); only the Seatbelt wrap is "
-            f"implemented (#1344) — Landlock/docker wrapping is a follow-up.",
+            f"(sandbox backend={name or 'none'}); only Seatbelt + Landlock wraps "
+            f"are implemented (#1344) — docker wrapping is a follow-up.",
             stacklevel=2,
         )
         return command, args

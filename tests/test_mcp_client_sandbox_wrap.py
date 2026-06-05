@@ -2,8 +2,9 @@
 
 The MCP server launched by ``_open_stdio`` must run under the platform sandbox
 so an LLM-invoked MCP tool cannot escape via the server. Pins the Seatbelt
-command-wrap (the implemented backend), the per-server network opt-in
-(default OFF = secure-by-default), the unsandboxed warning for other backends,
+command-wrap (macOS) + the Landlock re-exec shim (Linux, #1344-E), the
+per-server network default (single-source DEFAULT_SANDBOX_NETWORK, #1339-D)
+with operator opt-in / opt-out, the unsandboxed warning for other backends,
 and the temp-profile cleanup.
 
 No mocks: a real ``_FakeBackend`` (name + available()) injected via monkeypatch
@@ -87,6 +88,24 @@ def test_seatbelt_wrap_network_opt_out(monkeypatch):
     _cmd, args = client._sandbox_wrap_stdio("my-mcp", [])
     profile = Path(args[1]).read_text()
     assert "(allow network*)" not in profile
+
+
+def test_landlock_wrap_uses_reexec_shim(monkeypatch):
+    """Tier 2: under Landlock (#1344 follow-up E), the command is wrapped as the
+    reyn.sandbox.landlock_exec re-exec shim (python -m ... --policy ... -- cmd
+    args) — the COMMAND-level analog of the Seatbelt wrap (no UNSANDBOXED warn)."""
+    import sys
+    import warnings
+
+    _patch_backend(monkeypatch, _FakeBackend("landlock"))
+    client = _stdio_client()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any UNSANDBOXED warn would fail here
+        cmd, args = client._sandbox_wrap_stdio("my-mcp", ["--flag"])
+    assert cmd == sys.executable
+    assert args[:2] == ["-m", "reyn.sandbox.landlock_exec"]
+    sep = args.index("--")
+    assert args[sep + 1:] == ["my-mcp", "--flag"]  # original command preserved
 
 
 def test_non_seatbelt_warns_unsandboxed(monkeypatch):
