@@ -83,6 +83,13 @@ permissions:
       function: extract_problem_symbols
       mode: safe
       timeout: 5
+    # #1366 follow-up: bounds the plan-time region volume (drops no-match +
+    # too-generic high-count regions, caps total) so a common symbol's giant grep
+    # result cannot bloat the plan context. Mode: safe — pure data transform.
+    - module: ./prune_plan_regions.py
+      function: prune_plan_regions
+      mode: safe
+      timeout: 5
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 ---

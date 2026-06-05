@@ -55,6 +55,69 @@ def _extract():
     return _rank_symbols, extract_problem_symbols
 
 
+def _prune():
+    sys.path.insert(0, str(SWE_BENCH_DIR))
+    try:
+        from prune_plan_regions import _MAX_TOTAL_CHARS, prune_plan_regions
+    finally:
+        sys.path.pop(0)
+    return prune_plan_regions, _MAX_TOTAL_CHARS
+
+
+def test_prune_is_bounded_by_construction_total_size() -> None:
+    """Tier 2: the surfaced _plan_regions size is bounded by construction — the
+    total never exceeds the size budget, whatever the input grep counts.
+
+    This is the #1366 regression the original synthetic single-match tests missed:
+    on astropy-13236 `Column` matched 228 lines → raw _plan_regions reached ~6MB →
+    the plan model aborted. The size budget (primary bound), not a magic count
+    threshold, guarantees a small context.
+    """
+    import json as _json
+
+    prune_plan_regions, max_total = _prune()
+    # a pathological input: one huge high-count region + many large low-count ones
+    regions = [{"count": 228, "matches": [{"content": "Column " * 200}] * 228}]
+    regions += [{"count": 2, "matches": [{"content": "x" * 4000}]} for _ in range(50)]
+    out = prune_plan_regions({"data": {"_plan_regions": regions}})
+    total = len(_json.dumps(out["_plan_regions"]))
+    assert total <= max_total, f"total _plan_regions must be <= budget {max_total}, got {total}"
+
+
+def test_prune_drops_no_match_and_prioritizes_specific_over_generic() -> None:
+    """Tier 2: count is a SECONDARY ranking signal — a no-match region (count 0) is
+    dropped (validity), and precise low-count locators are surfaced ahead of a
+    non-specific high-count symbol when the budget is contended.
+
+    Realistic mixed distribution (lead-coder guidance #3): a common symbol
+    (high match-count, e.g. `Column`) + specific symbols (low count, the gold
+    targets). The specific ones must survive; the generic one is crowded out by the
+    size budget, not a hard threshold. Mirrors drop_not_locatable's spirit.
+    """
+    prune_plan_regions, max_total = _prune()
+    # Size the precise locators so the two of them ~fill the budget; the generic
+    # high-count region (sorted last) is then crowded out. This mirrors the real
+    # astropy-13236 distribution where ±context regions are ~13KB each so only the
+    # first couple by ascending count fit.
+    big = int(max_total * 0.45)  # each specific ~45% of budget → two ~fill it
+    specific_a = {"count": 1, "matches": [{"content": "N" * big}]}      # gold
+    specific_b = {"count": 2, "matches": [{"content": "d" * big}]}      # gold
+    absent = {"count": 0, "matches": []}
+    generic = {"count": 228, "matches": [{"content": "Column " * 400}] * 228}
+    out = prune_plan_regions(
+        {"data": {"_plan_regions": [generic, absent, specific_a, specific_b]}}
+    )
+    kept_counts = [r["count"] for r in out["_plan_regions"]]
+    assert 0 not in kept_counts, "a no-match region must be dropped (validity filter)"
+    # the precise locators are surfaced; the generic high-count symbol is crowded out
+    assert 1 in kept_counts and 2 in kept_counts, (
+        f"specific (gold) locators must survive, got {kept_counts}"
+    )
+    assert 228 not in kept_counts, (
+        f"the non-specific high-count symbol must be crowded out by the budget, got {kept_counts}"
+    )
+
+
 def test_extract_yields_valid_code_symbols_not_junk() -> None:
     """Tier 2: code-fence-aware extraction returns real identifiers, not prose junk.
 
@@ -211,6 +274,32 @@ def test_plan_preprocessor_surfaces_target_region_past_truncation(tmp_path: Path
     assert "PLAN-TARGET-REGION-ZZZ" in blob, (
         "the problem-named symbol's region was not surfaced into _plan_regions "
         "(model navigation would otherwise be required to see it)"
+    )
+
+
+def test_plan_preprocessor_bounds_volume_for_common_symbol(tmp_path: Path) -> None:
+    """Tier 2: a problem-named symbol that matches MANY lines does NOT bloat
+    _plan_regions — the prune step caps the volume (the #1366 regression: on
+    astropy-13236 `Column` matched 228 lines → ~6MB _plan_regions → plan aborted).
+
+    Builds a file where `Column` appears on hundreds of lines, names it in the
+    problem statement, runs the full real preprocessor, and asserts the resulting
+    _plan_regions stays small (the generic high-count region is dropped).
+    """
+    import json as _json
+
+    body = "".join(f"class Column{i}:  # Column usage line {i}\n" for i in range(300))
+    data = _run_plan_preprocessor(
+        tmp_path,
+        "pkg/mod.py",
+        body,
+        problem_statement="The `Column` class is broken in the writer.",
+    )
+    regions = data.get("_plan_regions") or []
+    total = len(_json.dumps(regions))
+    assert total < 60000, (
+        f"_plan_regions must stay bounded for a high-count symbol (got {total} chars); "
+        "the prune step should have dropped the too-generic region"
     )
 
 
