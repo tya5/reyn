@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import logging
 import platform
@@ -750,6 +751,28 @@ async def _run_single_task(
                 # preserves any explicit operator setting.
                 session.config.permissions.setdefault("file.read", "allow")
                 session.config.permissions.setdefault("file.write", "allow")
+                # #1326: the swe_bench eval run's agent-level sandbox policy. The
+                # phases' retired per-phase default_sandbox_policy was byte-identical
+                # (broad — these phases run an arbitrary repo's git + test suite); it
+                # now lives at the operator/run level. timeout_seconds=600 is the
+                # ceiling (verify/pytest). setdefault-style: an explicit operator
+                # sandbox.policy wins. On a container EnvironmentBackend the policy is
+                # ignored (the container IS the boundary); host backends best-effort.
+                if session.config.sandbox.policy is None:
+                    session.config.sandbox = dataclasses.replace(
+                        session.config.sandbox,
+                        policy={
+                            "network": True,
+                            "read_paths": ["/"],
+                            "write_paths": ["/"],
+                            "allow_subprocess": True,
+                            "env_passthrough": [
+                                "PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV",
+                                "LANG", "LC_ALL", "TMPDIR",
+                            ],
+                            "timeout_seconds": 600,
+                        },
+                    )
                 agent = Agent.from_config(
                     session.config,
                     shell_allowed=shell_allowed,

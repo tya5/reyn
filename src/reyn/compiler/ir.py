@@ -22,9 +22,6 @@ class PhaseDef:
     # Sentinel None = frontmatter omitted the key → expander applies the default.
     # Empty list = explicit "no ops".
     allowed_ops: list[str] | None = None
-    # Optional SandboxPolicy-kwargs dict applied to every sandboxed_exec op in
-    # this phase (FP-0008 #1115 Stage 2 D mechanism). None = use op-level fields.
-    default_sandbox_policy: dict | None = None
 
 
 @dataclass

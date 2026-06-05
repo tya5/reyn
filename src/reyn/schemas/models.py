@@ -124,18 +124,6 @@ class Phase(BaseModel):
             "glob_files", "grep_files", "ask_user",
         ],
     )
-    # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy for
-    # ``sandboxed_exec`` ops. When set, the OS applies it to every sandboxed_exec
-    # in this phase (phase-default WINS over op-level fields) so the policy is
-    # declared once in the phase frontmatter — deterministic + P8-clean (the
-    # skill body never describes the Control IR policy). ``None`` → fall back to
-    # the op's own policy fields (unchanged behavior). Shape mirrors
-    # SandboxPolicy kwargs (network / read_paths / write_paths /
-    # allow_subprocess / env_passthrough / timeout_seconds) — a plain exec-policy
-    # dict with no reyn-idiosyncratic naming, so Stage 3's unified permission
-    # block can relocate it verbatim into a ``permissions.exec:`` subsection
-    # (field-location move only; value structure / threading / precedence stay).
-    default_sandbox_policy: dict[str, Any] | None = None
 
 
 class SkillNodeSpec(BaseModel):

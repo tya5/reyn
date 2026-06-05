@@ -6,17 +6,6 @@ role: implementer
 model_class: standard
 allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, sandboxed_exec]
 max_act_turns: 30
-# FP-0008 #1115 Stage 2: policy for this phase's sandboxed_exec ops (e.g.
-# python -m py_compile syntax checks), winning over op fields. Permissive —
-# operates on an arbitrary repository. Ignored by a container EnvironmentBackend
-# (the C7 path); best-effort on host backends.
-default_sandbox_policy:
-  network: true
-  read_paths: ["/"]
-  write_paths: ["/"]
-  allow_subprocess: true
-  env_passthrough: ["PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "LANG", "LC_ALL", "TMPDIR"]
-  timeout_seconds: 120
 # #1209 PR-B — deterministic edit-region scaffolding. BEFORE the LLM enters this
 # phase, the OS places each edit's target region into context by grepping the
 # plan's verbatim `anchor`, so the model never edits a file it cannot see (the

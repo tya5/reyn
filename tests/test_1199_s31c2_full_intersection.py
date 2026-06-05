@@ -1,8 +1,9 @@
 """Tier 2: S3.1c-2 — SandboxLayer ∩ wired into the file + http gates (full-∩).
 
 #1199 S3.1c-2 completes the conjunctive-∩ model: ``require_file_read/write`` and
-``require_http_get`` now fold the phase ``default_sandbox_policy`` into a
-SandboxLayer ∩. A sandbox path/network cap RESTRICTS even an AgentLayer-granted
+``require_http_get`` now fold the resolved sandbox policy
+(``ctx.default_sandbox_policy`` — agent-level since #1326) into a SandboxLayer ∩.
+A sandbox path/network cap RESTRICTS even an AgentLayer-granted
 (zone / config-approved) path — restrict-only, the sandbox cannot grant. None (the
 OS's own in-process ops / non-sandboxed callers) → SandboxLayer ⊤ (unchanged).
 

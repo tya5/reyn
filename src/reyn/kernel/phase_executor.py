@@ -35,7 +35,6 @@ from reyn.kernel.runtime_types import (
     _validate_artifact_structure,
 )
 from reyn.kernel.validation import ValidationError, validate_output
-from reyn.op_runtime.context import resolve_sandbox_policy_source
 from reyn.safety.limit_handler import LimitDecision, handle_limit_exceeded
 from reyn.schemas.models import ActOutput, CandidateOutput, LLMOutput
 from reyn.workspace.artifact_validator import validate_artifact_data
@@ -207,8 +206,9 @@ class PhaseExecutor:
         self._intervention_bus = intervention_bus
         self._run_id = run_id
         self._strict = strict
-        # #1326: agent-level (operator) sandbox policy. WINS over the
-        # phase-scoped default_sandbox_policy via resolve_sandbox_policy_source.
+        # #1326: agent-level (operator) sandbox policy (reyn.yaml sandbox.policy).
+        # The deterministic sandbox policy for this run's ops + the SandboxLayer
+        # of the permission ∩. None → the SandboxLayer is ⊤ + op fields govern.
         self._agent_sandbox_policy = agent_sandbox_policy
         # build_frame is owned by OSRuntime (accesses skill graph + resolver +
         # event history). PhaseExecutor receives it as a callable to avoid
@@ -531,10 +531,7 @@ class PhaseExecutor:
         phase_def = self._skill.phases.get(phase)
         allowed_ops = set(phase_def.allowed_ops) if phase_def is not None else set()
         decl = self._skill.permissions
-        sandbox = resolve_sandbox_policy_source(
-            self._agent_sandbox_policy,
-            phase_def.default_sandbox_policy if phase_def is not None else None,
-        )
+        sandbox = self._agent_sandbox_policy
         cie = self._control_ir_executor
 
         host = PhaseRouterLoopHost(
@@ -980,10 +977,7 @@ class PhaseExecutor:
             )
             ir_results = await self._control_ir_executor.execute(
                 act.ops, phase=phase, decl=phase_decl, allowed_ops=allowed_ops,
-                default_sandbox_policy=resolve_sandbox_policy_source(
-                    self._agent_sandbox_policy,
-                    phase_def.default_sandbox_policy if phase_def is not None else None,
-                ),
+                default_sandbox_policy=self._agent_sandbox_policy,
                 compact_now=_compact_now,
             )
             # _holder reflects any mid-batch on-demand compaction; the new

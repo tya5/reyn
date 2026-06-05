@@ -1,27 +1,23 @@
-"""Tier 2: #1326 — sandbox-policy re-leveled from phase-scope to agent-level.
+"""Tier 2: #1326 — sandbox policy is an agent-level (operator) concern.
 
 The phase-scoped ``default_sandbox_policy`` (an FP-0017 remnant, declared only by
-swe_bench phases whose policy is byte-identical across all 5 phases) is being
-retired in favour of an agent-level (operator) policy carried by
-``reyn.yaml sandbox.policy``. This PR lands the non-breaking *mechanism*:
+swe_bench phases whose policy was byte-identical across all 5) is **retired**.
+Sandbox authorization now lives at the agent level — ``reyn.yaml sandbox.policy``
+(an operator/run config), threaded by the OS:
 
   - ``SandboxConfig.policy`` (optional nested mapping; absent → None → the
-    SandboxLayer stays ⊤, so any run that declares no policy is unchanged).
-  - ``resolve_sandbox_policy_source(agent, phase)``: the agent-level policy WINS
-    (deterministic, the LLM/phase cannot widen it); falls back to the migrating
-    phase policy while the swe_bench eval lane has not yet moved its policy to
-    agent/run config; the retire follow-up deletes that fallback.
-  - The policy is threaded OSRuntime → Phase / Orchestrator / pre- + post-
-    processor executors, so it reaches the postprocessor path — whose
-    ``_PostprocessorScope`` carries no phase policy — which is what makes the
-    index write-gate fire there (dissolves #1321).
-
-Equivalence: when no operator policy is set (= every current run), the resolver
-returns the phase policy → byte-equivalent to the pre-#1326 behavior.
+    SandboxLayer stays ⊤, so any run declaring no policy is unchanged + op-level
+    fields govern).
+  - When set, it is the deterministic policy applied to sandboxed ops + the
+    SandboxLayer of the permission ∩ — WINNING over op-declared fields (the LLM /
+    a skill cannot widen it).
+  - It is threaded OSRuntime → Phase / Orchestrator / pre- + post-processor, so it
+    reaches the postprocessor path — whose ``_PostprocessorScope`` is skill-level
+    (not a phase) — which is what makes the index write-gate fire there (#1321).
 
 No mocks: a real recording SandboxBackend Fake (mirrors test_op_sandboxed_exec /
 test_backend_injection_threading_1115_stage2) + a real recording PythonRunner
-Fake capture the resolved policy at the seam.
+Fake capture the policy / cap at the seam.
 """
 from __future__ import annotations
 
@@ -35,7 +31,6 @@ from reyn.config import SandboxConfig, _build_sandbox_config
 from reyn.events.events import EventLog
 from reyn.kernel.postprocessor_executor import PostprocessorExecutor
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
-from reyn.op_runtime.context import resolve_sandbox_policy_source
 from reyn.permissions.permissions import PermissionResolver
 from reyn.sandbox.backend import SandboxResult
 from reyn.schemas.models import (
@@ -49,7 +44,7 @@ from reyn.schemas.models import (
 )
 from reyn.workspace.workspace import Workspace
 
-# A broad operator policy mirroring swe_bench's (the live migration target).
+# A broad operator policy mirroring swe_bench's (the live eval-lane value).
 _AGENT_POLICY = {
     "network": True,
     "read_paths": ["/agent"],
@@ -57,14 +52,6 @@ _AGENT_POLICY = {
     "allow_subprocess": True,
     "env_passthrough": ["PATH"],
     "timeout_seconds": 600,
-}
-_PHASE_POLICY = {
-    "network": False,
-    "read_paths": ["/phase"],
-    "write_paths": ["/phase"],
-    "allow_subprocess": False,
-    "env_passthrough": ["HOME"],
-    "timeout_seconds": 120,
 }
 
 
@@ -89,25 +76,7 @@ def test_sandbox_config_invalid_policy_raises() -> None:
         SandboxConfig(policy={"bogus_key": 1})
 
 
-# ── Tier 2: resolve_sandbox_policy_source invariant ──────────────────────────
-
-
-def test_resolve_agent_policy_wins() -> None:
-    """Tier 2: the agent-level (operator) policy WINS over the phase policy."""
-    assert resolve_sandbox_policy_source(_AGENT_POLICY, _PHASE_POLICY) == _AGENT_POLICY
-
-
-def test_resolve_falls_back_to_phase_during_migration() -> None:
-    """Tier 2: agent absent → phase policy governs (the migration fallback)."""
-    assert resolve_sandbox_policy_source(None, _PHASE_POLICY) == _PHASE_POLICY
-
-
-def test_resolve_absent_both_is_none() -> None:
-    """Tier 2: neither set → None → SandboxLayer ⊤ + op-level fields govern."""
-    assert resolve_sandbox_policy_source(None, None) is None
-
-
-# ── Tier 2: agent policy reaches the sandboxed_exec seam + WINS ──────────────
+# ── Tier 2: agent policy reaches the sandboxed_exec seam ─────────────────────
 
 
 class _RecordingExecBackend:
@@ -140,16 +109,15 @@ def _one_phase_skill() -> Skill:
 
 
 def _exec_preprocessor(
-    tmp_path: Path, *, agent_policy: dict | None, phase_policy: dict | None,
-    backend: _RecordingExecBackend,
+    tmp_path: Path, *, agent_policy: dict | None, backend: _RecordingExecBackend,
 ) -> tuple[PreprocessorExecutor, Phase]:
     events = EventLog()
     phase = Phase(
         name="pp", instructions="d",
         input_schema={"type": "object", "properties": {}},
         allowed_ops=["sandboxed_exec"],
-        # op declares network=False / no subprocess: distinct from the agent
-        # policy so "WINS" is observable on the recorded policy.
+        # The op declares network=False / no subprocess / a non-default timeout=10
+        # so the recorded policy distinguishes "agent WINS" from "op fields govern".
         preprocessor=[
             RunOpStep(
                 type="run_op",
@@ -161,7 +129,6 @@ def _exec_preprocessor(
                 into="data._exec",
             )
         ],
-        default_sandbox_policy=phase_policy,
     )
     pe = PreprocessorExecutor(
         skill=_one_phase_skill(),
@@ -176,35 +143,34 @@ def _exec_preprocessor(
     return pe, phase
 
 
-def test_agent_policy_wins_at_sandboxed_exec_no_phase_policy(tmp_path: Path) -> None:
+def test_agent_policy_wins_at_sandboxed_exec(tmp_path: Path) -> None:
     """Tier 2: the agent policy reaches the sandboxed_exec seam and WINS over the
-    op-declared fields, with NO phase policy present (the steady-state shape)."""
+    op-declared fields (deterministic; the LLM cannot widen it)."""
     backend = _RecordingExecBackend()
-    pe, phase = _exec_preprocessor(
-        tmp_path, agent_policy=_AGENT_POLICY, phase_policy=None, backend=backend,
-    )
+    pe, phase = _exec_preprocessor(tmp_path, agent_policy=_AGENT_POLICY, backend=backend)
     asyncio.run(pe.run(phase, {"type": "x", "data": {}}, None))
-    # The op declared network=False; the agent policy (network=True) WINS.
+    # The op declared network=False / timeout=10; the agent policy WINS.
     assert backend.policy is not None
     assert backend.policy.network is True
     assert backend.policy.write_paths == ["/agent"]
+    assert backend.policy.timeout_seconds == 600
 
 
-def test_phase_policy_governs_when_agent_absent_equivalence(tmp_path: Path) -> None:
-    """Tier 2: equivalence — agent policy absent → the phase policy still governs
-    (byte-equivalent to pre-#1326), NOT the op fields. Falsifies an "agent always
-    wins" mis-wire."""
+def test_op_fields_govern_when_agent_absent(tmp_path: Path) -> None:
+    """Tier 2: equivalence / non-regression — with NO agent policy, the op's own
+    declared fields govern (the SandboxLayer is ⊤) — byte-equivalent to a run that
+    declares no sandbox policy. Falsifies an "agent always wins" mis-wire."""
     backend = _RecordingExecBackend()
-    pe, phase = _exec_preprocessor(
-        tmp_path, agent_policy=None, phase_policy=_PHASE_POLICY, backend=backend,
-    )
+    pe, phase = _exec_preprocessor(tmp_path, agent_policy=None, backend=backend)
     asyncio.run(pe.run(phase, {"type": "x", "data": {}}, None))
     assert backend.policy is not None
-    assert backend.policy.read_paths == ["/phase"]
+    # The op's non-default timeout=10 proves the OP fields flowed through (not a
+    # SandboxPolicy() default), and network stayed the op's False.
+    assert backend.policy.timeout_seconds == 10
     assert backend.policy.network is False
 
 
-# ── Tier 2: #1321 dissolve — agent policy reaches the POSTPROCESSOR path ──────
+# ── Tier 2: #1321 — agent policy reaches the POSTPROCESSOR path ──────────────
 
 
 class _RecordingPythonRunner:
@@ -264,10 +230,10 @@ def _run_postprocessor(
 
 
 def test_postprocessor_python_step_receives_agent_policy_cap(tmp_path: Path) -> None:
-    """Tier 2: #1321 dissolve — a postprocessor python step receives the agent
-    policy's write_paths cap, even though the _PostprocessorScope carries no phase
-    policy. This is the seam the index write self-gates against — the gap that
-    made the write-gate never fire in the postprocessor (#1321)."""
+    """Tier 2: #1321 — a postprocessor python step receives the agent policy's
+    write_paths cap, even though the _PostprocessorScope is skill-level (carries no
+    phase). This is the seam the index write self-gates against — the gap that made
+    the write-gate never fire in the postprocessor (#1321)."""
     runner = _RecordingPythonRunner()
     _run_postprocessor(tmp_path, agent_policy=_AGENT_POLICY, runner=runner)
     assert runner.sandbox_write_paths == ["/agent"]
@@ -275,9 +241,8 @@ def test_postprocessor_python_step_receives_agent_policy_cap(tmp_path: Path) -> 
 
 def test_postprocessor_cap_absent_without_agent_policy(tmp_path: Path) -> None:
     """Tier 2: falsification for the dissolve — with NO agent policy, the
-    postprocessor python step receives no cap (None) — the pre-#1326 #1321 gap
-    state. Proves the dissolve test above is detecting the agent-policy source,
-    not a constant."""
+    postprocessor python step receives no cap (None). Proves the dissolve test
+    above is detecting the agent-policy source, not a constant."""
     runner = _RecordingPythonRunner()
     _run_postprocessor(tmp_path, agent_policy=None, runner=runner)
     assert runner.sandbox_write_paths is None

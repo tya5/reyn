@@ -26,7 +26,6 @@ from reyn.kernel.runtime_types import (
     RunResult,
     WorkflowAbortedError,
 )
-from reyn.op_runtime.context import resolve_sandbox_policy_source
 from reyn.safety.limit_handler import (
     handle_limit_exceeded,
     reset_run_extensions,
@@ -692,10 +691,7 @@ class RunOrchestrator:
                 decide_results = await self._phase_executor._control_ir_executor.execute(
                     output.ops, phase=current_phase, decl=current_decl,
                     allowed_ops=current_allowed,
-                    default_sandbox_policy=resolve_sandbox_policy_source(
-                        self._agent_sandbox_policy,
-                        current_def.default_sandbox_policy if current_def is not None else None,
-                    ),
+                    default_sandbox_policy=self._agent_sandbox_policy,
                 )
                 if decide_results:
                     self._events.emit(

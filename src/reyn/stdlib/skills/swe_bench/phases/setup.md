@@ -6,17 +6,6 @@ role: initializer
 model_class: standard
 allowed_ops: [sandboxed_exec]
 max_act_turns: 5
-# FP-0008 #1115 Stage 2: policy for this phase's sandboxed_exec ops (git
-# checkout / git status / pytest --version), winning over op fields. Permissive
-# — operates on an arbitrary repository. Ignored by a container EnvironmentBackend
-# (the C7 path); best-effort on host backends.
-default_sandbox_policy:
-  network: true
-  read_paths: ["/"]
-  write_paths: ["/"]
-  allow_subprocess: true
-  env_passthrough: ["PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "LANG", "LC_ALL", "TMPDIR"]
-  timeout_seconds: 120
 ---
 
 Prepare the repository for the fix by checking out the exact commit the
