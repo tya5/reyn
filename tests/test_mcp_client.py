@@ -8,6 +8,7 @@ and ``ClientSession`` at the module they're imported from.
 from __future__ import annotations
 
 import asyncio
+import warnings
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest import mock
@@ -113,12 +114,33 @@ async def _fake_http_client(url, headers=None, timeout=30):
     yield ("read_stream_obj", "write_stream_obj", lambda: None)
 
 
+class _NoopBackend:
+    """A non-seatbelt sandbox backend stand-in (#1344): the stdio wrap then
+    no-ops (warns), so these transport-passthrough tests stay isolated from the
+    sandbox-wrap layer (which has its own test_mcp_client_sandbox_wrap.py)."""
+
+    name = "noop"
+
+    def available(self) -> bool:
+        return True
+
+
 @pytest.fixture
 def patched_sdk():
-    """Patch the SDK entry points used by MCPClient."""
+    """Patch the SDK entry points used by MCPClient.
+
+    Also pins a noop sandbox backend so the #1344 stdio sandbox-wrap leaves the
+    command untouched here — these tests verify transport config forwarding, not
+    the sandbox wrap (that is tested separately).
+    """
     with mock.patch("mcp.client.stdio.stdio_client", _fake_stdio_client), \
          mock.patch("mcp.client.streamable_http.streamablehttp_client", _fake_http_client), \
-         mock.patch("mcp.ClientSession", _FakeSession):
+         mock.patch("mcp.ClientSession", _FakeSession), \
+         mock.patch("reyn.sandbox.get_default_backend", lambda config=None: _NoopBackend()), \
+         warnings.catch_warnings():
+        # The noop backend makes the #1344 stdio wrap a no-op + warn — expected
+        # here (these tests isolate transport forwarding, not the sandbox wrap).
+        warnings.filterwarnings("ignore", message=".*runs UNSANDBOXED.*")
         yield
 
 

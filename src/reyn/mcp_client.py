@@ -18,7 +18,9 @@ Environment variable expansion:
 """
 from __future__ import annotations
 
+import os
 import tempfile
+import warnings
 from contextlib import AsyncExitStack
 from typing import Any
 
@@ -89,6 +91,10 @@ class MCPClient:
         # ``tempfile.TemporaryFile`` does. Lazily created in
         # ``_open_stdio``; closed in ``close``.
         self._stderr_capture: Any = None  # tempfile.TemporaryFile | None
+        # #1344: path of the temp Seatbelt profile (.sb) used to sandbox a
+        # stdio MCP server's subprocess, if one was generated in _open_stdio.
+        # Unlinked in close(). None for non-stdio / non-seatbelt / unsandboxed.
+        self._sandbox_profile_path: str | None = None
 
     @property
     def stderr_capture(self) -> "Any":
@@ -144,12 +150,23 @@ class MCPClient:
             await stack.aclose()
             tail = self.read_stderr_tail()
             self.close_stderr_capture()
+            # #1344 migration hint: a sandboxed stdio server runs with network
+            # DISABLED by default (secure-by-default). A server that needs the
+            # network (e.g. a GitHub MCP) will fail init — point the operator at
+            # the `network: true` opt-in knob rather than leave an opaque error.
+            hint = ""
+            if self._type == "stdio" and not self._config.get("network", False):
+                hint = (
+                    "\nHint (#1344): this MCP server runs sandboxed with network "
+                    "DISABLED by default. If it needs network access, add "
+                    "`network: true` to its server config."
+                )
             if tail:
                 raise MCPError(
                     f"MCP initialize failed: {exc}\n"
-                    f"--- subprocess stderr (tail) ---\n{tail}"
+                    f"--- subprocess stderr (tail) ---\n{tail}{hint}"
                 ) from exc
-            raise MCPError(f"MCP initialize failed: {exc}") from exc
+            raise MCPError(f"MCP initialize failed: {exc}{hint}") from exc
 
         self._stack = stack
         self._session = session
@@ -256,7 +273,18 @@ class MCPClient:
         return text
 
     def close_stderr_capture(self) -> None:
-        """Close + delete the stderr temp file, if any. Idempotent."""
+        """Close + delete the stderr temp file + the #1344 Seatbelt profile, if
+        any. Idempotent — called at every teardown path."""
+        # #1344: unlink the temp Seatbelt profile (.sb) generated for a
+        # sandboxed stdio MCP server. Best-effort; a leaked temp file must not
+        # break teardown.
+        profile_path = self._sandbox_profile_path
+        if profile_path is not None:
+            self._sandbox_profile_path = None
+            try:
+                os.unlink(profile_path)
+            except OSError:
+                pass
         capture = self._stderr_capture
         if capture is None:
             return
@@ -278,6 +306,61 @@ class MCPClient:
         # Unreachable due to __init__ validation, but keep defensive.
         raise ValueError(f"Unsupported MCP server type: {self._type!r}")
 
+    def _build_mcp_sandbox_policy(self):
+        """SandboxPolicy for a sandboxed stdio MCP server (#1344).
+
+        read broad (#1323 scoping) + the default sensitive deny-list; write tight
+        to the server's working dir; ``network`` is OPERATOR-declared per server
+        (``network: true`` in the MCP config) and defaults OFF — secure-by-default,
+        because the sandbox policy is the operator's, not the LLM's. The default-off
+        means a network-needing server (e.g. a GitHub MCP) must declare
+        ``network: true`` (see the migration hint surfaced on init failure).
+        """
+        from reyn.sandbox import SandboxPolicy
+
+        cwd = self._config.get("cwd") or os.getcwd()
+        return SandboxPolicy(
+            network=bool(self._config.get("network", False)),
+            write_paths=[cwd],
+        )
+
+    def _sandbox_wrap_stdio(self, command: str, args: list[str]) -> "tuple[str, list[str]]":
+        """Wrap ``(command, args)`` so the MCP server subprocess runs sandboxed (#1344).
+
+        Seatbelt (macOS): returns ``("sandbox-exec", ["-f", <profile>, command,
+        *args])`` with a generated SBPL profile (a temp ``.sb`` unlinked in
+        ``close``). MCP stdio is persistent, so the wrap is at the COMMAND level
+        (the backend's one-shot ``run()`` does not fit). Other backends
+        (landlock/docker) are not yet wrapped here (#1344 follow-up) — the server
+        then runs UNSANDBOXED with a warning (never silently).
+        """
+        from reyn.sandbox import get_default_backend
+
+        try:
+            backend = get_default_backend()
+            name = getattr(backend, "name", None)
+            available = backend.available()
+        except Exception:  # noqa: BLE001 — a backend probe must not block a launch
+            name, available = None, False
+        if name == "seatbelt" and available:
+            from reyn.sandbox.backends.seatbelt import _build_sbpl_profile
+
+            profile = _build_sbpl_profile(self._build_mcp_sandbox_policy())
+            fh = tempfile.NamedTemporaryFile(
+                suffix=".sb", mode="w", delete=False, encoding="utf-8",
+            )
+            fh.write(profile)
+            fh.close()
+            self._sandbox_profile_path = fh.name
+            return "sandbox-exec", ["-f", fh.name, command, *args]
+        warnings.warn(
+            f"MCP stdio server {command!r} runs UNSANDBOXED "
+            f"(sandbox backend={name or 'none'}); only the Seatbelt wrap is "
+            f"implemented (#1344) — Landlock/docker wrapping is a follow-up.",
+            stacklevel=2,
+        )
+        return command, args
+
     def _open_stdio(self):
         from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -285,6 +368,9 @@ class MCPClient:
         if not command:
             raise MCPError("stdio MCP server config requires 'command'")
         args = list(self._config.get("args") or [])
+        # #1344: wrap the server subprocess in the platform sandbox (Seatbelt)
+        # so an LLM-invoked MCP tool cannot escape the sandbox via the server.
+        command, args = self._sandbox_wrap_stdio(command, args)
         env = self._config.get("env")
         params = StdioServerParameters(
             command=command,
