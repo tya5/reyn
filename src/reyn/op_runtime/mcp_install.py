@@ -28,6 +28,7 @@ from reyn.schemas.models import MCPInstallIROp
 
 from . import register
 from .context import OpContext
+from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 
 # ---------------------------------------------------------------------------
 # Runtime-hint → command name
@@ -242,8 +243,13 @@ async def handle(
         project_root = Path(ctx.workspace.root)
     config_path = _scope_to_path(op.scope, project_root)
     if ctx.permission_resolver is not None:
+        # #1352-C: thread the agent/operator sandbox policy (SandboxLayer ∩),
+        # same as op_runtime/file.py — was missing here, so the write/http gates
+        # ran permission-only (SandboxLayer ⊤). None → ⊤ (unchanged).
+        _sandbox = _sandbox_policy_from_ctx(ctx)
         ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(config_path), ctx.skill_name,
+            sandbox_policy=_sandbox,
         )
         # Registry fetch happened via RegistryClient above — gate the
         # host symmetrically so the OS exercises its own permission
@@ -255,6 +261,7 @@ async def handle(
                 "registry.modelcontextprotocol.io",
                 ctx.intervention_bus,
                 ctx.skill_name,
+                sandbox_policy=_sandbox,
             )
 
     # ── 4. Credentials: resolve isSecret env vars from env_overrides or

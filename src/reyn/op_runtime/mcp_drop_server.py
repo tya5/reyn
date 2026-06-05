@@ -36,6 +36,7 @@ from reyn.schemas.models import MCPDropServerIROp
 
 from . import register
 from .context import OpContext
+from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 
 # ---------------------------------------------------------------------------
 # helpers (yaml read/write — mirror mcp_install for parity)
@@ -217,8 +218,11 @@ async def handle(
     # removed — per-server granularity in mutations is operator-
     # config-level concern, not per-op runtime concern.
     if ctx.permission_resolver is not None:
+        # #1352-C: thread the agent/operator sandbox policy (SandboxLayer ∩),
+        # same as op_runtime/file.py — was missing here (permission-only gap).
         ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(config_path), ctx.skill_name,
+            sandbox_policy=_sandbox_policy_from_ctx(ctx),
         )
 
     # ── 3. Capture env keys before mutation ────────────────────────────
