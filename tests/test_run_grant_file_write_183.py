@@ -79,5 +79,7 @@ def test_run_parser_exposes_grant_file_write_flag() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers()
     register(sub)
-    assert parser.parse_args(["run", "swe_bench", "--grant-file-write", "{}"]).grant_file_write is True
-    assert parser.parse_args(["run", "swe_bench", "{}"]).grant_file_write is False
+    # NB: no trailing positional — a stray positional after the skill name is
+    # rejected by Python 3.11 argparse (3.12 tolerates intermixed positionals).
+    assert parser.parse_args(["run", "swe_bench", "--grant-file-write"]).grant_file_write is True
+    assert parser.parse_args(["run", "swe_bench"]).grant_file_write is False
