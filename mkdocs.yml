@@ -81,6 +81,7 @@ nav:
           - Using Reyn:
               - guide/for-users/chat-and-web-ui.md
               - guide/for-users/manage-permissions.md
+              - guide/for-users/configure-sandbox.md
               - guide/for-users/ask-user-mid-phase.md
           - Files & integrations:
               - guide/for-users/work-with-files.md
