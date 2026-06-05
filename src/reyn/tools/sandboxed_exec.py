@@ -17,18 +17,19 @@ from typing import Any, Mapping
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _SANDBOXED_EXEC_DESCRIPTION = (
-    "Execute a command in a sandboxed environment with policy-controlled "
-    "resource access (FP-0017). "
+    "Execute a command in a sandboxed environment (FP-0017). The sandbox "
+    "policy (network access + filesystem scope) is the OPERATOR's, resolved "
+    "by the OS — it is not chosen here. "
     "argv: command and arguments (argv[0] is the executable). "
-    "network: allow outbound network (default false). "
-    "read_paths: filesystem paths readable by the command. "
-    "write_paths: filesystem paths writable by the command. "
-    "allow_subprocess: may spawn child processes (default false). "
-    "env_passthrough: environment variable names to pass through. "
     "timeout_seconds: wall-clock time limit in seconds (default 60)."
 )
 
 
+# #1339 / sandbox-model completion: the tool exposes ONLY argv (+ timeout). The
+# sandbox policy (network / read_paths / write_paths / allow_subprocess /
+# env_passthrough) is operator-or-default, resolved onto the OpContext — the LLM
+# cannot set it via the tool. (The SandboxedExecIROp keeps those fields for
+# skill-authored Control IR; only this tool surface is trimmed.)
 _SANDBOXED_EXEC_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -36,29 +37,6 @@ _SANDBOXED_EXEC_PARAMETERS: dict[str, Any] = {
             "type": "array",
             "items": {"type": "string"},
             "description": "Command and arguments; argv[0] is the executable.",
-        },
-        "network": {
-            "type": "boolean",
-            "description": "Allow outbound network access (default false).",
-        },
-        "read_paths": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Filesystem paths readable by the command.",
-        },
-        "write_paths": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Filesystem paths writable by the command.",
-        },
-        "allow_subprocess": {
-            "type": "boolean",
-            "description": "Allow spawning child processes (default false).",
-        },
-        "env_passthrough": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "Environment variable names to pass through.",
         },
         "timeout_seconds": {
             "type": "integer",
@@ -82,14 +60,14 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import SandboxedExecIROp
 
+    # #1339 / sandbox-model completion: the LLM supplies only argv (+ timeout).
+    # The op's policy fields keep their defaults here — the effective sandbox
+    # policy is operator-or-default, resolved onto the OpContext
+    # (ctx.default_sandbox_policy), which the op_runtime handler applies over the
+    # op fields. The LLM cannot set network / fs scope via this tool.
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
         argv=args["argv"],
-        network=bool(args.get("network", False)),
-        read_paths=list(args.get("read_paths") or []),
-        write_paths=list(args.get("write_paths") or []),
-        allow_subprocess=bool(args.get("allow_subprocess", False)),
-        env_passthrough=list(args.get("env_passthrough") or []),
         timeout_seconds=int(args.get("timeout_seconds", 60)),
     )
 

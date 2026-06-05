@@ -51,13 +51,17 @@ async def handle(
     # container backend) may ignore this host path and use its own baked cwd.
     cwd = str(ctx.workspace.base_dir)
 
+    # #1339: emit the ACTUAL enforced policy values (from the resolved policy),
+    # not the op's request fields — the operator-or-default policy wins over op
+    # fields, so the trace must show what was enforced (a network:true op under
+    # a network:false policy ran WITHOUT network, and the event must say so).
     ctx.events.emit(
         "sandboxed_exec_started",
         argv=list(op.argv),
         backend=backend.name,
-        timeout_seconds=op.timeout_seconds,
-        network=op.network,
-        allow_subprocess=op.allow_subprocess,
+        timeout_seconds=policy.timeout_seconds,
+        network=policy.network,
+        allow_subprocess=policy.allow_subprocess,
     )
 
     result = await backend.run(list(op.argv), policy, cwd=cwd)
