@@ -184,7 +184,8 @@ class _RecordingPythonRunner:
     def __init__(self) -> None:
         self.sandbox_write_paths: Any = "UNSET"
 
-    def run(self, *, sandbox_write_paths=None, **kwargs):
+    async def run(self, *, sandbox_write_paths=None, **kwargs):
+        # #1352-B: PythonRunner.run is async now; the Fake mirrors the signature.
         self.sandbox_write_paths = sandbox_write_paths
         return {}  # validated against the step's permissive output_schema
 

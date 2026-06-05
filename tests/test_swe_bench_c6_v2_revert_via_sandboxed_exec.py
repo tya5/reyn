@@ -123,8 +123,10 @@ def test_parse_test_targets_safe_mode_no_violation() -> None:
         },
     }
     # Must not raise — especially not PythonStepError(kind='SafeModeViolation').
+    # #1352-B: PythonRunner.run is async now (routes through the sandbox backend
+    # when configured; here no backend → direct subprocess path).
     try:
-        result = runner.run(
+        result = asyncio.run(runner.run(
             skill_dir=_SKILL_ROOT,
             module="./parse_test_targets.py",
             function="parse_test_targets",
@@ -132,7 +134,7 @@ def test_parse_test_targets_safe_mode_no_violation() -> None:
             artifact=artifact,
             timeout=30,
             allowed_modules=[],
-        )
+        ))
     except PythonStepError as exc:
         pytest.fail(
             f"PythonRunner(mode='safe') raised PythonStepError — this reproduces the v1 regression.\n"
