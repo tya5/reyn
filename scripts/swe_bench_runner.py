@@ -419,6 +419,13 @@ def run_reyn_in_container(
             "--container", name,
             "--repo-dir", repo_dir,
             "--state-dir", host_state,
+            # #183: grant file.write so the apply phase can edit the repo working
+            # tree. The grant is bounded by the sandbox write_paths (= the
+            # in-container repo_dir) via the resolver's SandboxLayer ∩, so it
+            # scopes to the repo, not globally. Without it a non-interactive run
+            # leaves the skill's declared file.write "declared-but-not-granted"
+            # and apply aborts ("outside the allowed write zone").
+            "--grant-file-write",
         ]
         # #183: point the #1356 harness subprocess at the in-container venv python
         # (read by PythonRunner's REYN_HARNESS_PYTHON override — the only OS change).
