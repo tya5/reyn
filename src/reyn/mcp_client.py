@@ -150,16 +150,21 @@ class MCPClient:
             await stack.aclose()
             tail = self.read_stderr_tail()
             self.close_stderr_capture()
-            # #1344 migration hint: a sandboxed stdio server runs with network
-            # DISABLED by default (secure-by-default). A server that needs the
-            # network (e.g. a GitHub MCP) will fail init — point the operator at
-            # the `network: true` opt-in knob rather than leave an opaque error.
+            # #1344/#1339-D migration hint: a sandboxed stdio server defaults to
+            # the single-source network posture (DEFAULT_SANDBOX_NETWORK); the
+            # operator isolates a server with `network: false`. If a server was
+            # isolated and fails init for a network reason, point the operator at
+            # the knob rather than leave an opaque error.
+            from reyn.sandbox.policy import DEFAULT_SANDBOX_NETWORK
+
             hint = ""
-            if self._type == "stdio" and not self._config.get("network", False):
+            if self._type == "stdio" and not self._config.get(
+                "network", DEFAULT_SANDBOX_NETWORK
+            ):
                 hint = (
-                    "\nHint (#1344): this MCP server runs sandboxed with network "
-                    "DISABLED by default. If it needs network access, add "
-                    "`network: true` to its server config."
+                    "\nHint (#1344): this MCP server is sandboxed with network "
+                    "DISABLED (`network: false` in its config). If it needs "
+                    "network access, set `network: true` (or remove the override)."
                 )
             if tail:
                 raise MCPError(
@@ -311,16 +316,20 @@ class MCPClient:
 
         read broad (#1323 scoping) + the default sensitive deny-list; write tight
         to the server's working dir; ``network`` is OPERATOR-declared per server
-        (``network: true`` in the MCP config) and defaults OFF — secure-by-default,
-        because the sandbox policy is the operator's, not the LLM's. The default-off
-        means a network-needing server (e.g. a GitHub MCP) must declare
-        ``network: true`` (see the migration hint surfaced on init failure).
+        (``network: false`` in the MCP config to isolate) and defaults to
+        :data:`~reyn.sandbox.policy.DEFAULT_SANDBOX_NETWORK` (#1339 / sandbox-model
+        completion D) — the SAME single-source default as sandboxed_exec, so the
+        sandbox network posture is consistent across surfaces. The guarantee is
+        operator-ownership (the policy is the operator's, not the LLM's — the LLM
+        cannot set it), not default-off; an operator who wants an isolated server
+        sets ``network: false`` (see the migration hint surfaced on init failure).
         """
         from reyn.sandbox import SandboxPolicy
+        from reyn.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
         cwd = self._config.get("cwd") or os.getcwd()
         return SandboxPolicy(
-            network=bool(self._config.get("network", False)),
+            network=bool(self._config.get("network", DEFAULT_SANDBOX_NETWORK)),
             write_paths=[cwd],
         )
 

@@ -42,7 +42,7 @@ def _patch_backend(monkeypatch, backend) -> None:
 
 def test_seatbelt_wrap_wraps_command(monkeypatch):
     """Tier 2: under Seatbelt, the command is wrapped as sandbox-exec -f <profile>
-    cmd args; the profile is a deny-default SBPL with broad-read, network OFF."""
+    cmd args; the profile is a deny-default SBPL with broad-read."""
     _patch_backend(monkeypatch, _FakeBackend("seatbelt"))
     client = _stdio_client()
     cmd, args = client._sandbox_wrap_stdio("my-mcp", ["--flag"])
@@ -54,17 +54,39 @@ def test_seatbelt_wrap_wraps_command(monkeypatch):
     profile = Path(profile_path).read_text()
     assert "(deny default)" in profile
     assert "(allow file-read*)" in profile.splitlines()  # broad-read (#1323)
-    assert "(allow network*)" not in profile  # network OFF by default
+
+
+def test_seatbelt_wrap_network_default(monkeypatch):
+    """Tier 2: #1339-D reproduce-first — with no per-server override the Seatbelt
+    profile follows the single-source default (network ON when
+    DEFAULT_SANDBOX_NETWORK is True). FAILS on the pre-D hardcoded default-off
+    (asserts on observable wrap output, not the private policy object)."""
+    from reyn.sandbox.policy import DEFAULT_SANDBOX_NETWORK
+
+    _patch_backend(monkeypatch, _FakeBackend("seatbelt"))
+    client = _stdio_client()  # no `network` key
+    _cmd, args = client._sandbox_wrap_stdio("my-mcp", [])
+    profile = Path(args[1]).read_text()
+    assert ("(allow network*)" in profile) is DEFAULT_SANDBOX_NETWORK
 
 
 def test_seatbelt_wrap_network_opt_in(monkeypatch):
-    """Tier 2: an operator-declared `network: true` opts the server into network
-    (the per-server knob; default is off = secure-by-default)."""
+    """Tier 2: an operator-declared `network: true` keeps the server on network."""
     _patch_backend(monkeypatch, _FakeBackend("seatbelt"))
     client = _stdio_client(network=True)
     _cmd, args = client._sandbox_wrap_stdio("my-mcp", [])
     profile = Path(args[1]).read_text()
     assert "(allow network*)" in profile
+
+
+def test_seatbelt_wrap_network_opt_out(monkeypatch):
+    """Tier 2: #1339-D — an operator-declared `network: false` ISOLATES the server
+    (the opt-OUT knob; the network gate is now operator-set, not default-off)."""
+    _patch_backend(monkeypatch, _FakeBackend("seatbelt"))
+    client = _stdio_client(network=False)
+    _cmd, args = client._sandbox_wrap_stdio("my-mcp", [])
+    profile = Path(args[1]).read_text()
+    assert "(allow network*)" not in profile
 
 
 def test_non_seatbelt_warns_unsandboxed(monkeypatch):
