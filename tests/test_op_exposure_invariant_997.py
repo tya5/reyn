@@ -89,16 +89,6 @@ def _kinds(executor: ControlIRExecutor) -> set[str]:
 # ── Direction 1: op-exposure invariant ──────────────────────────────────────
 
 
-@pytest.mark.parametrize("shell_allowed", [True, False])
-def test_shell_advertised_iff_shell_allowed(tmp_path: Path, shell_allowed: bool) -> None:
-    """Tier 2: shell is in the op catalog exactly when shell_allowed is set."""
-    kinds = _kinds(_executor(tmp_path, shell_allowed=shell_allowed))
-    assert ("shell" in kinds) is shell_allowed, (
-        f"shell advertised={('shell' in kinds)} but shell_allowed={shell_allowed} "
-        f"— exposure must track the permission flag (#997 invariant)"
-    )
-
-
 @pytest.mark.parametrize(
     "mcp_servers, expect",
     [

@@ -147,11 +147,6 @@ def _op_output_schema(op_kind: str) -> dict:
             "type": "object",
             "description": "web_search op result: query, backend, results (list of {title, url, snippet}).",
         }
-    if op_kind == "shell":
-        return {
-            "type": "object",
-            "description": "shell op result: status, returncode, stdout, stderr.",
-        }
     if op_kind == "lint":
         return {
             "type": "object",

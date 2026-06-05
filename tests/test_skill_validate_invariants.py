@@ -74,23 +74,24 @@ def _build_skill_dir(
 
 
 def test_validate_detects_undeclared_permission(tmp_path: Path) -> None:
-    """Tier 2: phase allowed_ops includes 'shell' but skill.permissions has no shell declaration.
+    """Tier 2: phase allowed_ops includes 'mcp' but skill.permissions has no mcp declaration.
 
     Invariant: validate_skill_dir returns a ValidationResult with at least one
-    ERROR whose op_kind is 'shell'.  ok must be False.
+    ERROR whose op_kind is 'mcp'.  ok must be False. (#1352-A: migrated off the
+    removed `shell` Tier-2/3 gate to `mcp`, the canonical remaining gate.)
     """
     from reyn.skill.validator import validate_skill_dir
 
     skill_dir = _build_skill_dir(
         tmp_path,
         skill_permissions_yaml="",  # no permissions block at all
-        phase_allowed_ops=["shell"],
+        phase_allowed_ops=["mcp"],
     )
     result = validate_skill_dir(skill_dir)
-    assert not result.ok, "Expected validation to fail when shell undeclared"
+    assert not result.ok, "Expected validation to fail when mcp undeclared"
     error_ops = {e.op_kind for e in result.errors}
-    assert "shell" in error_ops, (
-        f"Expected error for 'shell', got errors: {[e.message for e in result.errors]}"
+    assert "mcp" in error_ops, (
+        f"Expected error for 'mcp', got errors: {[e.message for e in result.errors]}"
     )
 
 
@@ -121,28 +122,29 @@ def test_validate_passes_consistent_skill(tmp_path: Path) -> None:
 
 
 def test_validate_detects_dead_permission_declaration(tmp_path: Path) -> None:
-    """Tier 2: skill.permissions.shell=true but no phase lists 'shell' in allowed_ops → WARNING.
+    """Tier 2: skill.permissions.mcp declared but no phase lists 'mcp' in allowed_ops → WARNING.
 
     Invariant: validate_skill_dir returns a ValidationResult with ok=True
-    (no errors) and at least one WARNING for the dead 'shell' declaration.
+    (no errors) and at least one WARNING for the dead 'mcp' declaration.
+    (#1352-A: migrated off the removed `shell` Tier-2/3 gate to `mcp`.)
     """
     from reyn.skill.validator import validate_skill_dir
 
     skill_dir = _build_skill_dir(
         tmp_path,
-        skill_permissions_yaml="  shell: true\n",
-        phase_allowed_ops=["file"],  # shell declared but not used in any phase
+        skill_permissions_yaml="  mcp:\n    - github\n",
+        phase_allowed_ops=["file"],  # mcp declared but not used in any phase
     )
     result = validate_skill_dir(skill_dir)
-    # No errors expected (declaration exists for what's used; shell is declared
+    # No errors expected (declaration exists for what's used; mcp is declared
     # but file doesn't require a permission, so no error).
     assert result.ok, (
         f"Expected no errors, got: {[e.message for e in result.errors]}"
     )
-    # Warning for dead shell declaration.
+    # Warning for dead mcp declaration.
     warning_ops = {w.op_kind for w in result.warnings}
-    assert "shell" in warning_ops, (
-        f"Expected warning for dead 'shell' declaration, got warnings: "
+    assert "mcp" in warning_ops, (
+        f"Expected warning for dead 'mcp' declaration, got warnings: "
         f"{[w.message for w in result.warnings]}"
     )
 

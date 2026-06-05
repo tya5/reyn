@@ -21,8 +21,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
 | `run_skill` | Run another skill as a sub-workflow | none (skill-level decision) |
 | `lint` | Run the DSL linter on a skill directory | none |
-| `shell` | Run a shell command (**deprecated** — use `sandboxed_exec`) | `shell` (off by default; needs `--allow-shell`) |
-| `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` | enforced by backend (`SandboxPolicy`) |
+| `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (replaces the removed `shell` op, #1352-A) | enforced by backend (`SandboxPolicy`) |
 | `web_search` | Search the public web via DuckDuckGo | Tier 1 — default allow; `web.search: deny` in `reyn.yaml` blocks |
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
@@ -144,22 +143,6 @@ Runs the DSL linter on a skill directory. Used by skill-building skills (`skill_
   "skill_path": "reyn/local/my_skill"
 }
 ```
-
-## `shell`
-
-Executes a shell command. **Off by default.** The runtime must be started with `--allow-shell` AND the project must permit `shell` in `reyn.yaml` (or grant per-run via prompt).
-
-```json
-{
-  "kind": "shell",
-  "cmd": "reyn run my_skill 'hello'",
-  "timeout": 120
-}
-```
-
-If shell is denied, the OS emits `shell_not_allowed` and returns a denial result rather than failing the phase.
-
-**Deprecated.** Will be removed in 1.0. Use `sandboxed_exec` (below) — it routes through a `SandboxBackend` that enforces the declared `SandboxPolicy`. A `DeprecationWarning` is emitted on first `shell` invocation per skill.
 
 ## `sandboxed_exec`
 

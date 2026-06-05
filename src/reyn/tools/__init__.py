@@ -101,7 +101,6 @@ def get_default_registry() -> ToolRegistry:
         REYN_SRC_READ,
     )
     from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
-    from reyn.tools.shell import SHELL
 
     # FP-0034 PR-3a: universal catalog wrappers (registered in registry;
     # not yet added to router build_tools() — that lands in PR-3b).
@@ -155,9 +154,14 @@ def get_default_registry() -> ToolRegistry:
     registry.register(DESCRIBE_SKILL)
     registry.register(LIST_AGENTS)
     registry.register(DESCRIBE_AGENT)
-    # ── Phase-only capabilities (gates.router=deny, gates.phase=allow) ──
+    # ── Exec / lint / ask_user (gates declared per-tool) ──
+    # #1352-D: SANDBOXED_EXEC is router="allow" (chat-reachable; the exec
+    # category is additionally gated by is_exec_available = a real sandbox
+    # backend, not by gates.router) — it was previously mis-grouped under a
+    # "gates.router=deny" comment alongside the now-removed `shell` op (the only
+    # true router=deny here was shell / ask_user). LINT=router="allow",
+    # ASK_USER=router="deny".
     registry.register(SANDBOXED_EXEC)
-    registry.register(SHELL)
     registry.register(LINT)
     registry.register(ASK_USER)
     # ── Router-only capabilities (gates.router=allow, gates.phase=deny) ──

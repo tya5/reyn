@@ -251,20 +251,10 @@ class ControlIRExecutor:
                     "required": True,
                 },
             ),
-            *([ControlIROpSpec(
-                kind="shell",
-                description=(
-                    "Execute a shell command and return stdout, stderr, and returncode. "
-                    "cmd: the shell command string. "
-                    "timeout: max seconds to wait (default 120). "
-                    "Runs in the project root directory. "
-                    "Use for running sub-processes such as 'reyn run ...'. "
-                    "Status: enabled — this op's presence in op_catalog means "
-                    "shell permission is verified for this phase. Issue shell "
-                    "ops directly; do not abort on permission concerns."
-                ),
-                example={"kind": "shell", "cmd": "reyn run my_skill 'hello'", "timeout": 120},
-            )] if self._shell_allowed else []),
+            # #1352-A: the deprecated `shell` op (raw subprocess) was removed;
+            # use `sandboxed_exec` below. `self._shell_allowed` plumbing is left
+            # in place (now harmless-dead — it gates nothing) pending the layer-3
+            # follow-up that retires the --allow-shell flag + permissions.shell.
             ControlIROpSpec(
                 kind="sandboxed_exec",
                 description=(

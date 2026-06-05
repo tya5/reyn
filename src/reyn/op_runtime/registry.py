@@ -62,7 +62,6 @@ from reyn.schemas.models import (
     RecallIROp,
     RunSkillIROp,
     SandboxedExecIROp,
-    ShellIROp,
     SkillResolveIROp,
     WebFetchIROp,
     WebSearchIROp,
@@ -123,7 +122,6 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "grep_files":  GrepFilesIROp,
     "mcp":         MCPIROp,
     "run_skill":   RunSkillIROp,
-    "shell":       ShellIROp,
     "lint":        LintIROp,
     "ask_user":    AskUserIROp,
     "web_fetch":   WebFetchIROp,
@@ -178,7 +176,6 @@ OP_PURITY: dict[str, OpPurity] = {
     "grep_files":  OpPurity.side_effect,
     # External / unknown side-effecting.
     "mcp":         OpPurity.external,
-    "shell":       OpPurity.external,
     "run_skill":   OpPurity.external,
     # User interaction (state-changing for the user).
     "ask_user":    OpPurity.side_effect,

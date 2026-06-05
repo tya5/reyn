@@ -117,57 +117,10 @@ def _shell_legacy_ctx(ctx: ToolContext) -> OpContext:
     )
 
 
-# ── 1. shell.py bridge integration test (= the original sandbox_2 case) ────
-
-
-@pytest.mark.asyncio
-async def test_shell_bridge_preserves_phase_permission_decl(
-    tmp_path: Path,
-) -> None:
-    """Tier 2: shell.py bridge: phase's `shell=True` decl reaches handle_shell.
-
-    Pre-fix: hardcoded ``PermissionDecl()`` empty → ``require_shell``
-    raises ``PermissionError``. Post-fix: phase decl propagates →
-    require_shell sees ``decl.shell=True`` + delegates to layer-2/3
-    approval.
-
-    We monkeypatch ``handle_shell`` to capture the legacy_ctx instead
-    of actually running a shell command (= isolates the bridge logic).
-    """
-    captured: dict[str, Any] = {}
-
-    async def _capture_handle_shell(*, op, ctx, caller):
-        captured["legacy_ctx"] = ctx
-        captured["caller"] = caller
-        return {"status": "ok", "stdout": "", "stderr": "", "returncode": 0}
-
-    import reyn.op_runtime.shell as op_shell_mod
-    import reyn.tools.shell as shell_mod
-    real_handle = op_shell_mod.handle
-    op_shell_mod.handle = _capture_handle_shell
-    try:
-        skill_decl = PermissionDecl(shell=True)
-        phase_state = _build_phase_state(skill_decl)
-        tool_ctx = _build_tool_ctx_with_phase(phase_state, tmp_path)
-
-        await shell_mod._handle(
-            args={"cmd": "echo hi", "timeout": 1},
-            ctx=tool_ctx,
-        )
-    finally:
-        op_shell_mod.handle = real_handle
-
-    legacy_ctx: OpContext = captured["legacy_ctx"]
-    assert legacy_ctx.permission_decl is phase_state.op_context.permission_decl, (
-        "shell.py bridge must propagate phase_state.op_context.permission_decl "
-        "(not a fresh empty PermissionDecl). Pre-fix behaviour: the bridge "
-        "dropped the skill's `shell=True` declaration and the downstream "
-        "require_shell raised PermissionError on a valid call."
-    )
-    assert legacy_ctx.permission_decl.shell is True
-
-
-# ── 2. parametrized bridge invariant across 10 tool wrappers ──────────────
+# ── 1. parametrized bridge invariant across tool wrappers ──────────────
+# (#1352-A: the shell.py bridge integration test + the shell parametrize entry
+# were removed with the deprecated shell op; the lint / web_search wrappers
+# preserve the same Tool→OpContext decl-propagation invariant.)
 
 
 @pytest.mark.asyncio
@@ -175,7 +128,6 @@ async def test_shell_bridge_preserves_phase_permission_decl(
     "tool_module_name, handler_attr, build_args",
     [
         # (a) module-level _handle adapters that build legacy_ctx inline
-        ("reyn.tools.shell", "_handle", {"cmd": "echo hi"}),
         ("reyn.tools.lint", "_handle", {"skill_path": "reyn/local/x"}),
         ("reyn.tools.web_search", "_handle", {"query": "x"}),
     ],
