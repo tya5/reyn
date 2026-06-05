@@ -163,14 +163,23 @@ class OSRuntime:
         # executor so sandboxed_exec backend selection honors the operator's
         # declared backend / on_unsupported policy. None → platform default.
         self._sandbox_config = sandbox_config
-        # #1326: the agent-level (operator) sandbox policy carried by
-        # ``reyn.yaml sandbox.policy`` (None when the operator declares none →
-        # the SandboxLayer stays ⊤). Threaded into the phase / orchestrator /
-        # pre- + post-processor executors so it is the deterministic policy for
-        # the permission ∩ + sandboxed ops, replacing the retired phase-scoped
-        # default_sandbox_policy.
-        self._agent_sandbox_policy = (
-            sandbox_config.policy if sandbox_config is not None else None
+        # #1326 + #1352-#1: the agent-level sandbox policy threaded into the phase /
+        # orchestrator / pre- + post-processor executors as the deterministic
+        # policy for the permission ∩ + sandboxed ops.
+        #
+        # #1352-#1 symmetrization: previously this was the operator policy
+        # verbatim-or-None → when the operator declared no policy the phase
+        # SandboxLayer stayed ⊤ (permission-only), while chat (#1347) already
+        # resolved a CONCRETE default. resolve_sandbox_policy now gives phase the
+        # SAME operator-or-concrete-default (write-tight to the workspace
+        # base_dir, network=DEFAULT_SANDBOX_NETWORK, sensitive read-deny), so the
+        # sandbox ∩ is active for phase ops by default too. Operator config still
+        # wins verbatim when set. (Audit residual #1; chat/phase asymmetry closed.)
+        from reyn.sandbox.policy import resolve_sandbox_policy
+
+        self._agent_sandbox_policy = resolve_sandbox_policy(
+            sandbox_config.policy if sandbox_config is not None else None,
+            write_paths=[str(self.workspace.base_dir)],
         )
         # Issue #364 multi-modal cluster: media-size gate config.
         self._multimodal_config = multimodal_config
@@ -385,6 +394,16 @@ class OSRuntime:
     def phase_compaction_cfg(self) -> "PhaseActResultsCompactionConfig | None":
         """PR-N8: read-only accessor for wiring-verification tests."""
         return self._phase_compaction_cfg
+
+    @property
+    def agent_sandbox_policy(self) -> dict | None:
+        """#1352-#1: read-only accessor for the RESOLVED agent sandbox policy.
+
+        Mirrors the chat factory (#1347): resolve_sandbox_policy yields an
+        operator-or-concrete-default policy (never None) — wiring-verification
+        tests assert the symmetrization without reaching into private state.
+        """
+        return self._agent_sandbox_policy
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 

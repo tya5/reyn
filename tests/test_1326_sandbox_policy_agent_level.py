@@ -246,3 +246,40 @@ def test_postprocessor_cap_absent_without_agent_policy(tmp_path: Path) -> None:
     runner = _RecordingPythonRunner()
     _run_postprocessor(tmp_path, agent_policy=None, runner=runner)
     assert runner.sandbox_write_paths is None
+
+
+# ── #1352-#1: OSRuntime symmetrizes phase policy with chat (concrete default) ──
+
+
+def test_osruntime_resolves_concrete_default_when_operator_absent(tmp_path: Path) -> None:
+    """Tier 2: #1352-#1 reproduce-first — OSRuntime symmetrizes with the chat
+    factory (#1347): with NO operator sandbox.policy the resolved agent policy is a
+    CONCRETE default (write-tight to workspace base_dir, network=
+    DEFAULT_SANDBOX_NETWORK), NOT None. FAILS pre-#1 (was sandbox_config.policy-or-
+    None → None → the phase SandboxLayer stayed ⊤ = permission-only)."""
+    from reyn.kernel.runtime import OSRuntime
+    from reyn.sandbox.policy import DEFAULT_SANDBOX_NETWORK
+
+    runtime = OSRuntime(
+        _one_phase_skill(), model="gpt-3.5-turbo", run_id="sym-default",
+        workspace_base_dir=tmp_path,
+    )
+    pol = runtime.agent_sandbox_policy
+    assert pol is not None  # was None pre-#1 → phase ran permission-only
+    assert pol["network"] is DEFAULT_SANDBOX_NETWORK
+    assert pol["write_paths"] == [str(tmp_path.resolve())]  # write-tight to base_dir
+
+
+def test_osruntime_operator_policy_wins_verbatim(tmp_path: Path) -> None:
+    """Tier 2: #1352-#1 — an operator-declared reyn.yaml sandbox.policy is returned
+    verbatim (resolve_sandbox_policy passes config through), so symmetrization does
+    not override an explicit operator policy."""
+    from reyn.config import SandboxConfig
+    from reyn.kernel.runtime import OSRuntime
+
+    cfg = SandboxConfig(policy={"network": False, "write_paths": ["/only/here"]})
+    runtime = OSRuntime(
+        _one_phase_skill(), model="gpt-3.5-turbo", run_id="sym-operator",
+        workspace_base_dir=tmp_path, sandbox_config=cfg,
+    )
+    assert runtime.agent_sandbox_policy == {"network": False, "write_paths": ["/only/here"]}
