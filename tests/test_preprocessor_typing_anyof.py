@@ -29,6 +29,7 @@ from reyn.compiler.preprocessor_typing import (
     PreprocessorTypeError,
     _get_at_path,
     _require_parent_exists,
+    _set_at_path,
 )
 
 # ── schema builders ────────────────────────────────────────────────────────────
@@ -125,6 +126,30 @@ def test_oneof_no_branch_raises():
     schema = {"oneOf": [_branch_without_data(), _obj({"other": _str_schema()})]}
     with pytest.raises(PreprocessorTypeError):
         _get_at_path(schema, "data.x")
+
+
+# ── (d2) anyOf: a field added at the union ROOT by a prior step's `into` ───────
+
+
+def test_anyof_resolves_field_added_at_union_root():
+    """Tier 2: a field written at the union ROOT (by a prior step's `into` via
+    _set_at_path) is resolvable by _get_at_path — the into→iterate round-trip for
+    union-input phases (#1366: plan's `exploration | verify_state` input adds
+    `data._plan_symbols`, then iterates over it).
+
+    Without the root-properties fallthrough the anyOf short-circuit raises before
+    seeing the root-level field, so into→iterate worked only for single-type
+    inputs. _set_at_path already writes the new field at the union root (a sibling
+    `properties` of the anyOf); this confirms _get_at_path now reads it back.
+    """
+    union = {"anyOf": [_branch_without_data(), _branch_with_data_x()]}
+    # a prior python step does `into: data._plan_symbols`
+    enriched = _set_at_path(union, "data._plan_symbols", {"type": "array"})
+    # a later iterate step does `over: data._plan_symbols` — must resolve
+    result = _get_at_path(enriched, "data._plan_symbols")
+    assert result == {"type": "array"}
+    # and the original branch fields are still reachable (no regression)
+    assert _get_at_path(enriched, "data.x") == _str_schema()
 
 
 # ── (e) allOf: path present in at least one constraint ────────────────────────
