@@ -16,10 +16,10 @@ v2 mechanism (#1115 Stage 2 migrated it off the deprecated ``shell`` op):
      EnvironmentBackend (host or container) instead of the host-only shell op.
   3. Mirror in ``report.md`` preprocessor for source-only final diff.
 
-The verify / report phases declare a permissive ``default_sandbox_policy`` (D
-mechanism): the OS applies it to every sandboxed_exec op in the phase, winning
-over op fields. On host the platform default backend enforces it; on a container
-backend it is ignored (the container is the boundary).
+The sandbox policy for these phases' sandboxed_exec ops is the agent-level
+``reyn.yaml sandbox.policy`` (#1326; injected by the eval harness for the run),
+winning over op fields. On host the platform default backend enforces it; on a
+container backend it is ignored (the container is the boundary).
 
 ## Merge gate tests (mandatory per task spec)
 
@@ -458,26 +458,15 @@ def test_verify_md_parse_step_mode_safe() -> None:
     )
 
 
-def test_verify_and_report_declare_default_sandbox_policy() -> None:
-    """Tier 2: verify.md and report.md declare a default_sandbox_policy (D mechanism)."""
-    verify_md = (_SKILL_ROOT / "phases" / "verify.md").read_text(encoding="utf-8")
-    report_md = (_SKILL_ROOT / "phases" / "report.md").read_text(encoding="utf-8")
-    assert "default_sandbox_policy:" in verify_md, (
-        "verify.md must declare default_sandbox_policy for its sandboxed_exec ops"
-    )
-    assert "default_sandbox_policy:" in report_md, (
-        "report.md must declare default_sandbox_policy for its sandboxed_exec ops"
-    )
+def test_loader_wires_sandboxed_exec() -> None:
+    """Tier 2: loading swe_bench wires sandboxed_exec into the exec phases' allowed_ops.
 
-
-def test_loader_wires_default_sandbox_policy_and_sandboxed_exec() -> None:
-    """Tier 2: loading swe_bench produces Phase.default_sandbox_policy + sandboxed_exec allowed_ops.
-
-    Behavioral pin for the parser→ir→expander wiring (the frontmatter key must
-    reach the Phase object, not be dropped). Loads the real skill from disk.
+    Behavioral pin for the parser→ir→expander wiring. (#1326 retired the phase
+    `default_sandbox_policy`; the sandbox policy for the eval run is now agent-level
+    `reyn.yaml sandbox.policy`, injected by the eval harness — not a phase decl.)
+    Loads the real skill from disk.
     """
     from reyn.compiler.loader import load_dsl_skill
-    from reyn.sandbox import SandboxPolicy
 
     skill = load_dsl_skill(_SKILL_ROOT / "skill.md")
     for phase_name in ("verify", "report"):
@@ -485,13 +474,6 @@ def test_loader_wires_default_sandbox_policy_and_sandboxed_exec() -> None:
         assert "sandboxed_exec" in phase.allowed_ops, (
             f"{phase_name}.allowed_ops must include sandboxed_exec. Got: {phase.allowed_ops}"
         )
-        policy = phase.default_sandbox_policy
-        assert isinstance(policy, dict) and policy, (
-            f"{phase_name}.default_sandbox_policy must be a non-empty dict reaching "
-            f"the Phase object. Got: {policy!r}"
-        )
-        # SandboxPolicy must accept the declared kwargs (no unknown/typo'd key).
-        SandboxPolicy(**policy)
 
 
 def test_report_md_has_parse_step_and_iterate_step() -> None:

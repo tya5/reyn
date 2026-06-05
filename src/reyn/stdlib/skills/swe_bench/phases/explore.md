@@ -6,16 +6,6 @@ role: analyst
 model_class: standard
 allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, sandboxed_exec]
 max_act_turns: 20
-# FP-0008 #1115 Stage 2: policy for any sandboxed_exec op this phase runs while
-# exploring an arbitrary repository (e.g. git log / ls). Permissive; ignored by a
-# container EnvironmentBackend (the C7 path), best-effort on host backends.
-default_sandbox_policy:
-  network: true
-  read_paths: ["/"]
-  write_paths: ["/"]
-  allow_subprocess: true
-  env_passthrough: ["PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "LANG", "LC_ALL", "TMPDIR"]
-  timeout_seconds: 120
 ---
 
 Understand the problem by reading the `problem_statement` and finding the

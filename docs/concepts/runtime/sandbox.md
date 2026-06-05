@@ -55,7 +55,7 @@ sandbox:
 
 Sandbox configuration is **operator-level** — set in `reyn.yaml` or via CLI flags, not per-skill or per-phase. See [`reyn.yaml` reference → `sandbox:`](../../reference/config/reyn-yaml.md) for the full config schema.
 
-> **Phase-level `default_sandbox_policy` is deprecated.** The `default_sandbox_policy` field in `phase.md` frontmatter (per-phase sandbox override) is being retired — sandbox policy unifies at the agent level. Existing uses continue to work during the migration window but should be migrated to `reyn.yaml sandbox:` configuration.
+> **Phase-level `default_sandbox_policy` was removed.** Sandbox policy is agent-level operator configuration, not a per-phase skill declaration — configure it in [`reyn.yaml sandbox.policy`](../../reference/config/reyn-yaml.md). When set, that policy is the deterministic policy for sandboxed ops + the `SandboxLayer` of the permission intersection (it wins over op-declared fields, so a skill or the LLM cannot widen it); absent, the op-level fields govern. The `phase.md` frontmatter key is no longer parsed.
 
 ## See also
 

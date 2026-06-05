@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.compiler.loader import load_dsl_skill
-from reyn.sandbox import SandboxPolicy
 
 _SKILL_ROOT = (
     Path(__file__).parent.parent / "src" / "reyn" / "stdlib" / "skills" / "swe_bench"
@@ -39,20 +38,17 @@ def test_no_phase_allows_shell_op() -> None:
         )
 
 
-def test_exec_phases_use_sandboxed_exec_with_policy() -> None:
-    """Tier 2: every exec phase uses sandboxed_exec and declares a valid default_sandbox_policy."""
+def test_exec_phases_use_sandboxed_exec() -> None:
+    """Tier 2: every exec phase routes commands through sandboxed_exec.
+
+    (#1326 retired the phase `default_sandbox_policy`; the run's sandbox policy is
+    now the agent-level `reyn.yaml sandbox.policy`, injected by the eval harness.)"""
     skill = _skill()
     for name in _EXEC_PHASES:
         phase = skill.phases[name]
         assert "sandboxed_exec" in phase.allowed_ops, (
             f"Phase '{name}' must allow sandboxed_exec. Got: {phase.allowed_ops}"
         )
-        policy = phase.default_sandbox_policy
-        assert isinstance(policy, dict) and policy, (
-            f"Phase '{name}' must declare a non-empty default_sandbox_policy reaching "
-            f"the Phase object. Got: {policy!r}"
-        )
-        SandboxPolicy(**policy)  # raises on an unknown/typo'd key
 
 
 def test_skill_no_longer_declares_shell_permission() -> None:

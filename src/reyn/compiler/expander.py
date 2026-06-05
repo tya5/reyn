@@ -85,8 +85,6 @@ def expand_phase(
     )
     if phase_def.allowed_ops is not None:
         phase_kwargs["allowed_ops"] = phase_def.allowed_ops
-    if phase_def.default_sandbox_policy is not None:
-        phase_kwargs["default_sandbox_policy"] = phase_def.default_sandbox_policy
     return Phase(**phase_kwargs)
 
 

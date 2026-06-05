@@ -166,31 +166,16 @@ class OpContext:
     plan_step: dict | None = None
 
 
-def resolve_sandbox_policy_source(
-    agent_policy: dict | None, phase_policy: dict | None
-) -> dict | None:
-    """#1326 — resolve which sandbox-policy dict governs a phase/op.
-
-    The agent-level (operator) policy WINS: sandbox authorization is an
-    operator/run concern, so when ``reyn.yaml sandbox.policy`` is set it is the
-    deterministic policy (the LLM and the phase cannot widen it). The
-    ``phase_policy`` (the retired-but-migrating phase-scoped
-    ``default_sandbox_policy``) is only a fallback while the swe_bench eval lane
-    has not yet moved its policy to agent/run-level config. When that migration
-    lands the ``phase_policy`` arg is always ``None`` and this collapses to
-    ``return agent_policy`` (the retire follow-up deletes the fallback)."""
-    return agent_policy if agent_policy is not None else phase_policy
-
-
 def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":
-    """Build the phase ``SandboxPolicy`` from ``ctx.default_sandbox_policy``
-    (the dict declared in phase frontmatter), or ``None`` when unset.
+    """Build the ``SandboxPolicy`` from ``ctx.default_sandbox_policy`` (the
+    agent-level operator policy resolved onto the ctx; #1326), or ``None`` when
+    unset.
 
     #1199 S3.1c-2: the file / http gates fold this into their SandboxLayer ∩.
     Mirrors the conversion ``sandboxed_exec`` already uses
-    (``SandboxPolicy(**ctx.default_sandbox_policy)``) so the SAME phase policy
-    governs both the sandboxed_exec subprocess and the OS's in-process file/http
-    ops. ``None`` → the SandboxLayer is ⊤ (non-sandboxed callers unchanged)."""
+    (``SandboxPolicy(**ctx.default_sandbox_policy)``) so the SAME policy governs
+    both the sandboxed_exec subprocess and the OS's in-process file/http ops.
+    ``None`` → the SandboxLayer is ⊤ (non-sandboxed callers unchanged)."""
     if ctx.default_sandbox_policy is None:
         return None
     from reyn.sandbox.policy import SandboxPolicy

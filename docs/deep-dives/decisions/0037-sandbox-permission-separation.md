@@ -57,9 +57,9 @@ declaration.**
 - `reyn.yaml sandbox:` is the canonical location for sandbox backend and
   scoping configuration.
 - CLI flags (`--sandbox`, `--image`, `--mount`) are the runtime override.
-- `default_sandbox_policy` in `phase.md` frontmatter is **deprecated** and
-  being retired. During the migration window it continues to work; new skills
-  should not use it.
+- `default_sandbox_policy` in `phase.md` frontmatter is **retired** (#1326): the
+  key is no longer parsed (a phase that still declares it is silently ignored).
+  Sandbox policy is set at the agent level instead.
 - The `SandboxPolicy` on `sandboxed_exec` op fields still applies (per-op
   policy at execution time), but this is operator/OS context, not skill author
   declaration.
@@ -82,8 +82,8 @@ declaration.**
 - `docs/concepts/architecture/sandbox-vs-permission.md` — concept doc for
   operator and agent audiences (no history refs; published to site).
 - `docs/concepts/runtime/sandbox.md` — updated to agent-level framing;
-  deprecated `default_sandbox_policy`; updated SandboxPolicy field table.
-- `docs/reference/dsl/phase-md.md` — deprecation note on `default_sandbox_policy`.
+  retired `default_sandbox_policy`; updated SandboxPolicy field table.
+- `docs/reference/dsl/phase-md.md` — removal note on `default_sandbox_policy`.
 
 ## Consequences
 
@@ -92,5 +92,5 @@ declaration.**
 2. Operators have a single, clear location for containment configuration.
 3. The permission/sandbox orthogonality is explicitly documented; the two
    systems can evolve independently.
-4. Existing swe_bench phases that use `default_sandbox_policy` need to be
-   migrated during the #1326 window.
+4. The swe_bench phases' `default_sandbox_policy` was migrated to the agent-level
+   policy the eval harness injects (`reyn.yaml sandbox.policy`) — #1326.

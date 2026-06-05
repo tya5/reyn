@@ -7,17 +7,6 @@ model_class: standard
 can_finish: true
 allowed_ops: [sandboxed_exec]
 max_act_turns: 10
-# FP-0008 #1115 Stage 2 (D mechanism): policy applied to every sandboxed_exec
-# op in this phase (git diff / git checkout revert), winning over op fields.
-# Permissive — operates on an arbitrary repository's working tree. Ignored on a
-# container EnvironmentBackend (the C7 path); best-effort on host backends.
-default_sandbox_policy:
-  network: true
-  read_paths: ["/"]
-  write_paths: ["/"]
-  allow_subprocess: true
-  env_passthrough: ["PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "LANG", "LC_ALL", "TMPDIR"]
-  timeout_seconds: 120
 preprocessor:
   # FP-0008 C6 v2 — belt-and-suspenders: revert test_patch-target files before
   # git diff HEAD so the final solution patch is source-only regardless of

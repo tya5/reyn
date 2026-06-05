@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any
 import jsonschema
 
 from reyn.llm.pricing import TokenUsage
-from reyn.op_runtime.context import resolve_sandbox_policy_source
 from reyn.python_runner import PythonRunner, PythonStepError
 
 if TYPE_CHECKING:
@@ -136,11 +135,11 @@ class PreprocessorExecutor:
         # preprocessor sandboxed_exec runs in the same (container) target as the
         # rest of the run. None → platform auto-detect (unchanged host behavior).
         self._sandbox_backend = sandbox_backend
-        # #1326: agent-level (operator) sandbox policy. WINS over the phase-scoped
-        # default_sandbox_policy via resolve_sandbox_policy_source — and is the
-        # ONLY source in the postprocessor path (whose _PostprocessorScope carries
-        # no phase policy), which is what makes the index write-gate fire there
-        # (dissolves #1321).
+        # #1326: agent-level (operator) sandbox policy (reyn.yaml sandbox.policy).
+        # The deterministic policy for this run's sandboxed ops + the SandboxLayer
+        # of the permission ∩. It is also the source for the postprocessor path
+        # (whose _PostprocessorScope is skill-level, not a phase), which is what
+        # makes the index write-gate fire there (#1321). None → no agent policy.
         self._agent_sandbox_policy = agent_sandbox_policy
 
     @property
@@ -184,12 +183,9 @@ class PreprocessorExecutor:
             secret_store=self._secret_store,
             # FP-0008 #1115 Stage 2: per-run injected exec backend instance.
             sandbox_backend=self._sandbox_backend,
-            # FP-0008 #1115 Stage 2 (D): phase-level default SandboxPolicy so a
-            # preprocessor sandboxed_exec uses the phase's declared policy.
-            default_sandbox_policy=resolve_sandbox_policy_source(
-                self._agent_sandbox_policy,
-                getattr(phase, "default_sandbox_policy", None),
-            ),
+            # #1326: the agent-level (operator) sandbox policy governs a
+            # preprocessor sandboxed_exec (deterministic; WINS over op fields).
+            default_sandbox_policy=self._agent_sandbox_policy,
         )
 
     async def run(
@@ -577,16 +573,11 @@ class PreprocessorExecutor:
         # step's host-direct index write (reyn.safe.embed_index →
         # SqliteIndexBackend) self-gates against it. None when no policy (or no
         # write_paths) → no cap (unchanged).
-        # #1326: the source is now the agent-level (operator) policy, WINNING over
-        # the migrating phase policy. The index write runs in the POSTPROCESSOR
-        # path, whose _PostprocessorScope carries no phase policy — so the
-        # agent-level source is what makes this write-gate fire end-to-end
-        # (dissolves the #1321 gap). getattr keeps the phase fallback for the
-        # preprocessor path (PhaseIR has the field) during migration.
-        _sbx = resolve_sandbox_policy_source(
-            self._agent_sandbox_policy,
-            getattr(phase, "default_sandbox_policy", None),
-        ) or None
+        # #1326: the source is the agent-level (operator) policy. The index write
+        # runs in the POSTPROCESSOR path, whose _PostprocessorScope is skill-level
+        # (not a phase) — so the agent-level source is what makes this write-gate
+        # fire end-to-end (#1321).
+        _sbx = self._agent_sandbox_policy
         sandbox_write_paths = (
             list(_sbx.get("write_paths") or [])
             if isinstance(_sbx, dict) and _sbx.get("write_paths") is not None

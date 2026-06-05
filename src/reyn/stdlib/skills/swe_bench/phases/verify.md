@@ -7,21 +7,6 @@ model_class: standard
 allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, sandboxed_exec]
 max_retries: 3
 max_act_turns: 30
-# FP-0008 #1115 Stage 2 (D mechanism): the OS applies this policy to every
-# sandboxed_exec op in this phase, winning over the op's own fields (the LLM
-# cannot weaken or strengthen it). This phase runs an arbitrary repository's
-# git + test suite, which inherently needs broad filesystem + subprocess +
-# network access — so the policy is permissive. On a container EnvironmentBackend
-# (the C7 path) the policy is ignored entirely (the container IS the boundary);
-# on host backends it is best-effort enforcement. timeout_seconds bounds the
-# longest op (pytest).
-default_sandbox_policy:
-  network: true
-  read_paths: ["/"]
-  write_paths: ["/"]
-  allow_subprocess: true
-  env_passthrough: ["PATH", "HOME", "PYTHONPATH", "VIRTUAL_ENV", "LANG", "LC_ALL", "TMPDIR"]
-  timeout_seconds: 600
 preprocessor:
   # FP-0008 PR-N15 / #1115 Stage 0: deterministic entry-input passthrough.
   # The OS injects the skill's original entry artifact (the `swe_bench_input`)
@@ -68,7 +53,8 @@ preprocessor:
   # cwd-anchor PR) = the SWE-bench repo root, so git checkout operates on the
   # correct working tree even in concurrent benchmark runs, and routes through
   # the run's EnvironmentBackend (host or container) instead of the deprecated
-  # shell op.  The phase default_sandbox_policy (above) governs the policy.
+  # shell op.  The agent-level sandbox policy (reyn.yaml sandbox.policy, set for
+  # the eval run) governs the sandboxed_exec policy.
   #
   # args_from {argv: "_iter.item"} is resolved by _materialize_op:
   # the IterateStep injects {_iter: {item: <argv_list>}} into iter_artifact
