@@ -56,7 +56,12 @@ Two sub-categories:
 - **Tier 2c — Multi-component integration (e2e)**: a single test exercises
   several modules to verify end-to-end behavior of an invariant. Uses
   real instances throughout; LLM is faked via a stub real callable
-  (NOT via `LLMReplay` — that path is Tier 3). Examples:
+  (NOT via `LLMReplay` — that path is Tier 3). **The LLM is the only
+  collaborator that may be faked.** Replacing a non-LLM collaborator
+  (e.g. a backend, a launcher, an external service) with a fake
+  exercises only the caller's logic — the collaborator's own construction
+  and behavior remain unverified. Integration of such collaborators is
+  proven only by tests that run the real thing. Examples:
   - "Crash mid-skill → restart → resume → completes" (`test_resume_e2e.py`)
   - "Schema mismatch → CLI exits cleanly with `--reset` hint"
   - "BudgetTracker cap enforced across crash + restart"
