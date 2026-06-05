@@ -30,16 +30,21 @@ reyn's permission system gates four kinds of capability: file paths, shell, MCP 
 
 Read/glob/grep anywhere under the project root. Write/edit/delete only under `.reyn/` or `reyn/`. No shell, no MCP, no Python.
 
-**Exception — protected write paths:** Four paths inside `.reyn/` are carved out from the default write grant because each backs a capability-gated operation that carries its own approval gate and audit event. Allowing direct writes to these paths via the broad `.reyn/` zone would bypass those controls — a skill could silently register a new capability without going through the intended authorization flow.
+**Exception — protected write paths:** A small set of paths inside `.reyn/` are carved out from the default write grant because a direct write would bypass an authorization or audit surface. The carve-out is deliberately narrow — a path needs it only when it lacks a *downstream* gate.
 
-| Protected path | Backs |
-|---|---|
-| `.reyn/approvals.yaml` | The persistent approval store — only the runtime authorization flow writes here |
-| `.reyn/mcp.yaml` | MCP server configuration |
-| `.reyn/cron.yaml` | Cron job registry |
-| `.reyn/index/sources.yaml` | Index source registry |
+| Protected path | Backs | Why carved out |
+|---|---|---|
+| `.reyn/approvals.yaml` | The persistent approval store — only the runtime authorization flow writes here | Permanent. It *is* the approval gate; there is no later use-gate, so a direct write would silently activate a never-approved grant on the next startup (#1199). |
+| `.reyn/index/sources.yaml` | Index source registry | Transitional — carved out until the S3.4 part1 op-layer gate lands. |
 
-A skill that legitimately needs to write one of these paths must declare it explicitly (e.g. `file.write: [{path: ".reyn/mcp.yaml"}]` in `skill.md` frontmatter) and obtain the corresponding approval. The intended route for these operations is the appropriate gated op handler — not direct file writes.
+**Protect-at-use (principle).** A config-write carve-out is *redundant* when the capability it configures is gated downstream at use time. `.reyn/mcp.yaml` and `.reyn/cron.yaml` were therefore **removed** from the carve-out:
+
+- `.reyn/mcp.yaml` — writing it (installing a server) grants nothing on its own. *Using* a server still passes a per-server check at call time (`require_mcp`), so download + execute of the server package is gated regardless of who wrote the config.
+- `.reyn/cron.yaml` — registering a job goes through the standard tool gate (`require_cron_register` / `require_file_write`); fired jobs run only under a user-launched in-process scheduler, and each fired op is itself permission-gated.
+
+A skill that legitimately needs to write a *still-protected* path must declare it explicitly (e.g. `file.write: [{path: ".reyn/index/sources.yaml"}]` in `skill.md` frontmatter) and obtain the corresponding approval. The intended route remains the appropriate gated op handler — not direct file writes.
+
+**Residual risk.** With mcp/cron at protect-at-use, a safe-mode step *can* now write `.reyn/mcp.yaml` / `.reyn/cron.yaml` directly via the broad `.reyn/` zone. This is intentional and bounded: the write changes only inert configuration. The authority it appears to grant (an MCP server, a cron job) is not realized until the gated use path (`require_mcp` / scheduler + op gates) is crossed, which a config write cannot bypass. The approval store keeps its carve-out precisely because it has no such downstream gate.
 
 ### Layer 2: skill declarations
 

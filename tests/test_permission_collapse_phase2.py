@@ -2,12 +2,14 @@
 
 Verifies the OS-invariants introduced by Phase 2:
 
-1. The canonical protected paths (.reyn/mcp.yaml / .reyn/cron.yaml /
-   .reyn/index/sources.yaml / .reyn/approvals.yaml) are excepted from the
-   broad `.reyn/` default write zone — direct `safe.file.write` to them
-   requires an explicit `file.write: [{path: ...}]` declaration. The
-   approvals.yaml entry (#1199) must hold on BOTH the permissions.py and
-   safe.file enforcement copies (drift-guarded).
+1. The canonical protected paths (.reyn/index/sources.yaml transitionally
+   + .reyn/approvals.yaml) are excepted from the broad `.reyn/` default
+   write zone — direct `safe.file.write` to them requires an explicit
+   `file.write: [{path: ...}]` declaration. The approvals.yaml entry
+   (#1199) must hold on BOTH the permissions.py and safe.file enforcement
+   copies (drift-guarded). .reyn/mcp.yaml and .reyn/cron.yaml were REMOVED
+   from this set (protect-at-use — a downstream use-gate makes the
+   config-write carve-out redundant); they are now default-zone-allowed.
 2. The bool-axis compat shim in `PermissionDecl.from_dict` expands each
    set bool axis (mcp_install / mcp_drop_server / cron_register /
    index_drop) into the equivalent `file.write` entry, so existing
@@ -37,7 +39,7 @@ from reyn.permissions.permissions import (
 
 
 def test_canonical_protected_paths_excepted_from_default_zone(tmp_path, monkeypatch):
-    """Tier 2: the 3 canonical paths return False from _in_default_write_zone."""
+    """Tier 2: each canonical protected path returns False from _in_default_write_zone."""
     monkeypatch.chdir(tmp_path)
     for rel in _CANONICAL_PROTECTED_WRITE_PATHS:
         assert _in_default_write_zone(rel) is False, (
@@ -57,6 +59,10 @@ def test_other_reyn_paths_still_in_default_zone(tmp_path, monkeypatch):
         ".reyn/events.jsonl",
         ".reyn/scratch/anything.txt",
         "reyn/local/whatever.py",
+        # realignment: mcp.yaml + cron.yaml REMOVED from the carve-out
+        # (protect-at-use) — they are now ordinary default-zone writes.
+        ".reyn/mcp.yaml",
+        ".reyn/cron.yaml",
     ):
         assert _in_default_write_zone(rel) is True, (
             f"{rel!r} should remain in the default write zone (non-canonical)"
@@ -70,7 +76,7 @@ def test_require_file_write_rejects_canonical_without_decl(tmp_path, monkeypatch
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl()  # no axes set
     with pytest.raises(PermissionError, match="was not approved"):
-        resolver.require_file_write(decl, ".reyn/mcp.yaml", "skill_x")
+        resolver.require_file_write(decl, ".reyn/index/sources.yaml", "skill_x")
 
 
 def test_require_file_write_rejects_approvals_yaml(tmp_path, monkeypatch):
@@ -99,10 +105,12 @@ def test_require_file_write_accepts_canonical_after_session_approval(tmp_path, m
     """
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
-    decl = PermissionDecl(file_write=[{"path": ".reyn/mcp.yaml", "scope": "just_path"}])
-    resolver.session_approve_path(".reyn/mcp.yaml", "skill_x", "file.write")
+    decl = PermissionDecl(
+        file_write=[{"path": ".reyn/index/sources.yaml", "scope": "just_path"}]
+    )
+    resolver.session_approve_path(".reyn/index/sources.yaml", "skill_x", "file.write")
     # Should not raise — startup_guard's session approval covers the path.
-    resolver.require_file_write(decl, ".reyn/mcp.yaml", "skill_x")
+    resolver.require_file_write(decl, ".reyn/index/sources.yaml", "skill_x")
 
 
 # ── legacy bool-axis keys are removed (#571 Phase 5) ───────────────────────────
@@ -139,7 +147,7 @@ def test_canonical_path_via_explicit_file_write_requires_startup_approval(tmp_pa
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl.from_dict({
-        "file.write": [{"path": ".reyn/mcp.yaml", "scope": "just_path"}],
+        "file.write": [{"path": ".reyn/index/sources.yaml", "scope": "just_path"}],
     })
     from reyn.permissions.permissions import _in_default_write_zone
     prompt_paths = [
@@ -149,7 +157,7 @@ def test_canonical_path_via_explicit_file_write_requires_startup_approval(tmp_pa
         and not _in_default_write_zone(entry["path"])
         and not resolver._is_path_approved_for(entry["path"], "skill_x", "file.write")
     ]
-    assert ".reyn/mcp.yaml" in prompt_paths
+    assert ".reyn/index/sources.yaml" in prompt_paths
 
 
 # ── reyn.safe.file enforcement ────────────────────────────────────────────────
@@ -166,7 +174,7 @@ def test_safe_file_check_write_rejects_canonical_via_parent_dir(tmp_path, monkey
         write_paths=[str(tmp_path / ".reyn"), str(tmp_path / "reyn")],
     )
     with pytest.raises(PermissionError, match="canonical protected path"):
-        safe_file._check_write(str(tmp_path / ".reyn" / "mcp.yaml"))
+        safe_file._check_write(str(tmp_path / ".reyn" / "index" / "sources.yaml"))
 
 
 def test_safe_file_check_write_accepts_canonical_via_explicit_path(tmp_path, monkeypatch):
@@ -179,11 +187,11 @@ def test_safe_file_check_write_accepts_canonical_via_explicit_path(tmp_path, mon
         write_paths=[
             str(tmp_path / ".reyn"),
             str(tmp_path / "reyn"),
-            str(tmp_path / ".reyn" / "mcp.yaml"),  # explicit
+            str(tmp_path / ".reyn" / "index" / "sources.yaml"),  # explicit
         ],
     )
     # Should not raise.
-    safe_file._check_write(str(tmp_path / ".reyn" / "mcp.yaml"))
+    safe_file._check_write(str(tmp_path / ".reyn" / "index" / "sources.yaml"))
 
 
 def test_safe_file_check_write_still_allows_non_canonical_under_reyn(tmp_path, monkeypatch):
@@ -237,3 +245,38 @@ def test_canonical_protected_lists_stay_in_sync():
     from reyn.safe.file import _CANONICAL_PROTECTED_WRITE_PATHS as safe_paths
 
     assert _CANONICAL_PROTECTED_WRITE_PATHS == safe_paths
+
+
+def test_mcp_cron_now_allowed_after_carveout_removal(tmp_path, monkeypatch):
+    """Tier 2: realignment — .reyn/mcp.yaml and .reyn/cron.yaml are removed from the
+    carve-out (protect-at-use), so a broad-zone write to them is ALLOWED on both
+    enforcement paths. Safety holds downstream: using a server passes require_mcp
+    (op_runtime/mcp.py) and cron jobs fire only under a user-launched, op-gated
+    scheduler — so writing the config alone grants nothing usable.
+
+    Falsification contrast: .reyn/approvals.yaml (no downstream use-gate) is still
+    DENIED via the same broad zone — the removal is specific to mcp/cron, not a
+    blanket relaxation.
+    """
+    monkeypatch.chdir(tmp_path)
+    resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
+    from reyn.safe import file as safe_file
+
+    safe_file._set_permission_context(
+        read_paths=[str(tmp_path)],
+        write_paths=[str(tmp_path / ".reyn"), str(tmp_path / "reyn")],
+    )
+
+    for rel in (".reyn/mcp.yaml", ".reyn/cron.yaml"):
+        # permissions.py path: no explicit decl needed — now in the default zone.
+        assert _in_default_write_zone(rel) is True
+        assert _is_canonical_protected_write(rel) is False
+        resolver.require_file_write(PermissionDecl(), rel, "skill_x")
+        # safe.file enforcement path: broad-zone prefix match is enough now.
+        safe_file._check_write(str(tmp_path / rel))
+
+    # contrast: approvals.yaml remains protected on both paths.
+    with pytest.raises(PermissionError, match="was not approved"):
+        resolver.require_file_write(PermissionDecl(), ".reyn/approvals.yaml", "skill_x")
+    with pytest.raises(PermissionError, match="canonical protected path"):
+        safe_file._check_write(str(tmp_path / ".reyn" / "approvals.yaml"))

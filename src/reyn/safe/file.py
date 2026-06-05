@@ -70,14 +70,20 @@ _read_paths: tuple[str, ...] = ()
 _write_paths: tuple[str, ...] = ()
 _context_initialised: bool = False
 
-# #571 collapse arc Phase 2: canonical paths whose write must go through
-# a specific op handler (= mcp_install / mcp_drop_server / cron_register
-# / index_drop) or, for ``.reyn/approvals.yaml``, the runtime
-# approval-decision flow (#1199). Listing one of these in ``_write_paths``
-# via a parent directory (e.g. ``.reyn/``) is no longer enough; the path
-# must appear in ``_write_paths`` *exactly* (= via an explicit
-# ``file.write: [{path: ...}]`` decl, or via the bool-axis compat shim
-# that auto-expands to the same entry).
+# #571 collapse arc Phase 2 / realignment: canonical paths whose write
+# must go through a specific op handler (= ``index_drop`` for
+# ``.reyn/index/sources.yaml``, transitionally) or, for
+# ``.reyn/approvals.yaml``, the runtime approval-decision flow (#1199).
+# Listing one of these in ``_write_paths`` via a parent directory
+# (e.g. ``.reyn/``) is no longer enough; the path must appear in
+# ``_write_paths`` *exactly* (= via an explicit ``file.write: [{path:
+# ...}]`` decl, or via the bool-axis compat shim that auto-expands to
+# the same entry).
+#
+# Protect-at-use migration: ``.reyn/mcp.yaml`` and ``.reyn/cron.yaml``
+# were REMOVED from this set — using a server (``require_mcp``) / firing
+# a cron job (gated, user-launched scheduler) is gated downstream, so the
+# config-write carve-out is redundant. See the parent permissions.py note.
 #
 # #1199 (safe.file side): ``.reyn/approvals.yaml`` is the persisted
 # approval store, written ONLY via the gated approval-decision mechanism.
@@ -93,8 +99,6 @@ _context_initialised: bool = False
 # modules because this one runs in the python-harness subprocess where
 # importing the parent's permissions module is not always available.
 _CANONICAL_PROTECTED_WRITE_PATHS = (
-    ".reyn/mcp.yaml",
-    ".reyn/cron.yaml",
     ".reyn/index/sources.yaml",
     ".reyn/approvals.yaml",
 )

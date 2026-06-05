@@ -56,24 +56,32 @@ if TYPE_CHECKING:
 
 _DEFAULT_WRITE_ZONES = (".reyn", "reyn")
 
-# #571 collapse arc Phase 2: canonical paths whose write is gated by a
-# specific op handler (= mcp_install / mcp_drop_server / cron_register /
-# index_drop) AND therefore must not be silently default-zone-allowed.
-# Skills that legitimately need to mutate these must declare them
-# explicitly via ``file.write: [{path: ...}]`` (or via the bool-axis
-# compat shim that auto-expands into the equivalent file.write entry —
-# see ``PermissionDecl._compat_expand_bool_axes``).
+# #571 collapse arc Phase 2 / realignment: canonical paths whose write
+# must NOT be silently default-zone-allowed because a direct write would
+# bypass an authorization / audit surface.
 #
-# Why exempt these specific paths only: they back capability that the
-# OS treats as a distinct event-emit + audit-trail surface (server
-# install / cron register / index drop). Letting any safe-mode python
-# step write them via the broad ``.reyn/`` default zone bypasses the
-# corresponding gate. The narrow exception preserves the broad
-# ``.reyn/`` write zone for everything else (= chunkers, cursors,
-# scratch state).
+# Protect-at-use migration: ``.reyn/mcp.yaml`` and ``.reyn/cron.yaml`` were
+# REMOVED from this set. Their config carve-out is redundant given a
+# downstream use-gate — writing the config alone grants nothing usable:
+#   - mcp.yaml: USING a server passes a per-server gate at call time
+#     (``require_mcp``, op_runtime/mcp.py). Installing (= writing mcp.yaml)
+#     without that gate is inert.
+#   - cron.yaml: registering a job goes through the standard tool gate
+#     (``require_cron_register`` / ``require_file_write``); fired jobs only
+#     run under a user-launched in-process scheduler and their ops are
+#     themselves permission-gated.
+# ``.reyn/index/sources.yaml`` stays carved out transitionally until the
+# S3.4 part1 op-layer gate lands. ``.reyn/approvals.yaml`` stays
+# permanently — it is the approval store itself and has no downstream
+# use-gate (see below).
+#
+# Skills that legitimately need to mutate a carved-out path must declare
+# it explicitly via ``file.write: [{path: ...}]`` (or the bool-axis compat
+# shim that auto-expands into the equivalent entry). Letting a safe-mode
+# python step write one via the broad ``.reyn/`` default zone bypasses the
+# corresponding gate. The narrow exception preserves the broad ``.reyn/``
+# write zone for everything else (= chunkers, cursors, scratch state).
 _CANONICAL_PROTECTED_WRITE_PATHS = (
-    ".reyn/mcp.yaml",
-    ".reyn/cron.yaml",
     ".reyn/index/sources.yaml",
     # #1199 security fix: the persisted approval store. It is written ONLY via
     # the gated approval-decision mechanism (``_persist`` — which also emits the
@@ -113,11 +121,13 @@ def _is_canonical_protected_write(path_str: str) -> bool:
 def _in_default_write_zone(path_str: str) -> bool:
     """Return True if path falls within a default-granted write zone (.reyn/ or reyn/).
 
-    Exception: canonical paths gated by specific op handlers (#571
-    collapse arc Phase 2 — ``.reyn/mcp.yaml`` / ``.reyn/cron.yaml`` /
-    ``.reyn/index/sources.yaml``) return False here so the corresponding
-    skill / op handler is forced to declare the explicit ``file.write``
-    entry (= or the bool-axis compat shim expands to it).
+    Exception: canonical protected paths (see
+    ``_CANONICAL_PROTECTED_WRITE_PATHS`` — ``.reyn/index/sources.yaml``
+    transitionally + ``.reyn/approvals.yaml``) return False here so the
+    write is forced through its explicit ``file.write`` declaration / gated
+    flow rather than the broad ``.reyn/`` zone. ``.reyn/mcp.yaml`` and
+    ``.reyn/cron.yaml`` were removed from this set (protect-at-use — their
+    downstream use-gate makes the config carve-out redundant).
     """
     if _is_canonical_protected_write(path_str):
         return False
