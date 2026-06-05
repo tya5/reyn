@@ -105,6 +105,14 @@ class WorkerSpec:
     # workers keep the production-default head/tail (= 12/12) so the
     # 4-entry skill-spawn turn pattern survives the slicer.
     compaction_grant: bool = False
+    # #1335 strict-permission / enforcement profile: when true, the worker's
+    # reyn.local.yaml is prepared WITHOUT the routing-runner blanket grants
+    # (file.write: allow / sandbox.backend: noop / web.fetch: allow) so
+    # permission + sandbox-enforcement scenarios (carve-out / broad-read /
+    # write-tight / network-off) reach their REAL gates (Seatbelt/Landlock +
+    # the permission resolver) instead of being short-circuited. Default
+    # (false) keeps the routing/functional env that only tests op routing.
+    enforcement_profile: bool = False
 
 
 @dataclass(frozen=True)
@@ -184,6 +192,7 @@ def load_batch_config(path: Path) -> BatchConfig:
             worktree=w["worktree"],
             agent_prefix=w["agent_prefix"],
             compaction_grant=bool(w.get("compaction_grant", False)),
+            enforcement_profile=bool(w.get("enforcement_profile", False)),
         ))
 
     past_batches = tuple(
