@@ -192,12 +192,25 @@ class LandlockBackend:
             )
             ruleset = landlock.Ruleset()  # type: ignore[attr-defined]
 
-            for path in policy.read_paths:
-                # TODO(fp-0017-b): Linux validation needed — verify access right constants.
-                ruleset.add_path_beneath_rule(  # type: ignore[attr-defined]
-                    path,
-                    read_only=True,
-                )
+            # #1199 realignment — broad read surface. Landlock is allowlist-only
+            # (path-beneath grants; anything not granted is denied), so broad-read
+            # is a single read rule on the filesystem root. This subsumes the old
+            # per-path read allowlist (policy.read_paths) AND fixes the Linux gap
+            # where system paths (/usr, /lib, dyld-equivalents) had to be
+            # enumerated for binaries to even load.
+            #
+            # Residual risk: Landlock CANNOT express a read deny-list (you cannot
+            # carve a subpath out of an allowed parent), so policy.read_deny_paths
+            # is NOT enforced here — unlike Seatbelt (SBPL deny-after-allow). The
+            # core guarantee rests instead on the network gate below: a compromised
+            # process on Linux may read sensitive paths but cannot exfiltrate
+            # (network off unless policy.network). This asymmetry is documented in
+            # the permission-model residual-risk section.
+            # TODO(fp-0017-b): Linux validation needed — verify access right constants.
+            ruleset.add_path_beneath_rule(  # type: ignore[attr-defined]
+                "/",
+                read_only=True,
+            )
 
             for path in policy.write_paths:
                 # TODO(fp-0017-b): Linux validation needed — verify access right constants.
