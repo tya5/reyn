@@ -290,10 +290,9 @@ def _build_runner():
         logger = make_logger()
 
         # #997 dir2: config-derived permission/runtime bundle wired by
-        # Agent.from_config (cron jobs run unattended → shell_allowed=False).
+        # Agent.from_config (cron jobs run unattended).
         agent = Agent.from_config(
             config,
-            shell_allowed=False,
             model=resolved,
             resolver=resolver,
             strict=False,

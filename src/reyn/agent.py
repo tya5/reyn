@@ -46,7 +46,6 @@ class Agent:
         strict: bool = False,
         subscribers: list[Callable] | None = None,
         intervention_bus: RequestBus | None = None,
-        shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
         safety: "SafetyConfig | None" = None,
@@ -80,7 +79,6 @@ class Agent:
         self.strict = strict
         self._subscribers = list(subscribers or [])
         self._intervention_bus = intervention_bus
-        self._shell_allowed = shell_allowed
         # #1212: skills opted into the native-tools op-loop (config-driven gate,
         # threaded to OSRuntime so the op-loop is reachable on the real run path).
         self._tool_calls_op_loop_skills = list(tool_calls_op_loop_skills or [])
@@ -134,7 +132,6 @@ class Agent:
         cls,
         config: "ReynConfig",
         *,
-        shell_allowed: bool,
         model: str | None = None,
         safety: "SafetyConfig | None" = None,
         resolver: ModelResolver | None = None,
@@ -162,12 +159,11 @@ class Agent:
         Construction-time prevention of the FP-0008 / #1133 wiring-gap class:
         the permission/runtime bundle that direct callers historically
         hand-listed (and sometimes omitted — e.g. ``eval benchmark`` shipped
-        without ``permission_resolver`` / ``shell_allowed``, so a phase that
-        declared ``shell`` got the op filtered to nothing and the LLM
-        hallucinated a fake schema) is derived here from ``config`` once. A
-        caller need only decide ``shell_allowed`` (+ any per-invocation extras);
-        it **cannot** forget ``permission_resolver`` / ``mcp_servers`` /
-        ``python_allowed_modules`` / ``prompt_cache_enabled`` / ``sandbox_config``.
+        without ``permission_resolver``, so a declared op got filtered to
+        nothing and the LLM hallucinated a fake schema) is derived here from
+        ``config`` once. The caller **cannot** forget ``permission_resolver`` /
+        ``mcp_servers`` / ``python_allowed_modules`` / ``prompt_cache_enabled`` /
+        ``sandbox_config``.
 
         ``model`` / ``safety`` / ``resolver`` default to the config-derived value
         but accept an override (e.g. ``reyn run`` passes an args-aware
@@ -183,8 +179,6 @@ class Agent:
         from reyn.config import _find_project_root
 
         perm_config = dict(getattr(config, "permissions", {}) or {})
-        if shell_allowed and "shell" not in perm_config:
-            perm_config["shell"] = "allow"
         permission_resolver = PermissionResolver(
             config_permissions=perm_config,
             project_root=_find_project_root(Path.cwd()),
@@ -196,7 +190,6 @@ class Agent:
             strict=strict,
             subscribers=subscribers,
             intervention_bus=intervention_bus,
-            shell_allowed=shell_allowed,
             resolver=resolver if resolver is not None else ModelResolver(config.models),
             permission_resolver=permission_resolver,
             safety=safety if safety is not None else config.safety,
@@ -288,7 +281,6 @@ class Agent:
             subscribers=[store] + self._subscribers,
             intervention_bus=self._intervention_bus,
             run_id=self.run_id,
-            shell_allowed=self._shell_allowed,
             resolver=self._resolver,
             permission_resolver=self._permission_resolver,
             safety=self._safety,

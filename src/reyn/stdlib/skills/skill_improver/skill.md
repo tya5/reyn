@@ -125,7 +125,7 @@ required_credentials: []
 
 Copies the target skill to a temp work directory (`.reyn/skill_improver_work/<name>/`), then iteratively improves it: runs eval, plans DSL changes, applies them, and re-evaluates. On success (`score_threshold_met`), copies the improved files back to the original location. On any other stop condition (regression, stagnation, cap reached), the original skill is left untouched.
 
-`skill_improver` invokes the `eval` and `eval_builder` skills via the `run_skill` Control IR op (no `--allow-shell` needed).
+`skill_improver` invokes the `eval` and `eval_builder` skills via the `run_skill` Control IR op.
 
 ## Phase flow
 

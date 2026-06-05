@@ -88,7 +88,6 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         max_phase_visits=25,
         sub_state_dir_override=None,
         state_dir_strategy="control_ir",
-        shell_allowed=False,
         mcp_servers={},
         mcp_clients={},
         intervention_bus=getattr(phase_op_ctx, "intervention_bus", None),

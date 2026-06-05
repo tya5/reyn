@@ -8,7 +8,6 @@ Default grants (no declaration needed):
 Outside the defaults → the skill must declare the path AND the user must approve:
   file.read:  [{path: <path>, scope: just_path|recursive}]   (paths outside CWD)
   file.write: [{path: <path>, scope: just_path|recursive}]
-  shell      — declare permissions.shell: true
   mcp        — declare permissions.mcp: [server_name, ...]
   tool       — declare permissions.tool: [tool_name, ...]
 
@@ -24,7 +23,6 @@ Approval keys are skill-scoped to prevent external skill privilege escalation:
 
 Config pre-approval (reyn.yaml / reyn.local.yaml):
   permissions:
-    shell: allow
     file.write: allow   # grants all write-class ops for all skills
 """
 from __future__ import annotations
@@ -188,7 +186,6 @@ class PythonPermission:
 class PermissionDecl:
     """Permissions declared in a skill's frontmatter `permissions:` block."""
 
-    shell: bool = False
     mcp: list[str] = field(default_factory=list)
     tool: list[str] = field(default_factory=list)
     # Read-class ops outside CWD. Each entry: {"path": str, "scope": "just_path" | "recursive"}
@@ -337,7 +334,6 @@ class PermissionDecl:
                     stacklevel=3,
                 )
         return cls(
-            shell=bool(d.get("shell", False)),
             mcp=_normalize_paths(d.get("mcp")),
             tool=_normalize_paths(d.get("tool")),
             file_read=cls._parse_path_list(d.get("file.read")),
@@ -1321,34 +1317,6 @@ class PermissionResolver:
         return EffectivePermission([
             AgentLayer(PermissionDecl(), approval_check=_approved)
         ]).allows(CapabilityAxis.FILE_WRITE, path)
-
-    async def require_shell(
-        self, decl: PermissionDecl, cmd: str, bus: "RequestBus | None",
-    ) -> None:
-        # #1199 S3.1b-2c: the static shell authority (decl.shell) flows through the
-        # unified model (SUBPROCESS axis). Byte-identical; the _approve prompt
-        # remains the separate runtime gate.
-        from reyn.permissions.effective import (
-            AgentLayer,
-            CapabilityAxis,
-            EffectivePermission,
-        )
-
-        if not EffectivePermission([AgentLayer(decl)]).allows(
-            CapabilityAxis.SUBPROCESS, None
-        ):
-            raise PermissionError(
-                f"shell access not declared in skill permissions. "
-                f"Add `permissions:\\n  shell: true` to the skill.md frontmatter."
-                f" (cmd: {cmd!r})"
-            )
-        if not await self._approve(
-            "shell",
-            f"shell command: {cmd!r}",
-            bus,
-            user_prompt="Allow running this shell command?",
-        ):
-            raise PermissionError(f"shell access denied (cmd: {cmd!r})")
 
     async def require_mcp(
         self, decl: PermissionDecl, server: str, bus: RequestBus,

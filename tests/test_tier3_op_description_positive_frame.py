@@ -64,7 +64,6 @@ def _assert_no_misleading_caveat(description: str, op_name: str) -> None:
 def _build_executor(
     tmp_path: Path,
     *,
-    shell_allowed: bool = False,
     mcp_servers: dict | None = None,
 ):
     """Construct a minimal ControlIRExecutor under tmp_path (no global state)."""
@@ -80,7 +79,6 @@ def _build_executor(
     return ControlIRExecutor(
         workspace=workspace,
         events=events,
-        shell_allowed=shell_allowed,
         mcp_servers=mcp_servers,
     )
 
@@ -127,7 +125,6 @@ def test_no_tier3_op_uses_skill_author_phrasing(tmp_path: Path) -> None:
     """
     executor = _build_executor(
         tmp_path,
-        shell_allowed=True,
         mcp_servers={"servers": {"x": {"transport": "stdio"}}},
     )
     skill_author_phrases = ("phase.allowed_ops", "skill.permissions")

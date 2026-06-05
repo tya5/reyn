@@ -98,7 +98,6 @@ def _shell_legacy_ctx(ctx: ToolContext) -> OpContext:
     before calling handle_shell — we want the OpContext, not the
     result of executing a real command.
     """
-    from reyn.tools.shell import _handle as shell_handle  # noqa: F401
     # We can't intercept the legacy_ctx mid-call without monkeypatching
     # handle_shell. Use the same construction logic as the real bridge.
     phase_op_ctx = (
@@ -165,10 +164,7 @@ async def test_tool_bridge_preserves_decl_from_phase_state(
     # Patch the canonical op_runtime entry point each tool delegates to.
     # Each Tool wrapper does `from reyn.op_runtime.<x> import handle as handle_X`
     # inside its _handle function — patch the source module's `handle`.
-    if tool_module_name == "reyn.tools.shell":
-        import reyn.op_runtime.shell as op_mod
-        monkeypatch.setattr(op_mod, "handle", _capture)
-    elif tool_module_name == "reyn.tools.lint":
+    if tool_module_name == "reyn.tools.lint":
         import reyn.op_runtime.lint as op_mod
         monkeypatch.setattr(op_mod, "handle", _capture)
     elif tool_module_name == "reyn.tools.web_search":
@@ -176,7 +172,7 @@ async def test_tool_bridge_preserves_decl_from_phase_state(
         from reyn.op_runtime import web as op_mod
         monkeypatch.setattr(op_mod, "handle_web_search", _capture)
 
-    skill_decl = PermissionDecl(shell=True, mcp=["github"])
+    skill_decl = PermissionDecl(mcp=["github"])
     phase_state = _build_phase_state(skill_decl)
     tool_ctx = _build_tool_ctx_with_phase(phase_state, tmp_path)
 
@@ -231,7 +227,7 @@ async def test_read_tool_result_bridge_preserves_decl(
     from reyn.tools import read_tool_result as rtr_mod
 
     # Replicate the bridge construction (rs path is None → fallback)
-    skill_decl = PermissionDecl(shell=True)
+    skill_decl = PermissionDecl(mcp=["github"])
     phase_state = _build_phase_state(skill_decl)
     tool_ctx = _build_tool_ctx_with_phase(phase_state, tmp_path)
 
@@ -286,7 +282,6 @@ def test_file_legacy_ctx_no_phase_returns_empty_decl(tmp_path: Path) -> None:
 
     legacy_ctx = _build_legacy_op_context(tool_ctx)
     assert legacy_ctx.permission_decl == PermissionDecl()
-    assert legacy_ctx.permission_decl.shell is False
 
 
 # ── 5. negative-shape audit: no hardcoded `PermissionDecl()` in bridge code ─

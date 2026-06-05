@@ -288,7 +288,6 @@ async def _handle_call_mcp_tool(
             max_phase_visits=25,
             sub_state_dir_override=None,
             state_dir_strategy="control_ir",
-            shell_allowed=False,
             mcp_servers={},
             mcp_clients={},
             intervention_bus=None,

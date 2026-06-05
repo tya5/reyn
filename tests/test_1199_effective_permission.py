@@ -26,25 +26,25 @@ AX = CapabilityAxis
 
 
 def test_capability_permitted_iff_all_layers_permit() -> None:
-    """Tier 2: subprocess is permitted only when BOTH the agent grant AND the
-    sandbox cap allow it — a single layer's deny vetoes."""
-    decl = PermissionDecl(shell=True)                      # agent grants subprocess
-    # agent grants + sandbox allows → permitted
+    """Tier 2: the SUBPROCESS capability is gated by the sandbox cap.
+
+    #1352-L3: the agent-side shell-permission gate (``decl.shell`` on the
+    AgentLayer SUBPROCESS axis) was retired with the shell op — subprocess is
+    now bounded by ``SandboxLayer.allow_subprocess`` at the sandboxed_exec seam,
+    so the AgentLayer no longer constrains SUBPROCESS (⊤). The sandbox cap still
+    vetoes. (The agent-veto / conjunctive-∩ falsification is exercised on a
+    still-agent-gated axis — FILE_WRITE — in the falsification test below.)"""
+    decl = PermissionDecl()
+    # sandbox allows → permitted (AgentLayer ⊤ for SUBPROCESS)
     eff = EffectivePermission.of(
         decl=decl, sandbox_policy=SandboxPolicy(allow_subprocess=True)
     )
     assert eff.allows(AX.SUBPROCESS, None) is True
-    # agent grants but sandbox caps it → denied (sandbox vetoes)
+    # sandbox caps it → denied (sandbox vetoes)
     eff2 = EffectivePermission.of(
         decl=decl, sandbox_policy=SandboxPolicy(allow_subprocess=False)
     )
     assert eff2.allows(AX.SUBPROCESS, None) is False
-    # sandbox would allow but agent never granted → denied (agent vetoes)
-    eff3 = EffectivePermission.of(
-        decl=PermissionDecl(shell=False),
-        sandbox_policy=SandboxPolicy(allow_subprocess=True),
-    )
-    assert eff3.allows(AX.SUBPROCESS, None) is False
 
 
 # ── ★the non-negotiable falsification ─────────────────────────────────────────

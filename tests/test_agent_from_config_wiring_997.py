@@ -27,37 +27,22 @@ from reyn.config import ReynConfig
 def test_from_config_model_defaults_to_config() -> None:
     """Tier 2: from_config(config) uses config.model when no override is given."""
     cfg = ReynConfig(model="standard")
-    agent = Agent.from_config(cfg, shell_allowed=False, interactive=False)
+    agent = Agent.from_config(cfg, interactive=False)
     assert agent.model == "standard"
 
 
 def test_from_config_model_override_wins() -> None:
     """Tier 2: an explicit model override replaces the config default."""
     cfg = ReynConfig(model="standard")
-    agent = Agent.from_config(cfg, shell_allowed=False, model="strong", interactive=False)
+    agent = Agent.from_config(cfg, model="strong", interactive=False)
     assert agent.model == "strong"
 
-
-def test_from_config_constructs_in_both_shell_modes() -> None:
-    """Tier 2: the perm-resolver derivation runs for both shell modes without a caller resolver.
-
-    shell_allowed=True exercises the shell pre-approval branch (config_permissions
-    gains ``shell: allow``); shell_allowed=False the plain path. A caller supplies
-    neither permission_resolver nor the rest of the bundle — the factory derives
-    it. Construction succeeding for both proves the gap-prone wiring is produced
-    internally (the FP-0008 caller could not).
-    """
-    cfg = ReynConfig(model="standard")
-    for shell_allowed in (True, False):
-        agent = Agent.from_config(cfg, shell_allowed=shell_allowed, interactive=False)
-        assert isinstance(agent, Agent)
-        assert agent.caller == "direct"
 
 
 def test_from_config_caller_override() -> None:
     """Tier 2: a non-default caller (validated by Agent.__init__) is forwarded."""
     cfg = ReynConfig(model="standard")
     agent = Agent.from_config(
-        cfg, shell_allowed=False, caller="agents/reviewer", interactive=False
+        cfg, caller="agents/reviewer", interactive=False
     )
     assert agent.caller == "agents/reviewer"

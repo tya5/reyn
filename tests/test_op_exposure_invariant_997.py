@@ -66,7 +66,7 @@ _UNCONDITIONAL_OPS = {
 
 
 def _executor(
-    tmp_path: Path, *, shell_allowed: bool = False, mcp_servers: dict | None = None
+    tmp_path: Path, *, mcp_servers: dict | None = None
 ) -> ControlIRExecutor:
     events = EventLog()
     ws = Workspace(events=events)
@@ -77,7 +77,6 @@ def _executor(
             config_permissions={}, project_root=tmp_path, interactive=False
         ),
         skill_name="t",
-        shell_allowed=shell_allowed,
         mcp_servers=mcp_servers,
     )
 
@@ -113,16 +112,14 @@ def test_mcp_advertised_iff_servers_configured(
 
 
 @pytest.mark.parametrize(
-    "shell_allowed, mcp_servers",
+    "mcp_servers",
     [
-        (False, None),
-        (True, None),
-        (False, {"servers": {"gh": {"type": "http", "url": "http://x"}}}),
-        (True, {"servers": {"gh": {"type": "http", "url": "http://x"}}}),
+        None,
+        {"servers": {"gh": {"type": "http", "url": "http://x"}}},
     ],
 )
 def test_unconditional_ops_always_advertised(
-    tmp_path: Path, shell_allowed: bool, mcp_servers: dict | None
+    tmp_path: Path, mcp_servers: dict | None
 ) -> None:
     """Tier 2: the flag-independent ops are always advertised (incl. sandboxed_exec = #1133).
 
@@ -130,11 +127,11 @@ def test_unconditional_ops_always_advertised(
     the unconditional Tier-3 + core ops must stay in the catalog. The original bug
     was sandboxed_exec silently absent from the spec list.
     """
-    kinds = _kinds(_executor(tmp_path, shell_allowed=shell_allowed, mcp_servers=mcp_servers))
+    kinds = _kinds(_executor(tmp_path, mcp_servers=mcp_servers))
     missing = _UNCONDITIONAL_OPS - kinds
     assert not missing, (
         f"unconditional ops missing from op catalog: {sorted(missing)} "
-        f"(shell_allowed={shell_allowed}, mcp={bool(mcp_servers)})"
+        f"(mcp={bool(mcp_servers)})"
     )
 
 

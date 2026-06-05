@@ -132,8 +132,6 @@ class AgentLayer:
                 any(e.get("host") in (value, "*") for e in d.http_get)
                 or self._approved(axis, value)
             )
-        if axis is CapabilityAxis.SUBPROCESS:
-            return bool(d.shell)
         if axis is CapabilityAxis.MCP:
             # #1199 S3.1b: faithful to require_mcp (permissions.py:1248+1253) —
             # the per-skill grant (``decl.mcp``) AND the per-skill allowlist
@@ -160,7 +158,10 @@ class AgentLayer:
             return any(
                 (p.module, p.function) == tuple(value) for p in d.python
             )
-        # SKILL / ENV: the decl does not constrain → ⊤.
+        # SKILL / ENV / SUBPROCESS: the decl does not constrain → ⊤.
+        # (#1352-L3: the shell-permission SUBPROCESS gate was retired with the
+        # shell op; subprocess is now bounded by SandboxLayer.allow_subprocess
+        # at the sandboxed_exec seam, not the AgentLayer.)
         return True
 
 

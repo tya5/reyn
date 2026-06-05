@@ -93,7 +93,6 @@ _MIGRATED_DESC_KEYS = (
     "models",
     "api_base",
     "output_language",
-    "shell_allowed",
     "permissions",
 )
 

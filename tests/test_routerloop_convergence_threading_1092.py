@@ -94,7 +94,7 @@ def test_from_config_gate_reaches_converged_op_loop(tmp_path, monkeypatch) -> No
 
     config = ReynConfig(tool_calls_op_loop_skills=[_SKILL_NAME])
     agent = Agent.from_config(
-        config, shell_allowed=False, model="stub/model", subscribers=[sink.append],
+        config, model="stub/model", subscribers=[sink.append],
     )
     result = asyncio.run(agent.run(_skill(), {"type": "input", "data": {}}))
 
@@ -121,7 +121,7 @@ def test_from_config_unlisted_skill_no_convergence(tmp_path, monkeypatch) -> Non
 
     config = ReynConfig(tool_calls_op_loop_skills=[])  # nothing opted in
     agent = Agent.from_config(
-        config, shell_allowed=False, model="stub/model", subscribers=[sink.append],
+        config, model="stub/model", subscribers=[sink.append],
     )
     result = asyncio.run(agent.run(_skill(), {"type": "input", "data": {}}))
 
@@ -185,7 +185,7 @@ def test_converged_op_loop_dispatches_phase_op_not_unknown_tool(tmp_path, monkey
     )
     config = ReynConfig(tool_calls_op_loop_skills=[_SKILL_NAME])
     agent = Agent.from_config(
-        config, shell_allowed=False, model="stub/model", subscribers=[sink.append],
+        config, model="stub/model", subscribers=[sink.append],
     )
     result = asyncio.run(agent.run(skill, {"type": "input", "data": {}}))
 
@@ -272,7 +272,7 @@ def test_converged_decide_frame_information_equivalent_to_json_op_loop(tmp_path,
         final_output_name="result",
     )
     config = ReynConfig(tool_calls_op_loop_skills=[_SKILL_NAME])
-    agent = Agent.from_config(config, shell_allowed=False, model="stub/model")
+    agent = Agent.from_config(config, model="stub/model")
     result = asyncio.run(agent.run(skill, {"type": "input", "data": {}}))
 
     assert result.ok, f"run must complete; got {result.status}"
