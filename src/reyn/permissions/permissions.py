@@ -107,9 +107,13 @@ def _expand(path_str: str) -> Path:
     return Path(path_str).expanduser().resolve()
 
 
-def _is_canonical_protected_write(path_str: str) -> bool:
-    """Return True if ``path_str`` resolves to one of the #571 protected paths."""
-    base = Path.cwd()
+def _is_canonical_protected_write(path_str: str, base: "Path | None" = None) -> bool:
+    """Return True if ``path_str`` resolves to one of the #571 protected paths.
+
+    #1316: ``base`` is the project root the default zones are anchored to.
+    ``None`` → ``Path.cwd()`` (the historical default; callers that set a
+    project_root ≠ cwd must pass it so the zone base matches approvals)."""
+    base = base or Path.cwd()
     p = Path(path_str).expanduser()
     resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
     for rel in _CANONICAL_PROTECTED_WRITE_PATHS:
@@ -118,7 +122,7 @@ def _is_canonical_protected_write(path_str: str) -> bool:
     return False
 
 
-def _in_default_write_zone(path_str: str) -> bool:
+def _in_default_write_zone(path_str: str, base: "Path | None" = None) -> bool:
     """Return True if path falls within a default-granted write zone (.reyn/ or reyn/).
 
     Exception: canonical protected paths (see
@@ -129,9 +133,9 @@ def _in_default_write_zone(path_str: str) -> bool:
     ``.reyn/cron.yaml`` were removed from this set (protect-at-use — their
     downstream use-gate makes the config carve-out redundant).
     """
-    if _is_canonical_protected_write(path_str):
+    base = base or Path.cwd()
+    if _is_canonical_protected_write(path_str, base):
         return False
-    base = Path.cwd()
     p = Path(path_str).expanduser()
     resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
     for zone in _DEFAULT_WRITE_ZONES:
@@ -143,9 +147,11 @@ def _in_default_write_zone(path_str: str) -> bool:
     return False
 
 
-def _in_default_read_zone(path_str: str) -> bool:
-    """Return True if path falls within the default-granted read zone (CWD)."""
-    base = Path.cwd()
+def _in_default_read_zone(path_str: str, base: "Path | None" = None) -> bool:
+    """Return True if path falls within the default-granted read zone (the project
+    root). #1316: ``base`` defaults to ``Path.cwd()`` (historical) — pass the
+    resolver's ``_project_root`` so the read zone matches the approvals base."""
+    base = base or Path.cwd()
     p = Path(path_str).expanduser()
     resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
     try:
@@ -736,7 +742,7 @@ class PermissionResolver:
             scope = entry.get("scope", "just_path")
             if not path:
                 continue
-            if _in_default_write_zone(path):
+            if _in_default_write_zone(path, self._project_root):
                 continue
             if self._is_config_approved("file.write"):
                 continue
@@ -752,7 +758,7 @@ class PermissionResolver:
             scope = entry.get("scope", "just_path")
             if not path:
                 continue
-            if _in_default_read_zone(path):
+            if _in_default_read_zone(path, self._project_root):
                 continue
             if self._is_config_approved("file.read"):
                 continue
@@ -974,7 +980,7 @@ class PermissionResolver:
             )
 
         if EffectivePermission([
-            AgentLayer(decl, approval_check=_approved),
+            AgentLayer(decl, approval_check=_approved, project_root=self._project_root),
             SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_READ, path):
             return
@@ -1026,7 +1032,7 @@ class PermissionResolver:
             )
 
         if EffectivePermission([
-            AgentLayer(decl, approval_check=_approved),
+            AgentLayer(decl, approval_check=_approved, project_root=self._project_root),
             SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_WRITE, path):
             return
@@ -1286,7 +1292,8 @@ class PermissionResolver:
             )
 
         return EffectivePermission([
-            AgentLayer(PermissionDecl(), approval_check=_approved)
+            AgentLayer(PermissionDecl(), approval_check=_approved,
+                       project_root=self._project_root)
         ]).allows(CapabilityAxis.FILE_READ, path)
 
     def is_write_allowed(self, path: str, skill_name: str = "") -> bool:
@@ -1315,7 +1322,8 @@ class PermissionResolver:
             )
 
         return EffectivePermission([
-            AgentLayer(PermissionDecl(), approval_check=_approved)
+            AgentLayer(PermissionDecl(), approval_check=_approved,
+                       project_root=self._project_root)
         ]).allows(CapabilityAxis.FILE_WRITE, path)
 
     async def require_mcp(

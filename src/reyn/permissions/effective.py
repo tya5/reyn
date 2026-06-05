@@ -100,9 +100,15 @@ class AgentLayer:
         decl: "PermissionDecl",
         *,
         approval_check: "Any" = None,
+        project_root: "Any" = None,
     ) -> None:
         self._decl = decl
         self._approval_check = approval_check
+        # #1316: the project root the default zones are anchored to. None →
+        # Path.cwd() inside the zone fns (historical). Passing the resolver's
+        # _project_root makes the zone base match the approvals base (so a
+        # project_root ≠ cwd does not diverge zone vs approval evaluation).
+        self._project_root = project_root
 
     def _approved(self, axis: CapabilityAxis, value: Any) -> bool:
         return bool(self._approval_check and self._approval_check(axis, value))
@@ -112,13 +118,13 @@ class AgentLayer:
         if axis is CapabilityAxis.FILE_READ:
             # #1199 S3.1c-1: decl-less — zone OR approved (no decl auto-grant).
             return (
-                _in_default_read_zone(str(value))
+                _in_default_read_zone(str(value), self._project_root)
                 or self._approved(axis, value)
             )
         if axis is CapabilityAxis.FILE_WRITE:
             # #1199 S3.1c-1: decl-less — zone OR approved (no decl auto-grant).
             return (
-                _in_default_write_zone(str(value))
+                _in_default_write_zone(str(value), self._project_root)
                 or self._approved(axis, value)
             )
         if axis is CapabilityAxis.NETWORK_HOST:
@@ -254,11 +260,14 @@ class EffectivePermission:
         sandbox_policy: "SandboxPolicy | None" = None,
         profile: "AgentProfile | None" = None,
         approval_check: "Any" = None,
+        project_root: "Any" = None,
     ) -> "EffectivePermission":
         """Build from the inputs (zone + approvals folded into the agent
-        layer; ② grant-back-safe). Build per op-context (Q3)."""
+        layer; ② grant-back-safe). Build per op-context (Q3).
+
+        #1316: ``project_root`` anchors the default zones (None → cwd)."""
         return cls([
-            AgentLayer(decl, approval_check=approval_check),
+            AgentLayer(decl, approval_check=approval_check, project_root=project_root),
             SandboxLayer(sandbox_policy),
             ProfileLayer(profile),
         ])
