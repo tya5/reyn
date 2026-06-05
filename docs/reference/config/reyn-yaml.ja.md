@@ -328,11 +328,12 @@ sandbox:
 
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
-| `network` | bool | `false` | サンドボックスプロセスからの外向きネットワークを許可。 |
-| `read_paths` | list[文字列] | `[]` | プロセスが読み取り可能なパス（glob 可）。 |
-| `write_paths` | list[文字列] | `[]` | プロセスが書き込み可能なパス。 |
-| `allow_subprocess` | bool | `false` | 子プロセスの spawn を許可するか。 |
-| `env_passthrough` | list[文字列] | `[]` | サンドボックスプロセスへ通過させる環境変数名。 |
+| `network` | bool | `false` | サンドボックスプロセスからの外向きネットワークを許可。主要な外部流出ゲート。 |
+| `write_paths` | list[文字列] | `[]` | プロセスが書き込み可能なパス（厳密なガード）。書き込みは読み取りを含む。 |
+| `read_deny_paths` | list[文字列] | `[]` | 広読み込みサーフェスから拒否する機密パス（多層防御）。deny-after-allow をサポートするバックエンド（Seatbelt）のみ適用。許可リストのみのバックエンド（Landlock）では非対応。 |
+| `read_paths` | list[文字列] | `[]` | **レガシー。** かつての厳密な読み込み許可リスト。現在のスコーピングモデルでは読み込みはデフォルトで広許可のため、このフィールドは意図した読み込み対象のドキュメントとしてのみ機能します。 |
+| `allow_subprocess` | bool | `false` | 子プロセスの spawn を許可するか。Seatbelt では advisory 扱い。 |
+| `env_passthrough` | list[文字列] | `[]` | サンドボックスプロセスへ通過させる環境変数名。`PATH` は常に通過します。 |
 | `timeout_seconds` | int | `60` | バックエンドが強制する実時間上限。 |
 
 [リファレンス: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) で op スキーマとバックエンド選択の詳細を参照してください。
