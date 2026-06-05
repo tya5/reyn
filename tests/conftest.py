@@ -50,6 +50,12 @@ def pytest_configure(config: pytest.Config) -> None:
         "replay(fixture): monkeypatch litellm.acompletion with a JSONL fixture. "
         "Pass the fixture path relative to the tests/ directory.",
     )
+    config.addinivalue_line(
+        "markers",
+        "docker: live-Docker integration test (#1332). Skipped when no daemon is "
+        "reachable; runs against a real container. Select with `-m docker` / "
+        "deselect with `-m 'not docker'`.",
+    )
 
 
 # ── Autouse fixture ────────────────────────────────────────────────────────────
