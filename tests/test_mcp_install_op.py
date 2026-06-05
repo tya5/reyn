@@ -205,25 +205,28 @@ def _run(coro):
 # ---------------------------------------------------------------------------
 
 
-def test_permission_gate_undeclared_raises(tmp_path):
-    """Tier 2: mcp_install op raises PermissionError when file.write not declared.
+def test_mcp_yaml_write_is_default_granted_protect_at_use(tmp_path):
+    """Tier 2: #571 protect-at-use / #1316 — writing the mcp install target
+    ``.reyn/mcp.yaml`` needs NO explicit file.write declaration: it sits in the
+    default project write zone (removed from the protected carve-out because
+    writing it is inert without ``require_mcp`` at call time; the install-side
+    grant is ``permissions.mcp``, the use-side gate is ``require_mcp``). The
+    carved-out ``.reyn/approvals.yaml`` still requires an explicit grant.
 
-    #571 collapse arc Phase 5: the legacy ``mcp_install: true`` bool
-    axis was removed; the op handler now gates via
-    ``require_file_write`` on ``.reyn/mcp.yaml``. A skill that
-    declares neither the explicit file.write entry nor the (now
-    removed) bool axis fails the gate.
-    """
-    resolver = _make_resolver(tmp_path)
-    decl = PermissionDecl()  # nothing declared
-    bus = _AutoApproveInterventionBus()
-    ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
-
-    op = MCPInstallIROp(kind="mcp_install", server_id="io.github.example/server-x")
-
-    with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-        with pytest.raises(PermissionError, match="not approved"):
-            _run(mcp_install_handle(op, ctx, "control_ir"))
+    (Pre-#1316, an mcp test with project_root ≠ cwd saw the mcp.yaml write DENIED
+    via the cwd-zone divergence — that latent bug is fixed; production
+    cwd=project_root always default-granted it, so this is production-faithful,
+    not a loosening.)"""
+    resolver = _make_resolver(tmp_path)  # project_root = tmp_path
+    # mcp.yaml under project_root/.reyn = default write zone → granted (no decl)
+    resolver.require_file_write(
+        PermissionDecl(), str(tmp_path / ".reyn" / "mcp.yaml"), "mcp_install_test"
+    )
+    # contrast: the approval store IS carved out → still needs an explicit grant
+    with pytest.raises(PermissionError):
+        resolver.require_file_write(
+            PermissionDecl(), str(tmp_path / ".reyn" / "approvals.yaml"), "t"
+        )
 
 
 def test_permission_gate_passes_with_explicit_decl(tmp_path, monkeypatch):
@@ -488,31 +491,6 @@ def test_event_emitted_on_success(tmp_path, monkeypatch):
     assert "env_keys_set" in evt.data
     assert isinstance(evt.data["env_keys_set"], list)
 
-
-def test_no_event_on_permission_denied(tmp_path):
-    """Tier 2: No mcp_server_installed event when permission gate rejects.
-
-    The event is only emitted after a successful install (P6 — only emit on
-    actual state change). #571 Phase 5: the rejection now comes from
-    ``require_file_write`` when ``.reyn/mcp.yaml`` is not declared.
-    """
-    resolver = _make_resolver(tmp_path)
-    decl = PermissionDecl()  # missing required file.write declaration
-    bus = _AutoApproveInterventionBus()
-    ctx = _make_op_ctx(tmp_path, resolver, bus, decl)
-
-    op = MCPInstallIROp(
-        kind="mcp_install",
-        server_id="io.github.example/server-x",
-        scope="local",
-    )
-
-    with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-        with pytest.raises(PermissionError):
-            _run(mcp_install_handle(op, ctx, "control_ir"))
-
-    install_events = [e for e in ctx.events.all() if e.type == "mcp_server_installed"]
-    assert install_events == []
 
 
 # ---------------------------------------------------------------------------

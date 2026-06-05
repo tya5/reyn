@@ -29,8 +29,14 @@ _STAR_WRITE = PermissionDecl(file_write=[{"path": "*", "scope": "recursive"}])
 
 
 def _out_of_zone(tmp_path: Path) -> str:
-    # tmp_path is outside the repo cwd → outside the default read/write zone.
-    return str(tmp_path / "outside" / "f.txt")
+    # #1316: the resolver's project_root IS tmp_path (see _make_resolver), and the
+    # default READ zone is "any path under project_root" — so a path UNDER tmp_path
+    # is in-zone. A genuinely out-of-zone path (out of both the read zone = under
+    # project_root and the write zone = project_root/.reyn|reyn) must live OUTSIDE
+    # project_root. (Pre-#1316 the zone fns hardcoded cwd, so a tmp_path-internal
+    # path looked out-of-zone only because tmp_path != cwd — that divergence is the
+    # bug #1316 fixes.) A sibling of project_root is outside it.
+    return str(tmp_path.parent / "out_of_zone_sibling" / "f.txt")
 
 
 def test_non_interactive_declared_unapproved_read_denies_with_message(tmp_path: Path) -> None:
