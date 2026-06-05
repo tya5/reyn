@@ -70,11 +70,6 @@ def test_mcp_is_external():
     assert get_op_purity("mcp") is OpPurity.external
 
 
-def test_shell_is_external():
-    """Tier 2: ``shell`` runs subprocess with arbitrary side effects."""
-    assert get_op_purity("shell") is OpPurity.external
-
-
 def test_run_skill_is_external():
     """Tier 2: ``run_skill`` spawns a child skill with its own side effects."""
     assert get_op_purity("run_skill") is OpPurity.external

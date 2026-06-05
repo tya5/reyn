@@ -335,17 +335,11 @@ class AskUserIROp(BaseModel):
     required: bool = True
 
 
-class ShellIROp(BaseModel):
-    kind: Literal["shell"]
-    cmd: str                  # shell command to execute
-    timeout: int = 120        # seconds
-
-
 class SandboxedExecIROp(BaseModel):
     """Execute a command under a SandboxPolicy (FP-0017).
 
-    Unlike ShellIROp (= raw `subprocess.run`, deprecated by FP-0017), this op
-    routes through a SandboxBackend that enforces the declared policy. The
+    The replacement for the removed `shell` op (raw `subprocess.run`, #1352-A):
+    this op routes through a SandboxBackend that enforces the declared policy. The
     OS selects the backend per platform; today the default is NoopBackend
     (= no enforcement). Future waves add SeatbeltBackend (macOS) and
     LandlockBackend (Linux).
@@ -577,7 +571,7 @@ ControlIROp = Annotated[
         ReadFileIROp, WriteFileIROp, EditFileIROp, DeleteFileIROp,
         # #1240 Wave 1.5: glob_files / grep_files fine ops.
         GlobFilesIROp, GrepFilesIROp,
-        MCPIROp, AskUserIROp, ShellIROp, LintIROp,
+        MCPIROp, AskUserIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
         IndexQueryIROp, RecallIROp, IndexDropIROp,
         SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp, CompactIROp,

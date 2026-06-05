@@ -43,10 +43,6 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 _TIER23_GATES: dict[str, dict] = {
-    "shell": {
-        "label": "permissions.shell",
-        "fix": "Add `permissions:\\n  shell: true` to the skill.md frontmatter.",
-    },
     "mcp": {
         "label": "permissions.mcp",
         "fix": (
@@ -135,8 +131,6 @@ def _permission_has(decl, op_kind: str) -> bool:
     needs ``http.get`` for the registry, but the validator stays at
     the file-write granularity for the cross-layer consistency check).
     """
-    if op_kind == "shell":
-        return bool(decl.shell)
     if op_kind == "mcp":
         return bool(decl.mcp)
     if op_kind == "mcp_install":

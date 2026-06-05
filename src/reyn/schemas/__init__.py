@@ -26,7 +26,6 @@ from .models import (
     PythonStep,
     RunOpStep,
     RunSkillIROp,
-    ShellIROp,
     Skill,
     SkillGraph,
     SkillNodeSpec,
@@ -41,7 +40,7 @@ __all__ = [
     "Phase", "PhaseConstraints", "SkillGraph", "SkillNodeSpec", "Skill",
     "ContextFrame", "ExecutionState", "CandidateOutput", "ControlIROpSpec",
     "LLMOutput", "ActOutput", "ControlDecision", "ControlReason",
-    "ControlIROp", "FileIROp", "ShellIROp", "WebFetchIROp", "WebSearchIROp",
+    "ControlIROp", "FileIROp", "WebFetchIROp", "WebSearchIROp",
     "RunSkillIROp", "AskUserIROp", "LintIROp", "MCPIROp",
     "Event",
 ]

@@ -55,7 +55,6 @@ _REGISTRY_WIRED_KINDS: frozenset[str] = frozenset({
     "mcp_install",
     "recall",
     "sandboxed_exec",
-    "shell",
     "web_fetch",
     "web_search",
     # #272/#1128: compact has a phase=allow registry ToolDefinition, so the op

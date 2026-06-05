@@ -58,13 +58,13 @@ def _run(coro) -> Any:
 
 
 def test_build_phase_tool_catalog_known_ops():
-    """Tier 2: OS invariant — _build_phase_tool_catalog produces entries with function.parameters for known op kinds (read_file, shell)."""
-    catalog = _build_phase_tool_catalog({"read_file", "shell"})
+    """Tier 2: OS invariant — _build_phase_tool_catalog produces entries with function.parameters for known op kinds (read_file, sandboxed_exec)."""
+    catalog = _build_phase_tool_catalog({"read_file", "sandboxed_exec"})
     assert "read_file" in catalog
-    assert "shell" in catalog
+    assert "sandboxed_exec" in catalog
     # Each entry should have a 'function' key with 'parameters'
     assert "parameters" in catalog["read_file"]["function"]
-    assert "parameters" in catalog["shell"]["function"]
+    assert "parameters" in catalog["sandboxed_exec"]["function"]
 
 
 def test_build_phase_tool_catalog_kind_not_in_required():
@@ -249,7 +249,7 @@ def test_not_allowed_in_phase_skip_no_dispatch_events(tmp_path: Path):
     decl = PermissionDecl()
 
     # allowed_ops excludes "file" → skipped at frontend before dispatch_tool
-    _run(executor.execute([op], phase="p", decl=decl, allowed_ops={"shell"}))
+    _run(executor.execute([op], phase="p", decl=decl, allowed_ops={"sandboxed_exec"}))
 
     types = _event_types(events)
     assert "control_ir_skipped" in types

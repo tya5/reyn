@@ -85,35 +85,6 @@ def _build_executor(
     )
 
 
-def test_shell_op_description_is_positive_frame(tmp_path: Path) -> None:
-    """Tier 2: shell op description (when enabled) has no failure-mode caveat."""
-    executor = _build_executor(tmp_path, shell_allowed=True)
-    specs = executor.available_ops()
-    shell_specs = [s for s in specs if s.kind == "shell"]
-    # unpack-enforcement (= behavior pin, not size pin): raises
-    # ValueError when shell_specs has != 1 element. Caught by the
-    # test framework with a clear message.
-    (shell_spec,) = shell_specs
-    _assert_no_misleading_caveat(shell_spec.description, "shell")
-
-
-def test_shell_op_description_carries_positive_affirmation(tmp_path: Path) -> None:
-    """Tier 2: shell op description names its enabled status explicitly.
-
-    Without an affirmative "Status: enabled" / "verified" / similar
-    marker, a small LLM defaults to "permission not declared" defensive
-    abort. The positive frame is the structural fix.
-    """
-    executor = _build_executor(tmp_path, shell_allowed=True)
-    shell_specs = [s for s in executor.available_ops() if s.kind == "shell"]
-    description = shell_specs[0].description.lower()
-    affirmation_words = ("enabled", "verified", "available")
-    assert any(w in description for w in affirmation_words), (
-        f"shell op description should carry an affirmative marker "
-        f"(one of {affirmation_words}); got: {shell_specs[0].description!r}"
-    )
-
-
 def test_mcp_op_description_is_positive_frame(tmp_path: Path) -> None:
     """Tier 2: call_mcp_tool op description (when servers configured) has no failure-mode caveat.
 
