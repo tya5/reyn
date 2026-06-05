@@ -398,7 +398,7 @@ Each Tier 3a area has one test that intentionally constructs a frame the fixture
 ```python
 @pytest.mark.replay("fixtures/llm/my_area/my_scenario.jsonl")
 def test_wrong_input_raises_missing_fixture():
-    """Tier 3a drift detection: changes to instructions / candidate_outputs
+    """Tier 3a: drift detection — changes to instructions / candidate_outputs
     must be reflected in re-recorded fixtures, otherwise the test fails loudly."""
     frame = ContextFrame(
         current_phase="classify",

@@ -324,7 +324,7 @@ Tier 3a の各エリアには、フィクスチャがカバーしていないフ
 ```python
 @pytest.mark.replay("fixtures/llm/my_area/my_scenario.jsonl")
 def test_wrong_input_raises_missing_fixture():
-    """Tier 3a drift detection: instructions / candidate_outputs の変更は
+    """Tier 3a: drift detection — instructions / candidate_outputs の変更は
     フィクスチャの再記録が必要。さもなければテストが大きな音で失敗する。"""
     frame = ContextFrame(
         current_phase="classify",
