@@ -75,6 +75,21 @@ def register(sub) -> None:
                        "Enable unsafe-mode Python preprocessor steps (no AST sandboxing). "
                        "Safe-mode python steps run without this flag. Off by default."
                    ))
+    # #183: grant file.write at the resolver layer for this run. The grant is
+    # scoped by the SandboxLayer (∩) to the run's sandbox write_paths (= the
+    # workspace base_dir / repo working tree), so this enables editing the
+    # working tree (e.g. a docker --repo-dir checkout) WITHOUT widening writes
+    # outside the sandbox zone. Mirrors the eval path's grant on the `reyn run`
+    # path. Off by default — the skill's declared file.write stays
+    # "declared-but-not-granted" in a non-interactive run without it.
+    p.add_argument("--grant-file-write",
+                   dest="grant_file_write",
+                   action="store_true",
+                   help=(
+                       "Grant file.write at the resolver layer (bounded by the "
+                       "sandbox write zone). Enables editing the working tree in a "
+                       "non-interactive run. Off by default."
+                   ))
     # #1289: shared --env-backend / container args (host / docker attach|launch).
     register_env_backend_args(p)
     p.set_defaults(func=run)
@@ -99,6 +114,17 @@ def run(args: argparse.Namespace) -> None:
     # (= no silent "ja" default) — the project targets a global audience.
     output_language = session.output_language_for(args)
     safety = session.safety_for(args)
+
+    # #183: --grant-file-write grants file.write at the resolver layer. The
+    # SandboxLayer (∩) still bounds writes to the sandbox write_paths (= the
+    # workspace base_dir / repo working tree), so the effective grant is scoped
+    # to the working tree, not global. Mirrors the eval path's
+    # `permissions.setdefault("file.write", "allow")` on the `reyn run` path so a
+    # non-interactive run can edit the working tree (its declared file.write is
+    # otherwise "declared-but-not-granted"). setdefault preserves any explicit
+    # operator setting in reyn.yaml.
+    if getattr(args, "grant_file_write", False):
+        session.config.permissions.setdefault("file.write", "allow")
 
     unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
     # Stdlib skills ship with the Reyn team's code and are trusted by
