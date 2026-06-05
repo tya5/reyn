@@ -1184,6 +1184,20 @@ class RightPanel(Widget):
         idx = max(0, min(len(self._events_visible) - 1, self._events_cursor))
         ev = self._events_visible[idx]
         title = f"event #{idx} · {ev.get('type', '?')}"
+        # #1154 Phase 1: content-type-aware viewer for tool-result events.
+        # When a tool_returned / tool_executed result carries a recognized
+        # content-type (markdown / CSV), render it via the dedicated viewer;
+        # otherwise fall back to the generic YAML preview (degrade, never
+        # hide content).
+        if ev.get("type") in ("tool_returned", "tool_executed"):
+            from .tool_result_viewers import render_tool_result
+            # Event emit kwargs are nested under ``data`` (events.py
+            # ``Event(type=, data=)``), so the op result dict lives at
+            # ``data["result"]`` — not the event's top level.
+            viewed = render_tool_result((ev.get("data") or {}).get("result"))
+            if viewed is not None:
+                pane.show_text(title, viewed)
+                return
         pane.show_text(title, self._render_as_yaml(ev))
 
     def _memory_move(self, delta: int) -> None:

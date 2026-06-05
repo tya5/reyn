@@ -1,0 +1,179 @@
+"""Tier 2: content-type → viewer registry for tool results (#1154 Phase 1).
+
+``render_tool_result(result)`` maps a tool result dict's content-type /
+MIME to a Rich renderable (markdown / CSV-table in Phase 1), or returns
+``None`` so the Right Panel events-tab preview falls back to its generic
+YAML rendering. These pin the dispatch + the fallback contract via the
+pure module's public return value (no Textual app needed).
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+_SRC = Path(__file__).parent.parent.parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from rich.markdown import Markdown as RichMarkdown
+from rich.table import Table
+
+from reyn.chat.tui.widgets.right_panel.tool_result_viewers import render_tool_result
+
+# ── dispatch: recognized content-types route to a viewer ─────────────────────
+
+
+def test_markdown_content_type_returns_markdown_renderable() -> None:
+    """Tier 2: a text/markdown result renders via the markdown viewer."""
+    out = render_tool_result({"content_type": "text/markdown", "content": "# Title\n\nbody"})
+    assert isinstance(out, RichMarkdown), f"expected RichMarkdown; got {type(out)!r}"
+
+
+def test_csv_content_type_returns_table() -> None:
+    """Tier 2: a text/csv result renders via the table viewer with columns."""
+    out = render_tool_result({"content_type": "text/csv", "content": "name,age\nalice,30\nbob,25"})
+    assert isinstance(out, Table), f"expected Table; got {type(out)!r}"
+    headers = [str(c.header) for c in out.columns]
+    assert headers == ["name", "age"], f"expected CSV header → table columns; got {headers}"
+
+
+def test_mimetype_key_also_detected() -> None:
+    """Tier 2: the ``mimeType`` field (mcp/media) is detected like content_type."""
+    out = render_tool_result({"mimeType": "text/markdown", "content": "**bold**"})
+    assert isinstance(out, RichMarkdown)
+
+
+def test_media_blocks_mimetype_detected() -> None:
+    """Tier 2: a media_blocks[0].mimeType surfaces the content-type."""
+    out = render_tool_result({
+        "media_blocks": [{"type": "text", "mimeType": "text/markdown"}],
+        "content": "# md",
+    })
+    assert isinstance(out, RichMarkdown)
+
+
+# ── fallback: anything unrecognized → None (caller renders YAML) ─────────────
+
+
+def test_unknown_content_type_returns_none() -> None:
+    """Tier 2: an unregistered content-type returns None → YAML fallback."""
+    assert render_tool_result({"content_type": "application/json", "content": "{}"}) is None
+
+
+def test_no_content_type_returns_none() -> None:
+    """Tier 2: a result with no content-type field returns None → fallback."""
+    assert render_tool_result({"status": "ok", "path": "/tmp/x"}) is None
+
+
+def test_non_dict_returns_none() -> None:
+    """Tier 2: a non-dict result (str / None) returns None → fallback."""
+    assert render_tool_result("plain string") is None
+    assert render_tool_result(None) is None
+
+
+def test_markdown_empty_content_returns_none() -> None:
+    """Tier 2: recognized type but empty payload → None (nothing to render)."""
+    assert render_tool_result({"content_type": "text/markdown", "content": ""}) is None
+
+
+# ── table viewer details ─────────────────────────────────────────────────────
+
+
+def test_csv_ragged_rows_padded_not_crashing() -> None:
+    """Tier 2: a CSV row shorter than the header is padded, not a crash."""
+    out = render_tool_result({"content_type": "text/csv", "content": "a,b,c\n1,2\n3,4,5"})
+    assert isinstance(out, Table)
+    headers = [str(c.header) for c in out.columns]
+    assert headers == ["a", "b", "c"], f"ragged CSV should keep header columns; got {headers}"
+
+
+def test_csv_caps_rows_with_overflow_caption() -> None:
+    """Tier 2: a CSV past the row cap renders a bounded table + overflow caption."""
+    lines = ["h"] + [str(i) for i in range(200)]
+    out = render_tool_result({"content_type": "text/csv", "content": "\n".join(lines)})
+    assert isinstance(out, Table)
+    assert out.caption and "more rows" in str(out.caption)
+
+
+# ── wire: _show_event_in_preview routes tool events through the viewer ───────
+# These exercise the integration seam the pure tests above cannot: an event's
+# emit kwargs are nested under ``data`` (events.py ``Event(type=, data=)``),
+# so the result dict lives at ``ev["data"]["result"]``. A wire reading the
+# wrong key silently never fires the viewer (always YAML) — these guard that.
+
+
+def _capture_preview_renderable(pane: object) -> list:
+    """Wrap a real preview pane's show_text to record the renderable it gets."""
+    captured: list = []
+    original = pane.show_text  # type: ignore[attr-defined]
+
+    def _spy(title: str, renderable: object) -> None:
+        captured.append(renderable)
+        original(title, renderable)
+
+    pane.show_text = _spy  # type: ignore[attr-defined]
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_wire_tool_returned_md_event_renders_via_viewer() -> None:
+    """Tier 2: a tool_returned event with a markdown result → viewer fires.
+
+    Guards the data-nesting seam: the result dict is at ev["data"]["result"],
+    so a wire reading ev["result"] would fall back to YAML (regression).
+    """
+    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.chat.tui.widgets import RightPanel
+    from reyn.chat.tui.widgets.right_panel.shells import _PreviewPane
+
+    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        panel = app.query_one(RightPanel)
+        pane = panel.query_one("#preview-pane", _PreviewPane)
+        captured = _capture_preview_renderable(pane)
+
+        panel._events_visible = [
+            {"type": "tool_returned",
+             "data": {"result": {"content_type": "text/markdown", "content": "# Hi"}}},
+        ]
+        panel._events_cursor = 0
+        panel._show_event_in_preview(pane)
+        await pilot.pause()
+
+        assert captured, "preview pane received no renderable"
+        assert isinstance(captured[-1], RichMarkdown), (
+            f"markdown tool result should render via the viewer; "
+            f"got {type(captured[-1])!r} (wire likely read the wrong result key)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_wire_unknown_type_event_falls_back_to_yaml() -> None:
+    """Tier 2: a tool_returned event with no recognized type → YAML fallback."""
+    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.chat.tui.widgets import RightPanel
+    from reyn.chat.tui.widgets.right_panel.shells import _PreviewPane
+
+    app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        panel = app.query_one(RightPanel)
+        pane = panel.query_one("#preview-pane", _PreviewPane)
+        captured = _capture_preview_renderable(pane)
+
+        panel._events_visible = [
+            {"type": "tool_returned",
+             "data": {"result": {"content_type": "application/json", "content": "{}"}}},
+        ]
+        panel._events_cursor = 0
+        panel._show_event_in_preview(pane)
+        await pilot.pause()
+
+        assert captured, "preview pane received no renderable"
+        assert not isinstance(captured[-1], RichMarkdown), (
+            "unrecognized content-type should fall back to the YAML preview, "
+            "not the markdown viewer"
+        )
