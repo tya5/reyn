@@ -31,7 +31,7 @@ models:
 | `plan` | map | Plan-mode step budget and retry tuning. See below. |
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
-| `sandbox` | map | Sandboxed-exec backend selection and unsupported-platform policy. See below. |
+| `sandbox` | map | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
 | `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
 | `embedding` | map | RAG embedding model classes and batch settings. See below. |
 | `chat` | map | Chat-session compaction settings. See below. |
@@ -311,18 +311,40 @@ All exporters are fire-and-forget: export failures are logged but do not abort t
 
 ## `sandbox` block
 
-Backend selection and unsupported-platform policy for `sandboxed_exec` ops.
+Backend selection, unsupported-platform policy, and the agent-level sandbox
+policy for `sandboxed_exec` ops + the OS's in-process file/http gates.
 
 ```yaml
 sandbox:
   backend: auto          # auto | seatbelt | landlock | noop
   on_unsupported: warn   # warn | error | ignore
+  policy:                # optional — the agent-level (operator) sandbox policy
+    network: true
+    read_paths: ["/"]
+    write_paths: ["/"]
+    allow_subprocess: true
+    env_passthrough: ["PATH", "HOME"]
+    timeout_seconds: 600
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `backend` | string | `auto` | Enforcement backend. `auto` lets the OS pick: macOS < 26 → `seatbelt` (sandbox-exec SBPL), Linux ≥ 5.13 with `sandbox-linux` extra → `landlock` (+ optional seccomp-BPF), otherwise → `noop` (audit-only, no enforcement). Explicit values force a specific backend. |
 | `on_unsupported` | string | `warn` | Policy when the requested backend is unavailable on this platform. `warn` logs a WARNING and falls back to `noop`. `error` raises `RuntimeError` (fail-fast for production environments that require enforcement). `ignore` silently falls back. |
+| `policy` | map | _none_ | **Agent-level (operator) sandbox policy** (#1326). When set, it is the deterministic policy applied to sandboxed ops **and** folded into the `SandboxLayer` of the permission intersection (`∩`) for the OS's in-process file/http gates — **winning over** op-declared fields, so a skill or the LLM cannot widen it. Omitted (the default) means **no agent-level restriction**: the `SandboxLayer` stays the identity (`⊤`) and op-level fields govern, exactly as before. Sandbox authorization is an operator/run concern — this replaces the retired phase-scoped `default_sandbox_policy`. See sub-keys below. |
+
+### `sandbox.policy` sub-keys
+
+When `sandbox.policy` is present, these mirror the `SandboxPolicy` fields. Unknown keys are rejected at config load.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `network` | bool | `false` | Allow outbound network from the sandboxed process. |
+| `read_paths` | list[string] | `[]` | Filesystem paths the process may read (glob patterns OK). |
+| `write_paths` | list[string] | `[]` | Filesystem paths the process may write. |
+| `allow_subprocess` | bool | `false` | Whether the process may spawn children. |
+| `env_passthrough` | list[string] | `[]` | Env-var names that pass through to the sandboxed process. |
+| `timeout_seconds` | int | `60` | Wall-clock cap enforced by the backend. |
 
 See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) for the op schema and backend selection details.
 

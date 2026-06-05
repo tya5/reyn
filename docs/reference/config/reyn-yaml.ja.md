@@ -31,7 +31,7 @@ models:
 | `plan` | マップ | プランモードのステップバジェットとリトライ設定。以下参照。 |
 | `web` | マップ | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
 | `eval` | マップ | `reyn eval` のトレース exporter バックエンド。以下参照。 |
-| `sandbox` | マップ | `sandboxed_exec` のバックエンド選択と非対応プラットフォームポリシー。以下参照。 |
+| `sandbox` | マップ | `sandboxed_exec` のバックエンド選択・非対応プラットフォームポリシー・agent-level サンドボックスポリシー。以下参照。 |
 | `action_retrieval` | マップ | ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
 | `embedding` | マップ | RAG 埋め込みモデルクラスとバッチ設定。以下参照。 |
 | `chat` | マップ | チャットセッションの Head/Body/Tail 圧縮設定。以下参照。 |
@@ -301,18 +301,39 @@ eval:
 
 ## `sandbox` ブロック
 
-`sandboxed_exec` op のバックエンド選択と非対応プラットフォームポリシー。
+`sandboxed_exec` op + OS の in-process file/http ゲートのバックエンド選択・非対応プラットフォームポリシー・agent-level サンドボックスポリシー。
 
 ```yaml
 sandbox:
   backend: auto          # auto | seatbelt | landlock | noop
   on_unsupported: warn   # warn | error | ignore
+  policy:                # オプション — agent-level（オペレータ）サンドボックスポリシー
+    network: true
+    read_paths: ["/"]
+    write_paths: ["/"]
+    allow_subprocess: true
+    env_passthrough: ["PATH", "HOME"]
+    timeout_seconds: 600
 ```
 
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
 | `backend` | 文字列 | `auto` | 強制バックエンド。`auto` は OS が選択: macOS < 26 → `seatbelt`（sandbox-exec SBPL）、Linux ≥ 5.13 かつ `sandbox-linux` extra インストール済み → `landlock`（+ オプションの seccomp-BPF）、その他 → `noop`（監査のみ、強制なし）。明示的な値で特定バックエンドを強制できます。 |
 | `on_unsupported` | 文字列 | `warn` | 要求バックエンドがこのプラットフォームで利用不可の場合のポリシー。`warn` は WARNING をログに記録して `noop` にフォールバック。`error` は `RuntimeError` を発生（強制が必須な本番環境のフェイルファスト）。`ignore` はサイレントにフォールバック。 |
+| `policy` | マップ | _なし_ | **agent-level（オペレータ）サンドボックスポリシー**（#1326）。設定すると、サンドボックス op に適用される決定的ポリシーになり、かつ OS の in-process file/http ゲートの permission 積（`∩`）の `SandboxLayer` に畳み込まれます — op 宣言のフィールドに **優先（WINS）** するため、スキルや LLM が緩めることはできません。省略時（デフォルト）は **agent-level の制限なし**: `SandboxLayer` は恒等（`⊤`）のままで op レベルのフィールドが従来通り支配します。サンドボックス認可はオペレータ/run の関心事であり、これは廃止された phase スコープの `default_sandbox_policy` を置き換えます。サブキーは以下参照。 |
+
+### `sandbox.policy` サブキー
+
+`sandbox.policy` が存在する場合、`SandboxPolicy` フィールドを反映します。未知のキーは config ロード時に拒否されます。
+
+| キー | 型 | デフォルト | 説明 |
+|-----|------|---------|-------------|
+| `network` | bool | `false` | サンドボックスプロセスからの外向きネットワークを許可。 |
+| `read_paths` | list[文字列] | `[]` | プロセスが読み取り可能なパス（glob 可）。 |
+| `write_paths` | list[文字列] | `[]` | プロセスが書き込み可能なパス。 |
+| `allow_subprocess` | bool | `false` | 子プロセスの spawn を許可するか。 |
+| `env_passthrough` | list[文字列] | `[]` | サンドボックスプロセスへ通過させる環境変数名。 |
+| `timeout_seconds` | int | `60` | バックエンドが強制する実時間上限。 |
 
 [リファレンス: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) で op スキーマとバックエンド選択の詳細を参照してください。
 
