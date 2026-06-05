@@ -28,6 +28,7 @@ preprocessor:
     module: ./sanitize_test_patch.py
     function: sanitize_test_patch
     mode: safe
+    runs_in: os   # #183: OS-orchestration text-prep (pure transform) — host, never the agent container
     into: data.test_patch
     output_schema:
       type: string
@@ -40,6 +41,7 @@ preprocessor:
     module: ./parse_test_targets.py
     function: parse_test_targets
     mode: safe
+    runs_in: os   # #183: OS-orchestration text-prep (pure transform) — host, never the agent container
     into: data._revert_cmds
     output_schema:
       type: array

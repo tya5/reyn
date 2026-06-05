@@ -18,6 +18,7 @@ preprocessor:
     module: ./escape_anchors.py
     function: escape_anchors
     mode: safe
+    runs_in: os   # #183: OS-orchestration text-prep (pure transform) — host, never the agent container
     into: data.edits
     output_schema:
       type: array
@@ -48,6 +49,7 @@ preprocessor:
     module: ./drop_not_locatable.py
     function: drop_not_locatable
     mode: safe
+    runs_in: os   # #183: OS-orchestration text-prep (pure transform) — host, never the agent container
     into: data
     output_schema:
       type: object

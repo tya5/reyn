@@ -50,6 +50,20 @@ class PythonStep(BaseModel):
     function: str             # function name within the module
     into: str                 # dot path in artifact where the return value is placed
     output_schema: dict[str, Any]  # JSON Schema of the function's return value
+    # #183 / #1352-B root-fix: which substrate this step runs on.
+    #   "sandbox" (default) — when a real exec backend is configured (container /
+    #     Seatbelt / Landlock), the harness subprocess routes through it (#1356):
+    #     for steps whose FS effects must hit the agent's shared substrate.
+    #   "os" — OS-orchestration: a deterministic, pure artifact-transform step
+    #     (in-memory input → output value, no FS/network) runs in the framework
+    #     HOST process and is NEVER routed to the exec backend. This is the
+    #     industry model (SWE-agent / OpenHands: no framework code in the agent
+    #     container — the swebench image's repo conda python can't host reyn).
+    #     Containment is unchanged: the safe-mode AST restriction + reyn.safe.file
+    #     path-gating apply on host identically; "os" only selects WHERE the
+    #     already-bounded compute runs. Default stays "sandbox" so #1356's
+    #     sandboxing intent is preserved for general / agent-authored steps.
+    runs_in: Literal["os", "sandbox"] = "sandbox"
 
 
 class RunOpStep(BaseModel):

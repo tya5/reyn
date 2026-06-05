@@ -603,6 +603,9 @@ class PreprocessorExecutor:
                 sandbox_write_paths=sandbox_write_paths,
                 sandbox_backend=self._sandbox_backend,
                 sandbox_policy=self._agent_sandbox_policy,
+                # #183 root-fix: OS-orchestration steps (runs_in:os) never route to
+                # the exec backend — they run in the host framework process.
+                runs_in=getattr(step, "runs_in", "sandbox"),
             )
         except PythonStepError as exc:
             self._events.emit(

@@ -94,6 +94,7 @@ class PythonRunner:
         sandbox_write_paths: list[str] | None = None,
         sandbox_backend: "SandboxBackend | None" = None,
         sandbox_policy: dict | None = None,
+        runs_in: str = "sandbox",
     ) -> Any:
         """Execute `function` in `module` against `artifact`.
 
@@ -148,8 +149,13 @@ class PythonRunner:
         # #1352-B: route through the OS sandbox backend when one is configured
         # (real + available + not noop). Falls back to a direct subprocess for
         # noop / None (unchanged behavior — standard chat runs python unsandboxed).
+        # #183 root-fix: an OS-orchestration step (`runs_in: os`) is never routed
+        # to the exec backend — it is reyn framework code (pure artifact-transform)
+        # that runs in the host process, not in the agent's sandbox/container
+        # (whose repo python can't host reyn). `sandbox` (default) preserves #1356.
         use_backend = (
-            sandbox_backend is not None
+            runs_in != "os"
+            and sandbox_backend is not None
             and getattr(sandbox_backend, "name", None) not in (None, "noop")
             and sandbox_backend.available()
         )

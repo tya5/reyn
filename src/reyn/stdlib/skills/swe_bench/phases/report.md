@@ -23,6 +23,7 @@ preprocessor:
     module: ./parse_test_targets.py
     function: parse_test_targets
     mode: safe
+    runs_in: os   # #183: OS-orchestration text-prep (pure transform) — host, never the agent container
     into: data._revert_cmds
     output_schema:
       type: array
