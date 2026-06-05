@@ -35,7 +35,7 @@ Read/glob/grep anywhere under the project root. Write/edit/delete only under `.r
 | Protected path | Backs | Why carved out |
 |---|---|---|
 | `.reyn/approvals.yaml` | The persistent approval store — only the runtime authorization flow writes here | Permanent. It *is* the approval gate; there is no later use-gate, so a direct write would silently activate a never-approved grant on the next startup (#1199). |
-| `.reyn/index/sources.yaml` | Index source registry | Transitional — carved out until the S3.4 part1 op-layer gate lands. |
+| `.reyn/index/sources.yaml` | Index source registry | Transitional — carved out until the index write-gate is effective end-to-end (#1320: the postprocessor scope must carry a sandbox-policy source; the S3.4 part1 op-layer gate alone does not fire in the real index flow). |
 
 **Protect-at-use (principle).** A config-write carve-out is *redundant* when the capability it configures is gated downstream at use time. `.reyn/mcp.yaml` and `.reyn/cron.yaml` were therefore **removed** from the carve-out:
 

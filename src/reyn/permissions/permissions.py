@@ -71,7 +71,9 @@ _DEFAULT_WRITE_ZONES = (".reyn", "reyn")
 #     run under a user-launched in-process scheduler and their ops are
 #     themselves permission-gated.
 # ``.reyn/index/sources.yaml`` stays carved out transitionally until the
-# S3.4 part1 op-layer gate lands. ``.reyn/approvals.yaml`` stays
+# index write-gate is effective end-to-end (#1320: the postprocessor scope
+# must carry a sandbox-policy source; the S3.4 part1 op-layer gate alone
+# does not fire in the real index flow). ``.reyn/approvals.yaml`` stays
 # permanently — it is the approval store itself and has no downstream
 # use-gate (see below).
 #
