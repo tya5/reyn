@@ -42,6 +42,18 @@ preprocessor:
       on_error: skip
     into: data._plan_regions
     on_error: skip
+  # #1366 follow-up: bound the region volume. A common symbol matches hundreds of
+  # lines (e.g. `Column`); with context each grep result is huge, so the raw
+  # `_plan_regions` can reach megabytes and overwhelm the plan model's context
+  # (it then aborts). This drops no-match (count 0) and too-generic (count > max)
+  # regions and caps the total, keeping only precise, size-bounded locators.
+  - type: python
+    module: ./prune_plan_regions.py
+    function: prune_plan_regions
+    mode: safe
+    into: data
+    output_schema:
+      type: object
 ---
 
 Produce a concrete edit plan: a list of files to change and a description of
