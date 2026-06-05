@@ -151,6 +151,11 @@ class PostprocessorExecutor:
         # Resume / WAL wiring — optional; None means fresh run (no memoization).
         state_log: Any = None,
         skill_run_id: str | None = None,
+        # #1326: agent-level (operator) sandbox policy. Forwarded to the delegate
+        # so a postprocessor index write self-gates against the operator policy —
+        # the _PostprocessorScope carries no phase policy, so this is the only
+        # source that makes the write-gate fire here (dissolves #1321).
+        agent_sandbox_policy: dict | None = None,
     ) -> None:
         self._skill = skill
         self._events = events
@@ -172,6 +177,7 @@ class PostprocessorExecutor:
             python_runner=python_runner,
             python_allowed_modules=python_allowed_modules,
             caller=caller,
+            agent_sandbox_policy=agent_sandbox_policy,
         )
 
     async def run(

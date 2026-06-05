@@ -163,6 +163,15 @@ class OSRuntime:
         # executor so sandboxed_exec backend selection honors the operator's
         # declared backend / on_unsupported policy. None → platform default.
         self._sandbox_config = sandbox_config
+        # #1326: the agent-level (operator) sandbox policy carried by
+        # ``reyn.yaml sandbox.policy`` (None when the operator declares none →
+        # the SandboxLayer stays ⊤). Threaded into the phase / orchestrator /
+        # pre- + post-processor executors so it is the deterministic policy for
+        # the permission ∩ + sandboxed ops, replacing the retired phase-scoped
+        # default_sandbox_policy.
+        self._agent_sandbox_policy = (
+            sandbox_config.policy if sandbox_config is not None else None
+        )
         # Issue #364 multi-modal cluster: media-size gate config.
         self._multimodal_config = multimodal_config
         # Issue #383 PR-C: media + tool-result file storage.
@@ -207,6 +216,7 @@ class OSRuntime:
             run_id=run_id,
             secret_store=secret_store,
             sandbox_backend=sandbox_backend,
+            agent_sandbox_policy=self._agent_sandbox_policy,
         )
         # FP-0020 Component A: all mutable run-scope state encapsulated in RunState.
         self._state = RunState()
@@ -292,6 +302,7 @@ class OSRuntime:
             # as data (P7-OK); this skill runs the converged native-tools op-loop
             # (#1092) iff its name is listed. Default empty = json-mode (zero change).
             op_loop_enabled=skill.name in (tool_calls_op_loop_skills or ()),
+            agent_sandbox_policy=self._agent_sandbox_policy,  # #1326
         )
         # FP-0020 Component D: phase sequence + transitions + rollback + skill-node
         # dispatch + resume + SkillRegistry lifecycle extracted to RunOrchestrator.
@@ -323,6 +334,7 @@ class OSRuntime:
             max_phase_visits=self._max_phase_visits,
             budget_tracker=budget_tracker,  # #1190 stage (ii): skill_node_adapt cost recording
             tool_calls_op_loop_skills=self._tool_calls_op_loop_skills,  # converged op-loop sub-skill gate
+            agent_sandbox_policy=self._agent_sandbox_policy,  # #1326
         )
 
     # ── Backward-compat properties (FP-0020 Component A) ───────────────────

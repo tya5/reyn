@@ -989,10 +989,23 @@ class SandboxConfig:
             ``'error'`` raises RuntimeError (useful to fail-fast in enforced
             production environments). ``'ignore'`` silently falls back.
             Allowed: ``{'warn', 'error', 'ignore'}``.
+        policy:
+            #1326 — the agent-level (operator) sandbox policy: a mapping of
+            ``SandboxPolicy`` kwargs (``network`` / ``read_paths`` /
+            ``write_paths`` / ``allow_subprocess`` / ``env_passthrough`` /
+            ``timeout_seconds``). When set it is the deterministic policy the OS
+            applies to sandboxed ops + the SandboxLayer of the permission ∩ —
+            WINNING over op-declared fields (the LLM cannot widen it). ``None``
+            (absent) means *no agent-level restriction* — the SandboxLayer stays
+            ⊤ and op-level fields govern (the pre-#1326 default for any run that
+            declares no policy). This replaces the retired phase-scoped
+            ``default_sandbox_policy`` (FP-0017 remnant): sandbox authorization is
+            an operator/run concern, not a per-phase one.
     """
 
     backend: str = "auto"
     on_unsupported: str = "warn"
+    policy: dict | None = None
 
     def __post_init__(self) -> None:
         if self.backend not in _SANDBOX_BACKENDS:
@@ -1005,6 +1018,19 @@ class SandboxConfig:
                 f"sandbox.on_unsupported {self.on_unsupported!r} is not one of "
                 f"{sorted(_SANDBOX_ON_UNSUPPORTED)}"
             )
+        if self.policy is not None:
+            # Fail-fast on a malformed operator policy: construct a SandboxPolicy
+            # to validate the keys (unknown key → TypeError → clear ValueError).
+            from reyn.sandbox.policy import SandboxPolicy
+
+            if not isinstance(self.policy, dict):
+                raise ValueError(
+                    f"sandbox.policy must be a mapping, got {type(self.policy).__name__}"
+                )
+            try:
+                SandboxPolicy(**self.policy)
+            except TypeError as exc:
+                raise ValueError(f"sandbox.policy is invalid: {exc}") from exc
 
 
 def _build_sandbox_config(raw: object) -> SandboxConfig:
@@ -1014,8 +1040,13 @@ def _build_sandbox_config(raw: object) -> SandboxConfig:
     defaults = SandboxConfig()
     backend = str(raw.get("backend", defaults.backend))
     on_unsupported = str(raw.get("on_unsupported", defaults.on_unsupported))
+    # #1326: optional agent-level policy. Absent → None (SandboxLayer stays ⊤).
+    policy_raw = raw.get("policy")
+    policy = dict(policy_raw) if isinstance(policy_raw, dict) else None
     # Validation delegated to __post_init__ — raises ValueError with clear message.
-    return SandboxConfig(backend=backend, on_unsupported=on_unsupported)
+    return SandboxConfig(
+        backend=backend, on_unsupported=on_unsupported, policy=policy
+    )
 
 
 @dataclass
