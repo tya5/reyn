@@ -292,6 +292,7 @@ def _build_environment_backend(args: argparse.Namespace, *, launcher=None):
             WORKSPACE_DEST_DEFAULT,
             ContainerLauncher,
             LaunchConfig,
+            load_devcontainer_config,
             parse_mount_spec,
         )
         # _find_project_root returns None when no reyn.yaml is found up the tree;
@@ -301,16 +302,30 @@ def _build_environment_backend(args: argparse.Namespace, *, launcher=None):
         project_root = _find_project_root(Path.cwd())
         workspace_root = str(project_root if project_root is not None else Path.cwd())
         try:
-            mounts = [parse_mount_spec(m) for m in (getattr(args, "mounts", None) or [])]
+            cli_mounts = [parse_mount_spec(m) for m in (getattr(args, "mounts", None) or [])]
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
         keep = bool(getattr(args, "keep_container", False))
+        # #1324 (b) devcontainer awareness: a workspace devcontainer.json seeds
+        # the launch defaults; explicit CLI flags override it. build-based
+        # devcontainers are not yet supported → warn + use the default image.
+        dc = load_devcontainer_config(workspace_root)
+        if dc is not None and dc.build_based:
+            print(
+                "Warning: build-based devcontainer (dockerFile/build) is not yet "
+                "supported; using the default image.",
+                file=sys.stderr,
+            )
+        cli_image = getattr(args, "image", None)
+        dc_image = dc.image if (dc is not None and not dc.build_based) else None
         config = LaunchConfig(
             workspace_root=workspace_root,
-            image=getattr(args, "image", None) or DEFAULT_IMAGE,
-            mounts=mounts,
+            image=cli_image or dc_image or DEFAULT_IMAGE,
+            mounts=cli_mounts or (dc.mounts if dc is not None else []),
             persistent=keep,
+            setup_command=(dc.setup_command if dc is not None else None),
+            user=(dc.user if dc is not None else None),
         )
         launcher = launcher or ContainerLauncher()
         try:

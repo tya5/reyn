@@ -19,6 +19,7 @@ from reyn.environment.container_launcher import (
     LaunchConfig,
     MountSpec,
     build_docker_run_argv,
+    load_devcontainer_config,
     parse_mount_spec,
 )
 from reyn.sandbox.backend import SandboxResult
@@ -235,3 +236,83 @@ def test_launch_builds_base_image_then_runs():
     assert runner.calls[0][:3] == ["docker", "image", "inspect"]
     assert runner.calls[1][:2] == ["docker", "build"]
     assert runner.calls[2][:3] == ["docker", "run", "-d"]
+
+
+# ─── devcontainer.json awareness (#1324 follow-up b) ──────────────────────────
+
+
+def _write_devcontainer(tmp_path, body: str, *, root_level: bool = False):
+    if root_level:
+        p = tmp_path / ".devcontainer.json"
+    else:
+        (tmp_path / ".devcontainer").mkdir(exist_ok=True)
+        p = tmp_path / ".devcontainer" / "devcontainer.json"
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+def test_devcontainer_image_and_postcreate(tmp_path):
+    """Tier 2: image → cfg.image, postCreateCommand → cfg.setup_command (once-after-create)."""
+    _write_devcontainer(tmp_path, '{"image": "python:3.12", "postCreateCommand": "pip install -e ."}')
+    cfg = load_devcontainer_config(str(tmp_path))
+    assert cfg is not None
+    assert cfg.image == "python:3.12"
+    assert cfg.setup_command == "pip install -e ."
+    assert cfg.build_based is False
+
+
+def test_devcontainer_jsonc_comments_and_trailing_commas(tmp_path):
+    """Tier 2: JSONC (// and /* */ comments + trailing commas) parses (spec-compliant)."""
+    _write_devcontainer(tmp_path, """
+    {
+      // line comment
+      "image": "node:20", /* block */
+      "remoteUser": "node",
+    }
+    """)
+    cfg = load_devcontainer_config(str(tmp_path))
+    assert cfg is not None
+    assert cfg.image == "node:20"
+    assert cfg.user == "node"
+
+
+def test_devcontainer_mounts_string_and_user(tmp_path):
+    """Tier 2: string-form mounts → MountSpec; remoteUser → cfg.user."""
+    _write_devcontainer(
+        tmp_path,
+        '{"image": "x", "remoteUser": "dev", '
+        '"mounts": ["source=/host/d,target=/c/d,type=bind", "source=/ro,target=/c/ro,readonly"]}',
+    )
+    cfg = load_devcontainer_config(str(tmp_path))
+    assert cfg is not None
+    assert cfg.user == "dev"
+    m0, m1 = cfg.mounts
+    assert (m0.host, m0.container, m0.mode) == ("/host/d", "/c/d", "rw")
+    assert (m1.host, m1.container, m1.mode) == ("/ro", "/c/ro", "ro")
+
+
+def test_devcontainer_build_based_flagged(tmp_path):
+    """Tier 2: a dockerFile/build devcontainer is flagged build_based (not yet supported)."""
+    _write_devcontainer(tmp_path, '{"build": {"dockerfile": "Dockerfile"}}')
+    cfg = load_devcontainer_config(str(tmp_path))
+    assert cfg is not None
+    assert cfg.build_based is True
+    assert cfg.image is None
+
+
+def test_devcontainer_root_level_location(tmp_path):
+    """Tier 2: the root-level .devcontainer.json location is also detected."""
+    _write_devcontainer(tmp_path, '{"image": "rootimg"}', root_level=True)
+    cfg = load_devcontainer_config(str(tmp_path))
+    assert cfg is not None and cfg.image == "rootimg"
+
+
+def test_devcontainer_absent_returns_none(tmp_path):
+    """Tier 2: no devcontainer.json → None (caller uses defaults)."""
+    assert load_devcontainer_config(str(tmp_path)) is None
+
+
+def test_devcontainer_malformed_returns_none(tmp_path):
+    """Tier 2: a malformed devcontainer.json returns None (must not crash a launch)."""
+    _write_devcontainer(tmp_path, '{"image": "x"  "broken"')
+    assert load_devcontainer_config(str(tmp_path)) is None
