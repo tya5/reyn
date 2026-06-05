@@ -23,6 +23,11 @@ import json
 import sys
 from pathlib import Path
 
+from reyn.cli.env_backend import (
+    build_environment_backend,
+    register_env_backend_args,
+)
+
 
 def register(sub) -> None:
     p = sub.add_parser(
@@ -78,6 +83,8 @@ def register(sub) -> None:
                            "Override the LiteLLM model id used for "
                            "interpretation (default: openai/gemini-2.5-flash-lite)."
                        ))
+    # #1289: per-frontend container-chat — same --env-backend surface as `reyn run`.
+    register_env_backend_args(run_p)
     run_p.set_defaults(func=run_run)
 
     # --- coverage ---
@@ -295,7 +302,14 @@ def run_run(args: argparse.Namespace) -> None:
     scenario_set = load_scenario_set(str(set_yaml))
 
     # Build the live-LLM runner_fn (injected seam for the real agent path)
-    live_runner_fn = _build_live_runner(args.agent)
+    # #1289: build the agent-level EnvironmentBackend and pass the SAME instance
+    # to both ChatSession seams (FS + exec) via _build_live_runner (single-shared
+    # sandbox, #1200). A launched container is torn down at process exit.
+    _env_backend, _wb, _ws, _env_cleanup = build_environment_backend(args)
+    if _env_cleanup is not None:
+        import atexit
+        atexit.register(_env_cleanup)
+    live_runner_fn = _build_live_runner(args.agent, env_backend=_env_backend)
 
     try:
         from reyn.dogfood.runner import run_scenario_set
@@ -338,7 +352,7 @@ def run_run(args: argparse.Namespace) -> None:
     print(f"  results → {run_dir / 'summary.json'}")
 
 
-def _build_live_runner(agent_name: str):
+def _build_live_runner(agent_name: str, *, env_backend=None):
     """Return an async runner_fn that drives the chat router via send_to_agent_impl.
 
     Reuses the same path as MCP / web A2A: build a minimal AgentRegistry +
@@ -444,6 +458,9 @@ def _build_live_runner(agent_name: str):
                 multimodal_config=config.multimodal,
                 tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
                 action_retrieval_config=config.action_retrieval,
+                # #1289: same backend instance to both seams (single-shared-sandbox).
+                environment_backend=env_backend,
+                sandbox_backend=env_backend,
             )
             s.load_history()
             return s
