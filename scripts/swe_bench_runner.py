@@ -65,7 +65,13 @@ _REQUIRED_FIELDS = ("instance_id", "repo", "base_commit", "problem_statement")
 #     the path via a `.pth` to the bind-mounted source (no PYTHONPATH threading,
 #     so container_backend.run is untouched). Deps are version-pinned by
 #     reyn's own pyproject (read at runtime — no hardcoded drift).
-_CONTAINER_REYN_MOUNT = "/reyn"            # host reyn repo, bind-mounted :ro
+# The reyn repo is bind-mounted at its OWN host path inside the container
+# (`-v <repo>:<repo>:ro`) so host-absolute paths are valid in the container: the
+# python step module path the OS hands the harness is the host skill_dir path
+# (e.g. <repo>/src/reyn/stdlib/skills/swe_bench/escape_anchors.py), and the venv
+# `.pth` points at <repo>/src — both resolve in-container only at the same path.
+# (Mounting at a fixed /reyn would translate paths and break the host-absolute
+# module path the harness loads.)
 _CONTAINER_VENV = "/opt/reyn-venv"
 _CONTAINER_PY311 = "/opt/miniconda3/bin/python3.11"
 _CONTAINER_HARNESS_PYTHON = f"{_CONTAINER_VENV}/bin/python"
@@ -99,11 +105,12 @@ def reyn_runtime_deps(pyproject_text: str) -> list[str]:
     return out
 
 
-def provision_command(deps: list[str]) -> str:
+def provision_command(deps: list[str], reyn_src: str) -> str:
     """The `bash -lc` body that builds the in-container reyn venv (pure → str).
 
     Builds a python3.11 venv, installs reyn's runtime deps (version-pinned), and
-    puts reyn itself on sys.path via a `.pth` to the bind-mounted source — so
+    puts reyn itself on sys.path via a `.pth` to ``reyn_src`` (the bind-mounted
+    source, at its host-absolute path inside the container) — so
     `<venv>/bin/python -m reyn.kernel._python_harness` imports reyn with no
     PYTHONPATH threading. Each dep is shell-quoted (version specs contain `>`)."""
     deps_arg = " ".join(shlex.quote(d) for d in deps)
@@ -111,7 +118,7 @@ def provision_command(deps: list[str]) -> str:
         "set -e; "
         f"{_CONTAINER_PY311} -m venv {_CONTAINER_VENV}; "
         f"{_CONTAINER_VENV}/bin/pip install --quiet {deps_arg}; "
-        f"echo {_CONTAINER_REYN_MOUNT}/src "
+        f"echo {shlex.quote(reyn_src)} "
         f"> \"$({_CONTAINER_VENV}/bin/python -c 'import site; print(site.getsitepackages()[0])')/reyn.pth\""
     )
 
@@ -370,12 +377,13 @@ def run_reyn_in_container(
     reyn_root = str(_reyn_repo_root())
     try:
         start = runner(
-            # #183: bind-mount the host reyn repo :ro so the in-container venv can
-            # put reyn on its path (.pth → /reyn/src); the harness imports reyn
-            # there. The repo's own files stay at repo_dir (/testbed), untouched.
+            # #183: bind-mount the host reyn repo :ro at its OWN host path so the
+            # in-container venv can put reyn on its path (.pth → <repo>/src) AND
+            # the harness can load the python step module by the host-absolute path
+            # the OS hands it. The repo's own files stay at repo_dir (/testbed).
             [
                 docker_bin, "run", "-d", "--name", name,
-                "-v", f"{reyn_root}:{_CONTAINER_REYN_MOUNT}:ro",
+                "-v", f"{reyn_root}:{reyn_root}:ro",
                 image, "sleep", "infinity",
             ],
             timeout=300,
@@ -395,7 +403,7 @@ def run_reyn_in_container(
         deps = reyn_runtime_deps((_reyn_repo_root() / "pyproject.toml").read_text())
         print(f"[swe_bench_runner] provisioning reyn venv in {name} ({len(deps)} deps)", file=sys.stderr)
         prov = runner(
-            [docker_bin, "exec", name, "bash", "-lc", provision_command(deps)],
+            [docker_bin, "exec", name, "bash", "-lc", provision_command(deps, f"{reyn_root}/src")],
             timeout=600,
         )
         if getattr(prov, "returncode", 1) != 0:
