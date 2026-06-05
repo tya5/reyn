@@ -218,6 +218,7 @@ nav:
           - concepts/architecture/phase-vs-skill-vs-os.md
           - concepts/architecture/llm-invocation-surfaces.md
           - concepts/architecture/llm-as-decision-engine.md
+          - concepts/architecture/sandbox-vs-permission.md
       - Runtime:
           - concepts/runtime/workspace.md
           - concepts/runtime/events.md

@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Sandbox
 
-Reyn's sandbox layer translates the policy a skill declares into kernel-level enforcement — without any OS code knowing which skill is running. This is a direct application of P3 (OS is the runtime engine) and P7 (OS code must not contain skill-specific strings): the skill declares *what* it needs; the OS selects *how* to enforce it.
+Reyn's sandbox layer provides **operator-level containment** for subprocess execution. The operator configures the backend and scoping model via `reyn.yaml`; the OS enforces it without any OS code knowing which skill is running (P3 / P7). Sandbox is orthogonal to permissions — see [Sandbox and permissions: orthogonal concerns](../architecture/sandbox-vs-permission.md).
 
 The sandbox complements the [permission model](../runtime/permission-model.md): permissions enforce declared scope at dispatch time (before the op runs); the sandbox enforces the same boundaries at the system-call level while the subprocess is running. The two layers are independent and additive.
 
@@ -16,12 +16,13 @@ Defined in `src/reyn/sandbox/policy.py`. Passed as fields on a `sandboxed_exec` 
 
 | Field | Type | Default | Meaning |
 |-------|------|---------|---------|
-| `network` | `bool` | `false` | Allow outbound network connections |
-| `read_paths` | `list[str]` | `[]` | Filesystem paths the subprocess may read (glob patterns and `{{workspace}}` template OK) |
-| `write_paths` | `list[str]` | `[]` | Filesystem paths the subprocess may write |
-| `allow_subprocess` | `bool` | `false` | Allow the subprocess to spawn child processes |
-| `env_passthrough` | `list[str]` | `[]` | Environment variable names passed through to the subprocess (all others are stripped) |
-| `timeout_seconds` | `int` | `60` | Wall-clock limit; process is killed on expiry |
+| `network` | `bool` | `false` | Allow outbound network connections. The primary exfiltration gate. |
+| `write_paths` | `list[str]` | `[]` | Filesystem paths the subprocess may write (tight guard). |
+| `read_deny_paths` | `list[str]` | [OS credential paths] | Sensitive paths denied from the broad read surface (defense-in-depth). Enforced only on backends that support deny-after-allow (Seatbelt). Default: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`. |
+| `read_paths` | `list[str]` | `[]` | **Legacy** — formerly the read allowlist. Under the current broad-read model reads are not restricted to this list; retained for backward compatibility and as documentation of intended read targets. |
+| `allow_subprocess` | `bool` | `false` | Allow the subprocess to spawn child processes. Advisory under Seatbelt (process-fork always permitted for binary bootstrap). |
+| `env_passthrough` | `list[str]` | `[]` | Environment variable names passed through to the subprocess (all others are stripped). `PATH` is always passed. |
+| `timeout_seconds` | `int` | `60` | Wall-clock limit; process is killed on expiry. |
 
 ## Backend selection table
 
@@ -29,8 +30,7 @@ Defined in `src/reyn/sandbox/policy.py`. Passed as fields on a `sandboxed_exec` 
 
 | Platform | Condition | Backend | Notes |
 |----------|-----------|---------|-------|
-| macOS | < 26 | `SeatbeltBackend` | SBPL profile via `sandbox-exec`. Deprecated upstream — Apple removing in macOS 26. |
-| macOS | ≥ 26 (future) | `AppleContainerBackend` | Not yet implemented (Component E, deferred). Falls back to `NoopBackend`. |
+| macOS | `sandbox-exec` available | `SeatbeltBackend` | SBPL deny-default profile via `sandbox-exec`. `sandbox-exec` is deprecated upstream but remains functional on macOS 26.3. Falls back to `NoopBackend` if the binary is absent. |
 | Linux | kernel ≥ 5.13, `sandbox-linux` extra installed | `LandlockBackend` + seccomp-BPF | `pip install reyn[sandbox-linux]` required. ABI v4+ adds network port rules. |
 | Linux | kernel < 5.13 or `sandbox-linux` not installed | `NoopBackend` | Audit-only; no enforcement. |
 | Other | any | `NoopBackend` | Audit-only; no enforcement. |
@@ -51,26 +51,11 @@ sandbox:
 - `backend: noop` — explicitly opt out of enforcement (useful in CI environments where you audit via events but do not need enforcement).
 - `on_unsupported: error` — fail skill dispatch if the configured backend is unavailable. Use in production environments where enforcement is a hard requirement.
 
-## Declaring a sandbox policy in a skill
+## Configuring the sandbox (operator config)
 
-In a skill's `skill.md`, add a `sandbox:` block to any phase that runs `sandboxed_exec`:
+Sandbox configuration is **operator-level** — set in `reyn.yaml` or via CLI flags, not per-skill or per-phase. See [`reyn.yaml` reference → `sandbox:`](../../reference/config/reyn-yaml.md) for the full config schema.
 
-```yaml
-# skill.md excerpt
-phases:
-  - name: run_script
-    instructions: |
-      Run the analysis script.
-    sandbox:
-      read_paths:
-        - "{{workspace}}/input"
-      write_paths:
-        - "{{workspace}}/output"
-      network: false
-      timeout_seconds: 120
-```
-
-The `{{workspace}}` template is expanded by the OS at runtime to the skill's workspace directory. Skill authors MUST NOT hardcode absolute paths — use `{{workspace}}` for all workspace-relative paths and `/usr/bin`, `/usr/lib`, etc. for system paths (those are automatically allowed on backends that need them for dylib loading).
+> **Phase-level `default_sandbox_policy` is deprecated.** The `default_sandbox_policy` field in `phase.md` frontmatter (per-phase sandbox override) is being retired — sandbox policy unifies at the agent level. Existing uses continue to work during the migration window but should be migrated to `reyn.yaml sandbox:` configuration.
 
 ## See also
 
