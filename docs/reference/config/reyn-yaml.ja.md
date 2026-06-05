@@ -320,7 +320,7 @@ sandbox:
 |-----|------|---------|-------------|
 | `backend` | 文字列 | `auto` | 強制バックエンド。`auto` は OS が選択: macOS < 26 → `seatbelt`（sandbox-exec SBPL）、Linux ≥ 5.13 かつ `sandbox-linux` extra インストール済み → `landlock`（+ オプションの seccomp-BPF）、その他 → `noop`（監査のみ、強制なし）。明示的な値で特定バックエンドを強制できます。 |
 | `on_unsupported` | 文字列 | `warn` | 要求バックエンドがこのプラットフォームで利用不可の場合のポリシー。`warn` は WARNING をログに記録して `noop` にフォールバック。`error` は `RuntimeError` を発生（強制が必須な本番環境のフェイルファスト）。`ignore` はサイレントにフォールバック。 |
-| `policy` | マップ | _なし_ | **agent-level（オペレータ）サンドボックスポリシー**（#1326）。設定すると、サンドボックス op に適用される決定的ポリシーになり、かつ OS の in-process file/http ゲートの permission 積（`∩`）の `SandboxLayer` に畳み込まれます — op 宣言のフィールドに **優先（WINS）** するため、スキルや LLM が緩めることはできません。省略時（デフォルト）は **agent-level の制限なし**: `SandboxLayer` は恒等（`⊤`）のままで op レベルのフィールドが従来通り支配します。サンドボックス認可はオペレータ/run の関心事であり、これは廃止された phase スコープの `default_sandbox_policy` を置き換えます。サブキーは以下参照。 |
+| `policy` | マップ | _なし_ | **agent-level（オペレータ）サンドボックスポリシー**。設定すると、サンドボックス op に適用される決定的ポリシーになり、かつ OS の in-process file/http ゲートの permission 積（`∩`）の `SandboxLayer` に畳み込まれます — op 宣言のフィールドに **優先（WINS）** するため、スキルや LLM が緩めることはできません。省略時（デフォルト）は **agent-level の制限なし**: `SandboxLayer` は恒等（`⊤`）のままで op レベルのフィールドが従来通り支配します。サンドボックス認可はオペレータ/run の関心事です。サブキーは以下参照。 |
 
 ### `sandbox.policy` サブキー
 
