@@ -23,7 +23,6 @@ from reyn.sandbox.policy import (  # noqa: E402
     resolve_sandbox_policy,
 )
 
-
 # ── (C) single-source resolver ────────────────────────────────────────────────
 
 
@@ -71,8 +70,8 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
     actually use the policy (not the op's request)."""
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
     from reyn.op_runtime.sandboxed_exec import handle
+    from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.workspace.workspace import Workspace
 
