@@ -218,3 +218,50 @@ def test_docker_launch_bad_mount_exits() -> None:
             _args(env_backend="docker", mounts=["bogus"]), launcher=fake
         )
     assert fake.launched == []  # rejected before launching
+
+
+# ─── docker LAUNCH devcontainer awareness (#1324 b) ────────────────────────────
+
+
+def _write_devcontainer(tmp_path, body: str) -> None:
+    (tmp_path / ".devcontainer").mkdir(exist_ok=True)
+    (tmp_path / ".devcontainer" / "devcontainer.json").write_text(body, encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("")  # so _find_project_root resolves here
+
+
+def test_docker_launch_reads_devcontainer_image(tmp_path, monkeypatch) -> None:
+    """Tier 2: #1324b — a workspace devcontainer.json image seeds the LaunchConfig
+    when no --image is given."""
+    _write_devcontainer(tmp_path, '{"image": "dcimg:1", "postCreateCommand": "make"}')
+    monkeypatch.chdir(tmp_path)
+    fake = _FakeLauncher()
+    _build_environment_backend(_args(env_backend="docker"), launcher=fake)
+    (cfg,) = fake.launched
+    assert cfg.image == "dcimg:1"
+    assert cfg.setup_command == "make"
+
+
+def test_docker_launch_cli_image_overrides_devcontainer(tmp_path, monkeypatch) -> None:
+    """Tier 2: #1324b — an explicit --image overrides the devcontainer image."""
+    _write_devcontainer(tmp_path, '{"image": "dcimg:1"}')
+    monkeypatch.chdir(tmp_path)
+    fake = _FakeLauncher()
+    _build_environment_backend(
+        _args(env_backend="docker", image="cli:override"), launcher=fake
+    )
+    (cfg,) = fake.launched
+    assert cfg.image == "cli:override"
+
+
+def test_docker_launch_build_based_devcontainer_warns(tmp_path, monkeypatch, capsys) -> None:
+    """Tier 2: #1324b — a build-based devcontainer warns + falls back to the default
+    image (build-based support is a tracked follow-up)."""
+    from reyn.environment.container_launcher import DEFAULT_IMAGE
+
+    _write_devcontainer(tmp_path, '{"build": {"dockerfile": "Dockerfile"}}')
+    monkeypatch.chdir(tmp_path)
+    fake = _FakeLauncher()
+    _build_environment_backend(_args(env_backend="docker"), launcher=fake)
+    (cfg,) = fake.launched
+    assert cfg.image == DEFAULT_IMAGE
+    assert "build-based devcontainer" in capsys.readouterr().err

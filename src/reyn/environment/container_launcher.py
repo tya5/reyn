@@ -35,9 +35,13 @@ mechanism here is independent of whether the default is published or bundled.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from reyn.environment.container_backend import SyncRunner, _sync_runner
 from reyn.sandbox.backend import SandboxResult
@@ -128,6 +132,119 @@ class LaunchConfig:
     read_only_rootfs: bool = True
     persistent: bool = False
     name: str | None = None
+
+
+# ── devcontainer.json awareness (#1324 follow-up b) ──────────────────────────
+#
+# When a workspace ships a devcontainer.json, reyn reads a minimal-useful subset
+# to seed the LaunchConfig (industry-standard spec; coding-task oriented). An
+# explicit CLI flag (--image / --mount) overrides the devcontainer default.
+# build/dockerFile-based devcontainers are NOT yet supported — the caller warns
+# and uses the default image (build-based support via the #1329 ensure_image
+# build-on-demand is a tracked follow-up).
+
+
+@dataclass
+class DevcontainerConfig:
+    """A devcontainer.json mapped to the LaunchConfig-relevant subset.
+
+    image:          devcontainer ``image`` (None if absent / build-based).
+    setup_command:  devcontainer ``postCreateCommand`` (once-after-create —
+                    semantically matches reyn's once-on-create setup_command;
+                    postStartCommand is every-start and intentionally NOT mapped).
+    mounts:         devcontainer ``mounts`` (bind mounts only).
+    user:           devcontainer ``remoteUser`` / ``containerUser``.
+    build_based:    True if the devcontainer is dockerFile/build/compose-based
+                    (not yet supported → caller falls back to the default image).
+    """
+
+    image: str | None = None
+    setup_command: str | None = None
+    mounts: list[MountSpec] = field(default_factory=list)
+    user: str | None = None
+    build_based: bool = False
+
+
+def _strip_jsonc(text: str) -> str:
+    """Best-effort strip of JSONC comments + trailing commas (devcontainer.json
+    permits ``//`` / ``/* */`` comments and trailing commas)."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)  # block comments
+    text = re.sub(r"(?m)//.*$", "", text)  # line comments
+    text = re.sub(r",(\s*[}\]])", r"\1", text)  # trailing commas
+    return text
+
+
+def _parse_devcontainer_mount(m: Any) -> MountSpec | None:
+    """Parse a devcontainer ``mounts`` entry → MountSpec.
+
+    Accepts the string form ``source=/h,target=/c[,type=bind][,readonly]`` and
+    the object form ``{"source": "/h", "target": "/c", ...}``. Non-bind mounts
+    (e.g. ``type=volume`` without a host source) are skipped (return None).
+    """
+    src = tgt = None
+    mode = "rw"
+    if isinstance(m, str):
+        for part in m.split(","):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                k = k.strip()
+                if k == "source":
+                    src = v.strip()
+                elif k == "target":
+                    tgt = v.strip()
+            elif part.strip() in ("readonly", "ro"):
+                mode = "ro"
+    elif isinstance(m, Mapping):
+        src = m.get("source")
+        tgt = m.get("target")
+        if m.get("readonly") or m.get("readOnly"):
+            mode = "ro"
+    if not src or not tgt:
+        return None
+    return MountSpec(host=str(src), container=str(tgt), mode=mode)
+
+
+def _map_devcontainer(data: Mapping[str, Any]) -> DevcontainerConfig:
+    cfg = DevcontainerConfig()
+    if data.get("dockerFile") or data.get("build") or data.get("dockerComposeFile"):
+        cfg.build_based = True
+    img = data.get("image")
+    if isinstance(img, str):
+        cfg.image = img
+    pcc = data.get("postCreateCommand")
+    if isinstance(pcc, str):
+        cfg.setup_command = pcc
+    elif isinstance(pcc, list):  # devcontainer allows an argv array
+        cfg.setup_command = " ".join(str(x) for x in pcc)
+    for m in data.get("mounts") or []:
+        ms = _parse_devcontainer_mount(m)
+        if ms is not None:
+            cfg.mounts.append(ms)
+    user = data.get("remoteUser") or data.get("containerUser")
+    if isinstance(user, str):
+        cfg.user = user
+    return cfg
+
+
+def load_devcontainer_config(workspace_root: str) -> DevcontainerConfig | None:
+    """Return the mapped devcontainer config for ``workspace_root``, or None.
+
+    Checks the two standard locations (``.devcontainer/devcontainer.json`` then
+    ``.devcontainer.json``). Parse failures return None (a malformed
+    devcontainer.json must not crash a launch — the caller falls back to defaults).
+    """
+    root = Path(workspace_root)
+    for rel in (".devcontainer/devcontainer.json", ".devcontainer.json"):
+        p = root / rel
+        if p.exists():
+            try:
+                data = json.loads(_strip_jsonc(p.read_text(encoding="utf-8")))
+            except (json.JSONDecodeError, OSError, ValueError):
+                return None
+            if isinstance(data, Mapping):
+                return _map_devcontainer(data)
+            return None
+    return None
 
 
 def _default_user() -> str | None:
