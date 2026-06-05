@@ -16,7 +16,7 @@ from reyn.index import SqliteIndexBackend
 from reyn.schemas.models import IndexQueryIROp
 
 from . import register
-from .context import OpContext
+from .context import OpContext, sandbox_policy_from_ctx
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -72,6 +72,19 @@ async def handle(
         )
 
     workspace_root = ctx.workspace.base_dir
+
+    # #1199 S3.4 Part1: route the index FS-op through the permission gate (the
+    # SQLite I/O itself stays host-direct — random-access/lock can't go on the
+    # read_file abstraction — so we gate the DB path BEFORE the backend opens
+    # it, with the phase sandbox_policy ∩, same shape as S3.1c-2). Closes the
+    # hole where a sandbox read_paths cap could not constrain index reads.
+    if ctx.permission_resolver is not None:
+        db_path = workspace_root / ".reyn" / "index" / op.source / "index.db"
+        ctx.permission_resolver.require_file_read(
+            ctx.permission_decl, str(db_path), ctx.skill_name,
+            sandbox_policy=sandbox_policy_from_ctx(ctx),
+        )
+
     backend = SqliteIndexBackend(workspace_root=workspace_root)
 
     try:

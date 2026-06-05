@@ -562,6 +562,21 @@ class PreprocessorExecutor:
             and entry.get("host") != "*"
         ]
 
+        # #1199 S3.4 Part1: forward the phase sandbox write_paths cap so a
+        # safe-mode step's host-direct index write (reyn.safe.embed_index →
+        # SqliteIndexBackend) self-gates against it. None when the phase declares
+        # no default_sandbox_policy (or no write_paths) → no cap (unchanged).
+        # getattr: the preprocessor path passes a PhaseIR (has the field); the
+        # postprocessor path passes a _PostprocessorScope (skill-level, no phase
+        # policy source yet) → None there (the index-write location; see the
+        # postprocessor-policy-source follow-up).
+        _sbx = getattr(phase, "default_sandbox_policy", None) or None
+        sandbox_write_paths = (
+            list(_sbx.get("write_paths") or [])
+            if isinstance(_sbx, dict) and _sbx.get("write_paths") is not None
+            else None
+        )
+
         try:
             result = await asyncio.to_thread(
                 self._python_runner.run,
@@ -575,6 +590,7 @@ class PreprocessorExecutor:
                 file_read_paths=file_read_paths,
                 file_write_paths=file_write_paths,
                 http_hosts=http_hosts,
+                sandbox_write_paths=sandbox_write_paths,
             )
         except PythonStepError as exc:
             self._events.emit(

@@ -195,6 +195,10 @@ def main() -> int:
         # #571 collapse arc Phase 3: host allowlist for reyn.safe.http
         # gating. Empty = no HTTP via safe.http.
         http_hosts = list(req.get("http_hosts") or [])
+        # #1199 S3.4 Part1: the phase sandbox policy's write_paths cap (None =
+        # no sandbox cap on the host-direct index write). Only present when the
+        # phase declares a default_sandbox_policy with write_paths.
+        sandbox_write_paths = req.get("sandbox_write_paths")
 
         if mode not in ("safe", "unsafe"):
             raise ValueError(f"unknown mode: {mode!r}")
@@ -235,6 +239,18 @@ def main() -> int:
             _safe_http._set_permission_context(http_hosts=http_hosts)
         except ImportError:
             pass
+
+        # #1199 S3.4 Part1: forward the phase sandbox write_paths cap to
+        # reyn.safe.embed_index so the host-direct index write (SqliteIndexBackend)
+        # self-gates the DB path against it. Only set when present (None = no cap).
+        if sandbox_write_paths is not None:
+            try:
+                from reyn.safe import embed_index as _safe_embed_index
+                _safe_embed_index._set_context(
+                    sandbox_write_paths=list(sandbox_write_paths),
+                )
+            except ImportError:
+                pass
 
         # Defensive copy so user mutations don't affect the parent's data.
         result = fn(copy.deepcopy(artifact))

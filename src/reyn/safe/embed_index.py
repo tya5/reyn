@@ -74,6 +74,13 @@ from reyn.index.source_manifest import SourceEntry, get_source_manifest
 _workspace_root: Path | None = None
 _embedding_config: dict | None = None
 _provider_name: str | None = None
+# #1199 S3.4 Part1: the phase sandbox policy's write_paths cap, forwarded into
+# this subprocess by the python harness (the OS knows the phase policy; the
+# subprocess does not). None = no cap (SqliteIndexBackend write is ungated by
+# the sandbox = unchanged). A sentinel of () means "set but empty" = deny all
+# out-of-(empty) ... but the harness only sets it when a phase policy declares
+# write_paths, so None vs a list is the live distinction.
+_sandbox_write_paths: "list[str] | None" = None
 
 
 def _set_context(
@@ -81,26 +88,32 @@ def _set_context(
     workspace_root: str | Path | None = None,
     embedding_config: dict | None = None,
     provider_name: str | None = None,
+    sandbox_write_paths: "list[str] | None" = None,
 ) -> None:
-    """Override the self-sufficient defaults (test / explicit-wiring hook).
+    """Override the self-sufficient defaults (test / harness-wiring hook).
 
     Any argument left ``None`` keeps the default resolution for that field.
+    (``sandbox_write_paths`` defaults to no cap; the harness sets it from the
+    phase ``default_sandbox_policy.write_paths`` — #1199 S3.4 Part1.)
     """
-    global _workspace_root, _embedding_config, _provider_name
+    global _workspace_root, _embedding_config, _provider_name, _sandbox_write_paths
     if workspace_root is not None:
         _workspace_root = Path(workspace_root)
     if embedding_config is not None:
         _embedding_config = dict(embedding_config)
     if provider_name is not None:
         _provider_name = provider_name
+    if sandbox_write_paths is not None:
+        _sandbox_write_paths = list(sandbox_write_paths)
 
 
 def _reset_context() -> None:
     """Clear all overrides → back to the self-sufficient defaults."""
-    global _workspace_root, _embedding_config, _provider_name
+    global _workspace_root, _embedding_config, _provider_name, _sandbox_write_paths
     _workspace_root = None
     _embedding_config = None
     _provider_name = None
+    _sandbox_write_paths = None
 
 
 def _resolve() -> tuple[Path, str, dict]:
@@ -154,7 +167,12 @@ async def embed_and_index_async(
     """
     workspace_root, provider_name, embedding_config = _resolve()
     provider = get_provider(provider_name, config=embedding_config)
-    backend = SqliteIndexBackend(workspace_root=workspace_root)
+    # #1199 S3.4 Part1: pass the forwarded phase sandbox write_paths cap so the
+    # host-direct index write self-gates the DB path before connecting (the
+    # subprocess has no ctx.permission_resolver / op-layer gate).
+    backend = SqliteIndexBackend(
+        workspace_root=workspace_root, sandbox_write_paths=_sandbox_write_paths,
+    )
 
     # Resume key: hashes already indexed (skip BEFORE embedding = cost save).
     # Append resumes against the existing DB; replace rebuilds from scratch, so
