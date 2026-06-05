@@ -585,8 +585,12 @@ class PreprocessorExecutor:
         )
 
         try:
-            result = await asyncio.to_thread(
-                self._python_runner.run,
+            # #1352-B: python_runner.run is async + routes the harness subprocess
+            # through the OS sandbox backend when one is configured (real backend
+            # → Seatbelt/Landlock/container; noop/None → direct subprocess, which
+            # run() runs in a thread internally). The agent/operator sandbox
+            # policy supplies the OS caps (write-tight to the workspace).
+            result = await self._python_runner.run(
                 skill_dir=Path(self._skill.skill_dir),
                 module=step.module,
                 function=step.function,
@@ -598,6 +602,8 @@ class PreprocessorExecutor:
                 file_write_paths=file_write_paths,
                 http_hosts=http_hosts,
                 sandbox_write_paths=sandbox_write_paths,
+                sandbox_backend=self._sandbox_backend,
+                sandbox_policy=self._agent_sandbox_policy,
             )
         except PythonStepError as exc:
             self._events.emit(
