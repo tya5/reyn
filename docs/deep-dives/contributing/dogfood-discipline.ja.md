@@ -171,6 +171,8 @@ See: `feedback_minimize_speculation.md`
 
 discipline: **LLM の挙動を疑った瞬間、LLM への input payload と output を観測できるかを確認します。** infra が存在しなければ、仮説を立てる前にそれを作ります。
 
+Reyn では、payload 観測の canonical ツールは `scripts/dogfood_trace.py` です。まず `--mode llm-payloads` を実行してください — batch 内の全 LLM call が何を受け取り何を出力したかのタイムラインが得られます。モード一覧は [LLM Payload Tracing](../../reference/dogfood-tracing.md) を参照してください。
+
 **概念例。** Finding に「router が skill 名を誤って識別している」と書かれています。4 つの仮説が提案されます: (a) enum 制約が欠落している; (b) skill description が truncate されている; (c) prompt rule が意図せず削除された; (d) モデルが類似コンテキストで見た名前を hallucinate する。観測 infra なしでは 4 つすべてがもっともらしく、comprehensive fix が 4 つすべてに対処します。観測 infra (実際の system prompt を dump し、enum を確認し、payload を replay) があれば、4 つのうち 3 つを数分で除去できます。正しい fix は確認された原因のみを対象にします。
 
 観測 infra を作った後、以前の仮説をすべて retroactive に verify します。 Reyn batch 7 での実例: 新しいツールを使って 4 つの過去仮説を評価したところ、1.5 件が否定されました。これらの仮説に基づく fix は wrong-layer になるところでした。
