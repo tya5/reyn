@@ -1,7 +1,10 @@
 """swe_bench_runner.py — SWE-bench harness wrapper for Reyn.
 
-Reads a single SWE-bench instance JSON, delegates to ``reyn run swe_bench``,
-and emits the harness-expected output shape on stdout.
+Reads a single SWE-bench instance JSON, solves it with the general agent via
+``reyn run-once`` in a per-instance container (the swe_bench skill was retired in
+#187 — the agent iterates with its own tools, no test_patch), and emits the
+harness-expected output shape on stdout. Authoritative scoring is delegated to the
+external swebench harness (eval_benchmark.run_tier1_swebench_eval), downstream.
 
 Usage
 -----
@@ -178,276 +181,12 @@ def format_output(
     return json.dumps(obj, ensure_ascii=False)
 
 
-def extract_patch(reyn_stdout: str) -> str:
-    """Extract the ``patch`` field from ``reyn run``'s JSON stdout.
-
-    ``reyn run`` prints a block that includes ``=== Final Output ===`` followed
-    by a JSON object on the following lines.  We scan for the JSON object and
-    pull out ``data.patch`` (nested) or top-level ``patch``.
-
-    Raises
-    ------
-    ValueError
-        If the patch field cannot be found or the JSON is unparseable.
-    """
-    # Locate the JSON block that follows "=== Final Output ===" or any JSON
-    # object containing a "patch" key.  We try two strategies:
-    #
-    # Strategy A: find the marker line and parse the block after it.
-    # Strategy B: scan every line for a JSON object with a "patch" key.
-    lines = reyn_stdout.splitlines()
-
-    # Strategy A — parse the JSON object that follows the marker.
-    # `reyn run` prints the marker, then `json.dumps(result.data, indent=2)`
-    # (multi-line, pretty), then trailing lines (token usage, "events saved →").
-    # A plain json.loads of everything-after-the-marker fails on those trailing
-    # lines, so use raw_decode: it parses the first JSON value starting at the
-    # block and ignores whatever follows.
-    marker = "=== Final Output ==="
-    for i, line in enumerate(lines):
-        if marker in line:
-            json_block = "\n".join(lines[i + 1 :]).lstrip()
-            if json_block:
-                try:
-                    obj, _ = json.JSONDecoder().raw_decode(json_block)
-                    return _extract_patch_from_obj(obj)
-                except (json.JSONDecodeError, ValueError):
-                    pass  # fall through to Strategy B
-            break
-
-    # Strategy B: scan for the start of a JSON object anywhere and raw_decode
-    # from there (handles a pretty-printed object with no marker, and trailing
-    # non-JSON text after it).
-    text = reyn_stdout
-    search_from = 0
-    while True:
-        start = text.find("{", search_from)
-        if start == -1:
-            break
-        try:
-            obj, _ = json.JSONDecoder().raw_decode(text[start:])
-        except (json.JSONDecodeError, ValueError):
-            search_from = start + 1
-            continue
-        try:
-            return _extract_patch_from_obj(obj)
-        except ValueError:
-            # parsed a JSON object without a patch key — keep scanning
-            search_from = start + 1
-
-    raise ValueError("could not find 'patch' field in reyn output")
-
-
-def _extract_patch_from_obj(obj: Any) -> str:
-    """Pull *patch* from a parsed JSON object (top-level or nested under data)."""
-    if not isinstance(obj, dict):
-        raise ValueError("expected JSON object")
-
-    # Top-level "patch"
-    if "patch" in obj:
-        return str(obj["patch"])
-
-    # Nested: {"data": {"patch": "..."}}
-    data = obj.get("data")
-    if isinstance(data, dict) and "patch" in data:
-        return str(data["patch"])
-
-    raise ValueError(f"no 'patch' key found in object; keys={list(obj.keys())}")
-
-
-def run_reyn(
-    instance: dict[str, Any],
-    *,
-    reyn_cmd: list[str] | None = None,
-    timeout: int = 600,
-    env: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Shell out to ``reyn run swe_bench`` and return a result dict.
-
-    Returns
-    -------
-    dict
-        ``{"ok": True, "patch": "..."}`` on success, or
-        ``{"ok": False, "error": "..."}`` on any failure.
-
-    Parameters
-    ----------
-    reyn_cmd:
-        Override the base command list.  Defaults to
-        ``["reyn", "run", "swe_bench"]``.  Tests inject a fake script here.
-    timeout:
-        Subprocess wall-clock timeout in seconds.
-    """
-    cmd = reyn_cmd if reyn_cmd is not None else ["reyn", "run", "swe_bench"]
-    input_json = json.dumps(instance, ensure_ascii=False)
-
-    print(
-        f"[swe_bench_runner] running: {' '.join(cmd)} (instance={instance['instance_id']})",
-        file=sys.stderr,
-    )
-
-    try:
-        proc = subprocess.run(
-            [*cmd, input_json],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-        )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"timeout after {timeout}s"}
-    except FileNotFoundError as exc:
-        return {"ok": False, "error": f"reyn not found on PATH: {exc}"}
-    except OSError as exc:
-        return {"ok": False, "error": f"subprocess error: {exc}"}
-
-    if proc.returncode != 0:
-        stderr_snippet = (proc.stderr or "")[:400]
-        return {
-            "ok": False,
-            "error": f"reyn exited {proc.returncode}: {stderr_snippet}",
-        }
-
-    # Try to extract patch from stdout.
-    try:
-        patch = extract_patch(proc.stdout)
-    except ValueError as exc:
-        stdout_snippet = (proc.stdout or "")[:400]
-        return {
-            "ok": False,
-            "error": f"could not parse reyn output: {exc}; stdout={stdout_snippet!r}",
-        }
-
-    return {"ok": True, "patch": patch}
-
-
-# ── in-container lifecycle (β2b) ─────────────────────────────────────────────
-
-
 def _default_docker_runner(argv: list[str], *, timeout: int = 180):
     """Run a docker CLI command and return the CompletedProcess.
 
     Injectable in tests so the lifecycle is exercised without a real daemon.
     """
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-
-
-def run_reyn_in_container(
-    instance: dict[str, Any],
-    *,
-    image: str,
-    repo_dir: str = "/testbed",
-    state_dir: str | None = None,
-    docker_bin: str = "docker",
-    reyn_base: list[str] | None = None,
-    timeout: int = 600,
-    docker_runner=None,
-    container_name: str | None = None,
-) -> dict[str, Any]:
-    """Run `swe_bench` inside a fresh per-instance container; return a result dict.
-
-    Lifecycle (FP-0008 #1115 Stage 2 β2b):
-      1. ``docker run -d --name <name> <image> sleep infinity`` — start the
-         pre-built SWE-bench instance container (repo already at ``repo_dir``).
-      2. ``reyn run swe_bench --env-backend=docker --container <name>
-         --repo-dir <repo_dir> --state-dir <host>`` — the skill's repo FS +
-         commands route into the container (bridge-free, /testbed direct edit);
-         the final ``git diff HEAD`` runs in-container, so the model_patch is the
-         in-container diff (parsed by the existing ``extract_patch``).
-      3. ``docker rm -f <name>`` — teardown, **always** (even on failure).
-
-    Returns the same shape as :func:`run_reyn`
-    (``{"ok": True, "patch": ...}`` / ``{"ok": False, "error": ...}``).
-
-    ``docker_runner`` is injectable for tests: ``callable(argv, *, timeout)`` →
-    an object with ``.returncode`` / ``.stdout`` / ``.stderr``.
-    """
-    import tempfile
-    import uuid
-
-    runner = docker_runner or _default_docker_runner
-    instance_id = instance["instance_id"]
-    name = container_name or f"reyn_swebench_{instance_id}_{uuid.uuid4().hex[:8]}"
-    host_state = state_dir or tempfile.mkdtemp(prefix="reyn_swebench_state_")
-
-    print(
-        f"[swe_bench_runner] docker run image={image} name={name} (instance={instance_id})",
-        file=sys.stderr,
-    )
-    reyn_root = str(_reyn_repo_root())
-    try:
-        start = runner(
-            # #183: bind-mount the host reyn repo :ro at its OWN host path so the
-            # in-container venv can put reyn on its path (.pth → <repo>/src) AND
-            # the harness can load the python step module by the host-absolute path
-            # the OS hands it. The repo's own files stay at repo_dir (/testbed).
-            [
-                docker_bin, "run", "-d", "--name", name,
-                "-v", f"{reyn_root}:{reyn_root}:ro",
-                image, "sleep", "infinity",
-            ],
-            timeout=300,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"ok": False, "error": f"docker run error: {exc}"}
-    if start.returncode != 0:
-        return {
-            "ok": False,
-            "error": f"docker run failed (rc={start.returncode}): {(start.stderr or '')[:400]}",
-        }
-
-    try:
-        # #183: provision the python3.11 venv with reyn inside the container so the
-        # #1356-routed python-step harness can run (the testbed conda is repo-pinned
-        # < 3.11). pytest stays on the testbed conda. Requires container→PyPI access.
-        deps = reyn_runtime_deps((_reyn_repo_root() / "pyproject.toml").read_text())
-        print(f"[swe_bench_runner] provisioning reyn venv in {name} ({len(deps)} deps)", file=sys.stderr)
-        prov = runner(
-            [docker_bin, "exec", name, "bash", "-lc", provision_command(deps, f"{reyn_root}/src")],
-            timeout=600,
-        )
-        if getattr(prov, "returncode", 1) != 0:
-            return {
-                "ok": False,
-                "error": f"venv provisioning failed (rc={prov.returncode}): {(prov.stderr or '')[:400]}",
-            }
-
-        base = reyn_base if reyn_base is not None else ["reyn", "run", "swe_bench"]
-        full_cmd = [
-            *base,
-            "--env-backend=docker",
-            "--container", name,
-            "--repo-dir", repo_dir,
-            "--state-dir", host_state,
-            # #183: grant file.write so the apply phase can edit the repo working
-            # tree. The grant is bounded by the sandbox write_paths (= the
-            # in-container repo_dir) via the resolver's SandboxLayer ∩, so it
-            # scopes to the repo, not globally. Without it a non-interactive run
-            # leaves the skill's declared file.write "declared-but-not-granted"
-            # and apply aborts ("outside the allowed write zone").
-            "--grant-file-write",
-        ]
-        # #183: point the #1356 harness subprocess at the in-container venv python
-        # (read by PythonRunner's REYN_HARNESS_PYTHON override — the only OS change).
-        run_env = {**os.environ, "REYN_HARNESS_PYTHON": _CONTAINER_HARNESS_PYTHON}
-        return run_reyn(instance, reyn_cmd=full_cmd, timeout=timeout, env=run_env)
-    finally:
-        try:
-            rm = runner([docker_bin, "rm", "-f", name], timeout=120)
-            if getattr(rm, "returncode", 0) != 0:
-                print(
-                    f"[swe_bench_runner] WARN teardown rm -f {name} rc={rm.returncode}: "
-                    f"{(rm.stderr or '')[:200]}",
-                    file=sys.stderr,
-                )
-        except (OSError, subprocess.SubprocessError) as exc:
-            print(
-                f"[swe_bench_runner] WARN teardown rm -f {name} raised: {exc}",
-                file=sys.stderr,
-            )
-
-
-# ── #187: general-agent (reyn chat / RouterLoop) SWE path ────────────────────
 
 
 def build_swe_task_prompt(instance: dict[str, Any]) -> str:
@@ -592,6 +331,18 @@ def run_reyn_once_in_container(
                 file=sys.stderr,
             )
 
+        # Point-of-use discoverability: when a trace was captured this run, surface
+        # the trace path + the analysis tool so it isn't overlooked (dogfood_trace.py
+        # is THE trace tool — do not hand-parse the raw jsonl).
+        _trace = run_env.get("REYN_LLM_TRACE_DUMP")
+        if _trace:
+            print(f"[swe_bench_runner] trace: {_trace}", file=sys.stderr)
+            print(
+                "[swe_bench_runner] analyze: python scripts/dogfood_trace.py "
+                f"--mode llm-payloads --trace {_trace}",
+                file=sys.stderr,
+            )
+
         # model_patch = the agent's edits, as the in-container `git diff HEAD`.
         diff = runner(
             [docker_bin, "exec", name, "git", "-C", repo_dir, "diff", "HEAD"],
@@ -652,13 +403,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--timeout", type=int, default=600, metavar="SECONDS",
         help="Maximum seconds to wait for `reyn run` to complete (default: 600).",
-    )
-    p.add_argument(
-        "--reyn-cmd", dest="reyn_cmd", default=None, metavar="CMD",
-        help=(
-            "Override the reyn invocation (space-separated).  "
-            "Useful for testing with a local install: --reyn-cmd 'python -m reyn'."
-        ),
     )
     # FP-0008 #1115 Stage 2 (β2b): faithful in-container run. When
     # --env-backend=docker, the runner owns the per-instance container lifecycle
