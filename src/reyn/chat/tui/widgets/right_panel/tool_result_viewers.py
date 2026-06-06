@@ -10,9 +10,10 @@ Design (lead-ratified #1154 Phase 1):
   - keyed by ``content_type`` / ``mimeType`` (the fields file/web/mcp op
     results already carry); no shape-sniff yet.
   - Phase 1 viewers: markdown (rendered) + CSV/table. Phase 2a adds a JSON
-    viewer (formatted + syntax-highlighted). Unknown types →
-    ``render_tool_result`` returns ``None`` so the caller falls back to the
-    existing YAML preview (degrade, never hide content).
+    viewer (formatted + syntax-highlighted); Phase 2b adds an image metadata
+    card (mime / size / source — avoids dumping the base64 blob). Unknown
+    types → ``render_tool_result`` returns ``None`` so the caller falls back
+    to the existing YAML preview (degrade, never hide content).
   - Phase 3 (deferred): LLM-generated viewer templates for novel types.
 
 This module is intentionally pure (dict in → Rich renderable | None) so it
@@ -59,6 +60,16 @@ def _result_text(result: dict) -> str:
         if isinstance(v, str) and v:
             return v
     return ""
+
+
+def _human_bytes(n: int) -> str:
+    """A compact human-readable byte size (e.g. 12.3 KB)."""
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{n} B"
 
 
 def _viewer_markdown(result: dict) -> RenderableType | None:
@@ -108,6 +119,47 @@ def _viewer_json(result: dict) -> RenderableType | None:
         return None
 
 
+def _viewer_image(result: dict) -> RenderableType | None:
+    """Metadata card for an image result (Phase 2b).
+
+    A terminal preview can't raster the image, and the raw result carries a
+    large base64 ``data`` blob — so YAML fallback would spew that blob. This
+    card summarizes the useful metadata (mime / size / source) instead, which
+    is strictly more readable than the raw dump. Always returns a renderable
+    (never None) when dispatched, since the content-type alone is informative.
+    """
+    blocks = result.get("media_blocks")
+    block = (
+        blocks[0]
+        if isinstance(blocks, list) and blocks and isinstance(blocks[0], dict)
+        else {}
+    )
+    mime = _content_type_of(result) or "image"
+    table = Table(show_header=False, box=None, expand=False)
+    table.add_column("field", style="bold")
+    table.add_column("value")
+    table.add_row("type", mime)
+
+    size = result.get("size_bytes")
+    if not isinstance(size, int):
+        data = block.get("data")
+        if isinstance(data, str) and data:
+            size = (len(data) * 3) // 4  # approx decoded bytes from base64 len
+    if isinstance(size, int):
+        table.add_row("size", _human_bytes(size))
+
+    source = result.get("path") or result.get("url")
+    if isinstance(source, str) and source:
+        table.add_row("source", source)
+
+    n_blocks = len([b for b in (blocks or []) if isinstance(b, dict)])
+    if n_blocks > 1:
+        table.add_row("blocks", str(n_blocks))
+
+    table.caption = "🖼  image not rendered inline (terminal preview)"
+    return table
+
+
 def render_tool_result(result: Any) -> RenderableType | None:
     """Pick a content-type viewer for ``result`` (or ``None`` for fallback).
 
@@ -126,4 +178,6 @@ def render_tool_result(result: Any) -> RenderableType | None:
         return _viewer_csv(result)
     if "json" in ct:
         return _viewer_json(result)
+    if ct.startswith("image/"):
+        return _viewer_image(result)
     return None
