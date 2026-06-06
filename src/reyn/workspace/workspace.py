@@ -225,20 +225,20 @@ class Workspace:
                     raise PermissionError(
                         f"glob not permitted: {pattern!r} (outside project, no read permission)"
                     )
-            # Filter for files BEFORE applying max_results; otherwise a glob
-            # whose first max_results matches are directories (common at the
-            # project root: .claude, .git, .github, .reyn, .venv, ...) silently
-            # truncates the file list to ~zero.
-            raw = sorted(str(m) for m in self._backend.glob(pattern))
-            files = [m for m in raw if Path(m).is_file()]
+            # The backend returns files only — directories are excluded in the
+            # backend's own environment (#1375 D10), so capping at max_results
+            # here cannot silently truncate the file list to ~zero behind leading
+            # directories. Re-applying a host-side ``is_file()`` filter would be
+            # the D10 bug: it stats a container backend's paths against the host
+            # filesystem (where they do not exist) and drops everything.
+            files = sorted(str(m) for m in self._backend.glob(pattern))
             return files[:max_results]
 
-        # Same fix for the relative-path branch: filter to files first, then
-        # cap at max_results.
+        # Relative-path branch: backend is already files-only (#1375 D10);
+        # relativize and cap.
         ws_matches = sorted(self._backend.glob(pattern, root=self.base_dir))
-        files_only = [m for m in ws_matches if m.is_file()]
         result = []
-        for m in files_only[:max_results]:
+        for m in ws_matches[:max_results]:
             try:
                 result.append(str(m.relative_to(self.base_dir)))
             except ValueError:

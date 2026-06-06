@@ -96,11 +96,19 @@ class EnvironmentBackend(Protocol):
         ...
 
     def glob(self, pattern: str, *, root: Path | None = None) -> list[Path]:
-        """Expand a glob pattern.
+        """Expand a glob pattern, returning matching FILES only.
 
         When ``root`` is ``None``, ``pattern`` is an absolute pattern matched
         recursively. Otherwise ``pattern`` is matched relative to ``root``.
-        Returns all matches (files AND directories); the caller filters.
+
+        Directories are excluded: each backend filters to files in its own
+        environment, symmetric with :meth:`grep` (#1375 D10). The contract was
+        narrowed from "all matches; caller filters" because a host-side file
+        filter cannot stat a container backend's paths — so the only sound place
+        for the filter is the environment that produced the matches. The sole
+        consumer (``Workspace.glob_files``) wants files only. If a directory
+        glob is ever needed, add a separate path (e.g. ``glob_dirs``) rather than
+        widening this one back to a mixed result.
         """
         ...
 

@@ -67,11 +67,16 @@ class HostBackend:
         }
 
     def glob(self, pattern: str, *, root: Path | None = None) -> list[Path]:
+        # Files only (directories excluded), symmetric with the container
+        # backend and grep — each backend filters in its own environment so the
+        # Workspace consumer never has to (#1375 D10). In-process this is the
+        # same filesystem the caller would have checked, so it is behaviour-
+        # preserving here; it is the load-bearing filter for the container case.
         if root is None:
             # Absolute pattern (recursive) — matches the legacy abs-path branch.
-            return [Path(p) for p in _glob.glob(pattern, recursive=True)]
+            return [Path(p) for p in _glob.glob(pattern, recursive=True) if Path(p).is_file()]
         # Relative pattern matched under root — matches the legacy rel branch.
-        return list(root.glob(pattern))
+        return [p for p in root.glob(pattern) if p.is_file()]
 
     def grep(
         self,
