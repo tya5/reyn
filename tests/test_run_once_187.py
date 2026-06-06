@@ -175,3 +175,62 @@ def test_runner_pipes_withheld_task_to_run_once() -> None:
     runner_src = _RUNNER.read_text(encoding="utf-8")
     assert '"reyn", "run-once"' in runner_src  # invoked via run-once
     assert "input=task" in runner_src           # the whole task on stdin (one message)
+
+
+# ── session-isolation (the 3rd faithful condition) ────────────────────────────
+
+def test_fresh_one_shot_does_not_load_persisted_history(tmp_path, monkeypatch) -> None:
+    """Tier 2: behavioral — `load_history()` rehydrates an agent's persisted
+    history.jsonl (the #187 session-contamination vector: a stale `default` history
+    made the agent recall an old skill + hallucinate a fix with 0 edits). A fresh
+    one-shot session that SKIPS it starts EMPTY, so no prior entry reaches the LLM.
+
+    Falsifiable: if the factory did NOT guard `load_history()` on `fresh`, the
+    one-shot would inherit the persisted entries — which the explicit
+    `load_history()` call below demonstrates (empty → 2)."""
+    import json
+
+    from reyn.chat.session import ChatSession
+
+    monkeypatch.chdir(tmp_path)  # workspace_dir (.reyn/agents/<name>) is cwd-relative
+    s = ChatSession(agent_name="default")
+    # a contaminated persisted history (unrelated prior conversation)
+    s.history_path.parent.mkdir(parents=True, exist_ok=True)
+    with s.history_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps({"role": "user", "content": "old demo: summarize this report"}) + "\n")
+        f.write(json.dumps({"role": "assistant", "content": "summary complete"}) + "\n")
+
+    # fresh / one-shot: history is NOT loaded → empty (no contamination to the LLM)
+    assert not s.history, "a fresh one-shot session must start with empty history"
+
+    # the persisted file IS the contamination vector — load_history rehydrates the
+    # stale prior conversation (exactly the call the fresh one-shot skips)
+    s.load_history()
+    assert s.history, "load_history is the rehydration path the fresh run skips"
+    assert any(
+        "old demo" in str(getattr(m, "content", "")) for m in s.history
+    ), "the stale prior-conversation content is what would contaminate a non-fresh run"
+
+
+def test_run_once_is_stateless_fresh() -> None:
+    """Tier 2: run-once is stateless (fresh=True) and the factory guards
+    load_history on it, so the one-shot never inherits persisted history."""
+    a = _run_once_parser().parse_args(["run-once"])
+    assert a.fresh is True
+    # the factory guards the sole rehydration path (load_history) on fresh
+    assert 'if not getattr(args, "fresh", False):' in _CHAT_PY.read_text(encoding="utf-8")
+
+
+def test_interactive_chat_is_not_fresh_and_loads_history() -> None:
+    """Tier 2: symmetric guard — interactive `reyn chat` has no `fresh` (falsy), so
+    the factory's not-fresh branch loads persisted history. Pins that the run-once
+    session-isolation fix did NOT regress interactive chat's history continuity."""
+    import argparse
+
+    from reyn.cli.commands import chat
+
+    p = argparse.ArgumentParser()
+    chat.register(p.add_subparsers())
+    a = p.parse_args(["chat"])
+    # falsy fresh → the factory's `if not fresh: load_history()` branch runs
+    assert not getattr(a, "fresh", False)

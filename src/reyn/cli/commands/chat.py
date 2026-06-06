@@ -402,7 +402,16 @@ def run(args: argparse.Namespace) -> None:
             environment_backend=env_backend,
             sandbox_backend=env_backend,
         )
-        s.load_history()
+        # #187 session-isolation: a fresh/stateless run (`reyn run-once`) does NOT
+        # rehydrate the agent's persisted conversation history. `load_history()` is
+        # the sole rehydration path (mcp_server.py:15-16); skipping it starts the
+        # one-shot with an empty history. Otherwise a one-shot would inherit the
+        # `default` agent's stale history (unrelated prior context → the agent
+        # recalled an old skill + hallucinated a fix with 0 edits). Interactive
+        # chat (no `fresh`) loads history as before. Scoping (env/exclude/grant) is
+        # independent of history, so it is unaffected.
+        if not getattr(args, "fresh", False):
+            s.load_history()
         return s
 
     registry = AgentRegistry(
