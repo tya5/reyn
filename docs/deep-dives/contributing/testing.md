@@ -157,6 +157,17 @@ When a test cannot be placed cleanly in Tier 1–3, it almost always belongs in 
 
 ---
 
+## Verification approach: static replay vs real-env run
+
+How to verify a feature depends on whether its behavior is deterministic or variance-gated:
+
+- **Deterministic mechanism** — a pure function, a parsing rule, an OS invariant with a fixed output for a fixed input: use a **static replay** (feed captured input against a gold expectation). The test is fully reproducible. For LLM-dependent paths, `LLMReplay` is the static replay mechanism (see [Tier 3](#tier-3--llm-replay-tests-deterministic-fake-llm)).
+- **Variance-gated behavior** — LLM routing, probability-dependent triggers, or any feature that fires only under certain conditions: use **N≥3 real-env runs that each actually fire the behavior under test**. A single smoke run cannot distinguish "working" from "happened to pass once." The measurement is whether the behavior fires in each run, not whether the pipeline completes without error.
+
+Counting failures across pipeline re-runs without establishing a zero-floor baseline is noise for variance-gated paths. Fix structural causes (missing context, schema mismatches, incorrect wiring) until the behavior fires reliably; only then do remaining failures reflect genuine model-capability limits.
+
+---
+
 ## Mock vs Fake
 
 LLM-dependent tests **must** use the Fake (`LLMReplay`). Mocks are forbidden.
