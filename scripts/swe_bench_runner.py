@@ -697,15 +697,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Docker CLI binary for --env-backend=docker (default: docker).",
     )
     # #187: solve with the general agent (`reyn chat` / RouterLoop) instead of the
-    # swe_bench skill — the non-cheat path (no test_patch; the agent iterates with
-    # its tools). Requires --env-backend=docker. The skill path stays the default
-    # (non-destructive; both coexist until the general-agent path is dogfood-proven).
+    # #187: the only solver is the general agent via `reyn run-once` (the swe_bench
+    # SKILL was retired — it was the test_patch-leak cheat path). `--agent-mode` is
+    # retained as 'chat'-only for back-compat with the dogfood harness invocation;
+    # it requires --env-backend=docker (the agent's tools run in the instance
+    # container). The authoritative scoring still uses the swebench HARNESS.
     p.add_argument(
-        "--agent-mode", dest="agent_mode", choices=["skill", "chat"], default="skill",
+        "--agent-mode", dest="agent_mode", choices=["chat"], default="chat",
         help=(
-            "Solver: 'skill' (default, `reyn run swe_bench`) or 'chat' (#187, the "
-            "general agent `reyn chat` — no test_patch, the agent iterates). "
-            "'chat' requires --env-backend=docker."
+            "Solver mode (only 'chat' = the general agent via `reyn run-once`; the "
+            "swe_bench skill cheat path was retired). Requires --env-backend=docker."
         ),
     )
 
@@ -739,48 +740,32 @@ def main(argv: list[str] | None = None) -> int:
 
     instance_id = instance["instance_id"]
 
-    # ── resolve reyn command ──────────────────────────────────────────────────
-    if args.reyn_cmd:
-        reyn_cmd = args.reyn_cmd.split()
-    else:
-        reyn_cmd = None  # run_reyn uses default ["reyn", "run", "swe_bench"]
-
-    # ── run reyn (host, or in a per-instance container for faithful eval) ──────
-    if getattr(args, "env_backend", "host") == "docker":
-        if not args.image:
-            print(
-                "Error: --env-backend=docker requires --image "
-                "(the pre-built SWE-bench instance image).",
-                file=sys.stderr,
-            )
-            return 1
-        if getattr(args, "agent_mode", "skill") == "chat":
-            # #187: solve with the general agent via `reyn run-once`, not the skill.
-            result = run_reyn_once_in_container(
-                instance,
-                image=args.image,
-                repo_dir=args.repo_dir,
-                docker_bin=args.docker_bin,
-                timeout=args.timeout,
-            )
-        else:
-            result = run_reyn_in_container(
-                instance,
-                image=args.image,
-                repo_dir=args.repo_dir,
-                state_dir=args.state_dir,
-                docker_bin=args.docker_bin,
-                reyn_base=reyn_cmd,
-                timeout=args.timeout,
-            )
-    elif getattr(args, "agent_mode", "skill") == "chat":
+    # ── run the faithful general agent (`reyn run-once`) in a per-instance ──────
+    # container. The swe_bench skill (and its host/skill subprocess paths) was
+    # retired; the agent solves with its own tools (no test_patch) and the model
+    # patch is the in-container `git diff HEAD`. Authoritative scoring is the
+    # swebench HARNESS (separate, downstream).
+    if getattr(args, "env_backend", "host") != "docker":
         print(
-            "Error: --agent-mode=chat requires --env-backend=docker.",
+            "Error: faithful SWE eval requires --env-backend=docker "
+            "(the agent's tools run in the per-instance container).",
             file=sys.stderr,
         )
         return 1
-    else:
-        result = run_reyn(instance, reyn_cmd=reyn_cmd, timeout=args.timeout)
+    if not args.image:
+        print(
+            "Error: --env-backend=docker requires --image "
+            "(the pre-built SWE-bench instance image).",
+            file=sys.stderr,
+        )
+        return 1
+    result = run_reyn_once_in_container(
+        instance,
+        image=args.image,
+        repo_dir=args.repo_dir,
+        docker_bin=args.docker_bin,
+        timeout=args.timeout,
+    )
 
     # ── emit harness output ───────────────────────────────────────────────────
     if result["ok"]:

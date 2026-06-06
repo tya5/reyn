@@ -283,57 +283,41 @@ def test_run_reyn_timeout() -> None:
     assert "timeout" in result["error"].lower()
 
 
-# ── 14. main: --input file ────────────────────────────────────────────────────
+# ── 14. main: faithful eval requires docker (host skill path retired) ──────────
 
 
-def test_main_input_file(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    """Tier 2: main() with --input path → stdout is valid harness JSON."""
+def test_main_input_requires_docker(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """Tier 2: the swe_bench skill (and its host solver path) was retired — main()
+    now solves only via the general agent (`reyn run-once`) in a per-instance
+    container, so a non-docker invocation is an honest error (no silent host run)."""
     from scripts.swe_bench_runner import main
 
     instance_file = tmp_path / "instance.json"
     instance_file.write_text(json.dumps(_VALID_INSTANCE), encoding="utf-8")
 
-    exit_code = main([
-        "--input", str(instance_file),
-        "--model-name", "reyn-test",
-        "--reyn-cmd", f"env FAKE_REYN_MODE=success {sys.executable} {_FIXTURE}",
-        "--timeout", "30",
-    ])
+    exit_code = main(["--input", str(instance_file), "--model-name", "reyn-test"])
 
-    assert exit_code == 0
-
-    captured = capsys.readouterr()
-    obj = json.loads(captured.out.strip())
-    assert obj["instance_id"] == _VALID_INSTANCE["instance_id"]
-    assert obj["model_name_or_path"] == "reyn-test"
-    assert "model_patch" in obj
+    assert exit_code == 1
+    assert "requires --env-backend=docker" in capsys.readouterr().err
 
 
-# ── 15. main: --stdin ─────────────────────────────────────────────────────────
+# ── 15. main: --stdin still reads input (parse path intact) ────────────────────
 
 
-def test_main_stdin_flag(
-    tmp_path: Path,
+def test_main_stdin_reads_input(
     capsys: pytest.CaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: main() with --stdin reads JSON from sys.stdin → valid harness JSON."""
+    """Tier 2: --stdin reads + parses the instance (the input path is intact); it
+    then hits the docker-required gate (run-once-only contract)."""
     import io
 
     from scripts.swe_bench_runner import main
 
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_VALID_INSTANCE)))
-
-    exit_code = main([
-        "--stdin",
-        "--model-name", "reyn",
-        "--reyn-cmd", f"env FAKE_REYN_MODE=success {sys.executable} {_FIXTURE}",
-        "--timeout", "30",
-    ])
-
-    assert exit_code == 0
-
-    captured = capsys.readouterr()
-    obj = json.loads(captured.out.strip())
-    assert obj["instance_id"] == _VALID_INSTANCE["instance_id"]
-    assert "model_patch" in obj
+    exit_code = main(["--stdin", "--model-name", "reyn"])
+    # parse succeeded (no 'invalid input' error); the docker-required gate fired
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "invalid input" not in err
+    assert "requires --env-backend=docker" in err
