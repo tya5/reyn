@@ -104,8 +104,10 @@ git apply --reverse --check .reyn/swe_bench_test.patch
   set `tests_passed = false` with the exact git stderr in `failure_summary`
   (the tests could not be run, so this is not a pass).
 
-Either way, move on after this single check — never re-apply. Never skip the
-test_patch: unapplied tests cannot be evaluated and are not a pass.
+Either way, move on to Step 2 (run the tests) after this single check — never
+re-apply. Applying the test_patch is NOT a pass on its own: you must still run
+the tests. Never skip the test_patch — unapplied tests cannot be evaluated and
+are not a pass.
 
 ## Step 2 — Run the tests
 
@@ -149,7 +151,10 @@ the test files applied when it produces the final diff.
 
 ## Step 4 — Evaluate the outcome
 
-Inspect the test runner's exit code and output and record the verdict:
+Inspect the test runner's exit code and output and record the verdict.
+`tests_passed = true` requires that you actually ran the tests in Step 2 and
+pytest exited 0 — **applying the test_patch is NOT a pass on its own**. If you
+did not run the tests, you cannot report a pass.
 
 - Exit code 0, all tests collected and passed → `tests_passed = true`,
   `failure_summary = ""`.
