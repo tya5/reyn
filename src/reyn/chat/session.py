@@ -1255,6 +1255,8 @@ class ChatSession:
         # workspace's own default) → unchanged behaviour. The sibling exec seam
         # (sandbox_backend string via sandbox_config) already flows agent-level.
         environment_backend: "EnvironmentBackend | None" = None,
+        workspace_base_dir: "Path | None" = None,  # #187: chat OpContext FS root — the container repo root (e.g. /testbed) when env-backend routes the repo into a container; None → host cwd
+        workspace_state_dir: "Path | None" = None,  # #187: host-side OS state dir, decoupled from a container base_dir (survives container death)
         # #1200 PR-F2 (exec seam): the agent's SandboxBackend INSTANCE, set on the
         # chat router OpContext so sandboxed_exec runs on the SAME backend as the
         # OSRuntime path (sandboxed_exec.py: `ctx.sandbox_backend or
@@ -1320,6 +1322,15 @@ class ChatSession:
         # (passed to the router Workspace in make_router_op_context). None →
         # HostBackend default.
         self._environment_backend = environment_backend
+        # #187: the chat OpContext Workspace's FS root + host-side state dir. With
+        # a container env-backend the agent's repo lives in the container, so
+        # base_dir must be the container repo root (the partner of the backend
+        # returned by build_environment_backend) — otherwise file__read/grep/glob
+        # resolve against the host cwd (the reyn repo) and the agent never sees
+        # the target tree (the #187 step-3 empty-FS defect: 0/134 reads, grep
+        # hitting reyn's own tests/venv).
+        self._workspace_base_dir = workspace_base_dir
+        self._workspace_state_dir = workspace_state_dir
         # #1200 PR-F2: agent SandboxBackend instance for the chat exec seam (set
         # on the router OpContext). None → get_default_backend. The INSTANCE, not
         # the sandbox_config.backend STRING (exec-tool gating).
@@ -4760,6 +4771,15 @@ class ChatSession:
             events=self._chat_events,
             permission_resolver=self._perm,
             skill_name="chat_router",
+            # #187: the chat OpContext FS root. With a container env-backend the
+            # agent's repo lives in the container (e.g. /testbed), so base_dir must
+            # be that container repo root — the partner of the backend below.
+            # Otherwise file__read/grep/glob resolve relative to the host cwd (the
+            # reyn repo) and the agent never sees the target tree. state_dir stays
+            # host-side (decoupled) so OS state survives container death + does not
+            # pollute the in-container git diff. None → Workspace's cwd default.
+            base_dir=self._workspace_base_dir,
+            state_dir=self._workspace_state_dir,
             # #1200 PR-F1 (FS seam): run chat file ops on the agent's
             # EnvironmentBackend instance (None → Workspace's HostBackend default).
             environment_backend=self._environment_backend,
