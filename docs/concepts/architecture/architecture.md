@@ -243,6 +243,16 @@ ChatSession is similarly decomposed into services under `chat/services/`:
   `memory_service.py`, `router_host_adapter.py`, `snapshot_journal.py`
 - `a2a_handler.py`, `intervention_handler.py`, `auto_resume_handler.py`
 
+### Transport vs agent scoping
+
+Two concepts that appear to affect what an agent "can do" operate at different layers and must not be conflated:
+
+**Transport** (`a2a_handler.py`, MCP) is how messages arrive at the session — the wire protocol. A2A delivers a task to `ChatSession`; MCP delivers a tool invocation result. Neither grants nor restricts capabilities; they are routing mechanisms only.
+
+**Agent scoping** is established at `ChatSession` construction time through its parameters: `env_backend` (sandbox profile), `exclude_tools` (tool suppression), and permission grants. These determine what the session is allowed to do with incoming messages, regardless of which transport delivered them.
+
+The practical consequence: when a code path appears to "lack a capability," the gap is almost always in agent construction (scoping not configured, tool not wired, permission not granted) rather than in the transport layer. Extending transport rarely fixes a scoping gap; the fix belongs in the constructor call or the `reyn.yaml` configuration.
+
 ## See also
 
 - [../architecture/principles.md](../architecture/principles.md) — the eight constraints
