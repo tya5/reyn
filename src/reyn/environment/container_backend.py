@@ -143,13 +143,18 @@ _STAT = (
     "  print(json.dumps({'size':st.st_size,'mtime':st.st_mtime,'ctime':st.st_ctime,"
     "'is_dir':os.path.isdir(p),'is_file':os.path.isfile(p),'mode':oct(st.st_mode & 0o777)}))\n"
 )
+# Returns matching FILES only (directories excluded), filtered in-container —
+# symmetric with _GREP's `f.is_file()` below. The Workspace consumer
+# (glob_files) wants files only, and a host-side filter cannot stat container
+# paths (#1375 D10), so the file-filter must run in the same environment as the
+# match. See backend.glob's Protocol docstring for the contract rationale.
 _GLOB = (
-    "import sys,glob,json,os\n"
+    "import sys,glob,json,os,pathlib\n"
     "pat=sys.argv[1]; root=sys.argv[2]\n"
     "if root:\n"
-    "  import pathlib; res=[str(x) for x in pathlib.Path(root).glob(pat)]\n"
+    "  res=[str(x) for x in pathlib.Path(root).glob(pat) if x.is_file()]\n"
     "else:\n"
-    "  res=glob.glob(pat,recursive=True)\n"
+    "  res=[p for p in glob.glob(pat,recursive=True) if os.path.isfile(p)]\n"
     "print(json.dumps(res))\n"
 )
 # grep: argv = pattern, flags, root, glob_or_'', file_type_or_'', output_mode,
