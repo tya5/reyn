@@ -6,15 +6,18 @@ consults this to render ``tool_returned`` / ``tool_executed`` results richer
 than the generic YAML fallback — the first slice of the Jupyter-style
 content-type → viewer vision in #1154.
 
-Design (lead-ratified #1154 Phase 1):
+Design (lead-ratified #1154 Phase 1–2):
   - keyed by ``content_type`` / ``mimeType`` (the fields file/web/mcp op
-    results already carry); no shape-sniff yet.
+    results already carry); explicit type wins, then a shape-sniff pass.
   - Phase 1 viewers: markdown (rendered) + CSV/table. Phase 2a adds a JSON
     viewer (formatted + syntax-highlighted); Phase 2b adds an image metadata
-    card (mime / size / source — avoids dumping the base64 blob). Unknown
-    types → ``render_tool_result`` returns ``None`` so the caller falls back
-    to the existing YAML preview (degrade, never hide content).
-  - Phase 3 (deferred): LLM-generated viewer templates for novel types.
+    card (mime / size / source — avoids dumping the base64 blob); Phase 2c
+    adds a shape-sniffed web-page-summary card (web-fetch HTML preview, which
+    carries no content_type but a distinctive field set). Unknown / unmatched
+    → ``render_tool_result`` returns ``None`` so the caller falls back to the
+    existing YAML preview (degrade, never hide content).
+  - Phase 3 (deferred): LLM-generated viewer templates for novel types;
+    email-card deferred until a real in-repo email result producer exists.
 
 This module is intentionally pure (dict in → Rich renderable | None) so it
 is testable in isolation without the Textual app.
@@ -160,24 +163,80 @@ def _viewer_image(result: dict) -> RenderableType | None:
     return table
 
 
-def render_tool_result(result: Any) -> RenderableType | None:
-    """Pick a content-type viewer for ``result`` (or ``None`` for fallback).
+# Shape-sniff (Phase 2c): some results carry no ``content_type`` but have a
+# distinctive field set. The web-fetch HTML preview (web.py ``_generate_web_
+# fetch_preview``) returns ``{title, outline, first_paragraph, link_count,
+# content_chars}``. We require ALL of these distinctive keys to match — a
+# single-field sniff (e.g. just ``title``) would false-positive on unrelated
+# results, so precision comes from the combination.
+_WEB_SUMMARY_KEYS = ("title", "outline", "first_paragraph", "link_count")
+_MAX_OUTLINE_ROWS = 12
 
-    ``None`` when ``result`` is not a dict, carries no recognizable
-    content-type, or the matched viewer has nothing to render — the caller
+
+def _looks_like_web_summary(result: dict) -> bool:
+    """True when *result* carries the full web-page-summary field set."""
+    return all(k in result for k in _WEB_SUMMARY_KEYS)
+
+
+def _viewer_web_summary(result: dict) -> RenderableType | None:
+    """Card for a web-fetch HTML page summary (Phase 2c, shape-sniffed).
+
+    Renders the distilled page (title / first paragraph / heading outline /
+    link count) — far more readable than the raw nested dict. Returns the
+    card; the dispatcher only calls this once the shape has matched.
+    """
+    table = Table(show_header=False, box=None, expand=False)
+    table.add_column("field", style="bold")
+    table.add_column("value")
+
+    title = result.get("title")
+    if isinstance(title, str) and title:
+        table.add_row("title", title)
+
+    para = result.get("first_paragraph")
+    if isinstance(para, str) and para:
+        table.add_row("summary", para)
+
+    outline = result.get("outline")
+    if isinstance(outline, list) and outline:
+        rows = [str(h) for h in outline[:_MAX_OUTLINE_ROWS] if str(h).strip()]
+        extra = len(outline) - len(rows)
+        if rows:
+            joined = "\n".join(rows)
+            if extra > 0:
+                joined += f"\n… {extra} more"
+            table.add_row("outline", joined)
+
+    links = result.get("link_count")
+    if isinstance(links, int):
+        table.add_row("links", str(links))
+
+    table.caption = "🌐  web page summary"
+    return table
+
+
+def render_tool_result(result: Any) -> RenderableType | None:
+    """Pick a viewer for ``result`` (or ``None`` for the YAML fallback).
+
+    Explicit ``content_type`` / MIME wins; when none matches, a shape-sniff
+    pass handles results that carry a distinctive field set but no content
+    type (web-page summary). ``None`` when ``result`` is not a dict, nothing
+    matches, or the matched viewer has nothing to render — the caller then
     falls back to the generic YAML preview.
     """
     if not isinstance(result, dict):
         return None
     ct = _content_type_of(result)
-    if not ct:
-        return None
-    if "markdown" in ct or ct.endswith("/md"):
-        return _viewer_markdown(result)
-    if "csv" in ct or "tab-separated" in ct:
-        return _viewer_csv(result)
-    if "json" in ct:
-        return _viewer_json(result)
-    if ct.startswith("image/"):
-        return _viewer_image(result)
+    if ct:
+        if "markdown" in ct or ct.endswith("/md"):
+            return _viewer_markdown(result)
+        if "csv" in ct or "tab-separated" in ct:
+            return _viewer_csv(result)
+        if "json" in ct:
+            return _viewer_json(result)
+        if ct.startswith("image/"):
+            return _viewer_image(result)
+    # No explicit content-type match → shape-sniff distinctive field sets.
+    if _looks_like_web_summary(result):
+        return _viewer_web_summary(result)
     return None

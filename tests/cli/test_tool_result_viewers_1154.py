@@ -167,6 +167,51 @@ def test_image_card_does_not_dump_base64_blob() -> None:
     assert "image/png" in text
 
 
+# ── web-page-summary shape-sniff card (Phase 2c) ─────────────────────────────
+
+
+def _web_summary_result(**over: object) -> dict:
+    """A web-fetch HTML preview result (web.py _generate_web_fetch_preview shape)."""
+    base = {
+        "title": "Example Page",
+        "outline": ["H1: Welcome", "H2: Details"],
+        "first_paragraph": "An example page.",
+        "link_count": 7,
+        "content_chars": 1234,
+    }
+    base.update(over)
+    return base
+
+
+def test_web_summary_shape_renders_card() -> None:
+    """Tier 2: a no-content_type result with the full web-summary shape → card."""
+    out = render_tool_result(_web_summary_result())
+    assert isinstance(out, Table), f"expected a Table card; got {type(out)!r}"
+    text = _render_to_text(out)
+    assert "Example Page" in text, "card should show the page title"
+    assert "Welcome" in text, "card should show the heading outline"
+    assert "7" in text, "card should show the link count"
+
+
+def test_web_summary_partial_shape_not_sniffed() -> None:
+    """Tier 2: precision — a partial field set must NOT shape-sniff as web summary."""
+    # title + first_paragraph present but outline + link_count missing → None.
+    assert render_tool_result({"title": "X", "first_paragraph": "y"}) is None
+
+
+def test_web_summary_single_title_field_not_sniffed() -> None:
+    """Tier 2: precision — a lone common field (title) must not false-positive."""
+    assert render_tool_result({"title": "Just a title"}) is None
+
+
+def test_web_summary_outline_capped_with_overflow() -> None:
+    """Tier 2: a long outline is capped with an overflow indicator."""
+    out = render_tool_result(_web_summary_result(outline=[f"H2: item {i}" for i in range(30)]))
+    assert isinstance(out, Table)
+    text = _render_to_text(out)
+    assert "more" in text, "capped outline should show an overflow indicator"
+
+
 # ── wire: _show_event_in_preview routes tool events through the viewer ───────
 # These exercise the integration seam the pure tests above cannot: an event's
 # emit kwargs are nested under ``data`` (events.py ``Event(type=, data=)``),
