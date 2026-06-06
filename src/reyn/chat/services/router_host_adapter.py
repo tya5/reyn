@@ -164,6 +164,14 @@ class RouterHostAdapter:
         # the exec category (= noop / no sandbox configured).
         sandbox_backend: str | None = None,
         sandbox_policy: dict | None = None,
+        # #187: the FS EnvironmentBackend INSTANCE (docker for in-container repos)
+        # + the container repo root + host-side state dir, for the router OpContext
+        # Workspace. Distinct from ``sandbox_backend`` (a STRING for the exec D14
+        # gate). Without these the LIVE file-op dispatch built a host-cwd Workspace
+        # (the #187 wrong-FS defect: file ops on the reyn repo, not /testbed).
+        environment_backend: Any = None,
+        workspace_base_dir: Path | None = None,
+        workspace_state_dir: Path | None = None,
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
         # ChatSession passes the session-scoped tracker; None when wrappers are
         # off or hot_list_n == 0.
@@ -303,6 +311,9 @@ class RouterHostAdapter:
         self._embedding_model_class = embedding_model_class
         # FP-0034 Phase 2
         self._sandbox_backend = sandbox_backend
+        self._environment_backend = environment_backend
+        self._workspace_base_dir = workspace_base_dir
+        self._workspace_state_dir = workspace_state_dir
         # #1339 / sandbox-model completion: the operator's reyn.yaml
         # sandbox.policy (dict | None) used to resolve the concrete agent-level
         # policy onto the router OpContext (None → the default policy).
@@ -1429,6 +1440,16 @@ class RouterHostAdapter:
             events=self._events,
             permission_resolver=self._perm,
             skill_name="chat_router",
+            # #187: this is the LIVE op-context factory the registry file-dispatch
+            # uses (router_loop.py op_context_factory=host.make_router_op_context).
+            # With a container env-backend the agent's repo lives in the container
+            # (e.g. /testbed), so base_dir must be that container repo root and the
+            # FS backend must be the docker instance — otherwise file__read/grep/
+            # glob/edit (and the sandbox write_paths below) resolve against the host
+            # cwd. None (host backend) → cwd default, unchanged.
+            base_dir=self._workspace_base_dir,
+            state_dir=self._workspace_state_dir,
+            environment_backend=self._environment_backend,
         )
         # FP-0022 fix (#53): wire intervention_bus so handlers that need
         # the 4-layer approval flow (web_fetch, mcp install / drop) can

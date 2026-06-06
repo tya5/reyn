@@ -1849,6 +1849,12 @@ class ChatSession:
                 self._sandbox_config.backend if self._sandbox_config is not None
                 else None
             ),
+            # #187: the FS env-backend instance + container repo root + host-side
+            # state dir for the LIVE router OpContext Workspace (the registry
+            # file-dispatch factory). Same source as the chat OpContext (#1410).
+            environment_backend=self._environment_backend,
+            workspace_base_dir=self._workspace_base_dir,
+            workspace_state_dir=self._workspace_state_dir,
             # #1339 / sandbox-model completion: thread the operator sandbox
             # policy so make_router_op_context resolves a concrete agent-level
             # policy onto the router OpContext (closes the chat-factory wiring gap).
