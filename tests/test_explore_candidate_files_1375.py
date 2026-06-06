@@ -1,0 +1,146 @@
+"""Tier 2: OS/skill invariant — #1375 D2 explore file-candidate scaffolding.
+
+The explore phase (weak model) misses the gold files (astropy-13398: gold in
+builtin_frames/* that explore overlooked). The D2 preprocessor pre-greps the
+problem statement's code-symbols across the repo and surfaces the strongest
+candidate files into ``_candidate_files`` (ranked by symbol co-occurrence +
+specificity), so explore SEES the gold files. Explore-layer analogue of the plan
+region-surfacing (#1366).
+
+Pins:
+  - ``extract_explore_symbols`` yields the problem-statement code-symbols;
+  - ``rank_candidate_files`` ranks by co-occurrence AND specificity — a file named
+    by a single RARE symbol (an exact method name) outranks an incidental file
+    matched by several COMMON symbols (lead-coder's refinement);
+  - the real explore preprocessor (real Workspace + skill + op_runtime grep)
+    surfaces the gold file into ``_candidate_files``.
+
+Real Workspace + real skill loaded from disk + real grep; no mocks.
+"""
+from __future__ import annotations
+
+import asyncio
+import sys
+from pathlib import Path
+
+from reyn.compiler.loader import load_dsl_skill
+from reyn.events.events import EventLog
+from reyn.kernel.preprocessor_executor import PreprocessorExecutor
+from reyn.permissions.permissions import PermissionResolver
+from reyn.sandbox import NoopBackend
+from reyn.workspace.workspace import Workspace
+
+SWE_BENCH_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "src" / "reyn" / "stdlib" / "skills" / "swe_bench"
+)
+
+
+def _fns():
+    sys.path.insert(0, str(SWE_BENCH_DIR))
+    try:
+        from extract_problem_symbols import (
+            extract_explore_symbols,
+            rank_candidate_files,
+        )
+    finally:
+        sys.path.pop(0)
+    return extract_explore_symbols, rank_candidate_files
+
+
+def test_extract_explore_symbols_yields_problem_symbols() -> None:
+    """Tier 2: extract_explore_symbols returns the problem-statement code-symbols."""
+    extract_explore_symbols, _ = _fns()
+    syms = extract_explore_symbols(
+        {"data": {"problem_statement": "the `rotation_matrix` and `itrs_to_observed_mat` are wrong"}}
+    )
+    names = {s["symbol"] for s in syms}
+    assert "rotation_matrix" in names and "itrs_to_observed_mat" in names
+    for s in syms:  # each carries a regex-escaped pattern for the grep
+        assert "symbol_re" in s
+
+
+def test_rank_specificity_beats_incidental_cooccurrence() -> None:
+    """Tier 2: a gold file named by a single RARE symbol outranks an incidental
+    file matched by several COMMON symbols (co-occurrence + specificity).
+
+    This is the astropy-13398 shape: `itrs_to_observed_mat` (exact gold method)
+    matches only the gold file, while common symbols match many decoys.
+    """
+    _, rank_candidate_files = _fns()
+    gold = "astropy/coordinates/builtin_frames/itrs_observed_transforms.py"
+    symbol_files = [
+        {"files": [gold]},                         # a SPECIFIC symbol → 1 file (gold)
+        {"files": ["x.py", "y.py", "z.py", "w.py"]},  # a COMMON symbol → 4 decoys
+        {"files": ["x.py", "y.py", "z.py", "w.py"]},  # another COMMON symbol → same decoys
+    ]
+    out = rank_candidate_files({"data": {"_symbol_files": symbol_files}})
+    assert out["_candidate_files"][0] == gold, (
+        f"the specific-symbol gold file must rank first, got {out['_candidate_files']}"
+    )
+
+
+def test_rank_cooccurrence_orders_multi_symbol_files() -> None:
+    """Tier 2: among equally-(non)specific files, more symbol co-occurrence ranks higher."""
+    _, rank_candidate_files = _fns()
+    # all symbols are common (match 3 files) so no specificity bonus; the file
+    # matched by MORE symbols (co-occurrence) wins.
+    symbol_files = [
+        {"files": ["a.py", "b.py", "c.py"]},
+        {"files": ["a.py", "d.py", "e.py"]},
+        {"files": ["a.py", "f.py", "g.py"]},
+    ]
+    out = rank_candidate_files({"data": {"_symbol_files": symbol_files}})
+    assert out["_candidate_files"][0] == "a.py", out["_candidate_files"]
+
+
+def test_rank_empty_when_no_symbol_files() -> None:
+    """Tier 2: no _symbol_files → empty _candidate_files (graceful; explore greps)."""
+    _, rank_candidate_files = _fns()
+    assert rank_candidate_files({"data": {}})["_candidate_files"] == []
+
+
+def test_explore_preprocessor_surfaces_gold_candidate(tmp_path: Path) -> None:
+    """Tier 2: the REAL explore preprocessor (real grep over a tmp repo) surfaces
+    the gold file — named by a specific symbol — at the top of _candidate_files,
+    above decoys named by common symbols.
+    """
+    skill = load_dsl_skill(SWE_BENCH_DIR / "skill.md")
+    events = EventLog()
+    resolver = PermissionResolver(
+        config_permissions={"python.safe": "allow"},
+        project_root=tmp_path,
+        interactive=False,
+    )
+    ws = Workspace(events=events, base_dir=tmp_path, permission_resolver=resolver)
+    # gold file: contains the rare/specific method name; decoys: only a common word
+    ws.write_file("pkg/builtin/gold.py", "def itrs_to_observed_mat(self):\n    return rotation_matrix\n")
+    ws.write_file("pkg/decoy1.py", "rotation_matrix = 1\n")
+    ws.write_file("pkg/decoy2.py", "rotation_matrix = 2\n")
+    ws.write_file("pkg/decoy3.py", "rotation_matrix = 3\n")
+
+    artifact = {
+        "type": "swe_bench_input",
+        "data": {
+            "instance_id": "x__y-1",
+            "problem_statement": "the `itrs_to_observed_mat` transform using `rotation_matrix` is wrong",
+        },
+    }
+    executor = PreprocessorExecutor(
+        skill=skill,
+        workspace=ws,
+        model="standard",
+        events=events,
+        subscribers=[],
+        resolver=None,
+        permission_resolver=resolver,
+        sandbox_backend=NoopBackend(),
+    )
+    result, _usage = asyncio.run(
+        executor.run(skill.phases["explore"], artifact, output_language=None)
+    )
+    candidates = result["data"].get("_candidate_files") or []
+    assert candidates, "explore preprocessor produced no _candidate_files"
+    assert candidates[0].endswith("gold.py"), (
+        f"the gold file (specific symbol itrs_to_observed_mat) must rank first; got {candidates}"
+    )

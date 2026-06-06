@@ -83,6 +83,18 @@ permissions:
       function: extract_problem_symbols
       mode: safe
       timeout: 5
+    # #1375 D2: explore-layer file-candidate scaffolding — extract problem-symbols
+    # then (after a repo-wide iterate-grep) rank the matched files by symbol
+    # co-occurrence + specificity so explore sees the gold files. Mode: safe —
+    # uses only re + json (PURE_STDLIB_ALLOWLIST), pure data transforms.
+    - module: ./extract_problem_symbols.py
+      function: extract_explore_symbols
+      mode: safe
+      timeout: 5
+    - module: ./extract_problem_symbols.py
+      function: rank_candidate_files
+      mode: safe
+      timeout: 5
     # #1366 follow-up: bounds the plan-time region volume (drops no-match +
     # too-generic high-count regions, caps total) so a common symbol's giant grep
     # result cannot bloat the plan context. Mode: safe — pure data transform.

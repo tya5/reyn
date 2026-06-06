@@ -6,6 +6,45 @@ role: analyst
 model_class: standard
 allowed_ops: [read_file, write_file, edit_file, delete_file, glob_files, grep_files, sandboxed_exec]
 max_act_turns: 20
+# #1375 D2 — deterministic file-candidate scaffolding (explore-layer analogue of
+# the plan region-surfacing #1366). BEFORE the LLM enters this phase, the OS
+# pre-greps the problem_statement's code-symbols across the repo and surfaces the
+# strongest candidate files (ranked by symbol co-occurrence + specificity) into
+# `_candidate_files`, so the weak explore model SEES the gold files in context
+# instead of missing them (astropy-13398: gold in builtin_frames/* that explore
+# overlooked). Deterministic (P5), never LLM-mutated. `extract_explore_symbols`
+# yields the symbols; the iterate greps each across the repo (files_with_matches);
+# `rank_candidate_files` ranks the matched files.
+preprocessor:
+  - type: python
+    module: ./extract_problem_symbols.py
+    function: extract_explore_symbols
+    mode: safe
+    into: data._explore_symbols
+    output_schema:
+      type: array
+  - type: iterate
+    over: data._explore_symbols
+    apply:
+      type: run_op
+      op:
+        kind: file
+        op: grep
+        path: "."
+        pattern: "__placeholder__"
+        output_mode: files_with_matches
+      args_from:
+        pattern: "_iter.item.symbol_re"
+      on_error: skip
+    into: data._symbol_files
+    on_error: skip
+  - type: python
+    module: ./extract_problem_symbols.py
+    function: rank_candidate_files
+    mode: safe
+    into: data
+    output_schema:
+      type: object
 ---
 
 Understand the problem by reading the `problem_statement` and finding the
@@ -42,6 +81,19 @@ cannot find them, recheck the prompt's input-artifact block before aborting.
 Read `data.problem_statement` from the input artifact. This is the GitHub
 issue text describing the bug to fix. If `data.hints_text` is non-empty,
 use it as additional guidance for where to look.
+
+## Step 1.5 — Start from the pre-fetched candidate files
+
+The OS has already grepped the problem statement's code-symbols across the repo
+and placed the strongest candidate files into `data._candidate_files` (ranked by
+how many problem-symbols they contain, with rare/specific symbols weighted
+higher). These are the files most likely to contain the bug — **read these
+first** and treat them as the leading candidates for `relevant_files`. They are
+deterministically derived, so a file here is a real match, not a guess.
+
+`_candidate_files` is a starting point, not a limit: if the problem statement
+points elsewhere, still follow it (Step 2). When `_candidate_files` is empty
+(the problem statement named no greppable symbols), fall back to Step 2 grep.
 
 ## Step 2 — Locate relevant code with grep
 
