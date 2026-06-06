@@ -142,9 +142,11 @@ The input is either:
   the exploration artifact saved to the workspace by the earlier explore
   phase.
 
-In both cases the fields are present in the prompt's input-artifact block
-(= the OS injects the artifact data structurally — no need to abort with
-"exploration missing" before reading the prompt). You may ALSO need to
+Read the input artifact's `data` fields directly. If the input was offloaded
+(`type: artifact_ref`), read its `ref_path` first rather than aborting with
+"input missing".
+
+You may need to
 refer back to the original SWE-bench input fields (`problem_statement`,
 `test_patch`) for context — those were carried into the workspace by the
 explore phase and can be re-read via a file op against the exploration

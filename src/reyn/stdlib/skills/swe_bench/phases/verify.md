@@ -83,50 +83,29 @@ the fix is correct.
 
 ## Step 1 — Apply the test_patch
 
-The `data.test_patch` field in the input is a unified diff. The
-verify-phase preprocessor has already normalized it deterministically
-(= CRLF → LF, BOM stripped, trailing newline ensured) so `git apply`
-operates on a clean diff.
-
-Write the sanitized diff to a temp file (e.g. `.reyn/swe_bench_test.patch`)
-then apply with robust flags:
+`data.test_patch` is a unified diff; the verify-phase preprocessor has already
+normalized it (CRLF → LF, BOM stripped, trailing newline). Write it to a temp
+file (e.g. `.reyn/swe_bench_test.patch`) and run `git apply` **exactly once**:
 
 ```
 git apply --3way --recount --whitespace=fix .reyn/swe_bench_test.patch
 ```
 
-The flags layer second-line defenses on top of the preprocessor:
-`--3way` enables merge-style recovery on context drift, `--recount`
-tolerates off-by-N context line counts, and `--whitespace=fix`
-forgives trailing-space drift.
-
-Apply the test_patch **once** — do not re-apply it. A second apply of an
-already-applied patch returns non-zero ("patch does not apply") purely
-because the patch is *already in the tree* (idempotency), NOT because it
-failed to apply; reading that second non-zero as an apply failure is a
-mis-diagnosis.
-
-If `git apply` returns non-zero, FIRST determine whether the patch is
-**already applied** before treating it as a failure — reverse-check it:
+**Do NOT run `git apply` a second time.** If the first apply returns non-zero,
+do NOT re-apply it — instead check whether the patch is already in the tree:
 
 ```
 git apply --reverse --check .reyn/swe_bench_test.patch
 ```
 
-If the reverse-check succeeds (returncode 0), the test_patch is already in
-the tree — **proceed to Step 2 and run the tests**; do NOT set
-`tests_passed = false`. Only a patch that is **neither applicable nor
-already-applied** (the `--reverse --check` also returns non-zero) is a
-genuine verify execution failure (not a test failure): set
-`tests_passed = false` and record the failure in `failure_summary`
-(= include the exact stderr from git apply, NOT a vague "patch failed"
-summary). The tests could not be evaluated, so this is not a pass.
+- The reverse-check succeeds (returncode 0) → the patch is already applied →
+  proceed to Step 2 and run the tests.
+- The reverse-check is also non-zero → the patch is genuinely not applicable →
+  set `tests_passed = false` with the exact git stderr in `failure_summary`
+  (the tests could not be run, so this is not a pass).
 
-**Do NOT skip the test_patch** — an unapplied test patch means tests
-can't be evaluated; that's NOT a pass. The schema invariant
-(`oneOf` on `swe_bench_result`) rejects `tests_passed=true` with an
-empty patch, but an unapplied test_patch could still produce a
-mis-attributed `tests_passed=true` if the LLM bypasses Step 1.
+Either way, move on after this single check — never re-apply. Never skip the
+test_patch: unapplied tests cannot be evaluated and are not a pass.
 
 ## Step 2 — Run the tests
 
