@@ -202,3 +202,57 @@ def extract_problem_symbols(data: Mapping[str, Any]) -> list[dict]:
                     "symbol_re": r"def\s+\w*" + re.escape(sym) + r"\w*\s*\(",
                 })
     return out
+
+
+# ── #1375 D2: explore-layer file-candidate scaffolding ──────────────────────
+# The explore phase (weak model) greps/reads to find which files to edit, but
+# misses the gold files (astropy-13398: gold in builtin_frames/*, explore looked
+# at transformations.py / baseframe.py). These two steps pre-grep the problem
+# statement's code-symbols across the repo and surface the strongest candidate
+# files so explore SEES the gold files in context — the explore-layer analogue
+# of the plan region-surfacing (#1366 / D1). Deterministic, P5; explore stays
+# LLM-driven but no longer blind. Uses problem_statement only (NOT test_patch),
+# same legitimate-input basis as D1.
+
+#: how many candidate files to surface (bounded — explore reads its own beyond).
+_MAX_CANDIDATE_FILES = 8
+#: a symbol matching this few files is "specific" — a strong signal even alone
+#: (e.g. an exact method name) — so its match outranks incidental co-occurrence.
+_SPECIFIC_FILE_THRESHOLD = 2
+_SPECIFIC_BONUS = 3.0
+
+
+def extract_explore_symbols(data: Mapping[str, Any]) -> list[dict]:
+    """Return ``[{symbol, symbol_re}, ...]`` for a repo-wide grep — the symbols
+    the iterate step greps across the repo (path is the repo root, a constant in
+    the op, so no per-symbol file here). Empty when no symbol is extractable."""
+    return [
+        {"symbol": s, "symbol_re": re.escape(s)}
+        for s in _rank_symbols(_problem_statement(data))
+    ]
+
+
+def rank_candidate_files(data: Mapping[str, Any]) -> dict:
+    """Rank the repo-grepped files by symbol co-occurrence + specificity into
+    ``_candidate_files`` (write back with ``into: data``).
+
+    Each entry of ``_symbol_files`` is one symbol's ``files_with_matches`` grep
+    result (``{"files": [...]}``). A file scores 1 per matching symbol, plus a
+    bonus when the matching symbol is *specific* (matches <= ``_SPECIFIC_FILE_THRESHOLD``
+    files repo-wide) — so a gold file named by a single exact symbol (e.g.
+    ``itrs_to_observed_mat``) outranks an incidental file matched by several
+    common symbols (lead-coder's co-occurrence + specificity refinement)."""
+    inner = data.get("data") if isinstance(data.get("data"), dict) else data
+    results = inner.get("_symbol_files") or []
+
+    scores: dict[str, float] = {}
+    for r in results:
+        if not isinstance(r, dict):
+            continue
+        files = [f for f in (r.get("files") or []) if isinstance(f, str) and f]
+        weight = 1.0 + (_SPECIFIC_BONUS if 1 <= len(files) <= _SPECIFIC_FILE_THRESHOLD else 0.0)
+        for f in files:
+            scores[f] = scores.get(f, 0.0) + weight
+
+    ranked = sorted(scores, key=lambda f: (-scores[f], f))[:_MAX_CANDIDATE_FILES]
+    return {**inner, "_candidate_files": ranked}
