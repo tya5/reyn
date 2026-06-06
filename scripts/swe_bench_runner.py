@@ -447,6 +447,157 @@ def run_reyn_in_container(
             )
 
 
+# ── #187: general-agent (reyn chat / RouterLoop) SWE path ────────────────────
+
+
+def build_swe_task_prompt(instance: dict[str, Any]) -> str:
+    """#187: a minimal, de-prescribed SWE task for the general agent.
+
+    No procedure ("reproduce → verify → …") — the agent has tools (read / edit /
+    grep / glob / sandboxed_exec) and decides how. NO test_patch (it is held out;
+    the harness scores externally from the dataset). The agent fixes the issue in
+    the working tree; the model_patch is the resulting ``git diff HEAD``.
+    """
+    repo = instance.get("repo", "")
+    base = instance.get("base_commit", "")
+    issue = (instance.get("problem_statement", "") or "").strip()
+    hints = (instance.get("hints_text", "") or "").strip()
+    lines = [
+        f"This repository ({repo}, checked out at commit {base}) has the following "
+        "open GitHub issue. Fix it in the working tree. You have file and shell "
+        "tools; how you investigate and verify the fix is your judgment.",
+        "",
+        "## Issue",
+        issue,
+    ]
+    if hints:
+        lines += ["", "## Hints", hints]
+    return "\n".join(lines)
+
+
+def run_reyn_chat_in_container(
+    instance: dict[str, Any],
+    *,
+    image: str,
+    repo_dir: str = "/testbed",
+    docker_bin: str = "docker",
+    timeout: int = 600,
+    docker_runner=None,
+    container_name: str | None = None,
+) -> dict[str, Any]:
+    """#187: solve the SWE task with the GENERAL AGENT (``reyn chat`` / RouterLoop),
+    NOT the swe_bench skill. The held-out test_patch is never given to the agent
+    (it is not in the task prompt); the model_patch is the in-container
+    ``git diff HEAD`` after the agent finishes editing the working tree.
+
+    Lifecycle mirrors :func:`run_reyn_in_container` (start container, provision the
+    reyn venv, teardown always), but invokes ``reyn chat --env-backend=docker
+    --container <name> --grant-file-write`` in scripted mode (the SWE task piped to
+    stdin) instead of ``reyn run swe_bench``.
+    """
+    import uuid
+
+    runner = docker_runner or _default_docker_runner
+    instance_id = instance["instance_id"]
+    name = container_name or f"reyn_swebench_chat_{instance_id}_{uuid.uuid4().hex[:8]}"
+    reyn_root = str(_reyn_repo_root())
+
+    print(
+        f"[swe_bench_runner] (chat/#187) docker run image={image} name={name} "
+        f"(instance={instance_id})",
+        file=sys.stderr,
+    )
+    try:
+        start = runner(
+            [
+                docker_bin, "run", "-d", "--name", name,
+                "-v", f"{reyn_root}:{reyn_root}:ro",
+                image, "sleep", "infinity",
+            ],
+            timeout=300,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": f"docker run error: {exc}"}
+    if start.returncode != 0:
+        return {
+            "ok": False,
+            "error": f"docker run failed (rc={start.returncode}): {(start.stderr or '')[:400]}",
+        }
+
+    try:
+        deps = reyn_runtime_deps((_reyn_repo_root() / "pyproject.toml").read_text())
+        print(
+            f"[swe_bench_runner] provisioning reyn venv in {name} ({len(deps)} deps)",
+            file=sys.stderr,
+        )
+        prov = runner(
+            [docker_bin, "exec", name, "bash", "-lc", provision_command(deps, f"{reyn_root}/src")],
+            timeout=600,
+        )
+        if getattr(prov, "returncode", 1) != 0:
+            return {
+                "ok": False,
+                "error": f"venv provisioning failed (rc={prov.returncode}): {(prov.stderr or '')[:400]}",
+            }
+
+        # Invoke the GENERAL AGENT (reyn chat) with the SWE task via stdin. The
+        # scoped --grant-file-write lets the agent edit the in-container repo
+        # working tree non-interactively (sandbox ∩ bounds it to repo_dir). NO
+        # test_patch is in the task (held out; the harness scores externally).
+        task = build_swe_task_prompt(instance)
+        chat_cmd = [
+            "reyn", "chat",
+            "--cui",
+            "--env-backend=docker",
+            "--container", name,
+            "--repo-dir", repo_dir,
+            "--grant-file-write",
+        ]
+        run_env = {**os.environ, "REYN_HARNESS_PYTHON": _CONTAINER_HARNESS_PYTHON}
+        print(
+            f"[swe_bench_runner] running: {' '.join(chat_cmd)} (instance={instance_id})",
+            file=sys.stderr,
+        )
+        try:
+            subprocess.run(
+                chat_cmd,
+                input=task,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=run_env,
+            )
+        except subprocess.TimeoutExpired:
+            print(
+                f"[swe_bench_runner] chat timed out after {timeout}s — extracting diff",
+                file=sys.stderr,
+            )
+
+        # model_patch = the agent's edits, as the in-container `git diff HEAD`.
+        diff = runner(
+            [docker_bin, "exec", name, "git", "-C", repo_dir, "diff", "HEAD"],
+            timeout=120,
+        )
+        patch = getattr(diff, "stdout", "") if getattr(diff, "returncode", 1) == 0 else ""
+        if isinstance(patch, bytes):
+            patch = patch.decode("utf-8", "replace")
+        return {"ok": True, "patch": patch}
+    finally:
+        try:
+            rm = runner([docker_bin, "rm", "-f", name], timeout=120)
+            if getattr(rm, "returncode", 0) != 0:
+                print(
+                    f"[swe_bench_runner] WARN teardown rm -f {name} rc={rm.returncode}: "
+                    f"{(rm.stderr or '')[:200]}",
+                    file=sys.stderr,
+                )
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(
+                f"[swe_bench_runner] WARN teardown rm -f {name} raised: {exc}",
+                file=sys.stderr,
+            )
+
+
 # ── CLI entry point ──────────────────────────────────────────────────────────
 
 
@@ -526,6 +677,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--docker-bin", dest="docker_bin", default="docker", metavar="BIN",
         help="Docker CLI binary for --env-backend=docker (default: docker).",
     )
+    # #187: solve with the general agent (`reyn chat` / RouterLoop) instead of the
+    # swe_bench skill — the non-cheat path (no test_patch; the agent iterates with
+    # its tools). Requires --env-backend=docker. The skill path stays the default
+    # (non-destructive; both coexist until the general-agent path is dogfood-proven).
+    p.add_argument(
+        "--agent-mode", dest="agent_mode", choices=["skill", "chat"], default="skill",
+        help=(
+            "Solver: 'skill' (default, `reyn run swe_bench`) or 'chat' (#187, the "
+            "general agent `reyn chat` — no test_patch, the agent iterates). "
+            "'chat' requires --env-backend=docker."
+        ),
+    )
 
     return p
 
@@ -572,15 +735,31 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        result = run_reyn_in_container(
-            instance,
-            image=args.image,
-            repo_dir=args.repo_dir,
-            state_dir=args.state_dir,
-            docker_bin=args.docker_bin,
-            reyn_base=reyn_cmd,
-            timeout=args.timeout,
+        if getattr(args, "agent_mode", "skill") == "chat":
+            # #187: solve with the general agent (reyn chat), not the skill.
+            result = run_reyn_chat_in_container(
+                instance,
+                image=args.image,
+                repo_dir=args.repo_dir,
+                docker_bin=args.docker_bin,
+                timeout=args.timeout,
+            )
+        else:
+            result = run_reyn_in_container(
+                instance,
+                image=args.image,
+                repo_dir=args.repo_dir,
+                state_dir=args.state_dir,
+                docker_bin=args.docker_bin,
+                reyn_base=reyn_cmd,
+                timeout=args.timeout,
+            )
+    elif getattr(args, "agent_mode", "skill") == "chat":
+        print(
+            "Error: --agent-mode=chat requires --env-backend=docker.",
+            file=sys.stderr,
         )
+        return 1
     else:
         result = run_reyn(instance, reyn_cmd=reyn_cmd, timeout=args.timeout)
 
