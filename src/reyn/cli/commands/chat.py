@@ -87,6 +87,18 @@ def register(sub) -> None:
             "agent runs that edit a working tree without a permission prompt."
         ),
     )
+    # #187: hide tools from the agent's LLM-visible catalog (general — any chat
+    # session can scope out tools; uses the existing RouterLoop exclude_tools hook).
+    # The faithful SWE-eval excludes web so the agent solves from the repo + issue,
+    # not a web lookup of the gold solution.
+    p.add_argument(
+        "--exclude-tools", dest="exclude_tools", default=None, metavar="NAMES",
+        help=(
+            "Comma-separated tool names to hide from the agent's LLM-visible "
+            "catalog (e.g. 'web__search,web__fetch'). The tools still exist; they "
+            "are just not offered to the model this session."
+        ),
+    )
     p.add_argument(
         "--banner",
         action="store_true",
@@ -299,6 +311,11 @@ def run(args: argparse.Namespace) -> None:
         perm_config.setdefault("file.read", "allow")
         perm_config.setdefault("file.write", "allow")
     unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
+    # #187: parse --exclude-tools (comma-separated tool names) → frozenset, threaded
+    # to ChatSession → the MAIN RouterLoop's exclude_tools (LLM-visible catalog filter).
+    _exclude_tools = frozenset(
+        t.strip() for t in (getattr(args, "exclude_tools", None) or "").split(",") if t.strip()
+    )
     # Single PermissionResolver shared across agents (per the PR10 decision:
     # `.reyn/approvals.yaml` is process-wide).
     perm_resolver = PermissionResolver(
@@ -346,6 +363,7 @@ def run(args: argparse.Namespace) -> None:
             embedding_config=session_cfg.config.embedding,
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
+            exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
             # #1289: same backend instance to both seams (single-shared-sandbox).
             environment_backend=env_backend,
             sandbox_backend=env_backend,

@@ -1272,6 +1272,7 @@ class ChatSession:
         eager_embedding_build: bool = False,
         tool_calls_op_loop_skills: list[str] | None = None,  # #1212: op-loop gate for chat-run skills
         agent_id: str | None = None,
+        exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -1298,6 +1299,12 @@ class ChatSession:
             self._on_perm_persist_cb = None
         _safety = safety or SafetyConfig()
         self._safety = _safety
+        # #187: tool names excluded from the MAIN chat RouterLoop's LLM-visible
+        # catalog (threaded to the loop construction below). General capability
+        # (mirrors the sub-loop exclude_tools, planner.py:1136); the faithful
+        # SWE-eval excludes web__search/web__fetch so the agent solves from the
+        # repo + issue, not a web lookup of the gold solution.
+        self._exclude_tools = frozenset(exclude_tools or ())
         # FP-0017 follow-up: declarative sandbox config (reyn.yaml `sandbox:`).
         # Plumbed through to spawned Agents so sandboxed_exec backend selection
         # honors the operator's declared policy.
@@ -5484,6 +5491,9 @@ class ChatSession:
         loop = RouterLoop(
             host=self._router_host, chain_id=chain_id, max_iterations=5,
             budget=self._budget_tracker,
+            # #187: hide excluded tools (e.g. web for faithful SWE-eval) from the
+            # MAIN agent loop's LLM-visible catalog (same hook the sub-loops use).
+            exclude_tools=self._exclude_tools,
             # B43-NF-W6-1: chat router empty-stop retry. Same opt-in
             # mechanic as PR #265's plan-step wiring — directive plumbed
             # unconditionally, runtime gated by ``REYN_EMPTY_STOP_RETRY=1``.
