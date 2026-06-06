@@ -376,6 +376,14 @@ class PermissionResolver:
         self._approvals_path = self._project_root / ".reyn" / "approvals.yaml"
         self._session: dict[str, bool] = {}
         self._saved: dict[str, bool] = self._load_saved()
+        # #1383 (D12): scoped read-grants for OS-offloaded artifacts. When the OS
+        # offloads an artifact to a state-dir path and hands the agent an
+        # `artifact_ref` / `_offload_ref` pointing there, that path is outside the
+        # default read zone (CWD) — the agent would be told to read a path it is
+        # then denied. The offload-emit registers the EXACT path here (not the
+        # whole state-dir → least-privilege); the read gate consults it. Resolved
+        # absolute paths only; exact-match (no prefix grant).
+        self._offload_read_paths: set[str] = set()
         if trusted_python_allowed is not None:
             unsafe_python_allowed = trusted_python_allowed
         self._unsafe_python_allowed = unsafe_python_allowed
@@ -610,6 +618,26 @@ class PermissionResolver:
     # Backwards-compatible alias used by older write-class call sites.
     def _is_path_approved(self, path: str, skill_name: str) -> bool:
         return self._is_path_approved_for(path, skill_name, "file.write")
+
+    def _resolve_for_offload(self, path: str) -> str:
+        """Resolve ``path`` to an absolute string (same convention as the gate)."""
+        p = Path(path).expanduser()
+        return str((self._project_root / p).resolve() if not p.is_absolute() else p.resolve())
+
+    def grant_offload_read(self, path: str) -> None:
+        """Register a scoped read-grant for an OS-offloaded artifact path (#1383 D12).
+
+        Called by the offload-emit layer (``context_builder`` artifact_ref /
+        offload_value) the moment a state-dir path is handed to the agent as a
+        readable ref. Grants read on EXACTLY this path (resolved) — not the
+        containing dir — so least-privilege holds. The read gate
+        (:meth:`require_file_read`) consults :meth:`_is_offload_read_granted`.
+        """
+        self._offload_read_paths.add(self._resolve_for_offload(path))
+
+    def _is_offload_read_granted(self, path: str) -> bool:
+        """True if ``path`` was registered via :meth:`grant_offload_read` (exact match)."""
+        return self._resolve_for_offload(path) in self._offload_read_paths
 
     def _is_host_approved_for(
         self, host: str, skill_name: str, kind: str = "http.get",
@@ -975,8 +1003,13 @@ class PermissionResolver:
         )
 
         def _approved(axis: object, value: object) -> bool:
-            return self._is_config_approved("file.read") or self._is_path_approved_for(
-                str(value), skill_name, "file.read"
+            return (
+                self._is_config_approved("file.read")
+                or self._is_path_approved_for(str(value), skill_name, "file.read")
+                # #1383 (D12): an artifact the OS offloaded to this agent is
+                # readable by it (exact-path scoped grant), even though the
+                # state-dir path is outside the default read zone.
+                or self._is_offload_read_granted(str(value))
             )
 
         if EffectivePermission([

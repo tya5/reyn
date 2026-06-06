@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from reyn.schemas.models import (
     CandidateOutput,
@@ -204,6 +204,7 @@ def offload_control_ir_result(
     events: Any = None,
     phase: str | None = None,
     cap: int = MAX_CONTROL_IR_RESULT_INLINE_BYTES,
+    on_offload_ref: Callable[[str], None] | None = None,
 ) -> dict:
     """Offload an oversized control_ir_result to a workspace scratch file.
 
@@ -248,6 +249,10 @@ def offload_control_ir_result(
     inline["_offload_status"] = "truncated"
     inline["_offload_total_chars"] = size_chars
     ref_path = offload_result.path_ref
+    # #1383 (D12): the inline carries `_offload_ref` = ref_path the LLM may
+    # file.read for the full content → grant a scoped read on it.
+    if on_offload_ref is not None:
+        on_offload_ref(ref_path)
     large_fields = _oversized_fields(result)
 
     if events is not None:
@@ -270,6 +275,7 @@ def maybe_offload_control_ir_results(
     events: Any = None,
     phase: str | None = None,
     cap: int = MAX_CONTROL_IR_RESULT_INLINE_BYTES,
+    on_offload_ref: Callable[[str], None] | None = None,
 ) -> list[dict]:
     """Apply per-result offload to all control_ir_results that exceed *cap*.
 
@@ -281,7 +287,8 @@ def maybe_offload_control_ir_results(
     if offload_dir is None:
         return control_ir_results
     return [
-        offload_control_ir_result(r, i, offload_dir, events=events, phase=phase, cap=cap)
+        offload_control_ir_result(r, i, offload_dir, events=events, phase=phase, cap=cap,
+                                  on_offload_ref=on_offload_ref)
         for i, r in enumerate(control_ir_results)
     ]
 
@@ -292,6 +299,7 @@ def maybe_ref_artifact(
     *,
     events: Any = None,
     phase: str | None = None,
+    on_offload_ref: Callable[[str], None] | None = None,
 ) -> dict:
     """
     Return the artifact as-is if small-or-medium, or an artifact_ref pointer if large.
@@ -304,6 +312,11 @@ def maybe_ref_artifact(
     The LLM can read artifact_ref paths via a file op. The inline-boost path
     keeps mid-size artifacts (e.g. SWE-bench task inputs, ~8–28KB) directly
     visible in the prompt so the LLM does not need a round-trip file read.
+
+    ``on_offload_ref(ref_path)`` (#1383 D12) is invoked when an artifact_ref is
+    emitted, so the OS can register a scoped read-grant: the LLM is told to read
+    ``ref_path`` (often a state-dir path outside the default read zone), so it
+    MUST be readable. Without this, the agent is told to read a path it is denied.
     """
     if artifact_path is None:
         return artifact
@@ -322,6 +335,9 @@ def maybe_ref_artifact(
                 artifact_path=artifact_path,
             )
         return artifact
+    # artifact_ref: the LLM will be instructed to read ref_path → grant it.
+    if on_offload_ref is not None:
+        on_offload_ref(artifact_path)
     return {
         "type": "artifact_ref",
         "artifact_type": artifact.get("type", "unknown"),
@@ -353,6 +369,7 @@ def build_frame(
     offload_dir: Path | None = None,
     context_size_signal: str | None = None,  # #1176 B1 — pre-rendered, tail field
     act_turn_reasoning: list[str] | None = None,  # #1212 reasoning-continuity
+    on_offload_ref: Callable[[str], None] | None = None,  # #1383 D12 scoped read-grant
 ) -> ContextFrame:
     allowed_next = [c.next_phase for c in candidates]
     current_visit = visit_counts.get(phase_name, 1)
@@ -375,13 +392,15 @@ def build_frame(
         events=events,
         phase=phase_name,
         cap=inline_cap,
+        on_offload_ref=on_offload_ref,
     )
 
     frame = ContextFrame(
         current_phase=phase_name,
         current_phase_role=phase.role,
         instructions=phase.instructions,
-        input_artifact=maybe_ref_artifact(artifact, artifact_path, events=events, phase=phase_name),
+        input_artifact=maybe_ref_artifact(artifact, artifact_path, events=events, phase=phase_name,
+                                           on_offload_ref=on_offload_ref),
         execution=ExecutionState(
             path=list(history)[-10:],
             current_visit=current_visit,

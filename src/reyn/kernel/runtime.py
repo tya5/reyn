@@ -591,6 +591,10 @@ class OSRuntime:
             remaining_act_turns=remaining_act_turns,
             offload_dir=offload_dir,
             context_size_signal=context_size_signal,
+            # #1383 (D12): when build_frame offloads an artifact to a state-dir
+            # path and hands the LLM a readable ref, register a scoped read-grant
+            # on that exact path so the agent can read what it is told to read.
+            on_offload_ref=(self._perm.grant_offload_read if self._perm else None),
         )
 
     # ── Phase entry + phase execution ─────────────────────────────────────────
