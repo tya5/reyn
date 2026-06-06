@@ -552,6 +552,11 @@ def run_reyn_chat_in_container(
             "--container", name,
             "--repo-dir", repo_dir,
             "--grant-file-write",
+            # #187 faithful-eval: the agent solves from the issue + repo ONLY. Hide
+            # web tools so it cannot web-search/fetch the gold PR/solution (the
+            # benchmark answer) — matching SWE-agent/OpenHands (no web in-bench). The
+            # exec network path is already sandbox-gated off; web is the only leak.
+            "--exclude-tools", "web__search,web__fetch",
         ]
         run_env = {**os.environ, "REYN_HARNESS_PYTHON": _CONTAINER_HARNESS_PYTHON}
         print(

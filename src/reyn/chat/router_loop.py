@@ -1433,6 +1433,30 @@ def _enrich_invoke_action_description(
     return result
 
 
+def _apply_tool_exclusions(
+    tools: list[dict], exclude_tools: "frozenset[str] | set[str]"
+) -> list[dict]:
+    """Drop tools whose function name is in ``exclude_tools`` from the catalog.
+
+    The post-build filter that hides tools from the LLM-visible catalog (and,
+    in lockstep, from the dispatch catalog — both derive from this same
+    ``tools`` list). Two callers: the plan sub-loops pass ``{"plan"}`` so plan
+    steps cannot recursively self-decompose (planner.py), and the #187
+    faithful SWE-eval passes the web tools (``web__search`` / ``web__fetch``)
+    so the general agent solves from the repo + issue, not a web lookup of the
+    gold solution. ``exclude_tools`` empty → ``tools`` returned unchanged.
+
+    P7-clean: no hardcoded tool names; the exclusion set is data supplied by
+    the caller.
+    """
+    if not exclude_tools:
+        return tools
+    return [
+        t for t in tools
+        if t.get("function", {}).get("name") not in exclude_tools
+    ]
+
+
 # ---------------------------------------------------------------------------
 # RouterLoop
 # ---------------------------------------------------------------------------
@@ -1788,11 +1812,7 @@ class RouterLoop:
                 ),
             )
             tools = _enrich_invoke_action_description(tools, _ars_entries)
-        if self._exclude_tools:
-            tools = [
-                t for t in tools
-                if t.get("function", {}).get("name") not in self._exclude_tools
-            ]
+        tools = _apply_tool_exclusions(tools, self._exclude_tools)
         self._catalog = {t["function"]["name"]: t for t in tools}
         self._tool_names = frozenset(self._catalog.keys())  # backward compat
         if self._system_prompt_override is not None:
