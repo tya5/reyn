@@ -367,7 +367,10 @@ def test_skill_real_op_kind_scanner_finds_known_ops() -> None:
     # any more; replaced by "read_file" (many skills, allowed_ops).
     spot_checks = {
         "read_file",     # many skills, allowed_ops
-        "sandboxed_exec", # swe_bench, allowed_ops + run_op preprocessor
+        # #187 retire: "sandboxed_exec" removed — swe_bench was the only stdlib
+        # skill that declared it (allowed_ops + run_op preprocessor), and the
+        # swe_bench skill was retired (the general agent solves SWE via run-once,
+        # not a skill). No stdlib skill declares sandboxed_exec any more.
         # #1303 Stage I removed the "embed" / "index_write" run-ops from
         # index_docs + index_events (chunkers stream into reyn.safe.embed_index),
         # so no stdlib skill declares them any more.

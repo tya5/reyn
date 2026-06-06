@@ -63,11 +63,16 @@ def test_swe_task_prompt_is_minimal_no_rigid_procedure() -> None:
     assert "your judgment" in lowered
 
 
-def test_runner_exposes_agent_mode_flag_default_skill() -> None:
-    """Tier 2: --agent-mode {skill,chat}, default 'skill' (old path stays, non-destructive)."""
+def test_runner_agent_mode_is_chat_only() -> None:
+    """Tier 2: the swe_bench skill was retired — --agent-mode is 'chat'-only now
+    (the general agent via `reyn run-once`); 'skill' is no longer a valid choice."""
+    import argparse
+
     p = r.build_parser()
-    assert p.parse_args(["--input", "/dev/null"]).agent_mode == "skill"
+    assert p.parse_args(["--input", "/dev/null"]).agent_mode == "chat"
     assert p.parse_args(["--input", "/dev/null", "--agent-mode", "chat"]).agent_mode == "chat"
+    with pytest.raises(SystemExit):  # 'skill' removed → argparse rejects
+        p.parse_args(["--input", "/dev/null", "--agent-mode", "skill"])
 
 
 def test_agent_mode_chat_requires_docker(

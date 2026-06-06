@@ -92,7 +92,7 @@ required_credentials: []
 ```bash
 reyn run ops_report '{"period": "last-week"}'
 reyn run ops_report '{"period": "last-7d", "focus": "failures", "format": "markdown"}'
-reyn run ops_report '{"period_days": 30, "skills": ["swe_bench", "eval"]}'
+reyn run ops_report '{"period_days": 30, "skills": ["skill_router", "eval"]}'
 ```
 
 | フィールド | 型 | デフォルト | 説明 |
