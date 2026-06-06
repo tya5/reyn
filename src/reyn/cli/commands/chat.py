@@ -361,7 +361,7 @@ def run(args: argparse.Namespace) -> None:
     # and pass the SAME instance to BOTH ChatSession seams (FS environment_backend
     # + exec sandbox_backend) — the #1200 single-shared-sandbox invariant. A
     # launched container is torn down at process exit.
-    env_backend, _ws_base_dir, _ws_state_dir, env_cleanup = build_environment_backend(args)
+    env_backend, ws_base_dir, ws_state_dir, env_cleanup = build_environment_backend(args)
     if env_cleanup is not None:
         import atexit
         atexit.register(env_cleanup)
@@ -401,6 +401,13 @@ def run(args: argparse.Namespace) -> None:
             # #1289: same backend instance to both seams (single-shared-sandbox).
             environment_backend=env_backend,
             sandbox_backend=env_backend,
+            # #187: forward the env-backend's PARTNER container repo root + host-side
+            # state dir to the chat OpContext Workspace, so file__read/grep/glob/edit
+            # root on the container repo (e.g. /testbed) — not the host reyn cwd.
+            # Without this the agent's file ops + the exec/diff seam disagree on the
+            # FS (the #187 step-3 wrong-FS defect). None (host backend) → cwd default.
+            workspace_base_dir=ws_base_dir,
+            workspace_state_dir=ws_state_dir,
         )
         # #187 session-isolation: a fresh/stateless run (`reyn run-once`) does NOT
         # rehydrate the agent's persisted conversation history. `load_history()` is
