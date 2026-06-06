@@ -49,6 +49,36 @@ preprocessor:
       on_error: skip
     into: data._symbol_files
     on_error: skip
+  # #1375 D7 — filename-based file-finding (on re-plan too): glob the repo for
+  # files whose NAME contains a problem-symbol token; merged with content candidates.
+  - type: python
+    module: ./extract_problem_symbols.py
+    function: extract_filename_tokens
+    mode: safe
+    into: data._filename_tokens
+    output_schema:
+      type: array
+  # grep with a `glob` file-filter (not the `glob` op — its results are filtered
+  # host-side and return nothing under the docker backend, #1375 D10); `.` matches
+  # any line so files_with_matches returns every file matching the glob. CAVEAT:
+  # `.` misses 0-byte/blank files (e.g. empty `__init__.py`) — adequate for
+  # non-empty source filename-finding; removed when D10 lets us use the glob op.
+  - type: iterate
+    over: data._filename_tokens
+    apply:
+      type: run_op
+      op:
+        kind: file
+        op: grep
+        path: "."
+        glob: "__placeholder__"
+        pattern: "."
+        output_mode: files_with_matches
+      args_from:
+        glob: "_iter.item.glob"
+      on_error: skip
+    into: data._filename_files
+    on_error: skip
   - type: python
     module: ./extract_problem_symbols.py
     function: rank_candidate_files

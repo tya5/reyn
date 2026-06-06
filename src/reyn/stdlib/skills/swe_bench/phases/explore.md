@@ -38,6 +38,42 @@ preprocessor:
       on_error: skip
     into: data._symbol_files
     on_error: skip
+  # #1375 D7 — filename-based file-finding. When the fix ADDS the named method it
+  # has 0 content matches (above), so glob the repo for files whose NAME contains a
+  # problem-symbol token; rank_candidate_files merges these with the content
+  # candidates so a fix-site file named by a problem token (astropy-13398's
+  # `itrs_observed_transforms.py`) surfaces even with 0 content match.
+  - type: python
+    module: ./extract_problem_symbols.py
+    function: extract_filename_tokens
+    mode: safe
+    into: data._filename_tokens
+    output_schema:
+      type: array
+  # NB: uses grep with a `glob` file-filter (not the `glob` op) because the glob
+  # op's results are filtered host-side and return nothing under the docker
+  # EnvironmentBackend (#1375 D10); grep filters in-container. A match-anything
+  # pattern (`.`) makes files_with_matches return every file matching the glob.
+  # CAVEAT: `.` requires a non-empty line, so this MISSES 0-byte / blank files
+  # (e.g. an empty `__init__.py`) — adequate for finding non-empty source files by
+  # name (the fix-site files we want), but not a general file-finder. Reverting to
+  # the real `glob` op once #1375 D10 is fixed removes this caveat.
+  - type: iterate
+    over: data._filename_tokens
+    apply:
+      type: run_op
+      op:
+        kind: file
+        op: grep
+        path: "."
+        glob: "__placeholder__"
+        pattern: "."
+        output_mode: files_with_matches
+      args_from:
+        glob: "_iter.item.glob"
+      on_error: skip
+    into: data._filename_files
+    on_error: skip
   - type: python
     module: ./extract_problem_symbols.py
     function: rank_candidate_files

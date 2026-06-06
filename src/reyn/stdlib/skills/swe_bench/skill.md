@@ -91,6 +91,13 @@ permissions:
       function: extract_explore_symbols
       mode: safe
       timeout: 5
+    # #1375 D7: filename-token file-finding — glob the repo for files whose NAME
+    # contains a problem-symbol token (surfaces fix-site files for patch-ADDED
+    # methods that have 0 content match). Mode: safe — pure data transform.
+    - module: ./extract_problem_symbols.py
+      function: extract_filename_tokens
+      mode: safe
+      timeout: 5
     - module: ./extract_problem_symbols.py
       function: rank_candidate_files
       mode: safe

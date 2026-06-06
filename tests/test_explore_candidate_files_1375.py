@@ -168,3 +168,68 @@ def test_rank_excludes_git_and_binary_candidates() -> None:
         f"only source survives, and a 'build' SUBSTRING (not component) is not "
         f"false-dropped: {cands}"
     )
+
+
+def _fns_d7():
+    sys.path.insert(0, str(SWE_BENCH_DIR))
+    try:
+        from extract_problem_symbols import (
+            extract_filename_tokens,
+            rank_candidate_files,
+        )
+    finally:
+        sys.path.pop(0)
+    return extract_filename_tokens, rank_candidate_files
+
+
+def test_extract_filename_tokens_splits_meaningfully() -> None:
+    """Tier 2: #1375 D7 — symbols split into meaningful lowercase tokens for the
+    filename glob (itrs_to_observed_mat -> itrs/observed/mat; AltAz -> alt; short
+    fragments dropped)."""
+    extract_filename_tokens, _ = _fns_d7()
+    toks = {t["token"] for t in extract_filename_tokens(
+        {"data": {"problem_statement": "`itrs_to_observed_mat` and `AltAz` and `rotation_matrix`"}}
+    )}
+    assert {"itrs", "observed", "rotation", "matrix", "alt"} <= toks
+    assert "to" not in toks and "az" not in toks  # short fragments dropped
+    for t in extract_filename_tokens({"data": {"problem_statement": "`itrs`"}}):
+        assert t["glob"] == "**/*itrs*"  # the glob pattern for the iterate step
+
+
+def test_merge_surfaces_filename_gold_with_zero_content() -> None:
+    """Tier 2: #1375 D7 — a fix-site file named by a problem token but with ZERO
+    content match (a patch-ADDED method) surfaces via the filename signal, merged
+    (interleaved) with the content candidates. This is the astropy-13398 case: the
+    gold `itrs_observed_transforms.py` (0 content match) must appear alongside the
+    `cirs/icrs` siblings D2's content-grep found.
+    """
+    _, rank_candidate_files = _fns_d7()
+    base = "astropy/coordinates/builtin_frames/"
+    out = rank_candidate_files({"data": {
+        # D2 content-grep found only the siblings (gold has 0 content match)
+        "_symbol_files": [{"files": [base + "cirs_observed_transforms.py",
+                                     base + "icrs_observed_transforms.py"]}],
+        # D7 filename-glob found the gold by its name tokens (itrs, observed)
+        "_filename_files": [
+            {"matches": [base + "itrs.py", base + "itrs_observed_transforms.py"]},  # itrs
+            {"matches": [base + "itrs_observed_transforms.py",
+                         base + "cirs_observed_transforms.py"]},  # observed
+        ],
+    }})
+    cands = out["_candidate_files"]
+    assert base + "itrs_observed_transforms.py" in cands, (
+        f"the filename-gold (0 content match) must surface via D7: {cands}"
+    )
+    # the content candidate is NOT crowded out by the filename merge
+    assert base + "cirs_observed_transforms.py" in cands
+
+
+def test_merge_empty_filename_falls_back_to_content() -> None:
+    """Tier 2: D7 falsification — no filename matches → _candidate_files is just the
+    content (D2) candidates (graceful; D7 adds nothing when no filename overlaps)."""
+    _, rank_candidate_files = _fns_d7()
+    out = rank_candidate_files({"data": {
+        "_symbol_files": [{"files": ["pkg/a.py", "pkg/b.py"]}],
+        "_filename_files": [],
+    }})
+    assert set(out["_candidate_files"]) == {"pkg/a.py", "pkg/b.py"}
