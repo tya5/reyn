@@ -171,6 +171,8 @@ See: `feedback_minimize_speculation.md`
 
 The discipline: **when you first suspect LLM behavior, ask whether you can observe the LLM's input payload and output.** If the infrastructure to do so does not exist, build it before forming hypotheses.
 
+In Reyn, the canonical tool for payload inspection is `scripts/dogfood_trace.py`. Start with `--mode llm-payloads` for a full timeline of what each LLM call received and produced across the batch. See [LLM Payload Tracing](../../reference/dogfood-tracing.md) for the complete mode reference.
+
 **Conceptual example.** A finding states "the router is misidentifying skill names." Four hypotheses are proposed: (a) enum constraints are missing; (b) skill descriptions are truncated; (c) a prompt rule was inadvertently removed; (d) the model hallucinates names it has seen in similar contexts. Without observation infrastructure, all four are plausible and a comprehensive fix addresses all four. With observation infrastructure (dump the actual system prompt, inspect the enum, replay the payload), three of the four can be eliminated in minutes. The correct fix targets only the confirmed cause.
 
 After building observation infrastructure, retroactively verify all previous hypotheses. The historical pattern from Reyn's batch 7: 4 prior hypotheses were evaluated retroactively with the new tooling, and 1.5 were refuted — meaning fixes based on those hypotheses would have been wrong-layer.

@@ -229,6 +229,7 @@ and run the checklist below before continuing:
   `eval`, `skill_improver`) for live examples
 - **ContextFrame / Output schemas**: `src/reyn/models.py`
 - **Op catalog and dispatch**: `src/reyn/op_runtime/`
+- **LLM trace analysis**: `docs/reference/dogfood-tracing.md` — `scripts/dogfood_trace.py --mode llm-payloads` is the canonical entry point for inspecting LLM payloads; do not hand-parse JSONL.
 
 ## Goal
 
