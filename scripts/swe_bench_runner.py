@@ -475,7 +475,7 @@ def build_swe_task_prompt(instance: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def run_reyn_chat_in_container(
+def run_reyn_once_in_container(
     instance: dict[str, Any],
     *,
     image: str,
@@ -484,26 +484,33 @@ def run_reyn_chat_in_container(
     timeout: int = 600,
     docker_runner=None,
     container_name: str | None = None,
+    max_iterations: int = 80,
 ) -> dict[str, Any]:
-    """#187: solve the SWE task with the GENERAL AGENT (``reyn chat`` / RouterLoop),
-    NOT the swe_bench skill. The held-out test_patch is never given to the agent
-    (it is not in the task prompt); the model_patch is the in-container
-    ``git diff HEAD`` after the agent finishes editing the working tree.
+    """#187: solve the SWE task with the GENERAL AGENT via ``reyn run-once``, NOT
+    the swe_bench skill. The held-out test_patch is never given to the agent (it is
+    not in the task prompt); the model_patch is the in-container ``git diff HEAD``
+    after the agent finishes editing the working tree.
 
     Lifecycle mirrors :func:`run_reyn_in_container` (start container, provision the
-    reyn venv, teardown always), but invokes ``reyn chat --env-backend=docker
-    --container <name> --grant-file-write`` in scripted mode (the SWE task piped to
-    stdin) instead of ``reyn run swe_bench``.
+    reyn venv, teardown always), but invokes ``reyn run-once --env-backend=docker
+    --container <name> --grant-file-write --exclude-tools web__search,web__fetch``
+    with the WHOLE SWE task piped to stdin as ONE message.
+
+    ``reyn run-once`` reads the entire stdin as a single user turn (not the REPL's
+    line-by-line read, which fragmented the 439-line task into 439 turns — the
+    #1401 root cause) and drives the agent to completion via send_to_agent_impl
+    (the same scoped chat session, no fresh unscoped build). --max-iterations is
+    raised (default 80) so the autonomous agent can explore→edit→verify.
     """
     import uuid
 
     runner = docker_runner or _default_docker_runner
     instance_id = instance["instance_id"]
-    name = container_name or f"reyn_swebench_chat_{instance_id}_{uuid.uuid4().hex[:8]}"
+    name = container_name or f"reyn_swebench_once_{instance_id}_{uuid.uuid4().hex[:8]}"
     reyn_root = str(_reyn_repo_root())
 
     print(
-        f"[swe_bench_runner] (chat/#187) docker run image={image} name={name} "
+        f"[swe_bench_runner] (once/#187) docker run image={image} name={name} "
         f"(instance={instance_id})",
         file=sys.stderr,
     )
@@ -540,32 +547,39 @@ def run_reyn_chat_in_container(
                 "error": f"venv provisioning failed (rc={prov.returncode}): {(prov.stderr or '')[:400]}",
             }
 
-        # Invoke the GENERAL AGENT (reyn chat) with the SWE task via stdin. The
+        # Invoke the GENERAL AGENT via `reyn run-once`, piping the WHOLE SWE task
+        # to stdin as ONE message (run-once reads the entire stdin as a single user
+        # turn — not the REPL's line-by-line read that fragmented the task). The
         # scoped --grant-file-write lets the agent edit the in-container repo
-        # working tree non-interactively (sandbox ∩ bounds it to repo_dir). NO
-        # test_patch is in the task (held out; the harness scores externally).
+        # working tree (sandbox ∩ bounds it to repo_dir); --exclude-tools hides web.
+        # --state-dir keeps reyn's OS state host-side so it never lands on (and
+        # pollutes) the in-container repo `git diff HEAD`. NO test_patch is in the
+        # task (held out; the harness scores externally).
         task = build_swe_task_prompt(instance)
-        chat_cmd = [
-            "reyn", "chat",
-            "--cui",
+        state_dir = f"/tmp/reyn_once_state_{instance_id}_{name[-8:]}"
+        once_cmd = [
+            "reyn", "run-once",
             "--env-backend=docker",
             "--container", name,
             "--repo-dir", repo_dir,
+            "--state-dir", state_dir,
             "--grant-file-write",
             # #187 faithful-eval: the agent solves from the issue + repo ONLY. Hide
             # web tools so it cannot web-search/fetch the gold PR/solution (the
             # benchmark answer) — matching SWE-agent/OpenHands (no web in-bench). The
             # exec network path is already sandbox-gated off; web is the only leak.
             "--exclude-tools", "web__search,web__fetch",
+            # autonomous SWE needs many tool rounds (explore→edit→verify) > chat's 5.
+            "--max-iterations", str(max_iterations),
         ]
         run_env = {**os.environ, "REYN_HARNESS_PYTHON": _CONTAINER_HARNESS_PYTHON}
         print(
-            f"[swe_bench_runner] running: {' '.join(chat_cmd)} (instance={instance_id})",
+            f"[swe_bench_runner] running: {' '.join(once_cmd)} (instance={instance_id})",
             file=sys.stderr,
         )
         try:
             subprocess.run(
-                chat_cmd,
+                once_cmd,
                 input=task,
                 capture_output=True,
                 text=True,
@@ -574,7 +588,7 @@ def run_reyn_chat_in_container(
             )
         except subprocess.TimeoutExpired:
             print(
-                f"[swe_bench_runner] chat timed out after {timeout}s — extracting diff",
+                f"[swe_bench_runner] run-once timed out after {timeout}s — extracting diff",
                 file=sys.stderr,
             )
 
@@ -741,8 +755,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         if getattr(args, "agent_mode", "skill") == "chat":
-            # #187: solve with the general agent (reyn chat), not the skill.
-            result = run_reyn_chat_in_container(
+            # #187: solve with the general agent via `reyn run-once`, not the skill.
+            result = run_reyn_once_in_container(
                 instance,
                 image=args.image,
                 repo_dir=args.repo_dir,

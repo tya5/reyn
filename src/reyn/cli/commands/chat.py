@@ -20,6 +20,36 @@ from reyn.llm.llm import run_async
 from ..common_args import add_common_args
 from ..session import Session
 
+# #187: send_to_agent_impl timeout for the one-shot (`reyn run-once`) drive. The
+# autonomous SWE agent may iterate for many minutes; the external bound is the
+# caller's process timeout (the SWE runner's subprocess timeout). On timeout the
+# agent's in-container edits persist (partial reply), so the caller still extracts
+# the model_patch via `git diff`.
+_ONCE_SEND_TIMEOUT = 3600.0
+
+
+async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> str:
+    """#187 one-shot drive: read the WHOLE *instream* (default stdin) as a SINGLE
+    user message and drive the agent to completion via ``send_to_agent_impl``,
+    returning the final reply.
+
+    This is the structural fix for the #1401 line-fragmentation bug: the WHOLE
+    stdin becomes ONE message (one ``send`` call), NOT one message per line (the
+    REPL's line-by-line ``readline``). ``instream`` / ``send`` are injectable so
+    the whole-message-not-fragmented behavior is testable with a recording double
+    (no mock); production uses ``sys.stdin`` + the real ``send_to_agent_impl``.
+    """
+    if instream is None:
+        instream = sys.stdin
+    if send is None:
+        from reyn.mcp_server import send_to_agent_impl as send
+    message = instream.read()
+    result = await send(
+        agent_registry, agent_name=agent_name, message=message,
+        timeout=_ONCE_SEND_TIMEOUT,
+    )
+    return result.get("reply", "") or ""
+
 
 def register(sub) -> None:
     p = sub.add_parser("chat", help="Start an interactive chat session")
@@ -364,6 +394,10 @@ def run(args: argparse.Namespace) -> None:
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
+            # #187: per-message tool-call budget. Interactive chat keeps 5; the
+            # one-shot autonomous path (`reyn run-once`) raises it (explore→edit→
+            # verify needs many rounds). --max-iterations unset → 5 (unchanged).
+            router_max_iterations=int(getattr(args, "max_iterations", None) or 5),
             # #1289: same backend instance to both seams (single-shared-sandbox).
             environment_backend=env_backend,
             sandbox_backend=env_backend,
@@ -443,6 +477,17 @@ def run(args: argparse.Namespace) -> None:
                 if not await _safe_restore():
                     sys.exit(1)
             await registry.attach(name)
+            # #187: one-shot mode (`reyn run-once`). The scoped session built above
+            # (grant / exclude_tools / env_backend / high router_max_iterations) is
+            # now ATTACHED in the registry. Instead of the line-by-line REPL, read
+            # the WHOLE stdin as a single user message and drive the agent to
+            # completion via send_to_agent_impl — the same programmatic drive MCP /
+            # A2A use (registry.get_or_load returns this attached scoped session, no
+            # fresh unscoped build), then print the final reply and exit.
+            if getattr(args, "once", False):
+                reply = await _run_once(registry, name)
+                sys.stdout.write(reply + "\n")
+                return
             await run_repl(registry, renderer=renderer)
 
         run_async(_main_cui())

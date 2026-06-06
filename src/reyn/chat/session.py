@@ -1273,6 +1273,7 @@ class ChatSession:
         tool_calls_op_loop_skills: list[str] | None = None,  # #1212: op-loop gate for chat-run skills
         agent_id: str | None = None,
         exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
+        router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -1305,6 +1306,12 @@ class ChatSession:
         # SWE-eval excludes web__search/web__fetch so the agent solves from the
         # repo + issue, not a web lookup of the gold solution.
         self._exclude_tools = frozenset(exclude_tools or ())
+        # #187: per-message tool-call budget for the MAIN chat RouterLoop. The
+        # interactive default (5) suits a human turn; an autonomous one-shot run
+        # (`reyn chat --once` for SWE) needs far more (explore→edit→verify rounds),
+        # so the one-shot path constructs the session with a higher value. Bounded
+        # either way — the loop stops at the cap (finite) or when the agent ends.
+        self._router_max_iterations = int(router_max_iterations)
         # FP-0017 follow-up: declarative sandbox config (reyn.yaml `sandbox:`).
         # Plumbed through to spawned Agents so sandboxed_exec backend selection
         # honors the operator's declared policy.
@@ -5489,7 +5496,8 @@ class ChatSession:
             1,
         )
         loop = RouterLoop(
-            host=self._router_host, chain_id=chain_id, max_iterations=5,
+            host=self._router_host, chain_id=chain_id,
+            max_iterations=self._router_max_iterations,
             budget=self._budget_tracker,
             # #187: hide excluded tools (e.g. web for faithful SWE-eval) from the
             # MAIN agent loop's LLM-visible catalog (same hook the sub-loops use).
