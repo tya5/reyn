@@ -92,6 +92,28 @@ def test_verify_md_step1_forbids_reapply() -> None:
     )
 
 
+def test_verify_md_guards_against_apply_equals_pass() -> None:
+    """Tier 2: verify.md guards against the 'apply = pass' false-pass shortcut.
+
+    sandbox_2's behavioural N=3 on the minimized verify.md found the model
+    reporting tests_passed=true with pytest run 0 times — apply-success conflated
+    with test-pass, Step 2 (run the tests) skipped. The minimization had over-cut
+    the anti-false-pass guard, and removing the apply-loop exposed the latent
+    shortcut. The minimal guard must be present: applying the test_patch is NOT a
+    pass on its own, and tests_passed=true requires an actual test run. Behavioural
+    removal of the false-pass is confirmed by the 13398 faithful re-run, not here.
+    """
+    lowered = _VERIFY_MD.read_text(encoding="utf-8").lower()
+    assert "not a pass on its own" in lowered, (
+        "verify.md must state that applying the test_patch is NOT a pass on its "
+        "own (the 'apply = pass' false-pass guard)."
+    )
+    assert "actually ran the tests" in lowered or "pytest exited 0" in lowered, (
+        "verify.md must require actually running the tests (real pytest exit) "
+        "before reporting tests_passed=true — not infer a pass from apply success."
+    )
+
+
 # ── (b) idiom-correctness (deterministic, no LLM) ────────────────────────
 
 
