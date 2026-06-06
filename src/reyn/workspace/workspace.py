@@ -43,6 +43,15 @@ class Workspace:
         # resolution, and event emission stay here; the backend does only IO on
         # the absolute paths this class resolves.
         self._backend: "EnvironmentBackend" = environment_backend or HostBackend()
+        # #1390 L3: a host backend for state_dir reads. state_dir storage is
+        # host-side (store_artifact writes directly host-side, bypassing the repo
+        # backend), so reads of state_dir paths must mirror that split — they stay
+        # host-side, not routed through the repo/container backend (under the
+        # docker backend a host state_dir path does not exist in-container). A
+        # fresh HostBackend reads reyn's own process FS = where store_artifact
+        # wrote. When self._backend is already a HostBackend (non-docker), this is
+        # the same environment, so routing is behaviour-preserving there.
+        self._state_backend: "EnvironmentBackend" = HostBackend()
         self.base_dir = base_dir.resolve() if base_dir is not None else Path.cwd()
         # FP-0008 #1115 Stage 0: state_dir is host-side and decoupled from
         # base_dir. Default = base_dir/.reyn (backward-compat). A caller that
@@ -92,6 +101,23 @@ class Workspace:
             return resolved
         raise PermissionError(f"read not permitted: {path_str!r} (outside project)")
 
+    def _read_backend_for(self, resolved_path: Path) -> "EnvironmentBackend":
+        """Backend for reading ``resolved_path`` — the single state_dir routing
+        seam (#1390 L3).
+
+        A read whose RESOLVED path is under ``state_dir`` (e.g. an OS-offloaded
+        artifact the agent is told to ``file.read``, ``llm.py``) stays host-side;
+        every other read goes to the repo backend. ``state_dir`` is ``.resolve()``
+        d at construction (``/tmp`` ↔ ``/private/tmp`` normalised), so callers
+        MUST pass a resolved path (``_resolve_read`` output) — a raw path would
+        mis-compare and wrongly route a state_dir read to the container backend
+        (the bug this fixes). Every backend-read site routes through here so no
+        site can silently miss the split (completeness by construction).
+        """
+        if resolved_path.is_relative_to(self.state_dir):
+            return self._state_backend
+        return self._backend
+
     def _resolve_write(self, path_str: str) -> Path:
         p = Path(path_str).expanduser()
         if p.is_absolute():
@@ -111,7 +137,7 @@ class Workspace:
     def read_file(self, path_str: str) -> tuple[str, bool]:
         """Read a file. Returns (content, found). Raises PermissionError if denied."""
         path = self._resolve_read(path_str)
-        data = self._backend.read_bytes(path)
+        data = self._read_backend_for(path).read_bytes(path)
         if data is None:
             return "", False
         return data.decode("utf-8"), True
@@ -125,7 +151,7 @@ class Workspace:
         denied by the workspace policy.
         """
         path = self._resolve_read(path_str)
-        data = self._backend.read_bytes(path)
+        data = self._read_backend_for(path).read_bytes(path)
         if data is None:
             return b"", False
         return data, True
@@ -188,7 +214,7 @@ class Workspace:
         string, e.g. ``"0o644"``). Gated by ``_resolve_read``.
         """
         path = self._resolve_read(path_str)
-        return self._backend.stat(path)
+        return self._read_backend_for(path).stat(path)
 
     def glob_files(self, pattern: str, max_results: int = 50) -> list[str]:
         """
@@ -231,12 +257,18 @@ class Workspace:
             # directories. Re-applying a host-side ``is_file()`` filter would be
             # the D10 bug: it stats a container backend's paths against the host
             # filesystem (where they do not exist) and drops everything.
-            files = sorted(str(m) for m in self._backend.glob(pattern))
+            # #1390 L3: route by the resolved glob root — a state_dir-rooted glob
+            # stays host-side (same split as read_file), repo globs hit the repo
+            # backend. (glob_files permits state_dir roots above.)
+            files = sorted(str(m) for m in self._read_backend_for(resolved_root).glob(pattern))
             return files[:max_results]
 
         # Relative-path branch: backend is already files-only (#1375 D10);
-        # relativize and cap.
-        ws_matches = sorted(self._backend.glob(pattern, root=self.base_dir))
+        # relativize and cap. base_dir is never under state_dir, so this routes to
+        # the repo backend (the #1390 L3 seam, uniformly applied).
+        ws_matches = sorted(
+            self._read_backend_for(self.base_dir).glob(pattern, root=self.base_dir)
+        )
         result = []
         for m in ws_matches[:max_results]:
             try:
@@ -266,7 +298,9 @@ class Workspace:
         relativizes for presentation. See [[environment.backend]] module docs.
         """
         root = self._resolve_read(path_str)
-        return self._backend.grep(
+        # #1390 L3: a state_dir-rooted grep stays host-side (same split as
+        # read_file); repo greps hit the repo backend.
+        return self._read_backend_for(root).grep(
             root,
             regex,
             glob=glob,
