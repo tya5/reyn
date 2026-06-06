@@ -142,6 +142,10 @@ The input is either:
   the exploration artifact saved to the workspace by the earlier explore
   phase.
 
+Read the input artifact's `data` fields directly. If the input was offloaded
+(`type: artifact_ref`), read its `ref_path` first rather than aborting with
+"input missing".
+
 You may need to
 refer back to the original SWE-bench input fields (`problem_statement`,
 `test_patch`) for context — those were carried into the workspace by the

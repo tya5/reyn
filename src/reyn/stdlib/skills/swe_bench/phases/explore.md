@@ -104,6 +104,10 @@ object contains every field you need. The input shape is:
 }
 ```
 
+Read each field from `data.*`. If the input is large the OS offloads it
+(`type: artifact_ref`) and hands you a `ref_path` to read first — read that
+rather than aborting with "field missing".
+
 ## Step 1 — Read the problem statement
 
 Read `data.problem_statement` from the input artifact. This is the GitHub
@@ -145,13 +149,8 @@ entire repository.
 ## Step 4 — Inspect the test_patch to understand expected behavior
 
 Read `data.test_patch` from the input artifact to understand what the tests
-expect the fixed code to do.  This is a unified diff string that has been
-present in the input from Step 1 — you do NOT need to issue any op to access
-it. The value lives at `data.test_patch` in the same input artifact as
-`data.problem_statement`.
-
-This gives a precise specification: the fix must make those tests pass. Do
-NOT apply the test_patch now — that happens in verify.
+expect the fixed code to do.  This gives a precise specification: the fix must
+make those tests pass. Do NOT apply the test_patch now — that happens in verify.
 
 ## Step 5 — Record exploration findings
 
