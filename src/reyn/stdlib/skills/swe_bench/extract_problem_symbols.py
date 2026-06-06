@@ -229,6 +229,29 @@ def extract_problem_symbols(data: Mapping[str, Any]) -> list[dict]:
 
 #: how many candidate files to surface (bounded — explore reads its own beyond).
 _MAX_CANDIDATE_FILES = 8
+#: #1375 D9 — the repo-wide grep matches the WHOLE tree including .git/ (binary
+#: pack files) and other non-source paths; surfacing those as candidates is noise
+#: and an unreadable .git pack as a "candidate" can make the explore model abort
+#: ("input artifact could not be read"). Drop non-source paths from candidates.
+#: excluded by EXACT path-component match (not substring) so a real source path
+#: like ``astropy/_build_utils/x.py`` is NOT false-dropped by ``build``.
+_NON_SOURCE_DIRS = frozenset({
+    ".git", ".tox", ".eggs", "node_modules", "build", "dist",
+    ".mypy_cache", "__pycache__", ".pytest_cache",
+})
+_NON_SOURCE_SUFFIXES = (".pack", ".idx", ".pyc", ".pyo", ".so", ".o", ".png",
+                        ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".gz")
+
+
+def _is_source_candidate(path: str) -> bool:
+    """True when ``path`` is a plausible source file (not .git/binary/cache).
+
+    Directory exclusion is by EXACT path component (``build`` matches a ``build/``
+    dir but not ``_build_utils/``), so real source files are never false-dropped.
+    """
+    if any(part in _NON_SOURCE_DIRS for part in path.split("/")):
+        return False
+    return not path.lower().endswith(_NON_SOURCE_SUFFIXES)
 #: a symbol matching this few files is "specific" — a strong signal even alone
 #: (e.g. an exact method name) — so its match outranks incidental co-occurrence.
 _SPECIFIC_FILE_THRESHOLD = 2
@@ -262,7 +285,10 @@ def rank_candidate_files(data: Mapping[str, Any]) -> dict:
     for r in results:
         if not isinstance(r, dict):
             continue
-        files = [f for f in (r.get("files") or []) if isinstance(f, str) and f]
+        files = [
+            f for f in (r.get("files") or [])
+            if isinstance(f, str) and f and _is_source_candidate(f)  # D9: drop .git/binary
+        ]
         weight = 1.0 + (_SPECIFIC_BONUS if 1 <= len(files) <= _SPECIFIC_FILE_THRESHOLD else 0.0)
         for f in files:
             scores[f] = scores.get(f, 0.0) + weight
