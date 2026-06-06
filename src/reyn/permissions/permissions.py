@@ -639,6 +639,19 @@ class PermissionResolver:
         """True if ``path`` was registered via :meth:`grant_offload_read` (exact match)."""
         return self._resolve_for_offload(path) in self._offload_read_paths
 
+    def _read_base_approved(self, path: str) -> bool:
+        """Read-approval shared by BOTH read gates (#1383 follow-up).
+
+        The op-runtime gate (:meth:`require_file_read`) and the Workspace gate
+        (:meth:`is_read_allowed`) are documented to make the SAME decision. The
+        config grant + offload grant are the part they MUST agree on, so they
+        live here — a single source both gates call, so the offload-grant
+        decision cannot diverge (the merged D12 bug: only one gate had it). The
+        per-skill path-approval term differs (is_read_allowed guards it on a
+        non-empty skill_name) and stays inline in each gate.
+        """
+        return self._is_config_approved("file.read") or self._is_offload_read_granted(path)
+
     def _is_host_approved_for(
         self, host: str, skill_name: str, kind: str = "http.get",
     ) -> bool:
@@ -1003,13 +1016,10 @@ class PermissionResolver:
         )
 
         def _approved(axis: object, value: object) -> bool:
-            return (
-                self._is_config_approved("file.read")
-                or self._is_path_approved_for(str(value), skill_name, "file.read")
-                # #1383 (D12): an artifact the OS offloaded to this agent is
-                # readable by it (exact-path scoped grant), even though the
-                # state-dir path is outside the default read zone.
-                or self._is_offload_read_granted(str(value))
+            # #1383: config + offload grant via the shared base (kept in sync with
+            # is_read_allowed); per-skill path-approval inline.
+            return self._read_base_approved(str(value)) or self._is_path_approved_for(
+                str(value), skill_name, "file.read"
             )
 
         if EffectivePermission([
@@ -1319,7 +1329,12 @@ class PermissionResolver:
         )
 
         def _approved(axis: object, value: object) -> bool:
-            return self._is_config_approved("file.read") or (
+            # #1383 follow-up: config + offload grant via the shared base (same
+            # source as require_file_read → the offload decision cannot diverge;
+            # the merged D12 bug was this gate lacking the offload grant, leaving
+            # astropy-13236 denied at Workspace._resolve_read). Per-skill
+            # path-approval inline (guarded on a non-empty skill_name here).
+            return self._read_base_approved(str(value)) or (
                 bool(skill_name)
                 and self._is_path_approved_for(str(value), skill_name, "file.read")
             )
