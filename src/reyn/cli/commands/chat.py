@@ -69,6 +69,24 @@ def register(sub) -> None:
             "Safe-mode python steps run without this flag. Off by default."
         ),
     )
+    # #187: scoped file grant for the agent, symmetric with `reyn run
+    # --grant-file-write` (run.py:85). Grants file.read/file.write at the
+    # resolver layer; the effective scope is bounded by the sandbox write_paths
+    # ∩ (the env-backend's repo/workspace zone), so a non-interactive / scripted
+    # agent can edit a working tree without a permission prompt but cannot escape
+    # it. General capability (any chat session), not skill-specific — unlike a
+    # skill run, a chat agent has no skill declaring `file.read`, so the flag
+    # grants both read and write (mirrors the eval path, eval_benchmark.py:742).
+    p.add_argument(
+        "--grant-file-write",
+        dest="grant_file_write",
+        action="store_true",
+        help=(
+            "Grant file.read/file.write at the resolver layer for this session, "
+            "scoped to the sandbox write zone. For non-interactive / scripted "
+            "agent runs that edit a working tree without a permission prompt."
+        ),
+    )
     p.add_argument(
         "--banner",
         action="store_true",
@@ -272,6 +290,14 @@ def run(args: argparse.Namespace) -> None:
     budget_tracker.load_state(budget_state_path)
     budget_tracker.set_state_path(budget_state_path)
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
+    # #187: --grant-file-write grants file.read/write at the resolver layer
+    # (mirrors `reyn run` run.py:126 + the eval swe_bench path
+    # eval_benchmark.py:742). The grant is bounded by the sandbox write_paths ∩
+    # (env-backend repo zone), so the effective scope is the working tree, not
+    # global. setdefault preserves any explicit operator setting.
+    if getattr(args, "grant_file_write", False):
+        perm_config.setdefault("file.read", "allow")
+        perm_config.setdefault("file.write", "allow")
     unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
     # Single PermissionResolver shared across agents (per the PR10 decision:
     # `.reyn/approvals.yaml` is process-wide).
