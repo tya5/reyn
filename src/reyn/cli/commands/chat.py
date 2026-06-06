@@ -28,6 +28,29 @@ from ..session import Session
 _ONCE_SEND_TIMEOUT = 3600.0
 
 
+async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> str:
+    """#187 one-shot drive: read the WHOLE *instream* (default stdin) as a SINGLE
+    user message and drive the agent to completion via ``send_to_agent_impl``,
+    returning the final reply.
+
+    This is the structural fix for the #1401 line-fragmentation bug: the WHOLE
+    stdin becomes ONE message (one ``send`` call), NOT one message per line (the
+    REPL's line-by-line ``readline``). ``instream`` / ``send`` are injectable so
+    the whole-message-not-fragmented behavior is testable with a recording double
+    (no mock); production uses ``sys.stdin`` + the real ``send_to_agent_impl``.
+    """
+    if instream is None:
+        instream = sys.stdin
+    if send is None:
+        from reyn.mcp_server import send_to_agent_impl as send
+    message = instream.read()
+    result = await send(
+        agent_registry, agent_name=agent_name, message=message,
+        timeout=_ONCE_SEND_TIMEOUT,
+    )
+    return result.get("reply", "") or ""
+
+
 def register(sub) -> None:
     p = sub.add_parser("chat", help="Start an interactive chat session")
     p.add_argument(
@@ -462,13 +485,8 @@ def run(args: argparse.Namespace) -> None:
             # A2A use (registry.get_or_load returns this attached scoped session, no
             # fresh unscoped build), then print the final reply and exit.
             if getattr(args, "once", False):
-                from reyn.mcp_server import send_to_agent_impl
-                message = sys.stdin.read()
-                result = await send_to_agent_impl(
-                    registry, agent_name=name, message=message,
-                    timeout=_ONCE_SEND_TIMEOUT,
-                )
-                sys.stdout.write((result.get("reply", "") or "") + "\n")
+                reply = await _run_once(registry, name)
+                sys.stdout.write(reply + "\n")
                 return
             await run_repl(registry, renderer=renderer)
 

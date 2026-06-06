@@ -78,14 +78,39 @@ def test_run_once_delegates_to_chat_run() -> None:
 
 # ── the anti-fragmentation guard (the bug this replaces) ──────────────────────
 
-def test_one_shot_reads_whole_stdin_not_line_by_line() -> None:
-    """Tier 2: the one-shot branch reads the WHOLE stdin as one message
-    (`sys.stdin.read()`), NOT the REPL's line-by-line `readline`. This is the
-    structural fix for the #1401 line-fragmentation bug."""
-    src = _CHAT_PY.read_text(encoding="utf-8")
-    # the once-branch drives send_to_agent_impl with the whole stdin
-    assert "send_to_agent_impl" in src
-    assert "sys.stdin.read()" in src
+def test_one_shot_delivers_whole_stdin_as_one_message() -> None:
+    """Tier 2: behavioral — a multi-line stdin is delivered to the agent as ONE
+    message (one `send` call, whole string, no line-splitting) — the structural fix
+    for the #1401 line-fragmentation bug (the REPL read stdin line-by-line, making
+    each line a separate turn). Uses a recording `send` double (no mock); pins the
+    raison d'être of this PR before the expensive N-run."""
+    import asyncio
+    import io
+
+    from reyn.cli.commands import chat
+
+    multi_line = "This repo @ <commit> has this issue:\n## Issue\nline A\nline B\n"
+    captured: dict = {}
+
+    async def _recording_send(registry, *, agent_name, message, timeout):
+        captured["calls"] = captured.get("calls", 0) + 1
+        captured["message"] = message
+        captured["agent"] = agent_name
+        return {"reply": "done", "partial": False, "agent": agent_name}
+
+    reply = asyncio.run(
+        chat._run_once(
+            object(), "default",
+            instream=io.StringIO(multi_line),
+            send=_recording_send,
+        )
+    )
+    # exactly ONE message carrying the WHOLE multi-line text, not N line-fragments
+    assert captured["calls"] == 1, "the whole task must be ONE message, not one-per-line"
+    assert captured["message"] == multi_line, "the multi-line task must arrive unsplit"
+    assert "\n" in captured["message"]  # newlines preserved (not fragmented)
+    assert captured["agent"] == "default"
+    assert reply == "done"
 
 
 # ── R1: in-container execution ────────────────────────────────────────────────
