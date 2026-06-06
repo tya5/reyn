@@ -66,8 +66,13 @@ def register(sub) -> None:
         ),
     )
     add_common_args(p)
-    # One-shot is always the plain-console (non-TUI) path with the one-shot drive.
-    p.set_defaults(func=run, once=True, cui=True)
+    # One-shot is always the plain-console (non-TUI) path with the one-shot drive,
+    # and STATELESS (fresh=True): it does NOT load the agent's persisted
+    # conversation history. A one-shot has no prior conversation to continue, and
+    # loading a persisted agent's history (e.g. 'default') would contaminate the
+    # run with unrelated prior context (#187 session-state contamination: a stale
+    # 'default' history made the agent recall the old skill + hallucinate a fix).
+    p.set_defaults(func=run, once=True, cui=True, fresh=True)
 
 
 def run(args: argparse.Namespace) -> None:
