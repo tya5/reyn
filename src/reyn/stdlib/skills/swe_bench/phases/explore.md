@@ -104,12 +104,6 @@ object contains every field you need. The input shape is:
 }
 ```
 
-All six fields are present in the prompt's artifact section that the OS
-gives you (= no need to grep / search / probe to find them). Read them
-directly from `data.*` — do NOT abort with "problem_statement missing"
-before reading the artifact, because the fields ARE there. If you genuinely
-cannot find them, recheck the prompt's input-artifact block before aborting.
-
 ## Step 1 — Read the problem statement
 
 Read `data.problem_statement` from the input artifact. This is the GitHub

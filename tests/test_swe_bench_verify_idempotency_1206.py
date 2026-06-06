@@ -70,6 +70,28 @@ def test_verify_md_step1_carries_idempotency_distinction() -> None:
     )
 
 
+def test_verify_md_step1_forbids_reapply() -> None:
+    """Tier 2: verify.md Step 1 unambiguously forbids re-applying (9th-defect driver).
+
+    The 9th-defect driver (astropy-13398/13453) was the model re-applying
+    ``git apply`` and misreading the second rc=1 (idempotency) as a failure,
+    looping. The minimized Step 1 targets that driver by making non-re-application
+    explicit — apply exactly once; on a non-zero apply, reverse-check ONCE, never
+    re-apply — so a model following it cannot enter the re-apply loop. Pin that the
+    apply-once / do-not-re-apply instruction is present (the prompt-side driver fix
+    exists). Behavioural driver-removal is verified by the 13398 faithful re-run,
+    not here (prose-presence is necessary, not sufficient).
+    """
+    lowered = _VERIFY_MD.read_text(encoding="utf-8").lower()
+    assert "exactly once" in lowered, (
+        "verify.md Step 1 must instruct applying the test_patch exactly once."
+    )
+    assert "do not re-apply" in lowered or "never re-apply" in lowered, (
+        "verify.md Step 1 must explicitly forbid re-applying git apply — the "
+        "9th-defect re-apply→misread-rc=1 loop driver."
+    )
+
+
 # ── (b) idiom-correctness (deterministic, no LLM) ────────────────────────
 
 
