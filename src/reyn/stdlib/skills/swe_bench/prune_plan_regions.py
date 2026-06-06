@@ -111,7 +111,8 @@ def prune_plan_regions(data: Mapping[str, Any]) -> dict:
     # noise for the plan model.
     pruned = {k: v for k, v in inner.items()
               if k not in ("_explore_symbols", "_symbol_files",
-                           "_candidate_files", "_plan_symbols")}
+                           "_candidate_files", "_plan_symbols",
+                           "_filename_tokens", "_filename_files")}
     pruned["_plan_regions"] = kept
     return pruned
 

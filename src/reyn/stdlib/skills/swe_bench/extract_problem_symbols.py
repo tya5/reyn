@@ -268,30 +268,99 @@ def extract_explore_symbols(data: Mapping[str, Any]) -> list[dict]:
     ]
 
 
-def rank_candidate_files(data: Mapping[str, Any]) -> dict:
-    """Rank the repo-grepped files by symbol co-occurrence + specificity into
-    ``_candidate_files`` (write back with ``into: data``).
+# #1375 D7 — filename-based file-finding. When the fix ADDS the named method
+# (e.g. astropy-13398's `itrs_to_observed_mat`), it has 0 content matches, so the
+# D2 content-grep can't surface the fix-site file — but the gold FILE is named by
+# the problem's tokens (`itrs_observed_transforms.py`). D7 globs the repo for files
+# whose NAME contains a problem-symbol token; the merge interleaves D2 (content)
+# and D7 (filename) candidates so the filename-gold survives even with 0 content
+# score (single-responsibility: D2=content, D7=filename).
+_TOKEN_SPLIT = re.compile(r"[._]|(?<=[a-z0-9])(?=[A-Z])")
 
-    Each entry of ``_symbol_files`` is one symbol's ``files_with_matches`` grep
-    result (``{"files": [...]}``). A file scores 1 per matching symbol, plus a
-    bonus when the matching symbol is *specific* (matches <= ``_SPECIFIC_FILE_THRESHOLD``
-    files repo-wide) — so a gold file named by a single exact symbol (e.g.
-    ``itrs_to_observed_mat``) outranks an incidental file matched by several
-    common symbols (lead-coder's co-occurrence + specificity refinement)."""
-    inner = data.get("data") if isinstance(data.get("data"), dict) else data
-    results = inner.get("_symbol_files") or []
 
+def _tokenize(symbol: str) -> list[str]:
+    """Split a symbol into meaningful lowercase tokens (snake_case + CamelCase),
+    dropping short/stopword fragments. ``itrs_to_observed_mat`` -> [itrs, observed,
+    mat]; ``AltAz`` -> [alt] (az < 3 dropped)."""
+    out = []
+    for part in _TOKEN_SPLIT.split(symbol):
+        p = part.lower()
+        if len(p) >= 3 and p not in _STOPWORDS and not p[0].isdigit():
+            out.append(p)
+    return out
+
+
+def extract_filename_tokens(data: Mapping[str, Any]) -> list[dict]:
+    """Return ``[{token, glob}, ...]`` — the problem-symbol tokens to glob the repo
+    for by FILENAME (``**/*<token>*``). De-duplicated, order-stable."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for sym in _rank_symbols(_problem_statement(data)):
+        for tok in _tokenize(sym):
+            if tok not in seen:
+                seen.add(tok)
+                out.append({"token": tok, "glob": f"**/*{tok}*"})
+    return out
+
+
+def _content_ranked(symbol_files: list) -> list[str]:
+    """D2: rank files by problem-symbol content co-occurrence + specificity."""
     scores: dict[str, float] = {}
-    for r in results:
+    for r in symbol_files:
         if not isinstance(r, dict):
             continue
         files = [
             f for f in (r.get("files") or [])
-            if isinstance(f, str) and f and _is_source_candidate(f)  # D9: drop .git/binary
+            if isinstance(f, str) and f and _is_source_candidate(f)
         ]
         weight = 1.0 + (_SPECIFIC_BONUS if 1 <= len(files) <= _SPECIFIC_FILE_THRESHOLD else 0.0)
         for f in files:
             scores[f] = scores.get(f, 0.0) + weight
+    return sorted(scores, key=lambda f: (-scores[f], f))
 
-    ranked = sorted(scores, key=lambda f: (-scores[f], f))[:_MAX_CANDIDATE_FILES]
-    return {**inner, "_candidate_files": ranked}
+
+def _filename_ranked(filename_files: list) -> list[str]:
+    """D7: rank files by problem-token filename matches, weighted by token
+    SPECIFICITY — a token matching few files repo-wide (e.g. ``itrs``) is a strong
+    signal, so a file named by it outranks one matched only by common tokens
+    (``frame``/``matrix``/``observed`` that name dozens of files). Mirrors the
+    content-side co-occurrence+specificity ranking. A grep-with-glob result carries
+    its files under ``files`` (``matches`` fallback)."""
+    scores: dict[str, float] = {}
+    for r in filename_files:
+        if not isinstance(r, dict):
+            continue
+        files = [
+            f for f in (r.get("files") or r.get("matches") or [])
+            if isinstance(f, str) and f and _is_source_candidate(f)
+        ]
+        weight = 1.0 + (_SPECIFIC_BONUS if 1 <= len(files) <= _SPECIFIC_FILE_THRESHOLD else 0.0)
+        for f in files:
+            scores[f] = scores.get(f, 0.0) + weight
+    return sorted(scores, key=lambda f: (-scores[f], f))
+
+
+def rank_candidate_files(data: Mapping[str, Any]) -> dict:
+    """Merge D2 content candidates + D7 filename candidates into ``_candidate_files``
+    (write back with ``into: data``).
+
+    ``_symbol_files`` = per-symbol content ``files_with_matches`` grep results (D2);
+    ``_filename_files`` = per-token ``glob`` results (D7). The two are ranked
+    separately then **interleaved** (top content, top filename, …), deduped and
+    bounded — so a filename-gold (a fix-site file named by a problem token but with
+    0 content match, e.g. ``itrs_observed_transforms.py``) surfaces even when its
+    content score is 0, and a strong content file is not crowded out."""
+    inner = data.get("data") if isinstance(data.get("data"), dict) else data
+    content = _content_ranked(inner.get("_symbol_files") or [])
+    filename = _filename_ranked(inner.get("_filename_files") or [])
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for i in range(max(len(content), len(filename))):
+        for src in (content, filename):
+            if i < len(src) and src[i] not in seen:
+                seen.add(src[i])
+                merged.append(src[i])
+                if len(merged) >= _MAX_CANDIDATE_FILES:
+                    return {**inner, "_candidate_files": merged}
+    return {**inner, "_candidate_files": merged}
