@@ -34,6 +34,8 @@ The observation unit is a **scenario**: a concrete user message that exercises a
 
 This is a form of structured empiricism. The discipline is how you make that empiricism systematic, reproducible, and incrementally useful.
 
+**On weak-model runs**: the deliverable of a run with a less capable model is structural defect discovery, not a pass rate. A weak model surfaces pipeline problems — missing context, schema mismatches, incorrect tool wiring — that a stronger model papers over. Once those structural defects are fixed, the weak model reaches its cognition floor: any remaining failures reflect genuine model-capability limits, not infrastructure gaps. Counting failures before that floor is noise; finding and fixing the structural defects is the goal.
+
 ### Connection to Reyn's design vision
 
 Reyn is designed for **predictability over autonomy** — specifically for deployment contexts where unexpected behavior carries high cost (see [Principles P1–P8](../../concepts/architecture/principles.md)). That vision only has meaning if "predictable" is measured against real workloads, not just synthetic test fixtures. Dogfood is the measurement instrument.
