@@ -117,6 +117,56 @@ def test_json_empty_content_returns_none() -> None:
     assert render_tool_result({"content_type": "application/json", "content": ""}) is None
 
 
+# ── image metadata card (Phase 2b) ───────────────────────────────────────────
+
+
+def _render_to_text(renderable: object, width: int = 120) -> str:
+    import io
+
+    from rich.console import Console
+
+    buf = io.StringIO()
+    Console(file=buf, width=width).print(renderable)
+    return buf.getvalue()
+
+
+def test_image_via_media_blocks_returns_card_with_mime() -> None:
+    """Tier 2: a file-shape image result (mime in media_blocks) → metadata card."""
+    out = render_tool_result({
+        "kind": "file", "path": "pic.png", "content": "",
+        "media_blocks": [{"type": "image", "data": "QUJD", "mimeType": "image/png"}],
+    })
+    assert isinstance(out, Table), f"expected a Table card; got {type(out)!r}"
+    text = _render_to_text(out)
+    assert "image/png" in text, "card should show the image mime type"
+
+
+def test_image_web_shape_shows_size_and_source() -> None:
+    """Tier 2: a web-shape image result → card surfaces size + source url."""
+    out = render_tool_result({
+        "content_type": "image/jpeg", "size_bytes": 2048, "url": "https://ex/i.jpg",
+        "media_blocks": [{"type": "image", "data": "QUJD", "mimeType": "image/jpeg"}],
+    })
+    assert isinstance(out, Table)
+    text = _render_to_text(out)
+    assert "image/jpeg" in text
+    assert "https://ex/i.jpg" in text, "card should show the source url"
+    assert "KB" in text or "2.0" in text, "card should show a human-readable size"
+
+
+def test_image_card_does_not_dump_base64_blob() -> None:
+    """Tier 2: the card omits the base64 data blob (the YAML-fallback pitfall)."""
+    blob = "BASE64BLOBABCDEF" * 64
+    out = render_tool_result({
+        "content_type": "image/png", "path": "big.png",
+        "media_blocks": [{"type": "image", "data": blob, "mimeType": "image/png"}],
+    })
+    assert isinstance(out, Table)
+    text = _render_to_text(out)
+    assert blob not in text, "image card must not spew the base64 data blob"
+    assert "image/png" in text
+
+
 # ── wire: _show_event_in_preview routes tool events through the viewer ───────
 # These exercise the integration seam the pure tests above cannot: an event's
 # emit kwargs are nested under ``data`` (events.py ``Event(type=, data=)``),
