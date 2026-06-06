@@ -418,11 +418,15 @@ def test_replan_rederives_regions_without_relevant_files(tmp_path: Path) -> None
         tmp_path, "pkg/mod.py", _big_body(target),
         problem_statement="The `render_special` method drops formatting. Fix it.",
     )
-    # candidate files were re-derived (no relevant_files on the verify_state input)
-    assert data.get("_candidate_files"), "D8 must re-derive _candidate_files on re-plan"
+    # _plan_regions>0 on a verify_state input (which has NO relevant_files) can
+    # only happen via re-derived candidates — that IS the D8 evidence.
     blob = str(data.get("_plan_regions") or [])
     assert "REPLAN-TARGET-XYZ" in blob, (
         "on a re-plan, the target region must be re-derived + surfaced (was 0 before D8)"
+    )
+    # the plan-time intermediates are stripped — only _plan_regions reaches the model
+    assert "_candidate_files" not in data and "_symbol_files" not in data, (
+        "plan intermediates must be stripped from the model context"
     )
 
 

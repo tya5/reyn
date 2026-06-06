@@ -103,7 +103,17 @@ def prune_plan_regions(data: Mapping[str, Any]) -> dict:
         total += size
         kept.append(region)
 
-    return {**inner, "_plan_regions": kept}
+    # #1375 D8: drop the plan-time intermediates so the plan model's context
+    # carries only the final `_plan_regions` (the anchor-grounding material).
+    # `_explore_symbols` / `_symbol_files` / `_candidate_files` / `_plan_symbols`
+    # are scaffolding the preprocessor used to BUILD the regions (and on the first
+    # plan `_candidate_files` is computed but unused); leaving them in context is
+    # noise for the plan model.
+    pruned = {k: v for k, v in inner.items()
+              if k not in ("_explore_symbols", "_symbol_files",
+                           "_candidate_files", "_plan_symbols")}
+    pruned["_plan_regions"] = kept
+    return pruned
 
 
 def _match_line(m: Any) -> int | None:
