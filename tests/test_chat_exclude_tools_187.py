@@ -87,6 +87,6 @@ def test_swe_runner_excludes_web_tools_in_chat_path() -> None:
         Path(__file__).resolve().parent.parent / "scripts" / "swe_bench_runner.py"
     ).read_text(encoding="utf-8")
     assert '"--exclude-tools", "web__search,web__fetch"' in src, (
-        "run_reyn_chat_in_container must pass --exclude-tools web__search,web__fetch "
-        "to reyn chat so the agent cannot web-look-up the gold solution (faithful eval)."
+        "run_reyn_once_in_container must pass --exclude-tools web__search,web__fetch "
+        "to reyn run-once so the agent cannot web-look-up the gold solution (faithful eval)."
     )

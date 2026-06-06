@@ -22,6 +22,7 @@ from . import mcp as mcp
 from . import memory as memory
 from . import permissions as permissions
 from . import run as run
+from . import run_once as run_once
 from . import secret as secret
 from . import skill as skill
 from . import skills as skills
@@ -30,4 +31,4 @@ from . import topology as topology
 from . import web as web
 
 # Order is the order shown in `reyn --help`.
-ALL = [init, config, skills, skill, run, chat, agent, topology, eval, lint, memory, permissions, auth, events, web, chainlit, mcp, secret, source, cron, dogfood, embeddings]
+ALL = [init, config, skills, skill, run, run_once, chat, agent, topology, eval, lint, memory, permissions, auth, events, web, chainlit, mcp, secret, source, cron, dogfood, embeddings]
