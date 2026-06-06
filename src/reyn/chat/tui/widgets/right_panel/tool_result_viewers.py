@@ -9,7 +9,8 @@ content-type → viewer vision in #1154.
 Design (lead-ratified #1154 Phase 1):
   - keyed by ``content_type`` / ``mimeType`` (the fields file/web/mcp op
     results already carry); no shape-sniff yet.
-  - Phase 1 viewers: markdown (rendered) + CSV/table. Unknown types →
+  - Phase 1 viewers: markdown (rendered) + CSV/table. Phase 2a adds a JSON
+    viewer (formatted + syntax-highlighted). Unknown types →
     ``render_tool_result`` returns ``None`` so the caller falls back to the
     existing YAML preview (degrade, never hide content).
   - Phase 3 (deferred): LLM-generated viewer templates for novel types.
@@ -19,9 +20,11 @@ is testable in isolation without the Textual app.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from rich.console import RenderableType
+from rich.json import JSON as RichJSON
 from rich.markdown import Markdown as RichMarkdown
 from rich.table import Table
 
@@ -88,6 +91,23 @@ def _viewer_csv(result: dict) -> RenderableType | None:
     return table
 
 
+def _viewer_json(result: dict) -> RenderableType | None:
+    """Syntax-highlighted, indented JSON (Phase 2a).
+
+    Parses the text payload and renders via ``rich.json.JSON`` (formats +
+    highlights). Returns ``None`` when there's nothing to render or the
+    payload isn't valid JSON — the caller then falls back to YAML, which
+    still shows the raw event (degrade, never hide content).
+    """
+    text = _result_text(result)
+    if not text:
+        return None
+    try:
+        return RichJSON(text)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
 def render_tool_result(result: Any) -> RenderableType | None:
     """Pick a content-type viewer for ``result`` (or ``None`` for fallback).
 
@@ -104,4 +124,6 @@ def render_tool_result(result: Any) -> RenderableType | None:
         return _viewer_markdown(result)
     if "csv" in ct or "tab-separated" in ct:
         return _viewer_csv(result)
+    if "json" in ct:
+        return _viewer_json(result)
     return None

@@ -17,6 +17,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from rich.json import JSON as RichJSON
 from rich.markdown import Markdown as RichMarkdown
 from rich.table import Table
 
@@ -59,7 +60,7 @@ def test_media_blocks_mimetype_detected() -> None:
 
 def test_unknown_content_type_returns_none() -> None:
     """Tier 2: an unregistered content-type returns None → YAML fallback."""
-    assert render_tool_result({"content_type": "application/json", "content": "{}"}) is None
+    assert render_tool_result({"content_type": "application/x-unknown-binary", "content": "x"}) is None
 
 
 def test_no_content_type_returns_none() -> None:
@@ -95,6 +96,25 @@ def test_csv_caps_rows_with_overflow_caption() -> None:
     out = render_tool_result({"content_type": "text/csv", "content": "\n".join(lines)})
     assert isinstance(out, Table)
     assert out.caption and "more rows" in str(out.caption)
+
+
+# ── JSON viewer (Phase 2a) ───────────────────────────────────────────────────
+
+
+def test_json_content_type_returns_json_renderable() -> None:
+    """Tier 2: an application/json result renders via the JSON viewer."""
+    out = render_tool_result({"content_type": "application/json", "content": '{"a": 1, "b": [2, 3]}'})
+    assert isinstance(out, RichJSON), f"expected RichJSON; got {type(out)!r}"
+
+
+def test_json_invalid_payload_returns_none() -> None:
+    """Tier 2: an application/json result with non-JSON text → None → fallback."""
+    assert render_tool_result({"content_type": "application/json", "content": "not json {{{"}) is None
+
+
+def test_json_empty_content_returns_none() -> None:
+    """Tier 2: an application/json result with no payload → None → fallback."""
+    assert render_tool_result({"content_type": "application/json", "content": ""}) is None
 
 
 # ── wire: _show_event_in_preview routes tool events through the viewer ───────
@@ -151,8 +171,17 @@ async def test_wire_tool_returned_md_event_renders_via_viewer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wire_unknown_type_event_falls_back_to_yaml() -> None:
-    """Tier 2: a tool_returned event with no recognized type → YAML fallback."""
+async def test_wire_unknown_type_event_falls_back_and_shows_content() -> None:
+    """Tier 2: an unrecognized content-type → YAML fallback that still shows content.
+
+    The "never hide content" guard: when no viewer matches, the preview
+    must fall back to the generic YAML render of the event — and that
+    render must still surface the result payload, not an empty pane.
+    """
+    import io
+
+    from rich.console import Console
+
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import RightPanel
     from reyn.chat.tui.widgets.right_panel.shells import _PreviewPane
@@ -166,14 +195,21 @@ async def test_wire_unknown_type_event_falls_back_to_yaml() -> None:
 
         panel._events_visible = [
             {"type": "tool_returned",
-             "data": {"result": {"content_type": "application/json", "content": "{}"}}},
+             "data": {"result": {"content_type": "application/x-unknown-binary",
+                                 "note": "ZZZSENTINEL"}}},
         ]
         panel._events_cursor = 0
         panel._show_event_in_preview(pane)
         await pilot.pause()
 
         assert captured, "preview pane received no renderable"
-        assert not isinstance(captured[-1], RichMarkdown), (
-            "unrecognized content-type should fall back to the YAML preview, "
-            "not the markdown viewer"
+        # No viewer should have matched (not markdown / not JSON).
+        assert not isinstance(captured[-1], (RichMarkdown, RichJSON)), (
+            "unrecognized content-type should fall back to the YAML preview"
+        )
+        # …and the fallback must still surface the payload (never hide content).
+        buf = io.StringIO()
+        Console(file=buf, width=120).print(captured[-1])
+        assert "ZZZSENTINEL" in buf.getvalue(), (
+            "YAML fallback must still render the result payload, not hide it"
         )
