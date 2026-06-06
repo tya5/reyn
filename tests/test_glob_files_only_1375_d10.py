@@ -82,3 +82,19 @@ def test_glob_files_directory_does_not_consume_max_results_slot(tmp_path: Path) 
     (tmp_path / "item_z.txt").write_text("payload\n")
 
     assert ws.glob_files("item_*", max_results=1) == ["item_z.txt"]
+
+
+def test_glob_files_matches_empty_file_by_name(tmp_path: Path) -> None:
+    """Tier 2: #1375 D7 — glob matches an EMPTY (0-byte) file by name.
+
+    The swe_bench D7 filename-finding (explore/plan preprocessors) reverted from
+    a grep-with-glob workaround to the real glob op once this D10 fix landed. The
+    distinguishing property the revert relies on: glob matches by NAME, so a
+    0-byte file (e.g. an empty package ``__init__.py``) is found — the
+    grep-with-glob workaround required a non-empty line and silently missed it.
+    """
+    ws = Workspace(events=EventLog(), base_dir=tmp_path)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("")  # 0-byte, name-only match
+
+    assert ws.glob_files("**/__init__.py") == ["pkg/__init__.py"]

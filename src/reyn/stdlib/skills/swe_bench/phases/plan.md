@@ -58,24 +58,20 @@ preprocessor:
     into: data._filename_tokens
     output_schema:
       type: array
-  # grep with a `glob` file-filter (not the `glob` op — its results are filtered
-  # host-side and return nothing under the docker backend, #1375 D10); `.` matches
-  # any line so files_with_matches returns every file matching the glob. CAVEAT:
-  # `.` misses 0-byte/blank files (e.g. empty `__init__.py`) — adequate for
-  # non-empty source filename-finding; removed when D10 lets us use the glob op.
+  # Real `glob` op (unblocked by the #1375 D10 fix that made glob filter to files
+  # in-backend, so it returns matches under the docker backend). The token's glob
+  # (e.g. `**/*itrs*`) becomes the op's `path`. Matches by NAME, so it also finds
+  # 0-byte/blank files (empty `__init__.py`) the grep-with-glob workaround missed.
   - type: iterate
     over: data._filename_tokens
     apply:
       type: run_op
       op:
         kind: file
-        op: grep
-        path: "."
-        glob: "__placeholder__"
-        pattern: "."
-        output_mode: files_with_matches
+        op: glob
+        path: "__placeholder__"
       args_from:
-        glob: "_iter.item.glob"
+        path: "_iter.item.glob"
       on_error: skip
     into: data._filename_files
     on_error: skip

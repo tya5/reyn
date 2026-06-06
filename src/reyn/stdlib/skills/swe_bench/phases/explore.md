@@ -50,27 +50,25 @@ preprocessor:
     into: data._filename_tokens
     output_schema:
       type: array
-  # NB: uses grep with a `glob` file-filter (not the `glob` op) because the glob
-  # op's results are filtered host-side and return nothing under the docker
-  # EnvironmentBackend (#1375 D10); grep filters in-container. A match-anything
-  # pattern (`.`) makes files_with_matches return every file matching the glob.
-  # CAVEAT: `.` requires a non-empty line, so this MISSES 0-byte / blank files
-  # (e.g. an empty `__init__.py`) — adequate for finding non-empty source files by
-  # name (the fix-site files we want), but not a general file-finder. Reverting to
-  # the real `glob` op once #1375 D10 is fixed removes this caveat.
+  # Real `glob` op (D7's original intent), unblocked by the #1375 D10 fix that
+  # made glob filter to files IN the backend's own environment — so it now
+  # returns matches under the docker EnvironmentBackend instead of nothing. The
+  # token's `glob` (e.g. `**/*itrs*`) becomes the op's `path` (the glob pattern).
+  # Unlike the earlier grep-with-glob workaround, the glob op matches by NAME so
+  # it also finds 0-byte / blank files (e.g. an empty `__init__.py`). The per-glob
+  # `max_results` cap (default 50) is robust: a specific signal token (`itrs`)
+  # matches few files, so the fix-site file is never capped out (rank_candidate_files
+  # weights specificity and bounds the final set anyway).
   - type: iterate
     over: data._filename_tokens
     apply:
       type: run_op
       op:
         kind: file
-        op: grep
-        path: "."
-        glob: "__placeholder__"
-        pattern: "."
-        output_mode: files_with_matches
+        op: glob
+        path: "__placeholder__"
       args_from:
-        glob: "_iter.item.glob"
+        path: "_iter.item.glob"
       on_error: skip
     into: data._filename_files
     on_error: skip
