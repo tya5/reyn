@@ -2901,6 +2901,33 @@ class RouterLoop:
         if name not in self._catalog and "__" in name:
             name, args = self._maybe_salvage_qualified_direct_call(name, args)
 
+        # #1406: execution-level exclude enforcement. ``exclude_tools`` is not just
+        # an advertisement filter (#1400 ``_apply_tool_exclusions`` hides excluded
+        # tools from ``tools[]`` / ``self._catalog``) — the LLM can still call an
+        # excluded tool by name, which the #229 salvage rewrites to
+        # ``invoke_action(action_name=<excluded>)`` (or it is called as
+        # ``invoke_action`` directly), and ``universal_dispatch`` then resolves and
+        # EXECUTES it (the #187 N=3 web__search leak). Compute the effective
+        # resolved action — unwrap ``invoke_action`` — and reject if excluded.
+        # Covers all three bypass paths (native direct / salvaged / direct
+        # invoke_action). Catalog filter (#1400) stays as the hide layer
+        # (defense-in-depth). A distinct ``tool_excluded`` kind + decision-enabling
+        # message lets the model adjust ([[deny-message-decision-enabling]]).
+        if self._exclude_tools:
+            effective = args.get("action_name") if name == "invoke_action" else name
+            if effective in self._exclude_tools:
+                return {
+                    "status": "error",
+                    "error": {
+                        "kind": "tool_excluded",
+                        "message": (
+                            f"tool {effective!r} is excluded this session and not "
+                            "available; do not call it (directly or via "
+                            "invoke_action)."
+                        ),
+                    },
+                }
+
         # #1092 PR-C-2.5: phase-mode op-dispatch WAL memoization. A phase host
         # returns the per-phase resume wiring; chat hosts don't implement the hook
         # (getattr → None), so the chat dispatch path below is byte-identical
