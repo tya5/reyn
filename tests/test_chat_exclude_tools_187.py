@@ -10,14 +10,16 @@ Mechanism: RouterLoop already filters its LLM-visible catalog by `exclude_tools`
 (planner.py:1136). #187 exposes this via `reyn chat --exclude-tools <names>`,
 threaded ChatSession → the MAIN agent loop (session.py).
 
-The load-bearing requirement (lead-coder): the exclusion reaches the **MAIN** chat
-loop (not just sub-loops). This file pins the threading on the public surface:
-  (a) the MAIN RouterLoop construction passes `exclude_tools=self._exclude_tools`
-      (the reach — distinct from the sub-loops' `{"plan"}`);
+The load-bearing constraint (lead-coder): the web-exclusion must be the real
+catalog-filter behavior, not a source-string check. This file pins:
+  (a) the catalog filter actually drops web tools (behavioral — the function
+      that builds the RouterLoop's LLM-visible + dispatch catalog at
+      router_loop.py:~1791);
   (b) `reyn chat` exposes `--exclude-tools`;
   (c) the faithful SWE runner excludes web__search/web__fetch in the chat invocation.
-(ChatSession threading the param into the main loop is exercised end-to-end by the
-faithful dogfood; we do not assert on the private `_exclude_tools` field here.)
+(The MAIN-loop reach — session.py passing `exclude_tools=self._exclude_tools` to
+the main RouterLoop — is lead-reviewed code + dogfood-netted; the filter behavior
+is what a refactor could silently break, so that is unit-pinned here.)
 """
 from __future__ import annotations
 
@@ -25,27 +27,40 @@ import argparse
 import sys
 from pathlib import Path
 
-_SESSION_PY = (
-    Path(__file__).resolve().parent.parent
-    / "src" / "reyn" / "chat" / "session.py"
-)
+
+def _tool(name: str) -> dict:
+    """An OpenAI-style tool catalog entry, as RouterLoop builds them."""
+    return {"type": "function", "function": {"name": name, "description": ""}}
 
 
-def test_main_chat_loop_threads_exclude_tools() -> None:
-    """Tier 2: the MAIN chat RouterLoop is constructed with exclude_tools=self._exclude_tools.
+def test_catalog_filter_hides_web_keeps_others() -> None:
+    """Tier 2: the catalog filter drops excluded (web) tools, keeps the rest.
 
-    The reach lead-coder required: not just the sub-loops (planner.py uses
-    `exclude_tools={"plan"}`), but the MAIN agent loop. The main loop is the
-    RouterLoop built with `host=self._router_host` / `max_iterations=5` in
-    session.py; assert that construction threads the session's exclude_tools.
+    `_apply_tool_exclusions` is the exact post-build filter that produces the
+    RouterLoop's LLM-visible catalog (`self._catalog`, router_loop.py:~1791).
+    Exercising it directly proves the web-exclusion *behavior* (refactor-robust,
+    no source-string): with web excluded, the catalog the LLM sees no longer
+    contains web__search/web__fetch but still offers the repo-editing tools.
     """
-    src = _SESSION_PY.read_text(encoding="utf-8")
-    # The main-loop construction must pass the session's exclude_tools through.
-    assert "exclude_tools=self._exclude_tools" in src, (
-        "the MAIN chat RouterLoop must be constructed with "
-        "exclude_tools=self._exclude_tools so the exclusion reaches the main "
-        "agent loop's LLM-visible catalog (not only sub-loops)."
+    from reyn.chat.router_loop import _apply_tool_exclusions
+
+    catalog = [
+        _tool("web__search"),
+        _tool("web__fetch"),
+        _tool("file__read"),
+        _tool("file__write"),
+        _tool("exec__sandboxed_exec"),
+    ]
+    filtered = _apply_tool_exclusions(catalog, frozenset({"web__search", "web__fetch"}))
+    names = {t["function"]["name"] for t in filtered}
+    assert "web__search" not in names and "web__fetch" not in names, (
+        "the faithful SWE catalog must hide web tools so the agent cannot "
+        "web-look-up the gold solution"
     )
+    # the repo-editing tools the agent actually needs survive the exclusion
+    assert {"file__read", "file__write", "exec__sandboxed_exec"} <= names
+    # empty exclusion = no filtering (the default, non-faithful path)
+    assert len(_apply_tool_exclusions(catalog, frozenset())) == len(catalog)
 
 
 def test_chat_parser_exposes_exclude_tools_flag() -> None:
