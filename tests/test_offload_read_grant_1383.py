@@ -120,3 +120,82 @@ def test_offload_grant_still_intersects_sandbox(tmp_path: Path) -> None:
         r.require_file_read(
             PermissionDecl(), str(offloaded), "swe_bench", sandbox_policy=policy
         )
+
+
+# ── #1383 follow-up: the Workspace read gate (is_read_allowed) must honor the
+# grant too — the op-runtime gate (require_file_read) passing alone left
+# astropy-13236 still aborting at Workspace._resolve_read ("outside project").
+
+def test_is_read_allowed_honors_offload_grant(tmp_path: Path) -> None:
+    """Tier 2c: is_read_allowed (the Workspace read gate's resolver method) honors the
+    offload grant — denied before, allowed after, on the same instance."""
+    r, offloaded, _ = _out_of_zone(tmp_path)
+    assert r.is_read_allowed(str(offloaded), "swe_bench") is False  # before grant
+    r.grant_offload_read(str(offloaded))
+    assert r.is_read_allowed(str(offloaded), "swe_bench") is True  # after grant
+
+
+def test_both_read_gates_in_sync_for_offload_grant(tmp_path: Path) -> None:
+    """Tier 2c: the two read gates make the SAME decision for an offloaded path —
+    require_file_read (op-runtime) and is_read_allowed (Workspace) both admit it
+    after the grant. (The follow-up restores the symmetry the merged D12 broke by
+    patching only require_file_read.)"""
+    r, offloaded, _ = _out_of_zone(tmp_path)
+    r.grant_offload_read(str(offloaded))
+    # op-runtime gate
+    r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")  # no raise
+    # Workspace gate
+    assert r.is_read_allowed(str(offloaded), "swe_bench") is True
+
+
+def test_read_gates_symmetric_granted_and_nongranted(tmp_path: Path) -> None:
+    """Tier 2c: symmetry-invariant (falsifies future divergence) — for BOTH a
+    granted offload path AND a non-granted out-of-zone path, require_file_read and
+    is_read_allowed return the SAME admit/deny. They share `_read_base_approved`
+    for the config+offload decision, so neither can drift on the offload axis."""
+    r, offloaded, state = _out_of_zone(tmp_path)
+    nongranted = state / "not_granted.json"
+
+    def _require_ok(p: Path) -> bool:
+        try:
+            r.require_file_read(PermissionDecl(), str(p), "swe_bench")
+            return True
+        except PermissionError:
+            return False
+
+    # non-granted out-of-zone: both DENY (symmetric)
+    assert _require_ok(nongranted) is False
+    assert r.is_read_allowed(str(nongranted), "swe_bench") is False
+    # granted: both ALLOW (symmetric)
+    r.grant_offload_read(str(offloaded))
+    assert _require_ok(offloaded) is True
+    assert r.is_read_allowed(str(offloaded), "swe_bench") is True
+
+
+def test_is_read_allowed_grant_is_exact_scoped(tmp_path: Path) -> None:
+    """Tier 2c: is_read_allowed's offload grant is exact-path scoped — a sibling in the
+    same state-dir stays disallowed (least-privilege, matching the op-runtime gate)."""
+    r, offloaded, state = _out_of_zone(tmp_path)
+    r.grant_offload_read(str(offloaded))
+    sibling = state / "other_secret.json"
+    assert r.is_read_allowed(str(sibling), "swe_bench") is False
+
+
+def test_workspace_read_gate_honors_offload_grant_end_to_end(tmp_path: Path) -> None:
+    """Tier 2c: end-to-end through the real Workspace — `Workspace.read_file` of an
+    offloaded out-of-zone path raises 'outside project' before the grant and succeeds
+    after (this is the exact gate-2 that left 13236 aborting)."""
+    from reyn.events.events import EventLog
+    from reyn.workspace.workspace import Workspace
+
+    r, offloaded, _ = _out_of_zone(tmp_path)
+    offloaded.write_text("INPUT-CONTENT")
+    base = (tmp_path / "proj").resolve()
+    ws = Workspace(
+        EventLog(), permission_resolver=r, skill_name="swe_bench", base_dir=base
+    )
+    with pytest.raises(PermissionError):
+        ws.read_file(str(offloaded))  # gate-2: outside project, no grant
+    r.grant_offload_read(str(offloaded))
+    content, found = ws.read_file(str(offloaded))
+    assert found and content == "INPUT-CONTENT"
