@@ -83,9 +83,10 @@ async def test_call_llm_emits_json_decode_failed_event(monkeypatch) -> None:
     """Tier 2: a JSON-decode failure in call_llm emits llm_output_json_decode_failed with the raw.
 
     Drives the real call_llm path; litellm.acompletion is a real async stub
-    returning content with an invalid `\\q` escape (unparseable after repair).
-    Asserts the additive event fires with failure_kind + error + raw_output, and
-    that the run still raises (behavior preserved).
+    returning genuinely malformed JSON (an unclosed object) — unrecoverable by
+    every lenient tier including the D6 invalid-escape repair, so the failure
+    path still fires. Asserts the additive event fires with failure_kind + error
+    + raw_output, and that the run still raises (behavior preserved).
     """
     import litellm
 
@@ -94,7 +95,9 @@ async def test_call_llm_emits_json_decode_failed_event(monkeypatch) -> None:
     from reyn.schemas.models import ContextFrame
     from reyn.testing.replay import REPLAY_DATETIME
 
-    bad = '{"type": "act", "ops": [{"path": "x\\q"}]}'  # invalid \q escape → JSONDecodeError
+    # Unclosed object (missing final `}`): genuinely malformed, so neither the
+    # escape-repair (D6) nor raw_decode can recover a complete leading value.
+    bad = '{"type": "act", "ops": [{"path": "x"}]'  # unclosed → JSONDecodeError
     monkeypatch.setattr(litellm, "acompletion", _ScriptedBadJSON(bad))
 
     events = EventLog()
