@@ -117,10 +117,23 @@ def _problem_statement(data: Mapping[str, Any]) -> str:
 
 
 def _relevant_files(data: Mapping[str, Any]) -> list[str]:
-    """Read ``relevant_files`` from the exploration input (inner data dict, with
-    a flat fallback for unit tests injecting the inner data directly)."""
+    """Read the files to region-surface: ``relevant_files`` from the exploration
+    input, else (#1375 D8) the re-derived ``_candidate_files``.
+
+    On a re-plan the plan input is ``verify_state``, which has NO
+    ``relevant_files`` (only the explore-phase output carries them). Without a
+    fallback, the region-surfacing produces 0 regions on EVERY re-plan — the model
+    flies blind through the whole verify→plan revision loop (astropy-13453: 13 of
+    14 plan iterations had no regions). D8 re-derives candidate files
+    deterministically from the problem_statement (the D2 explore-scaffolding repo
+    grep, run as preprocessor steps before this) into ``_candidate_files``, so the
+    re-plan gets the same gold-region scaffolding as the first plan."""
     inner = data.get("data") if isinstance(data.get("data"), dict) else data
-    files = inner.get("relevant_files") if isinstance(inner, dict) else None
+    if not isinstance(inner, dict):
+        return []
+    files = inner.get("relevant_files")
+    if not isinstance(files, list) or not files:
+        files = inner.get("_candidate_files")  # D8: re-derived fallback (re-plan)
     if isinstance(files, list):
         return [f for f in files if isinstance(f, str) and f]
     return []
@@ -216,6 +229,29 @@ def extract_problem_symbols(data: Mapping[str, Any]) -> list[dict]:
 
 #: how many candidate files to surface (bounded — explore reads its own beyond).
 _MAX_CANDIDATE_FILES = 8
+#: #1375 D9 — the repo-wide grep matches the WHOLE tree including .git/ (binary
+#: pack files) and other non-source paths; surfacing those as candidates is noise
+#: and an unreadable .git pack as a "candidate" can make the explore model abort
+#: ("input artifact could not be read"). Drop non-source paths from candidates.
+#: excluded by EXACT path-component match (not substring) so a real source path
+#: like ``astropy/_build_utils/x.py`` is NOT false-dropped by ``build``.
+_NON_SOURCE_DIRS = frozenset({
+    ".git", ".tox", ".eggs", "node_modules", "build", "dist",
+    ".mypy_cache", "__pycache__", ".pytest_cache",
+})
+_NON_SOURCE_SUFFIXES = (".pack", ".idx", ".pyc", ".pyo", ".so", ".o", ".png",
+                        ".jpg", ".jpeg", ".gif", ".pdf", ".zip", ".gz")
+
+
+def _is_source_candidate(path: str) -> bool:
+    """True when ``path`` is a plausible source file (not .git/binary/cache).
+
+    Directory exclusion is by EXACT path component (``build`` matches a ``build/``
+    dir but not ``_build_utils/``), so real source files are never false-dropped.
+    """
+    if any(part in _NON_SOURCE_DIRS for part in path.split("/")):
+        return False
+    return not path.lower().endswith(_NON_SOURCE_SUFFIXES)
 #: a symbol matching this few files is "specific" — a strong signal even alone
 #: (e.g. an exact method name) — so its match outranks incidental co-occurrence.
 _SPECIFIC_FILE_THRESHOLD = 2
@@ -249,7 +285,10 @@ def rank_candidate_files(data: Mapping[str, Any]) -> dict:
     for r in results:
         if not isinstance(r, dict):
             continue
-        files = [f for f in (r.get("files") or []) if isinstance(f, str) and f]
+        files = [
+            f for f in (r.get("files") or [])
+            if isinstance(f, str) and f and _is_source_candidate(f)  # D9: drop .git/binary
+        ]
         weight = 1.0 + (_SPECIFIC_BONUS if 1 <= len(files) <= _SPECIFIC_FILE_THRESHOLD else 0.0)
         for f in files:
             scores[f] = scores.get(f, 0.0) + weight

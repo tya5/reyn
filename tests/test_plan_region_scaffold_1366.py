@@ -364,3 +364,80 @@ def test_plan_preprocessor_absent_symbol_yields_no_fabricated_region(tmp_path: P
         assert r.get("count", 0) == 0 or not r.get("matches"), (
             "a symbol absent from the file must not yield a fabricated region"
         )
+
+
+def _run_plan_preprocessor_replan(
+    tmp_path: Path, file_path: str, file_body: str, problem_statement: str
+) -> dict:
+    """Run the plan preprocessor on a RE-PLAN input (``verify_state``, which has
+    NO ``relevant_files``) — D8 must re-derive candidate files from the repo."""
+    skill = load_dsl_skill(SWE_BENCH_DIR / "skill.md")
+    events = EventLog()
+    resolver = PermissionResolver(
+        config_permissions={"python.safe": "allow"},
+        project_root=tmp_path,
+        interactive=False,
+    )
+    ws = Workspace(events=events, base_dir=tmp_path, permission_resolver=resolver)
+    ws.write_file(file_path, file_body)
+    # verify_state: the re-plan input — note NO relevant_files
+    artifact = {
+        "type": "verify_state",
+        "data": {
+            "instance_id": "x__y-1",
+            "tests_passed": False,
+            "attempt": 2,
+            "failure_summary": "the fix did not work",
+        },
+    }
+    skill_input = {
+        "type": "swe_bench_input",
+        "data": {"instance_id": "x__y-1", "problem_statement": problem_statement},
+    }
+    executor = PreprocessorExecutor(
+        skill=skill, workspace=ws, model="standard", events=events, subscribers=[],
+        resolver=None, permission_resolver=resolver, sandbox_backend=NoopBackend(),
+    )
+    result, _usage = asyncio.run(
+        executor.run(skill.phases["plan"], artifact, output_language=None, skill_input=skill_input)
+    )
+    return result["data"]
+
+
+def test_replan_rederives_regions_without_relevant_files(tmp_path: Path) -> None:
+    """Tier 2: #1375 D8 — on a re-plan (verify_state, no relevant_files) the plan
+    preprocessor RE-DERIVES candidate files from the problem_statement (repo grep)
+    and still surfaces the target region into _plan_regions.
+
+    Before D8, a verify_state input gave extract_problem_symbols 0 files -> 0
+    regions on EVERY re-plan (astropy-13453: 13/14 plan iterations blind). The
+    re-derive (D2 mechanism) restores the scaffolding.
+    """
+    target = "    def render_special(self, col):  # REPLAN-TARGET-XYZ"
+    data = _run_plan_preprocessor_replan(
+        tmp_path, "pkg/mod.py", _big_body(target),
+        problem_statement="The `render_special` method drops formatting. Fix it.",
+    )
+    # _plan_regions>0 on a verify_state input (which has NO relevant_files) can
+    # only happen via re-derived candidates — that IS the D8 evidence.
+    blob = str(data.get("_plan_regions") or [])
+    assert "REPLAN-TARGET-XYZ" in blob, (
+        "on a re-plan, the target region must be re-derived + surfaced (was 0 before D8)"
+    )
+    # the plan-time intermediates are stripped — only _plan_regions reaches the model
+    assert "_candidate_files" not in data and "_symbol_files" not in data, (
+        "plan intermediates must be stripped from the model context"
+    )
+
+
+def test_replan_no_symbol_yields_empty_graceful(tmp_path: Path) -> None:
+    """Tier 2: D8 falsification — a re-plan whose problem_statement names no
+    greppable symbol re-derives no candidates and surfaces no region (graceful;
+    the model falls back to its own reads), never an error."""
+    data = _run_plan_preprocessor_replan(
+        tmp_path, "pkg/mod.py", _big_body("    x = 1  # ACTUAL"),
+        problem_statement="the behavior is wrong",  # no code symbols
+    )
+    regions = data.get("_plan_regions") or []
+    for r in regions:
+        assert r.get("count", 0) == 0 or not r.get("matches")

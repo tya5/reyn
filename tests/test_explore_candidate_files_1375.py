@@ -144,3 +144,27 @@ def test_explore_preprocessor_surfaces_gold_candidate(tmp_path: Path) -> None:
     assert candidates[0].endswith("gold.py"), (
         f"the gold file (specific symbol itrs_to_observed_mat) must rank first; got {candidates}"
     )
+
+
+def test_rank_excludes_git_and_binary_candidates() -> None:
+    """Tier 2: #1375 D9 — the repo-wide grep matches .git/ (binary pack files) and
+    other non-source paths; those must be dropped from _candidate_files (an
+    unreadable .git pack as a candidate made the explore model abort)."""
+    _, rank_candidate_files = _fns()
+    symbol_files = [
+        {"files": [
+            ".git/objects/pack/pack-abc.pack",   # binary git pack — drop
+            "astropy/io/ascii/html.py",          # source — keep
+            "astropy/_build_utils/helper.py",     # source ('build' is a SUBSTRING,
+                                                  # not a path component) — KEEP
+            "build/lib/x.py",                     # build/ dir component — drop
+            "docs/_static/logo.png",              # binary — drop
+            "__pycache__/mod.cpython-311.pyc",    # cache — drop
+        ]},
+    ]
+    out = rank_candidate_files({"data": {"_symbol_files": symbol_files}})
+    cands = set(out["_candidate_files"])
+    assert cands == {"astropy/io/ascii/html.py", "astropy/_build_utils/helper.py"}, (
+        f"only source survives, and a 'build' SUBSTRING (not component) is not "
+        f"false-dropped: {cands}"
+    )

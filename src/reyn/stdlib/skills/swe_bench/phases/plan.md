@@ -16,7 +16,46 @@ max_act_turns: 15
 # root cause, surfaced one layer up). Deterministic (P5), never LLM-mutated.
 # `extract_problem_symbols` returns [{file, symbol, symbol_re}] (cartesian of
 # relevant_files x symbols); the iterate step greps each into `_plan_regions`.
+# #1375 D8 — re-derive candidate files on re-plan. A re-plan's input is
+# `verify_state`, which has NO `relevant_files` (only explore's output carries
+# them), so the region scaffolding below produced 0 regions on EVERY re-plan and
+# the model flew blind through the whole verify→plan revision loop (astropy-13453:
+# 13/14 plan iterations had no regions). These first 3 steps re-derive candidate
+# files deterministically from the problem_statement (the same D2 explore repo
+# grep): extract symbols -> grep each across the repo (files_with_matches) -> rank
+# by co-occurrence+specificity into `_candidate_files`. `extract_problem_symbols`
+# then uses `relevant_files` (first plan) OR `_candidate_files` (re-plan), so a
+# re-plan gets the same gold-region scaffolding as the first plan.
 preprocessor:
+  - type: python
+    module: ./extract_problem_symbols.py
+    function: extract_explore_symbols
+    mode: safe
+    into: data._explore_symbols
+    output_schema:
+      type: array
+  - type: iterate
+    over: data._explore_symbols
+    apply:
+      type: run_op
+      op:
+        kind: file
+        op: grep
+        path: "."
+        pattern: "__placeholder__"
+        output_mode: files_with_matches
+      args_from:
+        pattern: "_iter.item.symbol_re"
+      on_error: skip
+    into: data._symbol_files
+    on_error: skip
+  - type: python
+    module: ./extract_problem_symbols.py
+    function: rank_candidate_files
+    mode: safe
+    into: data
+    output_schema:
+      type: object
   - type: python
     module: ./extract_problem_symbols.py
     function: extract_problem_symbols
