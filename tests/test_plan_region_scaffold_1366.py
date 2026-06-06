@@ -118,6 +118,43 @@ def test_prune_drops_no_match_and_prioritizes_specific_over_generic() -> None:
     )
 
 
+def test_prune_keeps_proximal_gold_match_over_early_isolated() -> None:
+    """Tier 2: #1375 D1 — within a region the prune keeps matches by PROXIMITY to
+    other symbols' matches, not first-N — so a LATE gold match co-located with
+    another symbol survives while early isolated junk is dropped.
+
+    This is the astropy-13453 failure: the plain `write` symbol matched early
+    lines [2,5,15] (module docstring/imports) AND the gold `write()` method @349;
+    first-N kept [2,5,15] and dropped @349. Here another symbol matches @348
+    (co-located with the gold @349), so proximity-rank must keep @349.
+    """
+    prune_plan_regions, _ = _prune()
+    f = "astropy/io/ascii/html.py"
+    # the gold symbol's region: 3 early isolated junk matches + the gold @349
+    gold_region = {
+        "count": 4,
+        "matches": [
+            {"path": f, "line_number": "2", "content": "module docstring"},
+            {"path": f, "line_number": "5", "content": "import"},
+            {"path": f, "line_number": "15", "content": "import"},
+            {"path": f, "line_number": "349", "content": "self.data._set_col_formats()"},
+        ],
+    }
+    # a DIFFERENT symbol matches @348 — adjacent to the gold @349 (the cluster)
+    neighbor_region = {
+        "count": 1,
+        "matches": [{"path": f, "line_number": "348", "content": "cols = ..."}],
+    }
+    out = prune_plan_regions({"data": {"_plan_regions": [gold_region, neighbor_region]}})
+    kept_gold = [r for r in out["_plan_regions"] if r["count"] == 4][0]
+    kept_lines = {int(m["line_number"]) for m in kept_gold["matches"]}
+    # _MAX_MATCHES_PER_REGION caps to 3; the gold @349 (dist 1 to @348) must be kept
+    assert 349 in kept_lines, (
+        f"the proximal gold match @349 must survive (got {sorted(kept_lines)}); "
+        "first-N selection would have dropped it for the early isolated lines"
+    )
+
+
 def test_extract_yields_valid_code_symbols_not_junk() -> None:
     """Tier 2: code-fence-aware extraction returns real identifiers, not prose junk.
 
@@ -187,9 +224,17 @@ def test_extract_pairs_are_cartesian_files_x_symbols() -> None:
     assert pairs, "expected non-empty pairs"
     files = {p["file"] for p in pairs}
     assert files == {"pkg/x.py", "pkg/y.py"}
+    # plain-symbol pairs carry the re.escape'd pattern; #1375 D1 also adds a
+    # method-definition pair per non-dotted symbol (`<sym> (def)` -> `def ...`).
     for p in pairs:
-        assert p["symbol_re"] == re.escape(p["symbol"])
-    # each file is paired with the same symbol set
+        if p["symbol"].endswith(" (def)"):
+            assert p["symbol_re"].startswith(r"def\s+"), f"def-pair pattern: {p}"
+        else:
+            assert p["symbol_re"] == re.escape(p["symbol"])
+    # a def-pair exists for the non-dotted symbol, not for the dotted one
+    defs = {p["symbol"] for p in pairs if p["symbol"].endswith(" (def)")}
+    assert "alpha_beta (def)" in defs and "Gamma.delta (def)" not in defs
+    # each file is paired with the same pair set
     by_file = {f: sorted(p["symbol"] for p in pairs if p["file"] == f) for f in files}
     assert by_file["pkg/x.py"] == by_file["pkg/y.py"]
 

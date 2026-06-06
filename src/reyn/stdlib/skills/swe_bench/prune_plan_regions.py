@@ -64,12 +64,39 @@ def prune_plan_regions(data: Mapping[str, Any]) -> dict:
     # non-specific high-count symbol.
     valid.sort(key=lambda r: r["count"])
 
+    # #1375 D1: within a region, select which matches to keep by PROXIMITY to
+    # other symbols' matches in the same file, not by first-N. The gold fix site
+    # tends to cluster where several problem-symbols co-occur (a method that
+    # references multiple of them), whereas the dropped junk matches are isolated
+    # early lines (module docstring / imports). Keeping the co-located matches
+    # surfaces the gold region; first-N kept only the early lines (astropy-13453:
+    # plain `write` matched @[2,5,15] — all early — and dropped the gold @349).
+    # `all_marks` = every match's (file, line) across the (count-sorted) regions,
+    # tagged with the region index so a region's own matches are excluded.
+    all_marks: list[tuple[str, int, int]] = []
+    for i, r in enumerate(valid):
+        for m in r.get("matches") or []:
+            p, ln = _match_path(m), _match_line(m)
+            if p is not None and ln is not None:
+                all_marks.append((p, ln, i))
+
+    def _proximity(m: Any, region_index: int) -> float:
+        """Min distance from this match to any OTHER region's match in the same
+        file. inf when isolated (no co-occurring symbol nearby) → ranked last."""
+        p, ln = _match_path(m), _match_line(m)
+        if p is None or ln is None:
+            return float("inf")
+        dists = [abs(ln - L) for (P, L, R) in all_marks if P == p and R != region_index]
+        return min(dists) if dists else float("inf")
+
     kept: list[Any] = []
     total = 0
-    for region in valid:
+    for i, region in enumerate(valid):
         matches = region.get("matches")
         if isinstance(matches, list) and len(matches) > _MAX_MATCHES_PER_REGION:
-            region = {**region, "matches": matches[:_MAX_MATCHES_PER_REGION]}
+            # keep the matches closest to other symbols' matches (gold cluster)
+            ranked = sorted(matches, key=lambda m: _proximity(m, i))
+            region = {**region, "matches": ranked[:_MAX_MATCHES_PER_REGION]}
         size = len(json.dumps(region))
         if total + size > _MAX_TOTAL_CHARS:
             break  # PRIMARY bound reached — output is bounded by construction
@@ -77,3 +104,21 @@ def prune_plan_regions(data: Mapping[str, Any]) -> dict:
         kept.append(region)
 
     return {**inner, "_plan_regions": kept}
+
+
+def _match_line(m: Any) -> int | None:
+    """A grep match's 1-based line number (the data stores it as a string)."""
+    if isinstance(m, dict):
+        try:
+            return int(m.get("line_number"))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _match_path(m: Any) -> str | None:
+    """A grep match's file path (each match carries its own ``path``)."""
+    if isinstance(m, dict):
+        p = m.get("path")
+        return p if isinstance(p, str) and p else None
+    return None
