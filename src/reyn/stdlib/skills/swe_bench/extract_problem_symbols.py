@@ -117,10 +117,23 @@ def _problem_statement(data: Mapping[str, Any]) -> str:
 
 
 def _relevant_files(data: Mapping[str, Any]) -> list[str]:
-    """Read ``relevant_files`` from the exploration input (inner data dict, with
-    a flat fallback for unit tests injecting the inner data directly)."""
+    """Read the files to region-surface: ``relevant_files`` from the exploration
+    input, else (#1375 D8) the re-derived ``_candidate_files``.
+
+    On a re-plan the plan input is ``verify_state``, which has NO
+    ``relevant_files`` (only the explore-phase output carries them). Without a
+    fallback, the region-surfacing produces 0 regions on EVERY re-plan — the model
+    flies blind through the whole verify→plan revision loop (astropy-13453: 13 of
+    14 plan iterations had no regions). D8 re-derives candidate files
+    deterministically from the problem_statement (the D2 explore-scaffolding repo
+    grep, run as preprocessor steps before this) into ``_candidate_files``, so the
+    re-plan gets the same gold-region scaffolding as the first plan."""
     inner = data.get("data") if isinstance(data.get("data"), dict) else data
-    files = inner.get("relevant_files") if isinstance(inner, dict) else None
+    if not isinstance(inner, dict):
+        return []
+    files = inner.get("relevant_files")
+    if not isinstance(files, list) or not files:
+        files = inner.get("_candidate_files")  # D8: re-derived fallback (re-plan)
     if isinstance(files, list):
         return [f for f in files if isinstance(f, str) and f]
     return []
