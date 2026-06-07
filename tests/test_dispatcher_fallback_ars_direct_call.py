@@ -1,43 +1,35 @@
-"""Tier 2: dispatcher fallback for ARS-only direct-call salvage (#229).
+"""Tier 2: dispatcher fallback — qualified-name direct-call salvage (#229).
 
-Pre-fix, weak LLMs (B42 W5-S6) read qualified names from the ARS block
-in ``invoke_action.description`` and emitted them as direct function
-calls (= ``function_call.name = "skill__mcp_install"``). The name
-wasn't in the dispatcher's ``tool_catalog`` (= ARS entries don't get a
-top-level tool slot unless they're also hot-list aliases), so
-``dispatch_tool`` rejected with ``unknown_tool``.
+When the LLM emits a qualified action name (e.g. ``skill__mcp_install``,
+``file__edit``) as a DIRECT function call instead of wrapping it in
+``invoke_action(action_name=...)``, the name isn't in the dispatcher's
+``tool_catalog`` (qualified names get no top-level tool slot unless they are
+hot-list aliases), so ``dispatch_tool`` would reject with ``unknown_tool``.
+The salvage (``router_loop._execute_tool`` →
+``_maybe_salvage_qualified_direct_call``) detects "qualified name not in
+catalog", confirms it routes via ``universal_dispatch.resolve_invoke_action``,
+and rewrites the call to ``invoke_action(action_name=name, args=args)``. An
+audit event ``direct_alias_call_salvaged`` records the rewrite.
 
-Per the #229 owner decision (α + β bundled):
+#187 STEP 1c: this salvage is now MORE load-bearing. With the ARS block removed
+from ``invoke_action.description`` (actions are enumerated only by
+``list_actions``), a sibling-tool cross-ref pointer (e.g. file__write →
+file__edit, #1420) leads the model to emit the pointed-at qualified name
+directly; the salvage is what routes that emit to dispatch. The
+pointer → direct-emit → salvage chain is the post-removal discovery path, so
+these salvage invariants are part of STEP 1c's load-bearing surface.
 
-  α — router_loop._execute_tool, before dispatch, detects "qualified
-      name not in catalog" and rewrites the call to
-      ``invoke_action(action_name=name, args=args)`` when
-      ``universal_dispatch.resolve_invoke_action`` confirms the name
-      is routable. An audit event
-      ``direct_alias_call_salvaged`` records the rewrite.
-
-  β — ``_enrich_invoke_action_description`` prefixes the ARS block
-      schema lines with an explicit "NOT direct-callable; use
-      invoke_action" instruction.
-
-This file pins:
-  1. Salvage triggers when name resolves through universal_dispatch.
-  2. Salvage NOT triggered when name is garbage (= original
-     unknown_tool surfacing preserved).
-  3. Salvage NOT triggered when name is in catalog (= hot-list alias
-     path unchanged).
-  4. Audit event emitted with original name + rewrite target.
-  5. ARS block hint text contains the explicit "NOT direct-callable"
-     instruction.
+This file pins (salvage standalone, no ARS dependency):
+  1. Salvage triggers when the name resolves through universal_dispatch.
+  2. Salvage NOT triggered when the name is garbage (= original unknown_tool
+     surfacing preserved).
+  3. Audit event emitted with original name + rewrite target.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from reyn.chat.router_loop import (
-    RouterLoop,
-    _enrich_invoke_action_description,
-)
+from reyn.chat.router_loop import RouterLoop
 
 
 class _RecordingEvents:
@@ -166,43 +158,3 @@ def test_salvage_does_not_emit_audit_on_unknown_name() -> None:
         t != "direct_alias_call_salvaged"
         for t, _ in loop.host.events.events
     )
-
-
-# ── 4. ARS block wording contains the "NOT direct-callable" instruction ─
-
-
-def test_ars_block_includes_not_direct_callable_instruction() -> None:
-    """Tier 2: the enrichment hint warns the LLM against direct calls."""
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "invoke_action",
-                "description": "Original description.",
-                "parameters": {},
-            },
-        },
-    ]
-    ars_entries = [("skill__mcp_install", {})]
-    enriched = _enrich_invoke_action_description(tools, ars_entries)
-    desc = enriched[0]["function"]["description"]
-    assert "NOT direct-callable" in desc
-    assert "invoke_action" in desc
-    # Schema line still present.
-    assert "skill__mcp_install" in desc
-
-
-def test_ars_block_unchanged_when_no_entries() -> None:
-    """Tier 2: empty ars_entries → no enrichment (= no spurious hint)."""
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "invoke_action",
-                "description": "Pristine.",
-                "parameters": {},
-            },
-        },
-    ]
-    enriched = _enrich_invoke_action_description(tools, [])
-    assert enriched[0]["function"]["description"] == "Pristine."
