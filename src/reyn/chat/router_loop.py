@@ -1266,7 +1266,7 @@ class RouterLoop:
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
         skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
-        empty_stop_retry_auto: bool = False,  # #187: agent-path always-on (no env opt-in)
+        empty_stop_retry_auto: bool = False,  # #187: always-on (no env opt-in); all prod sites pass True
         plan_invalid_retries: int = 1,  # B51 NF-W6-3 — safety.loop.plan_invalid_retries
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
     ):
@@ -1323,15 +1323,17 @@ class RouterLoop:
         # process — the directive plumbing lands in the codebase but no
         # default runtime behaviour change.
         self._empty_stop_retry_directive = empty_stop_retry_directive
-        # #187: agent-path (phase_executor) opt-in that enables the empty-stop
-        # retry WITHOUT requiring the ``REYN_EMPTY_STOP_RETRY`` env var. The
-        # agent op-loop must keep invoking tools to make progress, so a
-        # post-tool empty stop is a dead-end there (real-task: 67% empty-stop)
-        # — unlike the chat router, where "observe + surface" is acceptable.
-        # The chat / plan-executor construction sites leave this False so their
-        # behaviour stays env-gated (no regression). The gate below fires when
-        # this flag OR the env var is set. always-on-agent vs env-gated is an
-        # owner balance knob switchable by the phase_executor call-site value.
+        # #187: enable the empty-stop retry WITHOUT requiring the
+        # ``REYN_EMPTY_STOP_RETRY`` env var. owner decision (2026-06-07):
+        # UNIFORM always-on at every production RouterLoop site (chat /
+        # plan-step / agent op-loop all pass ``True``) — the env opt-in is
+        # retired. A content-less empty stop is a dead-end the loop must
+        # recover from (real-task: 67% premature). The gate below fires when
+        # this flag OR the env var is set. The default stays ``False`` only so
+        # direct/test construction can exercise the env-gated path; it is NOT a
+        # per-site agent-on/chat-off knob (that site-appropriate design was
+        # retracted). If a measured problem later motivates per-site
+        # divergence, this flag is the switch — but uniform-first by default.
         self._empty_stop_retry_auto = empty_stop_retry_auto
         # B51 NF-W6-3: plan_invalid self-correction retry cap. When the
         # ``plan`` tool returns ``{status:error, error:{kind:
