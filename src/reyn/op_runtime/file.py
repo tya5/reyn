@@ -424,6 +424,49 @@ def _execute_grep(op: FileIROp, ctx: OpContext) -> dict:
             "matches": matches, "count": len(matches)}
 
 
+def _changed_region_preview(
+    new_content: str,
+    start_offset: int,
+    new_len: int,
+    *,
+    context_lines: int = 3,
+    max_lines: int = 40,
+) -> str:
+    """A numbered-line view of the changed region for an edit result (#1418).
+
+    **show-not-judge**: renders the lines around where ``new_string`` landed as
+    1-based ``<lineno>\\t<text>`` only — NO syntax check, NO validity verdict, no
+    encoding of "correct". The agent self-assesses (e.g. notices it inserted at
+    indent 0 while the surrounding body is indent 8).
+
+    **language-agnostic**: pure line slicing, no language parsing — works on any
+    text file, not just Python.
+
+    **bounded-by-construction**: capped at ``max_lines`` so a large multi-line
+    insert cannot bloat the result.
+
+    ``start_offset`` is the char offset (in ``new_content``) where the change
+    begins — i.e. ``content.index(old_string)``, which is identical in the old
+    and new content because the prefix is unchanged. ``new_len`` is
+    ``len(new_string)`` (0 for a deletion, which then shows the surrounding
+    context at the seam).
+    """
+    lines = new_content.split("\n")
+    total = len(lines)
+    start_line = new_content.count("\n", 0, start_offset)
+    end_line = new_content.count("\n", 0, start_offset + new_len)
+    lo = max(0, start_line - context_lines)
+    hi = min(total - 1, end_line + context_lines)
+    truncated = False
+    if hi - lo + 1 > max_lines:
+        hi = lo + max_lines - 1
+        truncated = True
+    rendered = "\n".join(f"{i + 1}\t{lines[i]}" for i in range(lo, hi + 1))
+    if truncated:
+        rendered += "\n…\t(preview truncated)"
+    return rendered
+
+
 def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
     if op.old_string is None:
         return {"kind": "file", "op": "edit", "status": "error", "error": "old_string is required"}
@@ -455,7 +498,16 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
     ctx.workspace.write_file(op.path, new_content)
     replacements = count if op.replace_all else 1
     ctx.events.emit("tool_executed", op="edit_file", path=op.path, replacements=replacements)
-    return {"kind": "file", "op": "edit", "path": op.path, "status": "ok", "replacements": replacements}
+    # #1418: an additive, show-not-judge preview of the changed region so the
+    # agent can SEE what landed (and at what indent), not just the count. For
+    # replace_all this shows the first changed region; the count is in
+    # ``replacements``.
+    start_offset = content.index(op.old_string)
+    preview = _changed_region_preview(new_content, start_offset, len(op.new_string))
+    return {
+        "kind": "file", "op": "edit", "path": op.path, "status": "ok",
+        "replacements": replacements, "preview": preview,
+    }
 
 
 def regenerate_index_impl(
