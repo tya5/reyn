@@ -150,6 +150,31 @@ def _read_inline_cap(ctx: OpContext) -> int:
     return control_ir_inline_cap(model_str, events=ctx.events, phase=ctx.skill_name)
 
 
+def _resolve_for_gate(ctx: OpContext, path_str: str) -> str:
+    """Resolve a file-op path against the workspace base_dir so the permission
+    gate checks the SAME absolute target the op will actually read/write.
+
+    #187 B3: the handler previously passed the raw (often relative) op.path to
+    ``require_file_*``; the gate's SandboxLayer then resolved it with
+    ``Path(path).resolve()`` against the HOST process cwd — not the workspace
+    base_dir. Under a container backend (base_dir=/testbed) a relative repo
+    write like ``astropy/io/ascii/html.py`` was therefore checked against the
+    host cwd, fell outside the sandbox ``write_paths`` cap (``[/testbed]``), and
+    was DENIED — even though ``Workspace.write_file`` resolves that same path
+    against /testbed and would land it there. Resolving here closes the base
+    mismatch (the Workspace already documents that the gate operates on the
+    absolute paths it resolves). Behaviour-preserving for the host case
+    (base_dir == cwd → the identical absolute path).
+    """
+    ws = getattr(ctx, "workspace", None)
+    if ws is None:
+        return path_str
+    p = Path(path_str).expanduser()
+    if p.is_absolute():
+        return str(p.resolve())
+    return str((ws.base_dir / p).resolve())
+
+
 async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     # Permission check (single point for both frontends). For
     # `regenerate_index` the file actually written is `output_path`, not
@@ -162,20 +187,20 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
         if op.op in _WRITE_OPS:
             write_target = op.output_path if op.op == "regenerate_index" and op.output_path else op.path
             ctx.permission_resolver.require_file_write(
-                ctx.permission_decl, write_target, ctx.skill_name,
+                ctx.permission_decl, _resolve_for_gate(ctx, write_target), ctx.skill_name,
                 sandbox_policy=_sandbox,
             )
             # move also writes to dest_path — gate both source (= the file
             # being effectively deleted) and dest (= the file being created).
             if op.op == "move" and op.dest_path:
                 ctx.permission_resolver.require_file_write(
-                    ctx.permission_decl, op.dest_path, ctx.skill_name,
+                    ctx.permission_decl, _resolve_for_gate(ctx, op.dest_path), ctx.skill_name,
                     sandbox_policy=_sandbox,
                 )
         elif op.op in _READ_OPS:
             # read / glob / grep / stat — gate against read scope
             ctx.permission_resolver.require_file_read(
-                ctx.permission_decl, op.path, ctx.skill_name,
+                ctx.permission_decl, _resolve_for_gate(ctx, op.path), ctx.skill_name,
                 sandbox_policy=_sandbox,
             )
 
