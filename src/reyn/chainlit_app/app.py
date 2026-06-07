@@ -119,7 +119,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
         from reyn.budget.budget import BudgetTracker
         from reyn.chat.profile import AgentProfile
         from reyn.chat.registry import AgentRegistry
-        from reyn.chat.session import ChatSession
+        from reyn.chat.scoped_session_factory import build_scoped_chat_session
         from reyn.cli.session import Session
         from reyn.config import _find_project_root, load_project_context
         from reyn.events.state_log import StateLog
@@ -170,7 +170,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
         registry_ref: list = []
 
         def _session_factory(profile: AgentProfile) -> ChatSession:
-            s = ChatSession(
+            s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
                 resolver=session_cfg.resolver,
@@ -194,6 +194,17 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 action_retrieval_config=session_cfg.config.action_retrieval,
                 embedding_config=session_cfg.config.embedding,
                 agent_id=session_cfg.config.agent.id,
+                # #1402: scoped surface passed EXPLICITLY (required by
+                # build_scoped_chat_session). chainlit's current behaviour
+                # (behavior-preserving): no env-backend / exclude-tools /
+                # container-rooting. Fill = 1-line follow-up when a consumer needs it.
+                eager_embedding_build=False,
+                exclude_tools=None,
+                router_max_iterations=5,
+                environment_backend=None,
+                sandbox_backend=None,
+                workspace_base_dir=None,
+                workspace_state_dir=None,
             )
             s.load_history()
             return s

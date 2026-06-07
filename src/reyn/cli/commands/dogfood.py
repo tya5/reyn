@@ -399,7 +399,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None):
     from reyn.budget.budget import BudgetTracker
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import ChatSession
+    from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_config, load_project_context
     from reyn.dogfood.runner import ScenarioRunResult
     from reyn.events.event_store import EventStore
@@ -436,7 +436,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None):
         _reg_cell: list = []
 
         def _session_factory(profile: AgentProfile) -> ChatSession:
-            s = ChatSession(
+            s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
                 resolver=resolver,
@@ -461,6 +461,21 @@ def _build_live_runner(agent_name: str, *, env_backend=None):
                 # #1289: same backend instance to both seams (single-shared-sandbox).
                 environment_backend=env_backend,
                 sandbox_backend=env_backend,
+                # #1402: scoped surface passed EXPLICITLY (required by
+                # build_scoped_chat_session). These are dogfood's current
+                # behaviour (behavior-preserving). ★ NOTE the workspace-rooting
+                # gap: dogfood roots env_backend but passes workspace_base_dir=
+                # None — so chat file ops root on host cwd, not the container
+                # repo (the #187 wrong-FS class chat.py fixes via ws_base_dir).
+                # _wb/_ws ARE available here (build_environment_backend) → a
+                # 1-line follow-up can fill them; preserved as None for now.
+                embedding_config=None,  # gap: dogfood omitted embedding_config (had action_retrieval but not its sibling) → preserved as None
+                eager_embedding_build=False,
+                agent_id=None,
+                exclude_tools=None,
+                router_max_iterations=5,
+                workspace_base_dir=None,  # gap: not rooted on the container repo (see note)
+                workspace_state_dir=None,
             )
             s.load_history()
             return s
