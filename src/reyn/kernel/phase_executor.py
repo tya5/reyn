@@ -524,7 +524,7 @@ class PhaseExecutor:
         """
         import json as _json
 
-        from reyn.chat.router_loop import RouterLoop
+        from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
         from reyn.kernel.phase_router_host import PhaseRouterLoopHost
         from reyn.services.turn_budget import try_build_default_turn_budget_engine
 
@@ -632,6 +632,16 @@ class PhaseExecutor:
             llm_caller=self._llm_caller.make_phase_llm_caller(
                 phase=phase, state=state,
             ),
+            # #187: wire the agent-path empty-stop retry. Without this the
+            # retry mechanism (router_loop.py) was unreachable on the agent
+            # op-loop — the directive defaulted to None here, so a post-tool
+            # empty stop dead-ended (real-task: 67% empty-stop). The shared
+            # uniform "resume" directive + ``auto=True`` make it always-on for
+            # the agent path (owner decision), firing without the
+            # ``REYN_EMPTY_STOP_RETRY`` env opt-in. Same directive + policy as
+            # the chat / plan-step sites (no per-site differentiation).
+            empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
+            empty_stop_retry_auto=True,
         )
         # Drive the SHARED op-execution loop. Op results thread into ``messages``
         # as native tool-role turns; the model signals end_turn by emitting no

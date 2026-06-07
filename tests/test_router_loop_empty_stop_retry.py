@@ -9,6 +9,11 @@ Pinned invariants:
 - When the env var is unset, the directive is plumbed in but ignored — the
   loop falls through to the existing "observe + surface" path (= no behaviour
   change for the default chat-router policy).
+- #187: when ``empty_stop_retry_auto=True`` (= the agent-path always-on flag
+  set by phase_executor), the retry fires WITHOUT the env var. The directive
+  gate still holds (auto replaces the env opt-in, it does not fabricate a
+  missing directive). chat / plan-step sites leave auto False so they stay
+  env-gated (no regression).
 - When the directive is None, the env var is also ignored — no retry attempt
   even with the env var set.
 - Retries are bounded at 1 per turn: a second empty-stop in the same turn
@@ -67,12 +72,14 @@ def _make_loop(
     directive: str | None,
     *,
     llm_caller,
+    auto: bool = False,
 ) -> RouterLoop:
     return RouterLoop(
         host=host,
         chain_id="chain-empty-stop-test",
         max_iterations=5,
         empty_stop_retry_directive=directive,
+        empty_stop_retry_auto=auto,
         llm_caller=llm_caller,
     )
 
@@ -148,6 +155,52 @@ async def test_no_retry_when_directive_is_none(monkeypatch):
     host = FakeRouterHost()
     scripted = _ScriptedLLM([_empty_stop_result()])
     loop = _make_loop(host, None, llm_caller=scripted)  # no directive
+
+    await loop.run("test", [])
+
+    assert scripted.call_count == 1
+    assert host.outbox[0]["meta"]["source"] == "router_empty_response"
+
+
+# ---------------------------------------------------------------------------
+# #187: agent-path always-on flag — retry fires WITHOUT the env var
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_auto_flag_fires_retry_without_env_var(monkeypatch):
+    """Tier 2: #187 — ``empty_stop_retry_auto=True`` fires the retry with the
+    ``REYN_EMPTY_STOP_RETRY`` env var UNSET. This is the agent-path always-on
+    path (phase_executor sets auto=True): the agent op-loop must recover from a
+    post-tool empty stop without an operator opt-in, because a dead-ended agent
+    cannot make progress (real-task: 67% empty-stop). Mirror of
+    ``test_retry_path_injects_user_msg_when_env_var_set`` with env unset + auto.
+    """
+    monkeypatch.delenv("REYN_EMPTY_STOP_RETRY", raising=False)
+    host = FakeRouterHost()
+    scripted = _ScriptedLLM([_empty_stop_result(), text_result("recovered")])
+    loop = _make_loop(host, "resume", llm_caller=scripted, auto=True)
+
+    await loop.run("test", [])
+
+    # Two LLM calls (= 1 initial + 1 retry) even though the env var is unset.
+    assert scripted.call_count == 2
+    (only,) = host.outbox
+    assert only["text"] == "recovered"
+    emitted = [e["type"] for e in host._events.emitted]
+    assert "router_empty_response_retry_injected" in emitted
+
+
+@pytest.mark.asyncio
+async def test_auto_flag_still_requires_directive(monkeypatch):
+    """Tier 2: #187 — auto=True with directive None does NOT retry. The
+    ``auto`` flag replaces only the env opt-in; it does not fabricate a
+    missing directive (= the directive gate still holds). Guards against
+    auto accidentally widening the gate to a no-content retry."""
+    monkeypatch.delenv("REYN_EMPTY_STOP_RETRY", raising=False)
+    host = FakeRouterHost()
+    scripted = _ScriptedLLM([_empty_stop_result()])
+    loop = _make_loop(host, None, llm_caller=scripted, auto=True)
 
     await loop.run("test", [])
 

@@ -242,29 +242,12 @@ class RouterCapExceeded(Exception):
 DEFAULT_CHAT_CHANNEL_ID = "tui"
 
 
-# B43-NF-W6-1: continuation directive injected when the top-level chat
-# router LLM produces an empty stop after a tool round (= same attractor
-# as the plan-step case PR #265 closed at the planner.py sub_loop
-# construction sites). The chat router runs the full user-facing
-# conversation, so the directive references "the user's question" rather
-# than the plan-step's "step report". RouterLoop reads
-# ``REYN_EMPTY_STOP_RETRY=1`` from the environment at runtime; this
-# constant is plumbed in unconditionally but only kicks in when the env
-# var is set (= same opt-in mechanic as PR #265).
-#
-# Trace-patch-replay verified (= B43 W6-S2 top-level router post-plan
-# narration call): baseline N=10 = 6/10 EMPTY_STOP (60% trigger rate),
-# patched N=10 = 0/10 empty + 10/10 substantive (169-1485 chars).
-# Cross-provider documented attractor — Anthropic ``handling-stop-
-# reasons`` docs explicitly recommend continuation prompts "as a last
-# resort". Lead-coder review heuristic applied: this wires the third
-# (and last) RouterLoop construction site — planner.py has the other
-# two for plan-step sub_loops.
-_CHAT_ROUTER_EMPTY_STOP_RETRY_DIRECTIVE = (
-    "Now write your reply to the user. Summarise the relevant content "
-    "from the tool result above and address the user's question. Do "
-    "not call another tool. Write the reply text now."
-)
+# B43-NF-W6-1 / #187: the chat router's empty-stop continuation directive is
+# now the SHARED uniform ``EMPTY_STOP_RETRY_DIRECTIVE`` ("resume") from
+# router_loop.py — see its definition for the owner decision (no per-site
+# differentiation). Imported function-locally at the construction site below
+# (session→router_loop is a function-local import to avoid the module-level
+# cycle: router_loop imports from session).
 
 
 @dataclass(frozen=True)
@@ -5539,7 +5522,7 @@ class ChatSession:
         """
         # FP-0005: now async (consults safety.on_limit on hit).
         await self._check_and_increment_router_cap(user_text)
-        from reyn.chat.router_loop import RouterLoop
+        from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
         # B51 NF-W6-3: plan_invalid self-correction cap, sourced from
         # safety.loop.plan_invalid_retries (default 1). When set to 0
         # the retry is disabled and the LLM sees the plain tool error.
@@ -5555,10 +5538,15 @@ class ChatSession:
             # #187: hide excluded tools (e.g. web for faithful SWE-eval) from the
             # MAIN agent loop's LLM-visible catalog (same hook the sub-loops use).
             exclude_tools=self._exclude_tools,
-            # B43-NF-W6-1: chat router empty-stop retry. Same opt-in
-            # mechanic as PR #265's plan-step wiring — directive plumbed
-            # unconditionally, runtime gated by ``REYN_EMPTY_STOP_RETRY=1``.
-            empty_stop_retry_directive=_CHAT_ROUTER_EMPTY_STOP_RETRY_DIRECTIVE,
+            # B43-NF-W6-1 / #187: chat router empty-stop retry. owner decision —
+            # always-on (env-gate retired) + the SHARED uniform "resume"
+            # directive (no per-site differentiation). The old chat-specific
+            # "write your reply / do not call another tool" directive was
+            # retired: it was unevidenced differentiation and its anti-invoke
+            # framing was itself suspect. "resume" lets the model continue
+            # (reply OR tool-call) on its own.
+            empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
+            empty_stop_retry_auto=True,
             plan_invalid_retries=_plan_invalid_retries_cap,
         )
         # PR-N3: pre-frame context-overflow guard.

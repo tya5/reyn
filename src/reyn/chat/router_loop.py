@@ -141,6 +141,18 @@ _SPAWN_ACK_TOOL_DIRECTIVE = (
 )
 
 
+# #187: the SINGLE empty-stop retry continuation directive, shared UNIFORMLY by
+# every RouterLoop construction site (chat / plan-step / agent op-loop). owner
+# decision (2026-06-07): do NOT build per-site/per-tier directive differentiation
+# without evidence — a content-neutral "resume" re-enters the loop and lets the
+# model continue (tool-call OR reply) on its own. Real-task: a content-less empty
+# stop is 67% premature; "resume" recovers the next action (invoke 11/12). The
+# previous per-site directives (chat "write your reply" / plan "step report") were
+# unevidenced differentiation — and the chat one's "Do not call another tool"
+# was itself anti-invoke. Iterate per-site ONLY if a measured problem appears.
+EMPTY_STOP_RETRY_DIRECTIVE = "resume"
+
+
 def _strip_frontmatter(content: str) -> str:
     """Remove a leading YAML frontmatter block (``---\\n...\\n---\\n``) from
     a memory file's text and return the body alone.
@@ -1254,6 +1266,7 @@ class RouterLoop:
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
         skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
+        empty_stop_retry_auto: bool = False,  # #187: agent-path always-on (no env opt-in)
         plan_invalid_retries: int = 1,  # B51 NF-W6-3 — safety.loop.plan_invalid_retries
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
     ):
@@ -1310,6 +1323,16 @@ class RouterLoop:
         # process — the directive plumbing lands in the codebase but no
         # default runtime behaviour change.
         self._empty_stop_retry_directive = empty_stop_retry_directive
+        # #187: agent-path (phase_executor) opt-in that enables the empty-stop
+        # retry WITHOUT requiring the ``REYN_EMPTY_STOP_RETRY`` env var. The
+        # agent op-loop must keep invoking tools to make progress, so a
+        # post-tool empty stop is a dead-end there (real-task: 67% empty-stop)
+        # — unlike the chat router, where "observe + surface" is acceptable.
+        # The chat / plan-executor construction sites leave this False so their
+        # behaviour stays env-gated (no regression). The gate below fires when
+        # this flag OR the env var is set. always-on-agent vs env-gated is an
+        # owner balance knob switchable by the phase_executor call-site value.
+        self._empty_stop_retry_auto = empty_stop_retry_auto
         # B51 NF-W6-3: plan_invalid self-correction retry cap. When the
         # ``plan`` tool returns ``{status:error, error:{kind:
         # plan_invalid}}`` (= the LLM's ``steps_json`` failed JSON
@@ -2407,7 +2430,10 @@ class RouterLoop:
                 if (
                     self._empty_stop_retry_directive
                     and _empty_stop_retries < 1
-                    and os.environ.get("REYN_EMPTY_STOP_RETRY") == "1"
+                    and (
+                        self._empty_stop_retry_auto
+                        or os.environ.get("REYN_EMPTY_STOP_RETRY") == "1"
+                    )
                 ):
                     _empty_stop_retries += 1
                     messages.append({

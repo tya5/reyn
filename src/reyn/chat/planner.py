@@ -48,7 +48,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from reyn.chat.router_loop import RouterLoop, RouterLoopHost
+from reyn.chat.router_loop import (
+    EMPTY_STOP_RETRY_DIRECTIVE,
+    RouterLoop,
+    RouterLoopHost,
+)
 from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
@@ -110,23 +114,11 @@ _PLAN_STEP_FORCE_CLOSE_CONTINUE_TEMPLATE = (
     "--- Consolidation of work so far ---\n{consolidation}"
 )
 
-# B42-NF-W6-1: continuation directive passed to RouterLoop's empty-stop
-# retry path. RouterLoop only consults this when the
-# ``REYN_EMPTY_STOP_RETRY=1`` env var is set, so the production code wires
-# the directive in unconditionally but no runtime behaviour changes
-# unless the operator opts in. The wording follows the existing plan-step
-# system prompt voice ("report what this step found") and adds an
-# explicit imperative trailer that trace-patch-replay confirmed flips
-# the post-tool empty-stop attractor (= 0/10 → 10/10 narration recovery
-# on the W6-S1 plan step). Cross-provider issue (= documented for Gemini,
-# Claude, GPT) — see Anthropic handling-stop-reasons docs + Hermes-agent
-# #9400 for prior art.
-_PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE = (
-    "Now write your step report. Summarise the relevant content from the "
-    "tool result above in 2-5 paragraphs, citing concrete details (file "
-    "paths, header names, function names, line numbers, exact values). "
-    "Do not call another tool. Write the report text now."
-)
+# B42-NF-W6-1 / #187: the plan-step empty-stop continuation directive is now the
+# SHARED uniform ``EMPTY_STOP_RETRY_DIRECTIVE`` ("resume") imported from
+# router_loop.py (see its definition for the owner no-per-site-differentiation
+# decision). The old plan-step "write your step report / do not call another
+# tool" directive was retired (unevidenced differentiation + anti-invoke framing).
 
 
 # B51 NF-W6-3 fix: directive template for the plan_invalid self-correction
@@ -1135,10 +1127,11 @@ async def execute_plan(
                 # 3 plan invocations because steps re-emitted plan).
                 exclude_tools={"plan"},
                 memo_provider=memo_provider,
-                # B42-NF-W6-1: directive used when ``REYN_EMPTY_STOP_RETRY=1``
-                # is set (= operator opt-in). Production wiring lands in the
-                # codebase but no default behaviour change.
-                empty_stop_retry_directive=_PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE,
+                # #187: empty-stop retry — shared uniform "resume" directive +
+                # always-on (owner decision; env-gate retired, no per-site
+                # differentiation).
+                empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
+                empty_stop_retry_auto=True,
             )
             # FP-0031-C: auto-retry on transient step failures.
             # FP-0031-D: when retry budget is exhausted, ask the user via
@@ -1211,7 +1204,10 @@ async def execute_plan(
                             system_prompt_override=sys_prompt,
                             exclude_tools={"plan"},
                             memo_provider=memo_provider,
-                            empty_stop_retry_directive=_PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE,
+                            # #187: empty-stop retry — shared uniform "resume"
+                            # directive + always-on (owner decision).
+                            empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
+                            empty_stop_retry_auto=True,
                         )
                         continue  # re-enter — does NOT consume the FP-0031 attempt budget
                     step_succeeded = True
@@ -1262,7 +1258,10 @@ async def execute_plan(
                             memo_provider=memo_provider,
                             # B42-NF-W6-1: same directive as the initial
                             # sub_loop construction above.
-                            empty_stop_retry_directive=_PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE,
+                            # #187: empty-stop retry — shared uniform "resume"
+                            # directive + always-on (owner decision).
+                            empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
+                            empty_stop_retry_auto=True,
                         )
                         continue
                     # FP-0031-D: retry budget exhausted — ask user for extension.
