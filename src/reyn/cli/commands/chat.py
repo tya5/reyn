@@ -290,7 +290,7 @@ def run(args: argparse.Namespace) -> None:
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import DEFAULT_AGENT_NAME, AgentRegistry
     from reyn.chat.repl import run_repl
-    from reyn.chat.session import ChatSession
+    from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
     from reyn.events.state_log import StateLog
     from reyn.permissions.permissions import PermissionResolver
@@ -368,7 +368,7 @@ def run(args: argparse.Namespace) -> None:
 
     def _session_factory(profile: AgentProfile):
         # Captured CLI defaults — registry doesn't need to know them.
-        s = ChatSession(
+        s = build_scoped_chat_session(
             agent_name=profile.name,
             model=model,
             resolver=session_cfg.resolver,

@@ -316,7 +316,7 @@ def run_serve(args: argparse.Namespace) -> None:
     from reyn.budget.budget import BudgetTracker
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
-    from reyn.chat.session import ChatSession
+    from reyn.chat.scoped_session_factory import build_scoped_chat_session
     from reyn.config import _find_project_root, load_project_context
     from reyn.events.state_log import StateLog
     from reyn.mcp_server import serve_stdio
@@ -387,7 +387,7 @@ def run_serve(args: argparse.Namespace) -> None:
     project_context = load_project_context(session_cfg.config, project_root)
 
     def _session_factory(profile: AgentProfile):
-        s = ChatSession(
+        s = build_scoped_chat_session(
             agent_name=profile.name,
             model=model,
             resolver=session_cfg.resolver,
@@ -414,6 +414,18 @@ def run_serve(args: argparse.Namespace) -> None:
             tool_calls_op_loop_skills=session_cfg.config.tool_calls_op_loop_skills,
             action_retrieval_config=session_cfg.config.action_retrieval,
             embedding_config=session_cfg.config.embedding,
+            # #1402: scoped capability surface, passed EXPLICITLY (required by
+            # build_scoped_chat_session). The stdio-MCP factory's current
+            # behaviour — defaults that document the gaps, NOT new capabilities
+            # (behavior-preserving). Fill = 1-line follow-up when a consumer needs it.
+            agent_id=None,
+            exclude_tools=None,
+            router_max_iterations=5,
+            environment_backend=None,  # gap: MCP-serve lacks env-backend / container-rooting
+            sandbox_backend=None,
+            workspace_base_dir=None,
+            workspace_state_dir=None,
+            eager_embedding_build=False,
         )
         s.load_history()
         return s

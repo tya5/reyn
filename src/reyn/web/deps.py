@@ -205,7 +205,7 @@ def _get_registry():
     if _registry is None:
         from reyn.chat.profile import AgentProfile
         from reyn.chat.registry import AgentRegistry
-        from reyn.chat.session import ChatSession
+        from reyn.chat.scoped_session_factory import build_scoped_chat_session
         from reyn.config import load_project_context
 
         config = _load_config()
@@ -240,7 +240,7 @@ def _get_registry():
 
         def _session_factory(profile: AgentProfile) -> ChatSession:
             registry = registry_ref[0]
-            s = ChatSession(
+            s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
                 resolver=resolver,
@@ -271,6 +271,20 @@ def _get_registry():
                 action_retrieval_config=config.action_retrieval,
                 embedding_config=config.embedding,
                 eager_embedding_build=_eager_embedding_build,
+                # #1402: scoped capability surface, passed EXPLICITLY (required by
+                # build_scoped_chat_session). These are the A2A factory's current
+                # behaviour — defaults that document the gaps the divergence
+                # revealed, NOT new capabilities (behavior-preserving refactor).
+                # A consumer that needs one (e.g. an A2A SWE runner: #1401) flips
+                # the relevant default to a real value in one line.
+                allowed_mcp=None,  # gap: A2A lacks per-profile MCP gating (was omitted → None)
+                agent_id=None,
+                exclude_tools=None,
+                router_max_iterations=5,
+                environment_backend=None,  # gap: A2A lacks env-backend / container-rooting
+                sandbox_backend=None,
+                workspace_base_dir=None,
+                workspace_state_dir=None,
             )
             s.load_history()
             # FP-0041 #489 PR-D2.5: external transport outbox interceptor.
