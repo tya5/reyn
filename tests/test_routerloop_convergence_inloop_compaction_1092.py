@@ -102,7 +102,21 @@ class _NReadsThenStop:
                 "id": f"c{i}", "type": "function",
                 "function": {"name": "read_file", "arguments": json.dumps({"path": "notes.txt"})},
             }])
-        return _tool_result([])
+        # #1092↔#187 reconciliation: a clean op-loop end emits CONTENT (a final
+        # assistant message). A content-LESS stop is now (correctly) treated as a
+        # premature empty-stop glitch and nudged once by the #187 agent-path
+        # resume retry — which would inject an extra "resume" turn and corrupt
+        # this per-op growth measurement (the terminal delta would be the small
+        # resume turn, not a full op-result). The content-less terminator was an
+        # incidental simplification; the LOAD-BEARING assertion is the LINEAR
+        # per-op delta (≈ full op-result size — the unbounded result accumulation
+        # the C-4b hook closes), NOT the terminator's content-ness. A content-
+        # bearing clean end preserves the measurement while avoiding the (correct)
+        # empty-stop nudge.
+        return LLMToolCallResult(
+            content="done", tool_calls=[], finish_reason="stop",
+            usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
+        )
 
 
 def _finish_llm():

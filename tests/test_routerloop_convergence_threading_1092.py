@@ -55,10 +55,20 @@ def _skill() -> Skill:
 def _patch_llms(monkeypatch, tools_calls: list, decide_calls: list) -> None:
     async def _tools(*a, **k):  # noqa: ANN002, ANN003
         tools_calls.append(1)
-        # No tool_calls → the op-loop reaches end_turn immediately; the converged
-        # path then post-pends the FD2 json decide (separate ``call``).
+        # No tool_calls → the op-loop reaches end_turn; the converged path then
+        # post-pends the FD2 json decide (separate ``call``).
+        # #1092↔#187 reconciliation: a clean op-loop end emits CONTENT (a final
+        # assistant message). A content-LESS stop is now (correctly) treated as a
+        # premature empty-stop glitch and nudged once (#187 agent-path resume —
+        # real-task: 67% premature, resume recovers invoke 11/12). The content-less
+        # terminator here was an incidental simplification; the LOAD-BEARING
+        # assertion is gate-threading (the converged op-loop is reached, the single
+        # call_llm_tools gives tools_calls == [1]), NOT the terminator's
+        # content-ness. A content-bearing clean end preserves that intent while
+        # avoiding the (correct) empty-stop nudge that the content-less shape now
+        # triggers.
         return LLMToolCallResult(
-            content=None, tool_calls=[], finish_reason="stop",
+            content="done", tool_calls=[], finish_reason="stop",
             usage=TokenUsage(prompt_tokens=10, completion_tokens=5),
         )
 
