@@ -309,7 +309,13 @@ def run_run(args: argparse.Namespace) -> None:
     if _env_cleanup is not None:
         import atexit
         atexit.register(_env_cleanup)
-    live_runner_fn = _build_live_runner(args.agent, env_backend=_env_backend)
+    # #1431: thread the env-backend's PARTNER container repo root (_wb) + host-side
+    # state dir (_ws) so dogfood's chat file ops root on the CONTAINER repo (e.g.
+    # /testbed), not the host cwd — the #187 wrong-FS class (#1410 base_dir sibling),
+    # surfaced by the #1402 migration making the dropped workspace dirs explicit.
+    live_runner_fn = _build_live_runner(
+        args.agent, env_backend=_env_backend, ws_base_dir=_wb, ws_state_dir=_ws,
+    )
 
     try:
         from reyn.dogfood.runner import run_scenario_set
@@ -352,7 +358,7 @@ def run_run(args: argparse.Namespace) -> None:
     print(f"  results → {run_dir / 'summary.json'}")
 
 
-def _build_live_runner(agent_name: str, *, env_backend=None):
+def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, ws_state_dir=None):
     """Return an async runner_fn that drives the chat router via send_to_agent_impl.
 
     Reuses the same path as MCP / web A2A: build a minimal AgentRegistry +
@@ -462,20 +468,19 @@ def _build_live_runner(agent_name: str, *, env_backend=None):
                 environment_backend=env_backend,
                 sandbox_backend=env_backend,
                 # #1402: scoped surface passed EXPLICITLY (required by
-                # build_scoped_chat_session). These are dogfood's current
-                # behaviour (behavior-preserving). ★ NOTE the workspace-rooting
-                # gap: dogfood roots env_backend but passes workspace_base_dir=
-                # None — so chat file ops root on host cwd, not the container
-                # repo (the #187 wrong-FS class chat.py fixes via ws_base_dir).
-                # _wb/_ws ARE available here (build_environment_backend) → a
-                # 1-line follow-up can fill them; preserved as None for now.
+                # build_scoped_chat_session).
+                # #1431: workspace rooted on the CONTAINER repo via the
+                # env-backend's _wb/_ws (threaded through _build_live_runner) —
+                # fixes the #187 wrong-FS class (file ops were rooting on host
+                # cwd while env_backend pointed at the container). chat.py uses
+                # the same ws_base_dir/ws_state_dir pattern.
                 embedding_config=None,  # gap: dogfood omitted embedding_config (had action_retrieval but not its sibling) → preserved as None
                 eager_embedding_build=False,
                 agent_id=None,
                 exclude_tools=None,
                 router_max_iterations=5,
-                workspace_base_dir=None,  # gap: not rooted on the container repo (see note)
-                workspace_state_dir=None,
+                workspace_base_dir=ws_base_dir,
+                workspace_state_dir=ws_state_dir,
             )
             s.load_history()
             return s
