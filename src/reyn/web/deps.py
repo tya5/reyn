@@ -124,14 +124,25 @@ def _get_perm_resolver():
         from reyn.permissions.permissions import PermissionResolver
         config = _load_config()
         root = _get_project_root()
-        perm_config = getattr(config, "permissions", {}) or {}
+        # Copy so the #1401 grant setdefault below never mutates the shared config.
+        perm_config = dict(getattr(config, "permissions", {}) or {})
         # Mirror the CLI path: unsafe python steps require an explicit opt-in.
         # In the web gateway (non-interactive) the equivalent of --allow-unsafe-python
         # is python.unsafe: allow in reyn.yaml / reyn.local.yaml permissions.
         unsafe_python_allowed = perm_config.get("python.unsafe") == "allow"
+        # #1401: --grant-file-write grants file.read/write at the resolver layer
+        # (mirrors `reyn chat`/run.py/eval). Bounded by the sandbox write_paths ∩
+        # the env-backend repo zone. setdefault preserves explicit operator config.
+        _ov = get_cli_scoped_overrides()
+        if _ov.grant_file_write:
+            perm_config.setdefault("file.read", "allow")
+            perm_config.setdefault("file.write", "allow")
         _perm_resolver = PermissionResolver(
             config_permissions=perm_config,
             project_root=root,
+            # #1401/#1414: anchor the default file-zone on the container repo root
+            # under a container env-backend (None for host → project_root default).
+            file_zone_root=_ov.workspace_base_dir,
             # Web gateway: non-interactive. Permission prompts become denials
             # unless pre-approved in reyn.yaml / .reyn/approvals.yaml.
             interactive=False,
@@ -194,6 +205,63 @@ def _wire_external_outbox_interceptor(session, routing) -> None:
 
 
 # ---------------------------------------------------------------------------
+# #1401: CLI-scoped capability overrides (env-backend / exclude-tools / grant)
+# ---------------------------------------------------------------------------
+# `reyn web` with the scoped flags builds the env-backend INSTANCE in the CLI
+# process and threads it here as a module-global (NOT an env-var: an instance
+# can't ride a string, and rebuilding it app-side would double-build/attach the
+# container = re-introducing the very drift class #1402/#1412 rooted). The lazy
+# process-global session factory + perm resolver read it; they are NOT
+# request-scoped, so app.state — read via Request in handlers — does not fit
+# (using a module-global is a factory-shape decision, not ignoring a seam).
+# Only set under no-reload (same process); --reload is guarded at the CLI.
+from contextlib import contextmanager  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+
+
+@dataclass(frozen=True)
+class CliScopedOverrides:
+    """The `reyn web` scoped capability overrides (#1401). All defaults = the
+    pre-#1401 web/A2A behaviour (no env-backend, no exclude, no grant)."""
+
+    environment_backend: object | None = None  # FS+exec backend INSTANCE (single-shared)
+    workspace_base_dir: object | None = None   # container repo root (Path | None)
+    workspace_state_dir: object | None = None  # host-side OS state dir (Path | None)
+    exclude_tools: "frozenset | None" = None   # tool names hidden from the LLM catalog
+    grant_file_write: bool = False             # grant file.read/write at the resolver
+
+
+_cli_scoped: "CliScopedOverrides | None" = None
+
+
+def set_cli_scoped_overrides(overrides: "CliScopedOverrides | None") -> None:
+    """Set/clear the CLI-scoped overrides. `reyn web` run() calls this ONCE
+    before uvicorn.run (no-reload). Resetting the cached lazy singletons here
+    keeps the next perm-resolver / registry build pick the new overrides up."""
+    global _cli_scoped, _perm_resolver, _registry
+    _cli_scoped = overrides
+    _perm_resolver = None
+    _registry = None
+
+
+def get_cli_scoped_overrides() -> "CliScopedOverrides":
+    return _cli_scoped or CliScopedOverrides()
+
+
+@contextmanager
+def cli_scoped_overrides(overrides: "CliScopedOverrides"):
+    """Test isolation: apply the overrides for the block, restore after
+    (incl. the cached perm-resolver / registry singletons)."""
+    global _cli_scoped, _perm_resolver, _registry
+    prev = (_cli_scoped, _perm_resolver, _registry)
+    set_cli_scoped_overrides(overrides)
+    try:
+        yield
+    finally:
+        _cli_scoped, _perm_resolver, _registry = prev
+
+
+# ---------------------------------------------------------------------------
 # AgentRegistry  (process-shared)
 # ---------------------------------------------------------------------------
 
@@ -240,6 +308,7 @@ def _get_registry():
 
         def _session_factory(profile: AgentProfile) -> ChatSession:
             registry = registry_ref[0]
+            _scoped = get_cli_scoped_overrides()  # #1401 CLI-scoped capabilities
             s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
@@ -271,20 +340,20 @@ def _get_registry():
                 action_retrieval_config=config.action_retrieval,
                 embedding_config=config.embedding,
                 eager_embedding_build=_eager_embedding_build,
-                # #1402: scoped capability surface, passed EXPLICITLY (required by
-                # build_scoped_chat_session). These are the A2A factory's current
-                # behaviour — defaults that document the gaps the divergence
-                # revealed, NOT new capabilities (behavior-preserving refactor).
-                # A consumer that needs one (e.g. an A2A SWE runner: #1401) flips
-                # the relevant default to a real value in one line.
-                allowed_mcp=None,  # gap: A2A lacks per-profile MCP gating (was omitted → None)
+                # #1401: the 3 scoped capabilities, filled from the CLI override
+                # holder (env-backend INSTANCE → both FS+exec seams = single-shared
+                # sandbox #1200; container-rooting; exclude-tools). Default None =
+                # the pre-#1401 web/A2A behaviour, so a plain `reyn web` is
+                # byte-identical. allowed_mcp / agent_id / router_max_iterations
+                # remain the #1431 item-2 gaps (separate capability decision).
+                allowed_mcp=None,
                 agent_id=None,
-                exclude_tools=None,
+                exclude_tools=_scoped.exclude_tools,
                 router_max_iterations=5,
-                environment_backend=None,  # gap: A2A lacks env-backend / container-rooting
-                sandbox_backend=None,
-                workspace_base_dir=None,
-                workspace_state_dir=None,
+                environment_backend=_scoped.environment_backend,
+                sandbox_backend=_scoped.environment_backend,
+                workspace_base_dir=_scoped.workspace_base_dir,
+                workspace_state_dir=_scoped.workspace_state_dir,
             )
             s.load_history()
             # FP-0041 #489 PR-D2.5: external transport outbox interceptor.
