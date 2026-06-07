@@ -123,8 +123,10 @@ def build_environment_backend(args: argparse.Namespace, *, launcher=None):
         from reyn.environment.container_launcher import (
             DEFAULT_IMAGE,
             WORKSPACE_DEST_DEFAULT,
+            BuildSpec,
             ContainerLauncher,
             LaunchConfig,
+            _devcontainer_image_tag,
             load_devcontainer_config,
             parse_mount_spec,
         )
@@ -139,21 +141,44 @@ def build_environment_backend(args: argparse.Namespace, *, launcher=None):
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
         keep = bool(getattr(args, "keep_container", False))
-        # #1324 (b) devcontainer awareness: a workspace devcontainer.json seeds
-        # the launch defaults; explicit CLI flags override it. build-based
-        # devcontainers are not yet supported → warn + use the default image.
+        # #1324 (b) devcontainer awareness + #1341 build-based support: a workspace
+        # devcontainer.json seeds the launch defaults; an explicit --image overrides.
+        # - dockerFile/build (buildable) → build the image on demand (#1341).
+        # - dockerComposeFile (multi-service) → out of scope → warn + default image.
         dc = load_devcontainer_config(workspace_root)
-        if dc is not None and dc.build_based:
-            print(
-                "Warning: build-based devcontainer (dockerFile/build) is not yet "
-                "supported; using the default image.",
-                file=sys.stderr,
-            )
         cli_image = getattr(args, "image", None)
-        dc_image = dc.image if (dc is not None and not dc.build_based) else None
+        build_spec = None
+        dc_image = None
+        if dc is not None:
+            if cli_image:
+                pass  # explicit --image wins → skip the devcontainer image/build
+            elif dc.buildable:
+                # #1341: build-based devcontainer → build on demand. The image is
+                # a content-addressed tag; the launcher builds it (inspect-then-
+                # build) + logs the build (security: the workspace Dockerfile runs
+                # on the host daemon at build time — same trust as VS Code "Reopen
+                # in Container"; the runtime container still gets all reyn flags).
+                build_spec = BuildSpec(
+                    dockerfile=dc.dockerfile,  # type: ignore[arg-type]  # buildable ⇒ not None
+                    context=dc.build_context,  # type: ignore[arg-type]
+                    build_args=dc.build_args,
+                    target=dc.build_target,
+                )
+                dc_image = _devcontainer_image_tag(build_spec)
+            elif dc.build_based:
+                # compose / non-buildable → single-container launcher can't run it.
+                print(
+                    "Warning: compose-based devcontainer (dockerComposeFile) is "
+                    "not supported (single-container launcher); using the default "
+                    "image.",
+                    file=sys.stderr,
+                )
+            else:
+                dc_image = dc.image  # plain image-based devcontainer
         config = LaunchConfig(
             workspace_root=workspace_root,
             image=cli_image or dc_image or DEFAULT_IMAGE,
+            build=build_spec,
             mounts=cli_mounts or (dc.mounts if dc is not None else []),
             persistent=keep,
             setup_command=(dc.setup_command if dc is not None else None),
