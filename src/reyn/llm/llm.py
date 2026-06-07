@@ -449,6 +449,20 @@ _LLM_RETRY_BASE_S: float = 2.0     # first backoff: 2s → 4s → 8s (capped at 
 _LLM_RETRY_MAX_BACKOFF_S: float = 16.0
 
 
+class EmptyLLMResponseError(Exception):
+    """The LLM returned a 200 response with an empty ``choices`` list.
+
+    Not an API-level error — litellm neither raises nor retries it — yet the
+    downstream ``response.choices[0]`` access would IndexError and silently
+    crash the router loop mid-task (#187 B1: gemini-2.5-flash-lite via the
+    LiteLLM proxy intermittently returns this 200+empty shape, killing the
+    turn before the agent edits). Raised by ``_llm_call_with_retry`` so the
+    same backoff machinery retries it (the condition is transient), and on
+    exhaustion the caller sees this named error instead of a cryptic
+    IndexError.
+    """
+
+
 def _get_retryable_litellm_exceptions() -> tuple:
     """Return the tuple of retryable litellm exceptions, loading litellm lazily.
 
@@ -474,6 +488,9 @@ def _is_retryable_exc(exc: BaseException) -> bool:
     Also catches httpx transport-level errors that LiteLLM may not wrap when
     the request fails before reaching the provider's HTTP response logic.
     """
+    if isinstance(exc, EmptyLLMResponseError):
+        # #187 B1: 200 + choices=[] is a transient provider condition — retry.
+        return True
     if isinstance(exc, _get_retryable_litellm_exceptions()):
         return True
     if isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout)):
@@ -509,7 +526,19 @@ async def _llm_call_with_retry(
     last_exc: BaseException | None = None
     for attempt in range(_LLM_RETRY_MAX_ATTEMPTS):
         try:
-            return await coro_fn()
+            response = await coro_fn()
+            # #187 B1 root fix: an empty `choices` list is a transient provider
+            # condition — not an API error, so litellm neither raises nor retries
+            # it, yet the downstream `response.choices[0]` access IndexErrors and
+            # silently kills the router loop mid-task. Raise a named retryable
+            # error so the SAME backoff machinery retries it (covers both
+            # call_llm and call_llm_tools, the two choices[0] callsites), and on
+            # exhaustion the caller sees a clear error instead of an IndexError.
+            if not getattr(response, "choices", None):
+                raise EmptyLLMResponseError(
+                    f"LLM returned a 200 response with empty choices (model={model!r})"
+                )
+            return response
         except BaseException as exc:
             if not _is_retryable_exc(exc):
                 raise

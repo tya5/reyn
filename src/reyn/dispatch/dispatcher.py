@@ -123,8 +123,18 @@ async def dispatch_tool(
 
     # 1. Name validation
     if name not in ctx.tool_catalog:
+        # #187 A (deny-message-decision-enabling): suggest the closest catalog tool
+        # so the LLM can self-correct a near-miss instead of stalling. The #187
+        # dogfood saw the agent guess `source__grep` (from the source__* namespace)
+        # → unknown_tool → deterministic stop. A "did you mean <X>?" hint names a
+        # real, callable tool from the same catalog.
+        import difflib
+        _suggestions = difflib.get_close_matches(
+            name, list(ctx.tool_catalog), n=1, cutoff=0.6,
+        )
+        _hint = f" Did you mean {_suggestions[0]!r}?" if _suggestions else ""
         return _error(ctx, name, "unknown_tool",
-                      f"Tool {name!r} not in catalog")
+                      f"Tool {name!r} not in catalog.{_hint}")
 
     # 2. Argument validation against parameters schema
     schema = (
