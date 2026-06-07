@@ -826,6 +826,24 @@ async def _handle_list_actions(
     total = len(items)
     page = items[offset:offset + limit]
 
+    # Stage B (#187): on a NARROWED (category-filtered) browse, enrich each page
+    # item with the SAME full description + input_schema describe_action returns
+    # — via the shared _describe_one, so list ≡ describe BY CONSTRUCTION — giving
+    # the LLM selection-grade detail (name + description + schema) without a
+    # separate describe_action round-trip (which weak models rarely make). This
+    # inherits the schema-blind-hallucination protection the removed ARS block
+    # used to provide. Bounded: only the narrowed view (valid_filter non-empty)
+    # is enriched and the page is limit-capped, so the unfiltered alphabetical
+    # browse stays compact for breadth scanning.
+    if valid_filter:
+        from reyn.tools import get_default_registry
+        _registry = get_default_registry()
+        enriched: list[dict[str, Any]] = []
+        for it in page:
+            one = _describe_one(it["qualified_name"], ctx, _registry)
+            enriched.append({**it, **one} if one is not None else it)
+        page = enriched
+
     response: dict[str, Any] = {"items": page, "total": total}
     if _should_inject_hidden_state_hint(ctx.router_state):
         response["hint"] = _HIDDEN_STATE_HINT
@@ -922,6 +940,50 @@ async def _handle_search_actions(
     return {"items": results, "total": len(results)}
 
 
+def _describe_one(
+    qualified_name: str, ctx: ToolContext, registry: Any,
+) -> "dict[str, Any] | None":
+    """Resolve ``{description, input_schema}`` for one qualified action.
+
+    The shared selection-grade core of ``describe_action`` AND ``list_actions``'
+    enriched items, so the two return the SAME description + schema for a given
+    action BY CONSTRUCTION (list ≡ describe). Returns ``None`` when the name
+    doesn't resolve or has no registry target (the caller skips / errors as it
+    sees fit). Intentionally returns ONLY description + input_schema — the
+    describe_action metadata block and the B41 post-call directive stay in
+    ``describe_action`` and are not carried into ``list_actions`` items.
+
+    Per-resource description/schema (``_resource_description`` /
+    ``_resource_input_schema``) win over the dispatcher target's generic
+    fields; the target ``.description`` / ``.parameters`` are the fallback for
+    operation-category actions (file__edit, exec__sandboxed_exec, …).
+    """
+    from reyn.tools.universal_dispatch import (
+        UnknownActionError,
+        resolve_describe_action,
+    )
+
+    try:
+        resolved = resolve_describe_action(qualified_name)
+    except UnknownActionError:
+        return None
+    target = registry.lookup(resolved.target_tool_name)
+    if target is None:
+        return None
+
+    resource_schema = _resource_input_schema(qualified_name, ctx, registry)
+    input_schema = (
+        resource_schema if resource_schema is not None
+        else dict(target.parameters)
+    )
+    resource_desc = _resource_description(qualified_name, ctx, registry)
+    description = (
+        resource_desc if resource_desc is not None
+        else target.description
+    )
+    return {"description": description, "input_schema": input_schema}
+
+
 async def _handle_describe_action(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
@@ -971,34 +1033,19 @@ async def _handle_describe_action(
             f"this in production, the target may be a future-PR op)",
         ))
 
-    # D2-full: prefer the per-resource schema over the dispatcher schema.
-    # Falls back to ``target.parameters`` for operation categories and any
-    # resource category we couldn't resolve from router_state.
-    resource_schema = _resource_input_schema(qualified_name, ctx, registry)
-    input_schema = (
-        resource_schema if resource_schema is not None
-        else dict(target.parameters)
-    )
-
-    # B42-NF-W7-1: prefer the per-resource description over the dispatcher's
-    # generic description (= ``invoke_skill`` / ``delegate_to_agent`` /
-    # ``call_mcp_tool`` instruction text). Without this, describe_action on
-    # a skill__/agent.peer__/mcp.tool__ resource returns the dispatcher's
-    # "how to invoke a skill" wording instead of the resource's actual
-    # description — the LLM has nothing meaningful to relay and empty-stops
-    # on pronoun-followups like "tell me more about the simplest one"
-    # (N=10 trace replay: 9/10 empty → 0/10 empty after substituting the
-    # actual skill.md description).
-    resource_desc = _resource_description(qualified_name, ctx, registry)
-    description = (
-        resource_desc if resource_desc is not None
-        else target.description
-    )
+    # D2-full / B42-NF-W7-1: description + input_schema come from the shared
+    # _describe_one core (per-resource fields win over the dispatcher target's
+    # generic ones, falling back to target.parameters/.description for
+    # operation categories), so describe_action and list_actions' enriched
+    # items agree BY CONSTRUCTION. ``one`` is non-None here — the resolve +
+    # registry lookup above already succeeded, so _describe_one's same
+    # resolution does too.
+    one = _describe_one(qualified_name, ctx, registry) or {}
 
     return {
         "qualified_name": qualified_name,
-        "description": description,
-        "input_schema": input_schema,
+        "description": one.get("description"),
+        "input_schema": one.get("input_schema"),
         "metadata": {
             "target_tool_name": resolved.target_tool_name,
             "category": target.category,
