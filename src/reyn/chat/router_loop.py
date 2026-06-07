@@ -13,7 +13,10 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.chat.router_system_prompt import (
+    build_system_prompt,
+    tier_wants_discovery_mandate,
+)
 from reyn.chat.router_tools import (
     _DESCRIBE_SKILL_STRIP_FIELDS,
     MAX_DESC_LEN_FOR_LISTING,
@@ -1645,6 +1648,13 @@ class RouterLoop:
                 # once above. Rendered LAST in the SP (most volatile section →
                 # preserves the cached prefix above it); None when ample.
                 context_size_signal=_ctx_signal,
+                # #187 Stage C: weak-tier mechanical list_actions-first mandate.
+                # Gated to weak tiers (light = the flash-lite-backed default
+                # intent tier that under-explores the catalog); strong/unknown
+                # tiers OFF (strong-flexibility-preserving). Only the chat
+                # router path reaches build_system_prompt — the phase op-loop
+                # uses system_prompt_override, so this does not touch it.
+                discovery_mandate=tier_wants_discovery_mandate(self.router_model),
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
