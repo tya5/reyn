@@ -172,6 +172,18 @@ class RouterHostAdapter:
         environment_backend: Any = None,
         workspace_base_dir: Path | None = None,
         workspace_state_dir: Path | None = None,
+        # #187 exec-seam (10th defect): the SandboxBackend INSTANCE for exec
+        # EXECUTION (docker for in-container repos). Distinct from the
+        # ``sandbox_backend`` STRING above (which only drives the D14 exec
+        # visibility gate): the op handler (op_runtime/sandboxed_exec) reads
+        # ``ctx.sandbox_backend`` (the instance) and falls back to the host
+        # seatbelt backend when it is None. Without threading this, the LIVE
+        # router's exec ran on the host (``No such file or directory:
+        # '/testbed'``), so the agent's verify loop always failed. Parallel to
+        # ``environment_backend`` for FS (#1411) — the legacy
+        # ``ChatSession._make_router_op_context`` already passes it; the live
+        # adapter omitted it (the same live-vs-legacy seam gap as #1410/#1411).
+        sandbox_backend_instance: Any = None,
         # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
         # ChatSession passes the session-scoped tracker; None when wrappers are
         # off or hot_list_n == 0.
@@ -311,6 +323,7 @@ class RouterHostAdapter:
         self._embedding_model_class = embedding_model_class
         # FP-0034 Phase 2
         self._sandbox_backend = sandbox_backend
+        self._sandbox_backend_instance = sandbox_backend_instance
         self._environment_backend = environment_backend
         self._workspace_base_dir = workspace_base_dir
         self._workspace_state_dir = workspace_state_dir
@@ -1477,6 +1490,9 @@ class RouterHostAdapter:
             media_store=self._media_store,
             # #272/#1128: voluntary-compaction capability for the compact op.
             compact_now=self._compact_now,
+            # #187 exec-seam: the exec backend INSTANCE so sandboxed_exec runs
+            # in the container repo (/testbed), not the host seatbelt fallback.
+            sandbox_backend=self._sandbox_backend_instance,
             # #1339 / sandbox-model completion: resolve the operator-or-default
             # sandbox policy onto the router OpContext (was None → the handler
             # fell back to LLM-set op fields = the sandbox-escape gap).
