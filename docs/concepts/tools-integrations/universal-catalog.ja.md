@@ -134,12 +134,27 @@ list (省略 / `[]` 渡しで全 visible category)。 `filter` は
 短い description を持つ; 長い description は意図的に出さず、 一覧を
 コンパクトに保つ。
 
+**weak-model landing 設計** では、 category で絞った結果は各 item の
+完全な `description` と `input_schema` を運ぶ (= `qualified_name` +
+`description` + `input_schema` の3点)。 これにより common flow は
+`list_actions` → `invoke_action` の2段になり、 間の `describe_action`
+が不要になる。
+[Weak-model discovery + selection reliability](#weak-model-discovery-selection-reliability)
+参照。
+
 ### `describe_action(action_name) → {qualified_name, description, input_schema, metadata}`
 
 1 つの action の long description、 完全な input schema (= 元 tool の
 `parameters`)、 metadata (`target_tool_name`, `category`, `purity`) を
 返す。 未知の name に対しては §D12 の structured error response (下記
 参照)。
+
+weak-model landing 設計では `describe_action` は **common critical path
+から外れる** — `list_actions` が絞った category について description +
+schema を既に返すため。 edge case 用にのみ残す: 単一名 lookup、 もしくは
+全 schema を list 結果に inline すると無駄になるほど大きい category。
+[Weak-model discovery + selection reliability](#weak-model-discovery-selection-reliability)
+参照。
 
 ### `invoke_action(action_name, args) → <target の result>`
 
@@ -245,6 +260,109 @@ prefix 内に留まる (= 2 回目以降の request は warm cache を hit)。
 Tier 2 invariant が section の bullet 一覧を `CATEGORIES` tuple に
 pin しているので、 master taxonomy への将来の追加が SP と乖離する場合は
 test が落ちる。
+
+## Weak-model discovery + selection reliability
+
+discover→invoke loop は LLM がそれを *使う* 意志の分だけしか機能しない。
+strong model (`router_model: strong`) は category 一覧から action を柔軟
+に discover / select でき、 追加の足場は要らない。 weak / small model
+(`router_model: light`) は 2 つの信頼できる failure mode を示し、 catalog
+はこれを **構造的に** 解く — weak 対応が strong の柔軟性を損なわない形で:
+
+1. **Satisficing** — より適した action (`file__edit`) を discover せず、
+   見えている hot-list action (`file__write`) を「十分」として invoke する。
+2. **Discovery-skip** — 能動的に `list_actions` を呼ばず、 training prior
+   から action 名を推測する (しばしば malformed: `file.write`,
+   `file__read_file`)。
+
+*Status: no-names system prompt と `file__edit` cross-reference は出荷済;
+`list_actions` が schema を返す点と tier-gated mandate は合意済の landing
+設計 (実装進行中)。 以下の各 lever は `gemini-2.5-flash-lite` に対し
+patch + live で reliable N で検証済。*
+
+### No-names catalog
+
+action 名は **ただ 1 箇所** — `list_actions` の結果 — にのみ現れる。
+system prompt (category を capability で記述し、 action 名は載せない) や
+他のあらゆる tool の description には存在しない。 これは 2 つの目的に資する:
+
+- **Scalability** — LLM 可視の tool 一覧と system prompt が action 数に
+  対し O(1) に保たれる; 200-action surface でも 20-action と同じ prompt
+  コスト。
+- **真に未知の action の強制 discovery** — 名前が model の記憶し得る
+  どこにも存在しないとき、 それを得る唯一の手段は `list_actions` の呼び
+  出しになる。 真に未知の action ではこれが確実に fire する (非推測な
+  obscure skill で `list_actions` 16/16 を観測)。
+
+  注意 — 名前隠蔽が discovery を強制するのは *未知* action のみ。 training
+  で **既知** の概念 (`file__read` / `file__write`) では、 weak model は
+  概念を recall し、 正確な名前を discover せず malformed な近似を emit
+  する。 既知 action の *選択* は名前隠蔽ではなく、 下記の機械的 mandate
+  で扱う。
+
+### `list_actions` が name + description + schema を返す
+
+`list_actions(category=[…])` が bounded set に絞ったとき、 各 item は
+**3点セット** — `qualified_name` / `description` / `input_schema` — を運ぶ:
+
+- **`description`** は model が正しい action を *選ぶ* ための材料; model は
+  読めない action を選べない (tool description の慣例的役割)。
+- **`input_schema`** は選んだ action を正しい引数で *invoke* するための形。
+
+絞った結果が両方を運ぶため、 common flow は **2 段 — `list_actions` →
+`invoke_action`** — で、 間に `describe_action` を挟まない。 コンパクト
+さは *category-narrowing* (聞いた category の schema だけ来る) で保たれ、
+schema を全体的に省くことでは保たない。
+
+検証 (schema → invocation 軸): `list_actions` 結果に schema を注入すると、
+受動的な `describe_action` 呼び出しが 14→0、 引数正答が 0→12 (/20) に
+なった — list に schema があれば weak model は別の describe round-trip
+なしに正しく invoke する。 description → selection 軸は tool description
+の慣例的役割 (読めない action は選べない) であり、 description は別途
+測定した lever ではなく設計根拠として運ぶ。
+
+### 機械的 mandate (tier-gated)
+
+weak model は **機械的・無条件の手続き mandate には従う** が **推論ベース
+の推奨は無視する**。 *説明する* cross-reference (「partial edit には
+`file__edit` を推奨」) は無視され (0/20 が従う)、 無条件 mandate (「edit は
+`file__write` でなく `file__edit` を使わ MUST」) は従われる (edit 3 /
+write 1)。
+
+そのため router は一連の機械的 system-prompt mandate を model tier で
+gate する (`router_model: light` → on; `strong` → off):
+
+- **`list_actions`-first** — 最初の tool 呼び出しは、 何かを read / write
+  / edit する前に MUST `list_actions`。
+- **`file__edit`-MUST** — partial / surgical edit は `file__write` でなく
+  `file__edit` を使う。
+
+mandate を効かせるのは 2 つの性質:
+
+1. **明示的 action 列挙の wording。** mandate が covers する具体操作を
+   名指す (「read / write / edit する前に」) と 25-55% compliance; 一般的
+   表現 (「他の tool の前に」) は 0-10%。
+2. **Constraint reinforcement。** mandate を system prompt 中に ~3× 反復
+   すると compliance が ~36% から **~75-85%** に上がる (matched-pair で
+   検証、 distribution overlap なし)。 反復は small model が推論途中で
+   指示を取りこぼす goal-displacement に対抗する。
+
+### 天井
+
+明示列挙 wording + 3× reinforcement で `list_actions`-first mandate は
+**~75-85% の weak-model compliance** に達する。 これが実用的な prompting
+天井: 残り ~15-25% は prompting だけでは閉じない alignment fragility で、
+さらに狭めるには fine-tuning が要り scope 外。 strong model は mandate を
+off で走り影響を受けない。
+
+### 統一原理
+
+> weak model は **真に未知の** action を **自力 discover** し、 **機械的
+> mandate に従う**; **training 既知** の名前では **recall して flail** し、
+> **推論ベースの推奨を無視する**。 ゆえに catalog は名前を隠し (未知
+> discovery を強制)、 description + schema を絞った list に載せ (describe
+> round-trip を除去)、 機械的 mandate を weak tier で gate する (既知
+> action の選択を解く) — strong model は無制約のまま。
 
 ## Default-on (PR-3b-iv)
 
