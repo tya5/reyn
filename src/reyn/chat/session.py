@@ -4760,101 +4760,30 @@ class ChatSession:
         that op_runtime layer permission checks actually gate access rather than
         silently allowing everything through an empty decl.
         """
-        from reyn.op_runtime.context import OpContext
-        from reyn.permissions.permissions import PermissionDecl
-        from reyn.sandbox.policy import resolve_sandbox_policy
-        from reyn.workspace.workspace import Workspace
+        from reyn.chat.router_op_context import build_router_op_context
 
-        file_perms = self._get_file_permissions_for_router() or {}
-        mcp_servers = self._get_mcp_servers_for_router() or []
-
-        # Convert flat path strings to the {path, scope} dict format used by PermissionDecl
-        file_read = [{"path": p, "scope": "recursive"} for p in file_perms.get("read", [])]
-        file_write = [{"path": p, "scope": "recursive"} for p in file_perms.get("write", [])]
-        mcp_names = [s["name"] for s in mcp_servers]
-
-        # #571 collapse arc Phase 5: the legacy ``mcp_install`` /
-        # ``index_drop`` bool axes are replaced with the explicit list
-        # axes the corresponding op handlers now consume. The chat
-        # router declares the canonical mutation paths + the registry
-        # host so LLM-emitted mcp_install / index_drop / mcp_drop_server
-        # ops pass the OS's uniform permission gates without per-op
-        # prompts (= operator-level config / session approvals carry
-        # the authorisation).
-        file_write = list(file_write) + [
-            {"path": ".reyn/mcp.yaml", "scope": "just_path"},
-            {"path": ".reyn/cron.yaml", "scope": "just_path"},
-            {"path": ".reyn/index/sources.yaml", "scope": "just_path"},
-        ]
-        decl = PermissionDecl(
-            file_read=file_read,
-            file_write=file_write,
-            mcp=mcp_names,
+        # #1412: single-sourced via build_router_op_context (shared with
+        # RouterHostAdapter). ChatSession wires intervention_bus POST-HOC on the
+        # returned ctx (the MCP-op caller), so it is None at construction here;
+        # media/multimodal/compact ops go via the registry / RouterHostAdapter
+        # path (None here) — behavior-preserving.
+        return build_router_op_context(
+            events=self._chat_events,
+            permission_resolver=self._perm,
+            file_permissions=self._get_file_permissions_for_router(),
+            mcp_servers=self._get_mcp_servers_for_router(),
+            mcp_servers_flat=self._mcp_servers_flat(),
             allowed_mcp=self._allowed_mcp,
-            # #571 Phase 7: wildcard http.get authorises LLM-driven
-            # ``web_fetch`` ops to any host via a per-host 4-layer
-            # prompt at runtime — unifies the safe.http + web_fetch
-            # paths under a single ``http.get`` axis. The MCP registry
-            # host is also listed specifically so mcp_install's
-            # startup_guard pre-approves it without an extra prompt.
-            http_get=[
-                {"host": "registry.modelcontextprotocol.io"},
-                {"host": "*"},
-            ],
-            # #571 Phase 6: wildcard secret.write authorises LLM-emitted
-            # mcp_install ops to save runtime-determined ``isSecret`` env
-            # vars from the registry — the actual security gate is the
-            # operator's per-value prompt at op-execution time.
-            secret_write=["*"],
-        )
-        # Session-approve the canonical OS mutation paths so the runtime
-        # require_file_write check passes silently for LLM-emitted ops
-        # in the chat router context. Skipped when no resolver is wired
-        # (= ad-hoc test contexts that pass permission_resolver=None).
-        if self._perm is not None:
-            for canonical in (".reyn/mcp.yaml", ".reyn/cron.yaml", ".reyn/index/sources.yaml"):
-                self._perm.session_approve_path(canonical, "chat_router", "file.write")
-
-        workspace = Workspace(
-            events=self._chat_events,
-            permission_resolver=self._perm,
-            skill_name="chat_router",
-            # #187: the chat OpContext FS root. With a container env-backend the
-            # agent's repo lives in the container (e.g. /testbed), so base_dir must
-            # be that container repo root — the partner of the backend below.
-            # Otherwise file__read/grep/glob resolve relative to the host cwd (the
-            # reyn repo) and the agent never sees the target tree. state_dir stays
-            # host-side (decoupled) so OS state survives container death + does not
-            # pollute the in-container git diff. None → Workspace's cwd default.
-            base_dir=self._workspace_base_dir,
-            state_dir=self._workspace_state_dir,
-            # #1200 PR-F1 (FS seam): run chat file ops on the agent's
-            # EnvironmentBackend instance (None → Workspace's HostBackend default).
+            workspace_base_dir=self._workspace_base_dir,
+            workspace_state_dir=self._workspace_state_dir,
             environment_backend=self._environment_backend,
-        )
-        return OpContext(
-            workspace=workspace,
-            events=self._chat_events,
-            permission_decl=decl,
-            permission_resolver=self._perm,
-            skill_name="chat_router",
-            mcp_servers=self._mcp_servers_flat(),
-            run_id=None,  # FP-0021: chat router is outside run scope
-            agent_id=self._agent_id,  # FP-0016 E
-            # #1200 PR-F2 (exec seam): run chat sandboxed_exec on the agent's
-            # SandboxBackend instance (None → get_default_backend, unchanged).
             sandbox_backend=self._sandbox_backend,
-            # #1339 / sandbox-model completion: resolve the operator-or-default
-            # sandbox policy onto the chat OpContext (was None → the op_runtime
-            # handler fell back to the LLM-set op fields = the sandbox-escape
-            # gap). Always a concrete policy now → the LLM cannot set the sandbox
-            # axes via sandboxed_exec.
-            default_sandbox_policy=resolve_sandbox_policy(
+            sandbox_policy=(
                 self._sandbox_config.policy
                 if getattr(self, "_sandbox_config", None) is not None
-                else None,
-                write_paths=[str(workspace.base_dir)],
+                else None
             ),
+            agent_id=self._agent_id,
         )
 
     async def _file_op(self, op_dict: dict) -> dict:

@@ -1411,93 +1411,33 @@ class RouterHostAdapter:
         is populated from the agent's effective permissions so that op_runtime
         layer permission checks actually gate access.
         """
-        from reyn.op_runtime.context import OpContext
-        from reyn.permissions.permissions import PermissionDecl
-        from reyn.sandbox.policy import resolve_sandbox_policy
-        from reyn.workspace.workspace import Workspace
+        from reyn.chat.router_op_context import build_router_op_context
 
-        file_perms = self._get_file_permissions_for_router() or {}
-        mcp_servers = self._get_mcp_servers_for_router() or []
-
-        file_read = [{"path": p, "scope": "recursive"} for p in file_perms.get("read", [])]
-        file_write = [{"path": p, "scope": "recursive"} for p in file_perms.get("write", [])]
-        mcp_names = [s["name"] for s in mcp_servers]
-
-        # #571 collapse arc Phase 5: explicit list axes replace the
-        # former mcp_install / index_drop bool axes. See ChatSession's
-        # _make_router_op_context for the matching pattern.
-        file_write = list(file_write) + [
-            {"path": ".reyn/mcp.yaml", "scope": "just_path"},
-            {"path": ".reyn/cron.yaml", "scope": "just_path"},
-            {"path": ".reyn/index/sources.yaml", "scope": "just_path"},
-        ]
-        decl = PermissionDecl(
-            file_read=file_read,
-            file_write=file_write,
-            mcp=mcp_names,
-            allowed_mcp=self._allowed_mcp,
-            # #571 Phase 7: wildcard http.get + specific MCP registry —
-            # see ChatSession's matching pattern.
-            http_get=[
-                {"host": "registry.modelcontextprotocol.io"},
-                {"host": "*"},
-            ],
-            # #571 Phase 6: wildcard secret.write — see ChatSession.
-            secret_write=["*"],
-        )
-        if self._perm is not None:
-            for canonical in (".reyn/mcp.yaml", ".reyn/cron.yaml", ".reyn/index/sources.yaml"):
-                self._perm.session_approve_path(canonical, "chat_router", "file.write")
-
-        workspace = Workspace(
-            events=self._events,
-            permission_resolver=self._perm,
-            skill_name="chat_router",
-            # #187: this is the LIVE op-context factory the registry file-dispatch
-            # uses (router_loop.py op_context_factory=host.make_router_op_context).
-            # With a container env-backend the agent's repo lives in the container
-            # (e.g. /testbed), so base_dir must be that container repo root and the
-            # FS backend must be the docker instance — otherwise file__read/grep/
-            # glob/edit (and the sandbox write_paths below) resolve against the host
-            # cwd. None (host backend) → cwd default, unchanged.
-            base_dir=self._workspace_base_dir,
-            state_dir=self._workspace_state_dir,
-            environment_backend=self._environment_backend,
-        )
-        # FP-0022 fix (#53): wire intervention_bus so handlers that need
-        # the 4-layer approval flow (web_fetch, mcp install / drop) can
-        # progress past their ``intervention_bus is None`` defensive
-        # guard. The config-deny check inside require_web_fetch fires
-        # before the bus is touched, so leaving the bus None is still
-        # safe for the deny path — but we wire a real bus when one is
-        # available so the interactive (Layer 4) path also works.
+        # #1412: single-sourced via build_router_op_context (shared with
+        # ChatSession). RouterHostAdapter wires intervention_bus inline (via the
+        # factory) + media/multimodal/compact (the registry-dispatch path serves
+        # web/media ops). agent_id is unset here (registry-dispatch lacks one) —
+        # a #1412 follow-up gap candidate, preserved behaviorally.
         bus = (
             self._intervention_bus_factory()
             if self._intervention_bus_factory is not None
             else None
         )
-        return OpContext(
-            workspace=workspace,
+        return build_router_op_context(
             events=self._events,
-            permission_decl=decl,
             permission_resolver=self._perm,
-            skill_name="chat_router",
-            mcp_servers=self._mcp_servers_flat(),
-            intervention_bus=bus,
-            # Issue #364: gate config for router-initiated binary ops.
-            multimodal_config=self._multimodal_config,
-            # Issue #383 PR-C: shared MediaStore for path-ref save/read.
-            media_store=self._media_store,
-            # #272/#1128: voluntary-compaction capability for the compact op.
-            compact_now=self._compact_now,
-            # #187 exec-seam: the exec backend INSTANCE so sandboxed_exec runs
-            # in the container repo (/testbed), not the host seatbelt fallback.
+            file_permissions=self._get_file_permissions_for_router(),
+            mcp_servers=self._get_mcp_servers_for_router(),
+            mcp_servers_flat=self._mcp_servers_flat(),
+            allowed_mcp=self._allowed_mcp,
+            workspace_base_dir=self._workspace_base_dir,
+            workspace_state_dir=self._workspace_state_dir,
+            environment_backend=self._environment_backend,
             sandbox_backend=self._sandbox_backend_instance,
-            # #1339 / sandbox-model completion: resolve the operator-or-default
-            # sandbox policy onto the router OpContext (was None → the handler
-            # fell back to LLM-set op fields = the sandbox-escape gap).
-            default_sandbox_policy=resolve_sandbox_policy(
-                self._sandbox_policy,
-                write_paths=[str(workspace.base_dir)],
-            ),
+            sandbox_policy=self._sandbox_policy,
+            agent_id=None,
+            intervention_bus=bus,
+            multimodal_config=self._multimodal_config,
+            media_store=self._media_store,
+            compact_now=self._compact_now,
         )
