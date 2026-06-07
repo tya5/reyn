@@ -169,9 +169,9 @@ def _web_can_write(target: str, sandbox: "SandboxPolicy", *, grant: bool, ws) ->
 
 
 def test_grant_file_write_gates_real_in_repo_write(tmp_path, monkeypatch):
-    """Tier 2 R1: the --grant-file-write holder flag ACTUALLY gates file.write on
-    the REAL web perm resolver. Differential (the falsification pair): grant=True
-    allows an in-repo write, grant=False denies it. Not a source string-grep."""
+    """Tier 2: R1 — the --grant-file-write holder flag ACTUALLY gates file.write
+    on the REAL web perm resolver. Differential (the falsification pair):
+    grant=True allows an in-repo write, grant=False denies it. Not a string-grep."""
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     repo = tmp_path / "container_repo"
@@ -182,10 +182,10 @@ def test_grant_file_write_gates_real_in_repo_write(tmp_path, monkeypatch):
 
 
 def test_file_zone_root_from_holder_anchors_default_zone(tmp_path, monkeypatch):
-    """Tier 2 R1: file_zone_root receives the holder's container repo root (#1414)
-    at RUNTIME. Differential (no grant): a write into <repo>/.reyn (the default
-    write zone anchored on file_zone_root) is allowed when ws_base_dir=repo, but
-    DENIED when the holder has no ws_base_dir (zone anchors on the host root)."""
+    """Tier 2: R1 — file_zone_root receives the holder's container repo root
+    (#1414) at RUNTIME. Differential (no grant): a write into <repo>/.reyn (the
+    default write zone anchored on file_zone_root) is allowed when ws_base_dir=
+    repo, but DENIED when the holder has no ws_base_dir (zone anchors on host)."""
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     repo = tmp_path / "container_repo"
