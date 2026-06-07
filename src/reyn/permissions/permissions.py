@@ -369,9 +369,21 @@ class PermissionResolver:
         # FP-0014 compat: accept the legacy keyword name during the Track A → B
         # transition. New callers should use `unsafe_python_allowed`.
         trusted_python_allowed: bool | None = None,
+        # #1414: the default file read/write ZONE anchor. Distinct from
+        # ``project_root`` (= the host-side approvals/config base). Under a
+        # container backend the agent's file ops target the in-container repo
+        # (base_dir=/testbed, #1410/#1411), so the zone must anchor there while
+        # approvals.yaml stays host-side. ``None`` → defaults to ``project_root``
+        # so host / interactive behaviour is byte-identical.
+        file_zone_root: Path | None = None,
     ) -> None:
         self._config = config_permissions or {}
         self._project_root = (project_root or Path.cwd()).resolve()
+        # #1414: zone anchor (container repo root under a container backend);
+        # falls back to the host project_root (host-default byte-identical).
+        self._file_zone_root = (
+            Path(file_zone_root).resolve() if file_zone_root else self._project_root
+        )
         self._interactive = interactive
         self._approvals_path = self._project_root / ".reyn" / "approvals.yaml"
         self._session: dict[str, bool] = {}
@@ -783,7 +795,7 @@ class PermissionResolver:
             scope = entry.get("scope", "just_path")
             if not path:
                 continue
-            if _in_default_write_zone(path, self._project_root):
+            if _in_default_write_zone(path, self._file_zone_root):  # #1414
                 continue
             if self._is_config_approved("file.write"):
                 continue
@@ -799,7 +811,7 @@ class PermissionResolver:
             scope = entry.get("scope", "just_path")
             if not path:
                 continue
-            if _in_default_read_zone(path, self._project_root):
+            if _in_default_read_zone(path, self._file_zone_root):  # #1414
                 continue
             if self._is_config_approved("file.read"):
                 continue
@@ -1023,7 +1035,7 @@ class PermissionResolver:
             )
 
         if EffectivePermission([
-            AgentLayer(decl, approval_check=_approved, project_root=self._project_root),
+            AgentLayer(decl, approval_check=_approved, file_zone_root=self._file_zone_root),  # #1414
             SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_READ, path):
             return
@@ -1075,7 +1087,7 @@ class PermissionResolver:
             )
 
         if EffectivePermission([
-            AgentLayer(decl, approval_check=_approved, project_root=self._project_root),
+            AgentLayer(decl, approval_check=_approved, file_zone_root=self._file_zone_root),  # #1414
             SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_WRITE, path):
             return
@@ -1341,7 +1353,7 @@ class PermissionResolver:
 
         return EffectivePermission([
             AgentLayer(PermissionDecl(), approval_check=_approved,
-                       project_root=self._project_root)
+                       file_zone_root=self._file_zone_root)  # #1414
         ]).allows(CapabilityAxis.FILE_READ, path)
 
     def is_write_allowed(self, path: str, skill_name: str = "") -> bool:
@@ -1371,7 +1383,7 @@ class PermissionResolver:
 
         return EffectivePermission([
             AgentLayer(PermissionDecl(), approval_check=_approved,
-                       project_root=self._project_root)
+                       file_zone_root=self._file_zone_root)  # #1414
         ]).allows(CapabilityAxis.FILE_WRITE, path)
 
     async def require_mcp(

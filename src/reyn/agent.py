@@ -182,6 +182,11 @@ class Agent:
         permission_resolver = PermissionResolver(
             config_permissions=perm_config,
             project_root=_find_project_root(Path.cwd()),
+            # #1414: under a container backend the file zone anchors on the
+            # in-container repo (workspace_base_dir = base_dir, #1410/#1411),
+            # while approvals stay host-side. None (host) → defaults to
+            # project_root (byte-identical).
+            file_zone_root=workspace_base_dir,
             interactive=sys.stdin.isatty() if interactive is None else interactive,
             unsafe_python_allowed=unsafe_python,
         )

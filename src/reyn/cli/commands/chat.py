@@ -346,14 +346,9 @@ def run(args: argparse.Namespace) -> None:
     _exclude_tools = frozenset(
         t.strip() for t in (getattr(args, "exclude_tools", None) or "").split(",") if t.strip()
     )
-    # Single PermissionResolver shared across agents (per the PR10 decision:
-    # `.reyn/approvals.yaml` is process-wide).
-    perm_resolver = PermissionResolver(
-        config_permissions=perm_config,
-        project_root=project_root,
-        interactive=sys.stdin.isatty(),
-        unsafe_python_allowed=unsafe_python,
-    )
+    # #1414: the single PermissionResolver is constructed BELOW, after
+    # build_environment_backend, because it needs ``ws_base_dir`` for the
+    # container file-zone anchor (file_zone_root). It isn't used before then.
 
     project_context = load_project_context(session_cfg.config, project_root)
 
@@ -365,6 +360,21 @@ def run(args: argparse.Namespace) -> None:
     if env_cleanup is not None:
         import atexit
         atexit.register(env_cleanup)
+
+    # Single PermissionResolver shared across agents (per the PR10 decision:
+    # `.reyn/approvals.yaml` is process-wide). #1414: the default file
+    # read/write zone anchors on ``ws_base_dir`` (the container repo root under a
+    # container backend) so a non-grant write into the container repo's own
+    # `.reyn`/`reyn` default zone is permitted; approvals.yaml stays host-side
+    # (``project_root``). ws_base_dir is None for a host backend → file_zone_root
+    # defaults to project_root (host / interactive byte-identical).
+    perm_resolver = PermissionResolver(
+        config_permissions=perm_config,
+        project_root=project_root,
+        file_zone_root=ws_base_dir,
+        interactive=sys.stdin.isatty(),
+        unsafe_python_allowed=unsafe_python,
+    )
 
     def _session_factory(profile: AgentProfile):
         # Captured CLI defaults — registry doesn't need to know them.

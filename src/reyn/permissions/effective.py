@@ -100,15 +100,17 @@ class AgentLayer:
         decl: "PermissionDecl",
         *,
         approval_check: "Any" = None,
-        project_root: "Any" = None,
+        file_zone_root: "Any" = None,
     ) -> None:
         self._decl = decl
         self._approval_check = approval_check
-        # #1316: the project root the default zones are anchored to. None →
-        # Path.cwd() inside the zone fns (historical). Passing the resolver's
-        # _project_root makes the zone base match the approvals base (so a
-        # project_root ≠ cwd does not diverge zone vs approval evaluation).
-        self._project_root = project_root
+        # #1316/#1414: the root the default file zones are anchored to. None →
+        # Path.cwd() inside the zone fns (historical). This is the FILE-ZONE
+        # root only — under a container backend (#1414) it is the in-container
+        # repo root (workspace_base_dir), which may DIVERGE from the host-side
+        # approvals base (the resolver passes ``_file_zone_root``, defaulting to
+        # the host ``_project_root`` so host/interactive stays byte-identical).
+        self._file_zone_root = file_zone_root
 
     def _approved(self, axis: CapabilityAxis, value: Any) -> bool:
         return bool(self._approval_check and self._approval_check(axis, value))
@@ -118,13 +120,13 @@ class AgentLayer:
         if axis is CapabilityAxis.FILE_READ:
             # #1199 S3.1c-1: decl-less — zone OR approved (no decl auto-grant).
             return (
-                _in_default_read_zone(str(value), self._project_root)
+                _in_default_read_zone(str(value), self._file_zone_root)
                 or self._approved(axis, value)
             )
         if axis is CapabilityAxis.FILE_WRITE:
             # #1199 S3.1c-1: decl-less — zone OR approved (no decl auto-grant).
             return (
-                _in_default_write_zone(str(value), self._project_root)
+                _in_default_write_zone(str(value), self._file_zone_root)
                 or self._approved(axis, value)
             )
         if axis is CapabilityAxis.NETWORK_HOST:
@@ -260,14 +262,15 @@ class EffectivePermission:
         sandbox_policy: "SandboxPolicy | None" = None,
         profile: "AgentProfile | None" = None,
         approval_check: "Any" = None,
-        project_root: "Any" = None,
+        file_zone_root: "Any" = None,
     ) -> "EffectivePermission":
         """Build from the inputs (zone + approvals folded into the agent
         layer; ② grant-back-safe). Build per op-context (Q3).
 
-        #1316: ``project_root`` anchors the default zones (None → cwd)."""
+        #1316/#1414: ``file_zone_root`` anchors the default file zones (None →
+        cwd). Distinct from the host approvals base under a container backend."""
         return cls([
-            AgentLayer(decl, approval_check=approval_check, project_root=project_root),
+            AgentLayer(decl, approval_check=approval_check, file_zone_root=file_zone_root),
             SandboxLayer(sandbox_policy),
             ProfileLayer(profile),
         ])
