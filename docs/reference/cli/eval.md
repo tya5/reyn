@@ -31,7 +31,7 @@ reyn eval spec      FILE [OPTIONS]
 
 ## Subcommand: `benchmark`
 
-Run a skill against a JSONL task file with concurrent dispatch. Each line of the task file is one task input matching the skill's `input_schema`. Used as the execution layer for the SWE-bench harness wrapper (see [guide: run-swe-bench](../../guide/for-users/run-swe-bench.md)).
+Run a skill against a JSONL task file with concurrent dispatch. Each line of the task file is one task input matching the skill's `input_schema`.
 
 ```
 reyn eval benchmark <SKILL_NAME> --tasks PATH --output DIR [OPTIONS]

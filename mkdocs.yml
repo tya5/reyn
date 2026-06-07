@@ -87,8 +87,6 @@ nav:
               - guide/for-users/work-with-files.md
               - guide/for-users/enable-semantic-search.md
               - guide/for-users/popular-mcp-servers.md
-          - Evaluation:
-              - guide/for-users/run-swe-bench.md
       - For skill authors:
           - guide/for-skill-authors/index.md
           - Foundation:
