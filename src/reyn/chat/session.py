@@ -1855,6 +1855,13 @@ class ChatSession:
             environment_backend=self._environment_backend,
             workspace_base_dir=self._workspace_base_dir,
             workspace_state_dir=self._workspace_state_dir,
+            # #187 exec-seam (10th defect): the exec backend INSTANCE so the LIVE
+            # router's sandboxed_exec runs in the container repo, not the host
+            # seatbelt fallback. Same instance the legacy _make_router_op_context
+            # passes (4824); chat.py injects the SAME docker backend at both FS +
+            # exec seams (#1289 single-shared-sandbox). Distinct from the D14
+            # STRING above.
+            sandbox_backend_instance=self._sandbox_backend,
             # #1339 / sandbox-model completion: thread the operator sandbox
             # policy so make_router_op_context resolves a concrete agent-level
             # policy onto the router OpContext (closes the chat-factory wiring gap).

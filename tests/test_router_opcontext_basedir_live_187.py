@@ -48,3 +48,34 @@ def test_live_op_context_host_default_unchanged() -> None:
     s = ChatSession(agent_name="t")
     ctx = s._router_host.make_router_op_context()
     assert ctx.workspace.base_dir == Path.cwd()
+
+
+def test_live_op_context_threads_exec_sandbox_backend(tmp_path) -> None:
+    """Tier 2: #187 exec-seam (10th defect) — the LIVE op-context factory carries the
+    injected sandbox_backend INSTANCE so ``sandboxed_exec`` runs in the container repo,
+    not the host seatbelt fallback.
+
+    Root: ``sandboxed_exec`` reads ``ctx.sandbox_backend or get_default_backend(...)``;
+    the live ``RouterHostAdapter.make_router_op_context`` omitted ``sandbox_backend=``
+    on its OpContext → None → host seatbelt → exec hit ``/testbed not found`` → the
+    agent's verify loop always failed. The legacy ``ChatSession._make_router_op_context``
+    passed it; this is the same live-vs-legacy seam gap as #1410/#1411 (3rd instance).
+    """
+    backend = DockerEnvironmentBackend(container="c1", repo_dir="/testbed")
+    s = ChatSession(
+        agent_name="t", environment_backend=backend, sandbox_backend=backend,
+        workspace_base_dir=Path("/testbed"), workspace_state_dir=tmp_path,
+    )
+    ctx = s._router_host.make_router_op_context()
+    assert ctx.sandbox_backend is backend, (
+        "live router exec must run on the injected sandbox backend (the container), "
+        "not the None→host-seatbelt fallback (the #187 exec-seam defect)"
+    )
+
+
+def test_live_op_context_no_sandbox_backend_default_unchanged() -> None:
+    """Tier 2: no sandbox_backend → ctx.sandbox_backend is None → ``sandboxed_exec``
+    falls back to the host default backend (host / interactive behavior unchanged)."""
+    s = ChatSession(agent_name="t")
+    ctx = s._router_host.make_router_op_context()
+    assert ctx.sandbox_backend is None
