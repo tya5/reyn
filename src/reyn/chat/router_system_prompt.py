@@ -12,6 +12,47 @@ from collections import defaultdict
 from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING
 
 # ---------------------------------------------------------------------------
+# #187 Stage C: mechanical discovery mandate (weak-tier list_actions-first)
+# ---------------------------------------------------------------------------
+# Weak models under-explore the catalog: they satisfice (refuse / give up /
+# act on the visible hot-list) instead of calling list_actions to discover the
+# action they need. The fix composes INTO the existing V18 intent taxonomy
+# rather than bolting on a standalone unconditional mandate: branch-3 (task →
+# single-target) already routes "obvious/named action → invoke directly;
+# OTHERWISE <discovery chain>", but that OTHERWISE is a SOFT routing hint —
+# the ~33% under-fire root. Stage C strengthens ONLY that OTHERWISE branch into
+# a mechanical MUST, reinforced 3x (branch-3 / §D9 hot-list / Behaviour), each
+# carrying a "NON-obvious / unknown / not-named action" scope qualifier.
+#
+# Why scoped, not unconditional (owner decision + B11-R3 evidence): a bare
+# "list_actions FIRST always" reverses B11-R3 (named-skill → invoke directly,
+# skip the list-hop) whose mandatory hop made weak models fall through to
+# clarification = the exact non-invoke attractor #187 fights. The obvious/named
+# clause (branch-3) and the Conversation (branch-1) / Question (branch-2)
+# branches are UNTOUCHED, so chitchat / named-skill / direct routing are
+# preserved by construction. The mechanical lever (MUST) + 3x reinforcement
+# lifts list_actions-first ~25-55% → ~75-85% for genuine unnamed-discovery.
+#
+# VERBATIM wording — do NOT paraphrase (fire-rate is wording-sensitive). The
+# explicit-action-enumeration "before reading, writing, or editing" is the
+# verified lever (25-55%); the generic "before acting / any other tool" detunes
+# to 0-10%. Gated to weak tiers; lives in the static cacheable prefix.
+
+# Tier-gate: only tiers empirically shown to under-explore receive the mandate.
+# ``light`` is the default intent tier (flash-lite-backed). Unknown/future and
+# strong tiers stay OFF — strong-flexibility-preserving default (owner knob:
+# don't weak-specialise away strong models' latitude).
+_WEAK_TIERS = frozenset({"light"})
+
+
+def tier_wants_discovery_mandate(router_model: str | None) -> bool:
+    """True if the router tier should receive the mechanical list_actions
+    discovery mandate (#187 Stage C). Only verified weak tier(s) opt in;
+    unknown / strong tiers stay OFF (strong-flexibility-preserving default)."""
+    return router_model in _WEAK_TIERS
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -32,6 +73,7 @@ def build_system_prompt(
     cwd: str | None = None,
     search_actions_enabled: bool = True,  # FP-0034 §D14 — default True preserves byte-compat
     context_size_signal: str | None = None,  # #272/#1128 — pre-rendered, appended LAST
+    discovery_mandate: bool = False,  # #187 Stage C — weak-tier list_actions-first mandate (3x)
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -195,6 +237,25 @@ def build_system_prompt(
     #     treat the classification as a single-shot commitment.
     #   - Ambiguous-ask path matches human-assistant baseline; previous
     #     SP shapes never offered this and the LLM defaulted to guessing.
+    #
+    # #187 Stage C (1/3 reinforcement): the branch-3 "Otherwise" tail. Default
+    # is the SOFT discovery-chain hint; when ``discovery_mandate`` (weak tier),
+    # strengthen ONLY this OTHERWISE branch into a mechanical MUST. The
+    # obvious/named clause before it (B11-R3) is untouched, so the scope
+    # qualifier is structural: this fires only for NON-obvious / not-named
+    # actions. Verified explicit-action-enumeration ("reading, writing, or
+    # editing"); no generic "before acting".
+    if discovery_mandate:
+        _otherwise = (
+            "Otherwise — i.e. for any action that is NOT obvious or a named "
+            "skill above — your FIRST tool call MUST be list_actions before "
+            "reading, writing, or editing anything (the visible tools are a "
+            "hot-list subset, not the full catalog; do NOT skip it, refuse, "
+            f"or guess). Then {_wrapper_chain}. To edit a file you MUST use "
+            "file__edit, found via list_actions."
+        )
+    else:
+        _otherwise = f"Otherwise {_wrapper_chain}."
     parts.extend([
         "Decide what the user wants. Multi-step routing is fine — explore"
         " briefly when the right path is uncertain, but don't loop.",
@@ -219,8 +280,7 @@ def build_system_prompt(
         " item): if the action is obvious (file__read for \"read this"
         " file\", reyn.source__read for \"open Reyn doc X\", web__fetch"
         " for a specific URL, invoke_action(skill__X) for an explicit"
-        " named skill), invoke directly. Otherwise"
-        f" {_wrapper_chain}.",
+        " named skill), invoke directly. " + _otherwise,
         "- Multi-target / iteration (= \"do X for each Y\", \"process N"
         " files\", \"run X on every Y\"): decompose with plan into"
         " per-target steps + a final aggregate step. Do NOT invoke a"
@@ -332,12 +392,38 @@ def build_system_prompt(
         )
         parts.append("")
 
+    # #187 Stage C (2/3 reinforcement): strengthen the §D9 hot-list discovery
+    # guidance above into a mechanical MUST. Scope-qualified ("no visible tool
+    # obviously matches") so it reinforces the SAME non-obvious scope as
+    # branch-3, never a blanket rule (bleed guard). Renders whenever the tier
+    # opts in; list_actions is always available.
+    if discovery_mandate:
+        parts.append(
+            "When no visible tool obviously matches the action you need, "
+            "calling list_actions is MANDATORY and comes FIRST — before any "
+            "read, write, or edit. Treat the visible list as a subset, never "
+            "as complete."
+        )
+        parts.append("")
+
     # ── 4 & 5. Behaviour (static core) ─────────────────────────────────────
     # FP-0023 Change 1: Static Behaviour rules moved here (before dynamic
     # sections) to maximise cache prefix coverage. The two dynamic conditional
     # blocks (output_language, indexed_sources_section) are emitted later,
     # after the dynamic resource sections, since they vary per session/config.
     parts.append("## Behaviour")
+    # #187 Stage C (3/3 reinforcement): a Behaviour rule, scope-qualified
+    # ("an action you cannot name from the visible tools") so it reinforces the
+    # SAME non-obvious/unknown scope as branch-3 + §D9, not a blanket rule.
+    # Inside the static cacheable prefix.
+    if discovery_mandate:
+        parts.append(
+            "  - When a task needs an action you cannot name from the visible "
+            "tools, your FIRST tool call MUST be list_actions before reading, "
+            "writing, or editing anything — the visible tools are a hot-list "
+            "subset, not the full catalog."
+        )
+        parts.append("")
     # Wrapper-only: 5 cross-cutting policies (B23-PRE-1 confirmed policy).
     # Per-tool flow details (post-list MUST, post-describe MUST, spawn-ack,
     # task_completed, agent delegation, plan WHAT/WHEN_NOT) live in each
