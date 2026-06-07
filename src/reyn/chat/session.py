@@ -210,6 +210,28 @@ _TOOL_FAILED_FALLBACK_MSG: dict[str, str] = {
 }
 
 
+def _exec_gate_backend_name(sandbox_backend: Any, sandbox_config: Any) -> str | None:
+    """#1417: resolve the ``exec`` D14 visibility-gate backend name.
+
+    The ``exec`` category is gated on the ACTUAL exec backend, not the reyn.yaml
+    config string. When a sandbox backend INSTANCE is injected (e.g.
+    ``--env-backend=docker`` → ``DockerEnvironmentBackend.name == "docker"``),
+    its ``.name`` is the gate value — so ``exec`` stays discoverable even with a
+    ``sandbox.backend = noop`` config (the construction-forwarding-gap: the
+    config string is NOT the live injected instance, and the instance is what
+    actually executes via ``sandboxed_exec``). With no injected instance, fall
+    back to the config string (``auto`` / host-default behaviour unchanged).
+
+    A defensive ``getattr`` keeps an instance without a ``name`` from raising
+    (degrades to None → exec hidden, the safe direction).
+    """
+    if sandbox_backend is not None:
+        return getattr(sandbox_backend, "name", None)
+    if sandbox_config is not None:
+        return sandbox_config.backend
+    return None
+
+
 class RouterCapExceeded(Exception):
     """Raised when a user turn (or top-level agent_request) drives more
     skill_router invocations than the configured cap. Caught by handlers,
@@ -1827,10 +1849,20 @@ class ChatSession:
             ),
             action_retrieval_config=self._action_retrieval,
             # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
-            # None when sandbox_config is None (= noop assumed).
-            sandbox_backend=(
-                self._sandbox_config.backend if self._sandbox_config is not None
-                else None
+            # #1417: gate on the INJECTED backend's real capability, not the
+            # reyn.yaml config STRING. The exec capability comes from the
+            # injected ``self._sandbox_backend`` instance (the SAME object used
+            # for actual exec at line 1847 / sandboxed_exec.py: ``ctx.sandbox_
+            # backend or get_default_backend(...)``); both injected types expose
+            # ``.name`` (DockerEnvironmentBackend.name="docker" / SandboxBackend
+            # .name). Without this, ``sandbox.backend=noop`` config + an injected
+            # exec backend (``--env-backend=docker``) would HIDE exec from
+            # discovery even though sandboxed_exec is functionally available
+            # (the construction-forwarding-gap: config string ≠ live instance).
+            # No injected instance → fall back to the config string (auto /
+            # host-default behaviour unchanged).
+            sandbox_backend=_exec_gate_backend_name(
+                self._sandbox_backend, self._sandbox_config
             ),
             # #187: the FS env-backend instance + container repo root + host-side
             # state dir for the LIVE router OpContext Workspace (the registry
