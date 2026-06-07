@@ -434,3 +434,35 @@ def test_routing_decided_source_hot_list_alias_only_when_in_catalog(monkeypatch:
         f"Without hot-list landing, source must be 'ars_direct' not "
         f"'hot_list_alias' (issue #241); got {ev['source']!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Removal-invariant: invoke_action.description carries no action enumeration
+# ---------------------------------------------------------------------------
+
+
+def test_invoke_action_description_has_no_ars_block(monkeypatch: pytest.MonkeyPatch):
+    """Tier 2: #187 STEP 1c — invoke_action's description carries NO action
+    enumeration. Owner principle: actions are listed ONLY by list_actions and
+    their schemas ONLY by describe_action. The former ARS block (B37/B38), which
+    inlined the whole session action catalog into invoke_action.description, is
+    removed — this is the load-bearing guard against re-adding a second
+    enumeration surface to the wrapper description.
+    """
+    host = _FakeRouterHost(universal_wrappers_enabled=True)
+    captured: dict = {}
+
+    async def _capture_tools(**kwargs: object) -> LLMToolCallResult:
+        captured["tools"] = kwargs.get("tools")
+        return _text_result("ok")  # finish immediately
+
+    loop = RouterLoop(host=host, chain_id="chain-test", max_iterations=5)
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _capture_tools)
+    asyncio.run(loop.run("hello", []))
+
+    tools = captured["tools"]
+    invoke = next(t for t in tools if t["function"]["name"] == "invoke_action")
+    desc = invoke["function"]["description"]
+    # The ARS block's headers (public surface the LLM saw) must be absent.
+    assert "ACTION ARG SCHEMAS" not in desc
+    assert "canonical keys for all session-visible actions" not in desc
