@@ -139,12 +139,25 @@ case-insensitive substring match against `qualified_name` and
 `qualified_name` and a short description; long descriptions are
 deliberately omitted so the listing stays compact.
 
+In the **weak-model landing design**, a narrowed-category result instead
+carries each item's full `description` and `input_schema` (the triple
+`qualified_name` + `description` + `input_schema`), so the common flow is
+`list_actions` → `invoke_action` with no intervening `describe_action`. See
+[Weak-model discovery + selection reliability](#weak-model-discovery-selection-reliability).
+
 ### `describe_action(action_name) → {qualified_name, description, input_schema, metadata}`
 
 Returns the long description, full input schema (= the underlying
 tool's `parameters`), and metadata (`target_tool_name`, `category`,
 `purity`) for one action. On an unknown name, returns a structured
 error response per §D12 (see below).
+
+Under the weak-model landing design, `describe_action` is **off the common
+critical path** — `list_actions` already returns descriptions + schemas for
+the narrowed category. It is retained for edge cases only: a single-name
+lookup, or a category large enough that inlining every schema into the list
+result would be wasteful. See
+[Weak-model discovery + selection reliability](#weak-model-discovery-selection-reliability).
 
 ### `invoke_action(action_name, args) → <target's result>`
 
@@ -252,6 +265,116 @@ warm cache).
 A Tier 2 invariant pins the section's bullet list to the `CATEGORIES`
 tuple so future additions to the master taxonomy cannot drift from the
 SP without the test failing.
+
+## Weak-model discovery + selection reliability
+
+The discover→invoke loop is only as good as the LLM's willingness to *use*
+it. Strong models (`router_model: strong`) discover and select actions
+flexibly from the category list and need no extra scaffolding. Weak / small
+models (`router_model: light`) exhibit two reliable failure modes that the
+catalog addresses **structurally**, so weak-model support never costs
+strong-model flexibility:
+
+1. **Satisficing** — the model invokes a visible hot-list action
+   (`file__write`) instead of discovering a better-fit one (`file__edit`),
+   because the hot action is "good enough".
+2. **Discovery-skip** — the model does not proactively call `list_actions`;
+   it guesses an action name from training priors, often malformed
+   (`file.write`, `file__read_file`).
+
+*Status: the no-names system prompt and the `file__edit` cross-reference are
+shipped; `list_actions` returning schemas and the tier-gated mandates are the
+agreed landing design (implementation in progress). Every lever below is
+patch- and live-verified against `gemini-2.5-flash-lite` at reliable N.*
+
+### No-names catalog
+
+Action names appear in **exactly one place**: the `list_actions` result.
+They are absent from the system prompt (which describes *categories* by
+capability, never action names) and from every other tool's description.
+This serves two ends:
+
+- **Scalability** — the LLM-visible tool list and system prompt stay O(1)
+  in the number of actions; a 200-action surface costs the same prompt as a
+  20-action one.
+- **Forced discovery of genuinely-unknown actions** — when a name exists
+  nowhere the model could have memorised it, the only way to obtain it is to
+  call `list_actions`. For genuinely-unknown actions this fires reliably
+  (observed 16/16 `list_actions` for an obscure, non-guessable skill).
+
+  Caveat — name-hiding forces discovery only for *unknown* actions. For
+  training-**known** concepts (`file__read` / `file__write`) the weak model
+  recalls the concept and emits a malformed approximation rather than
+  discovering the exact name. Known-action *selection* is handled by the
+  mechanical mandate below, not by name-hiding.
+
+### `list_actions` returns name + description + schema
+
+When `list_actions(category=[…])` narrows to a bounded set, each item carries
+the **full triple** — `qualified_name`, `description`, and `input_schema`:
+
+- **`description`** is what lets the model *select* the right action; a model
+  cannot pick an action it cannot read (the conventional role of a tool
+  description).
+- **`input_schema`** is what lets the model *invoke* it with correct args.
+
+Because the narrowed result carries both, the common flow is **two steps —
+`list_actions` → `invoke_action`** — with no intervening `describe_action`.
+Compactness is preserved by *category-narrowing* (schemas come only for the
+category you asked about), not by omitting schemas globally.
+
+Verified (schema → invocation axis): injecting schemas into the
+`list_actions` result drove reactive `describe_action` calls 14→0 and
+argument-correctness 0→12 (of 20) — with schemas in the list, the weak model
+invokes correctly without a separate describe round-trip. The description →
+selection axis is the conventional tool-description role (a model cannot
+select an action it cannot read), so the description is carried on
+design grounds rather than as a separately measured lever.
+
+### Mechanical mandate (tier-gated)
+
+Weak models **obey mechanical, unconditional procedural mandates** but
+**ignore reasoning-based recommendations**. A cross-reference that *explains*
+("for a partial edit, prefer `file__edit`") is ignored (0/20 followed it); an
+unconditional mandate ("edits MUST use `file__edit`, NOT `file__write`") is
+followed (edit 3 / write 1).
+
+The router therefore gates a set of mechanical system-prompt mandates on the
+model tier (`router_model: light` → on; `strong` → off):
+
+- **`list_actions`-first** — the first tool call MUST be `list_actions`
+  before reading, writing, or editing anything.
+- **`file__edit`-MUST** — partial / surgical edits must use `file__edit`,
+  not `file__write`.
+
+Two properties make the mandate land:
+
+1. **Explicit-action-enumeration wording.** Naming the concrete operations
+   the mandate covers ("before reading, writing, or editing anything")
+   produces 25-55% compliance; a generic phrasing ("before any other tool")
+   produces 0-10%.
+2. **Constraint reinforcement.** Repeating the mandate ~3× across the system
+   prompt lifts compliance from ~36% to **~75-85%** (matched-pair verified,
+   no distribution overlap). Repetition counters the goal-displacement that
+   makes small models drop an instruction mid-reasoning.
+
+### The ceiling
+
+Explicit-enumeration wording + 3× reinforcement reaches **~75-85% weak-model
+compliance** on the `list_actions`-first mandate. This is the practical
+prompting ceiling: the residual ~15-25% is alignment fragility that prompting
+alone does not close — narrowing it further would need fine-tuning, which is
+out of scope. Strong models run with the mandates off and are unaffected.
+
+### Unifying principle
+
+> A weak model **self-discovers genuinely-unknown** actions and **obeys
+> mechanical mandates**; it **recalls-and-flails on training-known** names and
+> **ignores reasoning-based recommendations**. The catalog therefore hides
+> names (forcing unknown-discovery), puts descriptions + schemas on the
+> narrowed list (removing the describe round-trip), and gates mechanical
+> mandates on the weak tier (fixing known-action selection) — while leaving
+> strong models unconstrained.
 
 ## Default-on (PR-3b-iv)
 
