@@ -27,6 +27,8 @@ from pathlib import Path
 import pytest
 
 from reyn.cli.commands.web import _apply_cli_scoped_overrides
+from reyn.permissions.permissions import PermissionDecl
+from reyn.sandbox.policy import SandboxPolicy
 from reyn.web import deps
 from reyn.web.deps import (
     CliScopedOverrides,
@@ -149,12 +151,45 @@ def test_factory_threads_holder_to_build_scoped_chat_session():
     assert _scoped_attr(kw.get("workspace_state_dir"), "workspace_state_dir")
 
 
-def test_perm_resolver_threads_grant_and_file_zone():
-    """Tier 2: #1401 — _get_perm_resolver applies the --grant-file-write grant
-    (file.read/write setdefault) and anchors file_zone_root on the holder's
-    container repo root. Wiring guard for the resolver-layer port (the grant
-    EFFECT is covered by the shared chat/eval grant path)."""
-    src = (_SRC / "web" / "deps.py").read_text(encoding="utf-8")
-    assert 'perm_config.setdefault("file.read", "allow")' in src
-    assert 'perm_config.setdefault("file.write", "allow")' in src
-    assert "file_zone_root=_ov.workspace_base_dir" in src
+# ---------------------------------------------------------------------------
+# Real-resolver enforcement (R1): the holder grant + file_zone actually GATE
+# ---------------------------------------------------------------------------
+
+
+def _web_can_write(target: str, sandbox: "SandboxPolicy", *, grant: bool, ws) -> bool:
+    """Build the REAL web `_get_perm_resolver()` under the holder and check
+    whether ``require_file_write`` permits ``target`` (no None resolver)."""
+    with cli_scoped_overrides(CliScopedOverrides(grant_file_write=grant, workspace_base_dir=ws)):
+        resolver = deps._get_perm_resolver()
+        try:
+            resolver.require_file_write(PermissionDecl(), target, "default", sandbox_policy=sandbox)
+            return True
+        except PermissionError:
+            return False
+
+
+def test_grant_file_write_gates_real_in_repo_write(tmp_path, monkeypatch):
+    """Tier 2 R1: the --grant-file-write holder flag ACTUALLY gates file.write on
+    the REAL web perm resolver. Differential (the falsification pair): grant=True
+    allows an in-repo write, grant=False denies it. Not a source string-grep."""
+    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    repo = tmp_path / "container_repo"
+    sandbox = SandboxPolicy(write_paths=[str(repo)])
+    target = str(repo / "src" / "x.py")
+    assert _web_can_write(target, sandbox, grant=True, ws=repo) is True
+    assert _web_can_write(target, sandbox, grant=False, ws=repo) is False
+
+
+def test_file_zone_root_from_holder_anchors_default_zone(tmp_path, monkeypatch):
+    """Tier 2 R1: file_zone_root receives the holder's container repo root (#1414)
+    at RUNTIME. Differential (no grant): a write into <repo>/.reyn (the default
+    write zone anchored on file_zone_root) is allowed when ws_base_dir=repo, but
+    DENIED when the holder has no ws_base_dir (zone anchors on the host root)."""
+    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    repo = tmp_path / "container_repo"
+    sandbox = SandboxPolicy(write_paths=[str(repo)])
+    default_zone_target = str(repo / ".reyn" / "x.yaml")
+    assert _web_can_write(default_zone_target, sandbox, grant=False, ws=repo) is True
+    assert _web_can_write(default_zone_target, sandbox, grant=False, ws=None) is False
