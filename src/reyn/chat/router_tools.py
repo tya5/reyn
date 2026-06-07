@@ -261,7 +261,7 @@ def build_tools(
       B1 invoke_skill, B2 delegate_to_agent,
       B3 remember_shared, B4 remember_agent, B5 forget_memory,
       C1 list_directory, C2 read_file (when any file scope),
-      C3 write_file, C4 delete_file (only when write scope),
+      C3 write_file, C3b edit_file, C4 delete_file (only when write scope),
       D1 list_mcp_servers, D2 list_mcp_tools, D3 call_mcp_tool, D4 describe_mcp_tool (when mcp configured).
 
     Internally collects ToolSpec objects (= single source of truth for name,
@@ -511,6 +511,25 @@ def build_tools(
                     description=_write_file_rendered["function"]["description"],
                     parameters=_write_file_rendered["function"]["parameters"],
                     dispatch_kind=_write_file_def.dispatch_kind,
+                ))
+
+            # ── C3b: edit_file ───────────────────────────────────────────
+            # #187 9th defect: edit_file (surgical old_string/new_string) EXISTS
+            # and is dispatchable but was never advertised in the hot list — so
+            # the LLM only saw whole-file write_file and, on a truncated read of
+            # a large file, overwrote the file with the partial content it had
+            # (a destructive non-resolving diff). Surfacing the surgical edit
+            # lets the agent patch by anchor (no full-file read needed). It is a
+            # write-class op, so it lives inside the write-scope block alongside
+            # write_file/delete_file and completes read/write/edit/delete.
+            _edit_file_def = _registry.lookup("edit_file")
+            if _edit_file_def is not None and _edit_file_def.gates.router == "allow":
+                _edit_file_rendered = _edit_file_def.render_for_router()
+                specs.append(ToolSpec(
+                    name=_edit_file_rendered["function"]["name"],
+                    description=_edit_file_rendered["function"]["description"],
+                    parameters=_edit_file_rendered["function"]["parameters"],
+                    dispatch_kind=_edit_file_def.dispatch_kind,
                 ))
 
             # ── C4: delete_file ──────────────────────────────────────────

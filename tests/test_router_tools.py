@@ -93,9 +93,9 @@ def _max_object_nesting(params: dict) -> int:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
-FILE_TOOL_NAMES = {"list_directory", "read_file", "write_file", "delete_file"}
+FILE_TOOL_NAMES = {"list_directory", "read_file", "write_file", "edit_file", "delete_file"}
 FILE_READ_TOOL_NAMES = {"list_directory", "read_file"}
-FILE_WRITE_TOOL_NAMES = {"write_file", "delete_file"}
+FILE_WRITE_TOOL_NAMES = {"write_file", "edit_file", "delete_file"}
 MCP_TOOL_NAMES = {"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"}
 
 SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
@@ -259,11 +259,12 @@ def test_file_read_only_tools_present():
     assert "list_directory" in names, "list_directory missing with read scope"
     assert "read_file" in names, "read_file missing with read scope"
     assert "write_file" not in names, "write_file must be absent with read-only scope"
+    assert "edit_file" not in names, "edit_file (write-class) must be absent with read-only scope"
     assert "delete_file" not in names, "delete_file must be absent with read-only scope"
 
 
 def test_file_full_tools_present():
-    """Tier 2: Both read and write scope → all 4 file tools present."""
+    """Tier 2: Both read and write scope → all 5 file tools present."""
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,
@@ -272,6 +273,26 @@ def test_file_full_tools_present():
     names = set(_tool_names(tools))
     missing = FILE_TOOL_NAMES - names
     assert not missing, f"Missing file tools with full permissions: {missing}"
+
+
+def test_edit_file_advertised_in_hot_list_with_write_scope():
+    """Tier 2: #187 9th defect — edit_file (surgical) is advertised in the hot list.
+
+    edit_file existed and was dispatchable, but build_tools never surfaced it, so
+    the LLM only saw whole-file write_file and on a truncated read overwrote the
+    file with partial content (destructive non-resolving diff). This pins that the
+    surgical edit tool is in the advertised catalog whenever write scope is
+    granted — the SWE-agent ACI thesis (the edit tool is the critical SWE tool).
+    """
+    tools = build_tools(
+        SAMPLE_SKILLS,
+        SAMPLE_AGENTS,
+        file_permissions={"read": ["src"], "write": ["out"]},
+    )
+    names = _tool_names(tools)
+    assert "edit_file" in names, (
+        f"edit_file must be advertised with write scope (the #187 ACI gap); got: {names}"
+    )
 
 
 # ── MCP tool permission-gating tests ──────────────────────────────────────────
