@@ -82,6 +82,14 @@ Each is a distinct op kind with its own schema; there is no `op` sub-field.
 
 Permission scopes are configured per-op kind. See `reference/config/permissions.md`.
 
+A successful `edit_file` result additionally carries a `preview` (str, #1418): a
+numbered-line view (`<lineno>\t<text>`, 1-based) of the changed region — the
+lines around where `new_string` landed (±3 by default), so the agent can SEE
+*what* changed and at what indentation, not just `{status, replacements}`. It is
+**show-not-judge** (numbered lines only — no syntax check or validity verdict),
+**language-agnostic** (pure line slicing), and bounded (capped height). For
+`replace_all` it shows the first changed region; the count is in `replacements`.
+
 ### The coarse `file` execution backend (not phase-emittable)
 
 The fine kinds above are the only file ops a phase advertises to (and accepts
