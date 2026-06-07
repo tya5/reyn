@@ -3055,6 +3055,26 @@ class ChatSession:
             await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
             return
         except Exception as exc:
+            # #187 B1 instrument: a mid-work router-loop exception (e.g. the final
+            # call_llm raising after litellm's internal retries) was swallowed into a
+            # classified outbox summary, silently terminating the turn — for an
+            # autonomous run-once this ends the agent mid-edit with no diagnosable
+            # trace (req=resp+1, no logged response). Surface the FULL exception
+            # (stderr traceback + a P6 event) so the root error is primary-evidence
+            # for the fix; the classified summary still goes to the outbox unchanged.
+            logger.exception(
+                "router loop terminated by unhandled exception (chain_id=%s)",
+                chain_id,
+            )
+            try:
+                self._chat_events.emit(
+                    "router_loop_terminated_by_exception",
+                    chain_id=chain_id,
+                    error_type=type(exc).__name__,
+                    error=repr(exc)[:500],
+                )
+            except Exception:  # noqa: BLE001 — instrumentation must never break the path
+                pass
             await self._put_outbox(OutboxMessage(
                 kind="error", text=classify_router_error(exc),
                 meta={"chain_id": chain_id},

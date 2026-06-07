@@ -25,6 +25,15 @@ FP-0008 PR-Q v8:
    Raw httpx.ConnectError and httpx.ReadTimeout are retried (= transport-level
    errors LiteLLM may not wrap).
 
+9. test_empty_choices_retried_then_succeed   (#187 B1)
+   A 200 response with choices=[] on attempt 1 → retried as a transient
+   condition, succeeds on attempt 2. No IndexError, no crash.
+
+10. test_empty_choices_exhausted_raises_named_error   (#187 B1)
+   choices=[] on every attempt → raises the named EmptyLLMResponseError
+   (NOT a cryptic IndexError from response.choices[0]); exhausted event
+   emitted. Pins the real proxy failure-mode shape.
+
 No real network calls — tests use a counter-based async callable stub that
 fails K times then succeeds (real instance, no unittest.mock).
 asyncio.sleep is monkeypatched to a no-op so tests run at full speed.
@@ -40,6 +49,7 @@ from reyn.llm.llm import (
     _LLM_RETRY_BASE_S,
     _LLM_RETRY_MAX_ATTEMPTS,
     _LLM_RETRY_MAX_BACKOFF_S,
+    EmptyLLMResponseError,
     _backoff_s,
     _is_retryable_exc,
     _llm_call_with_retry,
@@ -102,6 +112,51 @@ def _fake_response(content: str = '{"ok": true}') -> object:
         usage = None
 
     return _Response()
+
+
+def _fake_empty_response() -> object:
+    """A 200-shaped response with an empty ``choices`` list.
+
+    This is the real failure shape the LiteLLM proxy intermittently returns
+    for gemini-2.5-flash-lite (#187 B1) — a successful response object whose
+    ``choices`` is empty, so ``response.choices[0]`` would IndexError.
+    """
+    class _Response:
+        choices: list = []
+        usage = None
+
+    return _Response()
+
+
+class _ReturnEmptyThenValidCallable:
+    """Zero-arg async callable: returns an empty-choices response for the
+    first ``empty_count`` calls, then a valid response.
+
+    Models the transient 200+empty-choices condition (a RETURNED value, not a
+    raised exception). Real instance — no mock machinery.
+    """
+
+    def __init__(self, empty_count: int, valid_response: object) -> None:
+        self._empty_count = empty_count
+        self._valid = valid_response
+        self.call_count: int = 0
+
+    async def __call__(self) -> object:
+        self.call_count += 1
+        if self.call_count <= self._empty_count:
+            return _fake_empty_response()
+        return self._valid
+
+
+class _AlwaysEmptyCallable:
+    """Zero-arg async callable that always returns an empty-choices response."""
+
+    def __init__(self) -> None:
+        self.call_count: int = 0
+
+    async def __call__(self) -> object:
+        self.call_count += 1
+        return _fake_empty_response()
 
 
 # ---------------------------------------------------------------------------
@@ -389,3 +444,65 @@ async def test_event_log_none_no_crash(monkeypatch):
     result = await _llm_call_with_retry(stub, "model-y", None)
     assert result is resp
     assert stub.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Test 9: empty choices (200 + choices=[]) retried, succeeds on retry  (#187 B1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_choices_retried_then_succeed(monkeypatch):
+    """Tier 2: retry wrapper — a 200 + empty-choices response is retried (#187 B1).
+
+    The LiteLLM proxy intermittently returns a successful response object with
+    choices=[] for gemini-2.5-flash-lite. Downstream response.choices[0] would
+    IndexError and silently kill the router loop mid-task. Invariant: empty
+    choices is treated as a transient condition and retried; the next non-empty
+    response is returned, with no IndexError.
+    """
+    import reyn.llm.llm as llm_mod
+    monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep_noop)
+
+    log = _make_event_log()
+    valid = _fake_response()
+    stub = _ReturnEmptyThenValidCallable(empty_count=1, valid_response=valid)
+
+    result = await _llm_call_with_retry(stub, "model-empty", log)
+    assert result is valid
+    assert stub.call_count == 2
+
+    retry_events = [e for e in log.all() if e.type == "llm_call_retry"]
+    assert retry_events, "empty choices must emit a llm_call_retry event"
+    assert retry_events[0].data["error_kind"] == "EmptyLLMResponseError"
+    assert not any(e.type == "llm_call_retry_exhausted" for e in log.all())
+
+
+# ---------------------------------------------------------------------------
+# Test 10: empty choices exhausted → named error, NOT IndexError  (#187 B1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_choices_exhausted_raises_named_error(monkeypatch):
+    """Tier 2: retry wrapper — persistent empty choices raises a named error (#187 B1).
+
+    Invariant: when every attempt returns choices=[], the wrapper raises the
+    explicit EmptyLLMResponseError after exhausting retries — NOT a cryptic
+    IndexError from response.choices[0] that the swallow handler would classify
+    opaquely. The exhausted event is emitted with the named error kind.
+    """
+    import reyn.llm.llm as llm_mod
+    monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep_noop)
+
+    log = _make_event_log()
+    stub = _AlwaysEmptyCallable()
+
+    with pytest.raises(EmptyLLMResponseError):
+        await _llm_call_with_retry(stub, "model-empty-always", log)
+
+    assert stub.call_count == _LLM_RETRY_MAX_ATTEMPTS
+
+    exhausted = [e for e in log.all() if e.type == "llm_call_retry_exhausted"]
+    assert exhausted, "persistent empty choices must emit llm_call_retry_exhausted"
+    assert exhausted[0].data["error_kind"] == "EmptyLLMResponseError"

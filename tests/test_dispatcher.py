@@ -62,14 +62,47 @@ def test_unknown_tool_returns_error_kind_and_emits_failed_event():
             name="bogus", args={}, ctx=ctx,
             invoker=_unused_invoker,
         )
-        assert result == {"status": "error",
-                          "error": {"kind": "unknown_tool",
-                                    "message": "Tool 'bogus' not in catalog"}}
+        # #187 A: message names the unknown tool; no close match in this catalog
+        # so no "Did you mean" hint is appended (kind/structure unchanged).
+        assert result["status"] == "error"
+        assert result["error"]["kind"] == "unknown_tool"
+        assert "Tool 'bogus' not in catalog" in result["error"]["message"]
+        assert "Did you mean" not in result["error"]["message"]
         # Failed event emitted, no called/returned events
         types = [e[0] for e in ev.events]
         assert "tool_failed" in types
         assert "tool_called" not in types
         assert "tool_returned" not in types
+    asyncio.run(main())
+
+
+def test_unknown_tool_suggests_close_match():
+    """Tier 2: a near-miss tool name yields a 'Did you mean <X>?' hint (#187 A).
+
+    The #187 dogfood saw the agent guess a non-catalog name (`source__grep`)
+    from a real namespace cue, hit unknown_tool, and deterministically stop.
+    The deny message now names the closest real catalog tool so the LLM can
+    self-correct instead of stalling. The suggestion must be an actual catalog
+    member (deny-message-decision-enabling).
+    """
+    async def main():
+        catalog = {
+            "source__read": {"function": {"name": "source__read"}},
+            "source__list": {"function": {"name": "source__list"}},
+            "exec__sandboxed_exec": {"function": {"name": "exec__sandboxed_exec"}},
+        }
+        ctx, _ev = make_ctx(catalog=catalog)
+        result = await dispatch_tool(
+            name="source__grep", args={}, ctx=ctx,
+            invoker=_unused_invoker,
+        )
+        assert result["status"] == "error"
+        assert result["error"]["kind"] == "unknown_tool"
+        msg = result["error"]["message"]
+        assert "Did you mean" in msg
+        # The suggested name must be a real catalog member, not a fabrication.
+        suggested = [name for name in catalog if repr(name) in msg]
+        assert suggested, f"suggestion must name a catalog tool; got: {msg!r}"
     asyncio.run(main())
 
 
