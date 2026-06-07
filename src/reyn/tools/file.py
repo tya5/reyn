@@ -42,7 +42,10 @@ _READ_FILE_DESCRIPTION = (
 
 _WRITE_FILE_DESCRIPTION = (
     "Write content to a file under the agent's write scope. "
-    "Creates or overwrites."
+    "Creates or overwrites the WHOLE file. For a partial or surgical "
+    "change to an existing file, prefer the edit action instead of "
+    "rewriting: describe_action(action_name='file__edit') for its args, "
+    "then invoke_action."
 )
 
 _DELETE_FILE_DESCRIPTION = (

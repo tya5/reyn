@@ -117,14 +117,21 @@ def test_read_file_router_render_exact_parameters():
 # ── 3. WRITE_FILE render_for_router byte-identity ────────────────────────────
 
 def test_write_file_router_render_exact_description():
-    """Tier 2: WRITE_FILE description is byte-identical to the legacy ToolSpec
-    description in router_tools.py C3 block."""
+    """Tier 2: WRITE_FILE renders its exact description through render_for_router.
+
+    Frozen drift-guard: a description change must update this pin AND re-check
+    replay fixtures (the rendered tools[] payload is what the LLM sees). #187
+    STEP 1 re-froze it after adding the reciprocal file__edit cross-ref.
+    """
     rendered = WRITE_FILE.render_for_router()
-    legacy_description = (
+    expected_description = (
         "Write content to a file under the agent's write scope. "
-        "Creates or overwrites."
+        "Creates or overwrites the WHOLE file. For a partial or surgical "
+        "change to an existing file, prefer the edit action instead of "
+        "rewriting: describe_action(action_name='file__edit') for its args, "
+        "then invoke_action."
     )
-    assert rendered["function"]["description"] == legacy_description
+    assert rendered["function"]["description"] == expected_description
 
 
 def test_write_file_router_render_exact_parameters():
@@ -275,6 +282,25 @@ def test_write_file_constants_match_definition():
     match the WRITE_FILE ToolDefinition fields."""
     assert WRITE_FILE.description == _WRITE_FILE_DESCRIPTION
     assert dict(WRITE_FILE.parameters) == _WRITE_FILE_PARAMETERS
+
+
+def test_write_edit_descriptions_cross_reference_symmetrically():
+    """Tier 2: #187 STEP 1 — file__write and file__edit descriptions reciprocally
+    cross-reference each other (general sibling-cross-ref), so the LLM is pointed
+    from a whole-file write toward a surgical edit and vice versa. Asserts the
+    public surface (concept presence), not exact wording.
+    """
+    from reyn.tools.file import _EDIT_FILE_DESCRIPTION, _WRITE_FILE_DESCRIPTION
+
+    # write → edit: points to the edit action (by its actionable qualified name)
+    # for partial/surgical changes instead of rewriting the whole file.
+    write_l = _WRITE_FILE_DESCRIPTION.lower()
+    assert "file__edit" in _WRITE_FILE_DESCRIPTION, "write desc must name the edit action"
+    assert "edit" in write_l and "whole file" in write_l
+
+    # edit → write: the existing reverse cross-ref (partial edit vs whole-file write).
+    edit_l = _EDIT_FILE_DESCRIPTION.lower()
+    assert "partial" in edit_l and "whole file" in edit_l
 
 
 def test_delete_file_constants_match_definition():
