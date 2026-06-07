@@ -150,6 +150,30 @@ When `--image` is omitted, reyn uses a bundled base image built for the current
 platform. To use a custom image, pass `--image` or set the default in `reyn.yaml`
 (see [`reyn.yaml` reference](../../reference/config/reyn-yaml.md)).
 
+### devcontainer.json
+
+If the workspace ships a `devcontainer.json` (`.devcontainer/devcontainer.json`
+or `.devcontainer.json`), reyn reads a minimal subset to seed the launch:
+`image`, `postCreateCommand`, `mounts`, and `remoteUser`. An explicit `--image`
+always overrides the devcontainer.
+
+- **Image-based** (`image: ...`) — launched directly.
+- **Build-based** (`dockerFile` / `build`) — reyn **builds the Dockerfile on
+  demand** (`docker build`) and launches the result. The built image is tagged
+  by content hash, so it is rebuilt only when the Dockerfile / build args /
+  target change. `build.args` and `build.context` are honored.
+- **Compose-based** (`dockerComposeFile`) — not supported (the launcher is
+  single-container); reyn warns and falls back to the default image.
+
+!!! warning "Build runs the workspace Dockerfile on your host"
+    Building a build-based devcontainer runs that Dockerfile's `RUN` steps on
+    your host Docker daemon at **build time** — these are **not** confined by
+    reyn's runtime sandbox (the network-off / non-root / read-only-rootfs flags
+    apply to the *running* container, not to `docker build`). This is the same
+    trust model as VS Code's "Reopen in Container": only use build-based
+    devcontainers from workspaces you trust. reyn logs the build for visibility;
+    `--env-backend=docker` is the opt-in.
+
 ## See also
 
 - [Concepts: Sandbox and permissions](../../concepts/architecture/sandbox-vs-permission.md) — why sandbox and permissions are orthogonal

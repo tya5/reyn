@@ -35,9 +35,11 @@ mechanism here is independent of whether the default is published or bundled.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,6 +62,30 @@ DEFAULT_IMAGE = REYN_BASE_IMAGE
 def _reyn_base_dockerfile() -> Path:
     """Path to the bundled reyn base Dockerfile (shipped as package data)."""
     return Path(__file__).parent / "reyn_base.Dockerfile"
+
+
+def _devcontainer_image_tag(spec: "BuildSpec") -> str:
+    """#1341: a content-addressed local tag for a build-based devcontainer image.
+
+    The hash covers the Dockerfile *contents* + sorted build args + target — the
+    inputs that change the built image (F2: content-addressed + inspect-then-build).
+    A changed Dockerfile/args/target yields a new tag → an inspect-miss → rebuild;
+    an unchanged spec reuses the existing tag (no rebuild). NOTE: a context-only
+    change (e.g. a COPY'd file edited without touching the Dockerfile) keeps the
+    same tag — a documented minor staleness limit, matching the VS Code model
+    (which also keys rebuilds on the Dockerfile/args, not arbitrary context edits).
+    Falls back to hashing the Dockerfile *path* if the file is unreadable.
+    """
+    h = hashlib.sha256()
+    try:
+        h.update(Path(spec.dockerfile).read_bytes())
+    except OSError:
+        h.update(spec.dockerfile.encode("utf-8"))
+    for k in sorted(spec.build_args):
+        h.update(f"\0{k}={spec.build_args[k]}".encode())
+    if spec.target:
+        h.update(f"\0target={spec.target}".encode())
+    return f"reyn-dc-{h.hexdigest()[:12]}:local"
 
 # Fixed in-container mount destination for the workspace (override-able via
 # LaunchConfig.workspace_dest). The agent's repo_dir resolves here.
@@ -106,6 +132,25 @@ def parse_mount_spec(raw: str) -> MountSpec:
 
 
 @dataclass
+class BuildSpec:
+    """A build-on-demand spec for a build-based devcontainer (#1341).
+
+    dockerfile:  absolute path to the devcontainer Dockerfile.
+    context:     absolute path to the build context dir.
+    build_args:  ``build.args`` → ``--build-arg k=v`` (str values only).
+    target:      optional ``build.target`` multi-stage target.
+
+    When a ``LaunchConfig`` carries a ``build``, the launcher builds the image
+    on demand (content-addressed tag, inspect-then-build) instead of pulling.
+    """
+
+    dockerfile: str
+    context: str
+    build_args: dict[str, str] = field(default_factory=dict)
+    target: str | None = None
+
+
+@dataclass
 class LaunchConfig:
     """Operator-level config for launching a mount-mode container.
 
@@ -114,6 +159,10 @@ class LaunchConfig:
         global cwd-vs-project_root fix is #1316, out of scope here).
     workspace_dest: in-container mount target for workspace_root.
     image / setup_command: the default generic image + a runtime extension hook.
+    build: a #1341 build-on-demand spec — when set, the launcher builds
+        ``image`` from this Dockerfile (build-based devcontainer) rather than
+        relying on ``docker run`` to pull it. ``image`` then holds the
+        content-addressed build tag (see ``_devcontainer_image_tag``).
     mounts: additional user bind mounts.
     network: outbound network (default off — the exfiltration gate).
     user: non-root ``uid[:gid]``; defaults to the host operator's ids so mounted
@@ -126,6 +175,7 @@ class LaunchConfig:
     workspace_dest: str = WORKSPACE_DEST_DEFAULT
     image: str = DEFAULT_IMAGE
     setup_command: str | None = None
+    build: BuildSpec | None = None
     mounts: list[MountSpec] = field(default_factory=list)
     network: bool = False
     user: str | None = None
@@ -154,8 +204,18 @@ class DevcontainerConfig:
                     postStartCommand is every-start and intentionally NOT mapped).
     mounts:         devcontainer ``mounts`` (bind mounts only).
     user:           devcontainer ``remoteUser`` / ``containerUser``.
-    build_based:    True if the devcontainer is dockerFile/build/compose-based
-                    (not yet supported → caller falls back to the default image).
+    build_based:    True if the devcontainer is dockerFile/build/compose-based.
+    dockerfile:     #1341 — resolved absolute path to the devcontainer Dockerfile
+                    (``dockerFile`` legacy or ``build.dockerfile``), or None for a
+                    non-buildable (``dockerComposeFile``) devcontainer.
+    build_context:  #1341 — resolved absolute build context dir.
+    build_args:     #1341 — ``build.args`` (str values).
+    build_target:   #1341 — ``build.target`` multi-stage target.
+
+    A dockerFile/build devcontainer is **buildable** (``buildable`` True →
+    build-on-demand, #1341); ``dockerComposeFile`` is build_based but NOT
+    buildable (multi-service is out of scope → caller warns + falls back to the
+    default image).
     """
 
     image: str | None = None
@@ -163,6 +223,16 @@ class DevcontainerConfig:
     mounts: list[MountSpec] = field(default_factory=list)
     user: str | None = None
     build_based: bool = False
+    dockerfile: str | None = None
+    build_context: str | None = None
+    build_args: dict[str, str] = field(default_factory=dict)
+    build_target: str | None = None
+
+    @property
+    def buildable(self) -> bool:
+        """True if this devcontainer can be built on demand (#1341): build_based
+        AND a Dockerfile was resolved (i.e. dockerFile/build, not compose-only)."""
+        return self.build_based and self.dockerfile is not None
 
 
 def _strip_jsonc(text: str) -> str:
@@ -204,10 +274,56 @@ def _parse_devcontainer_mount(m: Any) -> MountSpec | None:
     return MountSpec(host=str(src), container=str(tgt), mode=mode)
 
 
-def _map_devcontainer(data: Mapping[str, Any]) -> DevcontainerConfig:
-    cfg = DevcontainerConfig()
-    if data.get("dockerFile") or data.get("build") or data.get("dockerComposeFile"):
+def _map_devcontainer_build(
+    data: Mapping[str, Any], devcontainer_dir: Path, cfg: DevcontainerConfig
+) -> None:
+    """#1341: map a build-based devcontainer's build spec onto ``cfg``.
+
+    Sets ``build_based`` for any of dockerFile / build / dockerComposeFile.
+    For the buildable forms (legacy top-level ``dockerFile`` [+ ``context``] or
+    the ``build`` object ``{dockerfile, context, args, target}``) resolves the
+    Dockerfile + context relative to the devcontainer.json location (per the
+    devcontainer spec) and captures args/target. ``dockerComposeFile`` is
+    build_based but left non-buildable (dockerfile stays None) — multi-service
+    is out of scope for the single-container launcher.
+    """
+    build = data.get("build")
+    dockerfile_rel = context_rel = target = None
+    args: dict[str, str] = {}
+    if isinstance(build, Mapping):
+        df = build.get("dockerfile")
+        if isinstance(df, str):
+            dockerfile_rel = df
+        ctx = build.get("context")
+        if isinstance(ctx, str):
+            context_rel = ctx
+        tgt = build.get("target")
+        if isinstance(tgt, str):
+            target = tgt
+        ba = build.get("args")
+        if isinstance(ba, Mapping):
+            args = {str(k): str(v) for k, v in ba.items()}
+    elif isinstance(data.get("dockerFile"), str):  # legacy top-level form
+        dockerfile_rel = data["dockerFile"]
+        ctx = data.get("context")
+        if isinstance(ctx, str):
+            context_rel = ctx
+
+    if data.get("dockerFile") or build or data.get("dockerComposeFile"):
         cfg.build_based = True
+    if dockerfile_rel:  # buildable (dockerFile/build) — resolve relative to the json dir
+        cfg.dockerfile = str((devcontainer_dir / dockerfile_rel).resolve())
+        cfg.build_context = str((devcontainer_dir / (context_rel or ".")).resolve())
+        cfg.build_args = args
+        cfg.build_target = target
+    # dockerComposeFile (or build without a dockerfile) → build_based, non-buildable.
+
+
+def _map_devcontainer(
+    data: Mapping[str, Any], devcontainer_dir: Path
+) -> DevcontainerConfig:
+    cfg = DevcontainerConfig()
+    _map_devcontainer_build(data, devcontainer_dir, cfg)
     img = data.get("image")
     if isinstance(img, str):
         cfg.image = img
@@ -242,7 +358,9 @@ def load_devcontainer_config(workspace_root: str) -> DevcontainerConfig | None:
             except (json.JSONDecodeError, OSError, ValueError):
                 return None
             if isinstance(data, Mapping):
-                return _map_devcontainer(data)
+                # #1341: pass the devcontainer.json's directory so build-based
+                # dockerfile/context paths resolve relative to it (spec).
+                return _map_devcontainer(data, p.parent)
             return None
     return None
 
@@ -315,7 +433,14 @@ class ContainerLauncher:
             if existing:
                 return existing
 
-        self.ensure_image(config.image)
+        # #1341: a build-based devcontainer builds its image on demand (the tag
+        # is content-addressed); everything else uses ensure_image (reyn-base
+        # on-demand / docker-run pull). A generous build timeout (apt layers),
+        # independent of the shorter launch/run timeout.
+        if config.build is not None:
+            self._build_devcontainer_image(config)
+        else:
+            self.ensure_image(config.image)
         argv = build_docker_run_argv(config, docker_bin=self.docker_bin)
         res = self._runner(argv, timeout=timeout)
         if res.returncode != 0:
@@ -348,22 +473,72 @@ class ContainerLauncher:
         """
         if image != REYN_BASE_IMAGE:
             return
-        inspect = self._runner(
+        if self._image_present(image, timeout=timeout):
+            return  # already built
+        df = _reyn_base_dockerfile()
+        self._docker_build(
+            image, str(df), str(df.parent),
+            timeout=timeout, err_label="reyn base image build",
+        )
+
+    def _build_devcontainer_image(self, config: LaunchConfig, *, timeout: int = 600) -> None:
+        """#1341: build a build-based devcontainer image on demand (inspect-then-build).
+
+        No-op if the content-addressed tag (``config.image``) is already present.
+        SECURITY (documented): a `docker build` runs the **workspace-authored**
+        Dockerfile's RUN steps on the host docker daemon — NOT inside reyn's
+        runtime sandbox (the network-off / non-root / read-only-rootfs flags
+        apply to ``docker run``, not ``docker build``; builds typically need
+        network). The trust model is identical to VS Code "Reopen in Container"
+        building the workspace Dockerfile: the operator already opted in via
+        ``--env-backend=docker`` on a workspace they chose. The *runtime*
+        container still gets all reyn security flags. We log the build for
+        transparency (no extra confirmation prompt — the opt-in is the gate).
+        """
+        spec = config.build
+        if spec is None:
+            return
+        if self._image_present(config.image, timeout=timeout):
+            return  # content-addressed tag already built → reuse (F2)
+        print(
+            f"reyn: building devcontainer image {config.image} from "
+            f"{spec.dockerfile} (workspace Dockerfile runs on the host docker "
+            f"daemon at build time)",
+            file=sys.stderr,
+        )
+        self._docker_build(
+            config.image, spec.dockerfile, spec.context,
+            build_args=spec.build_args, target=spec.target,
+            timeout=timeout, err_label="devcontainer image build",
+        )
+
+    def _image_present(self, image: str, *, timeout: int) -> bool:
+        """True if ``docker image inspect`` succeeds (image locally present)."""
+        res = self._runner(
             [self.docker_bin, "image", "inspect", image], timeout=timeout
         )
-        if inspect.returncode == 0:
-            return  # already built
-        dockerfile = _reyn_base_dockerfile()
-        res = self._runner(
-            [
-                self.docker_bin, "build", "-t", image,
-                "-f", str(dockerfile), str(dockerfile.parent),
-            ],
-            timeout=timeout,
-        )
+        return res.returncode == 0
+
+    def _docker_build(
+        self, tag: str, dockerfile: str, context: str, *,
+        build_args: dict[str, str] | None = None, target: str | None = None,
+        timeout: int = 600, err_label: str = "image build",
+    ) -> None:
+        """Shared ``docker build`` primitive (reyn-base + #1341 devcontainer).
+
+        ``docker build -t <tag> -f <dockerfile> [--build-arg k=v ...]
+        [--target t] <context>``. Raises ``RuntimeError`` on non-zero exit.
+        """
+        argv = [self.docker_bin, "build", "-t", tag, "-f", str(dockerfile)]
+        for k, v in (build_args or {}).items():
+            argv += ["--build-arg", f"{k}={v}"]
+        if target:
+            argv += ["--target", target]
+        argv.append(str(context))
+        res = self._runner(argv, timeout=timeout)
         if res.returncode != 0:
             raise RuntimeError(
-                f"reyn base image build failed (rc={res.returncode}): "
+                f"{err_label} failed (rc={res.returncode}): "
                 f"{res.stderr.decode(errors='replace')[:400]}"
             )
 

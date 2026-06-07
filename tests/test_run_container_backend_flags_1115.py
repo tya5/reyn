@@ -255,9 +255,10 @@ def test_docker_launch_cli_image_overrides_devcontainer(tmp_path, monkeypatch) -
     assert cfg.image == "cli:override"
 
 
-def test_docker_launch_build_based_devcontainer_warns(tmp_path, monkeypatch, capsys) -> None:
-    """Tier 2: #1324b — a build-based devcontainer warns + falls back to the default
-    image (build-based support is a tracked follow-up)."""
+def test_docker_launch_build_based_devcontainer_builds(tmp_path, monkeypatch, capsys) -> None:
+    """Tier 2: #1341 — a build-based (dockerFile/build) devcontainer is BUILT on
+    demand: the LaunchConfig carries a BuildSpec + a content-addressed image tag
+    (no warn, no default-image fallback). Supersedes the #1324b warn behavior."""
     from reyn.environment.container_launcher import DEFAULT_IMAGE
 
     _write_devcontainer(tmp_path, '{"build": {"dockerfile": "Dockerfile"}}')
@@ -265,5 +266,34 @@ def test_docker_launch_build_based_devcontainer_warns(tmp_path, monkeypatch, cap
     fake = _FakeLauncher()
     _build_environment_backend(_args(env_backend="docker"), launcher=fake)
     (cfg,) = fake.launched
+    assert cfg.build is not None, "build-based devcontainer must carry a BuildSpec"
+    assert cfg.image.startswith("reyn-dc-") and cfg.image != DEFAULT_IMAGE
+    assert cfg.build.dockerfile.endswith("Dockerfile")
+    assert "not yet supported" not in capsys.readouterr().err
+
+
+def test_docker_launch_compose_devcontainer_warns(tmp_path, monkeypatch, capsys) -> None:
+    """Tier 2: #1341 — a compose-based devcontainer (dockerComposeFile) is OUT of
+    scope for the single-container launcher → warn + default-image fallback."""
+    from reyn.environment.container_launcher import DEFAULT_IMAGE
+
+    _write_devcontainer(tmp_path, '{"dockerComposeFile": "docker-compose.yml"}')
+    monkeypatch.chdir(tmp_path)
+    fake = _FakeLauncher()
+    _build_environment_backend(_args(env_backend="docker"), launcher=fake)
+    (cfg,) = fake.launched
+    assert cfg.build is None
     assert cfg.image == DEFAULT_IMAGE
-    assert "build-based devcontainer" in capsys.readouterr().err
+    assert "compose-based devcontainer" in capsys.readouterr().err
+
+
+def test_docker_launch_cli_image_overrides_build_devcontainer(tmp_path, monkeypatch) -> None:
+    """Tier 2: #1341 — an explicit --image wins over a build-based devcontainer
+    (no build; the operator's image is used as-is)."""
+    _write_devcontainer(tmp_path, '{"build": {"dockerfile": "Dockerfile"}}')
+    monkeypatch.chdir(tmp_path)
+    fake = _FakeLauncher()
+    _build_environment_backend(_args(env_backend="docker", image="my/img:tag"), launcher=fake)
+    (cfg,) = fake.launched
+    assert cfg.build is None
+    assert cfg.image == "my/img:tag"

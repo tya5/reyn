@@ -134,6 +134,17 @@ reyn run my_skill --env-backend=docker --container my-container --repo-dir /work
 
 `--image` を省略した場合、reyn は現在のプラットフォーム向けにビルドされたバンドルベースイメージを使用します。カスタムイメージを使用するには `--image` を渡すか、`reyn.yaml` でデフォルトを設定してください（[`reyn.yaml` リファレンス](../../reference/config/reyn-yaml.md)参照）。
 
+### devcontainer.json
+
+ワークスペースに `devcontainer.json`（`.devcontainer/devcontainer.json` または `.devcontainer.json`）がある場合、reyn は最小サブセット（`image` / `postCreateCommand` / `mounts` / `remoteUser`）を読み取って起動のデフォルトに反映します。明示的な `--image` は常に devcontainer より優先されます。
+
+- **image ベース**（`image: ...`）— そのまま起動。
+- **build ベース**（`dockerFile` / `build`）— reyn が Dockerfile を**オンデマンドでビルド**（`docker build`）して起動します。ビルド済みイメージは内容ハッシュでタグ付けされ、Dockerfile / build args / target が変わったときのみ再ビルドされます。`build.args` と `build.context` に対応。
+- **compose ベース**（`dockerComposeFile`）— 非対応（ランチャーは単一コンテナ）。警告を出してデフォルトイメージにフォールバックします。
+
+!!! warning "ビルドはワークスペースの Dockerfile をホストで実行します"
+    build ベース devcontainer のビルドは、その Dockerfile の `RUN` ステップを**ビルド時にホストの Docker デーモン上で**実行します。これは reyn のランタイムサンドボックスでは保護されません（network-off / non-root / read-only-rootfs は*実行中*コンテナに適用され、`docker build` には適用されません）。これは VS Code の「Reopen in Container」と同じ信頼モデルです。信頼できるワークスペースの build ベース devcontainer のみ使用してください。reyn はビルドをログ出力します。`--env-backend=docker` がオプトインです。
+
 ## 関連ドキュメント
 
 - [コンセプト: サンドボックスとパーミッション](../../concepts/architecture/sandbox-vs-permission.md) — 両者が直交する理由
