@@ -350,6 +350,7 @@ def _get_registry():
                 agent_id=None,
                 exclude_tools=_scoped.exclude_tools,
                 router_max_iterations=5,
+                non_interactive=False,  # #1439 Fix #1: A2A byte-identical (run-once-only fix). A2A-non-interactive = documented follow-up (cf factory module doc)
                 environment_backend=_scoped.environment_backend,
                 sandbox_backend=_scoped.environment_backend,
                 workspace_base_dir=_scoped.workspace_base_dir,

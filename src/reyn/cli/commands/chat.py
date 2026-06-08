@@ -408,6 +408,11 @@ def run(args: argparse.Namespace) -> None:
             # one-shot autonomous path (`reyn run-once`) raises it (explore→edit→
             # verify needs many rounds). --max-iterations unset → 5 (unchanged).
             router_max_iterations=int(getattr(args, "max_iterations", None) or 5),
+            # #1439 Fix #1: run-once pipes stdin (no TTY) → the SP proceeds with an
+            # assumption instead of asking a clarifying question nobody can answer
+            # (13398). Interactive `reyn chat` (TTY) → False = byte-identical. Same
+            # isatty() signal already feeds perm_resolver (interactive=) + use_tui.
+            non_interactive=not sys.stdin.isatty(),
             # #1289: same backend instance to both seams (single-shared-sandbox).
             environment_backend=env_backend,
             sandbox_backend=env_backend,

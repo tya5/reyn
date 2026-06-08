@@ -421,6 +421,7 @@ def run_serve(args: argparse.Namespace) -> None:
             agent_id=None,
             exclude_tools=None,
             router_max_iterations=5,
+            non_interactive=False,  # #1439 Fix #1: stdio-MCP byte-identical (run-once-only fix)
             environment_backend=None,  # gap: MCP-serve lacks env-backend / container-rooting
             sandbox_backend=None,
             workspace_base_dir=None,
