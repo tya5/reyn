@@ -308,6 +308,46 @@ def _dump_llm_response(request_id: str | None, payload: dict) -> None:
 
 _G12_SIGNAL_TEXT = "(answered) — task complete; reply to user or chain another tool"
 
+# #1439 Fix #2: the trailing-tool result was an ERROR. The success text above
+# asserts "task complete" unconditionally, so an errored exec carried "task
+# complete" → the agent narrated error-as-success (14096). The error cell drops
+# "complete" and signals the failure + a continuation nudge (decision-enabling).
+# Only the error cell changes; the success text is byte-identical so the
+# empty-stop-tuned envelope (#1424) recovery on the common success path is
+# unchanged by construction (replay-gate narrows to the error cell).
+_G12_SIGNAL_ERROR_TEXT = (
+    "(tool error) — the tool call did NOT succeed; inspect the error and decide"
+    " the next step before continuing (do not report success)"
+)
+
+# Tool-result status values (JSON `status` field) that mean the call failed.
+# Sourced from the op_runtime envelopes (error / denied / not_found) + a generic
+# "failed". Anything else (ok / absent / non-JSON / unparseable) is the success
+# cell = byte-identical signal.
+_G12_ERROR_STATUSES = frozenset({"error", "denied", "not_found", "failed"})
+
+
+def _trailing_tool_is_error(content: str) -> bool:
+    """#1439 Fix #2: True iff a JSON tool result carries an explicit error status.
+
+    Conservative by design: only valid JSON with ``status`` in
+    ``_G12_ERROR_STATUSES`` counts as an error. A non-JSON body, an unparseable
+    ``{``-prefixed string (the existing string-surgery path handles those), a
+    missing ``status``, or ``status: "ok"`` all return False → the success cell
+    (byte-identical signal). This keeps the error path narrow so the replay-gate
+    risk is bounded to genuinely-errored trailing tools.
+    """
+    if not content.startswith("{"):
+        return False
+    try:
+        parsed = json.loads(content)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    status = parsed.get("status")
+    return isinstance(status, str) and status.lower() in _G12_ERROR_STATUSES
+
 
 def _g12_signal_enabled() -> bool:
     """Return True unless `REYN_G12_SIGNAL` env var explicitly disables it.
@@ -355,6 +395,11 @@ def _apply_g12_signal(messages: list[dict]) -> list[dict]:
     content = last.get("content")
     if not isinstance(content, str):
         return messages
+    # #1439 Fix #2: status-aware signal text. An errored trailing tool result
+    # gets the error signal (no "task complete"); everything else keeps the
+    # byte-identical success signal. The embed STRUCTURE is unchanged — only the
+    # injected text differs — so all structural branches below are preserved.
+    signal = _G12_SIGNAL_ERROR_TEXT if _trailing_tool_is_error(content) else _G12_SIGNAL_TEXT
     new_last = dict(last)
     if content.startswith("{"):
         inner = content[1:]
@@ -362,13 +407,13 @@ def _apply_g12_signal(messages: list[dict]) -> list[dict]:
         # separator comma, otherwise the output would have a trailing
         # `, }` which fails JSON parse.
         if inner.lstrip().startswith("}"):
-            new_last["content"] = f'{{"_g12_signal": "{_G12_SIGNAL_TEXT}"{inner}'
+            new_last["content"] = f'{{"_g12_signal": "{signal}"{inner}'
         else:
             new_last["content"] = (
-                f'{{"_g12_signal": "{_G12_SIGNAL_TEXT}", {inner}'
+                f'{{"_g12_signal": "{signal}", {inner}'
             )
     else:
-        new_last["content"] = f"{_G12_SIGNAL_TEXT}\n\n{content}"
+        new_last["content"] = f"{signal}\n\n{content}"
     return messages[:-1] + [new_last]
 
 
