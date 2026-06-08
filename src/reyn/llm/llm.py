@@ -327,15 +327,29 @@ _G12_SIGNAL_ERROR_TEXT = (
 _G12_ERROR_STATUSES = frozenset({"error", "denied", "not_found", "failed"})
 
 
-def _trailing_tool_is_error(content: str) -> bool:
-    """#1439 Fix #2: True iff a JSON tool result carries an explicit error status.
+def _is_g12_error_status(status: object) -> bool:
+    """True iff ``status`` is an explicit error value (str in _G12_ERROR_STATUSES)."""
+    return isinstance(status, str) and status.lower() in _G12_ERROR_STATUSES
 
-    Conservative by design: only valid JSON with ``status`` in
-    ``_G12_ERROR_STATUSES`` counts as an error. A non-JSON body, an unparseable
-    ``{``-prefixed string (the existing string-surgery path handles those), a
-    missing ``status``, or ``status: "ok"`` all return False → the success cell
-    (byte-identical signal). This keeps the error path narrow so the replay-gate
-    risk is bounded to genuinely-errored trailing tools.
+
+def _trailing_tool_is_error(content: str) -> bool:
+    """#1439 Fix #2: True iff a JSON tool result carries an explicit error status
+    — at the **dispatch level (top-level) OR the op level (nested under data)**.
+
+    The production envelope nests the op status: ``dispatch_tool`` wraps every
+    successful dispatch as ``{"status": "ok", "data": <op_result>}`` (dispatcher.py
+    :84-97, confirmed router_loop.py:1913), so an op-execution error (file/grep
+    failure, exec returncode≠0 — incl. the 14096 case) lives at ``data.status``
+    while the top-level stays ``ok``. Only a *dispatch*-level failure (tool-not-
+    found / perm-deny / dispatch exception) sets the top-level ``status`` to error.
+    We check both: top-level first, then one level into ``data``.
+
+    Conservative by design: only valid JSON with an explicit error status (at
+    either level) counts. A non-JSON body, an unparseable ``{``-prefixed string
+    (the existing string-surgery path handles those), a missing status, or
+    ``ok`` at both levels → False → the success cell (byte-identical signal). This
+    keeps the error path narrow so the replay-gate risk is bounded to genuinely-
+    errored trailing tools.
     """
     if not content.startswith("{"):
         return False
@@ -345,8 +359,15 @@ def _trailing_tool_is_error(content: str) -> bool:
         return False
     if not isinstance(parsed, dict):
         return False
-    status = parsed.get("status")
-    return isinstance(status, str) and status.lower() in _G12_ERROR_STATUSES
+    # Dispatch-level error (top-level status) — rare.
+    if _is_g12_error_status(parsed.get("status")):
+        return True
+    # Op-execution error nested under the dispatch wrapper's ``data`` — the
+    # common case (and 14096). Recurse exactly one level.
+    data = parsed.get("data")
+    if isinstance(data, dict) and _is_g12_error_status(data.get("status")):
+        return True
+    return False
 
 
 def _g12_signal_enabled() -> bool:

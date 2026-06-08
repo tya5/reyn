@@ -305,3 +305,42 @@ def test_absent_and_non_json_status_use_success_cell() -> None:
     plain = _apply_g12_signal([{"role": "tool", "content": "just text"}])[-1]["content"]
     assert plain.startswith("(answered)")
     assert "task complete" in plain
+
+
+# ── 6b. #1439 Fix #2: the PRODUCTION envelope nests op status under `data` ──
+# dispatch_tool wraps every successful dispatch as {"status":"ok","data":<op>},
+# so op-execution errors (the 14096 case) are at data.status while top-level is
+# "ok". The replay-gate (sandbox_2) caught that a top-level-only check is a no-op
+# on this envelope. These pin the nested detection on the REAL shapes.
+
+
+def test_nested_op_error_under_data_is_detected() -> None:
+    """Tier 2: #1439 Fix #2 — the production envelope {"status":"ok","data":
+    {...,"status":"error"}} (op-execution error nested under the dispatch wrapper)
+    routes to the error cell — no "task complete". This is the 14096 case the
+    top-level-only check missed; the replay-gate's primary evidence."""
+    # The exact 14096 shape: an errored sandboxed_exec nested under data.
+    content = (
+        '{"status": "ok", "data": {"kind": "sandboxed_exec", "status": "error",'
+        ' "returncode": 1, "stderr": "boom"}}'
+    )
+    signal = _signal_of(content)
+    assert "complete" not in signal.lower(), "nested op error must not claim completion"
+    assert "error" in signal.lower()
+    assert "next step" in signal.lower()
+
+
+@pytest.mark.parametrize("op_status", ["error", "denied", "not_found", "failed"])
+def test_nested_op_error_statuses_route_to_error_cell(op_status: str) -> None:
+    """Tier 2: #1439 Fix #2 — every op error status nested under data (the
+    wrapped envelope) is detected, not just top-level dispatch errors."""
+    content = f'{{"status": "ok", "data": {{"kind": "file", "status": "{op_status}"}}}}'
+    assert "complete" not in _signal_of(content).lower()
+
+
+def test_nested_ok_under_data_uses_success_cell() -> None:
+    """Tier 2: #1439 Fix #2 — the dominant production success shape
+    {"status":"ok","data":{...,"status":"ok"}} keeps the byte-identical success
+    signal (nested ok must NOT false-trigger the error cell)."""
+    content = '{"status": "ok", "data": {"kind": "file", "status": "ok", "data": {}}}'
+    assert "task complete" in _signal_of(content)
