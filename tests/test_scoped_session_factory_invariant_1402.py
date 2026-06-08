@@ -53,6 +53,7 @@ _REQUIRED_SCOPED = frozenset({
     "exclude_tools",
     "agent_id",
     "router_max_iterations",
+    "non_interactive",  # #1439 Fix #1: run-once SP autonomy flag (per-frontend scoped)
     "eager_embedding_build",
     "allowed_mcp",
     # per-session config (should be UNIFORM across factories)

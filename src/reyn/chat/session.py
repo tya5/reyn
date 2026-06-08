@@ -1281,6 +1281,7 @@ class ChatSession:
         agent_id: str | None = None,
         exclude_tools: "frozenset[str] | set[str] | None" = None,  # #187: tool names hidden from the LLM catalog (e.g. web for faithful eval)
         router_max_iterations: int = 5,  # #187: per-message tool-call budget for the MAIN chat loop (interactive=5; one-shot autonomous SWE sets higher)
+        non_interactive: bool = False,  # #1439 Fix #1: run-once (piped, no TTY) — no user to ask, so the SP directs proceed-with-assumption instead of clarifying
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -1319,6 +1320,11 @@ class ChatSession:
         # so the one-shot path constructs the session with a higher value. Bounded
         # either way — the loop stops at the cap (finite) or when the agent ends.
         self._router_max_iterations = int(router_max_iterations)
+        # #1439 Fix #1: in run-once (no interactive user) the router SP must not
+        # tell the agent to "ask ONE clarifying question" (nobody answers → dead
+        # stop, 13398). Threaded to build_system_prompt below. Default False =
+        # interactive byte-identical.
+        self._non_interactive = bool(non_interactive)
         # FP-0017 follow-up: declarative sandbox config (reyn.yaml `sandbox:`).
         # Plumbed through to spawned Agents so sandboxed_exec backend selection
         # honors the operator's declared policy.
@@ -5220,6 +5226,7 @@ class ChatSession:
             project_context=self._router_host.get_project_context(),
             indexed_sources_section=None,
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
+            non_interactive=self._non_interactive,  # #1439 Fix #1
         )
 
     def _cap_tool_result(self, content_str: str) -> str:

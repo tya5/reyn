@@ -74,6 +74,7 @@ def build_system_prompt(
     search_actions_enabled: bool = True,  # FP-0034 §D14 — default True preserves byte-compat
     context_size_signal: str | None = None,  # #272/#1128 — pre-rendered, appended LAST
     discovery_mandate: bool = False,  # #187 Stage C — weak-tier list_actions-first mandate (3x)
+    non_interactive: bool = False,  # #1439 Fix #1 — run-once (no TTY): no user to ask, proceed instead of clarifying
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -287,8 +288,17 @@ def build_system_prompt(
         " per-target action directly without decomposition — it loses"
         " the iteration shape and gets stuck on the first item.",
         "",
-        "**Ambiguous or missing essential information** → ask ONE"
-        " clarifying question instead of guessing.",
+        # #1439 Fix #1: in run-once (no interactive user), asking a clarifying
+        # question is a structural dead-end (nobody answers → the agent stalls,
+        # 13398). Interactive default is byte-identical.
+        (
+            "**Ambiguous or missing essential information** → there is no"
+            " interactive user to ask; state your best assumption and proceed"
+            " (do NOT stop to ask a clarifying question)."
+            if non_interactive else
+            "**Ambiguous or missing essential information** → ask ONE"
+            " clarifying question instead of guessing."
+        ),
         "",
     ])
 

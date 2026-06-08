@@ -201,6 +201,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 eager_embedding_build=False,
                 exclude_tools=None,
                 router_max_iterations=5,
+                non_interactive=False,  # #1439 Fix #1: interactive UI = byte-identical
                 environment_backend=None,
                 sandbox_backend=None,
                 workspace_base_dir=None,
