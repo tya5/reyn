@@ -249,3 +249,98 @@ def test_realistic_polluted_history_post_tool_shape() -> None:
     # No role=user "(answered)" message exists
     user_answered = [m for m in result if m.get("role") == "user" and m.get("content") == "(answered)"]
     assert user_answered == []
+
+
+# ── 6. #1439 Fix #2: status-aware signal (error must NOT say "task complete") ──
+
+
+def _signal_of(tool_content: str) -> str:
+    """Apply the signal to a trailing tool result and return the embedded
+    `_g12_signal` text (real helper, no mocks)."""
+    msgs = [
+        {"role": "assistant", "tool_calls": [{"id": "abc"}]},
+        {"role": "tool", "content": tool_content},
+    ]
+    return json.loads(_apply_g12_signal(msgs)[-1]["content"])["_g12_signal"]
+
+
+@pytest.mark.parametrize("err_status", ["error", "denied", "not_found", "failed"])
+def test_errored_trailing_tool_signal_does_not_claim_complete(err_status: str) -> None:
+    """Tier 2: #1439 Fix #2 — an errored trailing tool result must NOT carry a
+    "task complete" / "complete" signal (the 14096 error-as-success root). The
+    error signal still carries a continuation nudge (decision-enabling), and the
+    embed stays valid JSON with original fields intact."""
+    content = f'{{"status": "{err_status}", "error": "boom"}}'
+    signal = _signal_of(content)
+    assert "complete" not in signal.lower(), f"{err_status} signal must not assert completion"
+    # Decision-enabling: it names the failure + nudges a next step.
+    assert "error" in signal.lower()
+    assert "next step" in signal.lower()
+    # Structure preserved: still valid JSON, original fields intact.
+    parsed = json.loads(_apply_g12_signal(
+        [{"role": "tool", "content": content}]
+    )[-1]["content"])
+    assert parsed["status"] == err_status
+    assert parsed["error"] == "boom"
+
+
+def test_success_vs_error_signal_differential() -> None:
+    """Tier 2: #1439 Fix #2 — the falsification pair. A status=ok trailing tool
+    keeps the byte-identical "task complete" success signal; a status=error one
+    gets the no-completion error signal. Same code path, status-driven branch."""
+    ok_signal = _signal_of('{"status": "ok", "data": 1}')
+    err_signal = _signal_of('{"status": "error", "error": "x"}')
+    assert "task complete" in ok_signal          # success cell unchanged
+    assert "complete" not in err_signal.lower()   # error cell suppresses it
+    assert ok_signal != err_signal
+
+
+def test_absent_and_non_json_status_use_success_cell() -> None:
+    """Tier 2: #1439 Fix #2 — conservative boundary: a missing status, an
+    unparseable `{`-string, and plain-text content all fall to the success cell
+    (byte-identical signal), so the error path is narrow (replay-gate bound)."""
+    # status absent → success
+    assert "task complete" in _signal_of('{"data": 5}')
+    # plain-text content → success (prefix form)
+    plain = _apply_g12_signal([{"role": "tool", "content": "just text"}])[-1]["content"]
+    assert plain.startswith("(answered)")
+    assert "task complete" in plain
+
+
+# ── 6b. #1439 Fix #2: the PRODUCTION envelope nests op status under `data` ──
+# dispatch_tool wraps every successful dispatch as {"status":"ok","data":<op>},
+# so op-execution errors (the 14096 case) are at data.status while top-level is
+# "ok". The replay-gate (sandbox_2) caught that a top-level-only check is a no-op
+# on this envelope. These pin the nested detection on the REAL shapes.
+
+
+def test_nested_op_error_under_data_is_detected() -> None:
+    """Tier 2: #1439 Fix #2 — the production envelope {"status":"ok","data":
+    {...,"status":"error"}} (op-execution error nested under the dispatch wrapper)
+    routes to the error cell — no "task complete". This is the 14096 case the
+    top-level-only check missed; the replay-gate's primary evidence."""
+    # The exact 14096 shape: an errored sandboxed_exec nested under data.
+    content = (
+        '{"status": "ok", "data": {"kind": "sandboxed_exec", "status": "error",'
+        ' "returncode": 1, "stderr": "boom"}}'
+    )
+    signal = _signal_of(content)
+    assert "complete" not in signal.lower(), "nested op error must not claim completion"
+    assert "error" in signal.lower()
+    assert "next step" in signal.lower()
+
+
+@pytest.mark.parametrize("op_status", ["error", "denied", "not_found", "failed"])
+def test_nested_op_error_statuses_route_to_error_cell(op_status: str) -> None:
+    """Tier 2: #1439 Fix #2 — every op error status nested under data (the
+    wrapped envelope) is detected, not just top-level dispatch errors."""
+    content = f'{{"status": "ok", "data": {{"kind": "file", "status": "{op_status}"}}}}'
+    assert "complete" not in _signal_of(content).lower()
+
+
+def test_nested_ok_under_data_uses_success_cell() -> None:
+    """Tier 2: #1439 Fix #2 — the dominant production success shape
+    {"status":"ok","data":{...,"status":"ok"}} keeps the byte-identical success
+    signal (nested ok must NOT false-trigger the error cell)."""
+    content = '{"status": "ok", "data": {"kind": "file", "status": "ok", "data": {}}}'
+    assert "task complete" in _signal_of(content)
