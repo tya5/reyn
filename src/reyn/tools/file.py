@@ -20,6 +20,9 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.tools.op_context_bridge import (
+    build_legacy_op_context as _build_legacy_op_context,
+)
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # Descriptions must be byte-identical to the ToolSpec.description literals in
@@ -198,48 +201,6 @@ _GLOB_FILES_PARAMETERS: dict[str, Any] = {
     },
     "required": ["pattern"],
 }
-
-
-def _build_legacy_op_context(ctx: ToolContext) -> Any:
-    """Build an OpContext for op_runtime delegation.
-
-    Preferred (= router-side production, ADR-0026 Phase 3.5): use the
-    ``ctx.router_state.op_context_factory`` callable bound by
-    RouterLoop. The factory yields the same OpContext the legacy router
-    branches received — populated PermissionDecl (= operator file/mcp
-    declarations), Workspace with ``skill_name="chat_router"``, and the
-    flattened MCP servers map.
-
-    Fallback (= phase-side dispatch, test sites): synthesize a minimal
-    OpContext from ToolContext fields with ``PermissionDecl()`` empty.
-    The fallback is documented as M3 transitional in ADR-0026 Open Q #7;
-    callers that need real permission gating must populate
-    ``router_state.op_context_factory`` (router) or supply
-    ``phase_state.op_context`` (phase) when those wirings land.
-    """
-    rs = ctx.router_state
-    if rs is not None and rs.op_context_factory is not None:
-        return rs.op_context_factory()
-
-    from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
-
-    # Propagate the active phase's PermissionDecl via phase_state.op_context
-    # (FP-0008 Tool→OpContext bridge fix 2026-05-28).
-    phase_op_ctx = (
-        ctx.phase_state.op_context if ctx.phase_state is not None else None
-    )
-    return OpContext(
-        workspace=ctx.workspace,
-        events=ctx.events,
-        permission_decl=(
-            phase_op_ctx.permission_decl
-            if phase_op_ctx is not None
-            else PermissionDecl()
-        ),
-        permission_resolver=ctx.permission_resolver,
-        skill_name="",
-    )
 
 
 async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
