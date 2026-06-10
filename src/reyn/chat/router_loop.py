@@ -936,6 +936,30 @@ def _build_hot_list_aliases(
     # Defensive filter: drop universal wrapper names before alias construction
     # so that any call site (present or future) cannot introduce duplicates.
     names = [n for n in names if n not in _UNIVERSAL_WRAPPER_NAMES]
+    # #1456 runtime-boundary guard: a hot-list alias name becomes the OpenAI
+    # function name VERBATIM (``"name": name`` below). Drop any name that
+    # violates the provider function-name grammar (^[a-zA-Z0-9_-]{1,64}$ — the
+    # tightest, OpenAI's; dots are outside all three target providers' specs).
+    # This closes the wire-grammar hole BY CONSTRUCTION at the emission point —
+    # a dotted name from a collapsed/legacy category (agent.peer__* /
+    # mcp.tool__*) or a future dynamic prefix can never reach the wire as a
+    # function name, independent of whether every upstream source pre-filtered
+    # it. (invoke_action's action_name is an argument value, not a function
+    # name, so it is correctly unaffected.) Companion to the static canary in
+    # test_qualified_name_provider_grammar_1456.
+    import re
+
+    _wire_safe = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+    _illegal = [n for n in names if not _wire_safe.match(n)]
+    if _illegal:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "hot-list: dropped %d name(s) violating the provider function-name "
+            "grammar (not wire-safe as a tools= function name): %s",
+            len(_illegal), _illegal,
+        )
+        names = [n for n in names if _wire_safe.match(n)]
     result = []
     lookup = short_description_lookup or {}
     for name in names:

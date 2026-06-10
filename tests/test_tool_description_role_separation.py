@@ -101,12 +101,16 @@ def test_invoke_action_description_carries_task_completed_status_semantics() -> 
 
 
 def test_invoke_action_description_contains_agent_delegation_pattern() -> None:
-    """Tier 2: invoke_action description carries agent.peer delegation pattern.
+    """Tier 2: invoke_action description carries the agent-delegation pattern.
 
     B23-PRE-1: ## Agent delegation SP subsection moved to invoke_action.description.
-    """
+    #1456: the pattern now names the canonical ``multi_agent__delegate`` action
+    (the legacy ``agent.peer__<agent_name>`` was a collapsed category that no
+    longer resolves — UnknownActionError — so the guidance pointed the LLM at a
+    dead name)."""
     desc = _INVOKE_ACTION_DESCRIPTION
-    assert "agent.peer__" in desc
+    assert "multi_agent__delegate" in desc
+    assert "agent.peer__" not in desc  # #1456: stale dead-name removed
     # The description key or pattern
     assert "AGENT DELEGATION" in desc or "delegation" in desc.lower()
 

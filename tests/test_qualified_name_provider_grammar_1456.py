@@ -78,3 +78,24 @@ def test_no_dotted_names_anywhere_in_the_static_surface() -> None:
     )
     dotted = [n for n in surface if "." in n]
     assert dotted == [], f"dotted names reintroduced (provider-grammar risk): {dotted}"
+
+
+def test_alias_builder_drops_wire_unsafe_names() -> None:
+    """Tier 2: #1456 (c) runtime-boundary guard — the ONLY emission point where a
+    qualified name becomes a tools= function name verbatim (_build_hot_list_aliases)
+    drops any name violating the function-name grammar. So a dotted name — a
+    collapsed/legacy category (agent.peer__* / mcp.tool__*) or a future dynamic
+    prefix — can NEVER reach the wire as a function name, by construction at the
+    boundary, independent of whether every upstream source pre-filtered it."""
+    from reyn.chat.router_loop import _build_hot_list_aliases
+
+    out = _build_hot_list_aliases([
+        "file__read",              # wire-safe → kept
+        "agent.peer__alice",       # dotted (collapsed category) → dropped
+        "mcp.tool__brave.search",  # dotted → dropped
+    ])
+    emitted = [d["function"]["name"] for d in out]
+    assert "file__read" in emitted
+    assert all("." not in n for n in emitted), f"dotted name reached the wire: {emitted}"
+    assert "agent.peer__alice" not in emitted
+    assert "mcp.tool__brave.search" not in emitted

@@ -300,10 +300,12 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
 # This is the set of qualified names that PR-2 can route statically
 # (= without consulting runtime caller state). Used by
 # ``suggest_similar_names`` when callers don't supply a candidate list.
-# Dynamic items (skill__*, agent.peer__*, mcp.tool__*, mcp.server__*,
-# memory_entry__*, rag_corpus__*) live in caller state and are not
-# enumerated here. PR-3 will combine this static set with the dynamic
-# items from RouterCallerState to feed the actual suggestion engine.
+# Dynamic items (skill__*, multi_agent__*, mcp__* tools, memory_entry__*,
+# rag_corpus__*) live in caller state and are not enumerated here. PR-3
+# combines this static set with the dynamic items from RouterCallerState to
+# feed the actual suggestion engine. (The legacy agent.peer / mcp.tool /
+# mcp.server dotted sub-categories were collapsed into multi_agent / mcp;
+# #1456: no current category carries a dot.)
 
 KNOWN_STATIC_QUALIFIED_NAMES: Final[tuple[str, ...]] = tuple(
     sorted(_OPERATION_RULES.keys())
