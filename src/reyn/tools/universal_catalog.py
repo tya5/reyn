@@ -38,7 +38,7 @@ verification 1-9.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final, Mapping
+from typing import TYPE_CHECKING, Any, Collection, Final, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
@@ -167,17 +167,35 @@ def is_valid_qualified_name(qualified_name: str) -> bool:
 # ── D14 visibility gating helpers ──────────────────────────────────────────
 
 
-def is_search_available(*, action_retrieval_embedding_class: str | None) -> bool:
+def is_search_available(
+    *,
+    action_retrieval_embedding_class: str | None,
+    embedding_class_names: "Collection[str] | None" = None,
+) -> bool:
     """Return True iff ``search_actions`` should be exposed to the LLM.
 
-    Per FP-0034 §D14, ``search_actions`` is only visible when an
-    embedding class is configured for action retrieval (= reyn.yaml
-    ``action_retrieval.embedding_class`` resolves to a real entry in
-    ``embedding.classes``). Callers (= router_tools.py in PR-3) pass
-    the resolved embedding class name (or None) here to decide whether
-    to include SEARCH_ACTIONS in tools=.
+    Per FP-0034 §D14, ``search_actions`` is only visible when an embedding
+    class is configured for action retrieval AND that class is a real entry
+    in ``embedding.classes`` (a class-typed field is closed-world).
+
+    #1454: the primary membership reconciliation happens upstream at config
+    load (``_reconcile_embedding_class`` degrades a dangling class to None +
+    logs once). By the time this is called the value is normally already
+    clean, so the ``bool()`` check suffices. ``embedding_class_names`` is the
+    belt-and-suspenders leg: when a caller passes the known class names, a
+    non-member class returns False here too (closed-world enforced at the
+    visibility boundary, not just at config load). No logging here — the single
+    actionable log lives in the config-load reconciliation to avoid double
+    surfacing.
     """
-    return bool(action_retrieval_embedding_class)
+    if not action_retrieval_embedding_class:
+        return False
+    if (
+        embedding_class_names is not None
+        and action_retrieval_embedding_class not in embedding_class_names
+    ):
+        return False
+    return True
 
 
 def is_exec_available(*, sandbox_backend: str | None) -> bool:
