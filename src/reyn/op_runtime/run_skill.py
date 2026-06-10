@@ -142,21 +142,16 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
         if hasattr(sub_skill, "source_path") and sub_skill.source_path:
             skill_md_path_for_hash = Path(sub_skill.source_path)
 
-    # Model class resolution: op.model is only honoured when it is a known model
-    # class in the resolver mapping (e.g. "light", "standard", "strong").
-    # Literal LiteLLM strings (e.g. "gpt-3.5-turbo") injected by the LLM are
-    # rejected here and fall back to the runtime model, because the proxy config
-    # (reyn.yaml models:) is the single source of truth for model selection.
-    # This prevents LLM-hallucinated model strings from bypassing the proxy.
-    if op.model and ctx.resolver and not ctx.resolver.is_known_class(op.model):
-        _log.warning(
-            "run_skill: op.model %r is not a known model class — ignoring and "
-            "inheriting runtime model %r instead. Use a model class (light / "
-            "standard / strong) defined in reyn.yaml models:.",
-            op.model,
-            ctx.model,
+    # Model class resolution: op.model is a class-typed (skill-supplied) field,
+    # so it is closed-world — only honoured when it is a known model class
+    # (light / standard / strong, or one in reyn.yaml models:). A literal
+    # LiteLLM string (e.g. "gpt-3.5-turbo") injected by the LLM is rejected and
+    # falls back to the runtime model, keeping the proxy config the single
+    # source of truth. #1454 PR-B: the guard is the shared resolver gate.
+    if ctx.resolver is not None:
+        model = ctx.resolver.resolve_class_or_fallback(
+            op.model, ctx.model, where="run_skill",
         )
-        model = ctx.model or "standard"
     else:
         model = op.model or ctx.model or "standard"
 

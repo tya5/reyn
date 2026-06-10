@@ -102,10 +102,16 @@ async def handle(
         }
 
     # ── 2. Resolve model string ───────────────────────────────────────────────
-    model_class = op.model or ctx.model or "standard"
+    # op.model is a class-typed (skill-supplied) field → closed-world gate
+    # (#1454 PR-B): a non-class value falls back to the runtime model rather
+    # than passing through as a literal LiteLLM string that bypasses the proxy.
     if ctx.resolver is not None:
+        model_class = ctx.resolver.resolve_class_or_fallback(
+            op.model, ctx.model, where="judge_output",
+        )
         resolved_model = ctx.resolver.resolve(model_class).model
     else:
+        model_class = op.model or ctx.model or "standard"
         resolved_model = model_class
 
     # ── 3. Build LLM messages ────────────────────────────────────────────────

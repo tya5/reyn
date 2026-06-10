@@ -151,6 +151,39 @@ class ModelResolver:
         """
         return name in self._resolved
 
+    def resolve_class_or_fallback(
+        self, requested: str | None, fallback: str | None, *, where: str = "",
+    ) -> str:
+        """Resolve a CLASS-TYPED model selection (op/skill-supplied) closed-world.
+
+        #1454 PR-B (the unified class/name rule): a class-typed position is
+        closed-world — a ``requested`` value that is NOT a known class is NOT
+        passed through as a literal LiteLLM model (that would let a
+        skill-authored / LLM-injected string bypass the proxy config, which is
+        the single source of truth for model selection). Returns ``requested``
+        only when it is a known class; otherwise logs ONE decision-enabling
+        warning and returns the trusted ``fallback``.
+
+        This is the "standard gate" promotion of :meth:`is_known_class` — every
+        op/skill-supplied model field (``op.model``) routes through here rather
+        than each call site re-implementing the guard. Operator-config model
+        references (``cfg.model`` etc., from reyn.yaml) deliberately do NOT use
+        this gate: literal LiteLLM strings there are an intentional
+        backward-compat passthrough (see :meth:`resolve`).
+        """
+        if requested and not self.is_known_class(requested):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "%s: model %r is not a known model class — ignoring and using "
+                "%r instead. Use a model class (e.g. light / standard / strong, "
+                "or one defined in reyn.yaml models:) so the proxy config stays "
+                "the single source of truth.",
+                where or "model selection", requested, fallback or "standard",
+            )
+            return fallback or "standard"
+        return requested or fallback or "standard"
+
     # ------------------------------------------------------------------
     # Internal resolution helpers
     # ------------------------------------------------------------------
