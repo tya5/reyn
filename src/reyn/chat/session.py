@@ -5503,6 +5503,11 @@ class ChatSession:
             host=self._router_host, chain_id=chain_id,
             max_iterations=self._router_max_iterations,
             budget=self._budget_tracker,
+            # #1440 followup: thread the run-once autonomy flag to the LIVE
+            # chat-router SP path (router_loop build_system_prompt). The original
+            # #1440 wired only _build_router_system_prompt; this reaches the path
+            # run-once actually renders. ChatSession._non_interactive set by #1440.
+            non_interactive=self._non_interactive,
             # #187: hide excluded tools (e.g. web for faithful SWE-eval) from the
             # MAIN agent loop's LLM-visible catalog (same hook the sub-loops use).
             exclude_tools=self._exclude_tools,
