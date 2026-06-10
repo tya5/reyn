@@ -239,3 +239,19 @@ def test_resolve_class_or_fallback_none_everywhere_defaults_standard():
     """Tier 2: #1454 — requested and fallback both absent → 'standard'."""
     r = ModelResolver({}, builtin={})
     assert r.resolve_class_or_fallback(None, None, where="t") == "standard"
+
+
+def test_bare_model_name_warns_prefixed_does_not(caplog):
+    """Tier 2: #1454 PR-B — a name position (models[*].model) lacking a '/'
+    provider prefix warns at load (degraded-but-allowed); a prefixed name is
+    silent. The class/name unified rule's name-position leg."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        ModelResolver({"bare": {"model": "gpt-4o-mini"}}, builtin={})
+    assert any("no provider prefix" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        ModelResolver({"ok": {"model": "openai/gpt-4o"}}, builtin={})
+    assert not any("no provider prefix" in r.message for r in caplog.records)

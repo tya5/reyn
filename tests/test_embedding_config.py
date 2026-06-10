@@ -400,3 +400,19 @@ class TestDefaultImmutability:
         _build_embedding_config({})
         _build_embedding_config({"batch_size": 50})
         assert set(_DEFAULT_EMBEDDING_CLASSES) == original_keys
+
+
+def test_bare_embedding_model_name_warns_prefixed_does_not(caplog):
+    """Tier 2: #1454 PR-B — embedding.classes[*].model is a name position; a
+    value lacking a '/' provider prefix warns at parse (degraded-but-allowed),
+    a prefixed value is silent. Shared name-position leg of the class/name rule."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="reyn.config"):
+        _parse_embedding_classes({"bare": {"model": "all-MiniLM-L6-v2"}})
+    assert any("no provider prefix" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="reyn.config"):
+        _parse_embedding_classes({"ok": {"model": "openai/text-embedding-3-small"}})
+    assert not any("no provider prefix" in r.message for r in caplog.records)

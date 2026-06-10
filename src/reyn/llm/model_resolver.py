@@ -134,6 +134,26 @@ class ModelResolver:
                     name, self._namespace[name], frozenset()
                 )
 
+        # #1454 PR-B: name-position validation. The resolved ``model`` is a NAME
+        # position, which should be ``provider/model`` (the `/`-prefix invariant
+        # — all builtin defaults comply). WARN (not error) for a bare name:
+        # litellm may accept some bare strings, so bare usage is
+        # degraded-but-allowed, flagged so a misroute is diagnosable. (Class
+        # positions — tier references — are closed-world via
+        # resolve_class_or_fallback; this is the name-position leg of the same
+        # unified class/name rule, shared with embedding.classes[*].model.)
+        for _name, _spec in self._resolved.items():
+            if "/" not in _spec.model:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "models.%s model %r has no provider prefix ('/') — a model "
+                    "position should be 'provider/model' (e.g. 'openai/gpt-4o'). "
+                    "Treating as a bare LiteLLM name; add the prefix if "
+                    "resolution misroutes.",
+                    _name, _spec.model,
+                )
+
     def resolve(self, name: str) -> ModelSpec:
         """Return the ModelSpec for name. Pass through as a no-kwargs ModelSpec if not in namespace."""
         if name in self._resolved:
