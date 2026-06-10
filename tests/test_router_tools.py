@@ -38,11 +38,8 @@ EXPECTED_TOOL_NAMES = [
     # web_fetch is always exposed (E2) — FP-0022: catalog-level gate removed;
     # authorization now at handler level via PermissionResolver._approve().
     "web_fetch",
-    # read_tool_result (E3) — companion to web_fetch preview path. Added in
-    # B49 Step 2 v6 fix (2026-05-22): registered in tools/__init__.py but
-    # build_tools() was never surfacing it, so the lazy-expand half of the
-    # preview-driven design was undeployed for router-side use.
-    "read_tool_result",
+    # #1449: read_tool_result (the former E3) retired — its same-host read
+    # folded into file__read; web_fetch's preview points there now.
     # plan (G1) — always exposed; LLM opts in for complex queries.
     "plan",
     # reyn_src_* are always exposed (F1, F2) — they read Reyn's own
@@ -306,10 +303,10 @@ def test_total_tool_count_with_full_permissions():
     """Tier 2: Full file + MCP permissions → all baseline + file + MCP tools present.
 
     Full file + MCP permissions → 11 baseline + 4 file C1-C4
-    + 3 web E1+E2+E3 (web_search + web_fetch always on since FP-0022;
-    read_tool_result added in B49 Step 2 v6 fix) + 4 MCP D1-D4
+    + 2 web E1+E2 (web_search + web_fetch always on since FP-0022; #1449
+    retired read_tool_result E3) + 4 MCP D1-D4
     + 2 reyn_src F1-F2 + 1 plan G1
-    + 2 RAG H1-H2 (recall + drop_source) = 27 tools total.
+    + 2 RAG H1-H2 (recall + drop_source) = 26 tools total.
     FP-0032: D4 describe_mcp_tool added alongside D1-D3.
     web_fetch_allowed param is kept for backward compat but now a no-op.
     """

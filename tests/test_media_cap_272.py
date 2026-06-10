@@ -34,7 +34,6 @@ from reyn.chat.router_loop import (
     _build_media_followup_message,
 )
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST, estimate_tokens
-from reyn.tools.read_tool_result import _handle, _is_image_ref
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.workspace.media_store import MediaStore, MediaStoreConfig
 
@@ -216,60 +215,7 @@ def test_no_store_tail_degrades_to_bounded_note(tmp_path: Path) -> None:
     assert "more image(s)" in notes[0]["text"]
 
 
-# ── load-contract (image ref read-back → small error, never ref/binary) ──────
-
-
-def _ctx(media_store):
-    from reyn.op_runtime.context import OpContext
-    from reyn.permissions.permissions import PermissionDecl
-
-    class _Events:
-        subscribers: list = []
-
-        def emit(self, *a, **k):
-            pass
-
-    ev = _Events()
-
-    def _factory():
-        return OpContext(
-            workspace=None, events=ev, permission_decl=PermissionDecl(),
-            permission_resolver=None, skill_name="", subscribers=[],
-            media_store=media_store,
-        )
-
-    return ToolContext(
-        events=ev, permission_resolver=None, workspace=None, caller_kind="router",
-        router_state=RouterCallerState(op_context_factory=_factory), phase_state=None,
-    )
-
-
-def test_image_ref_read_back_returns_small_error_never_binary(tmp_path: Path) -> None:
-    """Tier 2: read_tool_result on an image ref → small structured error, not binary, not a ref."""
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
-    result = asyncio.run(_handle({"path": ".reyn/tool-results/pic.png"}, _ctx(store)))
-    assert result["status"] == "error"
-    assert result["error_kind"] == "media_not_text_loadable"
-    assert "media_size_tokens" in result, "the LLM needs the context cost of the image"
-    assert "_offload_ref" not in result and "tool_result_ref" not in str(result)
-
-
-def test_text_ref_read_back_is_not_guarded(tmp_path: Path) -> None:
-    """Tier 2: a TEXT tool-result ref still reads normally (the guard is image-only)."""
-    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
-    block = store.save_tool_result("hello body\n", mime_type="text/plain", chain_id="c", tool="x", seq=1)
-    result = asyncio.run(_handle({"path": block["path"]}, _ctx(store)))
-    assert result["status"] == "ok"
-    assert result["content"] == "hello body\n"
-
-
-def test_is_image_ref_extensions() -> None:
-    """Tier 2: _is_image_ref recognises image extensions across path / url / uri tails."""
-    for ident in (
-        ".reyn/tool-results/a.png", "x.JPG", "y.jpeg", "z.gif", "w.webp",
-        "https://h/agents/me/tool-results/p.png?v=1",
-        "reyn-tool-result://me/q.bmp",
-    ):
-        assert _is_image_ref(ident), ident
-    for ident in (".reyn/tool-results/a.txt", "notes.json", "data.bin", "readme"):
-        assert not _is_image_ref(ident), ident
+# #1449: the read_tool_result-tool image/text ref read-back tests moved to
+# tests/test_file_read_binary_retire_rtr_1449.py — the tool is retired and the
+# same-host ref read-back is now file__read (with image → #365 media-blocks and
+# the #1449 non-image binary guard, superseding the old "image ref → error").

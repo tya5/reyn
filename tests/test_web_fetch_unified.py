@@ -54,7 +54,7 @@ def test_web_fetch_router_render_matches_legacy_shape():
     assert "max_length" in fn["description"]
     assert "50000" in fn["description"]
     assert "web_search" in fn["description"]
-    assert "read_tool_result" in fn["description"]
+    assert "file__read" in fn["description"]  # #1449: read_tool_result retired
 
     # Parameters schema
     params = fn["parameters"]
@@ -79,7 +79,7 @@ def test_web_fetch_router_render_exact_description():
         "stored under .reyn/tool-results/. url: absolute http/https URL. "
         "max_length: cap on extracted body length (default 50000). "
         "Use after web_search to load a result page; call "
-        "read_tool_result(path) to read the full body."
+        "file__read(path) to read the full body."
     )
     assert rendered["function"]["description"] == expected_description
 
