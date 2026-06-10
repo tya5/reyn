@@ -197,6 +197,11 @@ async def _handle_mcp_install_registry(
     decl.secret_write = ["*"]
 
     op_ctx = OpContext(
+        # #1442 Layer C: OpContext.workspace is REQUIRED; omitting it raised
+        # TypeError, crashing agent-invoked `mcp install`. Thread the caller's
+        # workspace so the handler resolves the write root from its base_dir
+        # (Layer B) instead of cwd.
+        workspace=getattr(ctx, "workspace", None),
         skill_name="mcp__install_registry",
         run_id=None,
         permission_decl=decl,
@@ -332,6 +337,10 @@ async def _handle_mcp_install_package(
     decl.secret_write = ["*"]
 
     op_ctx = OpContext(
+        # #1442 Layer C: required workspace (see _handle_mcp_install_registry) —
+        # thread the caller's so the agent-invoked package install doesn't crash
+        # and the handler roots the write at base_dir, not cwd.
+        workspace=getattr(ctx, "workspace", None),
         skill_name="mcp__install_package",
         run_id=None,
         permission_decl=decl,

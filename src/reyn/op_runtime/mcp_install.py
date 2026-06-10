@@ -90,6 +90,19 @@ def _scope_to_path(scope: str, project_root: Path) -> Path:
     return project_root / ".reyn" / "mcp.yaml"
 
 
+def _resolve_write_root(workspace: object) -> Path:
+    """#1442 Layer B: the project root the install writes under.
+
+    Resolved from the workspace's CANONICAL ``base_dir`` (the attribute the real
+    Workspace exposes and op_runtime/file.py reads), with ``root`` as a fallback
+    for the CLI source stub, and cwd as the last resort. The handler previously
+    checked only ``root`` — which the real Workspace lacks — so any agent /
+    registry install silently fell back to cwd, writing into the wrong tree.
+    """
+    root = getattr(workspace, "base_dir", None) or getattr(workspace, "root", None)
+    return Path(root) if root is not None else Path.cwd()
+
+
 def _build_server_entry(pkg_raw: dict, env_keys: list[str]) -> dict:
     """Build the mcp.servers.<name> config dict from a ServerPackage raw dict.
 
@@ -238,9 +251,7 @@ async def handle(
     # ``require_mcp_install`` per-server prompt is removed; per-server
     # granularity is enforced at call time via the existing
     # ``permissions.mcp: [<server>]`` gate.
-    project_root = Path.cwd()
-    if hasattr(ctx.workspace, "root"):
-        project_root = Path(ctx.workspace.root)
+    project_root = _resolve_write_root(ctx.workspace)
     config_path = _scope_to_path(op.scope, project_root)
     if ctx.permission_resolver is not None:
         # #1352-C: thread the agent/operator sandbox policy (SandboxLayer ∩),
