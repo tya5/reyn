@@ -22,6 +22,7 @@ by the search response (e.g. ``"io.github.foo/bar-mcp"``).
 from __future__ import annotations
 
 import os
+import urllib.parse
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -293,10 +294,15 @@ class RegistryClient:
             return server_json_from_raw(srv)
 
         last_error: RegistryError | None = None
+        # #1447: registry IDs are reverse-DNS and always contain "/" (e.g.
+        # io.github.foo/bar). The "/" MUST be percent-encoded or it injects extra
+        # path segments → the registry 404s. (Mirrors safe/mcp/registry.py:246;
+        # this parallel impl had the encoding gap → every registry install 404'd.)
+        encoded_name = urllib.parse.quote(server_name, safe="")
         for base in _base_urls():
             try:
                 data = await self._get(
-                    f"/v0.1/servers/{server_name}/versions/latest",
+                    f"/v0.1/servers/{encoded_name}/versions/latest",
                     base_url=base,
                 )
             except RegistryError as exc:
