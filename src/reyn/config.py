@@ -2002,6 +2002,45 @@ def _parse_mcp_search_threshold(raw_mcp: object) -> int:
         return _default
 
 
+def _reconcile_embedding_class(cfg: "ReynConfig") -> None:
+    """#1454 (c)+(d): a class-typed field is closed-world.
+
+    ``action_retrieval.embedding_class`` names an entry in
+    ``embedding.classes``. If it names a class with no such entry — the
+    builtin ``local-mini`` default when the user REPLACED ``embedding.classes``
+    (config.py: user classes override the builtin registry), or a typo — the
+    alias can never resolve. Degrade semantic ``search_actions`` to off (None)
+    with one decision-enabling log, rather than letting the dangling alias
+    reach the embedding backend where it surfaces as a misleading "model not
+    found" naming the alias (the owner-reported HF-blocked-company failure).
+
+    Same graceful-degrade family as the missing-extras path; an opt-out-able
+    auxiliary feature must never crash a zero-config session.
+    """
+    import logging
+
+    ec = cfg.action_retrieval.embedding_class
+    if not ec or ec in cfg.embedding.classes:
+        return
+    known = ", ".join(sorted(cfg.embedding.classes)) or "(none)"
+    if ec == ActionRetrievalConfig().embedding_class:
+        detail = (
+            f"the default embedding class {ec!r} has no entry in your "
+            f"embedding.classes — add it under embedding.classes, or set "
+            f"action_retrieval.embedding_class: null to silence this"
+        )
+    else:
+        detail = (
+            f"action_retrieval.embedding_class={ec!r} has no entry in "
+            f"embedding.classes (typo?) — add the class or set it to null"
+        )
+    logging.getLogger(__name__).warning(
+        "Semantic search_actions disabled: %s. Known classes: %s.",
+        detail, known,
+    )
+    cfg.action_retrieval.embedding_class = None
+
+
 def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
@@ -2097,7 +2136,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     safety_raw = merged.get("safety") if isinstance(merged.get("safety"), dict) else {}
     safety = _build_safety_config(safety_raw)
     cost = _build_cost_config(merged.get("cost"))
-    return ReynConfig(
+    _cfg = ReynConfig(
         model=str(merged.get("model", "standard")),
         output_language=output_language,
         models={
@@ -2145,6 +2184,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
             merged.get("external_transports"),
         ),
     )
+    _reconcile_embedding_class(_cfg)
+    return _cfg
 
 
 def _build_external_transports_config(raw: object):

@@ -114,8 +114,18 @@ class RoutingEmbeddingProvider:
 
     # ── Internal dispatch ──────────────────────────────────────────────────
 
-    def _backend_for(self, model: str) -> Any:
-        """Pick the right backend for the resolved-model string."""
+    def _route(self, model: str) -> "tuple[Any, str]":
+        """Resolve the class alias ONCE at this boundary, pick the backend by
+        the resolved name, and return ``(backend, resolved_model)``.
+
+        #1454 (a): the alias→model resolution happens exactly here. Callers
+        pass the RESOLVED model to the backend, never the raw class alias —
+        the previous ``_backend_for`` resolved only to *select* the backend
+        and then handed the unresolved alias to ``backend.embed(...)``, so a
+        class name like ``local-mini`` reached LiteLLM verbatim (→ "model not
+        found" naming the alias). Single resolution point = no dual-resolution
+        drift; downstream sees only model names.
+        """
         from reyn.embedding.sentence_transformers_provider import _PREFIX
         resolved = _resolve_via_classes(self._classes, model)
         if resolved.startswith(_PREFIX):
@@ -127,13 +137,14 @@ class RoutingEmbeddingProvider:
                     config=self._config,
                     event_sink=self._event_sink,
                 )
-            return self._st
-        return self._litellm
+            return self._st, resolved
+        return self._litellm, resolved
 
     # ── EmbeddingProvider protocol ─────────────────────────────────────────
 
     async def embed(self, texts: list[str], model: str) -> EmbedBatchResult:
-        return await self._backend_for(model).embed(texts, model)
+        backend, resolved = self._route(model)
+        return await backend.embed(texts, resolved)
 
     def estimate_tokens(self, texts: list[str]) -> int:
         # Token estimation is provider-agnostic in practice (both backends
@@ -143,7 +154,8 @@ class RoutingEmbeddingProvider:
         return self._litellm.estimate_tokens(texts)
 
     def get_dimension(self, model: str) -> int:
-        return self._backend_for(model).get_dimension(model)
+        backend, resolved = self._route(model)
+        return backend.get_dimension(resolved)
 
 
 __all__ = ["RoutingEmbeddingProvider"]

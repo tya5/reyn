@@ -110,13 +110,18 @@ def test_openai_model_routes_to_litellm() -> None:
 
 
 def test_class_name_resolving_to_openai_routes_to_litellm() -> None:
-    """Tier 2: class name 'standard' → openai/* → LiteLLM backend."""
+    """Tier 2: class name 'standard' → openai/* → LiteLLM backend.
+
+    #1454 (a): the backend receives the RESOLVED model string
+    ('openai/text-embedding-3-small'), NOT the class alias 'standard' —
+    resolution happens once at the routing boundary, downstream sees names."""
     litellm = _FakeBackend("litellm")
     st = _FakeBackend("st", dim=384)
     provider = _make_provider(litellm, st)
 
     _run(provider.embed(["hello"], "standard"))
-    assert litellm.embed_calls and litellm.embed_calls[0][1] == "standard"
+    assert litellm.embed_calls
+    assert litellm.embed_calls[0][1] == "openai/text-embedding-3-small"
     assert not st.embed_calls
 
 
@@ -137,14 +142,21 @@ def test_st_prefix_model_routes_to_sentence_transformers_backend() -> None:
 
 
 def test_class_name_resolving_to_st_routes_to_st_backend() -> None:
-    """Tier 2: class name 'local-mini' → sentence-transformers/* → ST backend."""
+    """Tier 2: class name 'local-mini' → sentence-transformers/* → ST backend.
+
+    #1454 (a): the ST backend receives the RESOLVED model string
+    ('sentence-transformers/all-MiniLM-L6-v2'), NOT the class alias
+    'local-mini'. Passing the alias through was the bug — it reached LiteLLM
+    verbatim in the dangling-class case and surfaced as "model not found"."""
     litellm = _FakeBackend("litellm")
     st = _FakeBackend("st", dim=384)
     provider = _make_provider(litellm, st)
 
     _run(provider.embed(["hi"], "local-mini"))
-    n_st_calls = len(st.embed_calls)
-    assert n_st_calls == 1 and st.embed_calls[0][1] == "local-mini"
+    # Behaviour: the ST backend was called with the RESOLVED model (one call).
+    assert [m for _texts, m in st.embed_calls] == [
+        "sentence-transformers/all-MiniLM-L6-v2"
+    ]
     assert not litellm.embed_calls
 
 
@@ -152,13 +164,16 @@ def test_class_name_resolving_to_st_routes_to_st_backend() -> None:
 
 
 def test_get_dimension_routes_to_st_for_st_prefix() -> None:
-    """Tier 2: get_dimension(local-mini) consults the ST backend."""
+    """Tier 2: get_dimension(local-mini) consults the ST backend.
+
+    #1454 (a): get_dimension follows the same single-resolution boundary —
+    the ST backend is queried with the RESOLVED model, not the alias."""
     litellm = _FakeBackend("litellm")
     st = _FakeBackend("st", dim=384)
     provider = _make_provider(litellm, st)
 
     assert provider.get_dimension("local-mini") == 384
-    assert st.dimension_calls == ["local-mini"]
+    assert st.dimension_calls == ["sentence-transformers/all-MiniLM-L6-v2"]
     assert not litellm.dimension_calls
 
 

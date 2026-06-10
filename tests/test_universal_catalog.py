@@ -312,6 +312,28 @@ def test_is_search_available_predicate(
     ) is expected
 
 
+def test_is_search_available_membership_belt_and_suspenders() -> None:
+    """Tier 2: #1454 (b) — when the known class names are supplied, a class
+    NOT among them returns False (closed-world enforced at the visibility
+    boundary too, not just at config-load reconciliation)."""
+    classes = {"standard", "local-mini"}
+    # member → available
+    assert is_search_available(
+        action_retrieval_embedding_class="standard",
+        embedding_class_names=classes,
+    ) is True
+    # non-member (dangling) → hidden, even though the string is truthy
+    assert is_search_available(
+        action_retrieval_embedding_class="company-proxy",
+        embedding_class_names=classes,
+    ) is False
+    # None class stays False regardless of membership set
+    assert is_search_available(
+        action_retrieval_embedding_class=None,
+        embedding_class_names=classes,
+    ) is False
+
+
 @pytest.mark.parametrize(
     "backend, expected",
     [
