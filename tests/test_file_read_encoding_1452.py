@@ -117,3 +117,109 @@ def test_undetectable_bytes_fall_back_to_binary(tmp_path, monkeypatch):
     result = _read(tmp_path, "rand.dat")
     assert result["status"] == "error"
     assert result["binary"] is True
+
+
+# ── edit/write encoding round-trip (the critical corruption-prevention) ─────
+
+
+def _edit(tmp_path, args):
+    return asyncio.run(invoke_tool(get_default_registry(), "edit_file", args, _ctx(tmp_path)))
+
+
+# Rich enough JP content that charset-normalizer detects a stable SJIS-family
+# codec (short/ambiguous content can be mis-detected — that's a real caveat, and
+# the impl handles it safely: a mis-decode just means old_string isn't found, an
+# error, never a corrupting write).
+_SJIS_DOC = "これは日本語のテスト文書です。\n設定: value = 旧\n複数行の内容があります。\n"
+
+
+def test_sjis_edit_round_trips_encoding_preserved(tmp_path, monkeypatch):
+    """Tier 2: #1452 — editing a Shift-JIS file preserves its encoding (writes
+    back in that codec, not silently UTF-8) and leaves bytes outside the edit
+    span unchanged. The corruption the unconditional UTF-8 write would cause."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "s.txt").write_bytes(_SJIS_DOC.encode("shift_jis"))
+    result = _edit(tmp_path, {"path": "s.txt", "old_string": "旧", "new_string": "新"})
+    assert result["status"] == "ok"
+    enc = result.get("encoding")
+    assert enc  # surfaced: a non-UTF-8 codec was preserved
+    back = (tmp_path / "s.txt").read_bytes()
+    # round-trips in the detected codec, and the edit landed.
+    assert back.decode(enc) == _SJIS_DOC.replace("旧", "新")
+    # the bytes are NOT UTF-8 (the encoding was preserved, not transcoded).
+    assert back != _SJIS_DOC.replace("旧", "新").encode("utf-8")
+
+
+def test_utf16_edit_preserves_bom_and_encoding(tmp_path, monkeypatch):
+    """Tier 2: #1452 — editing a UTF-16 (BOM) file preserves the BOM + codec."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "u16.txt").write_bytes("alpha\nbeta\n".encode("utf-16"))
+    result = _edit(tmp_path, {"path": "u16.txt", "old_string": "beta", "new_string": "gamma"})
+    assert result["status"] == "ok"
+    back = (tmp_path / "u16.txt").read_bytes()
+    assert back.decode("utf-16") == "alpha\ngamma\n"
+    assert back.startswith(b"\xff\xfe") or back.startswith(b"\xfe\xff")  # BOM preserved
+
+
+def test_emoji_into_sjis_errors_and_leaves_file_untouched(tmp_path, monkeypatch):
+    """Tier 2: #1452 — an edit not representable in the file's encoding (emoji →
+    Shift-JIS) ERRORS and leaves the file byte-for-byte unchanged (no silent
+    transcode to UTF-8). The critical no-corruption guarantee."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "s.txt").write_bytes(_SJIS_DOC.encode("shift_jis"))
+    before = (tmp_path / "s.txt").read_bytes()
+    result = _edit(tmp_path, {"path": "s.txt", "old_string": "旧", "new_string": "🎉"})
+    assert result["status"] == "error"
+    assert (tmp_path / "s.txt").read_bytes() == before  # untouched
+
+
+def test_edit_binary_errors(tmp_path, monkeypatch):
+    """Tier 2: #1452 — editing a binary file errors (cannot decode as text)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "b.dat").write_bytes(b"\x00\x01\x02\xff\xfebinary")
+    result = _edit(tmp_path, {"path": "b.dat", "old_string": "x", "new_string": "y"})
+    assert result["status"] == "error"
+    assert result.get("binary") is True
+
+
+def test_write_overwrite_sjis_becomes_utf8_with_note(tmp_path, monkeypatch):
+    """Tier 2: #1452 — write (full replacement) of an existing Shift-JIS file
+    writes UTF-8 and surfaces an encoding_note (the edit/write asymmetry)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "s.txt").write_bytes("古い内容\n".encode("shift_jis"))
+    result = asyncio.run(invoke_tool(
+        get_default_registry(), "write_file",
+        {"path": "s.txt", "content": "new content 🎉\n"}, _ctx(tmp_path),
+    ))
+    assert result["status"] == "ok"
+    assert result.get("encoding_note")  # noted the SJIS→UTF-8 change
+    assert (tmp_path / "s.txt").read_bytes() == "new content 🎉\n".encode("utf-8")
+
+
+# ── grep across encodings (backend-seam wiring) ─────────────────────────────
+
+
+def _grep(tmp_path, pattern):
+    return asyncio.run(invoke_tool(
+        get_default_registry(), "grep_files", {"path": ".", "pattern": pattern}, _ctx(tmp_path),
+    ))
+
+
+def test_grep_matches_pattern_in_sjis_file(tmp_path, monkeypatch):
+    """Tier 2: #1452 — grep finds a pattern inside a Shift-JIS file (the backend
+    decode now goes through the codec; the old utf-8-replace silently missed it)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "doc.txt").write_bytes("検索対象 TARGET_TOKEN です\n".encode("shift_jis"))
+    result = _grep(tmp_path, "TARGET_TOKEN")
+    assert result["status"] == "ok"
+    assert result.get("match_count", len(result.get("matches", []))) >= 1
+
+
+def test_grep_skips_binary_file(tmp_path, monkeypatch):
+    """Tier 2: #1452 — grep skips a binary file rather than matching against
+    replacement-char garbage."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "b.dat").write_bytes(b"\x00\x01TARGET_TOKEN\x02\xff")
+    result = _grep(tmp_path, "TARGET_TOKEN")
+    assert result["status"] == "ok"
+    assert result.get("match_count", len(result.get("matches", []))) == 0
