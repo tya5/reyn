@@ -157,10 +157,10 @@ async def _handle_mcp_install_registry(
     mcp__install_package or mcp__install_local instead. Secret handling
     matches the registry-aware contract — see module docstring.
     """
-    from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.mcp_install import handle as mcp_install_handle
     from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import MCPInstallIROp
+    from reyn.tools.op_context_bridge import build_legacy_op_context
 
     server_id = str(args.get("server_id") or "")
     if not server_id:
@@ -196,22 +196,14 @@ async def _handle_mcp_install_registry(
     decl.http_get = [{"host": "registry.modelcontextprotocol.io"}]
     decl.secret_write = ["*"]
 
-    op_ctx = OpContext(
-        # #1442 Layer C: OpContext.workspace is REQUIRED; omitting it raised
-        # TypeError, crashing agent-invoked `mcp install`. Thread the caller's
-        # workspace so the handler resolves the write root from its base_dir
-        # (Layer B) instead of cwd.
-        workspace=getattr(ctx, "workspace", None),
-        skill_name="mcp__install_registry",
-        run_id=None,
-        permission_decl=decl,
-        permission_resolver=getattr(
-            getattr(ctx, "router_state", None), "permission_resolver", None,
-        ),
-        events=getattr(ctx, "events", None),
-        intervention_bus=None,
-        media_store=None,
-    )
+    # #1442 follow-up: get the OpContext from the SINGLE-SOURCE bridge (the same
+    # one file/compact/recall/web_fetch/sandboxed_exec use), not a hand-built one.
+    # On the chat-router path this yields the real Workspace rooted at the agent's
+    # workspace_base_dir; hand-building from ctx.workspace (None there) wrote the
+    # config to cwd. Only the install-specific decl + skill_name are overridden.
+    op_ctx = build_legacy_op_context(ctx)
+    op_ctx.permission_decl = decl
+    op_ctx.skill_name = "mcp__install_registry"
 
     result = await mcp_install_handle(op, op_ctx, caller="control_ir")
     return {"status": "ok", "data": result}
@@ -291,10 +283,10 @@ async def _handle_mcp_install_package(
     then delegates to op_runtime/mcp_install with ``server_id=""`` so the
     registry HTTP path is skipped.
     """
-    from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.mcp_install import handle as mcp_install_handle
     from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import MCPInstallIROp
+    from reyn.tools.op_context_bridge import build_legacy_op_context
 
     kind = str(args.get("kind") or "")
     identifier = str(args.get("identifier") or "")
@@ -336,21 +328,11 @@ async def _handle_mcp_install_package(
     decl.file_write = [{"path": ".reyn/mcp.yaml"}]
     decl.secret_write = ["*"]
 
-    op_ctx = OpContext(
-        # #1442 Layer C: required workspace (see _handle_mcp_install_registry) —
-        # thread the caller's so the agent-invoked package install doesn't crash
-        # and the handler roots the write at base_dir, not cwd.
-        workspace=getattr(ctx, "workspace", None),
-        skill_name="mcp__install_package",
-        run_id=None,
-        permission_decl=decl,
-        permission_resolver=getattr(
-            getattr(ctx, "router_state", None), "permission_resolver", None,
-        ),
-        events=getattr(ctx, "events", None),
-        intervention_bus=None,
-        media_store=None,
-    )
+    # #1442 follow-up: single-source bridge (see _handle_mcp_install_registry) —
+    # real Workspace on the chat path; override only the install-specific fields.
+    op_ctx = build_legacy_op_context(ctx)
+    op_ctx.permission_decl = decl
+    op_ctx.skill_name = "mcp__install_package"
 
     result = await mcp_install_handle(op, op_ctx, caller="control_ir")
     return {"status": "ok", "data": result}
