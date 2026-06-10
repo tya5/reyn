@@ -8,7 +8,7 @@
 
 `search_actions` is the difference between:
 
-- **Without it**: the LLM has to guess which category your intent belongs to (`file` / `mcp` / `memory.entry` / …) and run `list_actions(category=[...])` to enumerate. For natural-language asks like _"find an action that converts PDF to text"_ the LLM may also try and refuse if it doesn't immediately spot a match.
+- **Without it**: the LLM has to guess which category your intent belongs to (`file` / `mcp` / `memory_entry` / …) and run `list_actions(category=[...])` to enumerate. For natural-language asks like _"find an action that converts PDF to text"_ the LLM may also try and refuse if it doesn't immediately spot a match.
 - **With it**: the LLM runs `search_actions(query="PDF to text")` and gets a top-K relevance-ranked list across every category. It can then `describe_action` or `invoke_action` directly.
 
 `action_retrieval.embedding_class` defaults to `local-mini`, so installing the `local-embed` extras is the only step required. If the extras are absent, ChatSession silently treats this as "no class configured" — `search_actions` is gated **out** of the LLM's tool list (see [visibility gate](../../concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1)) and `list_actions` surfaces the hidden-state hint pointing back at this guide.

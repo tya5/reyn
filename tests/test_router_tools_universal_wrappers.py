@@ -461,11 +461,11 @@ async def test_hot_list_alias_with_none_args_uses_empty_dict() -> None:
     The dispatch must coerce None → {} to avoid downstream KeyErrors.
     """
     loop = _CapturingRouterLoop()
-    await loop._invoke_router_tool("rag.corpus__meetings", None)  # type: ignore[arg-type]
+    await loop._invoke_router_tool("rag_corpus__meetings", None)  # type: ignore[arg-type]
 
     assert loop.calls[0] == (
         "invoke_action",
-        {"action_name": "rag.corpus__meetings", "args": {}},
+        {"action_name": "rag_corpus__meetings", "args": {}},
     )
 
 

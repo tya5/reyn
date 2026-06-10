@@ -25,7 +25,7 @@ Servers covered:
 > structurally overlap with Reyn built-in ops:
 >
 > - filesystem ↔ `file__*` (= read / write / list / grep / glob)
-> - memory ↔ `memory.operation__*` (= remember_shared / forget)
+> - memory ↔ `memory_operation__*` (= remember_shared / forget)
 > - fetch ↔ `web__fetch` (= HTTP fetch with markdown extraction)
 >
 > With both available, the chat router consistently picks the
@@ -342,4 +342,4 @@ requiring credentials: `reyn mcp set-secret <name> <KEY>` + reference
 | `MCP server <name> access denied` | Permission not pre-approved | `echo 'mcp.<name>: true' >> .reyn/approvals.yaml` |
 | `not found` errors after install | Server uses uvx (Python) but `uv` not installed | `brew install uv` |
 | Server config in YAML missing `type: stdio` or has `server-` prefix | Outdated install path | Re-install via `reyn mcp install` |
-| MCP fetch / filesystem / memory installed but agent uses Reyn op instead | Reyn internal op (`web__fetch` / `file__*` / `memory.operation__*`) wins on natural prompts | Use `scripts/mcp_smoke.py` direct call; the MCP server isn't exercised through the chat router |
+| MCP fetch / filesystem / memory installed but agent uses Reyn op instead | Reyn internal op (`web__fetch` / `file__*` / `memory_operation__*`) wins on natural prompts | Use `scripts/mcp_smoke.py` direct call; the MCP server isn't exercised through the chat router |

@@ -58,11 +58,11 @@ def test_categories_master_table_order() -> None:
         "mcp",
         "file",
         "web",
-        "memory.entry",
-        "memory.operation",
-        "reyn.source",
-        "rag.corpus",
-        "rag.operation",
+        "memory_entry",
+        "memory_operation",
+        "reyn_source",
+        "rag_corpus",
+        "rag_operation",
         "validation",
         "exec",
     )
@@ -86,11 +86,11 @@ def test_categories_no_duplicates() -> None:
         ("exec__sandboxed_exec", "exec", "sandboxed_exec"),
         # Dotted category, simple entry
         ("multi_agent__delegate", "multi_agent", "delegate"),
-        ("memory.entry__pref_dates", "memory.entry", "pref_dates"),
-        ("memory.operation__remember_shared", "memory.operation", "remember_shared"),
-        ("rag.corpus__meetings", "rag.corpus", "meetings"),
-        ("rag.operation__recall", "rag.operation", "recall"),
-        ("reyn.source__read", "reyn.source", "read"),
+        ("memory_entry__pref_dates", "memory_entry", "pref_dates"),
+        ("memory_operation__remember_shared", "memory_operation", "remember_shared"),
+        ("rag_corpus__meetings", "rag_corpus", "meetings"),
+        ("rag_operation__recall", "rag_operation", "recall"),
+        ("reyn_source__read", "reyn_source", "read"),
         # Issue #879 collapsed mcp surface — verb_object actions.
         ("mcp__search_registry", "mcp", "search_registry"),
         ("mcp__install_registry", "mcp", "install_registry"),
@@ -116,7 +116,7 @@ def test_split_qualified_name_parses_correctly(
     "category, entry_name, expected",
     [
         ("skill", "code_review", "skill__code_review"),
-        ("rag.corpus", "meetings", "rag.corpus__meetings"),
+        ("rag_corpus", "meetings", "rag_corpus__meetings"),
         # Issue #879 collapsed mcp surface.
         ("mcp", "search_registry", "mcp__search_registry"),
         ("mcp", "call_tool", "mcp__call_tool"),
@@ -270,7 +270,7 @@ def test_describe_action_requires_action_name() -> None:
 def test_invoke_action_requires_action_name_only() -> None:
     """Tier 2: invoke_action.action_name required; args optional (D19).
 
-    Per §D19, resource invoke for memory.entry / mcp__list_servers takes
+    Per §D19, resource invoke for memory_entry / mcp__list_servers takes
     no args, so args MUST be optional. action_name is always required.
     """
     required = INVOKE_ACTION.parameters.get("required", [])

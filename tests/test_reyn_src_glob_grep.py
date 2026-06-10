@@ -1,6 +1,6 @@
-"""Tier 2: reyn.source__glob / reyn.source__grep — FP-0038 S2 + S3.
+"""Tier 2: reyn_source__glob / reyn_source__grep — FP-0038 S2 + S3.
 
-Pins the §D20-completing surface for the `reyn.source` category. The two
+Pins the §D20-completing surface for the `reyn_source` category. The two
 new ops mirror `file__glob` / `file__grep` in shape but resolve paths
 against Reyn's own repo root (via `resolve_reyn_root()`), not the
 operator's workspace.
@@ -26,28 +26,28 @@ ROOT: Path = resolve_reyn_root()
 
 
 def test_reyn_source_category_has_four_ops() -> None:
-    """Tier 2: `reyn.source__{list,read,glob,grep}` are all registered.
+    """Tier 2: `reyn_source__{list,read,glob,grep}` are all registered.
 
     Catches the regression where §D20 surface drifts back to 2 ops.
     """
-    qns = known_qualified_name_for_category("reyn.source")
+    qns = known_qualified_name_for_category("reyn_source")
     assert set(qns) == {
-        "reyn.source__list",
-        "reyn.source__read",
-        "reyn.source__glob",
-        "reyn.source__grep",
+        "reyn_source__list",
+        "reyn_source__read",
+        "reyn_source__glob",
+        "reyn_source__grep",
     }
 
 
 def test_reyn_source_glob_routes_to_reyn_src_glob() -> None:
-    """Tier 2: dispatch routes `reyn.source__glob` to `reyn_src_glob`."""
-    target, _ = _OPERATION_RULES["reyn.source__glob"]
+    """Tier 2: dispatch routes `reyn_source__glob` to `reyn_src_glob`."""
+    target, _ = _OPERATION_RULES["reyn_source__glob"]
     assert target == "reyn_src_glob"
 
 
 def test_reyn_source_grep_routes_to_reyn_src_grep() -> None:
-    """Tier 2: dispatch routes `reyn.source__grep` to `reyn_src_grep`."""
-    target, _ = _OPERATION_RULES["reyn.source__grep"]
+    """Tier 2: dispatch routes `reyn_source__grep` to `reyn_src_grep`."""
+    target, _ = _OPERATION_RULES["reyn_source__grep"]
     assert target == "reyn_src_grep"
 
 

@@ -167,18 +167,18 @@ fixtures:
 
   - id: rag_recall_semantic
     source: dogfood/scenarios/control_ir_ops.yaml
-    prompt: "Use the rag.operation__recall action to find documentation about 'phase rollback'."
-    expected_action: rag.operation__recall
+    prompt: "Use the rag_operation__recall action to find documentation about 'phase rollback'."
+    expected_action: rag_operation__recall
     expected_reach_path:
-      - 'rag.operation__recall({query: "phase rollback"})'
+      - 'rag_operation__recall({query: "phase rollback"})'
     axis: [precision]
 
   - id: rag_drop_source_destructive
     source: dogfood/scenarios/permissions_and_safety.yaml
     prompt: "Drop the events index to free up disk space."
-    expected_action: rag.operation__drop_source
+    expected_action: rag_operation__drop_source
     expected_reach_path:
-      - 'rag.operation__drop_source({source_name: "events"})'
+      - 'rag_operation__drop_source({source_name: "events"})'
     axis: [precision]
 
   # ── memory (1 entry) ──────────────────────────────────────────────────────
@@ -186,9 +186,9 @@ fixtures:
   - id: memory_remember_shared
     source: synthesized
     prompt: "「私の好きな色は青」 という事実を覚えておいて。"
-    expected_action: memory.operation__remember_shared
+    expected_action: memory_operation__remember_shared
     expected_reach_path:
-      - 'memory.operation__remember_shared({content: "私の好きな色は青"})'
+      - 'memory_operation__remember_shared({content: "私の好きな色は青"})'
     axis: [precision]
 
   # ── validation (1 entry) ──────────────────────────────────────────────────
@@ -201,14 +201,14 @@ fixtures:
       - 'validation__lint({skill_path: "index_events"})'
     axis: [precision]
 
-  # ── reyn.source (1 entry) ─────────────────────────────────────────────────
+  # ── reyn_source (1 entry) ─────────────────────────────────────────────────
 
   - id: reyn_source_grep
     source: synthesized
     prompt: "reyn のソースで 'class Skill' を検索して。"
-    expected_action: reyn.source__grep
+    expected_action: reyn_source__grep
     expected_reach_path:
-      - 'reyn.source__grep({pattern: "class Skill"})'
+      - 'reyn_source__grep({pattern: "class Skill"})'
     axis: [precision]
 
   # ── discovery (call_rate-focused, 1 entry) ────────────────────────────────

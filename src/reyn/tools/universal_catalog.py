@@ -74,19 +74,20 @@ CATEGORIES: Final[tuple[str, ...]] = (
     "mcp",
     "file",
     "web",
-    "memory.entry",
-    "memory.operation",
-    "reyn.source",
-    "rag.corpus",
-    "rag.operation",
+    "memory_entry",
+    "memory_operation",
+    "reyn_source",
+    "rag_corpus",
+    "rag_operation",
     "validation",
     "exec",
 )
 
 
-# The qualified-name separator. Double-underscore is chosen so dotted
-# categories (``mcp.tool``) and dotted entry names (``brave.search``)
-# never collide with the boundary; see FP-0034 §D18.
+# The qualified-name separator. Double-underscore is chosen so a dotted
+# entry name (``brave.search``) never collides with the boundary; see
+# FP-0034 §D18. (#1456: category names are now dot-free — alnum/_/- only,
+# per the provider function-name grammar; entry names may still carry dots.)
 _NAME_SEPARATOR: Final[str] = "__"
 
 
@@ -105,7 +106,7 @@ def split_qualified_name(qualified_name: str) -> tuple[str, str]:
         ``skill__code_review``       → ("skill", "code_review")
         ``mcp.tool__brave.search``   → ("mcp.tool", "brave.search")
         ``mcp.operation__drop_server`` → ("mcp.operation", "drop_server")
-        ``rag.corpus__meetings``     → ("rag.corpus", "meetings")
+        ``rag_corpus__meetings``     → ("rag_corpus", "meetings")
 
     Raises:
         ValueError: when the input has no ``__`` separator, the category
@@ -247,7 +248,7 @@ _LIST_ACTIONS_DESCRIPTION = (
     "Returns {items: [{qualified_name, short_description}, ...], total: int}. "
     "An empty items array means no actions match — report this honestly. "
     "WHEN: PREFERRED FIRST for known-category enumeration (e.g. 'show me all "
-    "memory.entry actions', 'what skills are available?') or exact-name "
+    "memory_entry actions', 'what skills are available?') or exact-name "
     "lookup when you already know the category but not the exact entry. "
     "ALWAYS call list_actions BEFORE refusing a category-listable capability "
     "request. Refusing without a list_actions check is a FAILURE MODE "
@@ -313,7 +314,7 @@ _SEARCH_ACTIONS_DESCRIPTION = (
     "Handles both semantic descriptions AND free-text keyword lookup "
     "(e.g. 'http' を含む action). "
     "WHEN NOT: For known-category enumeration (e.g. 'show me all skills', "
-    "「memory.entry の一覧」) use list_actions(category=[...]) instead — "
+    "「memory_entry の一覧」) use list_actions(category=[...]) instead — "
     "it returns the flat catalogue slice rather than relevance-ranked hits. "
     "If you already know the exact action name, skip both and call "
     "invoke_action directly. "
@@ -372,7 +373,7 @@ _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {
             "description": (
                 "Qualified name of the action/resource to describe "
                 "(e.g. 'skill__code_review', 'mcp.tool__brave.search', "
-                "'rag.corpus__meetings')."
+                "'rag_corpus__meetings')."
             ),
         },
     },
@@ -436,7 +437,7 @@ _INVOKE_ACTION_PARAMETERS: dict[str, Any] = {
                 "Arguments for the action; shape comes from "
                 "describe_action.input_schema. May be omitted for "
                 "resources whose canonical invoke takes no args "
-                "(e.g. memory.entry__foo)."
+                "(e.g. memory_entry__foo)."
             ),
         },
     },
@@ -502,13 +503,13 @@ def _missing_action_name_error() -> dict[str, Any]:
 def _enumerate_static_category(category: str) -> list[dict[str, str]]:
     """Enumerate qualified names for a STATIC operation category.
 
-    Static categories (file / web / memory.operation / reyn.source /
-    rag.operation) have known qualified names declared in
+    Static categories (file / web / memory_operation / reyn_source /
+    rag_operation) have known qualified names declared in
     universal_dispatch._OPERATION_RULES. Their short_description comes
     from the target ToolDefinition in the registry.
 
     Resource categories (skill / agent.peer / mcp.{server,tool} /
-    memory.entry / rag.corpus) are NOT handled here — they need caller
+    memory_entry / rag_corpus) are NOT handled here — they need caller
     state (= ctx.router_state.available_*). See _enumerate_category.
     """
     # Lazy imports to avoid circular dependency (universal_dispatch imports
@@ -542,8 +543,8 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     """Enumerate qualified names for ``category`` consulting caller state.
 
     Dispatch by category kind:
-      - Static operation categories (file / web / memory.operation /
-        reyn.source / rag.operation / mcp.operation) →
+      - Static operation categories (file / web / memory_operation /
+        reyn_source / rag_operation / mcp.operation) →
         _enumerate_static_category (= populated via universal_dispatch's
         ``_OPERATION_RULES`` table)
       - Resource categories → consult ctx.router_state (skills /
@@ -560,7 +561,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     rs = ctx.router_state
 
     if category in (
-        "file", "web", "memory.operation", "reyn.source", "rag.operation",
+        "file", "web", "memory_operation", "reyn_source", "rag_operation",
         "mcp", "multi_agent", "validation",
     ):
         return _enumerate_static_category(category)
@@ -579,7 +580,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             if isinstance(s, Mapping) and "name" in s
         ]
 
-    if category == "rag.corpus":
+    if category == "rag_corpus":
         # FP-0034 Phase 2 prep: enumerate indexed RAG corpora from the
         # router caller state snapshot.  RouterLoop populates this from
         # ``SourceManifest.get_all()`` once per loop iteration; the
@@ -588,7 +589,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             return []
         return [
             {
-                "qualified_name": build_qualified_name("rag.corpus", c["name"]),
+                "qualified_name": build_qualified_name("rag_corpus", c["name"]),
                 "short_description": _truncate_short_description(
                     c.get("description", ""),
                 ),
@@ -597,7 +598,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             if isinstance(c, Mapping) and "name" in c
         ]
 
-    if category == "memory.entry":
+    if category == "memory_entry":
         if rs is None or rs.list_memory_fn is None:
             return []
         try:
@@ -612,7 +613,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             if not name:
                 continue
             out2.append({
-                "qualified_name": build_qualified_name("memory.entry", name),
+                "qualified_name": build_qualified_name("memory_entry", name),
                 "short_description": _truncate_short_description(
                     entry.get("description", ""),
                 ),
@@ -1018,7 +1019,7 @@ async def _handle_describe_action(
     actions (web__fetch / file__read / …) whose target IS the action.
 
     For resource-category actions (``skill__X``, ``agent.peer__X``,
-    ``mcp.tool__X.Y``, ``mcp.server__X``, ``rag.corpus__X``) the target
+    ``mcp.tool__X.Y``, ``mcp.server__X``, ``rag_corpus__X``) the target
     is a generic dispatcher (``invoke_skill`` / ``delegate_to_agent`` /
     ``call_mcp_tool`` / …) whose ``.parameters`` is the dispatcher's
     own args shape, NOT the resource's actual input schema. D2-full
@@ -1121,7 +1122,7 @@ def _resource_input_schema(
       - ``agent.peer__<name>`` — ``delegate_to_agent`` parameters minus ``to``.
       - ``mcp.server__<name>`` — empty object (``list_mcp_tools`` takes
         only the curried ``server`` arg).
-      - ``rag.corpus__<name>`` — ``recall`` parameters minus ``sources``.
+      - ``rag_corpus__<name>`` — ``recall`` parameters minus ``sources``.
       - ``mcp.tool__<server>.<tool>`` — scans
         ``ctx.router_state.mcp_servers`` for the tool's declared
         ``inputSchema`` (FP-0032 expanded shape).
@@ -1151,14 +1152,14 @@ def _resource_input_schema(
             return None
         return None
 
-    if category == "rag.corpus":
+    if category == "rag_corpus":
         tool = registry.lookup("recall")
         if tool is None:
             return None
         return _drop_field_from_schema(tool.parameters, "sources")
 
-    # memory.entry__X and any other category: pre-existing dispatch shape
-    # mismatch (memory.entry's transform sends {name} but read_memory_body
+    # memory_entry__X and any other category: pre-existing dispatch shape
+    # mismatch (memory_entry's transform sends {name} but read_memory_body
     # wants {layer, slug}); fall back to target.parameters so the LLM at
     # least sees the dispatcher's shape and can recover via list_actions.
     return None
@@ -1191,18 +1192,18 @@ def _resource_description(
         ``ctx.router_state.mcp_servers``.
 
     Falls through to ``target.description`` (= caller default) for:
-      - ``rag.corpus__<name>`` — no per-corpus description metadata
+      - ``rag_corpus__<name>`` — no per-corpus description metadata
         surface today; caller falls back to the ``recall`` tool
         description (= acceptable generic context for LLM narration).
-      - ``memory.entry__<name>`` — memory entries don't carry description
+      - ``memory_entry__<name>`` — memory entries don't carry description
         fields; caller falls back to ``read_memory_body`` description.
       - Operation categories (= ``file__/web__/exec__/...``): the target
         ToolDefinition IS the action, so ``target.description`` is
         already the correct per-action text.
 
     Coverage delta vs ``_resource_input_schema``: that helper covers
-    5 categories (skill / agent.peer / mcp.server / **rag.corpus** /
-    mcp.tool). This helper covers 4 (= same set minus rag.corpus) because
+    5 categories (skill / agent.peer / mcp.server / **rag_corpus** /
+    mcp.tool). This helper covers 4 (= same set minus rag_corpus) because
     the host-side per-corpus description surface doesn't exist; if a
     ``list_available_corpora()`` surface is added later, this helper
     should grow a matching branch.
@@ -1232,7 +1233,7 @@ def _resource_description(
             return None
         return None
 
-    # rag.corpus / memory.entry / unknown — fall through to target.description
+    # rag_corpus / memory_entry / unknown — fall through to target.description
     return None
 
 
@@ -1296,7 +1297,7 @@ def _augment_suggestions(
     The PR-2 default suggestion pool is the static catalogue
     (= KNOWN_STATIC_QUALIFIED_NAMES, 13 names). When ``ctx.router_state``
     is populated, we widen the pool with dynamic items (= skills /
-    agents / mcp.tool / mcp.server / memory.entry) so the suggestion
+    agents / mcp.tool / mcp.server / memory_entry) so the suggestion
     surfaces names the LLM can actually invoke. Falls back to the
     original exception unchanged when no dynamic items exist.
     """

@@ -4,7 +4,7 @@ Tests for ``src/reyn/tools/universal_dispatch.py`` covering:
   1. resolve_invoke_action across all 13 categories (= resource
      invoke per §D19 AND operation per-name lookup).
   2. Arg transformers for each routing flavour (skill / agent /
-     mcp.server / mcp.tool / memory.entry / rag.corpus + passthrough
+     mcp.server / mcp.tool / memory_entry / rag_corpus + passthrough
      for the operation categories).
   3. UnknownActionError carrying ``action_name`` / ``reason`` /
      ``suggestions`` per §D12.
@@ -122,27 +122,27 @@ def test_resolve_invoke_action_mcp_call_tool_keys_match_wrapper_schema() -> None
 
 
 def test_resolve_invoke_action_memory_entry_routes_to_read_body() -> None:
-    """Tier 2: memory.entry__<slug> → read_memory_body({layer: shared, slug}).
+    """Tier 2: memory_entry__<slug> → read_memory_body({layer: shared, slug}).
 
     §D19 resource invoke: invoking a memory entry returns its body.
 
     Post-N4 (2026-05-17): the transform was updated to emit the canonical
     ``{layer, slug}`` pair that ``read_memory_body`` requires. The previous
-    ``{name}`` shape caused dispatch failure when memory.entry aliases were
+    ``{name}`` shape caused dispatch failure when memory_entry aliases were
     invoked (= the pre-existing shape mismatch surfaced by N4-d).
     """
-    result = resolve_invoke_action("memory.entry__pref_dates", {})
+    result = resolve_invoke_action("memory_entry__pref_dates", {})
     assert result.target_tool_name == "read_memory_body"
     assert result.target_args == {"layer": "shared", "slug": "pref_dates"}
 
 
 def test_resolve_invoke_action_rag_corpus_curries_single_source() -> None:
-    """Tier 2: rag.corpus__<name> → recall(sources=[name], query, top_k?).
+    """Tier 2: rag_corpus__<name> → recall(sources=[name], query, top_k?).
 
     §D19 single-source resource invoke.
     """
     result = resolve_invoke_action(
-        "rag.corpus__meetings", {"query": "Q3 plans", "top_k": 5},
+        "rag_corpus__meetings", {"query": "Q3 plans", "top_k": 5},
     )
     assert result.target_tool_name == "recall"
     assert result.target_args == {
@@ -153,9 +153,9 @@ def test_resolve_invoke_action_rag_corpus_curries_single_source() -> None:
 
 
 def test_resolve_invoke_action_rag_corpus_without_top_k() -> None:
-    """Tier 2: rag.corpus__<name> omits top_k when caller doesn't supply it."""
+    """Tier 2: rag_corpus__<name> omits top_k when caller doesn't supply it."""
     result = resolve_invoke_action(
-        "rag.corpus__meetings", {"query": "X"},
+        "rag_corpus__meetings", {"query": "X"},
     )
     assert "top_k" not in result.target_args
     assert result.target_args["sources"] == ["meetings"]
@@ -177,16 +177,16 @@ def test_resolve_invoke_action_rag_corpus_without_top_k() -> None:
         # web ops
         ("web__search",  "web_search"),
         ("web__fetch",   "web_fetch"),
-        # memory.operation
-        ("memory.operation__remember_shared", "remember_shared"),
-        ("memory.operation__remember_agent",  "remember_agent"),
-        ("memory.operation__forget",          "forget_memory"),
-        # reyn.source
-        ("reyn.source__read", "reyn_src_read"),
-        ("reyn.source__list", "reyn_src_list"),
-        # rag.operation
-        ("rag.operation__recall",      "recall"),
-        ("rag.operation__drop_source", "drop_source"),
+        # memory_operation
+        ("memory_operation__remember_shared", "remember_shared"),
+        ("memory_operation__remember_agent",  "remember_agent"),
+        ("memory_operation__forget",          "forget_memory"),
+        # reyn_source
+        ("reyn_source__read", "reyn_src_read"),
+        ("reyn_source__list", "reyn_src_list"),
+        # rag_operation
+        ("rag_operation__recall",      "recall"),
+        ("rag_operation__drop_source", "drop_source"),
     ],
 )
 def test_operation_categories_route_passthrough(
@@ -208,7 +208,7 @@ def test_operation_category_empty_args_pass_through() -> None:
 
 def test_invoke_action_with_none_args_treats_as_empty() -> None:
     """Tier 2: passing args=None is equivalent to args={}."""
-    result = resolve_invoke_action("memory.entry__foo", None)
+    result = resolve_invoke_action("memory_entry__foo", None)
     assert result.target_tool_name == "read_memory_body"
     assert result.target_args == {"layer": "shared", "slug": "foo"}
 
@@ -281,9 +281,14 @@ def test_suggest_similar_names_finds_close_match() -> None:
 
 
 def test_suggest_similar_names_returns_empty_when_no_match() -> None:
-    """Tier 2: completely unrelated input returns no suggestions."""
+    """Tier 2: completely unrelated input returns no suggestions.
+
+    Uses an underscore-free string: difflib similarity keys partly on the
+    ``__`` / ``_`` characters shared by qualified names, so an unrelated input
+    that happens to contain underscores can spuriously clear the cutoff
+    (#1456 made category names underscore-richer)."""
     suggestions = suggest_similar_names(
-        "xyzqwerty_completely_unrelated_string_123",
+        "xyzqwertycompletelyunrelatedstring123",
     )
     assert suggestions == []
 
@@ -325,12 +330,12 @@ def test_suggest_similar_names_empty_candidates_returns_empty() -> None:
         ("mcp__install_package",     "mcp_install_package"),
         ("mcp__install_local",       "mcp_install_local"),
         ("mcp__drop_server",         "mcp_drop_server"),
-        ("memory.entry__pref_dates", "read_memory_body"),
-        ("rag.corpus__meetings",     "recall"),
+        ("memory_entry__pref_dates", "read_memory_body"),
+        ("rag_corpus__meetings",     "recall"),
         ("file__read",               "read_file"),
         ("web__search",              "web_search"),
-        ("memory.operation__forget", "forget_memory"),
-        ("rag.operation__recall",    "recall"),
+        ("memory_operation__forget", "forget_memory"),
+        ("rag_operation__recall",    "recall"),
     ],
 )
 def test_resolve_describe_returns_invoke_target(
@@ -362,7 +367,7 @@ def test_known_static_names_is_sorted_and_deduped() -> None:
 def test_known_static_names_covers_all_operation_categories() -> None:
     """Tier 2: statically-routed operation categories cover §D11 baseline.
 
-    file / web / memory.operation / reyn.source / rag.operation /
+    file / web / memory_operation / reyn_source / rag_operation /
     mcp.operation (PR-4) / exec (FP-0034 Phase 2) are all fully routed.
     """
     names = set(KNOWN_STATIC_QUALIFIED_NAMES)
@@ -370,16 +375,16 @@ def test_known_static_names_covers_all_operation_categories() -> None:
     assert {"file__read", "file__write", "file__delete", "file__list"} <= names
     # web (2 ops)
     assert {"web__search", "web__fetch"} <= names
-    # memory.operation (3 ops)
+    # memory_operation (3 ops)
     assert {
-        "memory.operation__remember_shared",
-        "memory.operation__remember_agent",
-        "memory.operation__forget",
+        "memory_operation__remember_shared",
+        "memory_operation__remember_agent",
+        "memory_operation__forget",
     } <= names
-    # reyn.source (2 ops — read/list; glob/grep are future)
-    assert {"reyn.source__read", "reyn.source__list"} <= names
-    # rag.operation (2 ops)
-    assert {"rag.operation__recall", "rag.operation__drop_source"} <= names
+    # reyn_source (2 ops — read/list; glob/grep are future)
+    assert {"reyn_source__read", "reyn_source__list"} <= names
+    # rag_operation (2 ops)
+    assert {"rag_operation__recall", "rag_operation__drop_source"} <= names
 
 
 def test_known_static_names_excludes_resource_categories() -> None:
@@ -389,7 +394,7 @@ def test_known_static_names_excludes_resource_categories() -> None:
     """
     names = set(KNOWN_STATIC_QUALIFIED_NAMES)
     # Resource categories should have no static qualified names.
-    for prefix in ("skill__", "memory.entry__", "rag.corpus__"):
+    for prefix in ("skill__", "memory_entry__", "rag_corpus__"):
         matches = [n for n in names if n.startswith(prefix)]
         assert matches == [], (
             f"resource prefix {prefix!r} should have no static entries; "
@@ -553,8 +558,8 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("multi_agent__list_peers", {}),
     ("multi_agent__describe_peer", {"name": "planner"}),
     ("multi_agent__delegate", {"to": "planner", "message": "hi", "request": "hi"}),
-    ("memory.entry__pref_dates", {}),
-    ("rag.corpus__notes", {"query": "what"}),
+    ("memory_entry__pref_dates", {}),
+    ("rag_corpus__notes", {"query": "what"}),
     # Operation categories (= _OPERATION_RULES) — passthrough transformers,
     # so the caller args must already include the target's required keys.
     # Issue #879 collapsed mcp surface + 2026-05-25 install 3-verb split.
@@ -576,17 +581,17 @@ _ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     ("file__edit",   {"path": "a", "old_string": "b", "new_string": "c"}),
     ("web__search",  {"query": "x"}),
     ("web__fetch",   {"url": "https://x"}),
-    ("memory.operation__remember_shared",
+    ("memory_operation__remember_shared",
      {"slug": "s", "name": "n", "description": "d", "type": "user", "body": "b"}),
-    ("memory.operation__remember_agent",
+    ("memory_operation__remember_agent",
      {"slug": "s", "name": "n", "description": "d", "type": "user", "body": "b"}),
-    ("memory.operation__forget", {"layer": "shared", "slug": "s"}),
-    ("reyn.source__read", {"path": "a"}),
-    ("reyn.source__list", {"path": "."}),
-    ("reyn.source__glob", {"pattern": "*.py"}),
-    ("reyn.source__grep", {"pattern": "x"}),
-    ("rag.operation__recall",      {"query": "q", "sources": ["s"]}),
-    ("rag.operation__drop_source", {"source": "s"}),
+    ("memory_operation__forget", {"layer": "shared", "slug": "s"}),
+    ("reyn_source__read", {"path": "a"}),
+    ("reyn_source__list", {"path": "."}),
+    ("reyn_source__glob", {"pattern": "*.py"}),
+    ("reyn_source__grep", {"pattern": "x"}),
+    ("rag_operation__recall",      {"query": "q", "sources": ["s"]}),
+    ("rag_operation__drop_source", {"source": "s"}),
     ("validation__lint",           {"skill_path": "index_events"}),
     ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),
 ]

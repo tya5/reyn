@@ -396,7 +396,7 @@ When enabled (default), the chat router's `tools=` includes the wrappers at the 
 - `describe_action(action_name="skill__index_docs")` → fetch the input schema
 - `invoke_action(action_name="skill__index_docs", args={...})` → execute via the existing handler
 
-Resource categories (`mcp.server`, `rag.corpus`, `memory.entry`, …) also support `invoke_action`.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
+Resource categories (`mcp.server`, `rag_corpus`, `memory_entry`, …) also support `invoke_action`.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
 
 See [Concepts: architecture](../../concepts/architecture/architecture.md) for the tool registry / dispatch background.
 

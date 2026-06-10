@@ -384,7 +384,7 @@ action_retrieval:
 - `describe_action(action_name="skill__index_docs")` → input schema を取得
 - `invoke_action(action_name="skill__index_docs", args={...})` → 既存 handler 経由で実行
 
-リソースカテゴリ (`mcp.server`, `rag.corpus`, `memory.entry`, …) も `invoke_action` をサポート。 不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラーを返し、 LLM は 1 turn で復帰可能。
+リソースカテゴリ (`mcp.server`, `rag_corpus`, `memory_entry`, …) も `invoke_action` をサポート。 不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラーを返し、 LLM は 1 turn で復帰可能。
 
 ツールレジストリ / dispatch の背景は [Concepts: architecture](../../concepts/architecture/architecture.md) を参照。
 

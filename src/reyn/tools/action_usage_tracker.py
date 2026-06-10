@@ -81,11 +81,11 @@ from typing import Callable
 # Referenced by ActionRetrievalConfig when hot_list_seed="default".
 # Seed growth log:
 #   B27-M2: file__grep removed (no routing rule yet).
-#   B27-M5: file__list + reyn.source__list added (cold-start directory listing).
+#   B27-M5: file__list + reyn_source__list added (cold-start directory listing).
 #   B28-MED-1: skill__index_docs added (RAG indexing intent).
 #   B30-NEW-2: skill__eval added (eval discoverability).
 #   B34: file__grep + file__glob re-added (ToolDefinitions implemented).
-#   B37 W4/W6: file__write + rag.operation__drop_source added (arg-canonical
+#   B37 W4/W6: file__write + rag_operation__drop_source added (arg-canonical
 #              gap — D2-wrapper scope is hot-list-only; seeding ensures schema
 #              guidance is present at first use).
 #   #879: skill__mcp_search → mcp__search_server; mcp__install_server added
@@ -94,7 +94,7 @@ from typing import Callable
 #         discovery first).
 #   2026-05-25 (post-#898): mcp__list_tools + mcp__call_tool added (= the
 #         "USE installed server" cold-start path observed missing in the
-#         5-server walkthrough). skill__skill_importer + rag.operation__
+#         5-server walkthrough). skill__skill_importer + rag_operation__
 #         drop_source dropped to keep seed size constant — skill_importer
 #         is the niche of the three flagship skill__skill_* verbs (=
 #         external import flow vs builder/improver), and drop_source's
@@ -117,10 +117,10 @@ DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "file__glob",
     "file__write",
     # file__edit deferred — FP-0034 §D20.
-    "reyn.source__list",
+    "reyn_source__list",
     "web__search",
     "web__fetch",
-    "memory.operation__remember_shared",
+    "memory_operation__remember_shared",
     "skill__skill_builder",
     "skill__skill_improver",
     "mcp__search_registry",

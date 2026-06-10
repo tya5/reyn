@@ -148,13 +148,13 @@ def _multi_agent_delegate_args(
 def _read_memory_body_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """``memory.entry__<name>`` → ``read_memory_body({layer, slug})``.
+    """``memory_entry__<name>`` → ``read_memory_body({layer, slug})``.
 
     D19 resource invoke: invoking a memory entry returns its body.
 
-    The qualified-name format ``memory.entry__<slug>`` does not encode a
+    The qualified-name format ``memory_entry__<slug>`` does not encode a
     layer; we default to "shared" because that is what the
-    ``memory.operation__remember_shared`` write surface produces, and
+    ``memory_operation__remember_shared`` write surface produces, and
     therefore what users encounter from natural-language "remember X"
     requests (= e2e-coder 2026-05-17 N4 probe). Agent-layer entries
     require a separate alias namespace (= follow-up if a real probe
@@ -166,7 +166,7 @@ def _read_memory_body_args(
 def _recall_single_source_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """``rag.corpus__<name>`` → ``recall({sources: [name], query, top_k?})``.
+    """``rag_corpus__<name>`` → ``recall({sources: [name], query, top_k?})``.
 
     D19 resource invoke: invoking a rag corpus performs a single-source
     recall against that source. The caller passes ``query`` and
@@ -208,9 +208,9 @@ def _passthrough_args(
 # Each rule is a tuple ``(target_tool_name, arg_transformer)``.
 #
 # Categories with multiple discrete entry-name choices (file, web,
-# memory.operation, reyn.source, rag.operation) list each pair
+# memory_operation, reyn_source, rag_operation) list each pair
 # explicitly. Resource categories (skill, agent.peer, mcp.server,
-# mcp.tool, memory.entry, rag.corpus) use the entry_name as the
+# mcp.tool, memory_entry, rag_corpus) use the entry_name as the
 # resource id and so have a single rule per category.
 
 # Per-category default rule (= used when entry_name is the resource id)
@@ -220,8 +220,8 @@ def _passthrough_args(
 # ``multi_agent`` verb category; resource rule removed.
 _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], dict[str, Any]]]]] = {
     "skill":         ("invoke_skill",        _invoke_skill_args),
-    "memory.entry":  ("read_memory_body",    _read_memory_body_args),
-    "rag.corpus":    ("recall",              _recall_single_source_args),
+    "memory_entry":  ("read_memory_body",    _read_memory_body_args),
+    "rag_corpus":    ("recall",              _recall_single_source_args),
 }
 
 
@@ -243,21 +243,21 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "web__search":  ("web_search",      _passthrough_args),
     "web__fetch":   ("web_fetch",       _passthrough_args),
 
-    # memory.operation category
-    "memory.operation__remember_shared": ("remember_shared", _passthrough_args),
-    "memory.operation__remember_agent":  ("remember_agent",  _passthrough_args),
-    "memory.operation__forget":          ("forget_memory",   _passthrough_args),
+    # memory_operation category
+    "memory_operation__remember_shared": ("remember_shared", _passthrough_args),
+    "memory_operation__remember_agent":  ("remember_agent",  _passthrough_args),
+    "memory_operation__forget":          ("forget_memory",   _passthrough_args),
 
-    # reyn.source category — §D20 surface: read / list / glob / grep.
+    # reyn_source category — §D20 surface: read / list / glob / grep.
     # FP-0038 closed the glob / grep gap (= S2 + S3).
-    "reyn.source__read": ("reyn_src_read", _passthrough_args),
-    "reyn.source__list": ("reyn_src_list", _passthrough_args),
-    "reyn.source__glob": ("reyn_src_glob", _passthrough_args),
-    "reyn.source__grep": ("reyn_src_grep", _passthrough_args),
+    "reyn_source__read": ("reyn_src_read", _passthrough_args),
+    "reyn_source__list": ("reyn_src_list", _passthrough_args),
+    "reyn_source__glob": ("reyn_src_glob", _passthrough_args),
+    "reyn_source__grep": ("reyn_src_grep", _passthrough_args),
 
-    # rag.operation category
-    "rag.operation__recall":      ("recall",       _passthrough_args),
-    "rag.operation__drop_source": ("drop_source",  _passthrough_args),
+    # rag_operation category
+    "rag_operation__recall":      ("recall",       _passthrough_args),
+    "rag_operation__drop_source": ("drop_source",  _passthrough_args),
 
     # Issue #879 — single ``mcp`` category. 2026-05-25 install-surface
     # refactor: split ``mcp__install_server`` into 3 verbs along the
@@ -301,7 +301,7 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
 # (= without consulting runtime caller state). Used by
 # ``suggest_similar_names`` when callers don't supply a candidate list.
 # Dynamic items (skill__*, agent.peer__*, mcp.tool__*, mcp.server__*,
-# memory.entry__*, rag.corpus__*) live in caller state and are not
+# memory_entry__*, rag_corpus__*) live in caller state and are not
 # enumerated here. PR-3 will combine this static set with the dynamic
 # items from RouterCallerState to feed the actual suggestion engine.
 
@@ -333,7 +333,7 @@ def resolve_invoke_action(
         qualified_name: ``<category>__<entry_name>`` per §D18.
         args: Caller-supplied arg dict; transformed per the category
             rule. May be None / empty for resources whose canonical
-            invoke takes no args (= memory.entry__foo).
+            invoke takes no args (= memory_entry__foo).
 
     Returns:
         ResolvedAction with the target ToolDefinition name and the
@@ -456,11 +456,11 @@ def known_qualified_name_for_category(category: str) -> tuple[str, ...]:
     """Return the static qualified names PR-2 knows about for ``category``.
 
     Resource categories (skill / agent.peer / mcp.{server,tool} /
-    memory.entry / rag.corpus) return an empty tuple because their
+    memory_entry / rag_corpus) return an empty tuple because their
     entries are dynamic (= populated by caller state in PR-3).
 
-    Operation categories (file / web / memory.operation / reyn.source /
-    rag.operation / mcp.operation / exec) return the qualified names
+    Operation categories (file / web / memory_operation / reyn_source /
+    rag_operation / mcp.operation / exec) return the qualified names
     this module has routing rules for. ``mcp.operation`` returns
     ``("mcp.operation__drop_server",)`` (= PR-4 landed). ``exec``
     returns ``("exec__sandboxed_exec",)`` — the route is now wired

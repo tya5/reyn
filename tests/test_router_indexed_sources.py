@@ -6,7 +6,7 @@ and section ordering guarantees.
 
 Phase 6 cleanup note: build_system_prompt() in the wrapper-only path no longer
 injects indexed_sources_section into the SP (discovery goes through
-list_actions(category=['rag.corpus']) at runtime). Tests that verified SP
+list_actions(category=['rag_corpus']) at runtime). Tests that verified SP
 injection are removed. SourceManifest.format_for_prompt() output correctness
 tests remain (they test the manifest, not the SP).
 """

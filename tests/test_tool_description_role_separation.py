@@ -181,13 +181,13 @@ def test_plan_description_contains_multi_source_examples() -> None:
 # ── recall description tests ───────────────────────────────────────────────────
 
 def test_recall_description_contains_disambiguation_with_memory() -> None:
-    """Tier 2: recall _HIDE_LEGACY description distinguishes recall from memory.entry.
+    """Tier 2: recall _HIDE_LEGACY description distinguishes recall from memory_entry.
 
     B23-PRE-1: recall vs memory disambiguation moved from SP disambiguation
     block to recall._RECALL_DESCRIPTION_HIDE_LEGACY.
     """
     desc = _RECALL_DESCRIPTION_HIDE_LEGACY
-    assert "memory.entry" in desc or "memory" in desc
+    assert "memory_entry" in desc or "memory" in desc
     # The description must explicitly note the anti-confusion rule
     assert "recall" in desc.lower()
     # The disambiguation signal

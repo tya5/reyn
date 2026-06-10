@@ -154,11 +154,11 @@ class RouterCallerState:
     mcp_servers: list[Mapping[str, Any]] | None = None
 
     # FP-0034 Phase 2 prep: indexed RAG corpora snapshot for the universal
-    # catalog ``rag.corpus`` category enumeration. Shape:
+    # catalog ``rag_corpus`` category enumeration. Shape:
     # ``[{name, description, backend?, chunk_count?}, ...]``.
     # Populated by RouterLoop from ``SourceManifest.get_all()`` so
-    # ``list_actions(category=["rag.corpus"])`` returns the configured
-    # corpora as ``rag.corpus__<name>`` qualified names without round-
+    # ``list_actions(category=["rag_corpus"])`` returns the configured
+    # corpora as ``rag_corpus__<name>`` qualified names without round-
     # tripping the manifest file per invocation. ``None`` = router did
     # not provide a manifest snapshot (= test sites / plan-step hosts);
     # the catalog handler treats this identically to an empty list.

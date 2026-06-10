@@ -54,11 +54,11 @@ adds an entry to the `CATEGORIES` tuple and one routing rule.
 | `mcp` | MCP server management + tool dispatch | six verb_object actions — see below |
 | `file` | Workspace file ops | read / write / delete / list |
 | `web` | Web search + fetch | search or fetch |
-| `memory.entry` | Persistent memory records | read the entry's body |
-| `memory.operation` | Memory CRUD ops | `remember_shared` / `remember_agent` / `forget` |
-| `reyn.source` | Reyn source / docs (read-only) | read or list |
-| `rag.corpus` | Indexed corpora (resource) | recall against this single source |
-| `rag.operation` | RAG management ops | multi-source recall / drop source |
+| `memory_entry` | Persistent memory records | read the entry's body |
+| `memory_operation` | Memory CRUD ops | `remember_shared` / `remember_agent` / `forget` |
+| `reyn_source` | Reyn source / docs (read-only) | read or list |
+| `rag_corpus` | Indexed corpora (resource) | recall against this single source |
+| `rag_operation` | RAG management ops | multi-source recall / drop source |
 | `exec` | Sandboxed argv execution | run argv under the sandbox backend |
 
 The `mcp` category provides six verb_object actions that cover the LLM-visible surface:
@@ -85,7 +85,7 @@ visible.
 ```
 
 The separator is **double underscore** (`__`). Categories may contain
-dots (`agent.peer`, `rag.corpus`, `reyn.source`, …); entry names may
+dots (`agent.peer`, `rag_corpus`, `reyn_source`, …); entry names may
 contain anything except the `__` sequence at the boundary. The split
 rule is "first `__` after the category name" so `agent.peer__alice`
 correctly parses as (`agent.peer`, `alice`).
@@ -98,14 +98,14 @@ Examples:
 | `agent.peer__alice` | (`agent.peer`, `alice`) |
 | `mcp__call_tool` | (`mcp`, `call_tool`) |
 | `mcp__install_registry` | (`mcp`, `install_registry`) |
-| `rag.corpus__meetings` | (`rag.corpus`, `meetings`) |
+| `rag_corpus__meetings` | (`rag_corpus`, `meetings`) |
 | `file__read` | (`file`, `read`) |
 
 ### Provider portability — dots in qualified names
 
 OpenAI's native function-call API restricts tool names to
 `^[a-zA-Z0-9_-]{1,64}$` (= no `.`). Reyn's qualified names with
-dotted categories (`agent.peer`, `rag.corpus`, `reyn.source`, etc.)
+dotted categories (`agent.peer`, `rag_corpus`, `reyn_source`, etc.)
 therefore **work via a LiteLLM proxy** but may be rejected by direct
 OpenAI native callers.
 
@@ -181,13 +181,13 @@ resource runs the *canonical default operation* for that kind:
 |---|---|
 | `skill` | run the skill |
 | `agent.peer` | delegate a message |
-| `memory.entry` | read the body |
-| `rag.corpus` | single-source recall |
+| `memory_entry` | read the body |
+| `rag_corpus` | single-source recall |
 
 The previous `mcp.server` / `mcp.tool` resource entries are removed; per-MCP-server / per-MCP-tool dispatch now flows through the verb actions in the `mcp` category (= `mcp__list_tools` →
 `mcp__call_tool({tool: "<server>__<tool>", args})`).
 
-This means an LLM can say `invoke_action("rag.corpus__meetings",
+This means an LLM can say `invoke_action("rag_corpus__meetings",
 {"query": "Q3 roadmap"})` and the wrapper expands it to
 `recall(sources=["meetings"], query="Q3 roadmap")` without the LLM
 needing to remember the underlying call shape. The canonical default
@@ -202,7 +202,7 @@ the routing:
 
 - **`_OPERATION_RULES`** — qualified name → `(target_tool_name,
   arg_transformer)` for static operation categories (file / web /
-  memory.operation / reyn.source / rag.operation / mcp).
+  memory_operation / reyn_source / rag_operation / mcp).
 - **`_RESOURCE_RULES`** — category → `(target_tool_name,
   arg_transformer)` for resource categories whose entries come from
   `RouterCallerState` (skills / agents / memory entries / rag corpora).
@@ -457,10 +457,10 @@ in a single retry. See `_LEGACY_CATEGORY_REDIRECTS` in
 
 **Deferred to Phase 2:**
 
-- **`rag.corpus` enumeration** — needs a `RouterCallerState` field
+- **`rag_corpus` enumeration** — needs a `RouterCallerState` field
   carrying indexed-source metadata, then plumbing through
   `RouterHostAdapter`. The `invoke` and `describe` paths already work
-  for `rag.corpus__<name>` if the LLM knows the name.
+  for `rag_corpus__<name>` if the LLM knows the name.
 - **`exec` enumeration** — needs sandbox-backend introspection. The
   visibility predicate exists; the catalogue body waits for the
   introspection API.

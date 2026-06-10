@@ -225,7 +225,7 @@ def _iter_files_under(root: Path):
     Walks ``root`` recursively with ``Path.rglob`` then filters out any
     file whose ancestry includes a name in ``_SKIP_DIR_NAMES``. Matches
     `list_entries`'s skip discipline so glob / grep results don't include
-    things a `reyn.source__list` browse wouldn't.
+    things a `reyn_source__list` browse wouldn't.
     """
     for p in root.rglob("*"):
         if not p.is_file():

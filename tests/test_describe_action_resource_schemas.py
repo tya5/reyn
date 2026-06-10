@@ -3,7 +3,7 @@
 Regression for the gap discovered while landing #119: ``describe_action``
 delegates to the registry's target ``ToolDefinition.parameters``, which for
 resource-category actions (``skill__X``, ``agent.peer__X``,
-``mcp.tool__X.Y``, ``mcp.server__X``, ``rag.corpus__X``) is the generic
+``mcp.tool__X.Y``, ``mcp.server__X``, ``rag_corpus__X``) is the generic
 dispatcher's args shape — not the resource's actual input schema. The
 weak-model probe path is: hot-list direct alias unavailable for this skill
 → LLM calls ``describe_action(skill__X)`` to learn args → gets
@@ -17,7 +17,7 @@ The fix special-cases resource categories in ``_handle_describe_action``:
                              via ``ctx.router_state.host.list_available_skills``.
   - ``agent.peer__X``      : ``delegate_to_agent`` parameters minus ``to``.
   - ``mcp.server__X``      : empty object (``list_mcp_tools`` curries server).
-  - ``rag.corpus__X``      : ``recall`` parameters minus ``sources``.
+  - ``rag_corpus__X``      : ``recall`` parameters minus ``sources``.
   - ``mcp.tool__X.Y``      : the MCP tool's declared ``inputSchema`` via
                              ``ctx.router_state.mcp_servers``.
 
@@ -132,14 +132,14 @@ def test_skill_without_input_schema_falls_back_to_dispatcher():
 # ── mcp.server__X ───────────────────────────────────────────────────────
 
 
-# ── rag.corpus__X ───────────────────────────────────────────────────────
+# ── rag_corpus__X ───────────────────────────────────────────────────────
 
 
 def test_rag_corpus_describe_drops_curried_sources_field():
-    """Tier 1: ``rag.corpus__X`` resolves to ``recall(sources=[X], …)`` — expose
+    """Tier 1: ``rag_corpus__X`` resolves to ``recall(sources=[X], …)`` — expose
     recall's parameters MINUS ``sources``."""
     ctx = _make_ctx()
-    out = _describe("rag.corpus__my_docs", ctx)
+    out = _describe("rag_corpus__my_docs", ctx)
     schema = out["input_schema"]
     assert "sources" not in schema.get("properties", {})
     assert "sources" not in (schema.get("required") or [])
@@ -192,7 +192,7 @@ def test_no_router_state_falls_back_for_resource_categories():
 
 @pytest.mark.parametrize("qn", [
     "skill__index_docs",
-    "rag.corpus__my_docs",
+    "rag_corpus__my_docs",
 ])
 def test_metadata_envelope_preserved(qn: str):
     """Tier 1: All cases preserve the §D11 metadata envelope (qualified_name +

@@ -88,8 +88,8 @@ _OP_KIND_CATEGORY: dict[str, str] = {
     "lint":          "validation",
     # sandboxed_exec → "exec" category (_OPERATION_RULES: exec__sandboxed_exec)
     "sandboxed_exec": "exec",
-    # recall → "rag.operation" category (_OPERATION_RULES: rag.operation__recall)
-    "recall":        "rag.operation",
+    # recall → "rag_operation" category (_OPERATION_RULES: rag_operation__recall)
+    "recall":        "rag_operation",
     # mcp tool call → "mcp" category (_OPERATION_RULES: mcp__call_tool)
     "mcp":           "mcp",
     # mcp install ops → "mcp" category (_OPERATION_RULES: mcp__install_*)
