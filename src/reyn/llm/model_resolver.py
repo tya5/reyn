@@ -134,6 +134,26 @@ class ModelResolver:
                     name, self._namespace[name], frozenset()
                 )
 
+        # #1454 PR-B: name-position validation. The resolved ``model`` is a NAME
+        # position, which should be ``provider/model`` (the `/`-prefix invariant
+        # — all builtin defaults comply). WARN (not error) for a bare name:
+        # litellm may accept some bare strings, so bare usage is
+        # degraded-but-allowed, flagged so a misroute is diagnosable. (Class
+        # positions — tier references — are closed-world via
+        # resolve_class_or_fallback; this is the name-position leg of the same
+        # unified class/name rule, shared with embedding.classes[*].model.)
+        for _name, _spec in self._resolved.items():
+            if "/" not in _spec.model:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "models.%s model %r has no provider prefix ('/') — a model "
+                    "position should be 'provider/model' (e.g. 'openai/gpt-4o'). "
+                    "Treating as a bare LiteLLM name; add the prefix if "
+                    "resolution misroutes.",
+                    _name, _spec.model,
+                )
+
     def resolve(self, name: str) -> ModelSpec:
         """Return the ModelSpec for name. Pass through as a no-kwargs ModelSpec if not in namespace."""
         if name in self._resolved:
@@ -150,6 +170,39 @@ class ModelResolver:
         This prevents LLM-hallucinated model strings from bypassing the proxy.
         """
         return name in self._resolved
+
+    def resolve_class_or_fallback(
+        self, requested: str | None, fallback: str | None, *, where: str = "",
+    ) -> str:
+        """Resolve a CLASS-TYPED model selection (op/skill-supplied) closed-world.
+
+        #1454 PR-B (the unified class/name rule): a class-typed position is
+        closed-world — a ``requested`` value that is NOT a known class is NOT
+        passed through as a literal LiteLLM model (that would let a
+        skill-authored / LLM-injected string bypass the proxy config, which is
+        the single source of truth for model selection). Returns ``requested``
+        only when it is a known class; otherwise logs ONE decision-enabling
+        warning and returns the trusted ``fallback``.
+
+        This is the "standard gate" promotion of :meth:`is_known_class` — every
+        op/skill-supplied model field (``op.model``) routes through here rather
+        than each call site re-implementing the guard. Operator-config model
+        references (``cfg.model`` etc., from reyn.yaml) deliberately do NOT use
+        this gate: literal LiteLLM strings there are an intentional
+        backward-compat passthrough (see :meth:`resolve`).
+        """
+        if requested and not self.is_known_class(requested):
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "%s: model %r is not a known model class — ignoring and using "
+                "%r instead. Use a model class (e.g. light / standard / strong, "
+                "or one defined in reyn.yaml models:) so the proxy config stays "
+                "the single source of truth.",
+                where or "model selection", requested, fallback or "standard",
+            )
+            return fallback or "standard"
+        return requested or fallback or "standard"
 
     # ------------------------------------------------------------------
     # Internal resolution helpers

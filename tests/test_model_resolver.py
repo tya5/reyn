@@ -204,3 +204,54 @@ def test_extends_backward_compat_slash_str_with_builtin_loaded():
     assert r.resolve("light").model == "openai/gemini-2.5-flash-lite"
     assert r.resolve("light").kwargs == {}
     assert r.resolve("standard").model == "openai/gpt-4o"
+
+
+# ── #1454 PR-B: resolve_class_or_fallback (the closed-world class gate) ──────
+
+
+def test_resolve_class_or_fallback_known_class_is_honoured():
+    """Tier 2: #1454 — a requested value that IS a known class is returned."""
+    r = ModelResolver({"strong": "openai/gpt-4o"}, builtin={})
+    assert r.resolve_class_or_fallback("strong", "standard", where="t") == "strong"
+
+
+def test_resolve_class_or_fallback_unknown_falls_back():
+    """Tier 2: #1454 — a non-class value (e.g. an LLM-injected literal model
+    string) is rejected and the trusted fallback is returned (closed-world:
+    op/skill-supplied class-typed fields never pass through as a name)."""
+    r = ModelResolver({"standard": "openai/gpt-4o"}, builtin={})
+    assert r.resolve_class_or_fallback(
+        "gpt-3.5-turbo", "standard", where="t",
+    ) == "standard"
+    # even a provider-prefixed literal is rejected here — class position only
+    assert r.resolve_class_or_fallback(
+        "openai/gpt-4o", "standard", where="t",
+    ) == "standard"
+
+
+def test_resolve_class_or_fallback_none_requested_uses_fallback():
+    """Tier 2: #1454 — no requested class → the fallback is used as-is."""
+    r = ModelResolver({"standard": "openai/gpt-4o"}, builtin={})
+    assert r.resolve_class_or_fallback(None, "standard", where="t") == "standard"
+
+
+def test_resolve_class_or_fallback_none_everywhere_defaults_standard():
+    """Tier 2: #1454 — requested and fallback both absent → 'standard'."""
+    r = ModelResolver({}, builtin={})
+    assert r.resolve_class_or_fallback(None, None, where="t") == "standard"
+
+
+def test_bare_model_name_warns_prefixed_does_not(caplog):
+    """Tier 2: #1454 PR-B — a name position (models[*].model) lacking a '/'
+    provider prefix warns at load (degraded-but-allowed); a prefixed name is
+    silent. The class/name unified rule's name-position leg."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        ModelResolver({"bare": {"model": "gpt-4o-mini"}}, builtin={})
+    assert any("no provider prefix" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
+        ModelResolver({"ok": {"model": "openai/gpt-4o"}}, builtin={})
+    assert not any("no provider prefix" in r.message for r in caplog.records)

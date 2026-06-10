@@ -58,6 +58,17 @@ models:
 
 `models:` の各エントリはクラス名を LiteLLM モデル文字列 **または** per-class LLM パラメータを宣言する dict にマップします。
 
+### モデルクラス と モデル名 — 解決ルール
+
+config には2種類の位置があり、逆のルールに従います。同じルールが補完側 `models:` ブロック **と** `embedding.classes:` ブロックの両方に適用されます。
+
+- **クラス位置**（クラスへの *参照*）：`model`、per-agent / per-phase / per-op のモデル上書き、`embedding_class`。これらは **closed-world** — 値は `models:` / `embedding.classes:` に存在するクラス（または組み込み tier: `light` / `standard` / `strong`）を指さなければなりません。既知クラスでない値は、リテラルモデルとして黙って素通しされません：
+  - オペレータ config（reyn.yaml の `model:`）は後方互換のリテラル素通しを維持（`openai/gpt-4o` を直接書ける）；
+  - **skill/op 由来**のモデル（`op.model`）が既知クラスでない場合は **reject** され、runtime モデルにフォールバック（警告1件）します。これにより skill・LLM 由来の文字列が proxy config を迂回できません — モデル選択の単一の真実源は proxy config です。
+- **名前位置**（モデルの *定義*）：`models:` / `embedding.classes:` エントリ内の `model:` 値。名前は `provider/model`（例：`openai/gpt-4o`、`sentence-transformers/all-MiniLM-L6-v2`）であるべきです。`/` のない bare 名は許容されます（一部の LiteLLM 文字列は bare）が、ロード時に **警告** します — 解決が誤ルートする場合は prefix を追加してください。
+
+一言で：**`_class` / tier 位置はクラス名（closed-world）、`model` 位置は `provider/model`（検証付き）。どちらも受け付ける位置はない。**
+
 ### str 形式 — リテラル（後方互換）
 
 str 値に **`/` が含まれる** 場合、LiteLLM モデル文字列として直接使用されます：

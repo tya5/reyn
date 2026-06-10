@@ -616,6 +616,23 @@ def _parse_embedding_classes(raw: dict[str, Any]) -> dict[str, EmbeddingClassSpe
                 f"embedding.classes.{name} must be a str or dict, "
                 f"got {type(value).__name__}"
             )
+    # #1454 PR-B: name-position validation. A ``model`` value is a NAME
+    # position, which should be ``provider/model`` (the `/`-prefix invariant —
+    # all builtin defaults comply). WARN (not error) for a bare name: litellm
+    # may accept some bare strings, so bare usage is degraded-but-allowed,
+    # flagged so a misroute is diagnosable. (Class positions are closed-world;
+    # name positions allow the prefixed literal — the unified class/name rule.)
+    for _name, _spec in result.items():
+        if "/" not in _spec.model:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "embedding.classes.%s model %r has no provider prefix ('/') — "
+                "a model position should be 'provider/model' (e.g. "
+                "'openai/text-embedding-3-small'). Treating as a bare LiteLLM "
+                "name; add the prefix if embedding resolution misroutes.",
+                _name, _spec.model,
+            )
     return result
 
 
