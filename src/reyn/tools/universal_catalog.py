@@ -291,8 +291,8 @@ _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
         "limit": {
             "type": "integer",
             "minimum": 1,
-            "default": 20,
-            "description": "Page size (default 20).",
+            "default": 10,
+            "description": "Page size (default 10).",
         },
     },
 }
@@ -809,11 +809,15 @@ async def _handle_list_actions(
     """list_actions handler — alphabetical browse with category +
     pagination.
 
-    Per FP-0034 §D11, returns:
-      ``{items: [{qualified_name, short_description}, ...], total: int}``
+    Per FP-0034 §D11 + #1455 uniform enrich, returns:
+      ``{items: [{qualified_name, short_description, description, input_schema},
+      ...], total: int}`` — EVERY page item is enriched via ``_describe_one``
+      (no longer gated to category-narrowed browses), so an unfiltered browse is
+      as actionable as a narrowed one. Token-bounded by the page limit (default
+      10).
 
     Sort is alphabetical by qualified_name (= pagination stability).
-    Pagination uses offset+limit REST conventions.
+    Pagination uses offset+limit REST conventions (default limit 10).
 
     #934: when ``category=[…]`` carries a name not in the current
     ``CATEGORIES`` tuple (= LLM-training-time stale enum), the handler
@@ -833,7 +837,7 @@ async def _handle_list_actions(
     categories = valid_filter if valid_filter else list(CATEGORIES)
 
     offset = max(0, int(args.get("offset", 0) or 0))
-    limit = max(1, int(args.get("limit", 20) or 20))
+    limit = max(1, int(args.get("limit", 10) or 10))
 
     items: list[dict[str, str]] = []
     for cat in categories:
@@ -844,23 +848,24 @@ async def _handle_list_actions(
     total = len(items)
     page = items[offset:offset + limit]
 
-    # Stage B (#187): on a NARROWED (category-filtered) browse, enrich each page
-    # item with the SAME full description + input_schema describe_action returns
-    # — via the shared _describe_one, so list ≡ describe BY CONSTRUCTION — giving
-    # the LLM selection-grade detail (name + description + schema) without a
-    # separate describe_action round-trip (which weak models rarely make). This
-    # inherits the schema-blind-hallucination protection the removed ARS block
-    # used to provide. Bounded: only the narrowed view (valid_filter non-empty)
-    # is enriched and the page is limit-capped, so the unfiltered alphabetical
-    # browse stays compact for breadth scanning.
-    if valid_filter:
-        from reyn.tools import get_default_registry
-        _registry = get_default_registry()
-        enriched: list[dict[str, Any]] = []
-        for it in page:
-            one = _describe_one(it["qualified_name"], ctx, _registry)
-            enriched.append({**it, **one} if one is not None else it)
-        page = enriched
+    # Stage B (#187) + #1455 uniform enrich: enrich EVERY page item with the
+    # SAME full description + input_schema describe_action returns — via the
+    # shared _describe_one, so list ≡ describe BY CONSTRUCTION — giving the LLM
+    # selection-grade detail (name + description + schema) without a separate
+    # describe_action round-trip (which weak models rarely make). This inherits
+    # the schema-blind-hallucination protection the removed ARS block provided.
+    # #1455 removed the prior ``if valid_filter:`` gate (the unfiltered browse
+    # used to stay compact, an asymmetry): the page is limit-capped and the
+    # default limit dropped 20→10, so a uniformly-enriched page is token-bounded
+    # (≈ the old narrowed@20 worst case) while making the unfiltered browse just
+    # as actionable as a narrowed one.
+    from reyn.tools import get_default_registry
+    _registry = get_default_registry()
+    enriched: list[dict[str, Any]] = []
+    for it in page:
+        one = _describe_one(it["qualified_name"], ctx, _registry)
+        enriched.append({**it, **one} if one is not None else it)
+    page = enriched
 
     response: dict[str, Any] = {"items": page, "total": total}
     if _should_inject_hidden_state_hint(ctx.router_state):

@@ -98,13 +98,21 @@ def test_static_op_and_resource_both_enriched():
     )
 
 
-def test_unfiltered_browse_stays_compact():
-    """Tier 1: the unfiltered (all-category) browse omits input_schema — compact breadth scan."""
+def test_unfiltered_browse_is_uniformly_enriched():
+    """Tier 1: #1455 — the unfiltered (all-category) browse is enriched too.
+
+    #1455 removed the prior ``if valid_filter:`` gate (which left the unfiltered
+    browse compact, an asymmetry): EVERY page item now carries description +
+    input_schema via the shared _describe_one, so an unfiltered browse is as
+    actionable as a narrowed one. Token-bounded by the (now-10) page limit."""
     ctx = _ctx()
-    items = _list(ctx)["items"]
+    # High limit so a known-enrichable operation action (file__read) is on the
+    # page regardless of the default page size; enrichment is per-item.
+    items = _list(ctx, limit=100)["items"]
     assert items, "expected a non-empty browse page"
-    assert all("input_schema" not in i for i in items), (
-        "the unfiltered browse must stay compact (no per-item schema)"
+    fr = next((i for i in items if i["qualified_name"] == "file__read"), None)
+    assert fr is not None and "input_schema" in fr, (
+        "the unfiltered browse must now enrich each item (#1455 uniform enrich)"
     )
 
 
