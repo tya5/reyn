@@ -209,6 +209,10 @@ def test_install_command_warns_on_tmp_args_on_darwin(tmp_path) -> None:
     if reyn_bin is None:
         import pytest
         pytest.skip("reyn executable not on PATH for subprocess invocation")
+    # #1442: install now resolves a project root and fails loud outside one
+    # (error-not-silent-cwd), so give tmp_path a reyn.yaml — the #320 /tmp-args
+    # warning fires inside the source install, past project resolution.
+    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
     result = subprocess.run(
         [
             reyn_bin, "mcp", "install",

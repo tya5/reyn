@@ -188,6 +188,14 @@ def register(sub) -> None:
         ),
     )
     install.add_argument(
+        "--project", dest="project", default=None, metavar="PATH",
+        help=(
+            "Project root containing reyn.yaml. Defaults to the closest "
+            "ancestor with a reyn.yaml, or the current directory. #1442: "
+            "without this, install resolved the target cwd-only."
+        ),
+    )
+    install.add_argument(
         "--scope",
         choices=_VALID_SCOPES,
         default="local",
@@ -520,6 +528,41 @@ def run_search(args: argparse.Namespace) -> None:
 # run_install
 # ---------------------------------------------------------------------------
 
+def _resolve_install_project_root(project_arg: str | None) -> Path:
+    """#1442 Layer A: resolve the install target project root, fail loud.
+
+    --project overrides; otherwise the closest reyn.yaml ancestor of cwd. When
+    neither yields a project (no --project and no reyn.yaml from cwd), exit with
+    an actionable message rather than silently writing into a non-project cwd
+    (the #1442 defect). Mirrors the `reyn mcp refresh` / `serve` resolution.
+    """
+    from reyn.config import _find_project_root
+
+    if project_arg:
+        project_root = Path(project_arg).resolve()
+    else:
+        found = _find_project_root(Path.cwd())
+        if found is None:
+            print(
+                "error: no reyn.yaml found from the current directory; pass "
+                "--project <path-to-project-root>. (mcp install writes the "
+                "server config under the project's .reyn/ — it will not guess "
+                "a non-project cwd.)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        project_root = found
+
+    if not (project_root / "reyn.yaml").exists():
+        print(
+            f"error: {project_root}/reyn.yaml not found. "
+            "Run `reyn init` there or pass a different --project path.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return project_root
+
+
 def run_install(args: argparse.Namespace) -> None:
     """Install an MCP server — thin wrapper over the mcp_install skill.
 
@@ -597,6 +640,12 @@ def run_install(args: argparse.Namespace) -> None:
     if non_interactive:
         os.environ["REYN_MCP_INSTALL_AUTO_APPROVE"] = "1"
 
+    # #1442 Layer A: resolve the project root ONCE (install was cwd-only +
+    # lacked --project, asymmetric with serve/list/refresh). --project overrides;
+    # else the closest reyn.yaml from cwd. Fail loud rather than silently writing
+    # into a non-project cwd. Threaded to both install paths below.
+    project_root = _resolve_install_project_root(getattr(args, "project", None))
+
     # ── Source mode: bypass skill, go direct to IR op handler ─────────────────
     if source:
         _run_install_from_source(
@@ -605,6 +654,7 @@ def run_install(args: argparse.Namespace) -> None:
             pre_env=pre_env,
             non_interactive=non_interactive,
             extra_args=extra_args,
+            project_root=project_root,
         )
         return
 
@@ -615,7 +665,7 @@ def run_install(args: argparse.Namespace) -> None:
     import json
 
     from reyn.agent import Agent
-    from reyn.config import _find_project_root, load_config, load_project_context
+    from reyn.config import load_config, load_project_context
     from reyn.llm.llm import run_async as _run_async
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionResolver
@@ -626,7 +676,11 @@ def run_install(args: argparse.Namespace) -> None:
     from ..logger_factory import make_logger
 
     config = load_config()
-    project_root = _find_project_root(Path.cwd())
+    # #1442 Layer A: root the agent's workspace at the resolved project_root so
+    # the mcp_install op handler writes there, not cwd. Mirrors `reyn mcp
+    # refresh` (os.chdir to project_root); the agent's cwd-defaulted workspace
+    # then base_dir-roots at it (paired with the handler base_dir fix, Layer B).
+    os.chdir(project_root)
 
     try:
         skill_dir, skill_root = _resolve_skill_path_raw("mcp_install")
@@ -711,17 +765,22 @@ def _run_install_from_source(
     pre_env: dict[str, str],
     non_interactive: bool,
     extra_args: list[str] | None = None,
+    *,
+    project_root: Path,
 ) -> None:
     """Install an MCP server directly from a ``--source`` specifier.
 
     Bypasses the mcp_install skill and the registry fetch, going directly
     to the IR op handler.  The permission gate, credential flow, and config
     write are all identical to the registry path (reusing the same handler).
+
+    #1442 Layer A: ``project_root`` is the run_install-resolved root (--project
+    or the closest reyn.yaml), no longer re-derived cwd-only here.
     """
     import asyncio
     import json
 
-    from reyn.config import _find_project_root, load_config
+    from reyn.config import load_config
     from reyn.events.events import EventLog
     from reyn.op_runtime.context import OpContext
     from reyn.op_runtime.mcp_install import handle as _mcp_install_handle
@@ -730,7 +789,6 @@ def _run_install_from_source(
     from reyn.user_intervention import StdinInterventionBus
 
     config = load_config()
-    project_root = _find_project_root(Path.cwd())
 
     perm_config = getattr(config, "permissions", {}) or {}
     perm_resolver = PermissionResolver(
@@ -741,7 +799,10 @@ def _run_install_from_source(
     )
 
     events = EventLog()
-    workspace = type("Workspace", (), {"root": str(project_root or Path.cwd())})()
+    # #1442 Layer B: expose ``base_dir`` (the canonical Workspace attribute the
+    # handler reads — op_runtime/file.py uses ctx.workspace.base_dir), not the
+    # legacy ``root`` the handler special-cased. project_root is now always set.
+    workspace = type("Workspace", (), {"base_dir": str(project_root)})()
     bus = StdinInterventionBus()
 
     # #571 collapse arc Phase 5: explicit list axes replace the
