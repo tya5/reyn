@@ -153,8 +153,10 @@ def test_class_name_resolving_to_st_routes_to_st_backend() -> None:
     provider = _make_provider(litellm, st)
 
     _run(provider.embed(["hi"], "local-mini"))
-    assert len(st.embed_calls) == 1
-    assert st.embed_calls[0][1] == "sentence-transformers/all-MiniLM-L6-v2"
+    # Behaviour: the ST backend was called with the RESOLVED model (one call).
+    assert [m for _texts, m in st.embed_calls] == [
+        "sentence-transformers/all-MiniLM-L6-v2"
+    ]
     assert not litellm.embed_calls
 
 
