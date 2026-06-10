@@ -1,16 +1,16 @@
-"""Tier 2 tests for memory.entry hot-list alias surfacing (2026-05-17 N4).
+"""Tier 2 tests for memory_entry hot-list alias surfacing (2026-05-17 N4).
 
-When a user saves a memory entry via ``memory.operation__remember_shared``,
+When a user saves a memory entry via ``memory_operation__remember_shared``,
 the file lands at ``<cwd>/.reyn/memory/<slug>.md``. In a fresh subsequent
 session, the LLM needs to be able to read that entry without first running
-``list_actions(category=['memory.entry'])`` — the weak default model rarely
+``list_actions(category=['memory_entry'])`` — the weak default model rarely
 takes that discovery step proactively (= empirical observation, e2e-coder
 N4-d probe).
 
 This is accomplished by:
 
 1. ``_enumerate_shared_memory_entries(host)`` — scans the shared-layer
-   directory and returns ``{memory.entry__<slug>: {description}}`` from
+   directory and returns ``{memory_entry__<slug>: {description}}`` from
    each entry's frontmatter.
 2. The router's hot-list-seed builder extends the static seed with these
    discovered names so the aliases appear in ``tools=`` at session start.
@@ -48,7 +48,7 @@ class _FakeHost:
 
 
 def test_enumerate_returns_entries_keyed_by_qualified_name(tmp_path):
-    """Tier 2: each .md file under shared/ produces a memory.entry__<slug> key."""
+    """Tier 2: each .md file under shared/ produces a memory_entry__<slug> key."""
     mem_dir = tmp_path / ".reyn" / "memory"
     mem_dir.mkdir(parents=True)
     (mem_dir / "user_project_phoenix.md").write_text(
@@ -64,8 +64,8 @@ def test_enumerate_returns_entries_keyed_by_qualified_name(tmp_path):
     result = _enumerate_shared_memory_entries(host)
 
     assert set(result.keys()) == {
-        "memory.entry__user_project_phoenix",
-        "memory.entry__user_language_python",
+        "memory_entry__user_project_phoenix",
+        "memory_entry__user_language_python",
     }
 
 
@@ -81,7 +81,7 @@ def test_enumerate_extracts_description_from_frontmatter(tmp_path):
 
     result = _enumerate_shared_memory_entries(host)
 
-    assert result["memory.entry__user_project_phoenix"]["description"] == (
+    assert result["memory_entry__user_project_phoenix"]["description"] == (
         "User is working on Phoenix with Python 3.12."
     )
 
@@ -99,8 +99,8 @@ def test_enumerate_skips_memory_index(tmp_path):
 
     result = _enumerate_shared_memory_entries(host)
 
-    assert "memory.entry__MEMORY" not in result
-    assert "memory.entry__entry" in result
+    assert "memory_entry__MEMORY" not in result
+    assert "memory_entry__entry" in result
 
 
 def test_enumerate_returns_empty_when_memory_dir_absent(tmp_path):
@@ -132,24 +132,24 @@ def test_enumerate_handles_missing_frontmatter_gracefully(tmp_path):
 
     result = _enumerate_shared_memory_entries(host)
 
-    assert "memory.entry__plain" in result
+    assert "memory_entry__plain" in result
     # Falls back to the placeholder generic description.
-    assert "plain" in result["memory.entry__plain"]["description"]
+    assert "plain" in result["memory_entry__plain"]["description"]
 
 
-# ── _resource_alias_metadata: memory.entry case ─────────────────────────────
+# ── _resource_alias_metadata: memory_entry case ─────────────────────────────
 
 
 def test_resource_alias_memory_entry_renders_description():
-    """Tier 2: memory.entry alias surfaces with the user-supplied description."""
+    """Tier 2: memory_entry alias surfaces with the user-supplied description."""
     skill_meta = {
-        "memory.entry__user_project_phoenix": {
+        "memory_entry__user_project_phoenix": {
             "description": "User is working on Phoenix with Python 3.12.",
         },
     }
 
     result = _resource_alias_metadata(
-        "memory.entry__user_project_phoenix",
+        "memory_entry__user_project_phoenix",
         skill_metadata_lookup=skill_meta,
         mcp_tool_lookup=None,
     )
@@ -161,10 +161,10 @@ def test_resource_alias_memory_entry_renders_description():
 
 
 def test_resource_alias_memory_entry_has_empty_params():
-    """Tier 2: memory.entry alias takes no args — the slug is encoded in the alias name."""
+    """Tier 2: memory_entry alias takes no args — the slug is encoded in the alias name."""
     result = _resource_alias_metadata(
-        "memory.entry__foo",
-        skill_metadata_lookup={"memory.entry__foo": {"description": "any"}},
+        "memory_entry__foo",
+        skill_metadata_lookup={"memory_entry__foo": {"description": "any"}},
         mcp_tool_lookup=None,
     )
 
@@ -174,10 +174,10 @@ def test_resource_alias_memory_entry_has_empty_params():
 
 
 def test_resource_alias_memory_entry_without_meta_still_resolves():
-    """Tier 2: a memory.entry alias must surface even when no metadata is plumbed,
+    """Tier 2: a memory_entry alias must surface even when no metadata is plumbed,
     so the LLM still discovers the action; description falls back to a placeholder."""
     result = _resource_alias_metadata(
-        "memory.entry__orphan",
+        "memory_entry__orphan",
         skill_metadata_lookup=None,
         mcp_tool_lookup=None,
     )
@@ -194,7 +194,7 @@ def test_resource_alias_memory_entry_without_meta_still_resolves():
 def test_read_memory_body_args_sends_canonical_layer_slug_pair():
     """Tier 2: transform output must match ``read_memory_body`` parameters
     (= ``{layer, slug}``). Previously sent ``{name}``, causing dispatch failure when
-    a memory.entry alias was invoked (= the 'pre-existing dispatch shape mismatch'
+    a memory_entry alias was invoked (= the 'pre-existing dispatch shape mismatch'
     deferred in FP-0034 D2-full).
     """
     args = _read_memory_body_args("user_project_phoenix", {})

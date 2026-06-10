@@ -26,7 +26,7 @@ from reyn.tools.universal_dispatch import UnknownActionError, resolve_invoke_act
 # file__write — W4 S1: LLM used args key "text" instead of "content" because
 # the action was absent from the hot list and the D2-wrapper ARS block had no
 # entry for it.
-# 2026-05-25 (post-#898 hot-list seed swap): rag.operation__drop_source
+# 2026-05-25 (post-#898 hot-list seed swap): rag_operation__drop_source
 # removed from the required-entries pin. Its B37 schema-hallucination
 # protection is now covered by the ARS scope-expansion contract (=
 # KNOWN_STATIC_QUALIFIED_NAMES is always in ARS regardless of hot-list,

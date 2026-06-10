@@ -70,7 +70,7 @@ def test_spawn_ack_p7_clean_no_skill_names():
     qualified names (`skill__X`, `file__Y`, `web__Z`, etc.) or
     skill-name-shaped strings. OS-level message stays category-agnostic."""
     tmpl = _load_spawn_ack_template()
-    forbidden_prefixes = ("skill__", "file__", "web__", "memory.", "rag.", "mcp.", "exec__", "reyn.source__")
+    forbidden_prefixes = ("skill__", "file__", "web__", "memory.", "rag.", "mcp.", "exec__", "reyn_source__")
     for lang, text in tmpl.items():
         for prefix in forbidden_prefixes:
             assert prefix not in text, (

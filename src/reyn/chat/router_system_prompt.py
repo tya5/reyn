@@ -148,15 +148,15 @@ def build_system_prompt(
     #
     # Wrapper-only Identity (= radical simplification):
     # The 3-paragraph Reyn explanation that lives in the legacy preamble
-    # is content the LLM can fetch via reyn.source__read on demand;
+    # is content the LLM can fetch via reyn_source__read on demand;
     # baking it into the SP for every turn is wasteful. Keep only the
     # empirically-mitigated parts (vendor identity leak ~50% → near 0)
     # and a single pointer to where the full content lives.
     #
     # B51 NF-W6-4 / W7-S1 fix (2026-05-23): the legacy preamble carried
-    # an inline ``invoke_action(reyn.source__read, README.md)`` example.
+    # an inline ``invoke_action(reyn_source__read, README.md)`` example.
     # Chain-replay verified that weak-tier LLMs (= flash-lite) parsed
-    # that example as "reyn.source__read is directly callable" and
+    # that example as "reyn_source__read is directly callable" and
     # emitted the truncated ``source__read({"path":"README.md"})`` (= no
     # wrapper, no namespace prefix) — observed B50/B51 W6-S2 + W7-S1 at
     # 5/5 baseline rate on the "What is Reyn?" prompt class. The fix
@@ -268,7 +268,7 @@ def build_system_prompt(
         " answer lives:",
         "- About Reyn itself (how Reyn works, Reyn's CLI / runtime /"
         " protocols / project conventions):"
-        " invoke_action(action_name=\"reyn.source__read\","
+        " invoke_action(action_name=\"reyn_source__read\","
         " args={\"path\": \"README.md\"}) → synthesize from README."
         " (README has the overview + curated map of deep-dive paths;"
         " chain to a specific doc if README points there.)",
@@ -279,7 +279,7 @@ def build_system_prompt(
         "**A task to perform** — pick by target shape:",
         "- Single-target action (= one file, one URL, one skill, one"
         " item): if the action is obvious (file__read for \"read this"
-        " file\", reyn.source__read for \"open Reyn doc X\", web__fetch"
+        " file\", reyn_source__read for \"open Reyn doc X\", web__fetch"
         " for a specific URL, invoke_action(skill__X) for an explicit"
         " named skill), invoke directly. " + _otherwise,
         "- Multi-target / iteration (= \"do X for each Y\", \"process N"
@@ -361,19 +361,19 @@ def build_system_prompt(
             "- **web** — web search and content fetch."
         )
         parts.append(
-            "- **memory.entry** — persistent memory records; invoke to read body."
+            "- **memory_entry** — persistent memory records; invoke to read body."
         )
         parts.append(
-            "- **memory.operation** — memory CRUD (remember_shared / remember_agent / forget)."
+            "- **memory_operation** — memory CRUD (remember_shared / remember_agent / forget)."
         )
         parts.append(
-            "- **reyn.source** — Reyn source/docs (read-only)."
+            "- **reyn_source** — Reyn source/docs (read-only)."
         )
         parts.append(
-            "- **rag.corpus** — indexed corpora; invoke with `query` for single-source recall."
+            "- **rag_corpus** — indexed corpora; invoke with `query` for single-source recall."
         )
         parts.append(
-            "- **rag.operation** — RAG management (multi-source recall, drop_source)."
+            "- **rag_operation** — RAG management (multi-source recall, drop_source)."
         )
         parts.append(
             "- **validation** — DSL linting (lint a skill directory and report issues)."
@@ -536,11 +536,11 @@ def build_system_prompt(
     # ── 9. Memory ────────────────────────────────────────────────────────────
     # B23-PRE-1 SP role-separation: ## Memory inline section is dropped in the
     # wrapper-only path. Memory discovery goes through
-    # list_actions(category=['memory.entry']) at runtime.
+    # list_actions(category=['memory_entry']) at runtime.
 
     # ── 10. Indexed sources (ADR-0033 UX gap fix A) ──────────────────────────
     # B23-PRE-1 SP role-separation: ## Indexed sources omitted in wrapper-only
-    # path — list_actions(category=['rag.corpus']) discovers at runtime.
+    # path — list_actions(category=['rag_corpus']) discovers at runtime.
 
     # ── 11. Files ────────────────────────────────────────────────────────────
     # B23-PRE-1 SP role-separation: ## Files section omitted in wrapper-only

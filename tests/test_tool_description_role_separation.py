@@ -101,12 +101,16 @@ def test_invoke_action_description_carries_task_completed_status_semantics() -> 
 
 
 def test_invoke_action_description_contains_agent_delegation_pattern() -> None:
-    """Tier 2: invoke_action description carries agent.peer delegation pattern.
+    """Tier 2: invoke_action description carries the agent-delegation pattern.
 
     B23-PRE-1: ## Agent delegation SP subsection moved to invoke_action.description.
-    """
+    #1456: the pattern now names the canonical ``multi_agent__delegate`` action
+    (the legacy ``agent.peer__<agent_name>`` was a collapsed category that no
+    longer resolves — UnknownActionError — so the guidance pointed the LLM at a
+    dead name)."""
     desc = _INVOKE_ACTION_DESCRIPTION
-    assert "agent.peer__" in desc
+    assert "multi_agent__delegate" in desc
+    assert "agent.peer__" not in desc  # #1456: stale dead-name removed
     # The description key or pattern
     assert "AGENT DELEGATION" in desc or "delegation" in desc.lower()
 
@@ -181,13 +185,13 @@ def test_plan_description_contains_multi_source_examples() -> None:
 # ── recall description tests ───────────────────────────────────────────────────
 
 def test_recall_description_contains_disambiguation_with_memory() -> None:
-    """Tier 2: recall _HIDE_LEGACY description distinguishes recall from memory.entry.
+    """Tier 2: recall _HIDE_LEGACY description distinguishes recall from memory_entry.
 
     B23-PRE-1: recall vs memory disambiguation moved from SP disambiguation
     block to recall._RECALL_DESCRIPTION_HIDE_LEGACY.
     """
     desc = _RECALL_DESCRIPTION_HIDE_LEGACY
-    assert "memory.entry" in desc or "memory" in desc
+    assert "memory_entry" in desc or "memory" in desc
     # The description must explicitly note the anti-confusion rule
     assert "recall" in desc.lower()
     # The disambiguation signal

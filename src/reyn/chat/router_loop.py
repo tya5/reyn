@@ -807,18 +807,18 @@ def _filter_ghost_names_by_registry(
     - ``agent.peer__*`` → must match a name in ``available_agents``.
     - ``mcp.tool__*`` / ``mcp.server__*`` → must be a key in ``mcp_tool_map``
       (or any server name prefix for ``mcp.server__*``).
-    - ``memory.entry__*`` → must be in ``known_memory_entries`` (=
+    - ``memory_entry__*`` → must be in ``known_memory_entries`` (=
       qualified names enumerated by ``_enumerate_shared_memory_entries``
       at hot-list build time). Required parameter — caller must supply
       the enumerated set (possibly empty when no entries exist).
-    - Operation categories (``file__*``, ``web__*``, ``memory.operation__*``,
-      ``reyn.source__*``, ``rag.operation__*``, ``mcp.operation__*``,
+    - Operation categories (``file__*``, ``web__*``, ``memory_operation__*``,
+      ``reyn_source__*``, ``rag_operation__*``, ``mcp.operation__*``,
       ``exec__*``) → must be in ``KNOWN_STATIC_QUALIFIED_NAMES`` (static
       op registry).
-    - ``rag.corpus__*`` is currently routed through the static check; it
-      is also a dynamic category and the same fix shape as memory.entry
+    - ``rag_corpus__*`` is currently routed through the static check; it
+      is also a dynamic category and the same fix shape as memory_entry
       applies if its caller starts seeding dynamic corpus aliases — see
-      the PR for the memory.entry case for the pattern.
+      the PR for the memory_entry case for the pattern.
 
     Ghost names are logged once per unique name per session to stderr.
     ``_warned`` is an optional set for cross-call deduplication.
@@ -874,7 +874,7 @@ def _filter_ghost_names_by_registry(
             exists = name in known_mcp_tools
         elif category == "mcp.server":
             exists = entry_name in known_mcp_servers
-        elif category == "memory.entry":
+        elif category == "memory_entry":
             # Dynamic category enumerated per-session from .reyn/memory/*.md
             # by ``_enumerate_shared_memory_entries``. Static op registry
             # does NOT contain user-saved memory entry slugs; the caller
@@ -883,9 +883,9 @@ def _filter_ghost_names_by_registry(
             exists = name in known_memory_entries
         else:
             # Operation categories not enumerable from session state:
-            # check static op registry. (``rag.corpus__*`` is also a
+            # check static op registry. (``rag_corpus__*`` is also a
             # dynamic category but no caller currently seeds it; if/when
-            # one does, mirror the memory.entry pattern above.)
+            # one does, mirror the memory_entry pattern above.)
             if name in static_ops:
                 exists = True
             else:
@@ -936,12 +936,36 @@ def _build_hot_list_aliases(
     # Defensive filter: drop universal wrapper names before alias construction
     # so that any call site (present or future) cannot introduce duplicates.
     names = [n for n in names if n not in _UNIVERSAL_WRAPPER_NAMES]
+    # #1456 runtime-boundary guard: a hot-list alias name becomes the OpenAI
+    # function name VERBATIM (``"name": name`` below). Drop any name that
+    # violates the provider function-name grammar (^[a-zA-Z0-9_-]{1,64}$ — the
+    # tightest, OpenAI's; dots are outside all three target providers' specs).
+    # This closes the wire-grammar hole BY CONSTRUCTION at the emission point —
+    # a dotted name from a collapsed/legacy category (agent.peer__* /
+    # mcp.tool__*) or a future dynamic prefix can never reach the wire as a
+    # function name, independent of whether every upstream source pre-filtered
+    # it. (invoke_action's action_name is an argument value, not a function
+    # name, so it is correctly unaffected.) Companion to the static canary in
+    # test_qualified_name_provider_grammar_1456.
+    import re
+
+    _wire_safe = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+    _illegal = [n for n in names if not _wire_safe.match(n)]
+    if _illegal:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "hot-list: dropped %d name(s) violating the provider function-name "
+            "grammar (not wire-safe as a tools= function name): %s",
+            len(_illegal), _illegal,
+        )
+        names = [n for n in names if _wire_safe.match(n)]
     result = []
     lookup = short_description_lookup or {}
     for name in names:
         # D2-min: for operation-category aliases (= passthrough rules in
-        # ``_OPERATION_RULES``: web__*, file__*, memory.operation__*,
-        # reyn.source__*, rag.operation__*, mcp.operation__*, exec__*),
+        # ``_OPERATION_RULES``: web__*, file__*, memory_operation__*,
+        # reyn_source__*, rag_operation__*, mcp.operation__*, exec__*),
         # surface the target ToolDefinition's real description + JSON
         # schema directly. Without this the alias arrives at the LLM as
         # `description: "Direct alias for X. Use invoke_action for schema
@@ -952,7 +976,7 @@ def _build_hot_list_aliases(
         # tool-call text. The FP-0034 D2 "hot list direct alias は full
         # schema 提供" intent is realised here for the passthrough
         # categories; resource categories (skill__X / agent.peer__X /
-        # mcp.tool__X.Y / memory.entry__X / rag.corpus__X) need per-
+        # mcp.tool__X.Y / memory_entry__X / rag_corpus__X) need per-
         # resource schema introspection and are out of scope for D2-min.
         rich = _operation_alias_metadata(name) or _resource_alias_metadata(
             name,
@@ -1002,7 +1026,7 @@ def _operation_alias_metadata(
     are the correct alias metadata.
 
     Returns ``None`` for resource-category aliases (skill / agent.peer /
-    mcp.tool / memory.entry / rag.corpus) — those route through
+    mcp.tool / memory_entry / rag_corpus) — those route through
     ``_RESOURCE_RULES`` whose target is a generic dispatcher (``invoke_skill``
     etc.) whose parameters do NOT match the resource's actual input schema.
     Those need per-resource schema introspection (D2-full).
@@ -1042,7 +1066,7 @@ def _resource_alias_metadata(
         minus ``to``.
       - ``mcp.server__<name>`` (step 1) — accepts ``{}``; rule curries
         ``server=<name>``. The action IS "list this server's tools".
-      - ``rag.corpus__<name>`` (step 1) — accepts ``{query, top_k?, ...}``;
+      - ``rag_corpus__<name>`` (step 1) — accepts ``{query, top_k?, ...}``;
         rule curries ``sources=[<name>]``. Source: ``recall`` parameters
         minus ``sources``.
       - ``skill__<name>`` (step 2) — caller supplies ``skill_metadata_lookup``
@@ -1055,7 +1079,7 @@ def _resource_alias_metadata(
         input_schema?}`` from the MCP server's declared tool schema.
 
     Returns ``None`` for:
-      - any unhandled category, e.g. ``memory.entry__X`` — the current
+      - any unhandled category, e.g. ``memory_entry__X`` — the current
         ``_read_memory_body_args`` transform sends ``{name: entry}`` but
         the target ``read_memory_body`` expects ``{layer, slug}``;
         pre-existing dispatch shape mismatch, surface separately.
@@ -1083,7 +1107,7 @@ def _resource_alias_metadata(
         )
         return description, params
 
-    if category == "rag.corpus":
+    if category == "rag_corpus":
         tool = registry.lookup("recall")
         if tool is None:
             return None
@@ -1121,8 +1145,8 @@ def _resource_alias_metadata(
         )
         return description, schema
 
-    if category == "memory.entry":
-        # E2e-coder 2026-05-17 N4 probe: memory.entry__<slug> aliases were
+    if category == "memory_entry":
+        # E2e-coder 2026-05-17 N4 probe: memory_entry__<slug> aliases were
         # previously marked unhandled because _read_memory_body_args sent
         # {name: slug} while read_memory_body required {layer, slug} — that
         # transform is now fixed (universal_dispatch.py) to send the
@@ -1142,14 +1166,14 @@ def _resource_alias_metadata(
 
 
 def _enumerate_shared_memory_entries(host: Any) -> dict[str, dict]:
-    """List shared memory entries as ``memory.entry__<slug>`` → metadata.
+    """List shared memory entries as ``memory_entry__<slug>`` → metadata.
 
     Scans the shared memory layer's directory (= ``<cwd>/.reyn/memory``) for
     ``*.md`` files, ignoring the ``MEMORY.md`` index. The returned mapping is
     keyed by qualified action name so the caller can:
 
       - extend the hot-list seed (so the alias appears in ``tools=`` without
-        the LLM running a discovery ``list_actions(category=['memory.entry'])``
+        the LLM running a discovery ``list_actions(category=['memory_entry'])``
         first), and
       - populate the alias metadata lookup so ``_resource_alias_metadata``
         renders a human description from the entry's frontmatter rather
@@ -1201,7 +1225,7 @@ def _enumerate_shared_memory_entries(host: Any) -> dict[str, dict]:
                         break
         except OSError:
             pass
-        out[f"memory.entry__{slug}"] = meta
+        out[f"memory_entry__{slug}"] = meta
     return out
 
 
@@ -1524,7 +1548,7 @@ class RouterLoop:
                 )
                 # N4 (2026-05-17): seed shared memory entries dynamically so
                 # the LLM can read user-saved memory in a fresh session
-                # without first running list_actions(category=['memory.entry']).
+                # without first running list_actions(category=['memory_entry']).
                 # Without this, cross-session memory retrieval requires a
                 # discovery step the weak default model rarely takes.
                 # Populates skill_metadata_lookup so the alias gets a
@@ -1536,7 +1560,7 @@ class RouterLoop:
                         _seed.append(_qn)
                     # _skill_meta_map is reused as a generic
                     # qualified-name → metadata lookup; see
-                    # _resource_alias_metadata's memory.entry branch.
+                    # _resource_alias_metadata's memory_entry branch.
                     _skill_meta_map.setdefault(_qn, _meta)
                 # FP-0034 refactor: live (= uncompacted) tool-call records
                 # are scanned on demand so the hot-list reflects in-session
@@ -1565,10 +1589,10 @@ class RouterLoop:
                     mcp_tool_map=_mcp_tool_map or None,
                     available_agents=host.list_available_agents() or None,
                     known_skill_names=frozenset(_known_skill_names) or None,
-                    # Dynamic memory.entry__<slug> names enumerated above
+                    # Dynamic memory_entry__<slug> names enumerated above
                     # from .reyn/memory/*.md. Empty set means "no entries
                     # exist this session" — filter rejects any stale
-                    # memory.entry name still in the action_usage tracker.
+                    # memory_entry name still in the action_usage tracker.
                     known_memory_entries=frozenset(_memory_entries),
                 )
                 if _top_names:
@@ -3012,7 +3036,7 @@ class RouterLoop:
             )
 
         # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the
-        # universal catalog's rag.corpus enumeration. SourceManifest
+        # universal catalog's rag_corpus enumeration. SourceManifest
         # caches the parsed YAML in-process so this is O(1) when the
         # cache is warm (= when the system-prompt path already loaded
         # the manifest earlier in this turn). Failures (= missing file,
@@ -3087,7 +3111,7 @@ class RouterLoop:
             # mcp_call_tool`` directly to preserve the session-level
             # MCPClient cache (= no per-call re-handshake).
             host=self.host,
-            # FP-0034 Phase 2 prep: rag.corpus enumeration snapshot.
+            # FP-0034 Phase 2 prep: rag_corpus enumeration snapshot.
             available_rag_sources=_rag_sources,
             # FP-0034 Phase 2 step 1: search_actions wiring.  All
             # three resolve via getattr fallback so narrow hosts

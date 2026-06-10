@@ -88,13 +88,13 @@ def test_flag_on_lists_all_categories() -> None:
         "multi_agent",
         "mcp",
         "file", "web",
-        "memory.entry", "memory.operation",
-        "reyn.source",
-        "rag.corpus", "rag.operation",
+        "memory_entry", "memory_operation",
+        "reyn_source",
+        "rag_corpus", "rag_operation",
         "exec",
     ):
         # Each category is on its own bullet line; use bold marker so
-        # 'file' and 'reyn.source' match independently of plain words.
+        # 'file' and 'reyn_source' match independently of plain words.
         assert f"**{cat}**" in prompt, (
             f"category {cat!r} must be listed as a bullet in the SP"
         )

@@ -3,10 +3,10 @@
 Tests for the real handlers in
 ``src/reyn/tools/universal_catalog.py`` covering:
   1. list_actions returns static-category items (file / web /
-     memory.operation / reyn.source / rag.operation) without
+     memory_operation / reyn_source / rag_operation) without
      consulting router_state.
   2. list_actions enumerates dynamic categories (skill /
-     agent.peer / mcp.{server,tool} / memory.entry) when
+     agent.peer / mcp.{server,tool} / memory_entry) when
      RouterCallerState is populated.
   3. list_actions offset / limit / category arguments.
   4. describe_action returns the target's description / parameters
@@ -94,15 +94,15 @@ def test_list_actions_web_static_category() -> None:
 
 
 def test_list_actions_memory_operation_static_category() -> None:
-    """Tier 2: list_actions(category=['memory.operation']) returns 3 ops."""
+    """Tier 2: list_actions(category=['memory_operation']) returns 3 ops."""
     result = _run(LIST_ACTIONS.handler(
-        {"category": ["memory.operation"]}, _make_ctx(),
+        {"category": ["memory_operation"]}, _make_ctx(),
     ))
     qns = {it["qualified_name"] for it in result["items"]}
     assert qns == {
-        "memory.operation__remember_shared",
-        "memory.operation__remember_agent",
-        "memory.operation__forget",
+        "memory_operation__remember_shared",
+        "memory_operation__remember_agent",
+        "memory_operation__forget",
     }
 
 
@@ -154,7 +154,7 @@ def test_list_actions_no_category_filter_includes_all() -> None:
     Without RouterCallerState, only static categories contribute.
     """
     result = _run(LIST_ACTIONS.handler({}, _make_ctx()))
-    # 4 (file) + 2 (web) + 3 (memory.operation) + 2 (reyn.source) + 2 (rag.op)
+    # 4 (file) + 2 (web) + 3 (memory_operation) + 2 (reyn_source) + 2 (rag.op)
     # = 13 known static items
     assert result["total"] >= 13
 
@@ -198,12 +198,12 @@ def test_list_actions_multi_agent_static_category_returns_verbs() -> None:
 
 
 def test_list_actions_rag_corpus_category_uses_router_state() -> None:
-    """Tier 2: rag.corpus category enumerates from rs.available_rag_sources.
+    """Tier 2: rag_corpus category enumerates from rs.available_rag_sources.
 
     Phase 2 prep wiring: RouterLoop populates ``available_rag_sources``
     from ``SourceManifest.get_all()`` so ``list_actions(category=
-    ["rag.corpus"])`` returns the configured corpora as
-    ``rag.corpus__<name>`` qualified names.  Previously rag.corpus
+    ["rag_corpus"])`` returns the configured corpora as
+    ``rag_corpus__<name>`` qualified names.  Previously rag_corpus
     always returned [] (= deferred branch); this test pins the new
     enumeration behavior.
     """
@@ -224,24 +224,24 @@ def test_list_actions_rag_corpus_category_uses_router_state() -> None:
         ],
     )
     result = _run(LIST_ACTIONS.handler(
-        {"category": ["rag.corpus"]}, _make_ctx(rs),
+        {"category": ["rag_corpus"]}, _make_ctx(rs),
     ))
     qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {"rag.corpus__meetings", "rag.corpus__design_docs"}
+    assert qns == {"rag_corpus__meetings", "rag_corpus__design_docs"}
     # Short description carries the corpus description, not internals.
     desc_by_name = {it["qualified_name"]: it["short_description"] for it in result["items"]}
-    assert "Q3 meeting minutes" in desc_by_name["rag.corpus__meetings"]
+    assert "Q3 meeting minutes" in desc_by_name["rag_corpus__meetings"]
 
 
 def test_list_actions_rag_corpus_empty_when_state_absent() -> None:
-    """Tier 2: rag.corpus returns empty list when router didn't snapshot manifest.
+    """Tier 2: rag_corpus returns empty list when router didn't snapshot manifest.
 
     Plan-mode hosts / test sites without a SourceManifest available
     leave ``available_rag_sources=None`` — the handler must treat
     that identically to an empty list rather than crashing.
     """
     result = _run(LIST_ACTIONS.handler(
-        {"category": ["rag.corpus"]}, _make_ctx(None),
+        {"category": ["rag_corpus"]}, _make_ctx(None),
     ))
     assert result["items"] == []
     assert result["total"] == 0
@@ -360,7 +360,7 @@ def test_list_actions_dynamic_category_empty_when_state_absent() -> None:
     verified by the dedicated stale-enum tests below.
     """
     result = _run(LIST_ACTIONS.handler(
-        {"category": ["skill", "rag.corpus", "memory.entry"]},
+        {"category": ["skill", "rag_corpus", "memory_entry"]},
         _make_ctx(),
     ))
     assert result["items"] == []
