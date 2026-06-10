@@ -43,6 +43,32 @@ def _image_mime_for_path(path: str) -> str | None:
 # LLM's "did you mean X" narration looks the same across both surfaces.
 _NOT_FOUND_SUGGESTIONS_LIMIT = 8
 
+# #1449: head bytes sampled for the NUL-byte binary sniff. A NUL never occurs in
+# valid UTF-8 text, so its presence in the head is a cheap, false-positive-free
+# binary signal; the full UTF-8 decode (below) catches the rest.
+_BINARY_SNIFF_BYTES = 8192
+
+
+def _binary_skipped_result(ctx: OpContext, path: str, byte_size: int) -> dict:
+    """#1449: structured result for a NON-image binary read — the bytes are NOT
+    loaded into context (no garbled dump). Images go through the #365 media path
+    above; this is the catch-all for compiled / archive / unknown binaries."""
+    ctx.events.emit("tool_executed", op="read_file", path=path, mode="binary_skipped")
+    return {
+        "kind": "file",
+        "op": "read",
+        "path": path,
+        "status": "error",
+        "error": (
+            f"binary file ({byte_size} bytes) — not text-loadable; its bytes were "
+            "not loaded into context. If this is an image, it is shown via the "
+            "media follow-up; otherwise it cannot be read as text."
+        ),
+        "binary": True,
+        "byte_size": byte_size,
+        "content": "",
+    }
+
 
 async def _read_image_file(op: FileIROp, ctx: OpContext, *, mime_type: str) -> dict:
     """Read an image file as bytes, apply the media-size gate, return as
@@ -215,7 +241,12 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
         if image_mime is not None:
             return await _read_image_file(op, ctx, mime_type=image_mime)
 
-        content, found = ctx.workspace.read_file(op.path)
+        # #1449: read bytes so a NON-image binary can be guarded BEFORE it is
+        # decoded into garbled text and dumped into context. (Images already
+        # short-circuited above via the #365 media-blocks path.) Permission
+        # gating is identical — read_file_bytes resolves the read-zone the same
+        # way read_file does.
+        raw_bytes, found = ctx.workspace.read_file_bytes(op.path)
         if not found:
             suggestions = _nearby_files(ctx.workspace, op.path)
             ctx.events.emit("tool_executed", op="read_file", path=op.path, found=False)
@@ -228,6 +259,17 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "suggestions": suggestions,
                 "content": "",
             }
+        # #1449 non-image binary guard: a NUL byte in the head sample, or bytes
+        # that are not valid UTF-8, mean a non-text payload — return a structured
+        # marker instead of dumping garbled bytes. Detection is NUL-byte +
+        # UTF-8-decode-failure ONLY, deliberately NOT a printable-ratio test
+        # (which false-positives on valid multibyte unicode — #1449 owner caution).
+        if b"\x00" in raw_bytes[:_BINARY_SNIFF_BYTES]:
+            return _binary_skipped_result(ctx, op.path, len(raw_bytes))
+        try:
+            content = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return _binary_skipped_result(ctx, op.path, len(raw_bytes))
         explicit_bounded = op.offset is not None or op.limit is not None
         if explicit_bounded:
             # Caller asked for an explicit window — honor it verbatim.

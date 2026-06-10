@@ -29,7 +29,7 @@ _WEB_FETCH_DESCRIPTION = (
     "stored under .reyn/tool-results/. url: absolute http/https URL. "
     "max_length: cap on extracted body length (default 50000). "
     "Use after web_search to load a result page; call "
-    "read_tool_result(path) to read the full body."
+    "file__read(path) to read the full body."
 )
 
 # Parameters JSON schema must be byte-identical to the current

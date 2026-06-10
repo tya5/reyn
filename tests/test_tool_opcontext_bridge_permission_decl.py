@@ -214,45 +214,10 @@ def test_file_legacy_ctx_helper_preserves_decl(tmp_path: Path) -> None:
     assert legacy_ctx.permission_decl is phase_state.op_context.permission_decl
 
 
-@pytest.mark.asyncio
-async def test_read_tool_result_bridge_preserves_decl(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2: read_tool_result.py's bridge propagates phase decl.
-
-    The handler raises on missing media_store, but we can construct
-    the legacy_ctx in the same shape the bridge does + assert
-    invariant directly.
-    """
-    from reyn.tools import read_tool_result as rtr_mod
-
-    # Replicate the bridge construction (rs path is None → fallback)
-    skill_decl = PermissionDecl(mcp=["github"])
-    phase_state = _build_phase_state(skill_decl)
-    tool_ctx = _build_tool_ctx_with_phase(phase_state, tmp_path)
-
-    rs = tool_ctx.router_state
-    if rs is not None and rs.op_context_factory is not None:
-        pytest.skip("router-side path not relevant to this test")
-    phase_op_ctx = (
-        tool_ctx.phase_state.op_context if tool_ctx.phase_state is not None else None
-    )
-    legacy_ctx = OpContext(
-        workspace=tool_ctx.workspace,
-        events=tool_ctx.events,
-        permission_decl=(
-            phase_op_ctx.permission_decl
-            if phase_op_ctx is not None
-            else PermissionDecl()
-        ),
-        permission_resolver=tool_ctx.permission_resolver,
-        skill_name="",
-        subscribers=getattr(tool_ctx.events, "subscribers", []),
-    )
-    assert legacy_ctx.permission_decl is phase_state.op_context.permission_decl
-    # Reference the module to keep the import live (= test pins the
-    # presence of the bridge code path).
-    assert hasattr(rtr_mod, "_handle_read_tool_result") or True
+# #1449: test_read_tool_result_bridge_preserves_decl removed — read_tool_result
+# is retired and the shared bridge it replicated now lives in
+# tools/op_context_bridge.py:build_legacy_op_context (#1446), tested there + via
+# the file.py bridge tests above.
 
 
 # ── 4. fallback semantics: no phase_state → empty PermissionDecl ──────────

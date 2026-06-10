@@ -92,7 +92,6 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_SHARED,
     )
     from reyn.tools.plan import PLAN
-    from reyn.tools.read_tool_result import READ_TOOL_RESULT
     from reyn.tools.recall import RECALL
     from reyn.tools.reyn_src import (
         REYN_SRC_GLOB,
@@ -117,11 +116,10 @@ def get_default_registry() -> ToolRegistry:
     # ── Both-surface capabilities (gates.router=allow, gates.phase=allow) ──
     registry.register(WEB_SEARCH)
     registry.register(WEB_FETCH)
-    # #385 PoC PR-D — companion to preview-driven tool returns; LLM
-    # calls this when the path-ref preview emitted by web_fetch (and
-    # future text-tool migrations) is insufficient and the full body
-    # needs to enter the model's context.
-    registry.register(READ_TOOL_RESULT)
+    # #1449: read_tool_result retired — its same-host path-ref read is covered by
+    # file__read(path) (the refs are plain files under .reyn/tool-results/), and
+    # its image guard is superseded by file__read's #365 media-blocks + #1449
+    # binary guard. The cross-host resource_uri path was a never-implemented stub.
     registry.register(INVOKE_SKILL)
     # RAG ops (ADR-0033 Phase 1)
     registry.register(RECALL)

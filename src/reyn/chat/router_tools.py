@@ -566,29 +566,10 @@ def build_tools(
             dispatch_kind=_wf.dispatch_kind,
         ))
 
-    # ── E3: read_tool_result (companion to E2 web_fetch preview path) ───────
-    # #385 PoC PR-D introduced READ_TOOL_RESULT as the lazy-expand half of
-    # the preview-driven tool return: web_fetch (and future text tools)
-    # save the full body under ``.reyn/tool-results/`` and return a
-    # ``preview + path_ref`` pair; the LLM is expected to call
-    # ``read_tool_result(path=...)`` when the preview is insufficient for
-    # what comes next.
-    # B49 Step 2 v6 finding (2026-05-22): READ_TOOL_RESULT was registered
-    # in the unified registry (``tools/__init__.py:112``) but
-    # ``build_tools()`` never surfaced it to the router LLM. Smoke v5/v6
-    # observed ``expand_rate=0%`` across all 18 web_fetch turns even
-    # when the LLM explicitly recognised the preview was insufficient —
-    # root cause was a catalog-deployment gap, not a discoverability
-    # gap. Surface the tool so the LLM can actually decide to expand.
-    _rtr = _registry.lookup("read_tool_result")
-    if _rtr is not None and _rtr.gates.router == "allow":
-        _rtr_rendered = _rtr.render_for_router()
-        specs.append(ToolSpec(
-            name=_rtr_rendered["function"]["name"],
-            description=_rtr_rendered["function"]["description"],
-            parameters=_rtr_rendered["function"]["parameters"],
-            dispatch_kind=_rtr.dispatch_kind,
-        ))
+    # #1449: read_tool_result (the former E3 lazy-expand companion to web_fetch's
+    # preview path) is retired. Its same-host path-ref read is covered by
+    # file__read(path) — web_fetch's preview now points there — so the router
+    # catalog no longer surfaces a dedicated expand tool.
 
     # ── G. Plan tool (always present) ────────────────────────────────────────
     #
