@@ -1265,6 +1265,7 @@ class RouterLoop:
         router_model: str = "light",  # config tier (light = intent classification)
         budget: Any = None,  # BudgetTracker | None — process-shared cost tracker
         system_prompt_override: str | None = None,
+        non_interactive: bool = False,  # #1440 followup: run-once (no TTY) → live router SP proceeds instead of asking a clarifying question (13398). Threaded from ChatSession.
         exclude_tools: set[str] | None = None,
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
         skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
@@ -1291,6 +1292,13 @@ class RouterLoop:
         # of a plan") instead of the full chat router prompt. The host facade
         # still controls the tool catalog narrowing.
         self._system_prompt_override = system_prompt_override
+        # #1440 followup: run-once (no interactive user) → the LIVE chat-router SP
+        # (built at the build_system_prompt call below) must omit the "ask ONE
+        # clarifying question" directive. The original #1440 wired only the
+        # session-side _build_router_system_prompt (override/budget path), missing
+        # this live path → run-once still dead-stopped (13398). Threaded from
+        # ChatSession._non_interactive via the constructor.
+        self._non_interactive = bool(non_interactive)
         # Tool names to drop from the catalog (= post-build filter). Used by
         # plan executor to pass ``{"plan"}`` so plan steps cannot recursively
         # call plan (= prevents unbounded nesting). Discovered 2026-05-07:
@@ -1655,6 +1663,7 @@ class RouterLoop:
                 # router path reaches build_system_prompt — the phase op-loop
                 # uses system_prompt_override, so this does not touch it.
                 discovery_mandate=tier_wants_discovery_mandate(self.router_model),
+                non_interactive=self._non_interactive,  # #1440 followup: live-path wiring
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
