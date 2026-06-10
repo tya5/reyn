@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from reyn.schemas.models import FileIROp
+from reyn.workspace.text_codec import decode_text_or_none, encode_text
 
 from . import register
 from .context import OpContext
@@ -42,11 +43,6 @@ def _image_mime_for_path(path: str) -> str | None:
 # ~8-suggestion shape that invoke_action's UnknownActionError emits so the
 # LLM's "did you mean X" narration looks the same across both surfaces.
 _NOT_FOUND_SUGGESTIONS_LIMIT = 8
-
-# #1449: head bytes sampled for the NUL-byte binary sniff. A NUL never occurs in
-# valid UTF-8 text, so its presence in the head is a cheap, false-positive-free
-# binary signal; the full UTF-8 decode (below) catches the rest.
-_BINARY_SNIFF_BYTES = 8192
 
 
 def _binary_skipped_result(ctx: OpContext, path: str, byte_size: int) -> dict:
@@ -231,9 +227,29 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
             )
 
     if op.op == "write":
+        # #1452: write authors NEW content (the author is now the LLM), so it
+        # writes UTF-8 — UNLIKE edit, which preserves a file's existing encoding
+        # in place. (Rationale-backed asymmetry, owner-vetoable: full replacement
+        # vs partial edit. Preserving a legacy encoding on write would surface
+        # not-representable errors for the common case of adding emoji/unicode.)
+        # When OVERWRITING a non-UTF-8 file, surface a note that the encoding
+        # changed. The pre-read is best-effort (skipped if read is denied).
+        _prev_enc: str | None = None
+        try:
+            _prev_bytes, _existed = ctx.workspace.read_file_bytes(op.path)
+            if _existed:
+                _, _prev_enc = decode_text_or_none(_prev_bytes)
+        except PermissionError:
+            pass
         ctx.workspace.write_file(op.path, op.content or "")
         ctx.events.emit("tool_executed", op="write_file", path=op.path)
-        return {"kind": "file", "op": "write", "path": op.path, "status": "ok"}
+        result: dict = {"kind": "file", "op": "write", "path": op.path, "status": "ok"}
+        if _prev_enc:
+            result["encoding_note"] = (
+                f"overwrote a {_prev_enc}-encoded file; the new content is written "
+                "as UTF-8."
+            )
+        return result
 
     if op.op == "read":
         # Issue #365: image extensions → binary path with media-size gate.
@@ -259,17 +275,18 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "suggestions": suggestions,
                 "content": "",
             }
-        # #1449 non-image binary guard: a NUL byte in the head sample, or bytes
-        # that are not valid UTF-8, mean a non-text payload — return a structured
-        # marker instead of dumping garbled bytes. Detection is NUL-byte +
-        # UTF-8-decode-failure ONLY, deliberately NOT a printable-ratio test
-        # (which false-positives on valid multibyte unicode — #1449 owner caution).
-        if b"\x00" in raw_bytes[:_BINARY_SNIFF_BYTES]:
+        # #1452 decode ladder (extends the #1449 binary guard): BOM → UTF-8 fast
+        # path → NUL-sniff binary-reject → charset-normalizer detection. Order is
+        # load-bearing: the BOM check runs BEFORE the NUL-sniff because UTF-16/32
+        # ASCII text is NUL-heavy and would be mis-rejected as binary. Returns
+        # (None, None) for a non-text payload (→ the structured binary marker).
+        content, _detected_encoding = decode_text_or_none(raw_bytes)
+        if content is None:
             return _binary_skipped_result(ctx, op.path, len(raw_bytes))
-        try:
-            content = raw_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            return _binary_skipped_result(ctx, op.path, len(raw_bytes))
+        # `encoding` is surfaced ONLY when a non-UTF-8 codec was used (BOM or
+        # charset-normalizer); the plain-UTF-8 fast path keeps the result shape
+        # byte-identical (no `encoding` field) for the common case.
+        _enc_field = {"encoding": _detected_encoding} if _detected_encoding else {}
         explicit_bounded = op.offset is not None or op.limit is not None
         if explicit_bounded:
             # Caller asked for an explicit window — honor it verbatim.
@@ -284,6 +301,7 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "path": op.path,
                 "status": "ok",
                 "content": content,
+                **_enc_field,
             }
 
         # #1209 (1) read-bounding, bound-only-when-over: an UNBOUNDED read whose
@@ -317,6 +335,7 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "total_lines": len(all_lines),
                 "next_offset": len(shown),
                 "total_chars": len(content),
+                **_enc_field,
             }
         ctx.events.emit("tool_executed", op="read_file", path=op.path)
         return {
@@ -325,6 +344,7 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
             "path": op.path,
             "status": "ok",
             "content": content,
+            **_enc_field,
         }
 
     if op.op == "glob":
@@ -515,7 +535,7 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
     if op.new_string is None:
         return {"kind": "file", "op": "edit", "status": "error", "error": "new_string is required"}
 
-    content, found = ctx.workspace.read_file(op.path)
+    raw_bytes, found = ctx.workspace.read_file_bytes(op.path)
     if not found:
         suggestions = _nearby_files(ctx.workspace, op.path)
         return {
@@ -525,6 +545,17 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
             "status": "not_found",
             "error": f"file not found: {op.path}",
             "suggestions": suggestions,
+        }
+
+    # #1452: decode via the shared codec ladder so a non-UTF-8 text file can be
+    # edited in place (encoding preserved on write-back below). A binary file
+    # cannot be edited as text.
+    content, _encoding = decode_text_or_none(raw_bytes)
+    if content is None:
+        return {
+            "kind": "file", "op": "edit", "path": op.path, "status": "error",
+            "binary": True,
+            "error": "binary file — cannot edit as text (its bytes were not loaded).",
         }
 
     count = content.count(op.old_string)
@@ -537,7 +568,22 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
 
     new_content = content.replace(op.old_string, op.new_string) if op.replace_all \
         else content.replace(op.old_string, op.new_string, 1)
-    ctx.workspace.write_file(op.path, new_content)
+    # #1452: re-encode with the file's ORIGINAL encoding (BOM restored for
+    # utf-8-sig/utf-16/utf-32). If the edit isn't representable in that codec
+    # (e.g. an emoji written into a Shift-JIS file), ERROR and leave the file
+    # untouched — never silently transcode the whole file to UTF-8.
+    encoded = encode_text(new_content, _encoding)
+    if encoded is None:
+        return {
+            "kind": "file", "op": "edit", "path": op.path, "status": "error",
+            "encoding": _encoding or "utf-8",
+            "error": (
+                f"the edit is not representable in the file's encoding "
+                f"({_encoding or 'utf-8'}) — file left unchanged. Some new "
+                "characters cannot be encoded there."
+            ),
+        }
+    ctx.workspace.write_file_bytes(op.path, encoded)
     replacements = count if op.replace_all else 1
     ctx.events.emit("tool_executed", op="edit_file", path=op.path, replacements=replacements)
     # #1418: an additive, show-not-judge preview of the changed region so the
@@ -549,6 +595,7 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
     return {
         "kind": "file", "op": "edit", "path": op.path, "status": "ok",
         "replacements": replacements, "preview": preview,
+        **({"encoding": _encoding} if _encoding else {}),
     }
 
 

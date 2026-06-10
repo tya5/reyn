@@ -55,12 +55,14 @@ def test_non_image_binary_is_guarded_not_dumped(tmp_path, monkeypatch):
     assert "not text-loadable" in result["error"]
 
 
-def test_invalid_utf8_binary_is_guarded(tmp_path, monkeypatch):
-    """Tier 2: #1449 — bytes that are not valid UTF-8 (no NUL) also route to the
-    binary guard, not a lossy decode."""
+def test_undetectable_non_utf8_bytes_are_guarded(tmp_path, monkeypatch):
+    """Tier 2: #1449/#1452 — non-UTF-8 bytes with no confident charset detection
+    (and no NUL) route to the binary guard, not a lossy decode. (#1452 update:
+    *detectable* legacy encodings like latin-1 are now decoded as text — see
+    test_file_read_encoding_1452; only undetectable bytes hit this guard.)"""
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "latin.bin").write_bytes(b"caf\xe9 not utf8 \xff\xfe")
-    result = _read(tmp_path, "latin.bin")
+    (tmp_path / "rand.bin").write_bytes(bytes(range(0, 256)) * 4)
+    result = _read(tmp_path, "rand.bin")
     assert result["status"] == "error"
     assert result["binary"] is True
 

@@ -162,6 +162,16 @@ class Workspace:
         self._backend.write_bytes(path, content.encode("utf-8"))
         self._events.emit("workspace_updated", path=str(path))
 
+    def write_file_bytes(self, path_str: str, data: bytes) -> None:
+        """Write raw bytes into the project (#1452 — the write-side mirror of
+        ``read_file_bytes``). Used by file__edit / write to persist content
+        already encoded in the file's detected codec (preserving a non-UTF-8
+        encoding + BOM on in-place edits). Same write-zone gating as
+        ``write_file``. Raises PermissionError if denied."""
+        path = self._resolve_write(path_str)
+        self._backend.write_bytes(path, data)
+        self._events.emit("workspace_updated", path=str(path))
+
     def delete_file(self, path_str: str) -> bool:
         """Delete a file from the project. Returns True if deleted, False if not found."""
         path = self._resolve_write(path_str)

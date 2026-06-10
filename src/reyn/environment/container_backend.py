@@ -159,6 +159,16 @@ _GLOB = (
 )
 # grep: argv = pattern, flags, root, glob_or_'', file_type_or_'', output_mode,
 #       head_limit_or_'-1', context_before, context_after
+#
+# #1452 encoding note (deliberate scope boundary): this grep runs as a
+# stdlib-only python script in the TARGET container, where REYN's
+# charset-normalizer dependency is not guaranteed to exist. So it keeps
+# ``read_text('utf-8','replace')`` — legacy-encoding detection (SJIS / EUC-JP /
+# UTF-16) and the binary-skip ladder are HOST-only (host_backend.py via
+# workspace/text_codec). In-container grep therefore matches UTF-8 content
+# faithfully but may replacement-char a non-UTF-8 file's bytes. Acceptable: the
+# faithful-SWE container path is for source repos (overwhelmingly UTF-8), and
+# adding charset-normalizer to arbitrary target images is out of scope.
 _GREP = (
     "import sys,re,json,os,pathlib\n"
     "pat,flags,root,g,ft,mode,hl,cb,ca=sys.argv[1:10]\n"

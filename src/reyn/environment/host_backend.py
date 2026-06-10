@@ -14,6 +14,20 @@ from pathlib import Path
 from typing import Any, Pattern
 
 from reyn.environment.backend import GrepResult
+from reyn.workspace.text_codec import decode_text_or_none
+
+
+def _grep_decode(path: Path) -> str | None:
+    """#1452: decode a file for grep via the shared codec ladder. Binary files
+    return None (skipped — the old ``errors="replace"`` turned binary into
+    replacement chars that SILENTLY missed patterns); SJIS / EUC-JP / UTF-16 /
+    etc. are decoded so their content is actually searchable."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    text, _enc = decode_text_or_none(data)
+    return text
 
 
 class HostBackend:
@@ -103,20 +117,20 @@ class HostBackend:
         if output_mode == "files_with_matches":
             matched: list[Path] = []
             for f in candidates:
-                try:
-                    if regex.search(f.read_text(encoding="utf-8", errors="replace")):
-                        matched.append(f)
-                except OSError:
-                    continue
+                text = _grep_decode(f)
+                if text is None:
+                    continue  # #1452: binary (or unreadable) — skip, don't garble
+                if regex.search(text):
+                    matched.append(f)
             return GrepResult(output_mode="files_with_matches", files=matched)
 
         if output_mode == "count":
             total = 0
             for f in candidates:
-                try:
-                    total += len(regex.findall(f.read_text(encoding="utf-8", errors="replace")))
-                except OSError:
+                text = _grep_decode(f)
+                if text is None:
                     continue
+                total += len(regex.findall(text))
             return GrepResult(output_mode="count", count=total)
 
         matches: list[dict] = []
@@ -124,10 +138,10 @@ class HostBackend:
         for f in candidates:
             if done:
                 break
-            try:
-                lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                continue
+            text = _grep_decode(f)
+            if text is None:
+                continue  # #1452: binary (or unreadable) — skip
+            lines = text.splitlines()
             for i, line in enumerate(lines):
                 if not regex.search(line):
                     continue
