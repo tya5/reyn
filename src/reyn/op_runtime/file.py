@@ -1,6 +1,7 @@
 """file kind handler — read/write/glob/grep/delete/edit/regenerate_index/mkdir/move/stat."""
 from __future__ import annotations
 
+import codecs
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -68,6 +69,53 @@ def _binary_skipped_result(ctx: OpContext, path: str, byte_size: int) -> dict:
         "byte_size": byte_size,
         "content": "",
     }
+
+
+# #1452: BOM signatures, checked BEFORE the NUL-sniff (UTF-16/32 ASCII text is
+# NUL-heavy). UTF-32 is listed before UTF-16 because BOM_UTF32_LE starts with
+# BOM_UTF16_LE's bytes — the longer signature must match first.
+_BOM_ENCODINGS: tuple[tuple[bytes, str], ...] = (
+    (codecs.BOM_UTF8, "utf-8-sig"),
+    (codecs.BOM_UTF32_LE, "utf-32"),
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+
+def _decode_text_or_none(raw: bytes) -> tuple[str | None, str | None]:
+    """#1452 decode ladder. Returns ``(text, encoding)`` for text, or
+    ``(None, None)`` for a non-text (binary) payload.
+
+    ``encoding`` is ``None`` on the plain-UTF-8 fast path (so the common-case
+    result shape is unchanged); it names the codec when a BOM or a
+    charset-normalizer detection was used. Ladder order is load-bearing:
+
+    1. **BOM first** — UTF-16/32 ASCII text is NUL-heavy and would be mis-rejected
+       by the NUL-sniff below; the codecs strip the BOM on decode.
+    2. **UTF-8 strict** — the dominant case; fast path, no detection cost.
+    3. **NUL-sniff** — a NUL byte (no BOM, not UTF-8) → binary fast-reject.
+    4. **charset-normalizer** — best-guess for legacy encodings (SJIS, EUC-JP,
+       latin-1, …); no confident match → binary (the #1449 safe fallback).
+    """
+    for bom, enc in _BOM_ENCODINGS:
+        if raw.startswith(bom):
+            try:
+                return raw.decode(enc), enc
+            except (UnicodeDecodeError, LookupError):
+                return None, None
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError:
+        pass
+    if b"\x00" in raw[:_BINARY_SNIFF_BYTES]:
+        return None, None
+    from charset_normalizer import from_bytes
+
+    match = from_bytes(raw).best()
+    if match is None:
+        return None, None
+    return str(match), match.encoding
 
 
 async def _read_image_file(op: FileIROp, ctx: OpContext, *, mime_type: str) -> dict:
@@ -259,17 +307,18 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "suggestions": suggestions,
                 "content": "",
             }
-        # #1449 non-image binary guard: a NUL byte in the head sample, or bytes
-        # that are not valid UTF-8, mean a non-text payload — return a structured
-        # marker instead of dumping garbled bytes. Detection is NUL-byte +
-        # UTF-8-decode-failure ONLY, deliberately NOT a printable-ratio test
-        # (which false-positives on valid multibyte unicode — #1449 owner caution).
-        if b"\x00" in raw_bytes[:_BINARY_SNIFF_BYTES]:
+        # #1452 decode ladder (extends the #1449 binary guard): BOM → UTF-8 fast
+        # path → NUL-sniff binary-reject → charset-normalizer detection. Order is
+        # load-bearing: the BOM check runs BEFORE the NUL-sniff because UTF-16/32
+        # ASCII text is NUL-heavy and would be mis-rejected as binary. Returns
+        # (None, None) for a non-text payload (→ the structured binary marker).
+        content, _detected_encoding = _decode_text_or_none(raw_bytes)
+        if content is None:
             return _binary_skipped_result(ctx, op.path, len(raw_bytes))
-        try:
-            content = raw_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            return _binary_skipped_result(ctx, op.path, len(raw_bytes))
+        # `encoding` is surfaced ONLY when a non-UTF-8 codec was used (BOM or
+        # charset-normalizer); the plain-UTF-8 fast path keeps the result shape
+        # byte-identical (no `encoding` field) for the common case.
+        _enc_field = {"encoding": _detected_encoding} if _detected_encoding else {}
         explicit_bounded = op.offset is not None or op.limit is not None
         if explicit_bounded:
             # Caller asked for an explicit window — honor it verbatim.
@@ -284,6 +333,7 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "path": op.path,
                 "status": "ok",
                 "content": content,
+                **_enc_field,
             }
 
         # #1209 (1) read-bounding, bound-only-when-over: an UNBOUNDED read whose
@@ -317,6 +367,7 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
                 "total_lines": len(all_lines),
                 "next_offset": len(shown),
                 "total_chars": len(content),
+                **_enc_field,
             }
         ctx.events.emit("tool_executed", op="read_file", path=op.path)
         return {
@@ -325,6 +376,7 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
             "path": op.path,
             "status": "ok",
             "content": content,
+            **_enc_field,
         }
 
     if op.op == "glob":
