@@ -1455,12 +1455,17 @@ class RouterLoop:
             # the first turn (= once per session; subsequent turns see
             # is_ready() True via SQLite cache) but eliminates the cold-start
             # race where search_actions is hidden from the LLM on Turn 1.
+            # #1458: skip both build paths when a prior attempt in this session
+            # failed (per-session failure memoization). The failed flag is set
+            # in _build_action_embedding_index_background on any exception.
+            _build_failed = getattr(self, "_action_index_build_failed", False)
             if (
                 _eager_embedding_build
                 and _idx is not None
                 and _provider is not None
                 and _model_class
                 and not getattr(_idx, "is_ready", lambda: False)()
+                and not _build_failed
             ):
                 await self._build_action_embedding_index_background(
                     _idx, _provider, _model_class,
@@ -1483,6 +1488,7 @@ class RouterLoop:
                 and _model_class
                 and not getattr(_idx, "is_ready", lambda: False)()
                 and getattr(self, "_action_index_build_task", None) is None
+                and not _build_failed
             ):
                 self._action_index_build_task = asyncio.create_task(
                     self._build_action_embedding_index_background(
@@ -2945,10 +2951,18 @@ class RouterLoop:
         hash skipped) and serialised by the index's internal lock,
         so concurrent calls are safe.
 
-        Errors are swallowed and logged via ``host.events`` so a
-        misconfigured embedding provider does not crash the chat
-        session — the next turn finds ``is_ready()`` False and
-        keeps ``search_actions`` hidden.
+        Errors are swallowed, flagged on the RouterLoop instance, and surfaced
+        as an operator-visible warning log so a misconfigured embedding provider
+        does not crash the chat session — the next turn finds ``is_ready()``
+        False and keeps ``search_actions`` hidden.
+
+        #1458: on failure, ``_action_index_build_failed`` is set to True so
+        neither the eager nor the background-task path retries within this
+        session (per-session once-only memoization). Cross-session persistence
+        is intentionally not implemented (YAGNI: one retry per new session with
+        a clear log is an acceptable cost, and the session boundary is a natural
+        cache-invalidation point for e.g. a model-download that was retried on a
+        reconnected machine).
         """
         from reyn.tools import get_default_registry
         from reyn.tools.types import ToolContext
@@ -2968,6 +2982,8 @@ class RouterLoop:
             items = result.get("items", []) if isinstance(result, dict) else []
             await idx.build(items, provider, model_class)
         except Exception as exc:
+            # #1458: memoize the failure so subsequent turns do not retry.
+            self._action_index_build_failed = True
             try:
                 self.host.events.emit(
                     "action_index_build_failed",
@@ -2976,6 +2992,23 @@ class RouterLoop:
                 )
             except Exception:
                 pass
+            # #1458: decision-enabling operator warning — names the likely
+            # cause + three actionable outs, same family as the #1454
+            # _reconcile_embedding_class message so the operator surface is
+            # consistent.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Semantic search_actions disabled for this session: action "
+                "embedding index build failed for model class %r (%s). "
+                "Possible cause: model download failed — Hugging Face "
+                "unreachable (offline / corporate network?). "
+                "Options: (1) pre-download the model on a connected machine "
+                "so it is in the HF cache, (2) set "
+                "`action_retrieval.embedding_class: null` to opt out, "
+                "(3) use an API-backed class (e.g. `standard`).",
+                model_class, type(exc).__name__,
+            )
 
     async def _build_router_caller_state(self) -> Any:
         """Build a RouterCallerState populated with bound callbacks.
