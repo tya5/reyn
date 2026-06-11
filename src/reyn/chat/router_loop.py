@@ -1694,6 +1694,10 @@ class RouterLoop:
                 # uses system_prompt_override, so this does not touch it.
                 discovery_mandate=tier_wants_discovery_mandate(self.router_model),
                 non_interactive=self._non_interactive,  # #1440 followup: live-path wiring
+                # #1473: conditional HOT-LIST vs no-aliases SP branch. True when
+                # N>0 produced actual alias functions (hot_list_n > 0 opt-in);
+                # False (new default) renders the "no pre-loaded actions" variant.
+                has_hot_list_aliases=bool(_hot_list_aliases),
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the

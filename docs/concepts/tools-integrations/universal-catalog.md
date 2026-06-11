@@ -464,9 +464,11 @@ in a single retry. See `_LEGACY_CATEGORY_REDIRECTS` in
 - **`exec` enumeration** — needs sandbox-backend introspection. The
   visibility predicate exists; the catalogue body waits for the
   introspection API.
-- **Hot-list pinning** — `action_retrieval.hot_list_n` is parsed but
-  unused; Phase 2 uses it to bias `list_actions` ordering toward the
-  most recently invoked actions.
+- **Hot-list** — `action_retrieval.hot_list_n` defaults to `0` (off)
+  following N=0 viability measurements. `list_actions` is the canonical
+  discovery path. Operators can opt in by setting `hot_list_n: 10+` in
+  `reyn.yaml`; the seed, usage tracker, and alias-builder remain fully
+  operative.
 
 ## Reference files
 

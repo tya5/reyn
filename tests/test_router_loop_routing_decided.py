@@ -99,10 +99,12 @@ class _FakeRouterHost:
         universal_wrappers_enabled: bool = True,
         tracker: "ActionUsageTracker | None" = None,
         skills: list[dict] | None = None,
+        hot_list_n: int = 0,
     ) -> None:
         self._universal_wrappers_enabled = universal_wrappers_enabled
         self._tracker = tracker
         self._skills = skills or []
+        self._hot_list_n = hot_list_n
         self.outbox: list[dict] = []
         self._events = _FakeEventLog()
 
@@ -125,8 +127,9 @@ class _FakeRouterHost:
     def get_embedding_model_class(self):  # type: ignore[return]
         return None
 
-    def get_action_retrieval_config(self):  # type: ignore[return]
-        return None
+    def get_action_retrieval_config(self):
+        from reyn.config import ActionRetrievalConfig
+        return ActionRetrievalConfig(hot_list_n=self._hot_list_n)
 
     def list_available_skills(self) -> list[dict]:
         return list(self._skills)
@@ -252,6 +255,7 @@ def test_routing_decided_emitted_for_hot_list_alias(monkeypatch: pytest.MonkeyPa
         universal_wrappers_enabled=True,
         tracker=tracker,
         skills=[{"name": "bar", "short_description": "bar skill"}],
+        hot_list_n=10,  # explicit opt-in so aliases are injected (default N=0 = off)
     )
     # B39: ``bar`` must be in available_skills so the registry-existence
     # check accepts ``skill__bar``. No input_schema needed (= empty-schema

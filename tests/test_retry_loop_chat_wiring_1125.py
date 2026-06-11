@@ -101,12 +101,14 @@ def test_decompose_slices_head_raw_middle_tail(tmp_path) -> None:
     non-empty head, raw_middle, and tail, and head + raw_middle + tail is a
     lossless in-order partition of all turns (no dropped or duplicated turn).
 
-    Uses t_max=2000 (effective_trigger≈89) and 8 turns of 20-token content
-    (total=160 > 89) to force the elide branch.
+    Uses t_max=2000 with 30 turns of 80-token content (total=2400 tokens).
+    2400 > T_max=2000 by construction so elide fires regardless of SP size —
+    default-independent: hot_list_n and other SP-affecting defaults don't change
+    whether elide fires.
     """
-    # Each turn = 'X'*320 = 80 tokens (use_chars4); total=640 > trigger≈570 → elide.
     session = _make_session(tmp_path, t_max=2000)
-    for i in range(8):
+    msgs_pushed = 30
+    for i in range(msgs_pushed):
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)
 
     head, raw_middle, tail, summary = session._decompose_history_for_retry()
@@ -118,8 +120,6 @@ def test_decompose_slices_head_raw_middle_tail(tmp_path) -> None:
 
     # Lossless partition: concatenating head+raw_middle+tail reproduces all turns.
     all_via_decomp = head + raw_middle + tail
-    # Same number of messages as were pushed (lossless — nothing dropped).
-    msgs_pushed = 8
     assert len(all_via_decomp) == msgs_pushed, (
         f"expected all {msgs_pushed} pushed turns in partition, got {len(all_via_decomp)}"
     )
@@ -221,8 +221,9 @@ def test_recovery_summary_bridge_matches_normal_path(tmp_path) -> None:
         ts=_now(),
         meta={"structured": structured, "covers_through_seq": 2},
     ))
-    # 8 turns of 80 tokens = 640 > trigger≈570 → elide fires → bridge inserted.
-    for i in range(8):
+    # 30 turns × 80 tokens = 2400 > T_max=2000 → elide fires → bridge inserted
+    # (default-independent: 2400 > T_max by construction regardless of SP size).
+    for i in range(30):
         _push(session, "user" if i % 2 == 0 else "assistant", _TURN_80TOK)
 
     # Normal path bridge content.

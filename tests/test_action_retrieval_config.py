@@ -2,7 +2,7 @@
 
 Tests for the new ``action_retrieval:`` config block:
   - Default config has the safe defaults (= wrappers enabled, no embedding,
-    mode='default', hot_list_n=20 — sized to cover DEFAULT_HOT_LIST_SEED).
+    mode='default', hot_list_n=0 — off by default; opt-in via reyn.yaml).
   - Parser accepts each field independently, validates types, and
     raises on bad values.
   - ReynConfig.action_retrieval is populated by load_config from the
@@ -45,7 +45,7 @@ def test_default_action_retrieval_config_is_on() -> None:
     cfg = ActionRetrievalConfig()
     assert cfg.universal_wrappers_enabled is True
     assert cfg.embedding_class == "local-mini"
-    assert cfg.hot_list_n == 20  # B37: covers DEFAULT_HOT_LIST_SEED (17) + headroom
+    assert cfg.hot_list_n == 0  # N=0 default: viability verdict; opt-in via reyn.yaml
     assert cfg.mode == "default"
 
 
@@ -235,7 +235,7 @@ def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> N
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
     assert cfg.action_retrieval.embedding_class == "local-mini"  # FP-0043 Phase 4
-    assert cfg.action_retrieval.hot_list_n == 20
+    assert cfg.action_retrieval.hot_list_n == 0  # N=0 default
     assert cfg.action_retrieval.mode == "default"
 
 
@@ -255,3 +255,34 @@ action_retrieval:
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is False
+
+
+# ── 5. N=0 default + opt-in contract (hot-list default flip) ─────────────
+
+
+def test_hot_list_n_default_is_zero() -> None:
+    """Tier 2: N=0 default flip — ActionRetrievalConfig.hot_list_n default is 0.
+
+    Regression pin: list_actions is the canonical discovery path; hot-list
+    aliases are off by default and require explicit opt-in (hot_list_n: 10+
+    in reyn.yaml). The seed/tracker/alias-builder remain operative as opt-in.
+    """
+    assert ActionRetrievalConfig().hot_list_n == 0
+
+
+def test_load_config_hot_list_n_explicit_opt_in(tmp_path: Path) -> None:
+    """Tier 2: N=0 default flip — explicit hot_list_n: 10 in reyn.yaml enables
+    the hot-list (symmetric pin: default off, explicit on)."""
+    (tmp_path / "reyn.yaml").write_text(
+        "model: standard\naction_retrieval:\n  hot_list_n: 10\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(cwd=tmp_path)
+    assert cfg.action_retrieval.hot_list_n == 10
+
+
+def test_load_config_hot_list_n_default_is_zero(tmp_path: Path) -> None:
+    """Tier 2: N=0 default flip — bare reyn.yaml with no hot_list_n gives 0."""
+    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    cfg = load_config(cwd=tmp_path)
+    assert cfg.action_retrieval.hot_list_n == 0

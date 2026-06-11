@@ -75,6 +75,7 @@ def build_system_prompt(
     context_size_signal: str | None = None,  # #272/#1128 — pre-rendered, appended LAST
     discovery_mandate: bool = False,  # #187 Stage C — weak-tier list_actions-first mandate (3x)
     non_interactive: bool = False,  # #1439 Fix #1 — run-once (no TTY): no user to ask, proceed instead of clarifying
+    has_hot_list_aliases: bool = False,  # True when hot_list_n>0 produced direct-alias functions
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -382,25 +383,33 @@ def build_system_prompt(
             "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
         )
         parts.append("")
-        # Catalog partiality signal: the function list shown to the LLM is a
-        # hot-list of frequently-used + seeded actions. The FULL catalog is
-        # larger (= every configured MCP server's tools, every project skill,
-        # every static op category). Without this signal, the LLM treats the
-        # hot-list as the complete inventory and refuses capability requests
-        # whose tool is not pre-loaded. Trace-replay verified pre-fix vs
-        # post-fix on sqlite + everything MCP servers: pre-fix the LLM
-        # refused; post-fix it calls list_actions to discover the rest
-        # and follows up with invoke_action.
-        parts.append(
-            "The function list visible to you is a HOT-LIST (= a subset of "
-            "the full catalog). Whenever the user requests a capability and "
-            "no listed tool obviously matches, ALWAYS call `list_actions` "
-            "(narrow with `category=[...]` when you know the category) to "
-            "discover the rest of the catalog BEFORE refusing. Refusing "
-            "without that check is a failure mode — the action you assumed "
-            "missing often exists."
-        )
-        parts.append("")
+        # Catalog partiality / discovery signal. Two branches:
+        #
+        # has_hot_list_aliases=True (hot_list_n>0, operator opt-in):
+        #   The function list is a HOT-LIST subset — LLM must use list_actions
+        #   before refusing. Trace-replay verified pre-fix vs post-fix on
+        #   sqlite + everything MCP servers: pre-fix the LLM refused;
+        #   post-fix it calls list_actions to discover the rest.
+        #
+        # has_hot_list_aliases=False (default N=0):
+        #   No actions are pre-loaded as functions; list_actions is the sole
+        #   discovery path. The refusal-prevention intent is preserved via an
+        #   explicit ALWAYS-call directive — the signal that was trace-verified.
+        # When hot_list_n>0 (opt-in), signal that the function list is a
+        # HOT-LIST subset and list_actions must precede any refusal.
+        # When N=0 (default), no aliases exist → paragraph absent
+        # (owner decision: nothing to qualify, no misleading subset claim).
+        if has_hot_list_aliases:
+            parts.append(
+                "The function list visible to you is a HOT-LIST (= a subset of "
+                "the full catalog). Whenever the user requests a capability and "
+                "no listed tool obviously matches, ALWAYS call `list_actions` "
+                "(narrow with `category=[...]` when you know the category) to "
+                "discover the rest of the catalog BEFORE refusing. Refusing "
+                "without that check is a failure mode — the action you assumed "
+                "missing often exists."
+            )
+            parts.append("")
 
     # #187 Stage C (2/3 reinforcement): strengthen the §D9 hot-list discovery
     # guidance above into a mechanical MUST. Scope-qualified ("no visible tool
