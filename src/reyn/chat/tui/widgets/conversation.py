@@ -347,6 +347,54 @@ def _classify_error_severity(
     return "med"
 
 
+class _StatusSpinnerController:
+    """Manages StickyStatus + InlineThinkingRow lifecycle for ConversationView.
+
+    Extracted from ConversationView (refactor tui-pr2). ConversationView
+    instantiates one instance and delegates via thin wrappers, keeping the
+    external API unchanged.
+    """
+
+    _THINKING_ROW_ID = "inline-thinking-row"
+
+    def __init__(self, parent: "ConversationView") -> None:
+        self._parent = parent
+
+    def show_status(self, text: str, kind: str = "general", *, terminal: bool = False) -> None:
+        s = self._parent._sticky()
+        if s is not None:
+            s.show(text, kind=kind, terminal=terminal)
+
+    def update_status(self, text: str) -> None:
+        s = self._parent._sticky()
+        if s is not None:
+            s.update_text(text)
+
+    def hide_status(self) -> None:
+        s = self._parent._sticky()
+        if s is not None:
+            s.hide()
+
+    def start_thinking(self) -> None:
+        """Idempotent: second call is a no-op when the row is already mounted."""
+        try:
+            self._parent.query_one(f"#{self._THINKING_ROW_ID}", InlineThinkingRow)
+        except Exception:
+            row = InlineThinkingRow(
+                id=self._THINKING_ROW_ID,
+                indent=self._parent._current_body_indent(),
+            )
+            self._parent.mount(row)
+
+    def stop_thinking(self) -> None:
+        """Idempotent: calling without a prior start_thinking is a no-op."""
+        try:
+            row = self._parent.query_one(f"#{self._THINKING_ROW_ID}", InlineThinkingRow)
+            row.remove()
+        except Exception:
+            pass
+
+
 class ConversationView(Widget):
     """Main conversation pane: RichLog + inline widgets + sticky status.
 
@@ -428,6 +476,9 @@ class ConversationView(Widget):
         # _last_failed_tool_row and all methods that operate on them
         # (refactor tui-pr1).
         self._row_mgr = _InlineRowManager(self)
+        # Status/spinner controller: owns StickyStatus + InlineThinkingRow
+        # methods (refactor tui-pr2).
+        self._status_ctrl = _StatusSpinnerController(self)
         # Header-grouping state (B1)
         self._last_speaker: str = ""
         self._last_speaker_at: float = 0.0
@@ -1654,52 +1705,21 @@ class ConversationView(Widget):
     # ── sticky status (A3) ────────────────────────────────────────────────────
 
     def show_status(self, text: str, kind: str = "general", *, terminal: bool = False) -> None:
-        s = self._sticky()
-        if s is not None:
-            s.show(text, kind=kind, terminal=terminal)
+        self._status_ctrl.show_status(text, kind=kind, terminal=terminal)
 
     def update_status(self, text: str) -> None:
-        s = self._sticky()
-        if s is not None:
-            s.update_text(text)
+        self._status_ctrl.update_status(text)
 
     def hide_status(self) -> None:
-        s = self._sticky()
-        if s is not None:
-            s.hide()
+        self._status_ctrl.hide_status()
 
     # ── inline thinking spinner (A3b) ─────────────────────────────────────────
 
-    _THINKING_ROW_ID = "inline-thinking-row"
-
     def start_thinking(self) -> None:
-        """Mount an InlineThinkingRow in the conv pane flow, below the last message.
-
-        Idempotent: calling twice mounts only one row (= second call is a
-        no-op when a row is already present).
-        """
-        try:
-            # Already mounted — idempotent.
-            self.query_one(f"#{self._THINKING_ROW_ID}", InlineThinkingRow)
-        except Exception:
-            # Pass the current body indent so the spinner aligns with
-            # body text for the current timestamp-toggle state (Fix 2 / A1).
-            row = InlineThinkingRow(
-                id=self._THINKING_ROW_ID,
-                indent=self._current_body_indent(),
-            )
-            self.mount(row)
+        self._status_ctrl.start_thinking()
 
     def stop_thinking(self) -> None:
-        """Unmount the InlineThinkingRow if present.
-
-        Idempotent: calling without a prior ``start_thinking`` is a no-op.
-        """
-        try:
-            row = self.query_one(f"#{self._THINKING_ROW_ID}", InlineThinkingRow)
-            row.remove()
-        except Exception:
-            pass  # not mounted — idempotent
+        self._status_ctrl.stop_thinking()
 
     # ── inline error rendering ────────────────────────────────────────────────
 
