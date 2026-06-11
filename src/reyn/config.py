@@ -215,12 +215,18 @@ class LoopConfig:
         skill_tokens_per_chain:
             Per-(chain, skill) token cap with warn semantics.
             ``hard_limit=None`` = unlimited (default).
+        max_router_iterations:
+            Maximum LLM tool-call iterations per chat-router invocation
+            (= per user turn). ``0`` = unlimited. CLI ``--max-iterations``
+            overrides this when provided. Run-once / autonomous contexts
+            typically set this higher (e.g. 80) via CLI.
     """
 
     max_act_turns_per_phase: int = 10
     max_phase_visits: int = 25
     max_router_calls_per_turn: int = 3
     max_agent_hops: int = 3
+    max_router_iterations: int = 5
     skill_calls_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
     skill_tokens_per_chain: CostLimitConfig = field(default_factory=CostLimitConfig)
 
@@ -2502,6 +2508,9 @@ def _build_safety_config(raw: object) -> SafetyConfig:
         )),
         max_agent_hops=int(loop_raw.get(
             "max_agent_hops", loop_defaults.max_agent_hops,
+        )),
+        max_router_iterations=int(loop_raw.get(
+            "max_router_iterations", loop_defaults.max_router_iterations,
         )),
         skill_calls_per_chain=_build_cost_limit(
             loop_raw.get("skill_calls_per_chain")

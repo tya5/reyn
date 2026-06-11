@@ -200,7 +200,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 # container-rooting. Fill = 1-line follow-up when a consumer needs it.
                 eager_embedding_build=False,
                 exclude_tools=None,
-                router_max_iterations=5,
+                router_max_iterations=session_cfg.config.safety.loop.max_router_iterations,
                 non_interactive=False,  # #1439 Fix #1: interactive UI = byte-identical
                 environment_backend=None,
                 sandbox_backend=None,

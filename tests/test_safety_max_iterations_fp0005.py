@@ -9,7 +9,7 @@ Invariants pinned:
 3. When the bus answers NO (user refused), the loop stops with a
    decision-enabling error message (mentions config key to change).
 4. When on_limit=None (legacy path), flat-abort error is still decision-enabling
-   (mentions router_max_iterations config key).
+   (mentions safety.loop.max_router_iterations config key).
 5. When bus=None (interactive mode, no bus wired), handle_limit_exceeded
    returns no_bus → decision-enabling error (not silent abort).
 6. When mode=unattended, no ask dispatched, immediate abort with error.
@@ -196,14 +196,14 @@ async def test_max_iterations_no_bus_decision_enabling_error() -> None:
 @pytest.mark.asyncio
 async def test_max_iterations_no_on_limit_legacy_decision_enabling() -> None:
     """Tier 2: FP-0005 — on_limit=None legacy path: error message is
-    decision-enabling (mentions router_max_iterations config key)."""
+    decision-enabling (mentions safety.loop.max_router_iterations config key)."""
     host = _LimitHost(bus=None)
 
     await _exhaust_loop(host, n_exhaust=1, max_iterations=1, on_limit=None)
 
     error_msgs = [m for m in host.outbox if m["kind"] == "error"]
     (err,) = error_msgs
-    assert "router_max_iterations" in err["text"]
+    assert "max_router_iterations" in err["text"]
 
 
 # ── 5. Unattended mode → immediate abort, no ask ─────────────────────────────

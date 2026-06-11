@@ -404,10 +404,13 @@ def run(args: argparse.Namespace) -> None:
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
-            # #187: per-message tool-call budget. Interactive chat keeps 5; the
-            # one-shot autonomous path (`reyn run-once`) raises it (explore→edit→
-            # verify needs many rounds). --max-iterations unset → 5 (unchanged).
-            router_max_iterations=int(getattr(args, "max_iterations", None) or 5),
+            # #187: per-message tool-call budget. Interactive chat uses
+            # safety.loop.max_router_iterations (default 5); the one-shot
+            # autonomous path raises it via --max-iterations (CLI wins).
+            router_max_iterations=int(
+                getattr(args, "max_iterations", None)
+                or session_cfg.config.safety.loop.max_router_iterations
+            ),
             # #1439 Fix #1: run-once pipes stdin (no TTY) → the SP proceeds with an
             # assumption instead of asking a clarifying question nobody can answer
             # (13398). Interactive `reyn chat` (TTY) → False = byte-identical. Same

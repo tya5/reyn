@@ -58,13 +58,14 @@ def test_run_once_parser_defaults_and_scoped_flags() -> None:
 
 
 def test_run_once_default_iterations_exceeds_interactive_chat() -> None:
-    """Tier 2: run-once defaults max_iterations far above interactive chat's 5
-    (autonomous SWE needs many explore→edit→verify rounds). chat.run maps an
-    unset value to 5 (interactive unchanged)."""
+    """Tier 2: run-once defaults max_iterations far above interactive chat's
+    safety.loop.max_router_iterations (default 5). chat.run falls back to the
+    config key (not a hardcoded 5) so the interactive default is operator-tunable
+    while run-once always overrides via --max-iterations."""
     a = _run_once_parser().parse_args(["run-once"])
     assert a.max_iterations == 80
-    # interactive chat has no such flag → the factory uses 5 (see chat.py).
-    assert "or 5)" in _CHAT_PY.read_text(encoding="utf-8")
+    # interactive chat falls back to safety.loop.max_router_iterations (config key)
+    assert "safety.loop.max_router_iterations" in _CHAT_PY.read_text(encoding="utf-8")
 
 
 def test_run_once_delegates_to_chat_run() -> None:
