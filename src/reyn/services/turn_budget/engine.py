@@ -47,11 +47,10 @@ if TYPE_CHECKING:
 # far" context is injected separately at force-close time (§8: one SP + per-axis
 # context injection). Sibling of compaction's summariser SP.
 _WRAP_UP_SYSTEM_PROMPT = """\
-You are being asked to WRAP UP the current unit of work because its working \
-context is approaching its size limit. Do NOT continue the task and do NOT \
-request or call any further tools or operations. Your only job now is to \
-consolidate what has happened so far into a single, final hand-off so a fresh \
-continuation can pick the work up without re-reading the raw history.
+You are being asked to WRAP UP the current unit of work. Do NOT continue the \
+task and do NOT request or call any further tools or operations. Your only job \
+now is to consolidate what has happened so far into a single, final hand-off \
+so a fresh continuation can pick the work up without re-reading the raw history.
 
 Cover, compactly:
 
@@ -69,13 +68,24 @@ content. This consolidation replaces the raw working history for the next step, 
 so anything omitted here is lost: capture the essence, not the volume."""
 
 
-def wrap_up_system_prompt() -> str:
+def wrap_up_system_prompt(reason: "str | None" = None) -> str:
     """The axis-independent wrap-up system prompt (the single SP of §8).
 
     Exposed as a function (not just the constant) so callers depend on a stable
     surface and a future templated variant stays source-compatible.
+
+    Args:
+        reason: Optional cause for the wrap-up (e.g. "router reached iteration
+            limit (5)"). When provided, prepended to the SP so the LLM knows
+            WHY it is being asked to wrap up. Placed in the SP (not as a
+            trailing user message) to avoid breaking provider function-call
+            pairing rules (Gemini rejects a user turn immediately after a
+            tool_result). ``None`` (= cumulative-axis path) keeps the prompt
+            cause-neutral so existing replay fixtures are unaffected.
     """
-    return _WRAP_UP_SYSTEM_PROMPT
+    if reason is None:
+        return _WRAP_UP_SYSTEM_PROMPT
+    return f"This wrap-up is triggered because: {reason}.\n\n{_WRAP_UP_SYSTEM_PROMPT}"
 
 
 @dataclass(frozen=True)

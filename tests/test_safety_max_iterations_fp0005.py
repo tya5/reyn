@@ -220,7 +220,108 @@ async def test_max_iterations_unattended_no_ask() -> None:
 
     # Bus NOT asked
     assert not bus.asks
-    # Error was emitted
+    # Error was emitted (scripted LLM returns no text on wrap-up → fallback error)
     error_msgs = [m for m in host.outbox if m["kind"] == "error"]
     (err,) = error_msgs
     assert "router_max_iterations" in err["text"] or "on_limit" in err["text"]
+
+
+# ── 6. Limit-deny → force-close wrap-up (LLM returns text) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_max_iterations_limit_deny_fires_force_close_wrap_up() -> None:
+    """Tier 2: #1496 — when limit fires and deny, force-close wrap-up is called;
+    LLM wrap-up text emitted as 'agent' with limit_stopped meta, no canned error,
+    limit_denied WAL event emitted."""
+    host = _LimitHost(bus=None)
+    on_limit = OnLimitConfig(mode="unattended")
+
+    # Script: 1 exhaust → limit fires → force-close LLM call returns text
+    script = [_loop_exhauster(0), text_result("work done: X; remaining: Y; stopped by limit")]
+    llm = _ScriptedLLM(script)
+    from reyn.chat.router_loop import RouterLoop
+    loop = RouterLoop(
+        host=host,
+        chain_id="chain-fc-test",
+        max_iterations=1,
+        llm_caller=llm,
+        on_limit=on_limit,
+    )
+    await loop.run_loop(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[],
+        _univ_enabled=False,
+    )
+
+    # Agent message emitted (wrap-up text), not canned error
+    agent_msgs = [m for m in host.outbox if m["kind"] == "agent"]
+    (msg,) = agent_msgs  # unpack: exactly one
+    assert msg["text"] == "work done: X; remaining: Y; stopped by limit"
+    assert msg["meta"].get("limit_stopped") is True
+    assert msg["meta"].get("limit_kind") == "max_iterations"
+    assert not [m for m in host.outbox if m["kind"] == "error"]
+
+    # limit_denied WAL event emitted
+    limit_events = [e for e in host.events.emitted if e.get("type") == "limit_denied"]
+    (ev,) = limit_events
+    assert ev["kind"] == "max_iterations"
+
+
+# ── 7. Plan/phase axis: record_force_close called only when content non-empty ─
+
+
+class _RecordingHost(_LimitHost):
+    """_LimitHost + record_force_close hook (plan/phase axis simulation)."""
+
+    def __init__(self, bus: "_FakeRequestBus | None" = None) -> None:
+        super().__init__(bus=bus)
+        self.recorded_fc: list = []
+
+    def record_force_close(self, result: object) -> None:
+        self.recorded_fc.append(result)
+
+
+@pytest.mark.asyncio
+async def test_record_force_close_called_when_wrap_up_has_content() -> None:
+    """Tier 2: #1496 — plan/phase axis: record_force_close is called when
+    force-close wrap-up returns non-empty text (host has the method)."""
+    host = _RecordingHost(bus=None)
+    on_limit = OnLimitConfig(mode="unattended")
+
+    # Script: 1 exhaust → force-close returns text
+    script = [_loop_exhauster(0), text_result("step done; remaining: cleanup")]
+    llm = _ScriptedLLM(script)
+    loop = RouterLoop(
+        host=host, chain_id="chain-plan-test", max_iterations=1,
+        llm_caller=llm, on_limit=on_limit,
+    )
+    await loop.run_loop(
+        messages=[{"role": "user", "content": "hi"}], tools=[], _univ_enabled=False,
+    )
+
+    # record_force_close called exactly once with the wrap-up result
+    (fc_result,) = host.recorded_fc
+    assert getattr(fc_result, "content", None) == "step done; remaining: cleanup"
+    # agent message emitted
+    agent_msgs = [m for m in host.outbox if m["kind"] == "agent"]
+    (msg,) = agent_msgs
+    assert msg["meta"].get("limit_stopped") is True
+
+
+@pytest.mark.asyncio
+async def test_record_force_close_NOT_called_when_wrap_up_empty() -> None:
+    """Tier 2: #1496 — plan/phase axis: record_force_close is NOT called when
+    wrap-up returns no content (avoids empty-consolidation checkpoint re-entry)."""
+    host = _RecordingHost(bus=None)
+    on_limit = OnLimitConfig(mode="unattended")
+
+    # Script: exhaust only (no text for force-close) → content=None → fallback
+    await _exhaust_loop(host, n_exhaust=1, max_iterations=1, on_limit=on_limit)
+
+    # record_force_close NOT called — empty content must not trigger re-entry
+    assert not host.recorded_fc
+    # Fallback canned error emitted
+    error_msgs = [m for m in host.outbox if m["kind"] == "error"]
+    (err,) = error_msgs
+    assert "max_router_iterations" in err["text"] or "on_limit" in err["text"]

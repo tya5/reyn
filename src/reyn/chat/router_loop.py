@@ -2588,7 +2588,61 @@ class RouterLoop:
                 continue  # re-enter inner for loop with extended limit
          break  # no extension granted or no on_limit — exit outer while
 
-        # max_iterations exhausted (or cancelled)
+        # Cancelled path (user-initiated): canned decision-enabling error.
+        if _loop_cancelled:
+            await self.host.put_outbox(
+                kind="error",
+                text=(
+                    f"Router loop exceeded max iterations ({self.max_iterations}). "
+                    f"Configure safety.on_limit.mode=interactive or auto_extend to "
+                    f"extend, or increase safety.loop.max_router_iterations."
+                ),
+                meta={"chain_id": self.chain_id},
+            )
+            return self._total_usage
+
+        # Limit-deny path (#1496): give the LLM one final tool-less turn to
+        # summarize what was accomplished before the turn ends. The cause
+        # is injected as a context message (SP stays cause-neutral). A
+        # structured marker on the outbox message signals forced-stop to
+        # the UI without a competing prose block. Degrades to canned error
+        # if the wrap-up call itself fails.
+        host.events.emit(
+            "limit_denied",
+            kind="max_iterations",
+            limit=self.max_iterations,
+            chain_id=self.chain_id,
+        )
+        # Cause embedded in wrap-up SP (not as a trailing user message):
+        # Gemini rejects a user turn immediately after a tool_result.
+        _reason = f"router reached its iteration limit ({self.max_iterations} iterations)"
+        try:
+            _wrapup = await self._force_close_call_with_retry(
+                messages,
+                resolved_model=host.resolve_model(self.router_model),
+                reason=_reason,
+            )
+            if _wrapup.content:
+                # Mirror cumulative-axis: hand result to host for checkpoint
+                # persistence (phase) and step-result collection (plan).
+                # Only when LLM produced real text — an empty consolidation
+                # would trigger a spurious phase re-entry via _last_force_close_checkpoint.
+                # getattr-guarded → chat hosts don't implement it → no-op.
+                _record_fc = getattr(host, "record_force_close", None)
+                if _record_fc is not None:
+                    _record_fc(_wrapup)
+                await self.host.put_outbox(
+                    kind="agent",
+                    text=_wrapup.content,
+                    meta={
+                        "chain_id": self.chain_id,
+                        "limit_stopped": True,
+                        "limit_kind": "max_iterations",
+                    },
+                )
+                return self._total_usage
+        except Exception:  # noqa: BLE001 — wrap-up failed; degrade to decision-enabling error
+            pass
         await self.host.put_outbox(
             kind="error",
             text=(
@@ -2661,7 +2715,12 @@ class RouterLoop:
     # will still work; the alias delegates to the unified implementation).
     _dedupe_async_tool_calls = _dedupe_tool_calls_round
 
-    def _build_force_close_messages(self, messages: list[dict]) -> list[dict]:
+    def _build_force_close_messages(
+        self,
+        messages: list[dict],
+        *,
+        reason: "str | None" = None,
+    ) -> list[dict]:
         """#1092 PR-B: rebuild ``messages`` for the wrap-up (force-close) call.
 
         The main system turn is replaced by the axis-independent wrap-up SP
@@ -2669,10 +2728,18 @@ class RouterLoop:
         are kept verbatim so the model consolidates them. Any pre-existing
         system turn(s) are dropped (the wrap-up SP is the only system context
         for this call). Pure — no I/O — so it is unit-testable in isolation.
+
+        Args:
+            reason: Cause for the wrap-up (e.g. "router reached iteration
+                limit"). Forwarded to ``wrap_up_system_prompt`` and embedded
+                in the SP — NOT as a trailing user message, because providers
+                with strict function-call pairing (Gemini) reject a user turn
+                immediately after a tool_result. ``None`` = cumulative-axis
+                (cause-neutral; replay fixtures unaffected).
         """
         non_system = [m for m in messages if m.get("role") != "system"]
         return [
-            {"role": "system", "content": wrap_up_system_prompt()},
+            {"role": "system", "content": wrap_up_system_prompt(reason=reason)},
             *non_system,
         ]
 
@@ -2681,6 +2748,7 @@ class RouterLoop:
         messages: list[dict],
         *,
         resolved_model: str,
+        reason: "str | None" = None,
     ) -> "LLMToolCallResult":
         """#1092 PR-B (force-close call): turn the CURRENT turn into a clean
         ``finish`` instead of letting it overflow the cumulative budget.
@@ -2691,7 +2759,8 @@ class RouterLoop:
         ADVERTISES NO TOOLS (``tools=[]``), so the model cannot continue the
         task and the small consolidation output makes ``finish_reason=stop`` the
         natural outcome. ``tool_choice`` stays ``"auto"`` (``"none"`` is not
-        Gemini-safe) — moot with an empty tools list. The working history is
+        Gemini-safe) — omitted by call_llm_tools when tools=[] (Gemini rejects
+        tool_choice without function_declarations). The working history is
         preserved; only the system turn is replaced (the wrap-up SP tells the
         model to consolidate that history into a hand-off).
 
@@ -2701,7 +2770,7 @@ class RouterLoop:
         chat/phase loops stay byte-identical until PR-C wires the trigger.
         """
         _llm = self._llm_caller or call_llm_tools
-        wrap_messages = self._build_force_close_messages(messages)
+        wrap_messages = self._build_force_close_messages(messages, reason=reason)
         # #1092 PR-E (by-construction floor): HARD-CAP the wrap-up output at
         # output_reserve via max_tokens, so the consolidation is ≤ output_reserve
         # by construction (not just by the wrap-up SP's "be concise"). With
@@ -2719,7 +2788,7 @@ class RouterLoop:
             model=_model,
             messages=wrap_messages,
             tools=[],            # continuation suppression: no tool to call
-            tool_choice="auto",  # "none" is not Gemini-safe; moot with tools=[]
+            tool_choice="auto",  # omitted by call_llm_tools when tools=[] (Gemini fix)
             skill_name="router",
             budget=self.budget,
             budget_agent=self.host.agent_name,
@@ -2731,6 +2800,7 @@ class RouterLoop:
         messages: list[dict],
         *,
         resolved_model: str,
+        reason: "str | None" = None,
     ) -> "LLMToolCallResult":
         """#1092 PR-B layer-2 (PHASE axis): the force-close call, made robust to
         its OWN overflow via overflow → host shrink → retry, monotonic to the
@@ -2758,7 +2828,7 @@ class RouterLoop:
         while True:
             try:
                 return await self._force_close_call(
-                    cur, resolved_model=resolved_model,
+                    cur, resolved_model=resolved_model, reason=reason,
                 )
             except Exception as exc:  # noqa: BLE001
                 if not _is_context_overflow_error(exc):
