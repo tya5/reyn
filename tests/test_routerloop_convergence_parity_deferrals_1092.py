@@ -233,7 +233,9 @@ def test_converged_op_loop_uses_effective_act_turn_cap(tmp_path, monkeypatch) ->
     asyncio.run(rt.run({"type": "input", "data": {}}))
     # The op-loop (always emitting tool_calls) ran exactly the EFFECTIVE cap (3),
     # not the raw 10 — proving converged force-close honors the resume-adjusted cap.
-    assert calls["n"] == _EFFECTIVE, (
+    # _EFFECTIVE loop iterations + 1 force-close wrap-up call (#1496).
+    assert calls["n"] == _EFFECTIVE + 1, (
         "the converged op-loop must bound iterations by the EFFECTIVE act-turn cap "
-        f"({_EFFECTIVE}), not the raw max_act_turns (10); call_tools fired {calls['n']}x"
+        f"({_EFFECTIVE}), not the raw max_act_turns (10); expected {_EFFECTIVE + 1} "
+        f"calls ({_EFFECTIVE} loop + 1 force-close wrap-up), got {calls['n']}x"
     )

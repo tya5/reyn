@@ -433,8 +433,10 @@ async def test_max_iterations_aborts_with_error(monkeypatch):
     monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", fake_llm)
     await loop.run("do stuff forever", [])
 
-    assert call_count["n"] == 3, (
-        f"Expected exactly 3 LLM calls (max_iterations), got {call_count['n']}"
+    # 3 loop iterations + 1 force-close wrap-up call (#1496); wrap-up
+    # returns content=None (stub always returns tool_calls) → fallback error.
+    assert call_count["n"] == 4, (
+        f"Expected 3 loop iterations + 1 force-close call = 4, got {call_count['n']}"
     )
     (msg,) = host.outbox
     assert msg["kind"] == "error"

@@ -220,7 +220,49 @@ async def test_max_iterations_unattended_no_ask() -> None:
 
     # Bus NOT asked
     assert not bus.asks
-    # Error was emitted
+    # Error was emitted (scripted LLM returns no text on wrap-up → fallback error)
     error_msgs = [m for m in host.outbox if m["kind"] == "error"]
     (err,) = error_msgs
     assert "router_max_iterations" in err["text"] or "on_limit" in err["text"]
+
+
+# ── 6. Limit-deny → force-close wrap-up (LLM returns text) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_max_iterations_limit_deny_fires_force_close_wrap_up() -> None:
+    """Tier 2: #1496 — when limit fires and deny, force-close wrap-up is called;
+    LLM wrap-up text emitted as 'agent' with limit_stopped meta, no canned error,
+    limit_denied WAL event emitted."""
+    host = _LimitHost(bus=None)
+    on_limit = OnLimitConfig(mode="unattended")
+
+    # Script: 1 exhaust → limit fires → force-close LLM call returns text
+    script = [_loop_exhauster(0), text_result("work done: X; remaining: Y; stopped by limit")]
+    llm = _ScriptedLLM(script)
+    from reyn.chat.router_loop import RouterLoop
+    loop = RouterLoop(
+        host=host,
+        chain_id="chain-fc-test",
+        max_iterations=1,
+        llm_caller=llm,
+        on_limit=on_limit,
+    )
+    await loop.run_loop(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[],
+        _univ_enabled=False,
+    )
+
+    # Agent message emitted (wrap-up text), not canned error
+    agent_msgs = [m for m in host.outbox if m["kind"] == "agent"]
+    (msg,) = agent_msgs  # unpack: exactly one
+    assert msg["text"] == "work done: X; remaining: Y; stopped by limit"
+    assert msg["meta"].get("limit_stopped") is True
+    assert msg["meta"].get("limit_kind") == "max_iterations"
+    assert not [m for m in host.outbox if m["kind"] == "error"]
+
+    # limit_denied WAL event emitted
+    limit_events = [e for e in host.events.emitted if e.get("type") == "limit_denied"]
+    (ev,) = limit_events
+    assert ev["kind"] == "max_iterations"

@@ -2588,7 +2588,59 @@ class RouterLoop:
                 continue  # re-enter inner for loop with extended limit
          break  # no extension granted or no on_limit — exit outer while
 
-        # max_iterations exhausted (or cancelled)
+        # Cancelled path (user-initiated): canned decision-enabling error.
+        if _loop_cancelled:
+            await self.host.put_outbox(
+                kind="error",
+                text=(
+                    f"Router loop exceeded max iterations ({self.max_iterations}). "
+                    f"Configure safety.on_limit.mode=interactive or auto_extend to "
+                    f"extend, or increase safety.loop.max_router_iterations."
+                ),
+                meta={"chain_id": self.chain_id},
+            )
+            return self._total_usage
+
+        # Limit-deny path (#1496): give the LLM one final tool-less turn to
+        # summarize what was accomplished before the turn ends. The cause
+        # is injected as a context message (SP stays cause-neutral). A
+        # structured marker on the outbox message signals forced-stop to
+        # the UI without a competing prose block. Degrades to canned error
+        # if the wrap-up call itself fails.
+        host.events.emit(
+            "limit_denied",
+            kind="max_iterations",
+            limit=self.max_iterations,
+            chain_id=self.chain_id,
+        )
+        _cause_msg = {
+            "role": "user",
+            "content": (
+                f"This turn is ending because the router reached its iteration "
+                f"limit ({self.max_iterations} iterations). "
+                "Do not call any more tools. "
+                "Summarize what has been accomplished, where outputs are, "
+                "what remains, and that this turn stopped due to a limit."
+            ),
+        }
+        try:
+            _wrapup = await self._force_close_call_with_retry(
+                [*messages, _cause_msg],
+                resolved_model=host.resolve_model(self.router_model),
+            )
+            if _wrapup.content:
+                await self.host.put_outbox(
+                    kind="agent",
+                    text=_wrapup.content,
+                    meta={
+                        "chain_id": self.chain_id,
+                        "limit_stopped": True,
+                        "limit_kind": "max_iterations",
+                    },
+                )
+                return self._total_usage
+        except Exception:  # noqa: BLE001 — wrap-up failed; degrade to decision-enabling error
+            pass
         await self.host.put_outbox(
             kind="error",
             text=(
