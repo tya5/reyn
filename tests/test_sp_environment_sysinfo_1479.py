@@ -47,6 +47,18 @@ class _FakeHostBackend:
     pass
 
 
+class _FakeContainerBackendNoInfo:
+    """ContainerBackend without get_environment_info() — probe not yet implemented.
+
+    This is the current state of DockerEnvironmentBackend. repo_dir signals
+    it is a non-host backend; absence of get_environment_info means the
+    platform/shell should be OMITTED (not filled from host values).
+    """
+
+    def __init__(self, repo_dir: str) -> None:
+        self.repo_dir = repo_dir
+
+
 # ── 1. get_environment_info() on RouterHostAdapter ────────────────────────────
 
 
@@ -81,6 +93,24 @@ def test_env_info_container_backend_uses_backend_values(tmp_path: Path) -> None:
     assert info["platform"] == "linux"
     assert info["os_version"] == "5.15.0"
     assert info["shell"] == "/bin/bash"
+
+
+def test_env_info_container_backend_no_probe_omits_platform_shell(tmp_path: Path) -> None:
+    """Tier 2: #1479 — non-host backend without get_environment_info() must NOT
+    fill platform/shell from the host. Omit them instead (degrade, don't guess).
+    Only date is always present. This pins the fix against the #1477-pattern
+    regression: showing host darwin/zsh for a linux container = wrong context.
+    """
+    backend = _FakeContainerBackendNoInfo(repo_dir="/testbed")
+    adapter = _make_adapter(
+        agent_workspace_dir=tmp_path / "agents" / "test",
+        environment_backend=backend,
+    )
+    info = adapter.get_environment_info()
+    assert "date" in info, "date must always be present (clock-derived)"
+    assert "platform" not in info, "platform must be absent when container probe not available"
+    assert "os_version" not in info, "os_version must be absent"
+    assert "shell" not in info, "shell must be absent"
 
 
 def test_env_info_no_backend_derives_from_platform_module(tmp_path: Path) -> None:

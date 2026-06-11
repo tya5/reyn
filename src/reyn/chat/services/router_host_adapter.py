@@ -529,22 +529,24 @@ class RouterHostAdapter:
     def get_environment_info(self) -> dict:
         """System metadata for the SP Environment section (#1479).
 
-        Returns a dict with the subset of fields that can be determined:
-          - ``date``        — today's date ISO-8601 (always; host-clock)
-          - ``platform``    — OS family lower-cased ("linux", "darwin", …)
-          - ``os_version``  — kernel/OS release string
-          - ``shell``       — default shell executable (path or name)
+        Always returns:
+          - ``date``       — today ISO-8601 (host-clock, universal)
+
+        Returns additionally when the backend is absent or is a HostBackend
+        (no ``repo_dir`` — same marker as #1477):
+          - ``platform``   — OS family lower-cased ("linux", "darwin", …)
+          - ``os_version`` — kernel/OS release string
+          - ``shell``      — default shell executable
           - ``is_git_repo`` — bool; True when a .git entry exists at cwd
 
-        Resolution order (getattr-guarded for forward compat with future
-        ContainerBackend.get_environment_info() probe):
-        1. backend.get_environment_info() — if the backend implements it
-           (ContainerBackend will probe the container and return its
-           platform/shell; this method then merges with the host date).
-        2. Local platform module + os.environ — HostBackend / no backend.
+        When a non-host backend is present (``repo_dir`` set = container):
+          - If backend implements ``get_environment_info()`` → use those values
+          - If not implemented → omit platform/os_version/shell/is_git_repo
+            (degrade, don't guess — returning host darwin/zsh for a linux
+            container would repeat the #1477 host-value-leak pattern)
 
-        Fields absent from the backend's dict are filled from the local
-        fallback; unknown/None fields are omitted (degrade, don't guess).
+        Container probe (uname -sr + $SHELL + .git check) is a follow-up
+        tracked in #1481; this PR establishes the correct omission semantics.
         """
         import datetime
         import os
@@ -552,32 +554,39 @@ class RouterHostAdapter:
         from pathlib import Path
 
         backend = self._environment_backend
-        backend_info: dict = {}
-        _info_fn = getattr(backend, "get_environment_info", None)
-        if callable(_info_fn):
-            try:
-                backend_info = _info_fn() or {}
-            except Exception:
-                backend_info = {}
-
         result: dict = {"date": datetime.date.today().isoformat()}
 
-        # platform / os_version: backend first (container-aware), then host
-        if "platform" not in backend_info:
-            backend_info["platform"] = _platform.system().lower()
-        if "os_version" not in backend_info:
-            backend_info["os_version"] = _platform.release()
-        if "shell" not in backend_info:
-            backend_info["shell"] = os.environ.get("SHELL", "")
+        # Determine whether this is a non-host (container) backend.
+        # Same marker as get_cwd() (#1477): presence of repo_dir signals
+        # a container backend whose agent-visible environment differs from host.
+        _is_non_host_backend = bool(getattr(backend, "repo_dir", None))
 
-        result["platform"] = backend_info["platform"]
-        result["os_version"] = backend_info["os_version"]
-        if backend_info.get("shell"):
-            result["shell"] = backend_info["shell"]
-
-        # Git repo check: .git entry at the agent-visible cwd
-        cwd_path = Path(self.get_cwd())
-        result["is_git_repo"] = (cwd_path / ".git").exists()
+        if _is_non_host_backend:
+            # Non-host backend: only use values the backend explicitly provides.
+            # If it doesn't implement get_environment_info(), omit all host-derived
+            # fields — showing host platform/shell for a container = wrong context.
+            _info_fn = getattr(backend, "get_environment_info", None)
+            if callable(_info_fn):
+                try:
+                    backend_info = _info_fn() or {}
+                except Exception:
+                    backend_info = {}
+                result["platform"] = backend_info.get("platform", "")
+                result["os_version"] = backend_info.get("os_version", "")
+                if backend_info.get("shell"):
+                    result["shell"] = backend_info["shell"]
+                cwd_path = Path(self.get_cwd())
+                result["is_git_repo"] = (cwd_path / ".git").exists()
+            # else: non-host backend without probe → omit platform/shell/git
+        else:
+            # Host backend or no backend: derive from local environment.
+            result["platform"] = _platform.system().lower()
+            result["os_version"] = _platform.release()
+            _shell = os.environ.get("SHELL", "")
+            if _shell:
+                result["shell"] = _shell
+            cwd_path = Path(self.get_cwd())
+            result["is_git_repo"] = (cwd_path / ".git").exists()
 
         return result
 
