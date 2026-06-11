@@ -218,11 +218,22 @@ async def handle(
             async with RegistryClient() as client:
                 server_json = await client.get_server(op.server_id)
         except RegistryError as exc:
+            # #1471: 404 = server not in registry → decision-enabling guidance so
+            # the LLM can immediately pivot to mcp__install_package instead of
+            # retrying with a registry-only tool.
+            if "HTTP 404" in str(exc):
+                _err = (
+                    f"'{op.server_id}' is not in the official MCP registry. "
+                    "For npm / pypi / docker / GitHub packages use "
+                    "mcp__install_package(source=<npm|pypi|docker|github>, name=...)."
+                )
+            else:
+                _err = f"Registry fetch failed: {exc}"
             return {
                 "kind": "mcp_install",
                 "status": "error",
                 "server_id": op.server_id,
-                "error": f"Registry fetch failed: {exc}",
+                "error": _err,
             }
 
         packages_raw = server_json.raw.get("packages", [])

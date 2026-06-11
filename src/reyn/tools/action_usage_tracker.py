@@ -125,6 +125,7 @@ DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "skill__skill_improver",
     "mcp__search_registry",
     "mcp__install_registry",
+    "mcp__install_package",   # #1471: visibility parity — install_package was only reachable via list_actions
     "mcp__list_tools",
     "mcp__call_tool",
     "skill__index_docs",
