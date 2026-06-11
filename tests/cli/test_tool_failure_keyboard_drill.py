@@ -54,7 +54,7 @@ async def test_drill_failed_tool_only_toggles_failure_row() -> None:
         # Use the public fail_tool_call_row path so _last_failed_tool_row is set.
         # (The row is popped from _tool_call_rows; we already hold the ref above.)
         failure_row.finish_failure(reason="exit code 1")
-        conv._last_failed_tool_row = failure_row  # simulate the tracking assignment
+        conv._row_mgr._last_failed_tool_row = failure_row  # simulate tracking (tui-pr1: state moved to _row_mgr)
 
         await pilot.pause()
 
@@ -116,7 +116,7 @@ async def test_drill_failed_tool_toggle_twice_returns_original() -> None:
         )
         assert failure_row is not None
         failure_row.finish_failure(reason="timeout")
-        conv._last_failed_tool_row = failure_row
+        conv._row_mgr._last_failed_tool_row = failure_row  # tui-pr1: state moved to _row_mgr
 
         await pilot.pause()
         original_state = failure_row.is_expanded  # False
