@@ -2629,6 +2629,14 @@ class RouterLoop:
                 resolved_model=host.resolve_model(self.router_model),
             )
             if _wrapup.content:
+                # Mirror cumulative-axis: hand result to host for checkpoint
+                # persistence (phase) and step-result collection (plan).
+                # Only when LLM produced real text — an empty consolidation
+                # would trigger a spurious phase re-entry via _last_force_close_checkpoint.
+                # getattr-guarded → chat hosts don't implement it → no-op.
+                _record_fc = getattr(host, "record_force_close", None)
+                if _record_fc is not None:
+                    _record_fc(_wrapup)
                 await self.host.put_outbox(
                     kind="agent",
                     text=_wrapup.content,
