@@ -266,7 +266,7 @@ async def test_speaker_grouping_suppresses_header_body_still_inline() -> None:
 
         conv._show_timestamps = True
         # Force the same speaker within the grouping window.
-        conv._last_speaker = ""  # ensure first message gets a header.
+        conv._renderer._last_speaker = ""  # ensure first message gets a header.
         conv.render_user_message("first message")
         await pilot.pause()
 

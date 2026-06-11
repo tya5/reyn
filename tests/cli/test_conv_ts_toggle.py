@@ -276,13 +276,13 @@ async def test_old_messages_keep_old_layout_after_toggle():
 
         # First message: ts on → inline with HH:MM prefix.
         conv._show_timestamps = True
-        conv._last_speaker = ""  # force new header
+        conv._renderer._last_speaker = ""  # force new header
         conv.render_user_message("before-toggle")
         await pilot.pause()
 
         # Toggle → ts off.
         conv._show_timestamps = False
-        conv._last_speaker = ""  # force new header
+        conv._renderer._last_speaker = ""  # force new header
 
         conv.render_user_message("after-toggle")
         await pilot.pause()
