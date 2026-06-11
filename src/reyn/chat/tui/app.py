@@ -1280,29 +1280,42 @@ class ReynTUIApp(App):
                 conv.abort_tool_call_rows(reason="cancelled (remote)")
             return
 
-        cancelled_skills = 0
-        for task in list(getattr(session, "running_skills", {}).values()):
-            if not task.done():
-                task.cancel()
-                cancelled_skills += 1
-        cancelled_plans = 0
-        # Iterate ``.items()`` so we can drop the AsyncStackPanel row
-        # for each plan_id alongside the asyncio cancel. ``task.cancel()``
-        # doesn't trigger the ``source=plan_complete`` outbox path the
-        # natural lifecycle hits, so the bottom-strip row would
-        # otherwise persist after Ctrl+C.
-        for plan_id, task in list(getattr(session, "running_plans", {}).items()):
-            if not task.done():
-                task.cancel()
-                cancelled_plans += 1
-                if conv is not None:
-                    try:
-                        # Wave-13 T2-2: terminal="interrupted" so the
-                        # strip briefly flashes red before unmounting,
-                        # distinguishing plan cancel from clean completion.
-                        conv.remove_async_task(str(plan_id), terminal="interrupted")
-                    except Exception:
-                        pass
+        # #1468: single seam — delegate asyncio cancellation (turn flag +
+        # skill tasks + plan tasks) to session.cancel_inflight(). The TUI
+        # retains ownership of UI-layer cleanup (row sealing, stack panel
+        # removal) which is TUI-specific and not appropriate to push into
+        # the session model.
+        #
+        # Snapshot counts + plan_ids BEFORE firing the cancel so the UI
+        # cleanup loops below have stable data (cancel is async; by the
+        # time they run the dicts may have been mutated by the task runner).
+        _running_skills_snap = {
+            rid: t for rid, t in getattr(session, "running_skills", {}).items()
+            if not t.done()
+        }
+        _running_plans_snap = {
+            pid: t for pid, t in getattr(session, "running_plans", {}).items()
+            if not t.done()
+        }
+        cancelled_skills = len(_running_skills_snap)
+        cancelled_plans = len(_running_plans_snap)
+        _cancel_fn = getattr(session, "cancel_inflight", None)
+        if callable(_cancel_fn):
+            asyncio.create_task(_cancel_fn())
+        # UI-layer plan row cleanup: remove AsyncStackPanel rows for each
+        # cancelled plan. Must happen here (TUI event loop), not in the
+        # session. ``task.cancel()`` doesn't trigger the natural
+        # ``source=plan_complete`` outbox path, so without this sweep the
+        # bottom-strip rows persist after Ctrl+C.
+        for plan_id in _running_plans_snap:
+            if conv is not None:
+                try:
+                    # Wave-13 T2-2: terminal="interrupted" so the
+                    # strip briefly flashes red before unmounting,
+                    # distinguishing plan cancel from clean completion.
+                    conv.remove_async_task(str(plan_id), terminal="interrupted")
+                except Exception:
+                    pass
 
         # Stop any SkillActivityRow spinners + clear the right-panel agents
         # tab. ``task.cancel()`` only stops the asyncio producer; no

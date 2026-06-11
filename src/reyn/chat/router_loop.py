@@ -1772,6 +1772,15 @@ class RouterLoop:
         _plan_invalid_retries: int = 0
 
         for _iteration in range(self.max_iterations):
+            # #1468: cooperative turn-cancel checkpoint. Checked BEFORE the LLM
+            # call so a cancel_inflight() fired between tool iterations stops the
+            # chain at the next boundary (= after the current tool completes, not
+            # mid-call). getattr-guarded → phase hosts that don't implement
+            # _is_turn_cancel_requested are no-ops (byte-identical).
+            _cancel_fn = getattr(host, "_is_turn_cancel_requested", None)
+            if callable(_cancel_fn) and _cancel_fn():
+                host.events.emit("turn_cancelled", chain_id=self.chain_id)
+                break
             resolved_model = host.resolve_model(self.router_model)
             # #1092 PR-C-5 (2): per-turn phase wall-clock budget enforcement. A phase
             # host implements ``check_phase_budget`` (RAISES PhaseBudgetExceededError
