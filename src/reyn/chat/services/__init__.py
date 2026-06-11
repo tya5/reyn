@@ -4,6 +4,7 @@ from reyn.chat.services.auto_resume_handler import AutoResumeHandler
 from reyn.chat.services.budget_gateway import BudgetGateway
 from reyn.chat.services.chain_manager import ChainManager, _PendingChain
 from reyn.chat.services.compaction_controller import CompactionController
+from reyn.chat.services.context_budget_advisor import ContextBudgetAdvisor
 from reyn.chat.services.intervention_handler import InterventionHandler
 from reyn.chat.services.intervention_registry import InterventionRegistry
 from reyn.chat.services.memory_service import MemoryService
@@ -19,6 +20,7 @@ from reyn.services.compaction.engine import (
 
 __all__ = [
     "A2AHandler",
+    "ContextBudgetAdvisor",
     "AutoResumeHandler",
     "BudgetGateway",
     "ChainManager",
