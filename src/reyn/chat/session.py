@@ -1787,6 +1787,13 @@ class ChatSession:
             get_router_host=lambda: self._router_host,
         )
 
+        # #1468: per-turn cooperative cancellation flag. Set by cancel_inflight();
+        # reset to False at the start of each _run_router_loop call so idle
+        # Ctrl-C is spurious-safe (a cancel fired while no turn is running clears
+        # automatically on the next turn's entry). The RouterLoopHost adapter
+        # forwards this flag via _is_turn_cancel_requested().
+        self._turn_cancel_requested: bool = False
+
         # #1092 PR-F1 (chat activation): build the chat axis's turn_budget engine
         # off the RESOLVED model (#1172-safe — resolve self.model exactly as the
         # CompactionEngine does; never hand the cosmetic class to the budget).
@@ -1923,6 +1930,10 @@ class ChatSession:
             # FP-0037 S2: yaml mtime watch needs the project root to resolve
             # the 3 yaml scope tier paths. None falls back to user-global only.
             project_root=getattr(self._registry, "_project_root", None),
+            # #1468: cooperative turn-cancel forwarding. The adapter's
+            # _is_turn_cancel_requested() method polls this flag; run_loop
+            # checks it via getattr at each iteration boundary.
+            turn_cancel_fn=self._is_turn_cancel_requested,
         )
 
         # FP-0019 Wave 1: synchronous head/body/tail compaction service.
@@ -2184,6 +2195,49 @@ class ChatSession:
         PlanRunner.
         """
         return self._plan_runner.running_plans
+
+    def _is_turn_cancel_requested(self) -> bool:
+        """#1468: True when a cooperative turn cancel has been requested.
+
+        Called by RouterHostAdapter._is_turn_cancel_requested() which is
+        polled at the top of each run_loop iteration. The flag is reset at
+        the start of _run_router_loop so idle cancel calls are spurious-safe.
+        """
+        return self._turn_cancel_requested
+
+    async def cancel_inflight(self) -> str:
+        """#1468: cancel all in-flight work — running turn + skills + plans.
+
+        Single seam called by both TUI (local mode) and WS handler (remote
+        mode). Returns a human-readable summary string.
+
+        V1 boundary: sets the cooperative cancellation flag so the turn's
+        run_loop breaks at the next tool-iteration boundary. A slow tool
+        already in flight completes before the cancel takes effect (subprocess
+        kill is a follow-up scope). Skills and plans are cancelled immediately
+        via asyncio task cancellation (existing behaviour, preserved here).
+        """
+        self._turn_cancel_requested = True
+        cancelled_skills = 0
+        for task in list(self.running_skills.values()):
+            if not task.done():
+                task.cancel()
+                cancelled_skills += 1
+        cancelled_plans = 0
+        for task in list(self.running_plans.values()):
+            if not task.done():
+                task.cancel()
+                cancelled_plans += 1
+        parts: list[str] = []
+        # Turn cancel is always "requested" when this method is called, but
+        # only fires if a turn is actually running. We include it in the
+        # summary as "turn" (a human can observe whether the chain stopped).
+        parts.append("turn")
+        if cancelled_skills:
+            parts.append(f"{cancelled_skills} skill{'s' if cancelled_skills != 1 else ''}")
+        if cancelled_plans:
+            parts.append(f"{cancelled_plans} plan{'s' if cancelled_plans != 1 else ''}")
+        return f"✗ cancelled {' + '.join(parts)}"
 
     @property
     def pending_user_images(self) -> list[dict]:
@@ -5488,6 +5542,10 @@ class ChatSession:
 
         Raises RouterCapExceeded when the per-turn cap is reached.
         """
+        # #1468: reset the cooperative cancel flag at turn entry so an idle
+        # cancel_inflight() call (Ctrl-C while no turn is running) is spurious-safe
+        # and does not bleed into the next turn.
+        self._turn_cancel_requested = False
         # FP-0005: now async (consults safety.on_limit on hit).
         await self._check_and_increment_router_cap(user_text)
         from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop

@@ -256,8 +256,13 @@ class RouterHostAdapter:
         # never calls _force_close_call until the F2 handoff lands, so wiring the
         # reserve here is inert until then.
         turn_budget_engine: Any = None,
+        # #1468: cooperative turn-cancel signal. ChatSession passes
+        # self._is_turn_cancel_requested; test hosts pass None (= never cancel).
+        # run_loop polls via getattr(host, "_is_turn_cancel_requested", None).
+        turn_cancel_fn: "Callable[[], bool] | None" = None,
     ) -> None:
         self._turn_budget_engine = turn_budget_engine
+        self._turn_cancel_fn = turn_cancel_fn  # #1468
         self._agent_name = agent_name
         self._agent_role = agent_role
         self.output_language = output_language
@@ -376,6 +381,15 @@ class RouterHostAdapter:
         (failure-mode separation), NOT a missing proactive trigger."""
         engine = self._turn_budget_engine
         return engine.budget.output_reserve if engine is not None else None
+
+    def _is_turn_cancel_requested(self) -> bool:
+        """#1468: True when the session has requested a cooperative turn cancel.
+
+        Polled by run_loop at the top of each iteration via
+        ``getattr(host, "_is_turn_cancel_requested", None)``. Returns False
+        when no ``turn_cancel_fn`` was wired (= test hosts / phase sub-hosts).
+        """
+        return bool(self._turn_cancel_fn and self._turn_cancel_fn())
 
     # --- RouterLoopHost identity attributes ---
 
