@@ -131,15 +131,9 @@ def test_single_turn_returns_single_message(tmp_path):
 # ── Elide branch (total > effective_trigger) ─────────────────────────────────
 
 # Each "XXXXXXXXXXX...X" text is 320 chars → 80 tokens (chars4).
-# With t_max=2000, section_caps_spec_tokens=0, T_SP≈1125 (real router SP),
-# T_comp_SP≈481 (real compaction SP):
-#   head_budget ≈ 87 tokens
-#   tail_budget ≈ 131 tokens
-#   effective_trigger ≈ 570 tokens
-# 8 turns × 80 tokens = 640 > 570 → elide fires.
-# head=[t0] (87 tokens budget, single 80-tok turn exactly fits).
-# tail=[t7] (131 tokens budget, single 80-tok turn fits).
-# middle=[t1..t6] → 6 turns absent from the router view.
+# 30 turns × 80 tokens = 2400 tokens. With t_max=2000, effective_trigger is
+# always < t_max by construction, so 2400 > effective_trigger regardless of SP
+# size — default-independent (hot_list_n changes don't affect this bound).
 
 _LONG_TEXT = "X" * 320  # 80 tokens via chars4; use with t_max=2000
 
@@ -148,12 +142,13 @@ def test_history_exceeds_trigger_elides_middle(tmp_path):
     """Tier 2: when total tokens > effective_trigger, the middle turns are
     elided and head + tail are returned without duplication.
 
-    Uses a synthetic T_max=2000 (section_caps_spec_tokens=0) which yields
-    effective_trigger≈570.  8 turns of 80-token text total 640 > 570, so
-    the elide branch fires.
+    Uses T_max=2000 with 30 turns of 80-token text (total=2400 tokens).
+    2400 > T_max=2000 so the elide branch fires regardless of SP size —
+    default-independent: hot_list_n and other SP-affecting defaults don't
+    change whether elide fires.
     """
     session = _make_session(tmp_path, t_max=2000)
-    texts = [f"turn-{i}:" + _LONG_TEXT for i in range(8)]
+    texts = [f"turn-{i}:" + _LONG_TEXT for i in range(30)]
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)
 
@@ -178,6 +173,10 @@ def test_history_exceeds_trigger_elides_middle(tmp_path):
 def test_elide_inserts_summary_bridge_when_summary_present(tmp_path):
     """Tier 2: when a summary exists and elide fires, a bridge message is
     inserted between head and tail.
+
+    Uses 30 turns to guarantee elide fires regardless of SP size (see
+    test_history_exceeds_trigger_elides_middle for the default-independent
+    size rationale).
     """
     session = _make_session(tmp_path, t_max=2000)
     # Inject a summary before the turns.
@@ -187,8 +186,8 @@ def test_elide_inserts_summary_bridge_when_summary_present(tmp_path):
         ts=_now(),
         meta={"structured": {"topic_arc": "test"}, "covers_through_seq": 0},
     ))
-    # 8 turns × 80 tokens = 640 > effective_trigger≈570 → elide fires.
-    texts = [f"turn-{i}:" + _LONG_TEXT for i in range(8)]
+    # 30 turns × 80 tokens = 2400 > T_max=2000 → elide fires.
+    texts = [f"turn-{i}:" + _LONG_TEXT for i in range(30)]
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)
 

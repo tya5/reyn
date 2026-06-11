@@ -179,12 +179,14 @@ def test_build_history_large_chat_elides_middle(tmp_path) -> None:
     """Tier 2: a large chat (total tokens > effective_trigger) elides the middle —
     head is present, tail is present, and at least one middle turn is absent.
 
-    Uses T_max=2000 (effective_trigger≈570) with 8 turns of 80-token content
-    (total=640 > 570) to force the elide branch.  The deduplication guard
-    ensures no turn appears twice even when head and tail budgets overlap.
+    Uses T_max=2000 with 30 turns of 80-token content (total=2400 tokens).
+    30×80=2400 exceeds any effective_trigger for T_max=2000 regardless of the
+    SP size (effective_trigger < T_max by construction), making this test
+    default-independent: changing hot_list_n or other SP-affecting defaults
+    does not change whether elide fires.
     """
     session = _make_session_with_t_max(tmp_path, t_max=2000)
-    texts = [f"turn-{i}:" + _CONTENT_80TOK for i in range(8)]
+    texts = [f"turn-{i}:" + _CONTENT_80TOK for i in range(30)]
     for i, text in enumerate(texts):
         _push(session, "user" if i % 2 == 0 else "assistant", text)
 
