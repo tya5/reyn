@@ -48,16 +48,12 @@ def test_install_registry_also_in_seed() -> None:
     assert "mcp__install_registry" in DEFAULT_HOT_LIST_SEED
 
 
-def test_hot_list_n_default_covers_seed() -> None:
-    """Tier 2: #1471 — hot_list_n_default (20) must remain >= len(seed) after
-    the addition. A cold-start session surfaces every seed entry as a direct
-    alias before usage-driven sorting kicks in."""
-    from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
-    hot_list_n_default = 20  # ActionRetrievalConfig.hot_list_n default
-    assert hot_list_n_default >= len(DEFAULT_HOT_LIST_SEED), (
-        f"hot_list_n_default={hot_list_n_default} < len(seed)={len(DEFAULT_HOT_LIST_SEED)}; "
-        "increase hot_list_n_default in ActionRetrievalConfig"
-    )
+def test_hot_list_n_default_is_zero() -> None:
+    """Tier 2: #1471 → default-flip — ActionRetrievalConfig.hot_list_n default
+    is 0 (off). The seed and mechanism remain intact for opt-in (hot_list_n: 10+
+    in reyn.yaml). Regression pin against accidental revert to non-zero default."""
+    from reyn.config import ActionRetrievalConfig
+    assert ActionRetrievalConfig().hot_list_n == 0
 
 
 # ── 2. Not-found error carries install_package guidance ─────────────────────

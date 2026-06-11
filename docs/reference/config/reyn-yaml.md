@@ -368,7 +368,7 @@ Universal catalog visibility + retrieval settings.  Provides the chat router wit
 action_retrieval:
   universal_wrappers_enabled: true    # default; set false to opt out
   embedding_class: local-mini         # default; null disables search_actions
-  hot_list_n: 10                      # top-N freq+recency direct aliases
+  hot_list_n: 0                       # 0 = off (default); set e.g. 10 to opt in
   mode: default                       # default | minimal | performance
 ```
 
@@ -378,7 +378,7 @@ action_retrieval:
 |-------|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | When `true` (default), the router's `tools=` exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM but remain available as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class`.  Set `false` to disable the wrapper surface entirely (= legacy tools become the only addressing path again). |
 | `embedding_class` | string \| null | `"local-mini"` | Name of an entry in [`embedding.classes`](../../concepts/data-retrieval/rag.md) to use for action-retrieval semantic search.  Default `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  Setting this also enables eager embedding build on cold-start sessions to avoid first-turn hallucinations.  **Graceful degrade**: if the chosen class points at a `sentence-transformers/` model but the `local-embed` extras aren't installed, reyn silently treats this as `null` and `list_actions` surfaces the install command to the LLM. Set explicitly to `standard` (= OpenAI) or `null` (= opt out) to override. |
-| `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases. Must be ≥ 0. `0` opts out entirely (= minimal mode). |
+| `hot_list_n` | int | `0` | Hot-list projection size for top-N `freq+recency` direct aliases. `0` (default) disables hot-list entirely — `list_actions` is the canonical discovery path. Set to `10` or higher to opt in; the seed, usage tracker, and alias-builder remain fully operative. |
 | `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
 | `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["skill__index_docs"]`) pins those as the initial hot list before usage stats accumulate. |
 

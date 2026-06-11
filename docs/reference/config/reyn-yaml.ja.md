@@ -357,7 +357,7 @@ sandbox:
 action_retrieval:
   universal_wrappers_enabled: true    # デフォルト; false でオプトアウト
   embedding_class: local-mini         # デフォルト; null で search_actions 無効
-  hot_list_n: 10                      # top-N freq+recency direct alias
+  hot_list_n: 0                       # 0 = 無効（デフォルト）; opt-in は例えば 10
   mode: default                       # default | minimal | performance
 ```
 
@@ -367,7 +367,7 @@ action_retrieval:
 |-----|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | `true`（デフォルト）の時、 Router の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) + hot list direct aliases のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) は LLM に surface されず、 wrapper の backing handler として残存。 `search_actions` は `embedding_class` で別途ゲート。 `false` 設定で wrapper surface 自体を無効化 (= legacy のみが addressing path)。 |
 | `embedding_class` | string \| null | `"local-mini"` | action-retrieval の semantic 検索に使用する [`embedding.classes`](../../concepts/data-retrieval/rag.md) のエントリ名。 デフォルト `local-mini` (= `sentence-transformers/all-MiniLM-L6-v2`)。 `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外される。 設定すると cold-start session で eager embedding build を発動し初回ターンの hallucination を回避。 **Graceful degrade**: 選んだクラスが `sentence-transformers/` モデルを指すのに `local-embed` extras 未インストールの場合、 reyn は黙って `null` 扱いとし `list_actions` がインストールコマンドを LLM に surface する。 `standard` (= OpenAI) や `null` (= opt out) で上書き可能。 |
-| `hot_list_n` | int | `10` | top-N `freq+recency` direct alias のホットリスト投影サイズ。 `0` 以上必須。 `0` で完全オプトアウト (= minimal モード)。 |
+| `hot_list_n` | int | `0` | top-N `freq+recency` direct alias のホットリスト投影サイズ。 デフォルト `0` (= 無効) — `list_actions` が正規の discovery path。 opt-in は `10` 以上を設定; seed・usage tracker・alias-builder は完全維持。 |
 | `mode` | string | `"default"` | 運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 |
 
 ### クイックスタート — オプトアウト

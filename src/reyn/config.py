@@ -1340,13 +1340,12 @@ class ActionRetrievalConfig:
 
         hot_list_n:
             Hot list size for top-N freq+recency projection (§D2).
-            Phase 2 wiring; the field lives here so reyn.yaml shape
-            stabilises early. Default sized to cover DEFAULT_HOT_LIST_SEED
-            with headroom (= seed length 17 → default 20) so cold-start
-            sessions surface every seed entry as a direct alias before
-            usage-driven sorting kicks in. Lower values silently truncate
-            the seed; the invariant test in test_action_usage_tracker.py
-            asserts hot_list_n_default >= len(DEFAULT_HOT_LIST_SEED).
+            Default 0 (= off) following N=0 viability verdict (44 runs,
+            nested-args 0/23) — list_actions is the canonical discovery
+            path and hot-list aliases introduced a visibility-asymmetry
+            bug class. Operators who want aliases can set hot_list_n: 10
+            (or higher) in reyn.yaml; the seed, tracker, and alias-builder
+            mechanisms remain fully operative as an opt-in.
 
         mode:
             Operational mode label (§D24): ``"minimal"`` /
@@ -1358,7 +1357,7 @@ class ActionRetrievalConfig:
 
     universal_wrappers_enabled: bool = True
     embedding_class: str | None = "local-mini"
-    hot_list_n: int = 20
+    hot_list_n: int = 0
     mode: str = "default"
     # FP-0034 §D16: seed qualified names for initial hot list (before freq
     # accumulates). "default" means the OS-defined 10-item seed (5 universal
