@@ -1689,13 +1689,6 @@ class ChatSession:
             get_router_host=lambda: self._router_host,
         )
 
-        # #1468: per-turn cooperative cancellation flag. Set by cancel_inflight();
-        # reset to False at the start of each _run_router_loop call so idle
-        # Ctrl-C is spurious-safe (a cancel fired while no turn is running clears
-        # automatically on the next turn's entry). The RouterLoopHost adapter
-        # forwards this flag via _is_turn_cancel_requested().
-        self._turn_cancel_requested: bool = False
-
         # #1092 PR-F1 (chat activation): build the chat axis's turn_budget engine
         # off the RESOLVED model (#1172-safe — resolve self.model exactly as the
         # CompactionEngine does; never hand the cosmetic class to the budget).
@@ -1833,7 +1826,7 @@ class ChatSession:
             # the 3 yaml scope tier paths. None falls back to user-global only.
             project_root=getattr(self._registry, "_project_root", None),
             # #1468: cooperative turn-cancel forwarding. The adapter's
-            # _is_turn_cancel_requested() method polls this flag; run_loop
+            # _is_turn_cancel_requested() forwards to RouterLoopDriver; run_loop
             # checks it via getattr at each iteration boundary.
             turn_cancel_fn=self._is_turn_cancel_requested,
         )
@@ -1968,6 +1961,30 @@ class ChatSession:
             model=self.model,
             events=self._chat_events,
             history_fn=self._history_buffer.build_history,
+        )
+
+        # session.py refactor PR-3: RouterLoopDriver owns the per-turn loop
+        # orchestration (run_turn, shrink/overflow, cap enforcement, cancel).
+        from reyn.chat.services.router_loop_driver import RouterLoopDriver
+        self._loop_driver = RouterLoopDriver(
+            router_host=self._router_host,
+            safety=self._safety,
+            router_max_iterations=self._router_max_iterations,
+            budget_tracker=self._budget_tracker,
+            non_interactive=self._non_interactive,
+            exclude_tools=self._exclude_tools,
+            budget=self._budget,
+            resolver=self._resolver,
+            compaction=self._compaction,
+            compaction_controller=self._compaction_controller,
+            token_learner=self._token_learner,
+            events=self._chat_events,
+            model=self.model,
+            history_buffer=self._history_buffer,
+            budget_advisor=self._budget_advisor,
+            limit_checkpoint_fn=self._handle_chat_limit_checkpoint,
+            next_seq_fn=lambda: self._next_seq,
+            append_history_fn=self._append_history,
         )
 
     # ── cost accumulation ───────────────────────────────────────────────────────
@@ -2131,13 +2148,8 @@ class ChatSession:
         return self._plan_runner.running_plans
 
     def _is_turn_cancel_requested(self) -> bool:
-        """#1468: True when a cooperative turn cancel has been requested.
-
-        Called by RouterHostAdapter._is_turn_cancel_requested() which is
-        polled at the top of each run_loop iteration. The flag is reset at
-        the start of _run_router_loop so idle cancel calls are spurious-safe.
-        """
-        return self._turn_cancel_requested
+        """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
+        return self._loop_driver.is_cancel_requested()
 
     async def cancel_inflight(self) -> str:
         """#1468: cancel all in-flight work — running turn + skills + plans.
@@ -2151,7 +2163,7 @@ class ChatSession:
         kill is a follow-up scope). Skills and plans are cancelled immediately
         via asyncio task cancellation (existing behaviour, preserved here).
         """
-        self._turn_cancel_requested = True
+        self._loop_driver.request_cancel()
         cancelled_skills = 0
         for task in list(self.running_skills.values()):
             if not task.done():
@@ -3445,35 +3457,8 @@ class ChatSession:
         return decision
 
     async def _check_and_increment_router_cap(self, user_text: str) -> None:
-        """Increment the per-turn router invocation counter and enforce the
-        cap. Raises RouterCapExceeded when the counter would exceed the
-        configured cap. cap=0 disables the check.
-
-        FP-0005: when ``safety.on_limit.mode`` is ``interactive`` /
-        ``auto_extend`` and the cap is hit, ask the user / auto-extend
-        before re-raising. On approval the cap is extended by the
-        configured amount and the run continues.
-        """
-        try:
-            self._budget.check_and_increment_router_cap(user_text)
-        except RouterCapExceeded as exc:
-            decision = await self._handle_chat_limit_checkpoint(
-                kind="router_cap",
-                prompt=(
-                    f"Router hit the per-turn cap of {exc.cap} invocations. "
-                    f"Allow more invocations this turn?"
-                ),
-                detail=(
-                    f"count={exc.count} cap={exc.cap} "
-                    f"last_reason={exc.last_reason}"
-                ),
-                extension_amount=1.0,
-            )
-            if not decision.allow_continue:
-                raise
-            # Approved — extend the cap and increment for THIS attempt.
-            self._budget.extend_router_cap(int(decision.extension))
-            self._budget.check_and_increment_router_cap(user_text)
+        """Forwarding → RouterLoopDriver._check_cap (PR-3)."""
+        await self._loop_driver._check_cap(user_text)
 
     # ── backward-compat shims for Tier-4 scaffold tests ─────────────────────
     # These proxy the gateway's private counter/reason through the session
@@ -5064,256 +5049,17 @@ class ChatSession:
         user_text: str,
         chain_id: str,
     ) -> None:
-        """Run RouterLoop for one user utterance. Enforces the per-turn cap,
-        builds history, and calls RouterLoop.run(). Does NOT modify history
-        or outbox directly — RouterLoop calls host callbacks.
-
-        Raises RouterCapExceeded when the per-turn cap is reached.
-        """
-        # #1468: reset the cooperative cancel flag at turn entry so an idle
-        # cancel_inflight() call (Ctrl-C while no turn is running) is spurious-safe
-        # and does not bleed into the next turn.
-        self._turn_cancel_requested = False
-        # FP-0005: now async (consults safety.on_limit on hit).
-        await self._check_and_increment_router_cap(user_text)
-        from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
-        # B51 NF-W6-3: plan_invalid self-correction cap, sourced from
-        # safety.loop.plan_invalid_retries (default 1). When set to 0
-        # the retry is disabled and the LLM sees the plain tool error.
-        _plan_invalid_retries_cap = getattr(
-            getattr(self._safety, "loop", None),
-            "plan_invalid_retries",
-            1,
-        )
-        loop = RouterLoop(
-            host=self._router_host, chain_id=chain_id,
-            max_iterations=self._router_max_iterations,
-            budget=self._budget_tracker,
-            # #1440 followup: thread the run-once autonomy flag to the LIVE
-            # chat-router SP path (router_loop build_system_prompt). The original
-            # #1440 wired only _build_router_system_prompt; this reaches the path
-            # run-once actually renders. ChatSession._non_interactive set by #1440.
-            non_interactive=self._non_interactive,
-            # #187: hide excluded tools (e.g. web for faithful SWE-eval) from the
-            # MAIN agent loop's LLM-visible catalog (same hook the sub-loops use).
-            exclude_tools=self._exclude_tools,
-            # B43-NF-W6-1 / #187: chat router empty-stop retry. owner decision —
-            # always-on (env-gate retired) + the SHARED uniform "resume"
-            # directive (no per-site differentiation). The old chat-specific
-            # "write your reply / do not call another tool" directive was
-            # retired: it was unevidenced differentiation and its anti-invoke
-            # framing was itself suspect. "resume" lets the model continue
-            # (reply OR tool-call) on its own.
-            empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
-            empty_stop_retry_auto=True,
-            plan_invalid_retries=_plan_invalid_retries_cap,
-        )
-        # PR-N3: pre-frame context-overflow guard.
-        # Estimate the projected history token count; if it would exceed
-        # the model's max_input_tokens, run compaction synchronously so
-        # the assembled history fits before the router LLM call.
-        # ISSUE #5: pass user_text so Axis-11 new_msg_budget check fires.
-        await self._maybe_force_compact_for_router(new_msg_text=user_text)
-
-        from reyn.services.compaction.engine import (
-            ContextOverflowError as _ContextOverflowError,
-        )
-
-        # #1092 PR-F2b: bounded force-close handoff loop. _router_run_with_shrink
-        # runs the router with the reactive retry_loop shrink; if even the floor
-        # overflows it raises _ContextOverflowError. On that terminal we force-
-        # close: consolidate the (floor) context into a capped summary (≤
-        # output_reserve) + install it covers-all — firing F2a's durable
-        # covers-respecting reset so the re-entry slices [consolidation] + new
-        # turns, NOT the raw head/tail that just overflowed. By construction
-        # (F1 max_tokens cap + F2a true-reset) a normal turn converges in ONE
-        # handoff; cap=1 backstops the irreducible single-oversized-message
-        # dead-end (no infinite loop) — the chat analogue of phase's
-        # max_phase_visits, except the by-construction floor makes 1 enough.
-        _handoffs = 0
-        while True:
-            try:
-                router_usage = await self._router_run_with_shrink(loop, user_text)
-                break
-            except _ContextOverflowError as _overflow_exc:
-                _reserve = getattr(
-                    self._router_host, "wrap_up_output_reserve", None
-                )
-                if _reserve is None or _handoffs >= _MAX_FORCE_CLOSE_HANDOFFS:
-                    # force-close unavailable (sub-viable model → no cap wired) OR
-                    # cap reached (the new message is irreducibly too large to fit
-                    # even after a full consolidation) → genuine dead-end.
-                    self._chat_events.emit(
-                        "router_context_overflow_unrecovered",
-                        error=repr(_overflow_exc),
-                    )
-                    raise
-                await self._force_close_handoff(loop, user_text)
-                _handoffs += 1
-
-        # F4 Bug 2 / F4 Bug 1: accumulate router LLM usage (with proxy-prefix
-        # stripping) into per-session totals via the gateway.
-        if router_usage is not None:
-            self._budget.add_router_usage(
-                usage=router_usage,
-                resolver=self._resolver,
-                router_model_name=loop.router_model,
-            )
+        """Forwarding → RouterLoopDriver.run_turn (PR-3)."""
+        await self._loop_driver.run_turn(user_text, chain_id)
 
     async def _router_run_with_shrink(self, loop, user_text: str) -> "Any":
-        """#1092 PR-F2b: run the router once with the reactive bounded-shrink
-        ``retry_loop`` (PR-N6 / #1125). Returns the router usage, or raises
-        ``_ContextOverflowError`` when even the floor overflows (the terminal the
-        F2b handoff loop catches to force-close). Rebuilds the history each call
-        so a force-close re-entry sees the post-handoff (F2a-reset) slice.
-
-        Extracted from ``_run_router_loop`` so the handoff loop can re-invoke it
-        across a force-close. No ``router_context_overflow_unrecovered`` event
-        here — the caller emits it ONLY when it actually gives up (cap reached /
-        sub-viable model), so a recoverable handoff is not mislogged as a dead-end.
-        """
-        from reyn.services.compaction.engine import (
-            ContextOverflowError as _ContextOverflowError,
-        )
-        from reyn.services.compaction.engine import (
-            UnrecoveredError as _UnrecoveredError,
-        )
-
-        history = self._build_history_for_router()
-        try:
-            return await loop.run(user_text=user_text, history=history)
-        except Exception as _exc:
-            _exc_str = str(_exc).lower()
-            if not any(
-                kw in _exc_str
-                for kw in ("context", "token", "length", "limit", "too long", "too large")
-            ):
-                raise
-            self._chat_events.emit(
-                "router_context_overflow_detected", error=repr(_exc)
-            )
-            from reyn.services.compaction.engine import retry_loop as _retry_loop
-            engine = self._compaction_controller._engine
-            _head, _raw_middle, _tail, _summary_dict = (
-                self._decompose_history_for_retry()
-            )
-            _new_msg = {"role": "user", "content": user_text}
-
-            async def _router_main_call(*, SP, head, summary, tail, new_msg):
-                _msgs = list(head)
-                if summary:
-                    _summary_text = _render_summary_for_storage(summary)
-                    _msgs.append({
-                        "role": "assistant",
-                        "content": (
-                            "[summary of earlier conversation]\n" + _summary_text
-                        ),
-                    })
-                _msgs.extend(tail)
-                try:
-                    _usage = await loop.run(user_text=user_text, history=_msgs)
-                except Exception as _call_exc:
-                    if any(kw in str(_call_exc).lower() for kw in (
-                        "context", "token", "length", "limit", "too long", "too large",
-                    )):
-                        raise _ContextOverflowError(str(_call_exc)) from _call_exc
-                    raise
-                return _RouterUsageShim(_usage)
-
-            try:
-                _shim = await _retry_loop(
-                    SP=self._build_router_system_prompt(),
-                    head=_head,
-                    summary=_summary_dict,
-                    raw_middle=_raw_middle,
-                    tail=_tail,
-                    new_msg=_new_msg,
-                    cfg=self._compaction,
-                    model=self.model,
-                    engine=engine,
-                    learner=self._token_learner,
-                    main_call=_router_main_call,
-                )
-                return _shim.usage
-            except (_ContextOverflowError, _UnrecoveredError) as _retry_exc:
-                raise _ContextOverflowError(
-                    f"Router context overflow after bounded shrink: {_retry_exc}"
-                ) from _retry_exc
+        """Forwarding → RouterLoopDriver._run_with_shrink (PR-3)."""
+        return await self._loop_driver._run_with_shrink(loop, user_text)
 
     async def _force_close_handoff(self, loop, user_text: str) -> None:
-        """#1092 PR-F2b: at the overflow terminal, consolidate the working context
-        into a capped force-close summary and install it covers-all — firing F2a's
-        durable covers-respecting reset so the re-entry slices ``[consolidation] +
-        new turn`` instead of the raw head/tail that just overflowed. The
-        consolidation is hard-capped ≤ output_reserve (F1) and made to fit by the
-        bounded fallback in ``_force_close_wrap_up``. Emits a P6
-        ``router_force_close_handoff`` event. ``user_text`` is unused here (the new
-        message is re-applied by the loop's next ``_router_run_with_shrink``); kept
-        for symmetry / future audit.
-        """
-        resolved_model = self._resolver.resolve(self.model).model
-        consolidation = await self._force_close_wrap_up(loop, resolved_model)
-        covers = max(self._next_seq - 1, 0)
-        structured = {"consolidation": consolidation}
-        msg = ChatMessage(
-            role="summary",
-            content=_render_summary_for_storage(structured),
-            ts=_now_iso(),
-            meta={"structured": structured, "covers_through_seq": covers},
-        )
-        self._append_history(msg)
-        self._chat_events.emit(
-            "router_force_close_handoff",
-            covers_through_seq=covers,
-            consolidation_chars=len(consolidation),
-        )
+        """Forwarding → RouterLoopDriver._force_close_handoff (PR-3)."""
+        await self._loop_driver._force_close_handoff(loop, user_text)
 
     async def _force_close_wrap_up(self, loop, resolved_model: str) -> str:
-        """#1092 PR-F2b (Fork 1 — wrap-up-fits): produce the capped consolidation
-        via the force-close wrap-up call, made to FIT by a bounded fallback that
-        shrinks the input if the wrap-up itself would overflow — the chat analogue
-        of phase's ``_force_close_call_with_retry`` (chat's wrap-up runs OUTSIDE
-        retry_loop, so it has no built-in recovery). Input candidates, decreasing:
-        ``[summary + raw_middle + tail]`` → ``[summary + tail]`` → ``[summary]``.
-        If even summary-only overflows, the model is RUNTIME sub-viable (distinct
-        from the config-time ``try_build``=None gate — the engine IS wired here) →
-        raise, which the handoff loop surfaces as a genuine dead-end.
-        """
-        from reyn.services.compaction.engine import (
-            ContextOverflowError as _ContextOverflowError,
-        )
-
-        _head, _raw_middle, _tail, _summary_dict = (
-            self._decompose_history_for_retry()
-        )
-        _summary_msg: list[dict] = []
-        if _summary_dict:
-            _summary_msg = [{
-                "role": "assistant",
-                "content": (
-                    "[summary of earlier conversation]\n"
-                    + _render_summary_for_storage(_summary_dict)
-                ),
-            }]
-        _candidates = [
-            _summary_msg + _raw_middle + _tail,
-            _summary_msg + _tail,
-            _summary_msg,
-        ]
-        _last_exc: "Exception | None" = None
-        for _inp in _candidates:
-            try:
-                _result = await loop._force_close_call(
-                    _inp, resolved_model=resolved_model
-                )
-                return _result.content or ""
-            except Exception as _exc:
-                if not any(kw in str(_exc).lower() for kw in (
-                    "context", "token", "length", "limit", "too long", "too large",
-                )):
-                    raise
-                _last_exc = _exc
-        raise _ContextOverflowError(
-            "force-close wrap-up overflowed even at summary-only "
-            f"(runtime sub-viable model): {_last_exc}"
-        )
+        """Forwarding → RouterLoopDriver._force_close_wrap_up (PR-3)."""
+        return await self._loop_driver._force_close_wrap_up(loop, resolved_model)
