@@ -91,8 +91,9 @@ def test_q8_system_prompt_prefers_project_context_over_web_search() -> None:
     assert "project_context" in lower and "primary" in lower, (
         "system prompt missing project_context-as-primary phrasing"
     )
-    assert "web_search" in lower and "supplementary" in lower, (
-        "system prompt missing web_search-as-supplementary phrasing"
+    # #1475: web search renamed to web__search (qualified name convention)
+    assert ("web__search" in lower or "web_search" in lower) and "supplementary" in lower, (
+        "system prompt missing web search-as-supplementary phrasing"
     )
 
 

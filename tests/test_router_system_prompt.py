@@ -281,8 +281,9 @@ class TestBehaviourRulesAfterF3F9Fix:
     """
 
     def test_reply_directly_restricted_to_chitchat(self):
-        """Tier 2: 'Reply directly' rule restricted — only chitchat.
-        Domain tasks must go to invoke_action."""
+        """Tier 2: 'Reply directly' rule restricted — only conversation (chitchat).
+        Domain tasks must go to invoke_action. Canonical location: Capabilities
+        routing guide (#1475: Policy 1 removed from Behaviour, single canonical)."""
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="",
@@ -290,9 +291,10 @@ class TestBehaviourRulesAfterF3F9Fix:
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
-        assert "Chitchat" in prompt
-        assert "invoke_action" in prompt
-        assert "Domain task" in prompt
+        # Conversation → reply directly (canonical in Capabilities routing guide)
+        assert "Conversation" in prompt
+        assert "reply" in prompt
+        assert "`invoke_action`" in prompt or "invoke_action" in prompt
 
     def test_v3_absolute_routing_rule_present(self):
         """Tier 2: B13-R3 V3 wording — ABSOLUTE routing rule block is present
