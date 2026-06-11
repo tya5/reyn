@@ -478,7 +478,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 eager_embedding_build=False,
                 agent_id=None,
                 exclude_tools=None,
-                router_max_iterations=5,
+                router_max_iterations=config.safety.loop.max_router_iterations,
                 non_interactive=False,  # #1439 Fix #1: dogfood driver = byte-identical (run-once-only fix)
                 workspace_base_dir=ws_base_dir,
                 workspace_state_dir=ws_state_dir,

@@ -439,6 +439,7 @@
 #     max_act_turns_per_phase: 10
 #     max_phase_visits: 25
 #     max_router_calls_per_turn: 3
+#     max_router_iterations: 5  # max LLM tool-call iterations per user turn; CLI --max-iterations overrides
 #     max_agent_hops: 3
 #     # plan() tool call parse-error self-correction (B51 NF-W6-3). 0 = disable.
 #     plan_invalid_retries: 1

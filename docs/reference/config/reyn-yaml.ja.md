@@ -191,6 +191,7 @@ safety:
     max_phase_visits: 25         # ランごとの Phase あたりの上限; 0 = 無制限 (--max-phase-visits)
     max_act_turns_per_phase: 10  # Phase 訪問内の LLM ↔ op ラリー数; 0 = 無制限
     max_router_calls_per_turn: 3 # ユーザーターンごとのチャットルーター呼び出し数
+    max_router_iterations: 5    # ユーザーターンごとの LLM ツール呼び出しイテレーション数 (CLI --max-iterations で上書き可)
     max_agent_hops: 3            # 最大委譲深度
   timeout:
     llm_call_seconds: 60         # 呼び出しごとの HTTP タイムアウト (--llm-timeout)
@@ -210,6 +211,7 @@ safety:
 | `safety.loop.max_phase_visits` | int | `25` | `--max-phase-visits` | ランごとの任意の単一 Phase への再訪問上限。`0` = 無制限。 |
 | `safety.loop.max_act_turns_per_phase` | int | `10` | — | 1 回の Phase 訪問内で許可される LLM ↔ op ラリー数。`0` = 無制限。 |
 | `safety.loop.max_router_calls_per_turn` | int | `3` | — | ユーザーターンごとのチャットルーター呼び出し数。`0` = 無制限。 |
+| `safety.loop.max_router_iterations` | int | `5` | `--max-iterations` | ユーザーターンごとの LLM ツール呼び出しイテレーション上限。CLI `--max-iterations` が指定された場合はそちらが優先。`reyn run-once` のデフォルトは 80。 |
 | `safety.loop.max_agent_hops` | int | `3` | — | 最大委譲深度（ユーザー → A → B → C = 3 ホップ）。 |
 | `safety.loop.plan_invalid_retries` | int | `1` | — | ルーターが malformed な `plan()` ツール呼び出しを emit した時、エラー + 「内側クォートをエスケープ」 ヒントを user-role directive として追加して LLM に再 emit させる。`0` で無効化。`1`（デフォルト）でチャットターンごとに 1 回の directive 駆動訂正を許可。 |
 

@@ -2594,7 +2594,7 @@ class RouterLoop:
             text=(
                 f"Router loop exceeded max iterations ({self.max_iterations}). "
                 f"Configure safety.on_limit.mode=interactive or auto_extend to "
-                f"extend, or increase router_max_iterations."
+                f"extend, or increase safety.loop.max_router_iterations."
             ),
             meta={"chain_id": self.chain_id},
         )
