@@ -85,21 +85,30 @@ def test_tier_gate_light_on_strong_unknown_off() -> None:
 
 
 def test_three_scope_qualified_reinforcements_when_enabled() -> None:
-    """Tier 2: #187 Stage C — all 3 reinforcements render with their scope
-    qualifier (so the mandate fires only for non-obvious/unknown/not-named
-    actions, never blanket — the classification-bleed guard)."""
+    """Tier 2: #187 Stage C — discovery_mandate renders with scope qualifier in
+    Capabilities (canonical location). Behaviour dedup: mandate NOT repeated there.
+
+    #1475: Policy 1/2 and discovery_mandate repeat removed from Behaviour (single
+    canonical location in branch-3 + §D9). Pins the new single-canonical design:
+    mandate present in Capabilities, absent from Behaviour.
+    """
     on = _on()
     # ① branch-3 Otherwise (strengthened) — scope: "NOT obvious or a named skill"
     assert "for any action that is NOT obvious or a named skill above" in on
     # ② §D9 hot-list — scope: "no visible tool obviously matches"
     assert "When no visible tool obviously matches the action you need" in on
     assert "MANDATORY and comes FIRST" in on
-    # ③ Behaviour — scope: "an action you cannot name from the visible tools"
-    assert "When a task needs an action you cannot name from the visible tools" in on
-    # mechanical MUST present (① + ③); plus § D9 MANDATORY = 3 reinforcements
-    assert on.count("FIRST tool call MUST be list_actions") == 2
+    # ③ Behaviour dedup (#1475): mandate NOT repeated in Behaviour
+    behav_pos = on.find("## Behaviour")
+    assert behav_pos >= 0
+    assert "FIRST tool call MUST be" not in on[behav_pos:], (
+        "discovery_mandate must not be repeated in ## Behaviour (canonical: Capabilities)"
+    )
+    # Exactly 1 canonical MUST occurrence (branch-3); backtick-wrapped list_actions
+    assert "`list_actions`" in on
+    assert on.count("FIRST tool call MUST be `list_actions`") == 1
     # file__edit MUST lever (satisficing-counter) carried in ①
-    assert "file__edit" in on
+    assert "`file__edit`" in on
 
 
 def test_explicit_action_enumeration_not_generic() -> None:
@@ -124,7 +133,7 @@ def test_disabled_keeps_soft_branch3_no_mandate() -> None:
     off = _off()
     # The soft Otherwise + wrapper chain stays; no mechanical strengthening.
     assert "invoke directly. Otherwise" in off
-    assert "FIRST tool call MUST be list_actions" not in off
+    assert "FIRST tool call MUST be `list_actions`" not in off
     assert "MANDATORY and comes FIRST" not in off
 
 
@@ -150,14 +159,17 @@ def test_b11r3_and_conversation_preserved_both_modes() -> None:
 
 
 def test_reinforcements_in_static_cacheable_prefix() -> None:
-    """Tier 2: #187 Stage C — the reinforcements precede the dynamic
-    ``project_context`` section, so they live in the static cacheable prefix
-    (warm prompt cache preserved)."""
+    """Tier 2: #187 Stage C — the canonical reinforcement (branch-3 Capabilities)
+    precedes the dynamic ``project_context`` section (warm prompt cache preserved).
+
+    #1475: Behaviour repeat removed; canonical location is branch-3. Pin updated
+    to the single canonical MUST occurrence (backtick-wrapped `list_actions`).
+    """
     marker = "ZZZ_DYNAMIC_PROJECT_CONTEXT_MARKER_ZZZ"
     on = build_system_prompt(**_BASE, project_context=marker, discovery_mandate=True)
     assert marker in on
-    # The last reinforcement (Behaviour ③) must come before the dynamic marker.
-    assert on.rindex("FIRST tool call MUST be list_actions") < on.index(marker)
+    # The canonical reinforcement (branch-3) must come before the dynamic marker.
+    assert on.rindex("FIRST tool call MUST be `list_actions`") < on.index(marker)
 
 
 # ---------------------------------------------------------------------------

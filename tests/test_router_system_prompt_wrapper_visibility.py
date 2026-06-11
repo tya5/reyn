@@ -62,7 +62,7 @@ def test_search_actions_enabled_true_includes_search_actions_in_wrapper_chain() 
     """
     sp = build_system_prompt(**_BASE, search_actions_enabled=True)
     assert "search_actions" in sp
-    assert "list_actions → search_actions" in sp
+    assert "`list_actions` → `search_actions`" in sp
 
 
 def test_search_actions_enabled_true_includes_four_wrapper_names() -> None:
@@ -81,7 +81,7 @@ def test_search_actions_enabled_true_includes_behaviour_guidance() -> None:
     must only appear when search_actions is actually in tools=.
     """
     sp = build_system_prompt(**_BASE, search_actions_enabled=True)
-    assert "USE search_actions(query=...)" in sp
+    assert "USE `search_actions(query=...)`" in sp
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ def test_search_actions_enabled_false_omits_search_actions_from_chain() -> None:
     sp = build_system_prompt(**_BASE, search_actions_enabled=False)
     assert "search_actions" not in sp
     # The disabled chain shape: list_actions chained directly to describe_action
-    assert "list_actions → describe_action → invoke_action" in sp
+    assert "`list_actions` → `describe_action` → `invoke_action`" in sp
 
 
 def test_search_actions_enabled_false_three_wrapper_names_present() -> None:
@@ -173,4 +173,4 @@ def test_default_includes_search_actions() -> None:
     """
     sp = build_system_prompt(**_BASE)
     assert "search_actions" in sp
-    assert "list_actions → search_actions" in sp
+    assert "`list_actions` → `search_actions`" in sp
