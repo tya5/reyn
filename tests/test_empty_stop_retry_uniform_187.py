@@ -42,12 +42,14 @@ import ast
 from pathlib import Path
 
 import reyn.chat.planner as planner_mod
-import reyn.chat.session as session_mod
+import reyn.chat.services.router_loop_driver as loop_driver_mod
+import reyn.chat.session as session_mod  # used for src-root path only
 import reyn.kernel.phase_executor as pe_mod
 from reyn.chat.router_loop import EMPTY_STOP_RETRY_DIRECTIVE
 
 _DIRECTIVE_NAME = "EMPTY_STOP_RETRY_DIRECTIVE"
-_WIRING_MODULES = (session_mod, planner_mod, pe_mod)
+# RouterLoop construction moved from session.py → router_loop_driver.py (PR-3).
+_WIRING_MODULES = (loop_driver_mod, planner_mod, pe_mod)
 
 
 # ---------------------------------------------------------------------------

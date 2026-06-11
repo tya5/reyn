@@ -202,16 +202,29 @@ class _FakeSkillTask:
         return self._was_cancelled
 
 
+class _MinimalLoopDriver:
+    """Minimal stub for RouterLoopDriver's cancel seam in harness tests."""
+
+    def __init__(self) -> None:
+        self._turn_cancel_requested = False
+
+    def request_cancel(self) -> None:
+        self._turn_cancel_requested = True
+
+    def is_cancel_requested(self) -> bool:
+        return self._turn_cancel_requested
+
+
 class _SessionWithCancelSeam:
     """Minimal session-like object exposing the #1468 cancel seam."""
 
     def __init__(self) -> None:
-        self._turn_cancel_requested = False
+        self._loop_driver = _MinimalLoopDriver()
         self.running_skills: dict = {}
         self.running_plans: dict = {}
 
     def _is_turn_cancel_requested(self) -> bool:
-        return self._turn_cancel_requested
+        return self._loop_driver.is_cancel_requested()
 
     async def cancel_inflight(self) -> str:
         from reyn.chat.session import ChatSession
