@@ -309,12 +309,22 @@ def _get_registry():
         def _session_factory(profile: AgentProfile) -> ChatSession:
             registry = registry_ref[0]
             _scoped = get_cli_scoped_overrides()  # #1401 CLI-scoped capabilities
+            # FP-0005: A2A peer sessions cannot surface RouterLoop checkpoint
+            # asks via A2AInterventionBus (follow-up #1493: wire via
+            # A2AInterventionBus.on_dispatch to mirror input-required).
+            # Until then, force on_limit=unattended so max_iterations
+            # exhaustion aborts gracefully (decision-enabling error) instead
+            # of hanging on an unreachable TUI intervention ask.
+            import dataclasses as _dc
+
+            from reyn.config import OnLimitConfig as _OLC
+            _a2a_safety = _dc.replace(config.safety, on_limit=_OLC(mode="unattended"))
             s = build_scoped_chat_session(
                 agent_name=profile.name,
                 model=model,
                 resolver=resolver,
                 permission_resolver=perm_resolver,
-                safety=config.safety,
+                safety=_a2a_safety,
                 mcp_servers=config.mcp,
                 output_language=output_language,
                 prompt_cache_enabled=config.prompt_cache_enabled,
