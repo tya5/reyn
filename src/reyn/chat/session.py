@@ -1987,6 +1987,27 @@ class ChatSession:
             append_history_fn=self._append_history,
         )
 
+        # session.py refactor PR-4 (FP-0019 series final): SkillPlanGlue owns
+        # skill/plan completion routing and chain timeout lifecycle.
+        from reyn.chat.services.skill_plan_glue import SkillPlanGlue
+        self._skill_plan_glue = SkillPlanGlue(
+            append_history_fn=self._append_history,
+            events=self._chat_events,
+            reset_turn_counter_fn=self._reset_router_turn_counter,
+            run_router_loop_fn=self._run_router_loop,
+            emit_cap_exhausted_fn=self._emit_router_cap_exhausted_user,
+            put_outbox_fn=self._put_outbox,
+            inbox=self.inbox,
+            journal=self._journal,
+            on_limit=self._on_limit,
+            chains=self._chains,
+            limit_checkpoint_fn=self._handle_chat_limit_checkpoint,
+            chain_timeout_seconds=self._chain_timeout_seconds,
+            send_agent_response_fn=self._send_agent_response,
+            skill_runner=self._skill_runner,
+            put_inbox_fn=self._put_inbox,
+        )
+
     # ── cost accumulation ───────────────────────────────────────────────────────
 
     def _accumulate(self, result) -> None:
@@ -4098,170 +4119,15 @@ class ChatSession:
         await self._a2a_handler.handle_agent_response(payload)
 
     async def _handle_skill_completed(self, payload: dict) -> None:
-        """FP-0012: drive narration of a background-spawned skill's completion.
-
-        Called from ``run()`` when a ``skill_completed`` inbox message
-        arrives (= enqueued by ``_run_one_skill`` on terminal status).
-        Injects a synthesized ``user``-role message into the existing
-        conversation thread carrying the structured completion data,
-        then runs one router LLM turn so the LLM extracts user-relevant
-        fields and produces a 1-2 sentence narration.
-
-        The user-role injection is the only currently-supported way to
-        re-engage the router LLM mid-conversation: tool_result messages
-        require a paired ``tool_use`` block that has already been
-        consumed (the spawn-ack), so a second tool_result for the same
-        invocation isn't valid per OpenAI / Anthropic API rules.
-
-        ``meta.source="skill_completion"`` distinguishes this from a
-        genuine user-typed message in audit / replay paths; the LLM
-        sees the text content but not the meta envelope.
-        """
-        run_id = payload.get("run_id", "")
-        skill_name = payload.get("skill", "")
-        status = payload.get("status") or "finished"
-        chain_id_raw = payload.get("chain_id") or ""
-        chain_id = chain_id_raw or _new_chain_id()
-        data = payload.get("data") or {}
-
-        # Build the user-role message text. Use a stable header so the
-        # router SP's TASK_COMPLETED rule can match on ``[task_completed]``
-        # reliably. JSON-encode ``data`` so the LLM sees the actual fields
-        # (= avoids lossy string coercion).
-        #
-        # B49 W1-S6 fix (2026-05-22): the "task" abstraction unifies
-        # skill-run and plan completions (= same label, same SP handler,
-        # ``kind=`` field disambiguates). The prescriptive "summarize in
-        # 1-2 sentences" trailer was the dominant signal that drove the
-        # LLM to drop substantive content from its reply (= W1-S6 had
-        # direct_llm returning code that the LLM compressed away). Per
-        # the SP design principle "SP conveys meaning, LLM decides
-        # handling", the injection now carries only meaning fields; the
-        # SP TASK_COMPLETED rule explains what they mean and the LLM
-        # decides how to narrate.
-        try:
-            data_str = json.dumps(data, ensure_ascii=False, indent=2)
-        except (TypeError, ValueError):
-            data_str = repr(data)
-        injected_text = (
-            f"[task_completed] kind=skill run_id={run_id} chain_id={chain_id}\n"
-            f"skill: {skill_name}  status: {status}\n"
-            f"result: {data_str}"
-        )
-
-        self._append_history(ChatMessage(
-            role="user", content=injected_text, ts=_now_iso(),
-            meta={
-                "source": "skill_completion",
-                "skill": skill_name,
-                "run_id": run_id,
-                "status": status,
-                "chain_id": chain_id,
-            },
-        ))
-        self._chat_events.emit(
-            "skill_completion_injected",
-            run_id=run_id, skill=skill_name, status=status, chain_id=chain_id,
-        )
-
-        # Reset the per-turn router cap counter — completion narration is a
-        # fresh turn boundary from the user's perspective (a new outbox reply
-        # will be produced).
-        self._reset_router_turn_counter()
-
-        try:
-            await self._run_router_loop(injected_text, chain_id)
-        except RouterCapExceeded as exc:
-            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
-            return
-        except Exception as exc:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"router failed (skill_completed): {exc}",
-                meta={"chain_id": chain_id, "skill": skill_name, "run_id": run_id},
-            ))
-            return
-
+        """Forwarding → SkillPlanGlue.handle_skill_completed (PR-4)."""
+        await self._skill_plan_glue.handle_skill_completed(payload)
     async def drain_skill_completed_inbox(
         self, *, deadline_monotonic: float,
     ) -> bool:
-        """FP-0012 / R-A2A-COMPLETION-DRAIN: dispatch queued
-        ``skill_completed`` inbox kinds inline up to a deadline.
-
-        ``session.run()`` is the normal consumer of the inbox, but the
-        A2A / MCP bypass path (= ``mcp_server.send_to_agent_impl``)
-        drives ``_handle_user_message`` directly without ever starting
-        ``session.run()`` (asyncio-starvation under the stdio transport).
-        Without this drain, a non-blocking ``invoke_skill`` that spawns
-        a skill in the background never gets its completion narration
-        produced under A2A — the caller only sees the spawn ack.
-
-        Behaviour:
-
-        - Pops every queued inbox item non-blockingly.
-        - For ``skill_completed`` kinds, records the WAL consume entry
-          (mirrors what ``_consume_inbox`` would do) and dispatches to
-          ``_handle_skill_completed`` within the remaining deadline
-          budget so the router LLM produces the narration.
-        - Other kinds are preserved (re-queued in original order) so
-          the next consumer / call can pick them up.
-
-        Returns ``True`` if the drain completed before the deadline,
-        ``False`` if the deadline fired mid-drain (= partial reply).
-        """
-        import time as _time
-
-        deferred: list[tuple[str, dict]] = []
-        drained_ok = True
-        while True:
-            try:
-                item = self.inbox.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            kind, payload = item
-            if kind != "skill_completed":
-                deferred.append(item)
-                continue
-            # Mirror the journal-consume bookkeeping that
-            # ``_consume_inbox`` performs so the WAL record matches.
-            msg_id = (
-                payload.get("_msg_id") if isinstance(payload, dict) else None
-            )
-            try:
-                await self._journal.consume_inbox(msg_id=msg_id)
-            except Exception as exc:  # noqa: BLE001 — best effort, drain proceeds
-                logger.warning(
-                    "drain_skill_completed_inbox: WAL consume failed "
-                    "msg_id=%s: %s",
-                    msg_id, exc,
-                )
-            remaining = max(0.1, deadline_monotonic - _time.monotonic())
-            # ``asyncio.timeout()`` (Python 3.11+) instead of
-            # ``asyncio.wait_for`` because ``_handle_skill_completed``
-            # drives a router LLM turn (= litellm → httpx async →
-            # internal anyio cancel scopes). If wait_for wraps the
-            # coroutine in a new task and the timeout fires mid-LLM
-            # call, the httpx cleanup runs in a different task than
-            # the entry → ``RuntimeError: Attempted to exit cancel
-            # scope in a different task...``. ``asyncio.timeout()``
-            # is a task-local deadline so the cleanup stays in-task.
-            try:
-                async with asyncio.timeout(remaining):
-                    await self._handle_skill_completed(payload)
-            except asyncio.TimeoutError:
-                drained_ok = False
-                break
-            except Exception as exc:  # noqa: BLE001 — log + continue
-                logger.warning(
-                    "drain_skill_completed_inbox: handler failed "
-                    "run_id=%s skill=%s: %s",
-                    payload.get("run_id"), payload.get("skill"), exc,
-                )
-        # Restore non-skill_completed kinds (FIFO order preserved).
-        for item in deferred:
-            self.inbox.put_nowait(item)
-        return drained_ok
-
+        """Forwarding → SkillPlanGlue.drain_skill_completed_inbox (PR-4)."""
+        return await self._skill_plan_glue.drain_skill_completed_inbox(
+            deadline_monotonic=deadline_monotonic,
+        )
     # ── chain timeout (PR18) ───────────────────────────────────────────────────
     # PR-refactor-session-1 wave 2: timer arm/cancel + sleep-and-fire loop are
     # now owned by ChainManager. The session keeps the on-fire callback below
@@ -4269,89 +4135,8 @@ class ChatSession:
     # stays out of the service layer.
 
     async def _on_chain_timeout_fire(self, chain_id: str) -> None:
-        """ChainManager invokes this when a chain's timeout watchdog fires.
-
-        Pops the pending chain via `_chains.fire_timeout` (which also
-        records the WAL `chain_timeout_fired` event), emits the
-        `chain_timeout` audit event, and synthesises an error response
-        upstream so the parent chain doesn't hang.
-
-        FP-0005: when ``safety.on_limit.mode`` opts in (interactive /
-        auto_extend), the watchdog peeks at the pending chain *before*
-        firing and asks whether to re-arm with a fresh deadline.
-        ``unattended`` (= default) preserves the legacy fire-and-error
-        behaviour byte-for-byte.
-        """
-        # FP-0005: try to re-arm the watchdog before firing if the
-        # operator opted in. The ChainManager's fire_timeout pop is
-        # destructive, so peek first via the registry's `get` accessor.
-        if self._on_limit.mode != "unattended":
-            pending_peek = self._chains.get(chain_id)
-            if pending_peek is not None:
-                waiting_peek = sorted(pending_peek.waiting_on)
-                decision = await self._handle_chat_limit_checkpoint(
-                    kind=f"chain_seconds:{chain_id}",
-                    prompt=(
-                        f"Chain {chain_id} timed out waiting for "
-                        f"{', '.join(waiting_peek) or 'unknown'} after "
-                        f"{self._chain_timeout_seconds:g}s. Wait longer?"
-                    ),
-                    detail=(
-                        f"chain={chain_id} waiting_on={waiting_peek} "
-                        f"timeout={self._chain_timeout_seconds:g}s"
-                    ),
-                    extension_amount=float(self._chain_timeout_seconds),
-                    run_id=chain_id,
-                )
-                if decision.allow_continue:
-                    # Re-arm the watchdog for another window.
-                    self._chains.arm_timeout(
-                        chain_id, on_fire=self._on_chain_timeout_fire,
-                    )
-                    self._chat_events.emit(
-                        "chain_timeout_extended",
-                        chain_id=chain_id,
-                        waiting_on=waiting_peek,
-                        extension_seconds=decision.extension,
-                        reason=decision.reason,
-                    )
-                    return  # do NOT fire timeout
-        pending = await self._chains.fire_timeout(chain_id)
-        if pending is None:
-            return  # resolved between sleep wake and fire — nothing to do
-        waiting = sorted(pending.waiting_on)
-        # FP-0004: hint at the config key the operator can raise.
-        error_text = (
-            f"chain timeout: {len(waiting)} delegate(s) "
-            f"({', '.join(waiting) or 'unknown'}) did not respond within "
-            f"{self._chain_timeout_seconds:g}s. "
-            f"→ Raise safety.timeout.chain_seconds to wait longer "
-            f"(0 = no timeout)."
-        )
-        self._chat_events.emit(
-            "chain_timeout",
-            chain_id=chain_id,
-            waiting_on=waiting,
-            timeout_seconds=self._chain_timeout_seconds,
-            origin_agent=pending.origin_agent,
-        )
-        try:
-            await self._send_agent_response(
-                to=pending.origin_agent,
-                response=error_text,
-                depth=pending.origin_depth,
-                chain_id=chain_id,
-            )
-        except Exception as exc:
-            # Don't let send failures wedge the loop — we already removed
-            # the pending entry, so the worst case is a chain that lost its
-            # error message but already won't hang.
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"chain timeout: failed to notify upstream: {exc}",
-                meta={"chain_id": chain_id},
-            ))
-
+        """Forwarding → SkillPlanGlue.on_chain_timeout_fire (PR-4)."""
+        await self._skill_plan_glue.on_chain_timeout_fire(chain_id)
     async def _on_chain_peer_discarded(
         self, *, chain_id: str, peer: str, reason: str,
     ) -> None:
@@ -4521,12 +4306,12 @@ class ChatSession:
     async def _spawn_skill_for_router(
         self, spec: dict, *, chain_id: str
     ) -> dict:
-        """Thin delegation to SkillRunner.spawn_for_router (FP-0019 Wave 1b)."""
-        return await self._skill_runner.spawn_for_router(spec, chain_id=chain_id)
+        """Forwarding → SkillPlanGlue.spawn_skill_for_router (PR-4)."""
+        return await self._skill_plan_glue.spawn_skill_for_router(spec, chain_id=chain_id)
 
     async def _spawn_skill(self, spec: dict, *, chain_id: str | None = None) -> None:
-        """Thin delegation to SkillRunner.spawn (FP-0019 Wave 1b)."""
-        await self._skill_runner.spawn(spec, chain_id=chain_id)
+        """Forwarding → SkillPlanGlue.spawn_skill (PR-4)."""
+        await self._skill_plan_glue.spawn_skill(spec, chain_id=chain_id)
 
     async def _enqueue_skill_completed(
         self,
@@ -4569,25 +4354,19 @@ class ChatSession:
         plan_id: str,
         chain_id: str,
         goal: str,
-        step_results: dict[str, str],
-        step_failures: dict[str, str],
+        step_results: "dict[str, str]",
+        step_failures: "dict[str, str]",
         n_steps: int,
     ) -> None:
-        """FP-0025 C: enqueue plan_completed inbox for router narration."""
-        try:
-            await self._put_inbox(
-                "plan_completed",
-                {
-                    "plan_id": plan_id,
-                    "chain_id": chain_id,
-                    "goal": goal,
-                    "step_results": step_results,
-                    "step_failures": step_failures,
-                    "n_steps": n_steps,
-                },
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("_enqueue_plan_completed failed for %s: %r", plan_id, exc)
+        """Forwarding → SkillPlanGlue.enqueue_plan_completed (PR-4)."""
+        await self._skill_plan_glue.enqueue_plan_completed(
+            plan_id=plan_id,
+            chain_id=chain_id,
+            goal=goal,
+            step_results=step_results,
+            step_failures=step_failures,
+            n_steps=n_steps,
+        )
 
     async def _handle_plan_completed(self, payload: dict) -> None:
         """FP-0025 C: narrate plan completion via one router LLM turn.
