@@ -38,8 +38,8 @@ the current configured value, and which config key to change.
 | Agent hops | `safety.loop.max_agent_hops` | 3 | ✅ | yes |
 | Phase wall-clock | `safety.timeout.phase_seconds` | 0 (off) | ✅ | yes |
 | Chain wait | `safety.timeout.chain_seconds` | 60 | ✅ | yes |
-| Router iterations | `router_max_iterations` _(ChatSession param)_ | 5 / 80 | ✅ | partial |
-| Plan step iterations | `plan.step_max_iterations` | 5 | ✅ | partial |
+| Router iterations | `router_max_iterations` _(ChatSession param)_ | 5 / 80 | ❌ → ✅ _(pending)_ | partial |
+| Plan step iterations | `plan.step_max_iterations` | 5 | ❌ → ✅ _(pending)_ | partial |
 | LLM call timeout | `safety.timeout.llm_call_seconds` | 60 | ❌ auto-retry/abort | — |
 | Media cap | `multimodal.max_bytes` | 5 MB | ❌ auto-degrade | — |
 | Summary body cap | `chat.compaction.body_token_cap` | 1500 | ❌ auto-truncate | — |
