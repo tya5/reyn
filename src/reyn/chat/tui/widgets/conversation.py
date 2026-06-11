@@ -1470,6 +1470,169 @@ class _MessageRenderer:
         self._parent._log().write(Padding(t, (0, 6, 0, 0)), expand=True)
 
 
+class _StreamController:
+    """Owns the in-flight streaming state and all stream lifecycle methods.
+
+    Extracted from ConversationView (tui-pr4). ConversationView retains
+    begin_stream / append_stream / end_stream / end_stream_cancelled as
+    thin 1-line delegates so the external call-site API is unchanged.
+
+    State owned:
+        _stream_rows      — msg_id → StreamingRow widget
+        _stream_new_turn  — msg_id → is_new_turn bool (stream-start grouping
+                            decision, #1253 Plan A guardrail ①)
+    """
+
+    def __init__(self, parent: "ConversationView") -> None:
+        self._parent = parent
+        self._stream_rows: dict[str, StreamingRow] = {}
+        self._stream_new_turn: dict[str, bool] = {}
+
+    @property
+    def stream_rows(self) -> "dict[str, StreamingRow]":
+        """Shallow copy of the in-flight stream-row registry (msg_id → row)."""
+        return dict(self._stream_rows)
+
+    def reset_for_clear(self) -> None:
+        """Seal all in-flight rows and clear both dicts (called by clear())."""
+        for row in self._stream_rows.values():
+            row.seal()
+        self._stream_rows.clear()
+        self._stream_new_turn.clear()
+
+    def begin_stream(self, msg_id: str, agent_name: str = "") -> StreamingRow:
+        """Start a streaming agent message row. Returns the row widget.
+
+        #1253 Plan A (guardrail ①): capture the grouping decision at START
+        so that the inline header written at seal-time reflects the stream-start
+        timing, not the (potentially different) seal timing.  The date-separator
+        and turn-anchor side-effects of ``_check_new_turn`` fire here; the
+        actual header write is deferred to ``end_stream`` via
+        ``_commit_stream_inline``.
+        """
+        self._parent._consume_empty_hint()
+        log = self._parent._log()
+        is_new_turn = self._parent._check_new_turn("reyn", log)
+        self._parent._renderer.set_speaker("reyn", time.time())
+        row = StreamingRow(
+            prefix="",
+            id=f"stream_{msg_id[:8]}",
+            indent=self._parent._current_body_indent(),
+        )
+        self._stream_rows[msg_id] = row
+        self._stream_new_turn[msg_id] = is_new_turn
+        self._parent.mount(row)
+        return row
+
+    def append_stream(self, msg_id: str, text: str) -> None:
+        row = self._stream_rows.get(msg_id)
+        if row is not None:
+            row.append(text)
+
+    def _commit_stream_inline(self, full: str, is_new_turn: bool) -> None:
+        """Commit the sealed streaming reply as inline ``HH:MM ⏺ first-line`` form.
+
+        #1253 Plan A: called from ``end_stream`` with the grouping decision
+        captured at stream-START.
+
+        /copy preservation: records the FULL reply in ``_recent_replies`` here
+        (NOT just the rest after the first line) so ``last_reply_text()``
+        returns the whole thing.  Using ``_write_agent_markdown(rest)`` would
+        record only the body minus the first line, which would truncate the
+        /copy result.
+        """
+        self._parent._renderer.record_reply(full)
+        first_line_plain = _plain_first_line(full)
+        self._parent._maybe_write_inline_header_body(
+            "reyn", _GLYPH_AGENT, "bold " + _AMBER, Text(first_line_plain),
+            is_new_turn=is_new_turn,
+        )
+        body_lines = full.splitlines()
+        if len(body_lines) > 1:
+            rest = "\n".join(body_lines[1:])
+            self._parent._write_body(RichMarkdown(rest))
+
+    def end_stream(self, msg_id: str) -> str:
+        """Seal the stream and flush the final content INTO the RichLog inline,
+        then remove the transient StreamingRow widget so the bottom of the
+        pane stays empty (or holds the next streaming row).
+
+        Replies render inline as ``HH:MM ⏺ <first-line>`` with grouping
+        captured at stream-start (#1253 Plan A).
+        """
+        row = self._stream_rows.pop(msg_id, None)
+        if row is None:
+            return ""
+        full = row.full_text()
+        row.seal()
+        self._parent.stop_thinking()
+        self._parent.hide_status()
+        is_new_turn = self._stream_new_turn.pop(msg_id, True)
+        if full:
+            try:
+                self._commit_stream_inline(full, is_new_turn)
+            except Exception:
+                self._parent._log().write(Text(full))
+        self._parent._log().write(Text(""))
+        try:
+            row.remove()
+        except Exception:
+            pass
+        return full
+
+    def end_stream_cancelled(self, msg_id: str) -> str:
+        """Seal a cancelled stream and write a visually-differentiated partial.
+
+        Wave-9 F-F7: the previous cancel path called ``end_stream``
+        which committed the partial text via the same
+        ``_write_agent_markdown`` formatting used for
+        complete replies, then appended a separate ``"  ⌁ cancelled"``
+        suffix line. Scrolling back through history the user couldn't
+        tell which was a cancelled fragment vs a real reply — the
+        partial rendered with full Markdown styling (= bold / headers /
+        code blocks / etc.), and the dim suffix was easy to miss
+        because it sat below the visible region for any reply taller
+        than the viewport.
+
+        The cancelled path now:
+          - emits a clear ``✗ cancelled (partial reply):`` header BEFORE
+            the partial text, in bold dim-red so it sits in the
+            user's eyeline at the top of the fragment
+          - renders the partial body as plain dim italic text (no
+            Markdown). Partial text usually has half-closed code
+            fences / unclosed lists / broken bold spans, so Markdown
+            rendering produced wrong styling anyway — the dim plain
+            text reads as "incomplete fragment".
+
+        The normal ``end_stream`` path is unchanged; only the explicit
+        cancel call site in ``action_cancel_inflight`` routes through
+        here.
+        """
+        row = self._stream_rows.pop(msg_id, None)
+        if row is None:
+            return ""
+        full = row.full_text()
+        row.seal()
+        self._parent.stop_thinking()
+        self._parent.hide_status()
+        self._stream_new_turn.pop(msg_id, None)
+        if full:
+            self._parent._renderer.record_reply(full)
+            try:
+                self._parent._log().write(
+                    Text("✗ cancelled (partial reply):", style=f"bold {_RED_MUTED}"),
+                )
+                self._parent._write_body(Text(full, style="dim italic " + _TEXT_MUTED))
+            except Exception:
+                self._parent._log().write(Text(full))
+        self._parent._log().write(Text(""))
+        try:
+            row.remove()
+        except Exception:
+            pass
+        return full
+
+
 class ConversationView(Widget):
     """Main conversation pane: RichLog + inline widgets + sticky status.
 
@@ -1541,12 +1704,9 @@ class ConversationView(Widget):
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
-        self._stream_rows: dict[str, StreamingRow] = {}
-        # Grouping decision captured at stream-START (guardrail ①, #1253).
-        # Maps msg_id → is_new_turn bool, populated in begin_stream and consumed
-        # in end_stream / end_stream_cancelled so the header is written with
-        # stream-start timing (not seal-time).
-        self._stream_new_turn: dict[str, bool] = {}
+        # Stream controller: owns _stream_rows, _stream_new_turn, and all
+        # stream lifecycle methods (refactor tui-pr4).
+        self._stream_ctrl = _StreamController(self)
         # Inline row manager: owns _skill_rows, _tool_call_rows,
         # _last_failed_tool_row and all methods that operate on them
         # (refactor tui-pr1).
@@ -1819,7 +1979,7 @@ class ConversationView(Widget):
         accessing ``_stream_rows`` directly — per CLAUDE.md testing
         policy.  Returns a snapshot; do not mutate the returned dict.
         """
-        return dict(self._stream_rows)
+        return self._stream_ctrl.stream_rows
 
     def on_mount(self) -> None:
         """Wire a scroll watcher so user scroll-up suppresses auto-scroll.
@@ -1956,158 +2116,19 @@ class ConversationView(Widget):
     def _write_body(self, renderable: RenderableType) -> None:
         self._renderer._write_body(renderable)
 
-    # ── streaming support ─────────────────────────────────────────────────────
+    # ── streaming support (delegated to _StreamController, tui-pr4) ─────────
 
     def begin_stream(self, msg_id: str, agent_name: str = "") -> StreamingRow:
-        """Start a streaming agent message row. Returns the row widget.
-
-        #1253 Plan A (guardrail ①): capture the grouping decision at START
-        so that the inline header written at seal-time reflects the stream-start
-        timing, not the (potentially different) seal timing.  The date-separator
-        and turn-anchor side-effects of ``_check_new_turn`` fire here; the
-        actual header write is deferred to ``end_stream`` via
-        ``_commit_stream_inline``.
-        """
-        self._consume_empty_hint()
-        # Capture grouping decision NOW (stream-start timing) and anchor
-        # _last_speaker / _last_speaker_at so same-window consecutive streams
-        # group correctly.
-        log = self._log()
-        is_new_turn = self._check_new_turn("reyn", log)
-        self._renderer.set_speaker("reyn", time.time())
-        # Pass the current body indent so the streaming row aligns with
-        # body text for the current timestamp-toggle state (Fix 2 / A1).
-        row = StreamingRow(
-            prefix="",
-            id=f"stream_{msg_id[:8]}",
-            indent=self._current_body_indent(),
-        )
-        self._stream_rows[msg_id] = row
-        self._stream_new_turn[msg_id] = is_new_turn
-        self.mount(row)
-        return row
+        return self._stream_ctrl.begin_stream(msg_id, agent_name)
 
     def append_stream(self, msg_id: str, text: str) -> None:
-        row = self._stream_rows.get(msg_id)
-        if row is not None:
-            row.append(text)
-
-    def _commit_stream_inline(self, full: str, is_new_turn: bool) -> None:
-        """Commit the sealed streaming reply as inline ``HH:MM ⏺ first-line`` form.
-
-        #1253 Plan A: called from ``end_stream`` with the grouping decision
-        captured at stream-START.
-
-        /copy preservation: records the FULL reply in ``_recent_replies`` here
-        (NOT just the rest after the first line) so ``last_reply_text()``
-        returns the whole thing.  Using ``_write_agent_markdown(rest)`` would
-        record only the body minus the first line, which would truncate the
-        /copy result.
-        """
-        # /copy: record full reply first.
-        self._renderer.record_reply(full)
-
-        first_line_plain = _plain_first_line(full)
-        self._maybe_write_inline_header_body(
-            "reyn", _GLYPH_AGENT, "bold " + _AMBER, Text(first_line_plain),
-            is_new_turn=is_new_turn,
-        )
-
-        body_lines = full.splitlines()
-        if len(body_lines) > 1:
-            rest = "\n".join(body_lines[1:])
-            # Render rest as Markdown at col-8 WITHOUT re-recording in
-            # _recent_replies (already recorded `full` above).
-            self._write_body(RichMarkdown(rest))
+        self._stream_ctrl.append_stream(msg_id, text)
 
     def end_stream(self, msg_id: str) -> str:
-        """Seal the stream and flush the final content INTO the RichLog inline,
-        then remove the transient StreamingRow widget so the bottom of the
-        pane stays empty (or holds the next streaming row).
-
-        Replies render inline as ``HH:MM ⏺ <first-line>`` with grouping
-        captured at stream-start (#1253 Plan A).
-        """
-        row = self._stream_rows.pop(msg_id, None)
-        if row is None:
-            return ""
-        full = row.full_text()
-        # Seal stops the cursor + 16ms tick.
-        row.seal()
-        self.stop_thinking()  # unmount inline spinner (turn reply started)
-        self.hide_status()
-        # Pop the stream-start grouping decision (default True = new turn).
-        is_new_turn = self._stream_new_turn.pop(msg_id, True)
-        if full:
-            try:
-                self._commit_stream_inline(full, is_new_turn)
-            except Exception:
-                self._log().write(Text(full))
-        self._log().write(Text(""))
-        try:
-            row.remove()
-        except Exception:
-            pass
-        return full
+        return self._stream_ctrl.end_stream(msg_id)
 
     def end_stream_cancelled(self, msg_id: str) -> str:
-        """Seal a cancelled stream and write a visually-differentiated partial.
-
-        Wave-9 F-F7: the previous cancel path called ``end_stream``
-        which committed the partial text via the same
-        ``_write_agent_markdown`` formatting used for
-        complete replies, then appended a separate ``"  ⌁ cancelled"``
-        suffix line. Scrolling back through history the user couldn't
-        tell which was a cancelled fragment vs a real reply — the
-        partial rendered with full Markdown styling (= bold / headers /
-        code blocks / etc.), and the dim suffix was easy to miss
-        because it sat below the visible region for any reply taller
-        than the viewport.
-
-        The cancelled path now:
-          - emits a clear ``✗ cancelled (partial reply):`` header BEFORE
-            the partial text, in bold dim-red so it sits in the
-            user's eyeline at the top of the fragment
-          - renders the partial body as plain dim italic text (no
-            Markdown). Partial text usually has half-closed code
-            fences / unclosed lists / broken bold spans, so Markdown
-            rendering produced wrong styling anyway — the dim plain
-            text reads as "incomplete fragment".
-
-        The normal ``end_stream`` path is unchanged; only the explicit
-        cancel call site in ``action_cancel_inflight`` routes through
-        here.
-        """
-        row = self._stream_rows.pop(msg_id, None)
-        if row is None:
-            return ""
-        full = row.full_text()
-        row.seal()
-        self.stop_thinking()  # unmount inline spinner (cancelled stream)
-        self.hide_status()
-        # Pop (and discard) the stream-start grouping decision so the dict
-        # doesn't leak entries when the stream is cancelled (#1253).
-        self._stream_new_turn.pop(msg_id, None)
-        if full:
-            # Wave-10 G-F10: stash the partial in the recent-replies ring
-            # buffer so ``/copy`` after a cancel returns the fragment the
-            # user just saw streaming. Capping mirrors the
-            # ``_write_agent_markdown`` cap (= one source of truth for
-            # the buffer's bounded size).
-            self._renderer.record_reply(full)
-            try:
-                self._log().write(
-                    Text("✗ cancelled (partial reply):", style=f"bold {_RED_MUTED}"),
-                )
-                self._write_body(Text(full, style="dim italic " + _TEXT_MUTED))
-            except Exception:
-                self._log().write(Text(full))
-        self._log().write(Text(""))
-        try:
-            row.remove()
-        except Exception:
-            pass
-        return full
+        return self._stream_ctrl.end_stream_cancelled(msg_id)
 
     # ── skill + tool-call rows (delegated to _InlineRowManager, tui-pr1) ──────
 
@@ -2285,9 +2306,8 @@ class ConversationView(Widget):
     def clear(self) -> None:
         """Ctrl+L: clear the log + reset state. Does not affect engine state."""
         self._log().clear()
-        for row in self._stream_rows.values():
-            row.seal()
-        self._stream_rows.clear()
+        # Seal + clear in-flight stream rows via controller (tui-pr4).
+        self._stream_ctrl.reset_for_clear()
         # Sweep skill + tool-call rows via manager (tui-pr1).
         self._row_mgr.clear()
         # AsyncStackPanel wiring: drop all bottom-stack entries so a
