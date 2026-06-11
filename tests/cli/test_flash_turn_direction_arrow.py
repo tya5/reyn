@@ -38,14 +38,14 @@ async def test_backward_jump_renders_up_arrow() -> None:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         log = conv._log()
-        conv._turn_anchors = [5, 50, 100]
+        conv._scroll_ctrl._turn_anchors = [5, 50, 100]
         try:
             log.scroll_to(y=100, animate=False)
         except Exception:
             pass
         await pilot.pause()
 
-        conv._jump_to_relative_anchor(-1)
+        conv._scroll_ctrl._jump_to_relative_anchor(-1)
         await pilot.pause()
         snap = conv._sticky().snapshot()
         assert snap["active"]
@@ -71,14 +71,14 @@ async def test_forward_jump_renders_down_arrow() -> None:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         log = conv._log()
-        conv._turn_anchors = [5, 50, 100]
+        conv._scroll_ctrl._turn_anchors = [5, 50, 100]
         try:
             log.scroll_to(y=10, animate=False)
         except Exception:
             pass
         await pilot.pause()
 
-        conv._jump_to_relative_anchor(+1)
+        conv._scroll_ctrl._jump_to_relative_anchor(+1)
         await pilot.pause()
         snap = conv._sticky().snapshot()
         assert snap["active"]
@@ -95,8 +95,8 @@ def test_flash_turn_position_signature_accepts_delta_kwarg() -> None:
     """
     import inspect
 
-    from reyn.chat.tui.widgets.conversation import ConversationView
-    sig = inspect.signature(ConversationView._flash_turn_position)
+    from reyn.chat.tui.widgets.conversation import _ScrollController
+    sig = inspect.signature(_ScrollController._flash_turn_position)
     assert "delta" in sig.parameters
     # Default is backward (preserves legacy behavior for any caller
     # that doesn't pass the new arg).

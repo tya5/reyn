@@ -395,6 +395,334 @@ class _StatusSpinnerController:
             pass
 
 
+class _ScrollController:
+    """Manages scroll-lock, turn navigation, and the '↓ N new' indicator.
+
+    Extracted from ConversationView (refactor tui-pr3). Owns all scroll/
+    viewport state and the methods that operate on it. ConversationView
+    retains public methods as thin delegates and Textual reactive handlers
+    as 1-line forwarders.
+
+    Dependencies injected via parent reference:
+      parent._log()        — the RichLog widget
+      parent._write_log()  — permanent log line write
+      parent._sticky()     — StickyStatus widget
+      parent.show_status() — route to StickyStatus
+      parent.query_one()   — Textual widget query
+    """
+
+    def __init__(self, parent: "ConversationView") -> None:
+        self._parent = parent
+        # Scroll-lock state
+        self._user_scrolled: bool = False
+        self._new_below_baseline: int = -1
+        self._new_below_count: int = 0
+        # Turn navigation anchors (absolute, drop-aware)
+        self._turn_anchors: list[int] = []
+        # One-shot warning flags
+        self._trim_warned: bool = False
+        self._start_line_warned: bool = False
+        # Flash dedup for turn-position + boundary cues
+        self._last_turn_flash: tuple[int, int] | None = None
+        self._last_boundary_flash: str | None = None
+
+    # ── read-only state accessors ────────────────────────────────────────────
+
+    @property
+    def user_scrolled(self) -> bool:
+        return self._user_scrolled
+
+    @property
+    def new_below_count(self) -> int:
+        return self._new_below_count
+
+    @property
+    def trim_warned(self) -> bool:
+        return self._trim_warned
+
+    def turn_anchors_snapshot(self) -> tuple[int, ...]:
+        return tuple(self._turn_anchors)
+
+    def richlog_start_line(self, log: "RichLog") -> int:
+        return self._richlog_start_line(log)
+
+    def absolute_line_position(self, log: "RichLog") -> int:
+        return self._absolute_line_position(log)
+
+    # ── public scroll methods ────────────────────────────────────────────────
+
+    def snap_to_bottom(self) -> None:
+        """Force the log to the tail and re-arm auto-scroll.
+
+        Called from 're-engaging' entry points (render_user_message, clear,
+        scroll_to_bottom) so prior scroll-up state doesn't pin the user.
+        """
+        try:
+            log = self._parent._log()
+        except Exception:
+            return
+        try:
+            log.auto_scroll = True
+            log.scroll_end(animate=False)
+        except Exception:
+            pass
+        self._user_scrolled = False
+        self._new_below_baseline = -1
+        self._update_new_below(0)
+
+    def jump_prev_turn(self) -> None:
+        self._jump_to_relative_anchor(-1)
+
+    def jump_next_turn(self) -> None:
+        self._jump_to_relative_anchor(+1)
+
+    def scroll_page_up(self) -> None:
+        """Scroll up one page; sets user-scrolled so auto-scroll doesn't snap back."""
+        log = self._parent._log()
+        try:
+            log.scroll_page_up(animate=False)
+        except Exception:
+            try:
+                log.scroll_relative(y=-log.size.height, animate=False)
+            except Exception:
+                pass
+        self._user_scrolled = True
+
+    def scroll_to_top(self) -> None:
+        """Jump to the oldest content; sets user-scrolled."""
+        log = self._parent._log()
+        try:
+            log.scroll_home(animate=False)
+        except Exception:
+            try:
+                log.scroll_to(y=0, animate=False)
+            except Exception:
+                pass
+        self._user_scrolled = True
+
+    def scroll_page_down(self) -> None:
+        """Scroll down one page; re-arms auto-scroll only if we land at the tail."""
+        log = self._parent._log()
+        try:
+            log.scroll_page_down(animate=False)
+        except Exception:
+            try:
+                log.scroll_relative(y=log.size.height, animate=False)
+            except Exception:
+                pass
+        try:
+            if log.scroll_y >= log.max_scroll_y - 1:
+                self._user_scrolled = False
+            else:
+                self._user_scrolled = True
+        except Exception:
+            pass
+
+    def scroll_line_up(self) -> None:
+        """Scroll up one line; sets user-scrolled."""
+        log = self._parent._log()
+        try:
+            log.scroll_relative(y=-1, animate=False)
+        except Exception:
+            pass
+        self._user_scrolled = True
+
+    def scroll_line_down(self) -> None:
+        """Scroll down one line; re-arms auto-scroll only at the tail."""
+        log = self._parent._log()
+        try:
+            log.scroll_relative(y=1, animate=False)
+        except Exception:
+            pass
+        try:
+            if log.scroll_y >= log.max_scroll_y - 1:
+                self._user_scrolled = False
+            else:
+                self._user_scrolled = True
+        except Exception:
+            pass
+
+    def scroll_to_bottom(self) -> None:
+        self.snap_to_bottom()
+
+    # ── bridge methods (called from non-scroll ConversationView methods) ─────
+
+    def record_turn_anchor(self, log: "RichLog") -> None:
+        """Append the current absolute write-position as a turn anchor."""
+        self._turn_anchors.append(self._absolute_line_position(log))
+
+    def maybe_warn_trim(self, log: "RichLog") -> None:
+        """Emit one-shot trim warning when the ring buffer has dropped lines."""
+        if not self._trim_warned and self._richlog_start_line(log) > 0:
+            self._maybe_warn_about_trimmed_history(log)
+
+    def reset_for_clear(self) -> None:
+        """Reset all scroll/nav state for Ctrl+L; caller handles log.auto_scroll."""
+        self._last_turn_flash = None
+        self._last_boundary_flash = None
+        self._turn_anchors.clear()
+        self._trim_warned = False
+        self._user_scrolled = False
+        self._new_below_baseline = -1
+        self._update_new_below(0)
+
+    # ── reactive handler bodies (called from ConversationView watchers) ──────
+
+    def on_log_scroll_y(self, old: float, new: float) -> None:
+        """Flip auto_scroll and _user_scrolled based on at-bottom check."""
+        try:
+            log = self._parent._log()
+        except Exception:
+            return
+        at_bottom = new >= log.max_scroll_y - 1
+        if at_bottom:
+            if not log.auto_scroll:
+                log.auto_scroll = True
+            if self._user_scrolled:
+                self._user_scrolled = False
+            self._new_below_baseline = -1
+            self._update_new_below(0)
+        else:
+            if log.auto_scroll:
+                log.auto_scroll = False
+            if not self._user_scrolled:
+                self._user_scrolled = True
+            if self._new_below_baseline < 0:
+                self._new_below_baseline = int(log.max_scroll_y)
+                self._update_new_below(0)
+
+    def on_log_content_grew(self, old: object, new: object) -> None:
+        """RichLog virtual_size changed — refresh the '↓ N new' count."""
+        if self._new_below_baseline < 0:
+            return
+        try:
+            log = self._parent._log()
+        except Exception:
+            return
+        delta = int(log.max_scroll_y) - self._new_below_baseline
+        self._update_new_below(max(0, delta))
+
+    # ── private helpers ──────────────────────────────────────────────────────
+
+    def _update_new_below(self, count: int) -> None:
+        self._new_below_count = max(0, count)
+        try:
+            strip = self._parent.query_one("#new-below", Static)
+        except Exception:
+            return
+        if count <= 0:
+            if "hidden" not in strip.classes:
+                strip.add_class("hidden")
+            return
+        noun = "new line" if count == 1 else "new lines"
+        strip.update(f"↓ {count} {noun} below · Alt+End to jump")
+        if "hidden" in strip.classes:
+            strip.remove_class("hidden")
+
+    def _richlog_start_line(self, log: "RichLog") -> int:
+        """Return log._start_line defensively (G-F15 one-shot warning on API change)."""
+        value = getattr(log, "_start_line", None)
+        if value is None:
+            if not self._start_line_warned:
+                self._start_line_warned = True
+                logger.warning(
+                    "RichLog._start_line is missing — Textual API may "
+                    "have changed; turn-navigation anchors will degrade "
+                    "to treating all history as never-trimmed. Update "
+                    "the helper at conversation._richlog_start_line.",
+                )
+            return 0
+        return value
+
+    def _absolute_line_position(self, log: "RichLog") -> int:
+        return self._richlog_start_line(log) + len(log.lines)
+
+    def _resolve_anchors_to_current_view(self, log: "RichLog") -> list[int]:
+        start = self._richlog_start_line(log)
+        return [a - start for a in self._turn_anchors if a - start >= 0]
+
+    def _maybe_warn_about_trimmed_history(self, log: "RichLog") -> None:
+        if self._trim_warned:
+            return
+        start = self._richlog_start_line(log)
+        if start <= 0:
+            return
+        self._trim_warned = True
+        warning_text = f"↑ earlier history trimmed ({start:,} lines)"
+        try:
+            self._parent._write_log(Text(f"  {warning_text}", style="dim italic " + _TEXT_MUTED))
+        except Exception:
+            pass
+        sticky = self._parent._sticky()
+        if sticky is not None:
+            try:
+                sticky.show(warning_text, kind="general")
+            except Exception:
+                pass
+
+    def _jump_to_relative_anchor(self, delta: int) -> None:
+        if not self._turn_anchors:
+            return
+        log = self._parent._log()
+        anchors = self._resolve_anchors_to_current_view(log)
+        if not anchors:
+            self._maybe_warn_about_trimmed_history(log)
+            return
+        if len(anchors) < len(self._turn_anchors):
+            self._maybe_warn_about_trimmed_history(log)
+        cur_y = log.scroll_y
+        if delta < 0:
+            target = None
+            for a in reversed(anchors):
+                if a < cur_y - 1:
+                    target = a
+                    break
+            hit_boundary = target is None
+            if target is None:
+                target = anchors[0]
+        else:
+            target = None
+            for a in anchors:
+                if a > cur_y + 1:
+                    target = a
+                    break
+            hit_boundary = target is None
+            if target is None:
+                target = anchors[-1]
+        if hit_boundary and abs(cur_y - target) <= 1:
+            self._flash_boundary_hint("start" if delta < 0 else "end")
+            return
+        try:
+            log.scroll_to(y=target, animate=False)
+        except Exception:
+            pass
+        self._user_scrolled = True
+        try:
+            idx = anchors.index(target)
+        except ValueError:
+            return
+        self._flash_turn_position(idx + 1, len(anchors), delta=delta)
+
+    def _flash_boundary_hint(self, direction: str) -> None:
+        if direction == "start":
+            text = "↑ beginning of history"
+        else:
+            text = "↓ end of history"
+        if self._last_boundary_flash == direction:
+            return
+        self._last_boundary_flash = direction
+        self._last_turn_flash = None
+        self._parent.show_status(text, kind="general")
+
+    def _flash_turn_position(self, n: int, total: int, delta: int = -1) -> None:
+        if self._last_turn_flash == (n, total):
+            return
+        self._last_turn_flash = (n, total)
+        self._last_boundary_flash = None
+        arrow = "↑" if delta < 0 else "↓"
+        self._parent.show_status(f"{arrow} turn {n} / {total}", kind="general")
+
+
 class ConversationView(Widget):
     """Main conversation pane: RichLog + inline widgets + sticky status.
 
@@ -479,6 +807,9 @@ class ConversationView(Widget):
         # Status/spinner controller: owns StickyStatus + InlineThinkingRow
         # methods (refactor tui-pr2).
         self._status_ctrl = _StatusSpinnerController(self)
+        # Scroll controller: owns scroll-lock, turn-nav, '↓ N new' indicator
+        # (refactor tui-pr3).
+        self._scroll_ctrl = _ScrollController(self)
         # Header-grouping state (B1)
         self._last_speaker: str = ""
         self._last_speaker_at: float = 0.0
@@ -487,32 +818,8 @@ class ConversationView(Widget):
         # line first so users can tell which day's "21:55" they're looking
         # at in a multi-day session.
         self._last_header_date: str = ""
-        # Last turn-flash position written by ``_flash_turn_position`` —
-        # (n, total) tuple. Used to suppress duplicate "↑ turn N / M"
-        # log lines when the user mashes Ctrl+P/N within the same anchor.
-        self._last_turn_flash: tuple[int, int] | None = None
-        # Wave-3 FS2: separate dedup state for the boundary hint
-        # (``↑ beginning of history`` / ``↓ end of history``) so rapid
-        # Ctrl+P/N at the edge doesn't spam the log. Reset on clear().
-        self._last_boundary_flash: str | None = None
         # Empty-state (B5)
         self._has_first_message = False
-        # Turn navigation (B4) — absolute line positions for each turn header.
-        # "Absolute" = ``log._start_line + len(log.lines)`` at write time, NOT
-        # the bare ``len(log.lines)`` value. RichLog uses a ring buffer; once
-        # the session crosses _RICHLOG_MAX_LINES, ``log._start_line`` grows
-        # and ``log.lines`` shifts. Bare-index anchors silently rot the moment
-        # the first line is dropped; absolute positions stay stable and we
-        # convert back to the current ``log.lines`` index on read.
-        self._turn_anchors: list[int] = []
-        # One-shot flag so the "earlier history trimmed" warning fires at most
-        # once per session (= the first time Ctrl+P/N is used after trim).
-        self._trim_warned = False
-        # Wave-10 follow-up G-F15: one-shot flag for the "RichLog
-        # private API broke" warning in ``_richlog_start_line``. Prevents
-        # log spam when a Textual upgrade removes the ``_start_line``
-        # attribute we depend on for turn-navigation anchors.
-        self._start_line_warned = False
         # Recent agent replies (newest last), capped at ``_RECENT_REPLIES_MAX``.
         # Consumed by the /copy slash command — users can grab the latest reply
         # (``/copy``) or any of the last N (``/copy 2``, ``/copy 3``, …) without
@@ -521,18 +828,6 @@ class ConversationView(Widget):
         # a bounded ring keeps the immediate history reachable without growing
         # memory unboundedly across long sessions.
         self._recent_replies: list[str] = []
-        # Track whether user has scrolled up (suppress auto-scroll while scrolled)
-        self._user_scrolled = False
-        # New-messages-below affordance: ``_new_below_baseline`` is the log's
-        # ``max_scroll_y`` captured at the instant the user scrolled up (=
-        # locked their view). While locked, new content grows ``max_scroll_y``;
-        # the delta from the baseline is the row count shown in the ``↓ N new``
-        # indicator. ``-1`` = "not locked" (= following the tail), so the
-        # content-grew watcher knows to stay hidden.
-        self._new_below_baseline: int = -1
-        # Current row count shown in the ``↓ N new`` strip (0 = hidden).
-        # Exposed read-only via the ``new_below_count`` property.
-        self._new_below_count: int = 0
         # F9 timestamp toggle — default on. Loaded from tui_prefs.json in
         # on_mount; callers use toggle_timestamps() / show_timestamps property.
         # New messages rendered after a toggle use the new indent; past
@@ -723,34 +1018,18 @@ class ConversationView(Widget):
 
     @property
     def user_scrolled(self) -> bool:
-        """True when the user has manually scrolled away from the tail.
-
-        Read-only accessor for the ``_user_scrolled`` latch. Tests and
-        external observers should read this property rather than accessing
-        ``_user_scrolled`` directly.
-        """
-        return self._user_scrolled
+        """True when the user has manually scrolled away from the tail."""
+        return self._scroll_ctrl.user_scrolled
 
     @property
     def new_below_count(self) -> int:
-        """Rows of new content that landed below the locked viewport.
-
-        ``0`` when the user is following the tail (= the ``↓ N new`` strip is
-        hidden); positive while the user is scrolled up and content has
-        arrived since they locked. Read-only accessor for the indicator
-        state — tests assert this rather than poking the Static internals.
-        """
-        return self._new_below_count
+        """Rows of new content below the locked viewport (0 = following tail)."""
+        return self._scroll_ctrl.new_below_count
 
     @property
     def trim_warned(self) -> bool:
-        """True when the one-shot ring-buffer-trim warning has been emitted.
-
-        The latch fires at most once per session (or per clear()). Tests
-        that need to verify whether the trim warning fired should use this
-        property rather than accessing ``_trim_warned`` directly.
-        """
-        return self._trim_warned
+        """True when the one-shot ring-buffer-trim warning has been emitted."""
+        return self._scroll_ctrl.trim_warned
 
     @property
     def last_speaker_at(self) -> float:
@@ -773,13 +1052,8 @@ class ConversationView(Widget):
         return self._last_header_date
 
     def turn_anchors_snapshot(self) -> tuple[int, ...]:
-        """Return a snapshot of the current turn-anchor list as an immutable tuple.
-
-        Each value is an absolute line position (drop-aware, monotonically
-        growing). Tests should use this rather than accessing
-        ``_turn_anchors`` directly.
-        """
-        return tuple(self._turn_anchors)
+        """Return a snapshot of the current turn-anchor list as an immutable tuple."""
+        return self._scroll_ctrl.turn_anchors_snapshot()
 
     @property
     def tool_call_row_ids(self) -> frozenset:
@@ -793,24 +1067,12 @@ class ConversationView(Widget):
         return frozenset(self._row_mgr._tool_call_rows)
 
     def richlog_start_line(self, log: "RichLog") -> int:
-        """Public wrapper around ``_richlog_start_line`` for test access.
-
-        Returns the RichLog's cumulative dropped-lines counter (=
-        ``log._start_line``) with a one-shot warning when the attribute is
-        missing. Tests that verify the ring-buffer trim / anchor-projection
-        logic should call this rather than ``_richlog_start_line`` directly.
-        """
-        return self._richlog_start_line(log)
+        """log._start_line (drop-aware counter); one-shot warning on API change."""
+        return self._scroll_ctrl.richlog_start_line(log)
 
     def absolute_line_position(self, log: "RichLog") -> int:
-        """Public wrapper around ``_absolute_line_position`` for test access.
-
-        Returns ``richlog_start_line(log) + len(log.lines)`` — the
-        monotonically-growing absolute write position. Tests that verify
-        anchor storage should call this rather than ``_absolute_line_position``
-        directly.
-        """
-        return self._absolute_line_position(log)
+        """Drop-aware absolute write position: richlog_start_line + len(log.lines)."""
+        return self._scroll_ctrl.absolute_line_position(log)
 
     def async_stack_snapshot(self) -> list:
         """Return the AsyncStackPanel's current snapshot list, or ``[]`` if absent.
@@ -886,117 +1148,22 @@ class ConversationView(Widget):
         except Exception:
             pass
 
-    def _snap_to_bottom(self) -> None:
-        """Force the log to the bottom and re-arm auto-scroll.
-
-        Called from "I'm re-engaging" entry points (``render_user_message``,
-        ``clear``) so the user's previous scroll-up state doesn't pin them
-        to old content after they've explicitly taken an action.
-        """
-        try:
-            log = self._log()
-        except Exception:
-            return
-        try:
-            log.auto_scroll = True
-            log.scroll_end(animate=False)
-        except Exception:
-            pass
-        self._user_scrolled = False
-        # Explicit re-engage: drop the lock baseline + clear the ``↓ N new``
-        # affordance so it doesn't linger after the user is back at the tail.
-        self._new_below_baseline = -1
-        self._update_new_below(0)
-
     def _on_log_scroll_y(self, old: float, new: float) -> None:
-        """Flip ``auto_scroll`` and ``_user_scrolled`` based on at-bottom check.
-
-        The ``-1`` threshold absorbs float-coord noise from Textual's
-        scroll math; treating "within 1 cell of the bottom" as "at the
-        bottom" matches how the user perceives the boundary.
-        """
-        try:
-            log = self._log()
-        except Exception:
-            return
-        at_bottom = new >= log.max_scroll_y - 1
-        # Only re-assign when the value actually changes so we don't churn
-        # Textual's reactive system every scroll tick.
-        if at_bottom:
-            if not log.auto_scroll:
-                log.auto_scroll = True
-            if self._user_scrolled:
-                self._user_scrolled = False
-            # Back at the tail: drop the lock baseline + clear the affordance.
-            self._new_below_baseline = -1
-            self._update_new_below(0)
-        else:
-            if log.auto_scroll:
-                log.auto_scroll = False
-            if not self._user_scrolled:
-                self._user_scrolled = True
-            # Just locked the view by scrolling up: capture the current
-            # content extent as the baseline so subsequent growth counts as
-            # "new below". Only capture on the False→True transition so a
-            # scroll WITHIN the locked region doesn't reset the baseline (=
-            # the count keeps accumulating until the user returns to bottom).
-            if self._new_below_baseline < 0:
-                self._new_below_baseline = int(log.max_scroll_y)
-                self._update_new_below(0)
+        """Textual reactive — delegates to _ScrollController."""
+        self._scroll_ctrl.on_log_scroll_y(old, new)
 
     def _on_log_content_grew(self, old: object, new: object) -> None:
-        """RichLog ``virtual_size`` changed — refresh the ``↓ N new`` count.
-
-        Fires on every write (the size grows as content is appended). Only
-        meaningful while the user has locked their view above the tail
-        (``_new_below_baseline >= 0``); otherwise the user is following and
-        the indicator stays hidden. The count is ``max_scroll_y - baseline``
-        — i.e. the rows of content that landed below the locked viewport.
-        """
-        if self._new_below_baseline < 0:
-            return
-        try:
-            log = self._log()
-        except Exception:
-            return
-        delta = int(log.max_scroll_y) - self._new_below_baseline
-        self._update_new_below(max(0, delta))
-
-    def _update_new_below(self, count: int) -> None:
-        """Show / hide the ``↓ N new`` indicator with ``count`` rows below.
-
-        ``count <= 0`` hides the strip (collapses to zero height); a positive
-        count shows ``↓ N new · Alt+End`` in coral. Defensive: a missing
-        widget (pre-mount / torn-down) is a silent no-op.
-        """
-        self._new_below_count = max(0, count)
-        try:
-            strip = self.query_one("#new-below", Static)
-        except Exception:
-            return
-        if count <= 0:
-            if "hidden" not in strip.classes:
-                strip.add_class("hidden")
-            return
-        noun = "new line" if count == 1 else "new lines"
-        strip.update(f"↓ {count} {noun} below · Alt+End to jump")
-        if "hidden" in strip.classes:
-            strip.remove_class("hidden")
+        """Textual reactive — delegates to _ScrollController."""
+        self._scroll_ctrl.on_log_content_grew(old, new)
 
     def on_click(self, event: object) -> None:
-        """Click on the ``↓ N new`` strip jumps to the bottom (= Alt+End).
-
-        Only the indicator strip triggers the jump; clicks elsewhere in the
-        conv pane keep their default (no-op / text-select) behaviour. The
-        widget-id guard keeps this handler scoped so it doesn't hijack other
-        click targets in the pane.
-        """
+        """Click on the ``↓ N new`` strip jumps to the bottom (= Alt+End)."""
         try:
             target_id = getattr(getattr(event, "widget", None), "id", None)
         except Exception:
             target_id = None
         if target_id == "new-below":
-            self._snap_to_bottom()
+            self._scroll_ctrl.snap_to_bottom()
 
     # ── empty state ───────────────────────────────────────────────────────────
 
@@ -1039,7 +1206,7 @@ class ConversationView(Widget):
             log.write(_date_separator(today))
             self._last_header_date = today
         # Record a turn anchor.
-        self._turn_anchors.append(self._absolute_line_position(log))
+        self._scroll_ctrl.record_turn_anchor(log)
         return True
 
     def _maybe_write_header(self, speaker: str, symbol: str,
@@ -1258,7 +1425,7 @@ class ConversationView(Widget):
         same logical line, with wrap continuations landing at col 8
         (``_BODY_INDENT_WITH_TS``) so they nest visually under the body text.
         """
-        self._snap_to_bottom()
+        self._scroll_ctrl.snap_to_bottom()
         self._consume_empty_hint()
         self._maybe_write_inline_header_body(
             "you", _GLYPH_USER, "bold #4abbb5", Text(text),
@@ -1485,8 +1652,7 @@ class ConversationView(Widget):
         # ``_RICHLOG_MAX_LINES`` boundary never saw the "earlier history
         # trimmed" signal until they happened to hit Ctrl+P. The
         # ``_trim_warned`` flag keeps it strictly one-shot per session.
-        if not self._trim_warned and self._richlog_start_line(log) > 0:
-            self._maybe_warn_about_trimmed_history(log)
+        self._scroll_ctrl.maybe_warn_trim(log)
 
     def _write_body(self, renderable: RenderableType) -> None:
         """Append a body renderable at the dynamic hanging-indent column.
@@ -1753,7 +1919,7 @@ class ConversationView(Widget):
         self.stop_thinking()  # turn ended in error
 
         # Scrolled-up cue — show "error below" when user is reading history.
-        if self._user_scrolled:
+        if self._scroll_ctrl.user_scrolled:
             self.show_status("✗ error below ↓", kind="general")
         else:
             self.hide_status()
@@ -1853,7 +2019,7 @@ class ConversationView(Widget):
         # ``intervention_resolved`` outbox handler (in app_outbox.py)
         # calls ``hide_status`` on both answer paths, so the cue clears
         # itself when the user responds.
-        if self._user_scrolled:
+        if self._scroll_ctrl.user_scrolled:
             self.show_status("⚑ intervention below ↓", kind="general")
         else:
             self.hide_status()
@@ -1872,7 +2038,7 @@ class ConversationView(Widget):
         # the sticky just got replaced with "⚑ intervention below ↓"
         # (above) so they have a clear signal the run is waiting; the
         # widget itself becomes visible on their next scroll-down.
-        if not self._user_scrolled:
+        if not self._scroll_ctrl.user_scrolled:
             try:
                 widget.scroll_visible()
             except Exception:
@@ -1944,394 +2110,28 @@ class ConversationView(Widget):
     # ── turn navigation (B4) ──────────────────────────────────────────────────
 
     def jump_prev_turn(self) -> None:
-        """Scroll the log to the previous agent turn anchor."""
-        self._jump_to_relative_anchor(-1)
+        self._scroll_ctrl.jump_prev_turn()
 
     def jump_next_turn(self) -> None:
-        """Scroll the log to the next agent turn anchor."""
-        self._jump_to_relative_anchor(+1)
-
-    def _richlog_start_line(self, log: RichLog) -> int:
-        """Return ``log._start_line`` defensively (G-F15, wave-10 follow-up).
-
-        ``_start_line`` is a private RichLog attribute carrying the
-        cumulative dropped-lines counter — load-bearing for the
-        absolute-anchor system that powers Ctrl+P/N turn navigation.
-        Textual hasn't renamed or restructured this attribute in any
-        version we've tested, but relying on a private name means a
-        future upgrade could silently swap it for a new public
-        property. The bare ``getattr(log, "_start_line", 0)`` form
-        would quietly return 0, making all anchor positions degrade
-        to "treated as never-trimmed" — on a long session past the
-        ``_RICHLOG_MAX_LINES`` boundary, every Ctrl+P/N would then
-        land on the wrong line, and the trim-warning would never
-        fire either.
-
-        The helper logs a one-shot warning when the attribute is
-        missing so operators get a detectable signal that the
-        integration is broken. Behavioural fallback stays 0 (= same
-        as the bare ``getattr`` default) so a no-history session
-        keeps working.
-        """
-        value = getattr(log, "_start_line", None)
-        if value is None:
-            if not self._start_line_warned:
-                self._start_line_warned = True
-                logger.warning(
-                    "RichLog._start_line is missing — Textual API may "
-                    "have changed; turn-navigation anchors will degrade "
-                    "to treating all history as never-trimmed. Update "
-                    "the helper at conversation._richlog_start_line.",
-                )
-            return 0
-        return value
-
-    def _absolute_line_position(self, log: RichLog) -> int:
-        """Return the absolute write-position (drop-aware) for the next line.
-
-        ``log._start_line`` is RichLog's cumulative dropped-lines counter
-        (private but stable). Combined with ``len(log.lines)``, it yields
-        a monotonic absolute index that survives the ring-buffer trim —
-        unlike the bare ``len(log.lines)`` value, which silently rebases
-        the moment ``max_lines`` is exceeded.
-
-        Reads through ``_richlog_start_line`` for the one-shot
-        Textual-API-change warning (G-F15).
-        """
-        return self._richlog_start_line(log) + len(log.lines)
-
-    def _resolve_anchors_to_current_view(self, log: RichLog) -> list[int]:
-        """Project stored absolute anchors back into current ``log.lines`` indexes.
-
-        Anchors whose target line has been trimmed (= ``absolute - start < 0``)
-        are silently dropped: jumping to a turn that no longer exists in the
-        log would scroll to whatever line happens to occupy that slot now,
-        which is exactly the bug the bare-index version exhibited.
-        """
-        start = self._richlog_start_line(log)
-        return [a - start for a in self._turn_anchors if a - start >= 0]
-
-    def _maybe_warn_about_trimmed_history(self, log: RichLog) -> None:
-        """Surface a one-shot warning when older history has been trimmed.
-
-        We only fire once per session — repeated Ctrl+P presses past the
-        top would otherwise spam the message. ``/clear`` resets the
-        flag so a fresh session can warn again.
-
-        Wave-10 G-F8: the warning previously wrote ONLY to the sticky
-        status. The same call stack then invoked ``_flash_turn_position``
-        which overwrote the sticky with ``↑ turn 1 / N`` before the user
-        could read the warning — effectively making it invisible. The
-        sticky path is kept as a glance-cue, but the load-bearing
-        record now lives in the log as a permanent dim line so the user
-        can find it in scrollback even after the sticky has been
-        replaced. Same idiom as ``_render_system_message`` for one-shot
-        notices that must survive subsequent sticky updates.
-        """
-        if self._trim_warned:
-            return
-        start = self._richlog_start_line(log)
-        if start <= 0:
-            return
-        self._trim_warned = True
-        warning_text = f"↑ earlier history trimmed ({start:,} lines)"
-        # Permanent log line — survives the turn-flash sticky overwrite.
-        try:
-            self._write_log(Text(f"  {warning_text}", style="dim italic " + _TEXT_MUTED))
-        except Exception:
-            pass
-        # Sticky glance-cue — may be overwritten by the next status
-        # update, but useful at the moment the user actually hit the
-        # boundary.
-        sticky = self._sticky()
-        if sticky is not None:
-            try:
-                sticky.show(warning_text, kind="general")
-            except Exception:
-                pass
+        self._scroll_ctrl.jump_next_turn()
 
     def scroll_page_up(self) -> None:
-        """Scroll the conv log up one page without changing focus.
-
-        Wave-4 AR5: the RichLog has ``can_focus=False`` (intentional —
-        prevents inadvertent focus capture from input), so Textual's
-        default PageUp doesn't reach it. The App's PageUp binding
-        dispatches here to drive ``log.scroll_page_up`` directly.
-        Sets the user-scrolled flag so the scroll watcher doesn't
-        immediately auto-scroll back to the bottom on the next
-        message.
-        """
-        log = self._log()
-        try:
-            log.scroll_page_up(animate=False)
-        except Exception:
-            try:
-                log.scroll_relative(y=-log.size.height, animate=False)
-            except Exception:
-                pass
-        self._user_scrolled = True
+        self._scroll_ctrl.scroll_page_up()
 
     def scroll_to_top(self) -> None:
-        """Jump the conv log to the very top (oldest content), no focus change.
-
-        Symmetric with ``scroll_to_bottom`` (Alt+End): the conv log has
-        ``can_focus=False`` so Textual's default Home key never reaches it,
-        and there was a jump-to-bottom but no jump-to-top. Sets
-        ``_user_scrolled`` so the scroll watcher doesn't yank the user back
-        to the tail on the next write (they're now reading the oldest
-        history). The ``scroll_y`` watcher also fires from the position
-        change, arming the same scroll-lock + ``↓ N new`` baseline as a
-        manual scroll-up.
-        """
-        log = self._log()
-        try:
-            log.scroll_home(animate=False)
-        except Exception:
-            try:
-                log.scroll_to(y=0, animate=False)
-            except Exception:
-                pass
-        self._user_scrolled = True
+        self._scroll_ctrl.scroll_to_top()
 
     def scroll_page_down(self) -> None:
-        """Scroll the conv log down one page without changing focus.
-
-        Symmetric with ``scroll_page_up``: if we land in the middle
-        (= not at the actual tail), the scroll is still a user-initiated
-        position lock so auto-scroll must NOT yank the viewport to the
-        bottom on the next stream write. We set ``_user_scrolled = True``
-        for the mid-scroll case and only clear it when we reach the tail
-        (= re-arm auto-scroll).
-        """
-        log = self._log()
-        try:
-            log.scroll_page_down(animate=False)
-        except Exception:
-            try:
-                log.scroll_relative(y=log.size.height, animate=False)
-            except Exception:
-                pass
-        # At tail → re-arm auto-scroll; mid-scroll → hold position.
-        try:
-            if log.scroll_y >= log.max_scroll_y - 1:
-                self._user_scrolled = False
-            else:
-                self._user_scrolled = True
-        except Exception:
-            pass
+        self._scroll_ctrl.scroll_page_down()
 
     def scroll_line_up(self) -> None:
-        """Scroll the conv log up one line without changing focus.
-
-        Complements ``scroll_page_up`` for fine-grained navigation when
-        a single PageUp overshoots. Sets ``_user_scrolled`` so the
-        scroll watcher doesn't auto-scroll back to bottom on the next
-        message.
-        """
-        log = self._log()
-        try:
-            log.scroll_relative(y=-1, animate=False)
-        except Exception:
-            pass
-        self._user_scrolled = True
+        self._scroll_ctrl.scroll_line_up()
 
     def scroll_line_down(self) -> None:
-        """Scroll the conv log down one line without changing focus.
-
-        Symmetric with ``scroll_line_up``: landing anywhere above the tail
-        keeps the scroll-lock so a concurrent stream write doesn't snap
-        the viewport away from the user's read position.
-        """
-        log = self._log()
-        try:
-            log.scroll_relative(y=1, animate=False)
-        except Exception:
-            pass
-        # At tail → re-arm auto-scroll; mid-scroll → hold position.
-        try:
-            if log.scroll_y >= log.max_scroll_y - 1:
-                self._user_scrolled = False
-            else:
-                self._user_scrolled = True
-        except Exception:
-            pass
+        self._scroll_ctrl.scroll_line_down()
 
     def scroll_to_bottom(self) -> None:
-        """Jump to the tail of the conv log and re-arm auto-scroll.
-
-        Lets the user return to the live tail after reading history
-        via PageUp / Ctrl+P without having to either press PageDown
-        repeatedly or type a new message (which is what currently
-        triggers ``_snap_to_bottom``).
-
-        Wave-10 follow-up G-F14: the previous ``self._user_scrolled =
-        False`` here was dead code — ``_snap_to_bottom`` already
-        unconditionally resets the flag. Removing it eliminates the
-        misleading hint that ``_snap_to_bottom`` might NOT reset the
-        flag (= which a future reader would have to verify before
-        editing either method).
-        """
-        self._snap_to_bottom()
-
-    def _jump_to_relative_anchor(self, delta: int) -> None:
-        if not self._turn_anchors:
-            return
-        log = self._log()
-        anchors = self._resolve_anchors_to_current_view(log)
-        if not anchors:
-            self._maybe_warn_about_trimmed_history(log)
-            return
-        # If the trim swallowed some anchors, surface that to the user.
-        if len(anchors) < len(self._turn_anchors):
-            self._maybe_warn_about_trimmed_history(log)
-        # Find the nearest anchor >= or <= current scroll y
-        cur_y = log.scroll_y
-        if delta < 0:
-            target = None
-            for a in reversed(anchors):
-                if a < cur_y - 1:  # strictly above current view
-                    target = a
-                    break
-            hit_boundary = target is None
-            if target is None:
-                target = anchors[0]
-        else:
-            target = None
-            for a in anchors:
-                if a > cur_y + 1:  # strictly below current view
-                    target = a
-                    break
-            hit_boundary = target is None
-            if target is None:
-                target = anchors[-1]
-        # Wave-3 FS2: when Ctrl+P/N hits the boundary AND the cursor was
-        # already there, the scroll is a no-op AND the
-        # ``_flash_turn_position`` dedup suppresses the turn-number
-        # flash — silent. Surface a brief "↑ beginning / ↓ end of
-        # history" cue so the user knows the key registered, not
-        # that nav broke. ``abs(cur_y - target) <= 1`` matches the
-        # same 1-line tolerance the scan loop above uses for "strictly
-        # above / below".
-        if hit_boundary and abs(cur_y - target) <= 1:
-            self._flash_boundary_hint("start" if delta < 0 else "end")
-            return
-        try:
-            log.scroll_to(y=target, animate=False)
-        except Exception:
-            pass
-        # Wave-10 G-F4: mark the jump as user-initiated so the next
-        # incoming chunk doesn't re-arm auto_scroll and snap the view
-        # back to the tail. ``scroll_page_up`` / ``scroll_line_up``
-        # already do this explicitly; ``_jump_to_relative_anchor``
-        # had been relying on ``_on_log_scroll_y`` to set the flag as
-        # a side effect of the scroll. The watcher path works for
-        # upward jumps but flips the flag back to False whenever
-        # ``at_bottom`` evaluates True — which can happen when the
-        # jump target sits within 1 line of ``max_scroll_y`` (= the
-        # last anchor in a recent session). The result was: Ctrl+P
-        # mid-stream → view jumped → next chunk's auto_scroll write
-        # immediately yanked the view back to the bottom, interrupting
-        # the user's turn-navigation read. Setting the flag here
-        # makes the behaviour match the explicit-scroll handlers.
-        self._user_scrolled = True
-        # Show "turn N / M" feedback so users in long sessions can tell
-        # where they are. Without this Ctrl+P/N scrolls silently and a
-        # 90-turn history is just a parade of "21:55" headers with no
-        # cursor signal. (StickyStatus with kind="general" was the
-        # intuitive surface but doesn't render reliably from this code
-        # path — open question, see workload notes; the log marker is
-        # the working compromise.)
-        try:
-            idx = anchors.index(target)
-        except ValueError:
-            return
-        self._flash_turn_position(idx + 1, len(anchors), delta=delta)
-
-    def _flash_boundary_hint(self, direction: str) -> None:
-        """Surface a ``↑ beginning of history`` / ``↓ end of history`` cue.
-
-        Wave-3 FS2: separate from ``_flash_turn_position`` so the
-        boundary cue isn't deduped by the (idx, total) tuple that
-        stays unchanged when the user mashes Ctrl+P at the first
-        turn. Has its own dedup state so rapid repeats at the same
-        boundary don't spam — but the moment the user navigates
-        inward (= turn-flash fires), the dedup clears so re-hitting
-        the boundary later flashes again.
-
-        Wave-10 follow-up G-F9: was previously dual-write (=
-        ``_write_log`` permanent breadcrumb + ``show_status``
-        sticky). The log line polluted scrollback — alternating
-        Ctrl+P / Ctrl+N at boundaries wrote two new ``↑ beginning``
-        / ``↓ end`` lines on every direction change, accumulating
-        as navigation artifacts indistinguishable from actual
-        conversation content. ``_flash_turn_position`` already
-        switched to sticky-only after FS1 fixed the visibility
-        gap; the sticky is docked at the conv pane's bottom and is
-        ALWAYS visible regardless of scroll position, so the log
-        line was redundant rather than a fallback. Drop the log
-        write; sticky alone is sufficient.
-        """
-        if direction == "start":
-            text = "↑ beginning of history"
-        else:
-            text = "↓ end of history"
-        # Dedup against the previous boundary direction. Mashing
-        # Ctrl+P at the start just shows the hint once.
-        if self._last_boundary_flash == direction:
-            return
-        self._last_boundary_flash = direction
-        # Clear the turn-flash dedup so a subsequent in-bounds
-        # Ctrl+P/N re-flashes the turn number cleanly.
-        self._last_turn_flash = None
-        # Sticky-only surface — visible regardless of scroll
-        # position. ``kind="general"`` reads as advisory (= grey
-        # accent) without preempting an active ``⟳ thinking…``
-        # (= the wave-10 G-F8 + I-F8 priority guard handles that).
-        self.show_status(text, kind="general")
-
-    def _flash_turn_position(self, n: int, total: int, delta: int = -1) -> None:
-        """Surface ``↑/↓ turn N / M`` feedback for Ctrl+P/N navigation.
-
-        ``delta`` selects the direction arrow: negative (Ctrl+P / backward
-        toward earlier history) → ``↑``, positive (Ctrl+N / forward
-        toward newer history) → ``↓``. Pre-fix the arrow was hard-coded
-        to ``↑`` regardless of direction (G-F5, wave-10) — pressing
-        Ctrl+N to advance forward through turns showed
-        ``↑ turn 5 / 8``, which contradicts the actual movement and
-        misleads users who use the arrow as a navigation cue.
-
-        Deduped by ``_last_turn_flash`` so rapid Ctrl+P/N presses that
-        land on the same anchor don't spam the surface with identical
-        messages. Cleared on Ctrl+L so post-clear navigation flashes
-        fresh.
-
-        Wave-3 FS1: previously this wrote ONLY to the conv log via
-        ``_write_log``. Problem: Ctrl+P scrolls the user UP through
-        history, and the new turn-N/M line lands at the LOG BOTTOM
-        (= invisible at the current scroll position). The user
-        navigates to turn 1 of 8 but only sees the flash when they
-        later scroll back to the bottom — by which time the lines
-        have accumulated as junk in conversation history.
-
-        Switch to the sticky-status surface (= the same place the
-        boundary hint from FS2 writes to). It's visible regardless
-        of scroll position AND it doesn't pollute the conv log
-        permanently. ``kind="general"`` reads as advisory (grey
-        accent), doesn't preempt an active ``⟳ thinking…`` (= those
-        use ``kind="thinking"``).
-
-        Boundary dedup state also cleared here so any successful
-        in-bounds move re-flashes the boundary cue next time.
-        """
-        if self._last_turn_flash == (n, total):
-            return
-        self._last_turn_flash = (n, total)
-        # Wave-3 FS2: any successful in-bounds move clears the boundary
-        # dedup so the next time the user hits the edge they get the
-        # hint fresh (= "user navigated away from the boundary").
-        self._last_boundary_flash = None
-        arrow = "↑" if delta < 0 else "↓"
-        self.show_status(f"{arrow} turn {n} / {total}", kind="general")
+        self._scroll_ctrl.scroll_to_bottom()
 
     def clear(self) -> None:
         """Ctrl+L: clear the log + reset state. Does not affect engine state."""
@@ -2363,35 +2163,16 @@ class ConversationView(Widget):
                 widget.remove()
             except Exception:
                 pass
-        # Reset header-grouping + turn anchors + fold stash
+        # Reset header-grouping state
         self._last_speaker = ""
         self._last_speaker_at = 0.0
-        # Wave-10 follow-up G-F13: preserve today's date as the
-        # "last separator date" so a same-day Ctrl+L doesn't emit
-        # another ``── YYYY-MM-DD ──`` separator on the next message.
-        # The separator is a *day-boundary* marker, not a session-start
-        # marker — emitting it every clear made it appear multiple
-        # times per day purely because the user cleared the pane.
-        # ``""`` is the cold-start value (= "no date written yet"), and
-        # the first message's ``_maybe_write_header`` would emit the
-        # separator unconditionally. Setting to today's date makes that
-        # branch a no-op for same-day clears while leaving day-crossing
-        # clears (= rare but possible if the user clears around midnight)
-        # correct.
+        # Preserve today's date so same-day Ctrl+L doesn't re-emit date separator.
         self._last_header_date = time.strftime("%Y-%m-%d")
-        self._last_turn_flash = None
-        self._last_boundary_flash = None
-        self._turn_anchors.clear()
-        self._trim_warned = False
-        # Wave-10 G-F3: reset the recent-replies ring buffer. Pre-fix
-        # ``/copy`` after a Ctrl+L returned replies from the now-invisible
-        # prior session — confusing, and potentially surfaces content
-        # the user thought they had cleared.
+        # Wave-10 G-F3: reset the recent-replies ring buffer so /copy after
+        # Ctrl+L doesn't return replies from the now-invisible prior session.
         self._recent_replies.clear()
-        # Re-arm auto-scroll: clear() puts the user back at a fresh blank
-        # log, and any prior scroll-up state is meaningless once the
-        # content it was reading is gone.
-        self._user_scrolled = False
+        # Reset all scroll/nav state via controller (tui-pr3).
+        self._scroll_ctrl.reset_for_clear()
         try:
             self._log().auto_scroll = True
         except Exception:

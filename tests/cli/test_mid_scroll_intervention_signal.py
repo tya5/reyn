@@ -83,7 +83,7 @@ async def test_intervention_mount_mid_scroll_shows_directional_cue() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        conv._user_scrolled = True  # simulate user-up scroll
+        conv._scroll_ctrl._user_scrolled = True  # simulate user-up scroll
 
         conv.mount_intervention(
             question="Continue?", choices=None, iv_id="iv-xyz",
@@ -126,7 +126,7 @@ async def test_error_write_mid_scroll_shows_directional_cue() -> None:
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        conv._user_scrolled = True
+        conv._scroll_ctrl._user_scrolled = True
 
         conv.write_error(message="boom", details="")
         await pilot.pause()

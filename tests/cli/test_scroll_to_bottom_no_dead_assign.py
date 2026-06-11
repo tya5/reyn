@@ -55,15 +55,15 @@ def test_scroll_to_bottom_source_has_no_duplicate_flag_set() -> None:
     most ONCE in ``_snap_to_bottom``'s body, never in
     ``scroll_to_bottom``'s.
     """
-    from reyn.chat.tui.widgets.conversation import ConversationView
+    from reyn.chat.tui.widgets.conversation import ConversationView, _ScrollController
 
-    snap_src = inspect.getsource(ConversationView._snap_to_bottom)
+    snap_src = inspect.getsource(_ScrollController.snap_to_bottom)
     scroll_src = inspect.getsource(ConversationView.scroll_to_bottom)
     assert "self._user_scrolled = False" in snap_src, (
-        "_snap_to_bottom should still own the flag-reset (regression "
+        "snap_to_bottom should still own the flag-reset (regression "
         "guard for the delegated behaviour)"
     )
     assert "self._user_scrolled = False" not in scroll_src, (
         "scroll_to_bottom should not duplicate the flag-reset that "
-        "_snap_to_bottom already performs"
+        "snap_to_bottom already performs"
     )

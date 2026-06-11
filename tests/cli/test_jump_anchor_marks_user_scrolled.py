@@ -55,7 +55,7 @@ async def test_jump_to_relative_anchor_marks_user_scrolled_true() -> None:
         # Synthetic anchors well above the viewport. ``log._start_line``
         # is 0 (no ring-buffer trim), so absolute positions == relative
         # positions in ``_resolve_anchors_to_current_view``.
-        conv._turn_anchors = [5, 50, 100]
+        conv._scroll_ctrl._turn_anchors = [5, 50, 100]
         # Move the log scroll past the first anchor so a backward
         # jump has somewhere to land.
         try:
@@ -65,10 +65,10 @@ async def test_jump_to_relative_anchor_marks_user_scrolled_true() -> None:
         await pilot.pause()
 
         # Pre-jump state: user has not scrolled.
-        conv._user_scrolled = False
+        conv._scroll_ctrl._user_scrolled = False
 
         # Ctrl+P → backward jump from 100 → anchor 50.
-        conv._jump_to_relative_anchor(-1)
+        conv._scroll_ctrl._jump_to_relative_anchor(-1)
         await pilot.pause()
 
         assert conv.user_scrolled is True, (
@@ -97,16 +97,16 @@ async def test_jump_keeps_user_scrolled_even_on_forward_to_last_anchor() -> None
         log = conv._log()
 
         # Anchors near tail; current position above the last anchor.
-        conv._turn_anchors = [5, 50, 100]
+        conv._scroll_ctrl._turn_anchors = [5, 50, 100]
         try:
             log.scroll_to(y=10, animate=False)
         except Exception:
             pass
         await pilot.pause()
 
-        conv._user_scrolled = False
+        conv._scroll_ctrl._user_scrolled = False
         # Ctrl+N → forward jump from 10 → anchor 50.
-        conv._jump_to_relative_anchor(+1)
+        conv._scroll_ctrl._jump_to_relative_anchor(+1)
         await pilot.pause()
 
         assert conv.user_scrolled is True, (

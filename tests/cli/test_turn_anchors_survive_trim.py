@@ -94,7 +94,7 @@ async def test_anchor_survives_partial_trim_and_projects_correctly() -> None:
         assert conv.turn_anchors_snapshot()[0] == anchor_abs
 
         # Projection subtracts the trim offset.
-        resolved = conv._resolve_anchors_to_current_view(log)
+        resolved = conv._scroll_ctrl._resolve_anchors_to_current_view(log)
         assert resolved == [anchor_abs - 5], (
             f"projection wrong after partial trim; got {resolved}"
         )
@@ -117,7 +117,7 @@ async def test_anchor_dropped_when_target_trimmed() -> None:
         # Trim past the anchor — its target line has been ring-buffered out.
         log._start_line = anchor + 10
 
-        resolved = conv._resolve_anchors_to_current_view(log)
+        resolved = conv._scroll_ctrl._resolve_anchors_to_current_view(log)
         assert resolved == [], (
             f"trimmed anchor must be filtered; got {resolved}"
         )
