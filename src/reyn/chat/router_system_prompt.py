@@ -76,6 +76,7 @@ def build_system_prompt(
     discovery_mandate: bool = False,  # #187 Stage C — weak-tier list_actions-first mandate (3x)
     non_interactive: bool = False,  # #1439 Fix #1 — run-once (no TTY): no user to ask, proceed instead of clarifying
     has_hot_list_aliases: bool = False,  # True when hot_list_n>0 produced direct-alias functions
+    environment_info: "dict | None" = None,  # #1479: date/platform/shell/git from get_environment_info()
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -310,20 +311,37 @@ def build_system_prompt(
     # prior ("please share the repository URL") even when the user is
     # obviously inside a checked-out repo. P7: no skill-specific strings,
     # only environment facts and routing hints to existing categories.
-    if cwd:
+    if cwd or environment_info:
         parts.append("## Environment")
         parts.append("")
-        parts.append(f"cwd: {cwd}")
+        if cwd:
+            parts.append(f"cwd: {cwd}")
+        # #1479: system info — backend-derived, competitor-aligned.
+        # Fields absent from environment_info are omitted (degrade, don't guess).
+        if environment_info:
+            if "date" in environment_info:
+                parts.append(f"date: {environment_info['date']}")
+            _plat = environment_info.get("platform", "")
+            _ver = environment_info.get("os_version", "")
+            if _plat and _ver:
+                parts.append(f"platform: {_plat} {_ver}")
+            elif _plat:
+                parts.append(f"platform: {_plat}")
+            if environment_info.get("shell"):
+                parts.append(f"shell: {environment_info['shell']}")
+            if "is_git_repo" in environment_info:
+                parts.append(f"git repo: {'yes' if environment_info['is_git_repo'] else 'no'}")
         parts.append("")
-        parts.append(
-            "When the user refers to \"this repo\", \"this code\", \"the codebase\","
-            " \"this project\", \"ここ\", or any other unqualified reference to"
-            " surrounding source, interpret it as the project at the cwd above."
-            " Do NOT ask for a repository URL or path — discover the contents"
-            " with `list_actions(category=['file'])` → `invoke_action(file__list, ...)`"
-            " → `invoke_action(file__read, ...)` within the cwd's read scope."
-        )
-        parts.append("")
+        if cwd:
+            parts.append(
+                "When the user refers to \"this repo\", \"this code\", \"the codebase\","
+                " \"this project\", \"ここ\", or any other unqualified reference to"
+                " surrounding source, interpret it as the project at the cwd above."
+                " Do NOT ask for a repository URL or path — discover the contents"
+                " with `list_actions(category=['file'])` → `invoke_action(file__list, ...)`"
+                " → `invoke_action(file__read, ...)` within the cwd's read scope."
+            )
+            parts.append("")
 
     # ── 3.5. Universal catalog (FP-0034 §D9, opt-in via action_retrieval) ────
     # When the operator has enabled the universal catalog (= reyn.yaml

@@ -526,6 +526,61 @@ class RouterHostAdapter:
             return str(repo_dir)
         return os.getcwd()
 
+    def get_environment_info(self) -> dict:
+        """System metadata for the SP Environment section (#1479).
+
+        Returns a dict with the subset of fields that can be determined:
+          - ``date``        — today's date ISO-8601 (always; host-clock)
+          - ``platform``    — OS family lower-cased ("linux", "darwin", …)
+          - ``os_version``  — kernel/OS release string
+          - ``shell``       — default shell executable (path or name)
+          - ``is_git_repo`` — bool; True when a .git entry exists at cwd
+
+        Resolution order (getattr-guarded for forward compat with future
+        ContainerBackend.get_environment_info() probe):
+        1. backend.get_environment_info() — if the backend implements it
+           (ContainerBackend will probe the container and return its
+           platform/shell; this method then merges with the host date).
+        2. Local platform module + os.environ — HostBackend / no backend.
+
+        Fields absent from the backend's dict are filled from the local
+        fallback; unknown/None fields are omitted (degrade, don't guess).
+        """
+        import datetime
+        import os
+        import platform as _platform
+        from pathlib import Path
+
+        backend = self._environment_backend
+        backend_info: dict = {}
+        _info_fn = getattr(backend, "get_environment_info", None)
+        if callable(_info_fn):
+            try:
+                backend_info = _info_fn() or {}
+            except Exception:
+                backend_info = {}
+
+        result: dict = {"date": datetime.date.today().isoformat()}
+
+        # platform / os_version: backend first (container-aware), then host
+        if "platform" not in backend_info:
+            backend_info["platform"] = _platform.system().lower()
+        if "os_version" not in backend_info:
+            backend_info["os_version"] = _platform.release()
+        if "shell" not in backend_info:
+            backend_info["shell"] = os.environ.get("SHELL", "")
+
+        result["platform"] = backend_info["platform"]
+        result["os_version"] = backend_info["os_version"]
+        if backend_info.get("shell"):
+            result["shell"] = backend_info["shell"]
+
+        # Git repo check: .git entry at the agent-visible cwd
+        cwd_path = Path(self.get_cwd())
+        result["is_git_repo"] = (cwd_path / ".git").exists()
+
+        return result
+
     def get_universal_wrappers_enabled(self) -> bool:
         """Return whether FP-0034 universal catalog wrappers are enabled.
 
