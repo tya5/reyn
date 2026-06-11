@@ -17,11 +17,11 @@ import base64
 from pathlib import Path
 
 from reyn.chat.router_loop import _build_media_followup_message
-from reyn.chat.session import (
-    ChatMessage,
+from reyn.chat.services.router_history_buffer import (
     _materialise_path_ref_content,
     _read_pathref_image,
 )
+from reyn.chat.session import ChatMessage
 from reyn.workspace.media_store import MediaStore, MediaStoreConfig
 
 # ── helpers ────────────────────────────────────────────────────────────

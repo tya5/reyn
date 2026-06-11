@@ -284,13 +284,25 @@ def _make_history_builder():
     (1-2 messages of a few tokens) are well below any realistic trigger, so
     all turns are returned raw — no elide, no duplication.
     """
+    from reyn.chat.services.router_history_buffer import RouterHistoryBuffer
     from reyn.chat.session import ChatSession
+    from reyn.config import CompactionConfig
 
     cs = ChatSession.__new__(ChatSession)  # bypass __init__
     cs.history = []  # set by tests
-    from reyn.config import CompactionConfig
     cs._compaction = CompactionConfig(use_chars4_estimate=True)
     cs._latest_summary = lambda: None  # type: ignore[method-assign]
+    cs._history_buffer = RouterHistoryBuffer(
+        history_fn=lambda: cs.history,
+        compaction=cs._compaction,
+        compaction_controller=None,
+        model="",
+        events=None,
+        media_store=None,
+        router_host=None,
+        action_retrieval=None,
+        non_interactive=False,
+    )
     return cs
 
 
