@@ -2759,7 +2759,8 @@ class RouterLoop:
         ADVERTISES NO TOOLS (``tools=[]``), so the model cannot continue the
         task and the small consolidation output makes ``finish_reason=stop`` the
         natural outcome. ``tool_choice`` stays ``"auto"`` (``"none"`` is not
-        Gemini-safe) — moot with an empty tools list. The working history is
+        Gemini-safe) — omitted by call_llm_tools when tools=[] (Gemini rejects
+        tool_choice without function_declarations). The working history is
         preserved; only the system turn is replaced (the wrap-up SP tells the
         model to consolidate that history into a hand-off).
 
@@ -2787,7 +2788,7 @@ class RouterLoop:
             model=_model,
             messages=wrap_messages,
             tools=[],            # continuation suppression: no tool to call
-            tool_choice="auto",  # "none" is not Gemini-safe; moot with tools=[]
+            tool_choice="auto",  # omitted by call_llm_tools when tools=[] (Gemini fix)
             skill_name="router",
             budget=self.budget,
             budget_agent=self.host.agent_name,

@@ -1309,7 +1309,12 @@ async def call_llm_tools(
         "model": effective_model,
         "messages": messages,
         "tools": tools,
-        "tool_choice": tool_choice,
+        # Gemini rejects tool_choice ("Function calling config is set without
+        # function_declarations") when tools=[] — omit tool_choice for tool-less
+        # calls. This fixes force-close wrap-up and any other tools=[] path.
+        # "none" is already documented as not Gemini-safe; "auto" with tools=[]
+        # is equally rejected. Plain text completion = no tool_choice needed.
+        **({} if not tools else {"tool_choice": tool_choice}),
         # spec.kwargs passthrough (operator-declared, e.g. temperature)
         **spec_kwargs,
         # Gemini-safe forced settings override spec_kwargs:
@@ -1327,7 +1332,7 @@ async def call_llm_tools(
         "caller_hint": trace_caller or "unknown",
         "messages": messages,
         "tools": tools,
-        "tool_choice": tool_choice,
+        "tool_choice": tool_choice if tools else None,
         "sampling_params": {
             "timeout": timeout,
             "max_retries": max_retries,
