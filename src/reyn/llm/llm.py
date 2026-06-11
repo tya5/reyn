@@ -306,15 +306,19 @@ def _dump_llm_response(request_id: str | None, payload: dict) -> None:
         logger.warning("llm trace dump write failed: %s", exc)
 
 
-_G12_SIGNAL_TEXT = "(answered) — task complete; reply to user or chain another tool"
+# Uniform in-stream continuation signal for all successful tool results.  The
+# prior text asserted "task complete" unconditionally — that is overstate for
+# many op kinds (write/edit: change applied but unverified; any op: the task may
+# have further steps).  "resume" is the same token used by the chat empty-stop
+# recovery path (EMPTY_STOP_RETRY_DIRECTIVE) — a pure continuation nudge with
+# no state assertion or instruction, matching the "uniform resume" philosophy.
+_G12_SIGNAL_TEXT = "resume"
 
 # #1439 Fix #2: the trailing-tool result was an ERROR. The success text above
 # asserts "task complete" unconditionally, so an errored exec carried "task
 # complete" → the agent narrated error-as-success (14096). The error cell drops
 # "complete" and signals the failure + a continuation nudge (decision-enabling).
-# Only the error cell changes; the success text is byte-identical so the
-# empty-stop-tuned envelope (#1424) recovery on the common success path is
-# unchanged by construction (replay-gate narrows to the error cell).
+# Only the error cell changes; the success text change (above) is orthogonal.
 _G12_SIGNAL_ERROR_TEXT = (
     "(tool error) — the tool call did NOT succeed; inspect the error and decide"
     " the next step before continuing (do not report success)"
@@ -416,10 +420,9 @@ def _apply_g12_signal(messages: list[dict]) -> list[dict]:
     content = last.get("content")
     if not isinstance(content, str):
         return messages
-    # #1439 Fix #2: status-aware signal text. An errored trailing tool result
-    # gets the error signal (no "task complete"); everything else keeps the
-    # byte-identical success signal. The embed STRUCTURE is unchanged — only the
-    # injected text differs — so all structural branches below are preserved.
+    # Two-cell signal: error → error cell; all other results → success cell.
+    # The embed STRUCTURE is unchanged — only the injected text differs — so
+    # all structural branches below are preserved.
     signal = _G12_SIGNAL_ERROR_TEXT if _trailing_tool_is_error(content) else _G12_SIGNAL_TEXT
     new_last = dict(last)
     if content.startswith("{"):
