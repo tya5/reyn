@@ -72,8 +72,7 @@ def test_json_tool_content_gets_top_level_signal_field() -> None:
     new_tool = result[-1]
     assert new_tool["role"] == "tool"
     parsed = json.loads(new_tool["content"])
-    assert parsed["_g12_signal"].startswith("(answered)")
-    assert "task complete" in parsed["_g12_signal"]
+    assert parsed["_g12_signal"] == "resume"
     assert parsed["status"] == "ok"
     assert parsed["data"] == {"path": "foo.md"}
 
@@ -130,7 +129,7 @@ def test_plain_text_tool_content_gets_prefix() -> None:
     ]
     result = _apply_g12_signal(msgs)
     new_content = result[-1]["content"]
-    assert new_content.startswith("(answered)")
+    assert new_content.startswith("resume")
     assert new_content.endswith("plain text result")
 
 
@@ -159,7 +158,7 @@ def test_empty_json_object_produces_valid_json() -> None:
     new_content = result[-1]["content"]
     # Must parse cleanly
     parsed = json.loads(new_content)
-    assert parsed["_g12_signal"].startswith("(answered)")
+    assert parsed["_g12_signal"] == "resume"
     # No other fields (= the only key is the signal)
     assert list(parsed.keys()) == ["_g12_signal"]
 
@@ -237,8 +236,7 @@ def test_realistic_polluted_history_post_tool_shape() -> None:
 
     # Trailing tool message got the signal field
     parsed = json.loads(result[-1]["content"])
-    assert parsed["_g12_signal"].startswith("(answered)")
-    assert "task complete" in parsed["_g12_signal"]
+    assert parsed["_g12_signal"] == "resume"
     assert parsed["status"] == "ok"
 
     # Prior snowball-style assistant message is left untouched (= helper
@@ -286,11 +284,11 @@ def test_errored_trailing_tool_signal_does_not_claim_complete(err_status: str) -
 
 def test_success_vs_error_signal_differential() -> None:
     """Tier 2: #1439 Fix #2 — the falsification pair. A status=ok trailing tool
-    keeps the byte-identical "task complete" success signal; a status=error one
-    gets the no-completion error signal. Same code path, status-driven branch."""
+    gets the "resume" success signal; a status=error one gets the no-completion
+    error signal. Same code path, status-driven branch."""
     ok_signal = _signal_of('{"status": "ok", "data": 1}')
     err_signal = _signal_of('{"status": "error", "error": "x"}')
-    assert "task complete" in ok_signal          # success cell unchanged
+    assert ok_signal == "resume"                  # success cell = uniform resume
     assert "complete" not in err_signal.lower()   # error cell suppresses it
     assert ok_signal != err_signal
 
@@ -300,11 +298,11 @@ def test_absent_and_non_json_status_use_success_cell() -> None:
     unparseable `{`-string, and plain-text content all fall to the success cell
     (byte-identical signal), so the error path is narrow (replay-gate bound)."""
     # status absent → success
-    assert "task complete" in _signal_of('{"data": 5}')
+    assert _signal_of('{"data": 5}') == "resume"
     # plain-text content → success (prefix form)
     plain = _apply_g12_signal([{"role": "tool", "content": "just text"}])[-1]["content"]
-    assert plain.startswith("(answered)")
-    assert "task complete" in plain
+    assert plain.startswith("resume")
+    assert "resume" in plain
 
 
 # ── 6b. #1439 Fix #2: the PRODUCTION envelope nests op status under `data` ──
@@ -340,7 +338,50 @@ def test_nested_op_error_statuses_route_to_error_cell(op_status: str) -> None:
 
 def test_nested_ok_under_data_uses_success_cell() -> None:
     """Tier 2: #1439 Fix #2 — the dominant production success shape
-    {"status":"ok","data":{...,"status":"ok"}} keeps the byte-identical success
-    signal (nested ok must NOT false-trigger the error cell)."""
+    {"status":"ok","data":{...,"status":"ok"}} uses the success cell
+    (nested ok must NOT false-trigger the error cell)."""
     content = '{"status": "ok", "data": {"kind": "file", "status": "ok", "data": {}}}'
-    assert "task complete" in _signal_of(content)
+    assert _signal_of(content) == "resume"
+
+
+# ── 7. stage-0: success cell is now "resume" (uniform continuation) ──────────
+# The prior text asserted "task complete" unconditionally — overstate for many
+# op kinds. The new text is "resume" — the same token used by the chat
+# empty-stop recovery path — a pure continuation nudge with no state assertion.
+# Error cell (#1441) is unchanged.
+
+
+def test_success_cell_is_resume() -> None:
+    """Tier 2: stage-0 — the success cell text is exactly "resume" (uniform
+    continuation signal). No state assertion, no instruction."""
+    from reyn.llm.llm import _G12_SIGNAL_TEXT
+    assert _G12_SIGNAL_TEXT == "resume"
+
+
+def test_success_cell_contains_no_task_complete() -> None:
+    """Tier 2: stage-0 — the success cell must not assert 'task complete'
+    (the overstate that produced the cancellation trace in g12 success-cell)."""
+    from reyn.llm.llm import _G12_SIGNAL_TEXT
+    assert "complete" not in _G12_SIGNAL_TEXT.lower()
+    assert "task" not in _G12_SIGNAL_TEXT.lower()
+
+
+def test_error_cell_unchanged_by_stage0() -> None:
+    """Tier 2: stage-0 — the error cell (#1441 Fix #2) is not touched;
+    regression pin against the stage-0 change overwriting it."""
+    from reyn.llm.llm import _G12_SIGNAL_ERROR_TEXT
+    assert "error" in _G12_SIGNAL_ERROR_TEXT.lower()
+    assert "complete" not in _G12_SIGNAL_ERROR_TEXT.lower()
+    assert "next step" in _G12_SIGNAL_ERROR_TEXT.lower()
+
+
+def test_two_cell_differential() -> None:
+    """Tier 2: stage-0 — falsification pair: success → "resume"; error → error
+    cell. The two must be distinct, and success must not contain "complete"."""
+    from reyn.llm.llm import _G12_SIGNAL_ERROR_TEXT, _G12_SIGNAL_TEXT
+    ok_signal = _signal_of('{"status": "ok", "data": 1}')
+    err_signal = _signal_of('{"status": "error", "error": "x"}')
+    assert ok_signal == _G12_SIGNAL_TEXT == "resume"
+    assert err_signal == _G12_SIGNAL_ERROR_TEXT
+    assert ok_signal != err_signal
+    assert "complete" not in ok_signal.lower()
