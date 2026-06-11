@@ -2613,20 +2613,14 @@ class RouterLoop:
             limit=self.max_iterations,
             chain_id=self.chain_id,
         )
-        _cause_msg = {
-            "role": "user",
-            "content": (
-                f"This turn is ending because the router reached its iteration "
-                f"limit ({self.max_iterations} iterations). "
-                "Do not call any more tools. "
-                "Summarize what has been accomplished, where outputs are, "
-                "what remains, and that this turn stopped due to a limit."
-            ),
-        }
+        # Cause embedded in wrap-up SP (not as a trailing user message):
+        # Gemini rejects a user turn immediately after a tool_result.
+        _reason = f"router reached its iteration limit ({self.max_iterations} iterations)"
         try:
             _wrapup = await self._force_close_call_with_retry(
-                [*messages, _cause_msg],
+                messages,
                 resolved_model=host.resolve_model(self.router_model),
+                reason=_reason,
             )
             if _wrapup.content:
                 # Mirror cumulative-axis: hand result to host for checkpoint
@@ -2721,7 +2715,12 @@ class RouterLoop:
     # will still work; the alias delegates to the unified implementation).
     _dedupe_async_tool_calls = _dedupe_tool_calls_round
 
-    def _build_force_close_messages(self, messages: list[dict]) -> list[dict]:
+    def _build_force_close_messages(
+        self,
+        messages: list[dict],
+        *,
+        reason: "str | None" = None,
+    ) -> list[dict]:
         """#1092 PR-B: rebuild ``messages`` for the wrap-up (force-close) call.
 
         The main system turn is replaced by the axis-independent wrap-up SP
@@ -2729,10 +2728,18 @@ class RouterLoop:
         are kept verbatim so the model consolidates them. Any pre-existing
         system turn(s) are dropped (the wrap-up SP is the only system context
         for this call). Pure — no I/O — so it is unit-testable in isolation.
+
+        Args:
+            reason: Cause for the wrap-up (e.g. "router reached iteration
+                limit"). Forwarded to ``wrap_up_system_prompt`` and embedded
+                in the SP — NOT as a trailing user message, because providers
+                with strict function-call pairing (Gemini) reject a user turn
+                immediately after a tool_result. ``None`` = cumulative-axis
+                (cause-neutral; replay fixtures unaffected).
         """
         non_system = [m for m in messages if m.get("role") != "system"]
         return [
-            {"role": "system", "content": wrap_up_system_prompt()},
+            {"role": "system", "content": wrap_up_system_prompt(reason=reason)},
             *non_system,
         ]
 
@@ -2741,6 +2748,7 @@ class RouterLoop:
         messages: list[dict],
         *,
         resolved_model: str,
+        reason: "str | None" = None,
     ) -> "LLMToolCallResult":
         """#1092 PR-B (force-close call): turn the CURRENT turn into a clean
         ``finish`` instead of letting it overflow the cumulative budget.
@@ -2761,7 +2769,7 @@ class RouterLoop:
         chat/phase loops stay byte-identical until PR-C wires the trigger.
         """
         _llm = self._llm_caller or call_llm_tools
-        wrap_messages = self._build_force_close_messages(messages)
+        wrap_messages = self._build_force_close_messages(messages, reason=reason)
         # #1092 PR-E (by-construction floor): HARD-CAP the wrap-up output at
         # output_reserve via max_tokens, so the consolidation is ≤ output_reserve
         # by construction (not just by the wrap-up SP's "be concise"). With
@@ -2791,6 +2799,7 @@ class RouterLoop:
         messages: list[dict],
         *,
         resolved_model: str,
+        reason: "str | None" = None,
     ) -> "LLMToolCallResult":
         """#1092 PR-B layer-2 (PHASE axis): the force-close call, made robust to
         its OWN overflow via overflow → host shrink → retry, monotonic to the
@@ -2818,7 +2827,7 @@ class RouterLoop:
         while True:
             try:
                 return await self._force_close_call(
-                    cur, resolved_model=resolved_model,
+                    cur, resolved_model=resolved_model, reason=reason,
                 )
             except Exception as exc:  # noqa: BLE001
                 if not _is_context_overflow_error(exc):
