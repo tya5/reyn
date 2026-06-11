@@ -494,7 +494,7 @@ class OutboxRouter:
             # here is intra-package coupling, but the alternative (a new
             # public accessor) is more surface area for the same purpose.
             interrupted: list[str] = []
-            for row in list(conv._skill_rows.values()):
+            for row in list(conv.in_flight_skill_rows()):
                 try:
                     interrupted.append(
                         f"✗ {row._skill_name}#{row._short_id}"

@@ -70,6 +70,7 @@ from reyn.chat.tui._palette import (
     _TEXT_NEUTRAL,
 )
 
+from ._inline_row_manager import _InlineRowManager
 from .async_stack_panel import AsyncStackPanel
 from .inline_thinking_row import InlineThinkingRow
 from .intervention import InterventionWidget
@@ -423,21 +424,10 @@ class ConversationView(Widget):
         # in end_stream / end_stream_cancelled so the header is written with
         # stream-start timing (not seal-time).
         self._stream_new_turn: dict[str, bool] = {}
-        self._skill_rows: dict[str, SkillActivityRow] = {}
-        # Issue #427 step 4: per-tool_call inline rows keyed by op_id
-        # (= dispatch_tool's args_hash, propagated via forwarder OutboxMessage
-        # meta). Mounted on tool_call_started, finalised on
-        # tool_call_completed / tool_call_failed.
-        self._tool_call_rows: dict[str, ToolCallRow] = {}
-        # W13 T2-1: reference to the most-recent ToolCallRow that was
-        # transitioned to failure state, kept so the F7 keyboard drill-down
-        # action can toggle its expand state. The reference is cleared on
-        # Ctrl+L (clear()) and updated on every fail_tool_call_row() call.
-        # The row may still be mounted (= live widget, F7 can toggle expand)
-        # or already flushed into the RichLog (= widget removed; F7 surfaces
-        # a "Ctrl+B → events" hint instead). A None value means no failure
-        # has occurred yet in this session.
-        self._last_failed_tool_row: ToolCallRow | None = None
+        # Inline row manager: owns _skill_rows, _tool_call_rows,
+        # _last_failed_tool_row and all methods that operate on them
+        # (refactor tui-pr1).
+        self._row_mgr = _InlineRowManager(self)
         # Header-grouping state (B1)
         self._last_speaker: str = ""
         self._last_speaker_at: float = 0.0
@@ -749,7 +739,7 @@ class ConversationView(Widget):
         (``conv.tool_call_row_ids == frozenset()``). Tests should use this
         rather than accessing ``_tool_call_rows`` directly.
         """
-        return frozenset(self._tool_call_rows)
+        return frozenset(self._row_mgr._tool_call_rows)
 
     def richlog_start_line(self, log: "RichLog") -> int:
         """Public wrapper around ``_richlog_start_line`` for test access.
@@ -1616,342 +1606,50 @@ class ConversationView(Widget):
             pass
         return full
 
-    # ── skill activity rows (C1+A1) ──────────────────────────────────────────
+    # ── skill + tool-call rows (delegated to _InlineRowManager, tui-pr1) ──────
 
     def start_skill_row(
-        self,
-        run_id: str,
-        skill_name: str,
-        *,
-        parent_run_id: str = "",
+        self, run_id: str, skill_name: str, *, parent_run_id: str = "",
     ) -> SkillActivityRow:
-        """Mount (or return existing) SkillActivityRow for a skill run.
-
-        Suppresses the noisy `· phase started: …` trace stream by giving it
-        a single ambient widget that updates in-place.
-
-        ``parent_run_id`` (issue #210): when non-empty AND a row for that
-        parent is currently mounted, the new row renders with a ``  └─ ``
-        prefix so sub-skill spawns visibly nest under their parent in the
-        conv pane. If the parent's row has already finished (= rotated
-        out of ``_skill_rows``) the child renders as a normal root row —
-        an orphaned ``└─`` connector pointing at a vanished line would
-        be more confusing than no indent at all.
-        """
-        existing = self._skill_rows.get(run_id)
-        if existing is not None:
-            return existing
-        self._consume_empty_hint()
-        label_prefix = ""
-        if parent_run_id and parent_run_id in self._skill_rows:
-            label_prefix = "  └─ "
-        row = SkillActivityRow(
-            run_id=run_id,
-            skill_name=skill_name,
-            id=f"skillrow_{run_id[:8]}",
-            label_prefix=label_prefix,
+        return self._row_mgr.start_skill_row(
+            run_id, skill_name, parent_run_id=parent_run_id,
         )
-        self._skill_rows[run_id] = row
-        self.mount(row)
-        return row
 
     def update_skill_phase(self, run_id: str, phase: str, visit: int = 1) -> None:
-        row = self._skill_rows.get(run_id)
-        if row is not None:
-            row.set_phase(phase, visit=visit)
+        self._row_mgr.update_skill_phase(run_id, phase, visit=visit)
 
     def update_skill_detail(self, run_id: str, detail: str) -> None:
-        """Update the row's in-phase detail (=``⤷ <detail>`` segment).
-
-        No-op if the row isn't mounted yet (a detail trace can arrive
-        before the first ``phase_started``; the row will be lazy-mounted
-        on the next phase event and will pick up subsequent details).
-        """
-        row = self._skill_rows.get(run_id)
-        if row is not None:
-            row.set_detail(detail)
+        self._row_mgr.update_skill_detail(run_id, detail)
 
     def in_flight_skill_rows(self) -> list[SkillActivityRow]:
-        """Return SkillActivityRow widgets whose skill is still running.
-
-        Powers the F3 keyboard expand action (= toggle drill-down on
-        whatever's executing right now). The mouse path can target any
-        specific row by clicking it; the keyboard path needs a default
-        target, and "everything currently running" is the most useful
-        — typically that's a single row, but if multiple skills are
-        concurrent the user can drill into all of them at once.
-
-        Finished rows are excluded — once a skill completes, the user
-        can still click it individually to expand, but F3 should not
-        surprise them by toggling old finished rows that have scrolled
-        far up. Returns an empty list when nothing is in flight; the
-        caller surfaces a status hint in that case.
-        """
-        return [
-            row for row in self._skill_rows.values()
-            if not row._finished
-        ]
-
-    def in_flight_tool_call_rows(self) -> list[ToolCallRow]:
-        """Return ToolCallRow widgets whose tool call is still running.
-
-        Sibling to ``in_flight_skill_rows`` — the F3 keyboard expand
-        action targets both. Finished tool call rows (= success /
-        failure / abort terminal state) are excluded for the same
-        reason: F3 should only touch what's currently executing,
-        not old completed rows that may have scrolled far up.
-        """
-        return [
-            row for row in self._tool_call_rows.values()
-            if not row._finished
-        ]
-
-    # ── Tool-call rows (issue #427 step 4) ───────────────────────────────────
-
-    def start_tool_call_row(
-        self,
-        op_id: str,
-        tool_name: str,
-        *,
-        args_repr: str = "",
-        parent_run_id: str = "",
-    ) -> ToolCallRow | None:
-        """Mount a ToolCallRow for ``op_id`` if one isn't already present.
-
-        Returns the row (existing or newly mounted). ``op_id`` is the
-        ``args_hash`` propagated through the forwarder; it correlates the
-        eventual ``tool_call_completed`` / ``tool_call_failed`` outbox
-        message back to this row. Empty ``op_id`` short-circuits to
-        None (= consumer with no correlation id falls back to silent
-        suppression rather than mounting an unkeyed row that can never
-        be finalised).
-
-        ``parent_run_id`` (F-F): when non-empty AND a SkillActivityRow
-        for that run_id is currently mounted, the new row renders with
-        a ``  └─ `` prefix so tool_calls visibly nest under their owning
-        skill — same idiom as ``start_skill_row``'s ``parent_run_id``
-        handling for sub-skill rows (issue #210). Root-level tool_calls
-        (= no matching parent skill row) render with empty prefix.
-        """
-        if not op_id:
-            return None
-        existing = self._tool_call_rows.get(op_id)
-        if existing is not None:
-            return existing
-        self._consume_empty_hint()
-        label_prefix = ""
-        if parent_run_id and parent_run_id in self._skill_rows:
-            label_prefix = "  └─ "
-            # Record the tool call on the owning SkillActivityRow so
-            # its drill-down expand view can surface the call list
-            # (= 2-level drill: phases × tools). Belt-and-braces over
-            # ``ToolCallRow``'s own rendering — the row gets unmounted
-            # on finalise, but the skill's drill-down should remember
-            # what tools ran beneath it for the rest of the session.
-            try:
-                self._skill_rows[parent_run_id].record_tool_call(
-                    tool_name, args_repr,
-                )
-            except Exception:
-                pass
-        row = ToolCallRow(
-            tool_name=tool_name,
-            args_repr=args_repr,
-            label_prefix=label_prefix,
-            id=f"toolcall_{op_id[:8]}",
-        )
-        self._tool_call_rows[op_id] = row
-        self.mount(row)
-        return row
-
-    def complete_tool_call_row(
-        self, op_id: str, *, result_snippet: str = "",
-    ) -> None:
-        """Transition the row keyed by ``op_id`` to the success terminal.
-
-        Mirrors ``finish_skill_row`` semantics: finalise the row, flush
-        its rendered shape into the RichLog so scrollback / Ctrl+P/N
-        can reach it, then unmount the live widget to bound DOM growth
-        across long sessions. No-op when no row is mounted for ``op_id``
-        (e.g. the start message was lost or the row was already
-        finalised by a prior terminal).
-        """
-        row = self._tool_call_rows.pop(op_id, None)
-        if row is None:
-            return
-        row.finish_success(result_snippet=result_snippet or None)
-        self._flush_tool_call_row(row)
-
-    def fail_tool_call_row(self, op_id: str, *, error: str = "") -> None:
-        """Transition the row keyed by ``op_id`` to the failure terminal."""
-        row = self._tool_call_rows.pop(op_id, None)
-        if row is None:
-            return
-        row.finish_failure(reason=error)
-        # W13 T2-1: record the most-recent failure before flushing so the
-        # F7 keyboard drill-down can find it even after the flush timer fires.
-        self._last_failed_tool_row = row
-        self._flush_tool_call_row(row)
-
-    def abort_tool_call_rows(self, reason: str = "cancelled") -> int:
-        """Transition every live tool-call row to the aborted terminal.
-
-        Called from ``ReynTUIApp.action_cancel_inflight`` so Ctrl+C
-        doesn't leave orphan ``●`` spinners frozen in scroll history
-        when the underlying skill task is cancelled mid-tool_call.
-        Returns the count of rows that were live + sealed (= 0 when
-        no tool_calls were in flight). Mirrors the streaming-row +
-        skill-row seal sweeps that precede it in ``action_cancel_inflight``.
-        """
-        cancelled = 0
-        for op_id in list(self._tool_call_rows.keys()):
-            row = self._tool_call_rows.pop(op_id, None)
-            if row is None:
-                continue
-            try:
-                row.finish_aborted(reason=reason)
-                self._flush_tool_call_row(row)
-                cancelled += 1
-            except Exception:
-                # Defensive: don't let one bad row stop the sweep.
-                pass
-        return cancelled
-
-    def latest_failed_tool_row(self) -> "ToolCallRow | None":
-        """Return the most-recent ToolCallRow that entered failure state.
-
-        Returns the row object regardless of whether it is still mounted
-        (= live widget, F7 can toggle expand) or already flushed into the
-        RichLog (= widget removed via ``row.remove()``). The caller must
-        check ``row.is_mounted`` or try ``row.toggle_expand()`` defensively
-        to distinguish the two cases:
-
-          - Mounted  (``is_mounted=True``)  → ``toggle_expand()`` works.
-          - Flushed  (``is_mounted=False``) → surface a hint directing the
-            user to Ctrl+B → Events tab for the full trace.
-
-        Returns None when no failure has been recorded in this session
-        (= all tool calls so far succeeded / aborted, or the view was
-        cleared via Ctrl+L).
-
-        W13 T2-1 public accessor.
-        """
-        return self._last_failed_tool_row
-
-    def _flush_tool_call_row(self, row: ToolCallRow) -> None:
-        """Render the row's two-line shape into the RichLog and unmount.
-
-        Same flush pattern as ``finish_skill_row`` (= finished line goes
-        to scroll history, live widget removed). The row's render
-        helpers are pure over its state, so reading them after the
-        finish_* call captures the terminal shape.
-
-        F-H min-display-time: very fast tool_calls (= cache hits, instant
-        returns) would mount + flush within a single event-loop tick,
-        leaving no perceptual cue that the tool ran. When the row has
-        been mounted for less than ``_TOOL_CALL_MIN_DISPLAY_S``, defer
-        the flush via ``set_timer`` so each row stays visible briefly
-        before transitioning into RichLog history.
-        """
-        elapsed = row.mounted_for_seconds()
-        if elapsed < _TOOL_CALL_MIN_DISPLAY_S:
-            delay = _TOOL_CALL_MIN_DISPLAY_S - elapsed
-            try:
-                self.app.set_timer(
-                    delay, lambda: self._do_flush_tool_call_row(row),
-                )
-                return
-            except Exception:
-                # If timer scheduling fails (e.g. widget already torn
-                # down), fall through to immediate flush — better
-                # to land the row in history than lose it.
-                pass
-        self._do_flush_tool_call_row(row)
-
-    def _do_flush_tool_call_row(self, row: ToolCallRow) -> None:
-        """Actual write-to-RichLog + unmount; safe to call from a timer.
-
-        A4 (flush-indent fix): when the row has a non-empty ``label_prefix``
-        (= sub-skill nesting, e.g. ``"  └─ "``), the prefix is already baked
-        into the Rich Text returned by ``_build_line1()`` / ``_build_line2()``.
-        The live widget renders at column 0 in the DOM (no Padding); flushing
-        via ``_write_body`` would apply an extra ``_indent_body`` Padding on top
-        of the prefix, producing double-indent vs the live widget.  Use
-        ``_write_log`` (column-0, no Padding) for prefixed rows so the flushed
-        line lands at the same visual column as the live widget.
-
-        Top-level rows (empty ``label_prefix``) continue to use ``_write_body``
-        — that path is unchanged by this fix.
-        """
-        try:
-            line1 = row._build_line1()
-            line2 = row._build_line2()
-            # #1245: flush at col 0 (``_write_log``, no Padding) for ALL rows
-            # so the flushed line lands at the same column as the LIVE widget
-            # (ToolCallRow CSS = ``padding: 0 0`` = col 0). ``_write_body``
-            # would add an 8-cell hanging-indent the live row never had,
-            # jumping the row right at seal (the top-level mismatch tracked
-            # in #1245). Any ``label_prefix`` (sub-skill nesting) is already
-            # baked into the Rich Text by ``_build_line1`` / ``_build_line2``,
-            # so the col-0 write preserves it (prefix = the visual indent) —
-            # this generalises the #1242 prefixed-row fix to top-level rows.
-            self._write_log(line1)
-            if line2.plain:
-                self._write_log(line2)
-            row.remove()
-        except Exception:
-            # Same defensive stance as finish_skill_row: a flush
-            # failure leaves the row mounted (= breadcrumb stays
-            # visible) rather than blowing up the outbox loop.
-            pass
-
-    # ── SkillActivityRow (issue #210 / wave-7 #418) ───────────────────────────
+        return self._row_mgr.in_flight_skill_rows()
 
     def finish_skill_row(
-        self,
-        run_id: str,
-        *,
-        success: bool = True,
-        reason: str = "",
-        aborted: bool = False,
+        self, run_id: str, *, success: bool = True, reason: str = "", aborted: bool = False,
     ) -> None:
-        """Transition the row to ``✓ / ✗`` and roll it into the scroll log.
+        self._row_mgr.finish_skill_row(run_id, success=success, reason=reason, aborted=aborted)
 
-        Previously the row was only popped from ``_skill_rows`` and
-        ``row.finish(...)`` was called, leaving the widget mounted in
-        the ConversationView DOM forever. That had two consequences:
+    def in_flight_tool_call_rows(self) -> list[ToolCallRow]:
+        return self._row_mgr.in_flight_tool_call_rows()
 
-        - DOM accumulation: every completed skill stacked another
-          mounted ``SkillActivityRow`` widget, growing layout cost
-          monotonically across the session.
-        - Unreachable breadcrumb: the ``✓ skill#abcd · Ns · Ctrl+B →
-          agents`` line lived below the RichLog as a sibling, so
-          ``Ctrl+P/N`` / ``Page_Up`` / arrow scrolling never reached
-          it — the finished status was visible only while the user
-          stayed at the bottom.
+    def start_tool_call_row(
+        self, op_id: str, tool_name: str, *, args_repr: str = "", parent_run_id: str = "",
+    ) -> "ToolCallRow | None":
+        return self._row_mgr.start_tool_call_row(
+            op_id, tool_name, args_repr=args_repr, parent_run_id=parent_run_id,
+        )
 
-        Flush the finished row's renderable into the RichLog (where it
-        becomes part of the scrollable history) and then remove the
-        widget.
-        """
-        row = self._skill_rows.pop(run_id, None)
-        if row is None:
-            return
-        row.finish(success=success, reason=reason, aborted=aborted)
-        try:
-            finished_text = row._build_finished()
-            # #1245: flush at col 0 to match the LIVE SkillActivityRow (CSS
-            # ``padding: 0 0``). ``_write_body``'s 8-cell hanging-indent
-            # jumped the finished breadcrumb right at seal. Any
-            # ``label_prefix`` is baked into ``_build_finished``'s Text, so
-            # the col-0 write preserves it.
-            self._write_log(finished_text)
-            row.remove()
-        except Exception:
-            # If anything in the flush path fails, leave the row mounted
-            # — the breadcrumb stays visible (just not scrollable), which
-            # is strictly better than blowing up the outbox loop.
-            pass
+    def complete_tool_call_row(self, op_id: str, *, result_snippet: str = "") -> None:
+        self._row_mgr.complete_tool_call_row(op_id, result_snippet=result_snippet)
+
+    def fail_tool_call_row(self, op_id: str, *, error: str = "") -> None:
+        self._row_mgr.fail_tool_call_row(op_id, error=error)
+
+    def abort_tool_call_rows(self, reason: str = "cancelled") -> int:
+        return self._row_mgr.abort_tool_call_rows(reason)
+
+    def latest_failed_tool_row(self) -> "ToolCallRow | None":
+        return self._row_mgr.latest_failed_tool_row()
 
     # ── sticky status (A3) ────────────────────────────────────────────────────
 
@@ -2621,39 +2319,8 @@ class ConversationView(Widget):
         for row in self._stream_rows.values():
             row.seal()
         self._stream_rows.clear()
-        # Force-finish any in-progress skill rows so they don't keep ticking
-        for row in list(self._skill_rows.values()):
-            row.finish(success=True, reason="cleared")
-        self._skill_rows.clear()
-        # Errors are now plain log lines — _log().clear() above removes them
-        # automatically; no separate widget sweep needed.
-        # Wave-10 G-F1: sweep in-flight ToolCallRow widgets too. They
-        # share the same "child of ConversationView, not a RichLog
-        # line" mounting model as StreamingRow / SkillActivityRow,
-        # so ``_log().clear()`` doesn't unmount them. Without this loop:
-        #   - the row widgets stay on screen as orphans on the now-blank
-        #     pane
-        #   - ``_tool_call_rows`` still carries the stale op_id keys, so
-        #     when the in-flight tool finally completes,
-        #     ``complete_tool_call_row`` / ``fail_tool_call_row`` pops
-        #     the dict entry and calls ``row.remove()`` against an
-        #     already-orphaned widget → Textual DOM exception swallowed
-        #     by the bare ``except Exception: pass`` in the caller.
-        # We use ``finish_aborted("cleared")`` rather than a bare
-        # ``remove()`` so the row briefly renders its ⊘ terminal state
-        # before the parent ``clear()`` blanks the log — matches the
-        # ``_skill_rows`` ``finish(reason="cleared")`` idiom directly
-        # above.
-        for row in list(self._tool_call_rows.values()):
-            try:
-                row.finish_aborted("cleared")
-                row.remove()
-            except Exception:
-                pass
-        self._tool_call_rows.clear()
-        # W13 T2-1: reset the most-recent failure reference so F7 on a
-        # fresh-cleared pane correctly shows "no recent tool failure".
-        self._last_failed_tool_row = None
+        # Sweep skill + tool-call rows via manager (tui-pr1).
+        self._row_mgr.clear()
         # AsyncStackPanel wiring: drop all bottom-stack entries so a
         # Ctrl+L leaves the panel empty alongside the conv log.
         # Without this the running-task overview would survive the

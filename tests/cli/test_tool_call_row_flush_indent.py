@@ -130,7 +130,7 @@ async def test_flushed_prefixed_row_lands_at_prefix_not_double_indent() -> None:
         row = _row_with_prefix("  └─ ")
         conv.mount(row)
         await pilot.pause()
-        conv._do_flush_tool_call_row(row)
+        conv._row_mgr._do_flush_tool_call_row(row)  # tui-pr1: method moved to _row_mgr
         await pilot.pause()
 
         idx = _find_line_containing(log, "bash")
@@ -165,7 +165,7 @@ async def test_flushed_toplevel_tool_row_lands_at_col0() -> None:
         row = _row_no_prefix()
         conv.mount(row)
         await pilot.pause()
-        conv._do_flush_tool_call_row(row)
+        conv._row_mgr._do_flush_tool_call_row(row)  # tui-pr1: method moved to _row_mgr
         await pilot.pause()
 
         idx = _find_line_containing(log, "bash")
