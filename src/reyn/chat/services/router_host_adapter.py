@@ -507,15 +507,23 @@ class RouterHostAdapter:
         return self._project_context or ""
 
     def get_cwd(self) -> str:
-        """Current working directory the agent process is running from.
+        """Agent-visible working directory for the SP Environment section.
 
-        Threaded into the router's system prompt so unqualified user
-        references like "this repo" / "this code" / "the codebase" map
-        to the project at this path. Without it the LLM falls back to
-        its training prior ("please share the repository URL") even when
-        the user is obviously inside a checked-out repo.
+        Backend-aware: when an environment backend is configured (e.g.
+        DockerEnvironmentBackend), the agent sees the in-container path
+        (backend.repo_dir) rather than the host cwd — these diverge when
+        the repo is mounted inside a container at a different path. Without
+        this fix the SP shows the host path but the actual FS/exec ops run
+        against the container repo_dir (frame mismatch + host path leak).
+
+        Resolution order (getattr-guarded for forward compat):
+        1. backend.repo_dir  — ContainerBackend (e.g. DockerEnvironmentBackend)
+        2. os.getcwd()       — HostBackend or no backend
         """
         import os
+        repo_dir = getattr(self._environment_backend, "repo_dir", None)
+        if repo_dir:
+            return str(repo_dir)
         return os.getcwd()
 
     def get_universal_wrappers_enabled(self) -> bool:

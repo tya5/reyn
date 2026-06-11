@@ -110,6 +110,7 @@ def _make_adapter(
     agent_replies_list: "list[str] | None" = None,
     resolver: ModelResolver | None = None,
     turn_budget_engine: object = None,
+    environment_backend: object = None,  # #1477: optional for sandbox-cwd tests
 ) -> RouterHostAdapter:
     """Construct a minimal RouterHostAdapter with real collaborators."""
     if events is None:
@@ -164,6 +165,7 @@ def _make_adapter(
         delegation_tracker=lambda: _delegations,
         agent_replies_tracker=lambda: _replies,
         turn_budget_engine=turn_budget_engine,
+        environment_backend=environment_backend,
     )
 
 
