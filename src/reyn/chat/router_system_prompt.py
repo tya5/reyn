@@ -213,10 +213,10 @@ def build_system_prompt(
     # FP-0034 §D14: ``search_actions`` is only in tools= when the
     # embedding class is configured.  Build the wrapper chain dynamically
     # so the SP routing hint matches the actual tools= shape.
-    _wrapper_names = ["list_actions"]
+    _wrapper_names = ["`list_actions`"]
     if search_actions_enabled:
-        _wrapper_names.append("search_actions")
-    _wrapper_names.extend(["describe_action", "invoke_action"])
+        _wrapper_names.append("`search_actions`")
+    _wrapper_names.extend(["`describe_action`", "`invoke_action`"])
     _wrapper_chain = " → ".join(_wrapper_names)
 
     # V18 — 4-intent multi-step routing (replaces the legacy single-line
@@ -250,11 +250,11 @@ def build_system_prompt(
     if discovery_mandate:
         _otherwise = (
             "Otherwise — i.e. for any action that is NOT obvious or a named "
-            "skill above — your FIRST tool call MUST be list_actions before "
-            "reading, writing, or editing anything (the visible tools are a "
-            "hot-list subset, not the full catalog; do NOT skip it, refuse, "
+            "skill above — your FIRST tool call MUST be `list_actions` before "
+            "reading, writing, or editing anything (the visible tools are "
+            "universal wrappers, not the full catalog; do NOT skip it, refuse, "
             f"or guess). Then {_wrapper_chain}. To edit a file you MUST use "
-            "file__edit, found via list_actions."
+            "`file__edit`, found via `list_actions`."
         )
     else:
         _otherwise = f"Otherwise {_wrapper_chain}."
@@ -269,19 +269,19 @@ def build_system_prompt(
         " answer lives:",
         "- About Reyn itself (how Reyn works, Reyn's CLI / runtime /"
         " protocols / project conventions):"
-        " invoke_action(action_name=\"reyn_source__read\","
-        " args={\"path\": \"README.md\"}) → synthesize from README."
+        " `invoke_action(action_name=\"reyn_source__read\","
+        " args={\"path\": \"README.md\"})` → synthesize from README."
         " (README has the overview + curated map of deep-dive paths;"
         " chain to a specific doc if README points there.)",
-        "- About external / current information: web__search or"
-        " web__fetch.",
+        "- About external / current information: `web__search` or"
+        " `web__fetch`.",
         "- Already in your training: answer directly.",
         "",
         "**A task to perform** — pick by target shape:",
         "- Single-target action (= one file, one URL, one skill, one"
-        " item): if the action is obvious (file__read for \"read this"
-        " file\", reyn_source__read for \"open Reyn doc X\", web__fetch"
-        " for a specific URL, invoke_action(skill__X) for an explicit"
+        " item): if the action is obvious (`file__read` for \"read this"
+        " file\", `reyn_source__read` for \"open Reyn doc X\", `web__fetch`"
+        " for a specific URL, `invoke_action`(`skill__X`) for an explicit"
         " named skill), invoke directly. " + _otherwise,
         "- Multi-target / iteration (= \"do X for each Y\", \"process N"
         " files\", \"run X on every Y\"): decompose with plan into"
@@ -320,8 +320,8 @@ def build_system_prompt(
             " \"this project\", \"ここ\", or any other unqualified reference to"
             " surrounding source, interpret it as the project at the cwd above."
             " Do NOT ask for a repository URL or path — discover the contents"
-            " with list_actions(category=['file']) → invoke_action(file__list, ...)"
-            " → invoke_action(file__read, ...) within the cwd's read scope."
+            " with `list_actions(category=['file'])` → `invoke_action(file__list, ...)`"
+            " → `invoke_action(file__read, ...)` within the cwd's read scope."
         )
         parts.append("")
 
@@ -340,10 +340,11 @@ def build_system_prompt(
         parts.append("## Action categories")
         parts.append("")
         parts.append(
-            "Actions are addressed by qualified name (<category>__<entry>). "
-            "Discover via list_actions(category=[...]); describe via "
-            "describe_action(action_name=...); execute via "
-            "invoke_action(action_name=..., args={...})."
+            "Actions are addressed by qualified name (`<category>__<entry>`)."
+            " Names in backticks of the form `<category>__<entry>` are invocable action names."
+            " Discover via `list_actions(category=[...])`; describe via"
+            " `describe_action(action_name=...)`; execute via"
+            " `invoke_action(action_name=..., args={...})`."
         )
         parts.append("")
         parts.append(
@@ -431,37 +432,10 @@ def build_system_prompt(
     # blocks (output_language, indexed_sources_section) are emitted later,
     # after the dynamic resource sections, since they vary per session/config.
     parts.append("## Behaviour")
-    # #187 Stage C (3/3 reinforcement): a Behaviour rule, scope-qualified
-    # ("an action you cannot name from the visible tools") so it reinforces the
-    # SAME non-obvious/unknown scope as branch-3 + §D9, not a blanket rule.
-    # Inside the static cacheable prefix.
-    if discovery_mandate:
-        parts.append(
-            "  - When a task needs an action you cannot name from the visible "
-            "tools, your FIRST tool call MUST be list_actions before reading, "
-            "writing, or editing anything — the visible tools are a hot-list "
-            "subset, not the full catalog."
-        )
-        parts.append("")
-    # Wrapper-only: 5 cross-cutting policies (B23-PRE-1 confirmed policy).
-    # Per-tool flow details (post-list MUST, post-describe MUST, spawn-ack,
-    # task_completed, agent delegation, plan WHAT/WHEN_NOT) live in each
-    # tool's description — Anthropic 1-tool-1-purpose pattern.
-    # Policies 1-5 are encoded here as SP cross-cutting rules that apply
-    # regardless of which tool was most recently called.
-    parts.extend([
-        # Policy 1: 3-way intent routing (Action / Plan / Reply)
-        "  - Domain task → invoke_action (single tool) OR plan (multi-source"
-        " synthesis). Chitchat → Reply.",
-        # Policy 2: plan routing signal (multi-source)
-        "  - Use plan when the query combines info from multiple independent"
-        " sources (e.g. \"compare A and B from two docs\", \"explain X with"
-        " code refs from N files\", \"summarise across these sources\")."
-        " Use invoke_action for single-tool tasks.",
-    ])
-
+    # Cross-cutting rules that apply regardless of which tool was last called.
+    # Routing decisions (intent tree / plan vs invoke / discovery mandate) live
+    # in ## Capabilities above — single canonical location, no repetition here.
     # B23-PRE-1 SP role-separation: spawn-ack / task_completed live in invoke_action.description.
-    # Only the cross-cutting errors policy remains (= Behaviour policy 5).
     parts.extend([
         "  - Errors MUST surface verbatim. Never narrate an error as success.",
         "    Optimism bias on errors is the single largest router-narration"
@@ -484,27 +458,27 @@ def build_system_prompt(
     if search_actions_enabled:
         parts.extend([
             "  - Never invent action names; only use those returned by",
-            "    list_actions or search_actions.",
+            "    `list_actions` or `search_actions`.",
             "  - For semantic / natural-language / keyword queries (= 「探し"
             "たい」 「関連」 「something for X」 「similar to」 「'http' を含む」),",
-            "    USE search_actions(query=...). For category enumeration,",
-            "    USE list_actions(category=[...]).",
+            "    USE `search_actions(query=...)`. For category enumeration,",
+            "    USE `list_actions(category=[...])`.",
         ])
     else:
         parts.extend([
             "  - Never invent action names; only use those returned by",
-            "    list_actions.",
-            "  - For category enumeration, USE list_actions(category=[...]).",
+            "    `list_actions`.",
+            "  - For category enumeration, USE `list_actions(category=[...])`.",
         ])
 
     # B12-R2/B13-R3 V3 ABSOLUTE rule preserved in wrapper vocab (1-line,
     # JA examples dropped — per B23-PRE-1 SP simplification policy).
-    # P7-compliant placeholder: <action_name> (= qualified name format).
+    # P7-compliant placeholder: `<action_name>` (= qualified name format).
     parts.append("")
     parts.extend([
         "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-        " name (= valid invoke_action action_name, e.g. skill__code_review),"
-        " call invoke_action immediately. NO clarifying questions. NO text replies.",
+        " name (= valid `invoke_action` action_name, e.g. `skill__code_review`),"
+        " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
         "",
     ])
 
@@ -528,7 +502,7 @@ def build_system_prompt(
         parts.append("")
         parts.append(
             "Prefer project_context (above) as the primary source when "
-            "answering questions about this project. Use web_search only as "
+            "answering questions about this project. Use `web__search` only as "
             "a supplementary source when project_context lacks the "
             "information needed."
         )
