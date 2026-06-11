@@ -395,6 +395,10 @@ def build_system_prompt(
         #   No actions are pre-loaded as functions; list_actions is the sole
         #   discovery path. The refusal-prevention intent is preserved via an
         #   explicit ALWAYS-call directive — the signal that was trace-verified.
+        # When hot_list_n>0 (opt-in), signal that the function list is a
+        # HOT-LIST subset and list_actions must precede any refusal.
+        # When N=0 (default), no aliases exist → paragraph absent
+        # (owner decision: nothing to qualify, no misleading subset claim).
         if has_hot_list_aliases:
             parts.append(
                 "The function list visible to you is a HOT-LIST (= a subset of "
@@ -405,14 +409,7 @@ def build_system_prompt(
                 "without that check is a failure mode — the action you assumed "
                 "missing often exists."
             )
-        else:
-            parts.append(
-                "No actions are pre-loaded as functions. Before refusing any "
-                "capability request, ALWAYS call `list_actions` "
-                "(narrow with `category=[...]`) — the catalog is large and the "
-                "action you assume missing often exists."
-            )
-        parts.append("")
+            parts.append("")
 
     # #187 Stage C (2/3 reinforcement): strengthen the §D9 hot-list discovery
     # guidance above into a mechanical MUST. Scope-qualified ("no visible tool

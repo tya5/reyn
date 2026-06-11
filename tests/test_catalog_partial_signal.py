@@ -77,10 +77,11 @@ def test_sp_catalog_partial_signal_present_when_wrappers_enabled() -> None:
     assert "refusing" in sp.lower() or "refuse" in sp.lower()
 
 
-def test_sp_no_aliases_branch_has_discovery_signal() -> None:
-    """Tier 2: when universal wrappers are enabled but no hot-list aliases
-    (has_hot_list_aliases=False, new default), the SP uses the no-aliases
-    variant that still carries the list_actions discovery directive."""
+def test_sp_no_aliases_branch_omits_hot_list_paragraph() -> None:
+    """Tier 2: when has_hot_list_aliases=False (new default N=0), the
+    HOT-LIST paragraph is completely absent — no subset claim, no
+    replacement text. Owner decision: nothing to qualify when no aliases
+    exist."""
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
@@ -91,9 +92,8 @@ def test_sp_no_aliases_branch_has_discovery_signal() -> None:
         has_hot_list_aliases=False,
     )
     assert "HOT-LIST" not in sp
-    assert "No actions are pre-loaded" in sp
-    assert "list_actions" in sp
-    assert "refusing" in sp.lower() or "refuse" in sp.lower()
+    assert "No actions are pre-loaded" not in sp
+    assert "subset" not in sp
 
 
 def test_sp_two_branches_are_distinct() -> None:
@@ -112,7 +112,6 @@ def test_sp_two_branches_are_distinct() -> None:
     )
     assert sp_with != sp_without
     assert "HOT-LIST" in sp_with and "HOT-LIST" not in sp_without
-    assert "No actions are pre-loaded" in sp_without and "No actions are pre-loaded" not in sp_with
 
 
 def test_sp_partial_signal_appears_after_action_categories() -> None:
@@ -140,9 +139,10 @@ def test_sp_partial_signal_appears_after_action_categories() -> None:
     assert cat_pos < sig_pos < behav_pos
 
 
-def test_sp_no_aliases_signal_appears_after_action_categories() -> None:
-    """Tier 2: position pin for the no-aliases branch — the discovery directive
-    also lives after ## Action categories and before ## Behaviour."""
+def test_sp_no_aliases_action_categories_section_still_present() -> None:
+    """Tier 2: when has_hot_list_aliases=False, ## Action categories section
+    is still rendered (only the HOT-LIST paragraph is absent, not the whole
+    section). The category list remains for context."""
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
@@ -152,13 +152,8 @@ def test_sp_no_aliases_signal_appears_after_action_categories() -> None:
         universal_wrappers_enabled=True,
         has_hot_list_aliases=False,
     )
-    cat_pos = sp.find("## Action categories")
-    sig_pos = sp.find("No actions are pre-loaded")
-    behav_pos = sp.find("## Behaviour")
-    assert cat_pos >= 0, "## Action categories section must exist"
-    assert sig_pos >= 0, "no-aliases signal must be present"
-    assert behav_pos >= 0, "## Behaviour section must exist"
-    assert cat_pos < sig_pos < behav_pos
+    assert "## Action categories" in sp
+    assert "list_actions" in sp  # the section header still references it
 
 
 def test_sp_partial_signal_absent_when_wrappers_disabled() -> None:
