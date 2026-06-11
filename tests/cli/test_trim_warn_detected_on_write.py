@@ -55,7 +55,7 @@ def _instrument_trim_warning(conv: ConversationView) -> list[None]:
         del log  # unused — we only care that the call happened
         calls.append(None)
 
-    conv._maybe_warn_about_trimmed_history = _recorder  # type: ignore[method-assign]
+    conv._scroll_ctrl._maybe_warn_about_trimmed_history = _recorder  # type: ignore[method-assign]
     return calls
 
 

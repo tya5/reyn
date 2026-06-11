@@ -151,7 +151,7 @@ async def test_trim_warning_writes_permanent_log_line() -> None:
         log._start_line = 137  # type: ignore[attr-defined]
         assert not conv.trim_warned
 
-        conv._maybe_warn_about_trimmed_history(log)
+        conv._scroll_ctrl._maybe_warn_about_trimmed_history(log)
         await pilot.pause()
 
         # One-shot — the flag flips so subsequent calls are no-ops.

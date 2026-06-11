@@ -81,12 +81,12 @@ async def test_same_speaker_within_window_groups_under_one_header() -> None:
         conv = app.query_one("#conversation", ConversationView)
         conv._render_agent_markdown(OutboxMessage(kind="agent", text="r1"))
         await pilot.pause()
-        anchors_after_first = len(conv._turn_anchors)
+        anchors_after_first = len(conv._scroll_ctrl._turn_anchors)
         # Within 60s — second same-speaker message must NOT emit a new
         # header (= grouped under the first).
         conv._render_agent_markdown(OutboxMessage(kind="agent", text="r2"))
         await pilot.pause()
-        anchors_after_second = len(conv._turn_anchors)
+        anchors_after_second = len(conv._scroll_ctrl._turn_anchors)
         assert anchors_after_second == anchors_after_first, (
             f"within-window same-speaker should group; "
             f"anchors before={anchors_after_first} after={anchors_after_second}"
@@ -109,13 +109,13 @@ async def test_same_speaker_past_window_emits_new_header() -> None:
         conv = app.query_one("#conversation", ConversationView)
         conv._render_agent_markdown(OutboxMessage(kind="agent", text="r1"))
         await pilot.pause()
-        anchors_before = len(conv._turn_anchors)
+        anchors_before = len(conv._scroll_ctrl._turn_anchors)
         # Back-date the stored timestamp 120s into the past so the
         # next same-speaker message is past the 60s window.
         conv._last_speaker_at = time.time() - 120.0
         conv._render_agent_markdown(OutboxMessage(kind="agent", text="r2"))
         await pilot.pause()
-        anchors_after = len(conv._turn_anchors)
+        anchors_after = len(conv._scroll_ctrl._turn_anchors)
         assert anchors_after == anchors_before + 1, (
             f"past-window same-speaker should emit new header (+1 anchor); "
             f"got before={anchors_before} after={anchors_after}"

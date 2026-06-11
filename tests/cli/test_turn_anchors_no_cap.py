@@ -73,7 +73,7 @@ async def test_turn_anchor_list_grows_past_200_entries() -> None:
         await pilot.pause()
 
         log = conv._log()
-        resolved = conv._resolve_anchors_to_current_view(log)
+        resolved = conv._scroll_ctrl._resolve_anchors_to_current_view(log)
         # ``resolved`` excludes any anchors that fell out of the
         # RichLog ring buffer's current view. At 250 short messages
         # we're well under the 20,000-line buffer, so every anchor
@@ -103,7 +103,7 @@ async def test_resolved_anchor_count_matches_pushed_turn_count() -> None:
         await pilot.pause()
 
         log = conv._log()
-        resolved = conv._resolve_anchors_to_current_view(log)
+        resolved = conv._scroll_ctrl._resolve_anchors_to_current_view(log)
         # Pin 1:1 invariant: 50 turns → 50 anchors at expected indices.
         # Unpack all 50 to verify exact count without a len() pin.
         (

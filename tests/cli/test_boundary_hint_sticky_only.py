@@ -41,7 +41,7 @@ async def test_start_boundary_hint_writes_sticky_only() -> None:
         log = conv._log()
         pre_lines = len(getattr(log, "lines", []))
 
-        conv._flash_boundary_hint("start")
+        conv._scroll_ctrl._flash_boundary_hint("start")
         await pilot.pause()
 
         snap = conv._sticky().snapshot()
@@ -68,7 +68,7 @@ async def test_end_boundary_hint_writes_sticky_only() -> None:
         log = conv._log()
         pre_lines = len(getattr(log, "lines", []))
 
-        conv._flash_boundary_hint("end")
+        conv._scroll_ctrl._flash_boundary_hint("end")
         await pilot.pause()
 
         snap = conv._sticky().snapshot()
@@ -89,13 +89,13 @@ async def test_repeated_direction_dedup_unchanged() -> None:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         # First start-boundary fires.
-        conv._flash_boundary_hint("start")
+        conv._scroll_ctrl._flash_boundary_hint("start")
         snap1 = conv._sticky().snapshot()
         body_after_first = snap1["body"]
         # Hide the sticky so we can tell whether the second call
         # re-shows it.
         conv.hide_status()
-        conv._flash_boundary_hint("start")
+        conv._scroll_ctrl._flash_boundary_hint("start")
         snap2 = conv._sticky().snapshot()
         # Dedup → second call is a no-op → sticky stays hidden.
         assert snap2["active"] is False, (
