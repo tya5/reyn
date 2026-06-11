@@ -698,6 +698,13 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     # op_runtime with the same gating the legacy router branches had.
     def make_router_op_context(self) -> Any: ...
 
+    # Safety-limit intervention bus factory (FP-0005 extension).
+    # Returns the current RequestBus for handle_limit_exceeded interactive
+    # mode, or None when no bus is wired (headless / test stubs).
+    # getattr-guarded in run_loop — hosts that don't implement it degrade
+    # to unattended (no ask, decision-enabling message instead).
+    def make_intervention_bus(self) -> "Any | None": ...
+
     # Resolve router model (config "router" → real model id)
     def resolve_model(self, name: str) -> str: ...
 
@@ -1296,6 +1303,7 @@ class RouterLoop:
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
         empty_stop_retry_auto: bool = False,  # #187: always-on (no env opt-in); all prod sites pass True
         plan_invalid_retries: int = 1,  # B51 NF-W6-3 — safety.loop.plan_invalid_retries
+        on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
     ):
         self.host = host
@@ -1387,6 +1395,7 @@ class RouterLoop:
         # testing.ja.md hard rule that forbids ``MagicMock / AsyncMock /
         # patch``. Production callers leave this as ``None``.
         self._llm_caller = llm_caller
+        self._on_limit = on_limit  # FP-0005 max_iterations checkpoint config
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
@@ -1782,7 +1791,11 @@ class RouterLoop:
         # (default 1 = one correction attempt per chat turn).
         _plan_invalid_retries: int = 0
 
-        for _iteration in range(self.max_iterations):
+        # FP-0005 max_iterations checkpoint: outer while allows re-entry after
+        # an approved extension. _loop_cancelled tracks cancel-break vs exhaustion.
+        _loop_cancelled = False
+        while True:
+         for _iteration in range(self.max_iterations):
             # #1468: cooperative turn-cancel checkpoint. Checked BEFORE the LLM
             # call so a cancel_inflight() fired between tool iterations stops the
             # chain at the next boundary (= after the current tool completes, not
@@ -1791,6 +1804,7 @@ class RouterLoop:
             _cancel_fn = getattr(host, "_is_turn_cancel_requested", None)
             if callable(_cancel_fn) and _cancel_fn():
                 host.events.emit("turn_cancelled", chain_id=self.chain_id)
+                _loop_cancelled = True
                 break
             resolved_model = host.resolve_model(self.router_model)
             # #1092 PR-C-5 (2): per-turn phase wall-clock budget enforcement. A phase
@@ -2549,10 +2563,39 @@ class RouterLoop:
             )
             return self._total_usage
 
-        # max_iterations exhausted
+         # end of inner for loop
+         if _loop_cancelled:
+            break  # cancelled: exit outer while, emit error below
+
+         # max_iterations exhausted — FP-0005 checkpoint
+         if self._on_limit is not None:
+            from reyn.safety.limit_handler import handle_limit_exceeded as _hle
+            _bus = getattr(self.host, "make_intervention_bus", lambda: None)()
+            _dec = await _hle(
+                bus=_bus,
+                on_limit=self._on_limit,
+                kind="max_iterations",
+                run_id=self.chain_id,
+                prompt=(
+                    f"Router hit the iteration limit ({self.max_iterations}). "
+                    "Allow more iterations?"
+                ),
+                detail=f"chain_id={self.chain_id}",
+                extension_amount=float(self.max_iterations),
+            )
+            if _dec.allow_continue:
+                self.max_iterations += int(_dec.extension)
+                continue  # re-enter inner for loop with extended limit
+         break  # no extension granted or no on_limit — exit outer while
+
+        # max_iterations exhausted (or cancelled)
         await self.host.put_outbox(
             kind="error",
-            text=f"Router loop exceeded max iterations ({self.max_iterations}).",
+            text=(
+                f"Router loop exceeded max iterations ({self.max_iterations}). "
+                f"Configure safety.on_limit.mode=interactive or auto_extend to "
+                f"extend, or increase router_max_iterations."
+            ),
             meta={"chain_id": self.chain_id},
         )
         return self._total_usage

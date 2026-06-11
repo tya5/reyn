@@ -1132,6 +1132,9 @@ async def execute_plan(
                 # differentiation).
                 empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
                 empty_stop_retry_auto=True,
+                # FP-0005: wire safety.on_limit so step_max_iterations exhaustion
+                # routes through handle_limit_exceeded instead of flat-aborting.
+                on_limit=on_limit,
             )
             # FP-0031-C: auto-retry on transient step failures.
             # FP-0031-D: when retry budget is exhausted, ask the user via
