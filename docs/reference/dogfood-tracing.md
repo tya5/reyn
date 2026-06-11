@@ -799,3 +799,123 @@ prompts trigger attractors before submitting a PR.
 
 **Targeted investigation with `--filter-caller`.** Focus on a single caller
 (e.g. `router`) to isolate router-layer attractors from phase-layer noise.
+
+---
+
+# Failure attribution: the audit ladder
+
+When a Reyn run produces an unexpected outcome, the trace is the primary
+evidence source. Before attributing a problem to model capability or a norm
+being ineffective, walk these rungs in order. Each one checks a different
+confound; skipping rungs risks the wrong attribution and the wrong fix.
+
+## Step 1 — Reachability / affordance
+
+Confirm that every tool the agent relied on was actually functional at the
+moment of the bad decision.
+
+```bash
+python scripts/dogfood_trace.py --mode replay \
+    --trace .reyn/llm_trace.jsonl --scope phase
+```
+
+Check that reads returned real file content, writes produced real feedback,
+and execution tools exited with expected codes. A tool that appeared to
+succeed but silently failed (wrong path, permission denied, empty read)
+invalidates downstream attribution — the LLM had no affordance to act
+correctly.
+
+## Step 2 — Window content at the decision moment
+
+Open the full payload for the request that produced the bad output.
+
+```bash
+python scripts/dogfood_trace.py --mode llm-detail <request_id> \
+    --trace .reyn/llm_trace.jsonl --full
+```
+
+Check whether the information needed for a correct decision was present
+**at line level**: file name and method name being visible is insufficient —
+the relevant code or diff must appear in the messages array. Also note
+position: content at the tail of a recent message is read reliably; content
+buried in the middle of a long context competes with more recent signals.
+If the core of the problem description was dropped by compaction or
+truncation, the model had no basis to act on it.
+
+## Step 3 — In-stream contradiction
+
+Identify every signal injected during the run that could contradict the SP
+norm or directive under evaluation.
+
+```bash
+# Inspect the full message stream for the critical request
+python scripts/dogfood_trace.py --mode llm-detail <request_id> \
+    --trace .reyn/llm_trace.jsonl --full
+```
+
+On weak models, a recent and specific in-stream signal — tool-result
+envelope text, retry directive, wrap-up instruction — outweighs a buried
+general norm in the system prompt. If such a contradicting signal exists,
+the A/B is measuring the contradiction, not the norm. Fix the contradiction
+first, or record it as a confound, before drawing conclusions.
+
+## Step 4 — Post-decision behaviour
+
+After the incorrect decision, check whether the agent ran verification and
+what feedback it received.
+
+```bash
+# Walk the steps immediately following the bad decision
+python scripts/dogfood_trace.py --mode replay \
+    --trace .reyn/llm_trace.jsonl --at <run_id>:<phase>:<step_idx>
+```
+
+Ask: did the agent attempt to verify? Was the verification oracle correct?
+Did the agent react to error feedback? A norm that induces verify-intent that
+gets cut off by turn budget looks identical in a rate metric to a norm that
+never fired.
+
+## Step 5 — Metric validity
+
+Before trusting a semantic rate (false-success rate, norm-compliance rate,
+etc.), validate the measurement instrument.
+
+```bash
+# Get the timeline to identify which requests the metric fired on
+python scripts/dogfood_trace.py --mode llm-payloads \
+    --trace .reyn/llm_trace.jsonl
+
+# Read the full response for each positive hit
+python scripts/dogfood_trace.py --mode llm-detail <request_id> \
+    --trace .reyn/llm_trace.jsonl --full
+```
+
+Regex classifiers for semantic properties (e.g. "claimed success") produce
+false positives: failure reports, in-progress statements, and
+norm-compliant verification intent can all match the same pattern.
+**Manually read every positive hit in full.** Use `--full` to expand
+truncated content. If the false-positive rate is material, replace the
+primary metric with a rubric-fixed LLM-judge or manual read; treat regex
+output as a pre-filter only, never the verdict metric.
+
+## Step 6 — Verdict hygiene
+
+Before publishing a verdict (effective / not-effective / regressed / fixed):
+
+- **Declare the judgment rule before counting.** State what counts as a
+  positive before inspecting results, to avoid p-hacking.
+- **Use k-sampling for non-deterministic measurements.** A single sample
+  proves nothing for stochastic behaviour; use `--n` to observe a
+  distribution:
+
+  ```bash
+  python scripts/llm_replay.py <request_id> \
+      --trace .reyn/llm_trace.jsonl --n 10 --diff
+  ```
+
+- **Report taxonomy + counts, not a single label.** A verdict like
+  "NOT-GOOD" is a single label; "3 true-false-success / 8
+  verify-intent-cut-by-budget / 1 regex-FP" is a verdict with structure.
+- **Structural confounds require a re-run after the fix.** A confounded
+  measurement cannot be corrected by reweighting; fix the confound (e.g.
+  the contradicting in-stream signal) and re-run from Step 1.
