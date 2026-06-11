@@ -2036,6 +2036,20 @@ class ChatSession:
             set_router_loop_agent_replies=lambda v: setattr(self, "_router_loop_agent_replies", v),
         )
 
+        # session.py refactor PR-1: ContextBudgetAdvisor owns the five
+        # per-turn budget-arithmetic methods.  Session keeps forwarding
+        # properties so RouterHostAdapter callbacks are unchanged.
+        from reyn.chat.services.context_budget_advisor import ContextBudgetAdvisor
+        self._budget_advisor = ContextBudgetAdvisor(
+            compaction=self._compaction,
+            compaction_controller=self._compaction_controller,
+            media_store=self._media_store,
+            model=self.model,
+            events=self._chat_events,
+            # history_fn: at PR-2 this will become self._history_buffer.build_history
+            history_fn=self._build_history_for_router,
+        )
+
     # ── cost accumulation ───────────────────────────────────────────────────────
 
     def _accumulate(self, result) -> None:
@@ -5284,110 +5298,27 @@ class ChatSession:
         )
 
     def _cap_tool_result(self, content_str: str) -> str:
-        """#1128 size axis (dead-end #1): cap an oversized chat tool result.
-
-        Derives the B_M-relative per-turn cap from the engine budgets
-        (``effective_trigger``; falls back to the model's max-input tokens before
-        budgets are computed) and delegates to ``cap_tool_result_content``, which
-        OFFLOADS the full body via the #385 store (``MediaStore.save_tool_result``,
-        lossless + restorable via ``read_tool_result``) and returns a bounded
-        preview ``≤ cap_tokens``. Threaded into ``RouterHostAdapter`` so
-        router_loop caps every tool result at the single ``content_str``
-        chokepoint, making each tool turn individually compactable (so the chat
-        retry_loop's shrink can always fold it). No-op when no media_store is
-        configured (= nowhere to store the body losslessly).
-        """
-        store = self._media_store
-        if store is None:
-            return content_str
-        from reyn.chat.services.tool_result_cap import cap_tool_result_content
-
-        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-        return cap_tool_result_content(
-            content_str,
-            cap_tokens=self._per_turn_cap_tokens(),
-            model=self.model,
-            save_fn=store.save_tool_result,
-            use_chars4=use_chars4,
-            events=self._chat_events,
-        )
+        """Forwarding → ContextBudgetAdvisor.cap_tool_result (PR-1)."""
+        return self._budget_advisor.cap_tool_result(content_str)
 
     def _per_turn_cap_tokens(self) -> int:
-        """The B_M-relative per-turn cap (#1128/#272), shared by the tool-result
-        text cap and the per-turn media bound.
-
-        ``compute_cap_tokens(effective_trigger)`` — derived from the engine
-        budgets (falls back to the model's max-input tokens before budgets are
-        computed). A whole result turn (capped text + materialised media) is
-        held ≤ this so it stays single-turn compactable.
-        """
-        from reyn.chat.services.tool_result_cap import compute_cap_tokens
-
-        controller = getattr(self, "_compaction_controller", None)
-        engine = getattr(controller, "_engine", None) if controller is not None else None
-        budgets = getattr(engine, "budgets", None)
-        if budgets is not None:
-            effective_trigger = budgets.effective_trigger
-        else:
-            from reyn.llm.model_budget import get_max_input_tokens
-            effective_trigger = get_max_input_tokens(self.model, events=self._chat_events)
-        return compute_cap_tokens(effective_trigger)
+        """Forwarding → ContextBudgetAdvisor.per_turn_cap_tokens (PR-1)."""
+        return self._budget_advisor.per_turn_cap_tokens()
 
     def _media_followup_budget(self, tool_content: str) -> int:
-        """#272 media axis: tokens left for a tool turn's media follow-up after
-        its (already-capped) text.
-
-        ``per-turn cap − estimate_tokens(tool_content)`` (floored at 0) — so the
-        whole result turn (capped text + materialised media) stays ≤ the per-turn
-        cap and remains single-turn compactable. router_loop passes this to
-        ``_build_media_followup_message`` to bound media materialisation; overflow
-        media stays a small lossless ref.
-        """
-        from reyn.services.compaction.engine import estimate_tokens
-
-        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-        text_tokens = estimate_tokens(tool_content, self.model, use_chars4=use_chars4)
-        return max(0, self._per_turn_cap_tokens() - text_tokens)
+        """Forwarding → ContextBudgetAdvisor.media_followup_budget (PR-1)."""
+        return self._budget_advisor.media_followup_budget(tool_content)
 
     def _free_window_now(self) -> "tuple[int, int]":
-        """Return ``(effective_trigger, estimated_history_tokens)`` for the
-        current router history (#272/#1128 compact op + context-size signal).
+        """Forwarding → ContextBudgetAdvisor._free_window_now (PR-1).
 
-        ``free_window = effective_trigger − estimated_history_tokens`` is the
-        exact-token headroom before the involuntary backstop fires — the unit
-        the context-size signal and the load-contract error both speak.
+        Kept for _compact_now_for_op which calls self._free_window_now().
         """
-        import json as _json
-
-        from reyn.services.compaction.engine import estimate_tokens
-
-        controller = getattr(self, "_compaction_controller", None)
-        engine = getattr(controller, "_engine", None) if controller is not None else None
-        budgets = getattr(engine, "budgets", None)
-        if budgets is not None:
-            effective_trigger = budgets.effective_trigger
-        else:
-            from reyn.llm.model_budget import get_max_input_tokens
-            effective_trigger = get_max_input_tokens(self.model, events=self._chat_events)
-        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-        try:
-            combined = _json.dumps(self._build_history_for_router(), ensure_ascii=False)
-            estimated = estimate_tokens(combined, self.model, use_chars4=use_chars4)
-        except Exception:  # noqa: BLE001 — estimation best-effort
-            estimated = 0
-        return effective_trigger, estimated
+        return self._budget_advisor._free_window_now()
 
     def _context_window_status(self) -> dict:
-        """#272/#1128: live exact-token context budget for the context-size
-        signal (header). ``{free_window, effective_trigger}`` — free_window is
-        the headroom before the involuntary backstop, unit-aligned with the
-        compact op result + media load-contract error.
-        """
-        effective_trigger, used = self._free_window_now()
-        return {
-            "free_window": max(0, effective_trigger - used),
-            "effective_trigger": effective_trigger,
-        }
+        """Forwarding → ContextBudgetAdvisor.context_window_status (PR-1)."""
+        return self._budget_advisor.context_window_status()
 
     async def _compact_now_for_op(self) -> dict:
         """#272/#1128/#191: voluntary-compaction callback (compact op + /compact).
@@ -5449,87 +5380,8 @@ class ChatSession:
         self,
         new_msg_text: "str | None" = None,
     ) -> None:
-        """Pre-frame context-overflow guard (PR-N3, 11-axis).
-
-        Uses the ComputedBudgets.effective_trigger from the compaction engine
-        as the threshold (= min(main_M_room, B_M)).  Estimates the projected
-        token count of the current history slice; if it exceeds effective_trigger,
-        runs force_compact_now() synchronously so the history fits before the
-        router LLM call.
-
-        Axis 11 (ISSUE #5): if new_msg_text is provided (= the raw user text for
-        this turn), checks that the incoming message is within new_msg_budget;
-        raises NewMsgExceedsBudgetError if not.  A minimal ``{"role": "user",
-        "content": new_msg_text}`` dict is built internally for token estimation.
-
-        #1128 PR-a: this synchronous guard is now the sole auto-compaction
-        trigger (the background spawn_maybe path was removed).
-        """
-        from reyn.services.compaction.engine import (
-            NewMsgExceedsBudgetError,
-            estimate_tokens,
-            estimate_tokens_for_turn,
-        )
-
-        # ISSUE #4: re-measure T_SP dynamically before checking budgets so
-        # operator-editable SP changes (REYN.md, skills catalog reloads) are
-        # reflected in the effective_trigger for this turn.
-        engine = self._compaction_controller._engine
-        try:
-            engine.recompute_budgets()
-        except Exception:
-            pass  # fail-safe: static budgets remain in effect
-
-        # Retrieve the computed budgets from the engine (Axis 1).
-        engine = self._compaction_controller._engine
-        budgets = getattr(engine, "budgets", None)
-        effective_trigger: int
-        new_msg_budget: int
-        if budgets is not None:
-            effective_trigger = budgets.effective_trigger
-            new_msg_budget = budgets.new_msg_budget
-        else:
-            # Fallback: use raw model max_tokens (pre-budget-compute path).
-            from reyn.llm.model_budget import get_max_input_tokens
-            effective_trigger = get_max_input_tokens(self.model, events=self._chat_events)
-            new_msg_budget = effective_trigger
-
-        # Axis 11 (ISSUE #5): check new_msg_budget before estimating history.
-        if new_msg_text is not None:
-            new_msg_turn = {"role": "user", "content": new_msg_text}
-            use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-            new_msg_tokens = estimate_tokens_for_turn(
-                new_msg_turn, self.model, use_chars4=use_chars4
-            )
-            if new_msg_tokens > new_msg_budget:
-                self._chat_events.emit(
-                    "new_msg_exceeds_budget",
-                    new_msg_tokens=new_msg_tokens,
-                    new_msg_budget=new_msg_budget,
-                )
-                raise NewMsgExceedsBudgetError(
-                    new_msg_tokens=new_msg_tokens,
-                    new_msg_budget=new_msg_budget,
-                )
-
-        # Quick estimate of the current history slice.
-        import json as _json
-        try:
-            history_msgs = self._build_history_for_router()
-            combined = _json.dumps(history_msgs, ensure_ascii=False)
-            use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-            estimated = estimate_tokens(combined, self.model, use_chars4=use_chars4)
-        except Exception:
-            return
-
-        if estimated > effective_trigger:
-            self._chat_events.emit(
-                "compaction_check",
-                outcome="pre_frame_overflow",
-                estimated_tokens=estimated,
-                effective_trigger=effective_trigger,
-            )
-            await self._compaction_controller.force_compact_now()
+        """Forwarding → ContextBudgetAdvisor.maybe_force_compact (PR-1)."""
+        await self._budget_advisor.maybe_force_compact(new_msg_text=new_msg_text)
 
     async def _run_router_loop(
         self,
