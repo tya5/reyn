@@ -112,7 +112,7 @@ async def test_same_speaker_past_window_emits_new_header() -> None:
         anchors_before = len(conv._scroll_ctrl._turn_anchors)
         # Back-date the stored timestamp 120s into the past so the
         # next same-speaker message is past the 60s window.
-        conv._last_speaker_at = time.time() - 120.0
+        conv._renderer._last_speaker_at = time.time() - 120.0
         conv._render_agent_markdown(OutboxMessage(kind="agent", text="r2"))
         await pilot.pause()
         anchors_after = len(conv._scroll_ctrl._turn_anchors)

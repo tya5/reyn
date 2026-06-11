@@ -723,6 +723,753 @@ class _ScrollController:
         self._parent.show_status(f"{arrow} turn {n} / {total}", kind="general")
 
 
+class _MessageRenderer:
+    """Owns all message-rendering state and logic (tui-pr5).
+
+    State owned:
+      parent._renderer._last_speaker          — current-turn speaker id
+      parent._renderer._last_speaker_at       — wall-clock time of last header
+      parent._renderer._last_header_date      — YYYY-MM-DD of last header date
+      parent._renderer._recent_replies        — /copy ring buffer (newest last)
+      parent._renderer._has_first_message     — empty-hint latch
+
+    Public surface used by ConversationView delegates:
+      render_message / render_user_message
+      last_reply_text / reply_at / recent_reply_count
+      find_in_buffer / dump_buffer_text
+      write_error / render_cost_suffix
+
+    Bridge methods for streaming (pr4):
+      set_speaker(speaker, at)  — anchor grouping at stream-start
+      record_reply(text)        — append to /copy ring buffer with cap
+    """
+
+    def __init__(self, parent: "ConversationView") -> None:
+        self._parent = parent
+        self._last_speaker: str = ""
+        self._last_speaker_at: float = 0.0
+        self._last_header_date: str = ""
+        self._recent_replies: list[str] = []
+        self._has_first_message: bool = False
+
+    # ── read-only accessors (public) ──────────────────────────────────────────
+
+    @property
+    def last_speaker_at(self) -> float:
+        """Wall-clock timestamp of the last header write (for timestamp tests).
+
+        Tests and streaming callers write ``conv._last_speaker_at`` directly
+        for setup rather than accessing ``_last_speaker_at`` directly.
+        """
+        return self._last_speaker_at
+
+    @property
+    def last_header_date(self) -> str:
+        """YYYY-MM-DD string of the most recently written date separator.
+
+        Used by toggle_timestamps tests rather than accessing
+        ``_last_header_date`` directly.
+        """
+        return self._last_header_date
+
+    # ── bridge methods ────────────────────────────────────────────────────────
+
+    def reset_for_clear(self) -> None:
+        """Reset all renderer state on Ctrl+L (mirrors _scroll_ctrl.reset_for_clear)."""
+        self._last_speaker = ""
+        self._last_speaker_at = 0.0
+        # Preserve today's date so same-day Ctrl+L doesn't re-emit date separator.
+        self._last_header_date = time.strftime("%Y-%m-%d")
+        self._recent_replies.clear()
+        self._has_first_message = False
+
+    def set_speaker(self, speaker: str, at: float) -> None:
+        """Anchor grouping state at stream-start (pr4 / _StreamController bridge)."""
+        self._last_speaker = speaker
+        self._last_speaker_at = at
+
+    def record_reply(self, text: str) -> None:
+        """Append to /copy ring buffer with cap (pr4 / _StreamController bridge)."""
+        self._recent_replies.append(text)
+        if len(self._recent_replies) > _RECENT_REPLIES_MAX:
+            self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
+
+    # ── write primitives ──────────────────────────────────────────────────────
+
+    def _write_log(self, text: "Text") -> None:
+        log = self._parent._log()
+        log.write(text)
+        # Surface the trim warning the first time it's earned, even when
+        # the user hasn't pressed Ctrl+P/N yet. The previous wiring only
+        # called this from ``_jump_to_relative_anchor`` — turn navigation
+        # — so a user who let the session auto-scroll past the
+        # ``_RICHLOG_MAX_LINES`` boundary never saw the "earlier history
+        # trimmed" signal until they happened to hit Ctrl+P. The
+        # ``_trim_warned`` flag keeps it strictly one-shot per session.
+        self._parent._scroll_ctrl.maybe_warn_trim(log)
+
+    def _write_body(self, renderable: "RenderableType") -> None:
+        """Append a body renderable at the dynamic hanging-indent column.
+
+        Wraps ``renderable`` in left-only ``Padding`` so wrap continuations
+        line up under the speaker symbol and stay visually distinct from the
+        column-0 turn header. The indent is 8 when timestamps are shown
+        (= col 0-4 ts + col 5 space + col 6 symbol + col 7 space + col 8+
+        body) and 2 when hidden (= col 0 symbol + col 1 space + col 2+ body).
+        """
+        self._parent._log().write(
+            _indent_body(renderable, self._parent._current_body_indent())
+        )
+
+    # ── empty state ───────────────────────────────────────────────────────────
+
+    def _consume_empty_hint(self) -> None:
+        if self._has_first_message:
+            return
+        self._has_first_message = True
+        try:
+            # Hide instead of remove so /clear can bring it back.
+            self._parent.query_one("#empty-hint", Static).add_class("hidden")
+        except Exception:
+            pass
+
+    # ── header grouping (B1) ──────────────────────────────────────────────────
+
+    def _check_new_turn(self, speaker: str, log: "RichLog") -> bool:
+        """Return True if this is a new turn (different speaker or window expired).
+
+        Side-effects when a new turn starts:
+          - Emits a date-separator when the calendar day has changed.
+          - Records the current absolute line position as a turn anchor.
+        Does NOT write any header line — the caller decides what to write.
+
+        ``_last_speaker`` / ``_last_speaker_at`` are updated by the caller
+        AFTER the header/body write (so anchors are recorded before the write
+        that advances the line counter).
+
+        Wave-10 follow-up G-F7: ``time.time()`` (wall clock) matches the
+        visible ``HH:MM`` timestamp and grouping decision — see
+        ``_maybe_write_header`` docstring for full rationale.
+        """
+        now = time.time()
+        same_speaker = (speaker == self._last_speaker)
+        within_window = (now - self._last_speaker_at) < _GROUP_WINDOW_S
+        if same_speaker and within_window:
+            return False
+        # Day boundary marker.
+        today = time.strftime("%Y-%m-%d")
+        if today != self._last_header_date:
+            log.write(_date_separator(today))
+            self._last_header_date = today
+        # Record a turn anchor.
+        self._parent._scroll_ctrl.record_turn_anchor(log)
+        return True
+
+    def _maybe_write_header(self, speaker: str, symbol: str,
+                             name_style: str) -> None:
+        """Write a symbol-only header when the speaker changes or the gap exceeds _GROUP_WINDOW_S.
+
+        The header is ``HH:MM <symbol>`` (ts on) or ``<symbol>`` (ts off).
+        A blank line separates turns; the dash rule from the old layout is
+        intentionally absent.
+
+        Wave-10 follow-up G-F7: ``time.time()`` (wall clock) rather
+        than ``time.monotonic()``. The header's visible HH:MM
+        timestamp uses ``time.strftime`` (= wall clock), so grouping
+        the *same* timeline keeps the displayed timestamp and the
+        grouping decision in lockstep. ``monotonic`` doesn't advance
+        during system sleep on every platform (= CLOCK_MONOTONIC vs
+        CLOCK_BOOTTIME differ across Linux / macOS) — after a
+        sleep/wake cycle, two messages can show wall-clock timestamps
+        an hour apart yet share a grouping bucket simply because
+        monotonic registered no progress. Wall clock matches the
+        user-visible timeline exactly.
+        """
+        now = time.time()
+        log = self._parent._log()
+        if self._check_new_turn(speaker, log):
+            # No cap. The previous 200-entry cap silently dropped the
+            # oldest anchors in long sessions, so Ctrl+P/N's "N / M"
+            # readout showed an M smaller than the real turn count and
+            # the user thought they had walked the entire history when
+            # they had not. ``_resolve_anchors_to_current_view`` already
+            # filters anchors whose line position fell below
+            # ``log._start_line`` (= dropped by the RichLog ring
+            # buffer), so the effective navigation list stays bounded
+            # by ``_RICHLOG_MAX_LINES`` / typical-lines-per-turn even
+            # though the raw ``_turn_anchors`` list grows unbounded.
+            # The raw list cost is ~8 bytes per turn — a 24h session
+            # generating one turn per second is ~700 KB, negligible
+            # next to the RichLog itself.
+            log.write(_msg_header(symbol, name_style, show_ts=self._parent._show_timestamps))
+        self._last_speaker = speaker
+        self._last_speaker_at = now
+
+    def _maybe_write_inline_header_body(
+        self,
+        speaker: str,
+        symbol: str,
+        name_style: str,
+        body_text: "Text",
+        is_new_turn: "bool | None" = None,
+    ) -> None:
+        """Write header + body inline (#646 Claude Code style) with col-8 hanging indent.
+
+        When a new turn starts (new speaker or _GROUP_WINDOW_S expired):
+          - Emits ``HH:MM <sym> <body_first_line>`` at column 0.
+          - Emits each body-wrap continuation at ``_current_body_indent()``
+            columns so the wrap visually nests under the body text, not the
+            symbol.
+
+        When within the same speaker's grouping window (= header suppressed):
+          - Emits body only via ``_write_body`` (= hanging-indent Padding),
+            same as the original 2-line path.  The symbol is intentionally
+            absent so successive messages from the same speaker don't pile up
+            repeated headers.
+
+        Body wrap is computed by splitting ``body_text`` at
+        ``pane_width - indent`` cell-width.  The pane width falls back to
+        ``_BODY_WIDTH_FALLBACK + indent`` when ``self.size.width`` is 0
+        (= widget not yet laid-out or test harness with ``size=(0,0)``).
+
+        This is the load-bearing writer for ``render_user_message`` and
+        ``_render_agent_markdown`` (plain-text first-line path).
+
+        ``is_new_turn`` (#1253 Plan A guardrail ①):
+          - ``None`` (default): call ``_check_new_turn`` + update
+            ``_last_speaker`` / ``_last_speaker_at`` as usual (non-streaming
+            callers: ``render_user_message``, ``_render_agent_markdown``).
+          - A bool: use it directly. Do NOT call ``_check_new_turn`` (skip its
+            side-effects) and do NOT update ``_last_speaker`` /
+            ``_last_speaker_at`` (the streaming caller already anchored them in
+            ``begin_stream``).
+        """
+        log = self._parent._log()
+        if is_new_turn is None:
+            now = time.time()
+            is_new_turn = self._check_new_turn(speaker, log)
+            self._last_speaker = speaker
+            self._last_speaker_at = now
+
+        indent = self._parent._current_body_indent()
+
+        if not is_new_turn:
+            # Grouped turn: no header, just body at hanging-indent.
+            self._write_body(body_text)
+            return
+
+        # New turn: build inline header prefix.
+        prefix = _build_header_prefix(symbol, name_style, show_ts=self._parent._show_timestamps)
+        prefix_cells = cell_len(prefix.plain)
+
+        # Compute body wrap width = pane_width minus the indent column.
+        # The first body line starts at col ``prefix_cells`` (= same as
+        # ``indent`` by design: both are 8 with ts-on, 2 with ts-off).
+        try:
+            pane_width = self._parent.size.width
+            if pane_width <= 0:
+                pane_width = _BODY_WIDTH_FALLBACK + indent
+        except Exception:
+            pane_width = _BODY_WIDTH_FALLBACK + indent
+        # RichLog has 1-cell padding on each side (see CSS: padding: 0 1).
+        body_width = max(10, pane_width - indent - 2)
+
+        # Split body_text into wrap lines at body_width.
+        try:
+            from rich.console import Console as _Console
+            _buf_console = _Console(width=body_width, highlight=False)
+            wrapped_lines = list(body_text.wrap(_buf_console, body_width))
+        except Exception:
+            wrapped_lines = [body_text]
+
+        if not wrapped_lines:
+            # Empty body: emit just the header prefix as a standalone line.
+            log.write(prefix)
+            return
+
+        # First line: header prefix + first body-wrap line inline.
+        first_line = prefix + wrapped_lines[0]
+        log.write(first_line)
+
+        # Remaining wrap lines: indented to ``indent`` col via Padding.
+        for cont in wrapped_lines[1:]:
+            if cont.plain.strip():  # skip blank-only continuation lines
+                log.write(_indent_body(cont, indent))
+
+    # ── non-streaming message rendering ───────────────────────────────────────
+
+    def render_message(self, msg: "OutboxMessage") -> None:
+        """Append an OutboxMessage to the log (or route via dedicated widget).
+
+        Routing:
+          agent      → header + Markdown inline (with B3 fold for >30 lines)
+          system     → header + plain-text inline (persistent slash output)
+          intervention/trace/status/skill_done → suppressed (handled elsewhere)
+          error      → inline Rich Text written into the RichLog
+          others     → plain Rich Text line
+        """
+        if msg.kind == "intervention":
+            # Interventions are handled via mount_intervention, not here.
+            self._consume_empty_hint()
+            self._write_log(_format_intervention_line(msg))
+            return
+
+        if msg.kind in {"trace", "status", "skill_done"}:
+            # Suppressed — these are handled by:
+            #   trace       → start/update_skill_row (driven from app.py)
+            #   status      → show_status (sticky)
+            #   skill_done  → finish_skill_row (driven from app.py)
+            return
+
+        if msg.kind == "agent":
+            self._render_agent_markdown(msg)
+            return
+
+        if msg.kind == "system":
+            self._render_system_message(msg)
+            return
+
+        if msg.kind == "error":
+            # W13 A#2: derive short keys from full meta when missing.
+            # forwarder.py populates meta["skill_name"] + meta["run_id_short"]
+            # for skill-context errors; direct router emissions (classify path,
+            # chain_timeout, chain_peer_discarded) only set meta["skill"]
+            # (full name) and meta["run_id"] (full id). Deriving here at the
+            # TUI seam restores the [skill#abcd] prefix + re-enables the
+            # Ctrl+B trace hint footer for all router-emitted errors.
+            skill_name = str(
+                msg.meta.get("skill_name") or msg.meta.get("skill", "")
+            )
+            run_id_raw = str(msg.meta.get("run_id", ""))
+            run_id_short = str(
+                msg.meta.get("run_id_short") or (run_id_raw[-4:] if run_id_raw else "")
+            )
+            details = str(msg.meta.get("details", ""))
+            # W13 A#1: when details is empty, build context lines from
+            # well-known meta keys so the expand region surfaces structured
+            # provenance rather than just repeating the header message.
+            context_lines: list[str] = []
+            if not details:
+                for key in ("chain_id", "skill", "run_id", "dimension"):
+                    val = msg.meta.get(key)
+                    if val:
+                        context_lines.append(f"{key}={val}")
+            self.write_error(
+                message=msg.text,
+                details=details,
+                run_id_short=run_id_short,
+                skill_name=skill_name,
+                context_lines=context_lines,
+                meta=msg.meta,
+            )
+            return
+
+        text = _format_message(msg)
+        if text is not None:
+            self._consume_empty_hint()
+            self._write_body(text)
+
+    def render_user_message(self, text: str) -> None:
+        """Render a freshly submitted user message with grouped header.
+
+        Submitting a message is an "I'm re-engaging" signal — even if the
+        user had previously scrolled up to read history, they now want to
+        see the conversation continue. Snap back to the bottom and re-arm
+        auto-scroll so subsequent agent reply chunks track the tail.
+
+        #646 Claude Code-style inline layout: ``HH:MM > message text`` on the
+        same logical line, with wrap continuations landing at col 8
+        (``_BODY_INDENT_WITH_TS``) so they nest visually under the body text.
+        """
+        self._parent._scroll_ctrl.snap_to_bottom()
+        self._consume_empty_hint()
+        self._maybe_write_inline_header_body(
+            "you", _GLYPH_USER, "bold #4abbb5", Text(text),
+        )
+        self._write_log(Text(""))
+
+    def _render_system_message(self, msg: "OutboxMessage") -> None:
+        """Render a slash-command (or other OS-generated) message persistently.
+
+        Distinct from ``agent`` so the log doesn't claim the LLM produced
+        these lines, and distinct from ``status`` so prior outputs survive
+        when running multiple commands in a row.
+
+        Rendered as plain text (newlines preserved, no Markdown) under a
+        neutral ``system`` header in dim grey. **Exception**: lifecycle
+        markers (= ``[↑ ... ]`` shape from ``ChatLifecycleForwarder``)
+        skip the speaker header and render as a dim inline divider —
+        they're state-change announcements, not speech, and don't
+        deserve the same visual weight as a slash-command output.
+        """
+        self._consume_empty_hint()
+        self._parent.stop_thinking()
+        self._parent.hide_status()
+        text = msg.text or ""
+        if _is_lifecycle_marker(text):
+            self._write_log(_render_lifecycle_marker(text))
+            return
+        self._maybe_write_header("system", _GLYPH_SYSTEM, "bold " + _TEXT_MUTED)
+        for line in text.splitlines() or [""]:
+            self._write_body(Text(line))
+        self._write_log(Text(""))
+
+    def _render_agent_markdown(self, msg: "OutboxMessage") -> None:
+        """Render a non-streaming agent message inline in the log.
+
+        Writes Markdown directly into the RichLog (as a Rich renderable) so
+        agent replies appear under their header instead of being pushed to
+        the bottom of the pane. Hides any sticky "thinking…" indicator that
+        was active for this turn.
+
+        #646 Claude Code-style inline layout: ``HH:MM ⏺ [meta] first_line``
+        appears on the same logical line.  The first plain-text line of the
+        message body (or the meta prefix when present) is extracted and
+        inlined with the header via ``_maybe_write_inline_header_body``.
+        The remaining Markdown body (if any) is written at col-8 indent.
+
+        Implementation note (structural vs simple tradeoff):
+          - Markdown formatting on the first line is rendered as plain text
+            (e.g. ``**bold**`` shows as plain ``bold``). For the typical
+            agent reply, the first line is prose — this is an acceptable
+            trade-off that avoids reimplementing Rich's Markdown renderer.
+          - When no body text is present (= header-only turn signal), only
+            the header prefix is emitted.
+        """
+        self._consume_empty_hint()
+        self._parent.stop_thinking()  # turn finished — unmount inline spinner
+        self._parent.hide_status()    # also clear any sticky status
+        meta_pfx = _meta_prefix(msg.meta)
+        body_text = msg.text or ""
+
+        # Build the inline first-line text: meta prefix (if any) + first body
+        # line stripped of Markdown markup.  For an agent reply that begins
+        # "**Plan**:" this reads "Plan:" in the inline header — acceptable.
+        if meta_pfx:
+            first_line_plain = meta_pfx.rstrip()
+            if body_text:
+                # Append first source line (stripped of leading # / * / `) to
+                # keep the header line short and readable.
+                src_first = _plain_first_line(body_text)
+                if src_first:
+                    first_line_plain = f"{first_line_plain} {src_first}"
+        elif body_text:
+            first_line_plain = _plain_first_line(body_text)
+        else:
+            first_line_plain = ""
+
+        inline_body = Text(first_line_plain, style="dim " + _TEXT_MUTED if meta_pfx else "")
+
+        # _AMBER for agent identity — distinct from _CORAL (interactive
+        # affordances).
+        self._maybe_write_inline_header_body(
+            "reyn", _GLYPH_AGENT, "bold " + _AMBER, inline_body,
+        )
+
+        # Write the full Markdown body (all lines) at hanging-indent.
+        # This causes the first line to appear twice when body_text has one
+        # line, but for Markdown replies the full render at col 8 gives
+        # correct formatting (= bold, code, lists) for lines 2+.
+        # When body has only one line, suppress the duplicate body write.
+        if body_text:
+            body_lines = body_text.splitlines()
+            if len(body_lines) > 1:
+                # Remaining lines as Markdown (preserving formatting).
+                rest = "\n".join(body_lines[1:])
+                self._write_agent_markdown(rest)
+            # Single-line body: already rendered inline; no extra write needed.
+        self._write_log(Text(""))
+
+    def _write_agent_markdown(self, text: str) -> None:
+        """Write ``text`` as full inline Markdown (Claude-Code-style, no collapse).
+
+        All replies — regardless of length — are rendered directly into the
+        RichLog via ``_write_body``. Fold machinery removed per user direction
+        ("会話 reply は fold しなくて良い、claude code みたいに").
+
+        Side effect: appends ``text`` to ``self._recent_replies`` (capped
+        at ``_RECENT_REPLIES_MAX``) so the /copy slash command can hand
+        any of the last N replies to the system clipboard.
+        """
+        self._recent_replies.append(text)
+        if len(self._recent_replies) > _RECENT_REPLIES_MAX:
+            self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
+        self._write_body(RichMarkdown(text))
+
+    def last_reply_text(self) -> "str | None":
+        """Return the full text of the most recent agent reply (any length).
+
+        Used by the /copy slash command. Returns None when there has been no
+        agent reply in this session yet.
+        """
+        return self._recent_replies[-1] if self._recent_replies else None
+
+    def reply_at(self, n: int) -> "str | None":
+        """Return the n-th most recent agent reply (1-indexed; n=1 is latest).
+
+        Returns None when ``n`` is out of range (≤ 0 or beyond the buffered
+        history). The /copy slash uses this to surface older replies that the
+        single-slot predecessor silently lost on every new turn.
+        """
+        if n <= 0 or n > len(self._recent_replies):
+            return None
+        return self._recent_replies[-n]
+
+    def recent_reply_count(self) -> int:
+        """Number of agent replies currently held in the /copy ring buffer."""
+        return len(self._recent_replies)
+
+    def find_in_buffer(
+        self,
+        query: str,
+        *,
+        regex: bool = False,
+        case_sensitive: bool = False,
+    ) -> "list[tuple[int, str]]":
+        """Return ``(line_idx, line_text)`` for every RichLog line matching ``query``.
+
+        Search modes (off → on, two independent flags):
+          - ``regex=False`` (default): substring match — fast, no
+            metacharacters interpreted
+          - ``regex=True``: compiled regex search via ``re.search``;
+            invalid patterns raise ``re.error`` so the caller can
+            surface a clear error status
+          - ``case_sensitive=False`` (default): match across cases
+            (= ``"Foo"`` query matches ``"foo bar"``)
+          - ``case_sensitive=True``: exact-case match
+
+        Scope: the live RichLog buffer (= what's currently
+        scrollable). Lines past the ``_RICHLOG_MAX_LINES`` ring-
+        buffer trim are NOT searched — for older history the user
+        has the right-panel Events tab + the agent-side
+        ``.reyn/events/agents/<name>/`` skill-run directories.
+
+        Empty ``query`` returns an empty list (= caller treats this
+        as "nothing to search for", usually with a usage hint).
+
+        Each tuple's ``line_text`` carries the line's rendered
+        plain text (via the Strip's ``.text`` property) so callers
+        can surface a short preview alongside the line number.
+        """
+        q = (query or "").strip()
+        if not q:
+            return []
+        log = self._parent._log()
+        out: list[tuple[int, str]] = []
+
+        if regex:
+            import re
+            # ``re.error`` (invalid pattern) bubbles up — callers
+            # catch it and surface a status; silent suppression
+            # would leave the user wondering why ``/find -r foo(``
+            # silently matched nothing.
+            flags = 0 if case_sensitive else re.IGNORECASE
+            pattern = re.compile(q, flags)
+            for idx, strip in enumerate(getattr(log, "lines", []) or []):
+                text = getattr(strip, "text", "") or ""
+                if pattern.search(text):
+                    out.append((idx, text))
+            return out
+
+        # Substring path — same lookup whether case-sensitive or
+        # not; only the comparison case differs.
+        needle = q if case_sensitive else q.lower()
+        for idx, strip in enumerate(getattr(log, "lines", []) or []):
+            text = getattr(strip, "text", "") or ""
+            haystack = text if case_sensitive else text.lower()
+            if needle in haystack:
+                out.append((idx, text))
+        return out
+
+    def dump_buffer_text(self) -> "list[str]":
+        """Return the plain-text rendering of every line in the RichLog buffer.
+
+        Sibling to :meth:`find_in_buffer` — same buffer scope (= the
+        live, scrollable RichLog content; not historical events past
+        ``_RICHLOG_MAX_LINES``), but returns the full ordered list
+        without filtering. Used by ``/save`` to materialise the conv
+        pane to a text file. Each entry is a single line (= no
+        embedded newlines), already stripped of ANSI / Rich markup
+        by Strip's ``.text`` property.
+        """
+        log = self._parent._log()
+        return [
+            getattr(strip, "text", "") or ""
+            for strip in (getattr(log, "lines", []) or [])
+        ]
+
+    # ── inline error rendering ────────────────────────────────────────────────
+
+    def write_error(
+        self,
+        *,
+        message: str,
+        details: str = "",
+        run_id_short: str = "",
+        skill_name: str = "",
+        context_lines: "list[str] | None" = None,
+        meta: "dict | None" = None,
+    ) -> None:
+        """Render an error as inline Rich Text into the conv RichLog.
+
+        Errors flow as plain log lines — ephemeral, scroll-away (= Claude
+        Code style).  Severity colour is applied inline.  No widget is
+        mounted; no dismiss mechanic is needed.
+
+        Lines written:
+          1. ``✗ [prefix]: <first-line>``  in the severity colour.
+          2. ``  • <inline-hint>`` in _HINT_ACTION  (when present).
+          3. Detail lines (first 5 + ``… N more``) dim, OR context_lines.
+          4. ``Ctrl+B → events for full trace`` dim  (when has_trace).
+          5. A blank separator line.
+        """
+        from rich.markup import escape as _markup_escape
+        from rich.text import Text as _RichText
+
+        self._consume_empty_hint()
+        self._parent.stop_thinking()  # turn ended in error
+
+        # Scrolled-up cue — show "error below" when user is reading history.
+        if self._parent._scroll_ctrl.user_scrolled:
+            self._parent.show_status("✗ error below ↓", kind="general")
+        else:
+            self._parent.hide_status()
+
+        # Severity → colour.
+        severity = _classify_error_severity(message, meta or {})
+        if severity == "high":
+            sev_color = _SEV_HIGH
+        elif severity == "med":
+            sev_color = _SEV_MED
+        else:
+            sev_color = _TEXT_MUTED  # low
+
+        # Build prefix: [skill#run_id] / [skill] / [#run_id] / "".
+        if skill_name and run_id_short:
+            prefix = f"[{skill_name}#{run_id_short}]"
+        elif skill_name:
+            prefix = f"[{skill_name}]"
+        elif run_id_short:
+            prefix = f"[#{run_id_short}]"
+        else:
+            prefix = ""
+
+        # Extract trailing " • <hint>" from the first message line.
+        first_line, _sep, _rest = message.partition("\n")
+        if " • " in first_line:
+            detail_part, _bullet, hint_part = first_line.partition(" • ")
+            inline_hint = hint_part.strip()
+            first_line_for_header = detail_part
+        else:
+            inline_hint = ""
+            first_line_for_header = first_line
+
+        # Header line: ✗ [prefix]: message-first-line.
+        header = _RichText()
+        if prefix:
+            header.append(
+                f"✗ {_markup_escape(prefix)}: {_markup_escape(first_line_for_header)}",
+                style="bold " + sev_color,
+            )
+        else:
+            header.append(
+                f"✗ {_markup_escape(first_line_for_header)}",
+                style="bold " + sev_color,
+            )
+        self._write_log(header)
+
+        # Inline hint line.
+        if inline_hint:
+            hint_t = _RichText(f"  • {_markup_escape(inline_hint)}", style=_HINT_ACTION)
+            self._write_log(hint_t)
+
+        # Detail / context lines.
+        has_trace = bool(skill_name or run_id_short)
+        if details:
+            lines = details.splitlines()
+            visible = lines[:5]
+            overflow = len(lines) - 5
+            for ln in visible:
+                self._write_log(_RichText(f"  {_markup_escape(ln)}", style=_TEXT_MID))
+            if overflow > 0:
+                self._write_log(_RichText(f"  … {overflow} more", style=_TEXT_MID))
+        elif context_lines:
+            for ln in context_lines:
+                self._write_log(_RichText(f"  {_markup_escape(ln)}", style=_TEXT_MID))
+
+        # Ctrl+B trace pointer.
+        if has_trace:
+            self._write_log(
+                _RichText("  Ctrl+B → events for full trace", style="dim " + _TEXT_DIM)
+            )
+
+        # Trailing blank separator.
+        self._write_log(_RichText(""))
+
+    # ── cost suffix (A4) ──────────────────────────────────────────────────────
+
+    def render_cost_suffix(
+        self,
+        tokens: int,
+        cost_usd: float,
+        elapsed_s: float,
+        *,
+        partial: bool = False,
+    ) -> None:
+        """Append a dim per-turn cost suffix, right-aligned. Caller decides when (opt-in).
+
+        Three pieces are load-bearing:
+
+        - ``Text(..., justify="right")`` only right-aligns when the
+          renderer is told a width to fill, and ``RichLog.write`` defaults
+          to ``expand=False`` — without ``expand=True`` the suffix
+          silently renders at column 0.
+        - Wrapping the Text in ``Padding(text, (0, RIGHT_PAD, 0, 0))``
+          reserves explicit right-margin cells. Without that margin the
+          right-justified end of the suffix landed under the vertical
+          scrollbar + the small right-padding RichLog reserves and the
+          trailing ``N.Ns`` segment was clipped at 80-col terminal widths
+          (the ``expand=True`` fill width didn't subtract the scrollbar
+          column or RichLog's own right-padding from the right edge of
+          the right-justified text).
+        - Separator is ``│`` (U+2502, narrow, unambiguous width) rather
+          than ``·`` (U+00B7, East Asian Width "Ambiguous") so Rich's
+          cell-width accounting matches what the terminal actually paints.
+
+        ``partial=True`` prefixes each numeric segment with ``~`` and
+        appends ``  (skill still running)``. Wave-6 ST3 + wave-7 C-F6:
+        when the cost-suffix deferral cap fires while a skill is still
+        spinning, the snapshot under-reports the eventual total. Without
+        a visual marker, the user sees ``⌁ Nt │ $X.XXXX │ Ys`` and
+        treats it as the final number. The ``~`` + suffix make the
+        partial nature visible at a glance; a subsequent terminal-state
+        emit overrides this line with the final number.
+        """
+        from rich.padding import Padding
+        if partial:
+            body = (
+                f"⌁ ~{tokens}t │ ~${cost_usd:.4f} │ ~{elapsed_s:.1f}s"
+                "  (skill still running)"
+            )
+        else:
+            body = f"⌁ {tokens}t │ ${cost_usd:.4f} │ {elapsed_s:.1f}s"
+        t = Text(
+            body,
+            style="dim " + _TEXT_NEUTRAL,
+            justify="right",
+        )
+        # ``(top=0, right=6, bottom=0, left=0)`` — reserve 6 cells on
+        # the right so the right-justified text stays inside the
+        # scrollbar + widget right-padding. Empirical calibration at
+        # 80-col widths: 2 cells still clipped (``17.``), 3 still clipped
+        # (``17.1.``), 6 leaves the full ``N.Ns`` segment + a visible gap
+        # from the scrollbar. The ``expand=True`` fill width doesn't
+        # subtract the scrollbar column or RichLog's own right-padding
+        # from the right edge of the right-justified text, so we have to
+        # reserve it manually.
+        self._parent._log().write(Padding(t, (0, 6, 0, 0)), expand=True)
+
+
 class ConversationView(Widget):
     """Main conversation pane: RichLog + inline widgets + sticky status.
 
@@ -810,24 +1557,9 @@ class ConversationView(Widget):
         # Scroll controller: owns scroll-lock, turn-nav, '↓ N new' indicator
         # (refactor tui-pr3).
         self._scroll_ctrl = _ScrollController(self)
-        # Header-grouping state (B1)
-        self._last_speaker: str = ""
-        self._last_speaker_at: float = 0.0
-        # Last date (YYYY-MM-DD) we wrote a header for. When a new header
-        # crosses to a different calendar day, emit a dim date-separator
-        # line first so users can tell which day's "21:55" they're looking
-        # at in a multi-day session.
-        self._last_header_date: str = ""
-        # Empty-state (B5)
-        self._has_first_message = False
-        # Recent agent replies (newest last), capped at ``_RECENT_REPLIES_MAX``.
-        # Consumed by the /copy slash command — users can grab the latest reply
-        # (``/copy``) or any of the last N (``/copy 2``, ``/copy 3``, …) without
-        # fighting the TUI's mouse-capture to drag-select text out of the log.
-        # Single-slot storage silently lost every prior reply on each new turn;
-        # a bounded ring keeps the immediate history reachable without growing
-        # memory unboundedly across long sessions.
-        self._recent_replies: list[str] = []
+        # Message renderer: owns header-grouping state, recent-replies ring,
+        # empty-hint latch, and all rendering logic (refactor tui-pr5).
+        self._renderer = _MessageRenderer(self)
         # F9 timestamp toggle — default on. Loaded from tui_prefs.json in
         # on_mount; callers use toggle_timestamps() / show_timestamps property.
         # New messages rendered after a toggle use the new indent; past
@@ -1033,23 +1765,13 @@ class ConversationView(Widget):
 
     @property
     def last_speaker_at(self) -> float:
-        """Wall-clock timestamp (``time.time()`` epoch seconds) of the last header write.
-
-        Used by header-grouping tests to verify the clock source is wall
-        time and not monotonic. Read-only — tests that need to simulate
-        time passage write ``conv._last_speaker_at`` directly for setup.
-        """
-        return self._last_speaker_at
+        """Wall-clock timestamp (``time.time()`` epoch seconds) of the last header write."""
+        return self._renderer.last_speaker_at
 
     @property
     def last_header_date(self) -> str:
-        """``YYYY-MM-DD`` string of the last date-separator written, or ``""`` before any message.
-
-        ``clear()`` updates this to today so same-day Ctrl+L doesn't
-        re-emit the date separator. Tests verify this via the property
-        rather than accessing ``_last_header_date`` directly.
-        """
-        return self._last_header_date
+        """``YYYY-MM-DD`` string of the last date-separator written, or ``""`` before any message."""
+        return self._renderer.last_header_date
 
     def turn_anchors_snapshot(self) -> tuple[int, ...]:
         """Return a snapshot of the current turn-anchor list as an immutable tuple."""
@@ -1168,86 +1890,15 @@ class ConversationView(Widget):
     # ── empty state ───────────────────────────────────────────────────────────
 
     def _consume_empty_hint(self) -> None:
-        if self._has_first_message:
-            return
-        self._has_first_message = True
-        try:
-            # Hide instead of remove so /clear can bring it back.
-            self.query_one("#empty-hint", Static).add_class("hidden")
-        except Exception:
-            pass
+        self._renderer._consume_empty_hint()
 
-    # ── header grouping (B1) ──────────────────────────────────────────────────
+    # ── header grouping (B1) — delegated to _MessageRenderer (tui-pr5) ────────
 
     def _check_new_turn(self, speaker: str, log: "RichLog") -> bool:
-        """Return True if this is a new turn (different speaker or window expired).
+        return self._renderer._check_new_turn(speaker, log)
 
-        Side-effects when a new turn starts:
-          - Emits a date-separator when the calendar day has changed.
-          - Records the current absolute line position as a turn anchor.
-        Does NOT write any header line — the caller decides what to write.
-
-        ``_last_speaker`` / ``_last_speaker_at`` are updated by the caller
-        AFTER the header/body write (so anchors are recorded before the write
-        that advances the line counter).
-
-        Wave-10 follow-up G-F7: ``time.time()`` (wall clock) matches the
-        visible ``HH:MM`` timestamp and grouping decision — see
-        ``_maybe_write_header`` docstring for full rationale.
-        """
-        now = time.time()
-        same_speaker = (speaker == self._last_speaker)
-        within_window = (now - self._last_speaker_at) < _GROUP_WINDOW_S
-        if same_speaker and within_window:
-            return False
-        # Day boundary marker.
-        today = time.strftime("%Y-%m-%d")
-        if today != self._last_header_date:
-            log.write(_date_separator(today))
-            self._last_header_date = today
-        # Record a turn anchor.
-        self._scroll_ctrl.record_turn_anchor(log)
-        return True
-
-    def _maybe_write_header(self, speaker: str, symbol: str,
-                             name_style: str) -> None:
-        """Write a symbol-only header when the speaker changes or the gap exceeds _GROUP_WINDOW_S.
-
-        The header is ``HH:MM <symbol>`` (ts on) or ``<symbol>`` (ts off).
-        A blank line separates turns; the dash rule from the old layout is
-        intentionally absent.
-
-        Wave-10 follow-up G-F7: ``time.time()`` (wall clock) rather
-        than ``time.monotonic()``. The header's visible HH:MM
-        timestamp uses ``time.strftime`` (= wall clock), so grouping
-        the *same* timeline keeps the displayed timestamp and the
-        grouping decision in lockstep. ``monotonic`` doesn't advance
-        during system sleep on every platform (= CLOCK_MONOTONIC vs
-        CLOCK_BOOTTIME differ across Linux / macOS) — after a
-        sleep/wake cycle, two messages can show wall-clock timestamps
-        an hour apart yet share a grouping bucket simply because
-        monotonic registered no progress. Wall clock matches the
-        user-visible timeline exactly.
-        """
-        now = time.time()
-        log = self._log()
-        if self._check_new_turn(speaker, log):
-            # No cap. The previous 200-entry cap silently dropped the
-            # oldest anchors in long sessions, so Ctrl+P/N's "N / M"
-            # readout showed an M smaller than the real turn count and
-            # the user thought they had walked the entire history when
-            # they had not. ``_resolve_anchors_to_current_view`` already
-            # filters anchors whose line position fell below
-            # ``log._start_line`` (= dropped by the RichLog ring
-            # buffer), so the effective navigation list stays bounded
-            # by ``_RICHLOG_MAX_LINES`` / typical-lines-per-turn even
-            # though the raw ``_turn_anchors`` list grows unbounded.
-            # The raw list cost is ~8 bytes per turn — a 24h session
-            # generating one turn per second is ~700 KB, negligible
-            # next to the RichLog itself.
-            log.write(_msg_header(symbol, name_style, show_ts=self._show_timestamps))
-        self._last_speaker = speaker
-        self._last_speaker_at = now
+    def _maybe_write_header(self, speaker: str, symbol: str, name_style: str) -> None:
+        self._renderer._maybe_write_header(speaker, symbol, name_style)
 
     def _maybe_write_inline_header_body(
         self,
@@ -1257,311 +1908,35 @@ class ConversationView(Widget):
         body_text: Text,
         is_new_turn: bool | None = None,
     ) -> None:
-        """Write header + body inline (#646 Claude Code style) with col-8 hanging indent.
+        self._renderer._maybe_write_inline_header_body(
+            speaker, symbol, name_style, body_text, is_new_turn=is_new_turn,
+        )
 
-        When a new turn starts (new speaker or _GROUP_WINDOW_S expired):
-          - Emits ``HH:MM <sym> <body_first_line>`` at column 0.
-          - Emits each body-wrap continuation at ``_current_body_indent()``
-            columns so the wrap visually nests under the body text, not the
-            symbol.
-
-        When within the same speaker's grouping window (= header suppressed):
-          - Emits body only via ``_write_body`` (= hanging-indent Padding),
-            same as the original 2-line path.  The symbol is intentionally
-            absent so successive messages from the same speaker don't pile up
-            repeated headers.
-
-        Body wrap is computed by splitting ``body_text`` at
-        ``pane_width - indent`` cell-width.  The pane width falls back to
-        ``_BODY_WIDTH_FALLBACK + indent`` when ``self.size.width`` is 0
-        (= widget not yet laid-out or test harness with ``size=(0,0)``).
-
-        This is the load-bearing writer for ``render_user_message`` and
-        ``_render_agent_markdown`` (plain-text first-line path).
-
-        ``is_new_turn`` (#1253 Plan A guardrail ①):
-          - ``None`` (default): call ``_check_new_turn`` + update
-            ``_last_speaker`` / ``_last_speaker_at`` as usual (non-streaming
-            callers: ``render_user_message``, ``_render_agent_markdown``).
-          - A bool: use it directly. Do NOT call ``_check_new_turn`` (skip its
-            side-effects) and do NOT update ``_last_speaker`` /
-            ``_last_speaker_at`` (the streaming caller already anchored them in
-            ``begin_stream``).
-        """
-        log = self._log()
-        if is_new_turn is None:
-            now = time.time()
-            is_new_turn = self._check_new_turn(speaker, log)
-            self._last_speaker = speaker
-            self._last_speaker_at = now
-
-        indent = self._current_body_indent()
-
-        if not is_new_turn:
-            # Grouped turn: no header, just body at hanging-indent.
-            self._write_body(body_text)
-            return
-
-        # New turn: build inline header prefix.
-        prefix = _build_header_prefix(symbol, name_style, show_ts=self._show_timestamps)
-        prefix_cells = cell_len(prefix.plain)
-
-        # Compute body wrap width = pane_width minus the indent column.
-        # The first body line starts at col ``prefix_cells`` (= same as
-        # ``indent`` by design: both are 8 with ts-on, 2 with ts-off).
-        try:
-            pane_width = self.size.width
-            if pane_width <= 0:
-                pane_width = _BODY_WIDTH_FALLBACK + indent
-        except Exception:
-            pane_width = _BODY_WIDTH_FALLBACK + indent
-        # RichLog has 1-cell padding on each side (see CSS: padding: 0 1).
-        body_width = max(10, pane_width - indent - 2)
-
-        # Split body_text into wrap lines at body_width.
-        try:
-            from rich.console import Console as _Console
-            _buf_console = _Console(width=body_width, highlight=False)
-            wrapped_lines = list(body_text.wrap(_buf_console, body_width))
-        except Exception:
-            wrapped_lines = [body_text]
-
-        if not wrapped_lines:
-            # Empty body: emit just the header prefix as a standalone line.
-            log.write(prefix)
-            return
-
-        # First line: header prefix + first body-wrap line inline.
-        first_line = prefix + wrapped_lines[0]
-        log.write(first_line)
-
-        # Remaining wrap lines: indented to ``indent`` col via Padding.
-        for cont in wrapped_lines[1:]:
-            if cont.plain.strip():  # skip blank-only continuation lines
-                log.write(_indent_body(cont, indent))
-
-    # ── non-streaming message rendering ───────────────────────────────────────
+    # ── non-streaming message rendering — delegated to _MessageRenderer ────────
 
     def render_message(self, msg: OutboxMessage) -> None:
-        """Append an OutboxMessage to the log (or route via dedicated widget).
-
-        Routing:
-          agent      → header + Markdown inline (with B3 fold for >30 lines)
-          system     → header + plain-text inline (persistent slash output)
-          intervention/trace/status/skill_done → suppressed (handled elsewhere)
-          error      → inline Rich Text written into the RichLog
-          others     → plain Rich Text line
-        """
-        if msg.kind == "intervention":
-            # Interventions are handled via mount_intervention, not here.
-            self._consume_empty_hint()
-            self._write_log(_format_intervention_line(msg))
-            return
-
-        if msg.kind in {"trace", "status", "skill_done"}:
-            # Suppressed — these are handled by:
-            #   trace       → start/update_skill_row (driven from app.py)
-            #   status      → show_status (sticky)
-            #   skill_done  → finish_skill_row (driven from app.py)
-            return
-
-        if msg.kind == "agent":
-            self._render_agent_markdown(msg)
-            return
-
-        if msg.kind == "system":
-            self._render_system_message(msg)
-            return
-
-        if msg.kind == "error":
-            # W13 A#2: derive short keys from full meta when missing.
-            # forwarder.py populates meta["skill_name"] + meta["run_id_short"]
-            # for skill-context errors; direct router emissions (classify path,
-            # chain_timeout, chain_peer_discarded) only set meta["skill"]
-            # (full name) and meta["run_id"] (full id). Deriving here at the
-            # TUI seam restores the [skill#abcd] prefix + re-enables the
-            # Ctrl+B trace hint footer for all router-emitted errors.
-            skill_name = str(
-                msg.meta.get("skill_name") or msg.meta.get("skill", "")
-            )
-            run_id_raw = str(msg.meta.get("run_id", ""))
-            run_id_short = str(
-                msg.meta.get("run_id_short") or (run_id_raw[-4:] if run_id_raw else "")
-            )
-            details = str(msg.meta.get("details", ""))
-            # W13 A#1: when details is empty, build context lines from
-            # well-known meta keys so the expand region surfaces structured
-            # provenance rather than just repeating the header message.
-            context_lines: list[str] = []
-            if not details:
-                for key in ("chain_id", "skill", "run_id", "dimension"):
-                    val = msg.meta.get(key)
-                    if val:
-                        context_lines.append(f"{key}={val}")
-            self.write_error(
-                message=msg.text,
-                details=details,
-                run_id_short=run_id_short,
-                skill_name=skill_name,
-                context_lines=context_lines,
-                meta=msg.meta,
-            )
-            return
-
-        text = _format_message(msg)
-        if text is not None:
-            self._consume_empty_hint()
-            self._write_body(text)
+        self._renderer.render_message(msg)
 
     def render_user_message(self, text: str) -> None:
-        """Render a freshly submitted user message with grouped header.
-
-        Submitting a message is an "I'm re-engaging" signal — even if the
-        user had previously scrolled up to read history, they now want to
-        see the conversation continue. Snap back to the bottom and re-arm
-        auto-scroll so subsequent agent reply chunks track the tail.
-
-        #646 Claude Code-style inline layout: ``HH:MM > message text`` on the
-        same logical line, with wrap continuations landing at col 8
-        (``_BODY_INDENT_WITH_TS``) so they nest visually under the body text.
-        """
-        self._scroll_ctrl.snap_to_bottom()
-        self._consume_empty_hint()
-        self._maybe_write_inline_header_body(
-            "you", _GLYPH_USER, "bold #4abbb5", Text(text),
-        )
-        self._write_log(Text(""))
-
-    def _render_system_message(self, msg: OutboxMessage) -> None:
-        """Render a slash-command (or other OS-generated) message persistently.
-
-        Distinct from ``agent`` so the log doesn't claim the LLM produced
-        these lines, and distinct from ``status`` so prior outputs survive
-        when running multiple commands in a row.
-
-        Rendered as plain text (newlines preserved, no Markdown) under a
-        neutral ``system`` header in dim grey. **Exception**: lifecycle
-        markers (= ``[↑ ... ]`` shape from ``ChatLifecycleForwarder``)
-        skip the speaker header and render as a dim inline divider —
-        they're state-change announcements, not speech, and don't
-        deserve the same visual weight as a slash-command output.
-        """
-        self._consume_empty_hint()
-        self.stop_thinking()
-        self.hide_status()
-        text = msg.text or ""
-        if _is_lifecycle_marker(text):
-            self._write_log(_render_lifecycle_marker(text))
-            return
-        self._maybe_write_header("system", _GLYPH_SYSTEM, "bold " + _TEXT_MUTED)
-        for line in text.splitlines() or [""]:
-            self._write_body(Text(line))
-        self._write_log(Text(""))
+        self._renderer.render_user_message(text)
 
     def _render_agent_markdown(self, msg: OutboxMessage) -> None:
-        """Render a non-streaming agent message inline in the log.
+        self._renderer._render_agent_markdown(msg)
 
-        Writes Markdown directly into the RichLog (as a Rich renderable) so
-        agent replies appear under their header instead of being pushed to
-        the bottom of the pane. Hides any sticky "thinking…" indicator that
-        was active for this turn.
-
-        #646 Claude Code-style inline layout: ``HH:MM ⏺ [meta] first_line``
-        appears on the same logical line.  The first plain-text line of the
-        message body (or the meta prefix when present) is extracted and
-        inlined with the header via ``_maybe_write_inline_header_body``.
-        The remaining Markdown body (if any) is written at col-8 indent.
-
-        Implementation note (structural vs simple tradeoff):
-          - Markdown formatting on the first line is rendered as plain text
-            (e.g. ``**bold**`` shows as plain ``bold``). For the typical
-            agent reply, the first line is prose — this is an acceptable
-            trade-off that avoids reimplementing Rich's Markdown renderer.
-          - When no body text is present (= header-only turn signal), only
-            the header prefix is emitted.
-        """
-        self._consume_empty_hint()
-        self.stop_thinking()  # turn finished — unmount inline spinner
-        self.hide_status()    # also clear any sticky status
-        meta_pfx = _meta_prefix(msg.meta)
-        body_text = msg.text or ""
-
-        # Build the inline first-line text: meta prefix (if any) + first body
-        # line stripped of Markdown markup.  For an agent reply that begins
-        # "**Plan**:" this reads "Plan:" in the inline header — acceptable.
-        if meta_pfx:
-            first_line_plain = meta_pfx.rstrip()
-            if body_text:
-                # Append first source line (stripped of leading # / * / `) to
-                # keep the header line short and readable.
-                src_first = _plain_first_line(body_text)
-                if src_first:
-                    first_line_plain = f"{first_line_plain} {src_first}"
-        elif body_text:
-            first_line_plain = _plain_first_line(body_text)
-        else:
-            first_line_plain = ""
-
-        inline_body = Text(first_line_plain, style="dim " + _TEXT_MUTED if meta_pfx else "")
-
-        # _AMBER for agent identity — distinct from _CORAL (interactive
-        # affordances).
-        self._maybe_write_inline_header_body(
-            "reyn", _GLYPH_AGENT, "bold " + _AMBER, inline_body,
-        )
-
-        # Write the full Markdown body (all lines) at hanging-indent.
-        # This causes the first line to appear twice when body_text has one
-        # line, but for Markdown replies the full render at col 8 gives
-        # correct formatting (= bold, code, lists) for lines 2+.
-        # When body has only one line, suppress the duplicate body write.
-        if body_text:
-            body_lines = body_text.splitlines()
-            if len(body_lines) > 1:
-                # Remaining lines as Markdown (preserving formatting).
-                rest = "\n".join(body_lines[1:])
-                self._write_agent_markdown(rest)
-            # Single-line body: already rendered inline; no extra write needed.
-        self._write_log(Text(""))
+    def _render_system_message(self, msg: OutboxMessage) -> None:
+        self._renderer._render_system_message(msg)
 
     def _write_agent_markdown(self, text: str) -> None:
-        """Write ``text`` as full inline Markdown (Claude-Code-style, no collapse).
-
-        All replies — regardless of length — are rendered directly into the
-        RichLog via ``_write_body``. Fold machinery removed per user direction
-        ("会話 reply は fold しなくて良い、claude code みたいに").
-
-        Side effect: appends ``text`` to ``self._recent_replies`` (capped
-        at ``_RECENT_REPLIES_MAX``) so the /copy slash command can hand
-        any of the last N replies to the system clipboard.
-        """
-        self._recent_replies.append(text)
-        if len(self._recent_replies) > _RECENT_REPLIES_MAX:
-            self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
-        self._write_body(RichMarkdown(text))
+        self._renderer._write_agent_markdown(text)
 
     def last_reply_text(self) -> str | None:
-        """Return the full text of the most recent agent reply (any length).
-
-        Used by the /copy slash command. Returns None when there has been no
-        agent reply in this session yet.
-        """
-        return self._recent_replies[-1] if self._recent_replies else None
+        return self._renderer.last_reply_text()
 
     def reply_at(self, n: int) -> str | None:
-        """Return the n-th most recent agent reply (1-indexed; n=1 is latest).
-
-        Returns None when ``n`` is out of range (≤ 0 or beyond the buffered
-        history). The /copy slash uses this to surface older replies that the
-        single-slot predecessor silently lost on every new turn.
-        """
-        if n <= 0 or n > len(self._recent_replies):
-            return None
-        return self._recent_replies[-n]
+        return self._renderer.reply_at(n)
 
     def recent_reply_count(self) -> int:
-        """Number of agent replies currently held in the /copy ring buffer."""
-        return len(self._recent_replies)
+        return self._renderer.recent_reply_count()
 
     def find_in_buffer(
         self,
@@ -1570,100 +1945,16 @@ class ConversationView(Widget):
         regex: bool = False,
         case_sensitive: bool = False,
     ) -> list[tuple[int, str]]:
-        """Return ``(line_idx, line_text)`` for every RichLog line matching ``query``.
-
-        Search modes (off → on, two independent flags):
-          - ``regex=False`` (default): substring match — fast, no
-            metacharacters interpreted
-          - ``regex=True``: compiled regex search via ``re.search``;
-            invalid patterns raise ``re.error`` so the caller can
-            surface a clear error status
-          - ``case_sensitive=False`` (default): match across cases
-            (= ``"Foo"`` query matches ``"foo bar"``)
-          - ``case_sensitive=True``: exact-case match
-
-        Scope: the live RichLog buffer (= what's currently
-        scrollable). Lines past the ``_RICHLOG_MAX_LINES`` ring-
-        buffer trim are NOT searched — for older history the user
-        has the right-panel Events tab + the agent-side
-        ``.reyn/events/agents/<name>/`` skill-run directories.
-
-        Empty ``query`` returns an empty list (= caller treats this
-        as "nothing to search for", usually with a usage hint).
-
-        Each tuple's ``line_text`` carries the line's rendered
-        plain text (via the Strip's ``.text`` property) so callers
-        can surface a short preview alongside the line number.
-        """
-        q = (query or "").strip()
-        if not q:
-            return []
-        log = self._log()
-        out: list[tuple[int, str]] = []
-
-        if regex:
-            import re
-            # ``re.error`` (invalid pattern) bubbles up — callers
-            # catch it and surface a status; silent suppression
-            # would leave the user wondering why ``/find -r foo(``
-            # silently matched nothing.
-            flags = 0 if case_sensitive else re.IGNORECASE
-            pattern = re.compile(q, flags)
-            for idx, strip in enumerate(getattr(log, "lines", []) or []):
-                text = getattr(strip, "text", "") or ""
-                if pattern.search(text):
-                    out.append((idx, text))
-            return out
-
-        # Substring path — same lookup whether case-sensitive or
-        # not; only the comparison case differs.
-        needle = q if case_sensitive else q.lower()
-        for idx, strip in enumerate(getattr(log, "lines", []) or []):
-            text = getattr(strip, "text", "") or ""
-            haystack = text if case_sensitive else text.lower()
-            if needle in haystack:
-                out.append((idx, text))
-        return out
+        return self._renderer.find_in_buffer(query, regex=regex, case_sensitive=case_sensitive)
 
     def dump_buffer_text(self) -> list[str]:
-        """Return the plain-text rendering of every line in the RichLog buffer.
-
-        Sibling to :meth:`find_in_buffer` — same buffer scope (= the
-        live, scrollable RichLog content; not historical events past
-        ``_RICHLOG_MAX_LINES``), but returns the full ordered list
-        without filtering. Used by ``/save`` to materialise the conv
-        pane to a text file. Each entry is a single line (= no
-        embedded newlines), already stripped of ANSI / Rich markup
-        by Strip's ``.text`` property.
-        """
-        log = self._log()
-        return [
-            getattr(strip, "text", "") or ""
-            for strip in (getattr(log, "lines", []) or [])
-        ]
+        return self._renderer.dump_buffer_text()
 
     def _write_log(self, text: Text) -> None:
-        log = self._log()
-        log.write(text)
-        # Surface the trim warning the first time it's earned, even when
-        # the user hasn't pressed Ctrl+P/N yet. The previous wiring only
-        # called this from ``_jump_to_relative_anchor`` — turn navigation
-        # — so a user who let the session auto-scroll past the
-        # ``_RICHLOG_MAX_LINES`` boundary never saw the "earlier history
-        # trimmed" signal until they happened to hit Ctrl+P. The
-        # ``_trim_warned`` flag keeps it strictly one-shot per session.
-        self._scroll_ctrl.maybe_warn_trim(log)
+        self._renderer._write_log(text)
 
     def _write_body(self, renderable: RenderableType) -> None:
-        """Append a body renderable at the dynamic hanging-indent column.
-
-        Wraps ``renderable`` in left-only ``Padding`` so wrap continuations
-        line up under the speaker symbol and stay visually distinct from the
-        column-0 turn header. The indent is 8 when timestamps are shown
-        (= col 0-4 ts + col 5 space + col 6 symbol + col 7 space + col 8+
-        body) and 2 when hidden (= col 0 symbol + col 1 space + col 2+ body).
-        """
-        self._log().write(_indent_body(renderable, self._current_body_indent()))
+        self._renderer._write_body(renderable)
 
     # ── streaming support ─────────────────────────────────────────────────────
 
@@ -1683,8 +1974,7 @@ class ConversationView(Widget):
         # group correctly.
         log = self._log()
         is_new_turn = self._check_new_turn("reyn", log)
-        self._last_speaker = "reyn"
-        self._last_speaker_at = time.time()
+        self._renderer.set_speaker("reyn", time.time())
         # Pass the current body indent so the streaming row aligns with
         # body text for the current timestamp-toggle state (Fix 2 / A1).
         row = StreamingRow(
@@ -1715,9 +2005,7 @@ class ConversationView(Widget):
         /copy result.
         """
         # /copy: record full reply first.
-        self._recent_replies.append(full)
-        if len(self._recent_replies) > _RECENT_REPLIES_MAX:
-            self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
+        self._renderer.record_reply(full)
 
         first_line_plain = _plain_first_line(full)
         self._maybe_write_inline_header_body(
@@ -1806,9 +2094,7 @@ class ConversationView(Widget):
             # user just saw streaming. Capping mirrors the
             # ``_write_agent_markdown`` cap (= one source of truth for
             # the buffer's bounded size).
-            self._recent_replies.append(full)
-            if len(self._recent_replies) > _RECENT_REPLIES_MAX:
-                self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
+            self._renderer.record_reply(full)
             try:
                 self._log().write(
                     Text("✗ cancelled (partial reply):", style=f"bold {_RED_MUTED}"),
@@ -1887,7 +2173,7 @@ class ConversationView(Widget):
     def stop_thinking(self) -> None:
         self._status_ctrl.stop_thinking()
 
-    # ── inline error rendering ────────────────────────────────────────────────
+    # ── inline error rendering — delegated to _MessageRenderer (tui-pr5) ────────
 
     def write_error(
         self,
@@ -1899,101 +2185,14 @@ class ConversationView(Widget):
         context_lines: list[str] | None = None,
         meta: dict | None = None,
     ) -> None:
-        """Render an error as inline Rich Text into the conv RichLog.
-
-        Errors flow as plain log lines — ephemeral, scroll-away (= Claude
-        Code style).  Severity colour is applied inline.  No widget is
-        mounted; no dismiss mechanic is needed.
-
-        Lines written:
-          1. ``✗ [prefix]: <first-line>``  in the severity colour.
-          2. ``  • <inline-hint>`` in _HINT_ACTION  (when present).
-          3. Detail lines (first 5 + ``… N more``) dim, OR context_lines.
-          4. ``Ctrl+B → events for full trace`` dim  (when has_trace).
-          5. A blank separator line.
-        """
-        from rich.markup import escape as _markup_escape
-        from rich.text import Text as _RichText
-
-        self._consume_empty_hint()
-        self.stop_thinking()  # turn ended in error
-
-        # Scrolled-up cue — show "error below" when user is reading history.
-        if self._scroll_ctrl.user_scrolled:
-            self.show_status("✗ error below ↓", kind="general")
-        else:
-            self.hide_status()
-
-        # Severity → colour.
-        severity = _classify_error_severity(message, meta or {})
-        if severity == "high":
-            sev_color = _SEV_HIGH
-        elif severity == "med":
-            sev_color = _SEV_MED
-        else:
-            sev_color = _TEXT_MUTED  # low
-
-        # Build prefix: [skill#run_id] / [skill] / [#run_id] / "".
-        if skill_name and run_id_short:
-            prefix = f"[{skill_name}#{run_id_short}]"
-        elif skill_name:
-            prefix = f"[{skill_name}]"
-        elif run_id_short:
-            prefix = f"[#{run_id_short}]"
-        else:
-            prefix = ""
-
-        # Extract trailing " • <hint>" from the first message line.
-        first_line, _sep, _rest = message.partition("\n")
-        if " • " in first_line:
-            detail_part, _bullet, hint_part = first_line.partition(" • ")
-            inline_hint = hint_part.strip()
-            first_line_for_header = detail_part
-        else:
-            inline_hint = ""
-            first_line_for_header = first_line
-
-        # Header line: ✗ [prefix]: message-first-line.
-        header = _RichText()
-        if prefix:
-            header.append(
-                f"✗ {_markup_escape(prefix)}: {_markup_escape(first_line_for_header)}",
-                style="bold " + sev_color,
-            )
-        else:
-            header.append(
-                f"✗ {_markup_escape(first_line_for_header)}",
-                style="bold " + sev_color,
-            )
-        self._write_log(header)
-
-        # Inline hint line.
-        if inline_hint:
-            hint_t = _RichText(f"  • {_markup_escape(inline_hint)}", style=_HINT_ACTION)
-            self._write_log(hint_t)
-
-        # Detail / context lines.
-        has_trace = bool(skill_name or run_id_short)
-        if details:
-            lines = details.splitlines()
-            visible = lines[:5]
-            overflow = len(lines) - 5
-            for ln in visible:
-                self._write_log(_RichText(f"  {_markup_escape(ln)}", style=_TEXT_MID))
-            if overflow > 0:
-                self._write_log(_RichText(f"  … {overflow} more", style=_TEXT_MID))
-        elif context_lines:
-            for ln in context_lines:
-                self._write_log(_RichText(f"  {_markup_escape(ln)}", style=_TEXT_MID))
-
-        # Ctrl+B trace pointer.
-        if has_trace:
-            self._write_log(
-                _RichText("  Ctrl+B → events for full trace", style="dim " + _TEXT_DIM)
-            )
-
-        # Trailing blank separator.
-        self._write_log(_RichText(""))
+        self._renderer.write_error(
+            message=message,
+            details=details,
+            run_id_short=run_id_short,
+            skill_name=skill_name,
+            context_lines=context_lines,
+            meta=meta,
+        )
 
     # ── intervention mounting ─────────────────────────────────────────────────
 
@@ -2055,57 +2254,7 @@ class ConversationView(Widget):
         *,
         partial: bool = False,
     ) -> None:
-        """Append a dim per-turn cost suffix, right-aligned. Caller decides when (opt-in).
-
-        Three pieces are load-bearing:
-
-        - ``Text(..., justify="right")`` only right-aligns when the
-          renderer is told a width to fill, and ``RichLog.write`` defaults
-          to ``expand=False`` — without ``expand=True`` the suffix
-          silently renders at column 0.
-        - Wrapping the Text in ``Padding(text, (0, RIGHT_PAD, 0, 0))``
-          reserves explicit right-margin cells. Without that margin the
-          right-justified end of the suffix landed under the vertical
-          scrollbar + the small right-padding RichLog reserves and the
-          trailing ``N.Ns`` segment was clipped at 80-col terminal widths
-          (the ``expand=True`` fill width didn't subtract the scrollbar
-          column from the right edge of the right-justified text).
-        - Separator is ``│`` (U+2502, narrow, unambiguous width) rather
-          than ``·`` (U+00B7, East Asian Width "Ambiguous") so Rich's
-          cell-width accounting matches what the terminal actually paints.
-
-        ``partial=True`` prefixes each numeric segment with ``~`` and
-        appends ``  (skill still running)``. Wave-6 ST3 + wave-7 C-F6:
-        when the cost-suffix deferral cap fires while a skill is still
-        spinning, the snapshot under-reports the eventual total. Without
-        a visual marker, the user sees ``⌁ Nt │ $X.XXXX │ Ys`` and
-        treats it as the final number. The ``~`` + suffix make the
-        partial nature visible at a glance; a subsequent terminal-state
-        emit overrides this line with the final number.
-        """
-        from rich.padding import Padding
-        if partial:
-            body = (
-                f"⌁ ~{tokens}t │ ~${cost_usd:.4f} │ ~{elapsed_s:.1f}s"
-                "  (skill still running)"
-            )
-        else:
-            body = f"⌁ {tokens}t │ ${cost_usd:.4f} │ {elapsed_s:.1f}s"
-        t = Text(
-            body,
-            style="dim " + _TEXT_NEUTRAL,
-            justify="right",
-        )
-        # ``(top=0, right=6, bottom=0, left=0)`` — reserve 6 cells on
-        # the right so the right-justified text stays inside the
-        # scrollbar + widget right-padding. Empirical calibration at
-        # 80-col widths: 2 cells still clipped (``17.``), 3 still clipped
-        # (``17.1.``), 6 leaves the full ``N.Ns`` segment + a visible gap
-        # from the scrollbar. The ``expand=True`` fill width doesn't
-        # subtract the scrollbar column or RichLog's own right-padding
-        # from the right edge of the right-justified text, so we have to
-        # reserve it manually.
-        self._log().write(Padding(t, (0, 6, 0, 0)), expand=True)
+        self._renderer.render_cost_suffix(tokens, cost_usd, elapsed_s, partial=partial)
 
     # ── turn navigation (B4) ──────────────────────────────────────────────────
 
@@ -2163,14 +2312,9 @@ class ConversationView(Widget):
                 widget.remove()
             except Exception:
                 pass
-        # Reset header-grouping state
-        self._last_speaker = ""
-        self._last_speaker_at = 0.0
-        # Preserve today's date so same-day Ctrl+L doesn't re-emit date separator.
-        self._last_header_date = time.strftime("%Y-%m-%d")
-        # Wave-10 G-F3: reset the recent-replies ring buffer so /copy after
-        # Ctrl+L doesn't return replies from the now-invisible prior session.
-        self._recent_replies.clear()
+        # Reset all renderer state (header-grouping, recent-replies, empty-hint
+        # latch) via controller (tui-pr5).
+        self._renderer.reset_for_clear()
         # Reset all scroll/nav state via controller (tui-pr3).
         self._scroll_ctrl.reset_for_clear()
         try:
@@ -2181,7 +2325,6 @@ class ConversationView(Widget):
         self.stop_thinking()
         self.hide_status()
         # Restore the empty-state hint so the next session looks fresh.
-        self._has_first_message = False
         try:
             self.query_one("#empty-hint", Static).remove_class("hidden")
         except Exception:
