@@ -1434,6 +1434,11 @@ class RouterLoop:
         # content stays unchanged for cached fixtures.
         _cwd_getter = getattr(host, "get_cwd", None)
         _cwd_str = _cwd_getter() if _cwd_getter else None
+        # #1479: system info (date/platform/shell/git). Same getattr-fallback:
+        # FakeRouterHost has no get_environment_info → None → fields absent →
+        # fixture SP keys unaffected.
+        _env_info_getter = getattr(host, "get_environment_info", None)
+        _environment_info = _env_info_getter() if callable(_env_info_getter) else None
         # FP-0034 Phase 2 step 1: D14 visibility gate for search_actions.
         # Only show search_actions when (a) wrappers are on, (b) the
         # operator configured an embedding model class, AND (c) the
@@ -1698,6 +1703,8 @@ class RouterLoop:
                 # N>0 produced actual alias functions (hot_list_n > 0 opt-in);
                 # False (new default) renders the "no pre-loaded actions" variant.
                 has_hot_list_aliases=bool(_hot_list_aliases),
+                # #1479: system info (date/platform/shell/git).
+                environment_info=_environment_info,
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the

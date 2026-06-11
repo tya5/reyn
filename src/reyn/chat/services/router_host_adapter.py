@@ -526,6 +526,70 @@ class RouterHostAdapter:
             return str(repo_dir)
         return os.getcwd()
 
+    def get_environment_info(self) -> dict:
+        """System metadata for the SP Environment section (#1479).
+
+        Always returns:
+          - ``date``       — today ISO-8601 (host-clock, universal)
+
+        Returns additionally when the backend is absent or is a HostBackend
+        (no ``repo_dir`` — same marker as #1477):
+          - ``platform``   — OS family lower-cased ("linux", "darwin", …)
+          - ``os_version`` — kernel/OS release string
+          - ``shell``      — default shell executable
+          - ``is_git_repo`` — bool; True when a .git entry exists at cwd
+
+        When a non-host backend is present (``repo_dir`` set = container):
+          - If backend implements ``get_environment_info()`` → use those values
+          - If not implemented → omit platform/os_version/shell/is_git_repo
+            (degrade, don't guess — returning host darwin/zsh for a linux
+            container would repeat the #1477 host-value-leak pattern)
+
+        Container probe (uname -sr + $SHELL + .git check) is a follow-up
+        tracked in #1481; this PR establishes the correct omission semantics.
+        """
+        import datetime
+        import os
+        import platform as _platform
+        from pathlib import Path
+
+        backend = self._environment_backend
+        result: dict = {"date": datetime.date.today().isoformat()}
+
+        # Determine whether this is a non-host (container) backend.
+        # Same marker as get_cwd() (#1477): presence of repo_dir signals
+        # a container backend whose agent-visible environment differs from host.
+        _is_non_host_backend = bool(getattr(backend, "repo_dir", None))
+
+        if _is_non_host_backend:
+            # Non-host backend: only use values the backend explicitly provides.
+            # If it doesn't implement get_environment_info(), omit all host-derived
+            # fields — showing host platform/shell for a container = wrong context.
+            _info_fn = getattr(backend, "get_environment_info", None)
+            if callable(_info_fn):
+                try:
+                    backend_info = _info_fn() or {}
+                except Exception:
+                    backend_info = {}
+                result["platform"] = backend_info.get("platform", "")
+                result["os_version"] = backend_info.get("os_version", "")
+                if backend_info.get("shell"):
+                    result["shell"] = backend_info["shell"]
+                cwd_path = Path(self.get_cwd())
+                result["is_git_repo"] = (cwd_path / ".git").exists()
+            # else: non-host backend without probe → omit platform/shell/git
+        else:
+            # Host backend or no backend: derive from local environment.
+            result["platform"] = _platform.system().lower()
+            result["os_version"] = _platform.release()
+            _shell = os.environ.get("SHELL", "")
+            if _shell:
+                result["shell"] = _shell
+            cwd_path = Path(self.get_cwd())
+            result["is_git_repo"] = (cwd_path / ".git").exists()
+
+        return result
+
     def get_universal_wrappers_enabled(self) -> bool:
         """Return whether FP-0034 universal catalog wrappers are enabled.
 
