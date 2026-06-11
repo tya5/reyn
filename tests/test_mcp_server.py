@@ -466,23 +466,22 @@ def test_drain_skill_completed_inbox_preserves_other_kinds(tmp_path):
             "chain_id": "c2", "data": {"error": "bad"},
         })
 
-        # Replace _handle_skill_completed with a counter so the test
+        # Replace handle_skill_completed with a counter so the test
         # doesn't pull in the real router stack.
         dispatched: list[dict] = []
 
-        async def _record(self, payload):
+        async def _record(payload):
             dispatched.append(payload)
 
-        from reyn.chat.session import ChatSession as _CS
-        original = _CS._handle_skill_completed
-        _CS._handle_skill_completed = _record  # type: ignore[assignment]
+        original = session._skill_plan_glue.handle_skill_completed
+        session._skill_plan_glue.handle_skill_completed = _record  # type: ignore[assignment]
         try:
             import time as _time
             ok = await session.drain_skill_completed_inbox(
                 deadline_monotonic=_time.monotonic() + 5.0,
             )
         finally:
-            _CS._handle_skill_completed = original  # type: ignore[assignment]
+            session._skill_plan_glue.handle_skill_completed = original  # type: ignore[assignment]
 
         return ok, dispatched
 

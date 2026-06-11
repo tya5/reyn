@@ -12,6 +12,7 @@ from reyn.chat.services.plan_runner import PlanRunner
 from reyn.chat.services.router_history_buffer import RouterHistoryBuffer
 from reyn.chat.services.router_host_adapter import RouterHostAdapter
 from reyn.chat.services.router_loop_driver import RouterLoopDriver
+from reyn.chat.services.skill_plan_glue import SkillPlanGlue
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.services.compaction.engine import (
@@ -37,6 +38,7 @@ __all__ = [
     "RouterHistoryBuffer",
     "RouterHostAdapter",
     "RouterLoopDriver",
+    "SkillPlanGlue",
     "SkillRunner",
     "SnapshotJournal",
     "_PendingChain",
