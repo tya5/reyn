@@ -334,6 +334,11 @@ class RouterLoopDriver:
             empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
             empty_stop_retry_auto=True,
             plan_invalid_retries=_plan_invalid_retries_cap,
+            # FP-0005: on_limit NOT threaded here yet — router max_iterations
+            # wiring is deferred until sandbox_2 validates the planner step
+            # path (step_max_iterations via session.py). The outer-while
+            # mechanism + make_intervention_bus protocol are in place; Tier-2
+            # tests prove the wiring via direct RouterLoop construction.
         )
         # PR-N3: pre-frame context-overflow guard.
         await self._budget_advisor.maybe_force_compact(new_msg_text=user_text)

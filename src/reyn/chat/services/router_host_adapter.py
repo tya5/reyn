@@ -1527,3 +1527,14 @@ class RouterHostAdapter:
             media_store=self._media_store,
             compact_now=self._compact_now,
         )
+
+    def make_intervention_bus(self) -> "Any | None":
+        """Return the current intervention bus for safety-limit checkpoints.
+
+        Called by RouterLoop when max_iterations is reached and
+        safety.on_limit.mode=interactive. Returns None when no bus is
+        wired (headless / test stubs) → limit degrades to unattended.
+        """
+        if self._intervention_bus_factory is None:
+            return None
+        return self._intervention_bus_factory()
