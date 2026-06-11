@@ -220,7 +220,8 @@ async def test_chain_register_emits_wal_event(tmp_path, monkeypatch):
     peer_session = ChatSession(agent_name="peer_agent")
     registry.register("peer_agent", peer_session)
 
-    session = _make_session(tmp_path, registry=registry)
+    session = _make_session(tmp_path, registry=registry,
+                            on_limit=OnLimitConfig(mode="unattended"))
     session.is_attached = True
 
     # Round 1: router asks to delegate; round 2 is never reached in this test
@@ -279,7 +280,8 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
     registry = _FakeRegistry()
     registry.register("peer_agent", peer_session)
 
-    session = _make_session(tmp_path, registry=registry)
+    session = _make_session(tmp_path, registry=registry,
+                            on_limit=OnLimitConfig(mode="unattended"))
     session.is_attached = True
 
     # Phase 1: router delegates to peer_agent.
