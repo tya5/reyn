@@ -235,15 +235,23 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
         # When OVERWRITING a non-UTF-8 file, surface a note that the encoding
         # changed. The pre-read is best-effort (skipped if read is denied).
         _prev_enc: str | None = None
+        _prev_size: int | None = None  # #1466: bytes of the file before overwrite
         try:
             _prev_bytes, _existed = ctx.workspace.read_file_bytes(op.path)
             if _existed:
                 _, _prev_enc = decode_text_or_none(_prev_bytes)
+                _prev_size = len(_prev_bytes)  # zero extra I/O — reuse the encoding pre-read
         except PermissionError:
             pass
-        ctx.workspace.write_file(op.path, op.content or "")
+        _content = op.content or ""
+        ctx.workspace.write_file(op.path, _content)
         ctx.events.emit("tool_executed", op="write_file", path=op.path)
-        result: dict = {"kind": "file", "op": "write", "path": op.path, "status": "ok"}
+        result: dict = {
+            "kind": "file", "op": "write", "path": op.path, "status": "ok",
+            "bytes_written": len(_content.encode("utf-8")),
+        }
+        if _prev_size is not None:
+            result["previous_size_bytes"] = _prev_size
         if _prev_enc:
             result["encoding_note"] = (
                 f"overwrote a {_prev_enc}-encoded file; the new content is written "
