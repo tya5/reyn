@@ -583,92 +583,6 @@ class ChatMessage:
 # Design-B ChatMessage instances.
 
 
-def _materialise_path_ref_content(
-    content: str | list[dict], media_store: Any,
-) -> str | list[dict]:
-    """Issue #383 PR-C: convert path-ref content parts to inline data URLs
-    at the LLM wire boundary.
-
-    Three input cases:
-      - str content → returned unchanged.
-      - list content with no path-ref parts → returned unchanged.
-      - list content with path-ref parts (= ``{"type":"image","path":...}``)
-        → each path-ref is resolved via ``media_store.read_image`` and
-        emitted as ``{"type":"image_url","image_url":{"url":"data:..."}}``.
-
-    When ``media_store`` is None OR the path resolves outside the storage
-    root OR the file no longer exists, the block is dropped (= conversation
-    continues without it, no crash). Already-inline image_url parts pass
-    through.
-    """
-    if isinstance(content, str) or not isinstance(content, list):
-        return content
-    has_pathref = any(
-        isinstance(p, dict) and p.get("type") == "image" and p.get("path")
-        for p in content
-    )
-    if not has_pathref:
-        return content
-    materialised: list[dict] = []
-    for part in content:
-        if not isinstance(part, dict):
-            materialised.append(part)
-            continue
-        if part.get("type") != "image" or not part.get("path"):
-            materialised.append(part)
-            continue
-        path = part["path"]
-        mime = part.get("mime_type") or part.get("mimeType") or "image/png"
-        data_bytes = _read_pathref_image(path, media_store)
-        if data_bytes is None:
-            continue
-        import base64
-        data_b64 = base64.b64encode(data_bytes).decode("ascii")
-        materialised.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:{mime};base64,{data_b64}"},
-        })
-    return materialised
-
-
-def _read_pathref_image(path: str, media_store: Any) -> bytes | None:
-    """Resolve a path-ref to raw image bytes (issue #383 PR-C).
-
-    Two cases:
-      - Path inside the MediaStore's image directory (= Reyn-owned,
-        from a tool result): read via ``media_store.read_image``.
-      - Path elsewhere (= user-attached via ``/image``): read directly
-        from disk so user files don't need to be copied into the
-        workspace.
-
-    Returns None when the path can't be resolved (missing file,
-    permission denied, etc.). Caller drops the block in that case so
-    the LLM message stays valid.
-    """
-    from pathlib import Path as _Path
-    # Try the MediaStore first (= validates inside-media_dir + reads).
-    if media_store is not None:
-        try:
-            data_bytes, found = media_store.read_image(path)
-            if found:
-                return data_bytes
-        except PermissionError:
-            # Not inside media_dir — try direct disk read below.
-            pass
-    # Direct disk read for user-attached files. Resolve relative paths
-    # against CWD (= the chat session's project root convention).
-    p = _Path(path)
-    if not p.is_absolute():
-        p = _Path.cwd() / p
-    p = p.resolve()
-    if not p.exists() or not p.is_file():
-        return None
-    try:
-        return p.read_bytes()
-    except OSError:
-        return None
-
-
 def _migrate_legacy_chat_message(raw: dict) -> dict:
     """Read-time migration for pre-#383 history.jsonl entries.
 
@@ -1055,18 +969,6 @@ def _iv_meta(iv: "UserIntervention") -> dict:
 # phase's max_phase_visits (25), made tight (1) by the by-construction floor.
 _MAX_FORCE_CLOSE_HANDOFFS = 1
 
-
-def _is_force_close_consolidation(summary: "ChatMessage") -> bool:
-    """#1092 PR-F2a: True iff a ``summary`` turn is a force-close handoff
-    consolidation — identified by the dedicated ``consolidation`` structured
-    field (set by the F2b handoff). This is the GATE for the durable
-    covers-respecting reset in :meth:`ChatSession._build_history_for_router`:
-    when present, the slicer drops the covered raw head/tail and slices
-    ``[consolidation] + post-consolidation turns``. Normal compaction summaries
-    lack the field → the slicer keeps its head/tail+bridge behaviour unchanged
-    (normal chat stays byte-identical)."""
-    structured = (summary.meta or {}).get("structured") or {}
-    return bool(structured.get("consolidation"))
 
 
 def _render_summary_for_storage(structured: dict) -> str:
@@ -1958,6 +1860,23 @@ class ChatSession:
             chars4_mode=self._compaction.use_chars4_estimate,
         )
 
+        # session.py refactor PR-2: RouterHistoryBuffer must exist before
+        # CompactionController so that system_prompt_provider (called during
+        # CompactionEngine.recompute_budgets() at construction time) resolves.
+        # compaction_controller=None here; patched below after construction.
+        from reyn.chat.services.router_history_buffer import RouterHistoryBuffer
+        self._history_buffer = RouterHistoryBuffer(
+            history_fn=lambda: self.history,
+            compaction=self._compaction,
+            compaction_controller=None,  # patched after CompactionController below
+            model=self.model,
+            events=self._chat_events,
+            media_store=self._media_store,
+            router_host=self._router_host,
+            action_retrieval=self._action_retrieval,
+            non_interactive=self._non_interactive,
+        )
+
         self._compaction_controller = CompactionController(
             event_log=self._chat_events,
             config=self._compaction,
@@ -1990,6 +1909,8 @@ class ChatSession:
             # action_usage table so the hot-list survives summarisation.
             merge_action_usage=_merge_action_usage_from_candidates,
         )
+        # Wire compaction_controller now that it exists.
+        self._history_buffer._compaction_controller = self._compaction_controller
 
         # FP-0019 Wave 3: crash recovery service.
         # Discovers in-flight skill_runs from WAL and re-spawns them on
@@ -2046,8 +1967,7 @@ class ChatSession:
             media_store=self._media_store,
             model=self.model,
             events=self._chat_events,
-            # history_fn: at PR-2 this will become self._history_buffer.build_history
-            history_fn=self._build_history_for_router,
+            history_fn=self._history_buffer.build_history,
         )
 
     # ── cost accumulation ───────────────────────────────────────────────────────
@@ -5040,262 +4960,18 @@ class ChatSession:
     # --- RouterLoop orchestration ---
 
     def _build_history_for_router(self) -> list[dict]:
-        """Slice self.history into OpenAI-style messages for RouterLoop.
-
-        #1128 step 3 (Fork B — window-utilization-first): the elide point now
-        coincides with ``effective_trigger`` (the existing pre-frame compaction
-        trigger) instead of the old turn-count head_size/tail_size.
-
-        - If total token estimate <= effective_trigger: return ALL turns raw
-          (no elide, no duplication).  The LLM sees the full conversation up
-          to the compaction trigger.
-        - Else: elide the middle — head (trim_head) + optional summary bridge
-          + tail (trim_tail).  The pre-frame guard
-          ``_maybe_force_compact_for_router`` has already compacted the middle
-          before this runs, so the elide point is structurally aligned.
-
-        Overlap guard: if trim_head and trim_tail collectively cover all turns
-        (the chat is small relative to budgets but total > trigger — unlikely
-        but possible with large single turns), deduplication by identity
-        ensures no turn appears twice.
-
-        Returns [{role: 'user'|'assistant', content: str}, ...] ordered
-        chronologically. The system prompt is prepended by RouterLoop itself.
-        Only user/agent conversational turns are included; ``summary`` /
-        ``skill_event`` remain Reyn-internal and are filtered out.
-        """
-        from reyn.services.compaction.engine import (
-            estimate_tokens_for_turn,
-            trim_head,
-            trim_tail,
-        )
-        # E-full (#383): include tool-turn entries (= assistant w/ tool_calls,
-        # tool responses) in the slice. The wire-shape builder below
-        # forwards them as-is to the LLM. ``summary`` / ``skill_event``
-        # remain Reyn-internal and filtered out.
-        turns = [
-            m for m in self.history
-            if m.role in ("user", "assistant", "tool", "agent")
-        ]
-
-        # #1092 PR-F2a: durable force-close reset. When the latest summary is a
-        # force-close handoff consolidation (covers-all), the conversation
-        # overflowed even when shrunk to its floor — so the slicer DROPS the
-        # covered raw head/tail permanently and slices [consolidation bridge] +
-        # the turns appended AFTER the consolidation. This is DURABLE (re-applied
-        # every turn, not a one-shot override): the next user turn slices
-        # [consolidation] + recent turns, never re-slicing the dropped raw
-        # head/tail → no immediate re-overflow. Position-based (turns after the
-        # consolidation in history order), NOT seq>covers — assistant/tool turns
-        # keep seq=0 (only user/agent get a monotonic seq), so a seq filter would
-        # wrongly drop post-handoff assistant replies. GATED to force-close
-        # consolidations only (the dedicated `consolidation` field) — normal
-        # compaction summaries fall through to the unchanged head/tail+bridge
-        # path below, so normal chat stays byte-identical.
-        _fc_summary = self._latest_summary()
-        if _fc_summary is not None and _is_force_close_consolidation(_fc_summary):
-            _idx = next(
-                (i for i, m in enumerate(self.history) if m is _fc_summary), -1
-            )
-            _post = [
-                m for m in self.history[_idx + 1:]
-                if m.role in ("user", "assistant", "tool", "agent")
-            ]
-            _summary_text = (
-                _fc_summary.content if isinstance(_fc_summary.content, str)
-                else json.dumps(_fc_summary.content, ensure_ascii=False)
-            )
-            _bridge = [ChatMessage(
-                role="assistant",
-                content=f"[summary of earlier conversation]\n{_summary_text}",
-                ts=_fc_summary.ts,
-            )]
-            return [self._serialise_turn(m) for m in (_bridge + _post)]
-
-        # Resolve token budgets from the compaction engine.
-        _ctrl = getattr(self, "_compaction_controller", None)
-        engine = getattr(_ctrl, "_engine", None)
-        budgets = getattr(engine, "budgets", None)
-        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-        model = getattr(self, "model", "")
-        if budgets is not None:
-            effective_trigger = budgets.effective_trigger
-            head_budget = budgets.head_budget
-            tail_budget = budgets.tail_budget
-        else:
-            from reyn.llm.model_budget import get_max_input_tokens
-            effective_trigger = get_max_input_tokens(
-                model, events=getattr(self, "_chat_events", None)
-            )
-            head_budget = tail_budget = effective_trigger // 4
-
-        total = sum(
-            estimate_tokens_for_turn(m, model, use_chars4=use_chars4)
-            for m in turns
-        )
-
-        if total <= effective_trigger:
-            # Window-utilization: full raw conversation fits — no elide.
-            selected = turns
-        else:
-            # Elide the middle: head + optional summary bridge + tail.
-            head = trim_head(turns, head_budget, model, use_chars4=use_chars4)
-            tail = trim_tail(turns, tail_budget, model, use_chars4=use_chars4)
-            # Overlap guard: dedupe by identity so no turn appears twice.
-            head_ids = {id(t) for t in head}
-            tail_deduped = [t for t in tail if id(t) not in head_ids]
-            summary = self._latest_summary()
-            if summary:
-                summary_text = (
-                    summary.content if isinstance(summary.content, str)
-                    else json.dumps(summary.content, ensure_ascii=False)
-                )
-                bridge = [ChatMessage(
-                    role="assistant",
-                    content=f"[summary of earlier conversation]\n{summary_text}",
-                    ts=summary.ts,
-                )]
-                selected = head + bridge + tail_deduped
-            else:
-                selected = head + tail_deduped
-
-        # E-full (#383) pass-through: ChatMessage IS the wire shape, so the
-        # builder just serialises each entry into a litellm-compatible
-        # message dict. Path-ref content parts (= ``{"type":"image","path":...}``)
-        # are materialised to data URLs **at this boundary** so storage
-        # stays light and the LLM sees the inline form it expects.
-        return [self._serialise_turn(m) for m in selected]
-
-    def _serialise_turn(self, m: "ChatMessage") -> dict:
-        """Serialise one ChatMessage into a litellm-compatible wire dict.
-
-        Path-ref content parts (= ``{"type":"image","path":...}``) are
-        materialised to data URLs at this boundary so storage stays light
-        and the LLM sees the inline form it expects. Shared by
-        :meth:`_build_history_for_router` and
-        :meth:`_decompose_history_for_retry` so both produce identical wire
-        shapes (the retry_loop decomposition must rebuild the same prompt the
-        normal path would have sent).
-        """
-        media_store = getattr(self, "_media_store", None)
-        # Legacy "agent" stragglers (= migrated entries that somehow bypassed
-        # _migrate_legacy_chat_message) → normalise on read.
-        role = "assistant" if m.role == "agent" else m.role
-        content = _materialise_path_ref_content(m.content, media_store)
-        msg: dict = {"role": role, "content": content}
-        if m.tool_calls is not None:
-            msg["tool_calls"] = m.tool_calls
-        if m.tool_call_id is not None:
-            msg["tool_call_id"] = m.tool_call_id
-        if m.name is not None:
-            msg["name"] = m.name
-        return msg
+        """Forwarding → RouterHistoryBuffer.build_history (PR-2)."""
+        return self._history_buffer.build_history()
 
     def _decompose_history_for_retry(
         self,
-    ) -> tuple[list[dict], list[dict], list[dict], dict | None]:
-        """Decompose current history into (head, raw_middle, tail, summary) for retry_loop.
-
-        #1128 step 3: mirrors :meth:`_build_history_for_router`'s token-budget
-        elide threshold (effective_trigger) and exposes the elided ``raw_middle``
-        explicitly so the bounded adaptive-shrink ``retry_loop`` (#1125 Item 2)
-        can fold it into the running summary under overflow.  ``summary`` is the
-        structured dict from the latest persisted summary turn (retry_loop treats
-        it as an immutable base).
-
-        When total token estimate <= effective_trigger the full history goes into
-        ``head`` with empty ``raw_middle`` / ``tail`` — there is nothing to elide,
-        and retry_loop's shrink can still trim ``head``.
-        """
-        from reyn.services.compaction.engine import (
-            estimate_tokens_for_turn,
-            trim_head,
-            trim_tail,
-        )
-        turns = [
-            m for m in self.history
-            if m.role in ("user", "assistant", "tool", "agent")
-        ]
-
-        # Resolve token budgets from the compaction engine (same as _build_history_for_router).
-        _ctrl = getattr(self, "_compaction_controller", None)
-        engine = getattr(_ctrl, "_engine", None)
-        budgets = getattr(engine, "budgets", None)
-        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
-        model = getattr(self, "model", "")
-        if budgets is not None:
-            effective_trigger = budgets.effective_trigger
-            head_budget = budgets.head_budget
-            tail_budget = budgets.tail_budget
-        else:
-            from reyn.llm.model_budget import get_max_input_tokens
-            effective_trigger = get_max_input_tokens(
-                model, events=getattr(self, "_chat_events", None)
-            )
-            head_budget = tail_budget = effective_trigger // 4
-
-        total = sum(
-            estimate_tokens_for_turn(m, model, use_chars4=use_chars4)
-            for m in turns
-        )
-
-        if total <= effective_trigger:
-            # Everything fits — no elide; retry_loop can still trim head.
-            head_msgs = turns
-            raw_middle_msgs: list = []
-            tail_msgs: list = []
-        else:
-            head_msgs = trim_head(turns, head_budget, model, use_chars4=use_chars4)
-            tail_msgs = trim_tail(turns, tail_budget, model, use_chars4=use_chars4)
-            # raw_middle = turns strictly between head and tail (by identity).
-            head_id_set = {id(t) for t in head_msgs}
-            tail_id_set = {id(t) for t in tail_msgs}
-            raw_middle_msgs = [
-                t for t in turns
-                if id(t) not in head_id_set and id(t) not in tail_id_set
-            ]
-
-        summary_msg = self._latest_summary()
-        summary_dict: dict | None = None
-        if summary_msg is not None:
-            structured = (summary_msg.meta or {}).get("structured")
-            if isinstance(structured, dict):
-                summary_dict = structured
-        head = [self._serialise_turn(m) for m in head_msgs]
-        raw_middle = [self._serialise_turn(m) for m in raw_middle_msgs]
-        tail = [self._serialise_turn(m) for m in tail_msgs]
-        return head, raw_middle, tail, summary_dict
+    ) -> "tuple[list[dict], list[dict], list[dict], dict | None]":
+        """Forwarding → RouterHistoryBuffer.decompose_history_for_retry (PR-2)."""
+        return self._history_buffer.decompose_history_for_retry()
 
     def _build_router_system_prompt(self) -> str:
-        """Return the router system prompt for the current session state.
-
-        ISSUE #4 (PR-N3): used as the ``system_prompt_provider`` for
-        :class:`~reyn.services.compaction.engine.CompactionEngine`
-        so that T_SP is measured dynamically — operator-editable REYN.md and
-        skills catalog changes are reflected before each pre-frame budget check.
-
-        Note: ``indexed_sources_section`` is omitted (= None) because this
-        method is synchronous and cannot await ``get_source_manifest()``.
-        The omission means T_SP is slightly under-counted, which is conservative
-        (= compaction triggers slightly more often than strictly necessary).
-        The error is small relative to the total context window.
-        """
-        from reyn.chat.router_system_prompt import build_system_prompt
-        return build_system_prompt(
-            agent_name=self._router_host.agent_name,
-            agent_role=self._router_host.agent_role,
-            available_skills=self._router_host.list_available_skills(),
-            available_agents=self._router_host.list_available_agents(),
-            memory_index=self._router_host.get_memory_index(),
-            file_permissions=self._router_host.get_file_permissions(),
-            mcp_servers=self._router_host.get_mcp_servers(),
-            web_fetch_allowed=self._router_host.get_web_fetch_allowed(),
-            output_language=self._router_host.output_language,
-            project_context=self._router_host.get_project_context(),
-            indexed_sources_section=None,
-            universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
-            non_interactive=self._non_interactive,  # #1439 Fix #1
-        )
+        """Forwarding → RouterHistoryBuffer.build_system_prompt (PR-2)."""
+        return self._history_buffer.build_system_prompt()
 
     def _cap_tool_result(self, content_str: str) -> str:
         """Forwarding → ContextBudgetAdvisor.cap_tool_result (PR-1)."""
