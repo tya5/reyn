@@ -17,6 +17,7 @@ RouterHostAdapter.turn_cancel_fn callback wired in ChatSession.__init__.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -73,10 +74,22 @@ class RouterLoopDriver:
         self._limit_checkpoint_fn = limit_checkpoint_fn
         self._next_seq_fn = next_seq_fn
         self._append_history_fn = append_history_fn
-        # #1468: per-turn cooperative cancellation flag.
+        # #1468: per-turn cooperative cancellation flag + asyncio.Event for
+        # deep-cancel propagation into running subprocess ops (#1470).
         self._turn_cancel_requested: bool = False
+        self._turn_cancel_event: asyncio.Event = asyncio.Event()
+        # #1470: wire cancel_event onto router_host so make_router_op_context
+        # can thread it into OpContext → sandboxed_exec backend.
+        _set_fn = getattr(router_host, "_set_cancel_event", None)
+        if callable(_set_fn):
+            _set_fn(self._turn_cancel_event)
 
-    # ── Cancel lifecycle (#1468) ──────────────────────────────────────────────
+    # ── Cancel lifecycle (#1468 / #1470) ─────────────────────────────────────
+
+    @property
+    def cancel_event(self) -> asyncio.Event:
+        """Per-turn asyncio.Event set by request_cancel(), cleared at turn entry."""
+        return self._turn_cancel_event
 
     def is_cancel_requested(self) -> bool:
         """True when a cooperative turn cancel has been requested.
@@ -89,8 +102,9 @@ class RouterLoopDriver:
         return self._turn_cancel_requested
 
     def request_cancel(self) -> None:
-        """Set the cooperative cancel flag. Called by cancel_inflight()."""
+        """Set the cooperative cancel flag and cancel_event. Called by cancel_inflight()."""
         self._turn_cancel_requested = True
+        self._turn_cancel_event.set()
 
     # ── Cap enforcement ───────────────────────────────────────────────────────
 
@@ -305,10 +319,11 @@ class RouterLoopDriver:
             ContextOverflowError as _ContextOverflowError,
         )
 
-        # #1468: reset the cooperative cancel flag at turn entry so an idle
+        # #1468 / #1470: reset cancel flag + event at turn entry so an idle
         # cancel_inflight() call (Ctrl-C while no turn is running) is
         # spurious-safe and does not bleed into the next turn.
         self._turn_cancel_requested = False
+        self._turn_cancel_event.clear()
         # FP-0005: now async (consults safety.on_limit on hit).
         await self._check_cap(user_text)
         # B51 NF-W6-3: plan_invalid self-correction cap, sourced from

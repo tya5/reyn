@@ -64,10 +64,32 @@ async def handle(
         allow_subprocess=policy.allow_subprocess,
     )
 
-    result = await backend.run(list(op.argv), policy, cwd=cwd)
+    result = await backend.run(
+        list(op.argv), policy, cwd=cwd, cancel_event=ctx.cancel_event,
+    )
 
     stdout_text = result.stdout.decode("utf-8", errors="replace")
     stderr_text = result.stderr.decode("utf-8", errors="replace")
+
+    if result.cancelled:
+        # #1470: emit distinct event on cancel (P6) — not sandboxed_exec_completed.
+        ctx.events.emit(
+            "sandboxed_exec_cancelled",
+            argv=list(op.argv),
+            backend=backend.name,
+            returncode=result.returncode,
+            stdout_len=len(stdout_text),
+            stderr_len=len(stderr_text),
+        )
+        return {
+            "kind": "sandboxed_exec",
+            "status": "cancelled",
+            "backend": backend.name,
+            "returncode": result.returncode,
+            "stdout": stdout_text,
+            "stderr": stderr_text,
+            "truncated": False,
+        }
 
     ctx.events.emit(
         "sandboxed_exec_completed",
