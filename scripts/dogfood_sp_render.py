@@ -7,20 +7,17 @@ Usage:
     python scripts/dogfood_sp_render.py [flags]
 
     # Basic render (full SP to stdout):
-    python scripts/dogfood_sp_render.py --hide-legacy-tools
+    python scripts/dogfood_sp_render.py
 
     # Stats only:
-    python scripts/dogfood_sp_render.py --hide-legacy-tools --stats
+    python scripts/dogfood_sp_render.py --stats
     # => e.g. "2487 chars / 47 lines"
 
     # Section headers only:
-    python scripts/dogfood_sp_render.py --hide-legacy-tools --show-sections
+    python scripts/dogfood_sp_render.py --show-sections
 
     # Legacy literal grep:
-    python scripts/dogfood_sp_render.py --hide-legacy-tools --grep-legacy
-
-    # Compare legacy vs wrapper:
-    python scripts/dogfood_sp_render.py --compare-legacy
+    python scripts/dogfood_sp_render.py --grep-legacy
 
     # With skills and agents:
     python scripts/dogfood_sp_render.py --skill code_review=review_code --skill skill_builder=build
@@ -117,7 +114,7 @@ def _parse_indexed_sources(names: list[str]) -> str | None:
     return "\n".join(lines)
 
 
-def _build_sp(args: argparse.Namespace, *, hide_legacy_tools: bool) -> str:
+def _build_sp(args: argparse.Namespace) -> str:
     """Construct the system prompt from parsed CLI args."""
     skills = [_parse_kv(s, "skill") for s in (args.skill or [])]
     agents = [_parse_kv(a, "agent_peer") for a in (args.agent_peer or [])]
@@ -139,7 +136,6 @@ def _build_sp(args: argparse.Namespace, *, hide_legacy_tools: bool) -> str:
         project_context=args.project_context or "",
         indexed_sources_section=indexed_sources_section,
         universal_wrappers_enabled=args.universal_wrappers_enabled,
-        hide_legacy_tools=hide_legacy_tools,
     )
 
 
@@ -178,34 +174,15 @@ def _do_grep_legacy(sp: str) -> None:
             print(f"  line {lineno}: [{literal}]  {line[:120]}")
 
 
-def _do_compare_legacy(args: argparse.Namespace) -> None:
-    """Render both legacy and wrapper SP, print diff stats."""
-    sp_legacy = _build_sp(args, hide_legacy_tools=False)
-    sp_wrapper = _build_sp(args, hide_legacy_tools=True)
-
-    chars_legacy = len(sp_legacy)
-    chars_wrapper = len(sp_wrapper)
-    lines_legacy = len(sp_legacy.split("\n"))
-    lines_wrapper = len(sp_wrapper.split("\n"))
-    reduction_pct = (1 - chars_wrapper / chars_legacy) * 100 if chars_legacy else 0.0
-    byte_identical = sp_legacy == sp_wrapper
-
-    print("=== SP compare: legacy vs wrapper ===")
-    print(f"  Legacy  (hide_legacy_tools=False): {chars_legacy:,} chars / {lines_legacy} lines")
-    print(f"  Wrapper (hide_legacy_tools=True) : {chars_wrapper:,} chars / {lines_wrapper} lines")
-    print(f"  Reduction: {reduction_pct:.1f}%")
-    print(f"  Byte-identical: {byte_identical}")
-
-
 def _do_legacy_check(args: argparse.Namespace) -> None:
-    """Verify byte-identity of hide_legacy_tools=False against known fixtures.
+    """Verify byte-identity against known fixtures.
 
     Currently a no-op stub (Phase 5 prep) — prints the SP char count and a
     reminder that fixture-pinning requires the 7 LLMReplay fixture files to
     be wired in.  When wired, this mode will load each fixture's expected SP
     and compare byte-for-byte.
     """
-    sp = _build_sp(args, hide_legacy_tools=False)
+    sp = _build_sp(args)
     print(f"Legacy SP rendered: {len(sp)} chars / {len(sp.split(chr(10)))} lines")
     print(
         "Note: --legacy-check fixture comparison is a Phase 5 stub. "
@@ -224,29 +201,12 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "SP rendering confirmation utility for batch dogfood.\n"
             "Default: render full system prompt to stdout.\n"
-            "Use --stats / --show-sections / --grep-legacy / --compare-legacy "
-            "for targeted inspection."
+            "Use --stats / --show-sections / --grep-legacy for targeted inspection."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     # ── Core SP build flags ────────────────────────────────────────────────
-    parser.add_argument(
-        "--hide-legacy-tools",
-        action="store_true",
-        default=False,
-        help=(
-            "Render wrapper-only SP (Phase 4 preview). "
-            "Drops per-kind tool enumerations; points at invoke_action instead. "
-            "Default: False (legacy SP, byte-identical to LLMReplay fixtures)."
-        ),
-    )
-    parser.add_argument(
-        "--no-hide-legacy-tools",
-        dest="hide_legacy_tools",
-        action="store_false",
-        help="Force legacy SP (default behaviour; explicit override of --hide-legacy-tools).",
-    )
     parser.add_argument(
         "--universal-wrappers-enabled",
         action="store_true",
@@ -358,15 +318,6 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     mode_group.add_argument(
-        "--compare-legacy",
-        action="store_true",
-        default=False,
-        help=(
-            "Render both hide_legacy_tools=False and True, then print diff stats "
-            "(char count, line count, reduction pct, byte-identity)."
-        ),
-    )
-    mode_group.add_argument(
         "--legacy-check",
         action="store_true",
         default=False,
@@ -389,17 +340,12 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    # ── Modes that build two SPs (no single-SP needed) ─────────────────────
-    if args.compare_legacy:
-        _do_compare_legacy(args)
-        return
-
     if args.legacy_check:
         _do_legacy_check(args)
         return
 
     # ── All other modes: build one SP ──────────────────────────────────────
-    sp = _build_sp(args, hide_legacy_tools=args.hide_legacy_tools)
+    sp = _build_sp(args)
 
     if args.stats:
         _do_stats(sp)
