@@ -70,16 +70,18 @@ def test_other_reyn_paths_still_in_default_zone(tmp_path, monkeypatch):
         assert _is_canonical_protected_write(rel) is False
 
 
-def test_require_file_write_rejects_canonical_without_decl(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_require_file_write_rejects_canonical_without_decl(tmp_path, monkeypatch):
     """Tier 2: require_file_write raises for protected path without explicit decl."""
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     decl = PermissionDecl()  # no axes set
     with pytest.raises(PermissionError, match="was not approved"):
-        resolver.require_file_write(decl, ".reyn/index/sources.yaml", "skill_x")
+        await resolver.require_file_write(decl, ".reyn/index/sources.yaml", "skill_x")
 
 
-def test_require_file_write_rejects_approvals_yaml(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_require_file_write_rejects_approvals_yaml(tmp_path, monkeypatch):
     """Tier 2: #1199 security fix — a broad-zone file.write to the persisted approval
     store (.reyn/approvals.yaml) is DENIED without an explicit decl, closing the
     approval-injection persistence attack (a direct write would otherwise bypass the
@@ -91,12 +93,13 @@ def test_require_file_write_rejects_approvals_yaml(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path)
     with pytest.raises(PermissionError, match="was not approved"):
-        resolver.require_file_write(PermissionDecl(), ".reyn/approvals.yaml", "skill_x")
+        await resolver.require_file_write(PermissionDecl(), ".reyn/approvals.yaml", "skill_x")
     # contrast: a non-protected .reyn/ path is NOT denied (in default zone).
-    resolver.require_file_write(PermissionDecl(), ".reyn/scratch/notes.txt", "skill_x")
+    await resolver.require_file_write(PermissionDecl(), ".reyn/scratch/notes.txt", "skill_x")
 
 
-def test_require_file_write_accepts_canonical_after_session_approval(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_require_file_write_accepts_canonical_after_session_approval(tmp_path, monkeypatch):
     """Tier 2: require_file_write passes when path was approved at startup_guard time.
 
     Phase 2 does not change require_file_write semantics — declaration alone
@@ -110,7 +113,7 @@ def test_require_file_write_accepts_canonical_after_session_approval(tmp_path, m
     )
     resolver.session_approve_path(".reyn/index/sources.yaml", "skill_x", "file.write")
     # Should not raise — startup_guard's session approval covers the path.
-    resolver.require_file_write(decl, ".reyn/index/sources.yaml", "skill_x")
+    await resolver.require_file_write(decl, ".reyn/index/sources.yaml", "skill_x")
 
 
 # ── legacy bool-axis keys are removed (#571 Phase 5) ───────────────────────────
@@ -247,7 +250,8 @@ def test_canonical_protected_lists_stay_in_sync():
     assert _CANONICAL_PROTECTED_WRITE_PATHS == safe_paths
 
 
-def test_mcp_cron_now_allowed_after_carveout_removal(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_mcp_cron_now_allowed_after_carveout_removal(tmp_path, monkeypatch):
     """Tier 2: realignment — .reyn/mcp.yaml and .reyn/cron.yaml are removed from the
     carve-out (protect-at-use), so a broad-zone write to them is ALLOWED on both
     enforcement paths. Safety holds downstream: using a server passes require_mcp
@@ -271,12 +275,12 @@ def test_mcp_cron_now_allowed_after_carveout_removal(tmp_path, monkeypatch):
         # permissions.py path: no explicit decl needed — now in the default zone.
         assert _in_default_write_zone(rel) is True
         assert _is_canonical_protected_write(rel) is False
-        resolver.require_file_write(PermissionDecl(), rel, "skill_x")
+        await resolver.require_file_write(PermissionDecl(), rel, "skill_x")
         # safe.file enforcement path: broad-zone prefix match is enough now.
         safe_file._check_write(str(tmp_path / rel))
 
     # contrast: approvals.yaml remains protected on both paths.
     with pytest.raises(PermissionError, match="was not approved"):
-        resolver.require_file_write(PermissionDecl(), ".reyn/approvals.yaml", "skill_x")
+        await resolver.require_file_write(PermissionDecl(), ".reyn/approvals.yaml", "skill_x")
     with pytest.raises(PermissionError, match="canonical protected path"):
         safe_file._check_write(str(tmp_path / ".reyn" / "approvals.yaml"))

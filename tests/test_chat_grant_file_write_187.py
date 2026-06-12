@@ -24,6 +24,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import pytest
+
 from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.sandbox.policy import SandboxPolicy
 
@@ -49,10 +51,10 @@ def _resolver(*, granted: bool) -> PermissionResolver:
     )
 
 
-def _can_write(resolver: PermissionResolver, path: str) -> bool:
+async def _can_write(resolver: PermissionResolver, path: str) -> bool:
     sandbox = SandboxPolicy(write_paths=[_REPO])
     try:
-        resolver.require_file_write(_DECL, path, "default", sandbox_policy=sandbox)
+        await resolver.require_file_write(_DECL, path, "default", sandbox_policy=sandbox)
         return True
     except PermissionError:
         return False
@@ -66,22 +68,25 @@ def test_chat_grant_injects_read_and_write() -> None:
     assert config.get("file.write") == "allow"
 
 
-def test_chat_grant_allows_in_repo_write() -> None:
+@pytest.mark.asyncio
+async def test_chat_grant_allows_in_repo_write() -> None:
     """Tier 2: chat grant + sandbox[repo] → an in-repo write is allowed (agent edits)."""
-    assert _can_write(_resolver(granted=True), f"{_REPO}/astropy/io/ascii/html.py") is True
+    assert await _can_write(_resolver(granted=True), f"{_REPO}/astropy/io/ascii/html.py") is True
 
 
-def test_chat_grant_still_denies_outside_sandbox_zone() -> None:
+@pytest.mark.asyncio
+async def test_chat_grant_still_denies_outside_sandbox_zone() -> None:
     """Tier 2: the SandboxLayer ∩ scopes the chat grant — a write OUTSIDE write_paths
     (e.g. /etc) is DENIED even with the resolver grant (scope from the sandbox, not
     the blanket resolver allow). Same safety as `reyn run --grant-file-write`."""
-    assert _can_write(_resolver(granted=True), "/etc/passwd") is False
+    assert await _can_write(_resolver(granted=True), "/etc/passwd") is False
 
 
-def test_chat_no_grant_denies_in_repo_write() -> None:
+@pytest.mark.asyncio
+async def test_chat_no_grant_denies_in_repo_write() -> None:
     """Tier 2: flag absent → no grant → even an in-repo write is DENIED (the
     non-interactive prompt-less default). Falsification pair for the grant test."""
-    assert _can_write(_resolver(granted=False), f"{_REPO}/astropy/io/ascii/html.py") is False
+    assert await _can_write(_resolver(granted=False), f"{_REPO}/astropy/io/ascii/html.py") is False
 
 
 def test_chat_parser_exposes_grant_file_write_flag() -> None:

@@ -435,7 +435,7 @@ async def _handle_mcp_install_local(
     decl.file_write = [{"path": ".reyn/mcp.yaml"}]
     resolver = getattr(rs, "permission_resolver", None) if rs is not None else None
     if resolver is not None:
-        resolver.require_file_write(decl, str(config_path), "mcp__install_local")
+        await resolver.require_file_write(decl, str(config_path), "mcp__install_local")
 
     entry: dict[str, Any] = {
         "type": "stdio",

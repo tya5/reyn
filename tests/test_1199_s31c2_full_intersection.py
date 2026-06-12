@@ -23,7 +23,8 @@ from tests.test_permissions import _make_resolver
 # ── file gates: SandboxLayer ∩ (path caps) ───────────────────────────────────
 
 
-def test_sandbox_cap_restricts_in_zone_write(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_sandbox_cap_restricts_in_zone_write(tmp_path: Path) -> None:
     """Tier 2: a sandbox write_paths cap DENIES even an in-zone write — the ∩
     narrows (sandbox restrict-only over the AgentLayer zone grant)."""
     r = _make_resolver(tmp_path)
@@ -31,27 +32,30 @@ def test_sandbox_cap_restricts_in_zone_write(tmp_path: Path) -> None:
     # caps writes to /sandboxed → ∩ denies.
     policy = SandboxPolicy(write_paths=["/sandboxed"])
     with pytest.raises(PermissionError):
-        r.require_file_write(PermissionDecl(), ".reyn/x.txt", "s", sandbox_policy=policy)
+        await r.require_file_write(PermissionDecl(), ".reyn/x.txt", "s", sandbox_policy=policy)
 
 
-def test_sandbox_allow_all_permits(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_sandbox_allow_all_permits(tmp_path: Path) -> None:
     """Tier 2: write_paths=['/'] (= swe_bench's allow-all policy) → in-zone write
     passes (the no-current-blast-radius case)."""
     r = _make_resolver(tmp_path)
-    r.require_file_write(
+    await r.require_file_write(
         PermissionDecl(), ".reyn/x.txt", "s",
         sandbox_policy=SandboxPolicy(write_paths=["/"]),
     )  # no raise
 
 
-def test_no_sandbox_policy_unchanged(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_no_sandbox_policy_unchanged(tmp_path: Path) -> None:
     """Tier 2: sandbox_policy=None → SandboxLayer ⊤ — the gate behaves exactly as
     pre-S3.1c-2 (in-zone write passes; non-sandboxed callers unaffected)."""
     r = _make_resolver(tmp_path)
-    r.require_file_write(PermissionDecl(), ".reyn/x.txt", "s")  # no raise
+    await r.require_file_write(PermissionDecl(), ".reyn/x.txt", "s")  # no raise
 
 
-def test_sandbox_falsification_removing_layer_regrants(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_sandbox_falsification_removing_layer_regrants(tmp_path: Path) -> None:
     """Tier 2: ★∩-falsification — the SAME in-zone write the sandbox DENIES is
     ALLOWED once the SandboxLayer is dropped (sandbox_policy=None). Proves the
     SandboxLayer is load-bearing (over-grant if removed)."""
@@ -59,17 +63,18 @@ def test_sandbox_falsification_removing_layer_regrants(tmp_path: Path) -> None:
     path = ".reyn/x.txt"
     capped = SandboxPolicy(write_paths=["/sandboxed"])  # does not cover .reyn/
     with pytest.raises(PermissionError):
-        r.require_file_write(PermissionDecl(), path, "s", sandbox_policy=capped)
+        await r.require_file_write(PermissionDecl(), path, "s", sandbox_policy=capped)
     # drop the SandboxLayer → re-granted by the zone baseline (the over-grant).
-    r.require_file_write(PermissionDecl(), path, "s", sandbox_policy=None)  # no raise
+    await r.require_file_write(PermissionDecl(), path, "s", sandbox_policy=None)  # no raise
 
 
-def test_sandbox_read_cap_restricts(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_sandbox_read_cap_restricts(tmp_path: Path) -> None:
     """Tier 2: the read gate folds the SandboxLayer too (read_paths cap)."""
     r = _make_resolver(tmp_path)
     capped = SandboxPolicy(read_paths=["/sandboxed"])  # excludes cwd
     with pytest.raises(PermissionError):
-        r.require_file_read(PermissionDecl(), "src/reyn/x.py", "s", sandbox_policy=capped)
+        await r.require_file_read(PermissionDecl(), "src/reyn/x.py", "s", sandbox_policy=capped)
 
 
 # ── http gate: SandboxLayer ∩ (network) ──────────────────────────────────────

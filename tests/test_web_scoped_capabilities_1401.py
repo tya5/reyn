@@ -156,19 +156,20 @@ def test_factory_threads_holder_to_build_scoped_chat_session():
 # ---------------------------------------------------------------------------
 
 
-def _web_can_write(target: str, sandbox: "SandboxPolicy", *, grant: bool, ws) -> bool:
+async def _web_can_write(target: str, sandbox: "SandboxPolicy", *, grant: bool, ws) -> bool:
     """Build the REAL web `_get_perm_resolver()` under the holder and check
     whether ``require_file_write`` permits ``target`` (no None resolver)."""
     with cli_scoped_overrides(CliScopedOverrides(grant_file_write=grant, workspace_base_dir=ws)):
         resolver = deps._get_perm_resolver()
         try:
-            resolver.require_file_write(PermissionDecl(), target, "default", sandbox_policy=sandbox)
+            await resolver.require_file_write(PermissionDecl(), target, "default", sandbox_policy=sandbox)
             return True
         except PermissionError:
             return False
 
 
-def test_grant_file_write_gates_real_in_repo_write(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_grant_file_write_gates_real_in_repo_write(tmp_path, monkeypatch):
     """Tier 2: R1 — the --grant-file-write holder flag ACTUALLY gates file.write
     on the REAL web perm resolver. Differential (the falsification pair):
     grant=True allows an in-repo write, grant=False denies it. Not a string-grep."""
@@ -177,11 +178,12 @@ def test_grant_file_write_gates_real_in_repo_write(tmp_path, monkeypatch):
     repo = tmp_path / "container_repo"
     sandbox = SandboxPolicy(write_paths=[str(repo)])
     target = str(repo / "src" / "x.py")
-    assert _web_can_write(target, sandbox, grant=True, ws=repo) is True
-    assert _web_can_write(target, sandbox, grant=False, ws=repo) is False
+    assert await _web_can_write(target, sandbox, grant=True, ws=repo) is True
+    assert await _web_can_write(target, sandbox, grant=False, ws=repo) is False
 
 
-def test_file_zone_root_from_holder_anchors_default_zone(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_file_zone_root_from_holder_anchors_default_zone(tmp_path, monkeypatch):
     """Tier 2: R1 — file_zone_root receives the holder's container repo root
     (#1414) at RUNTIME. Differential (no grant): a write into <repo>/.reyn (the
     default write zone anchored on file_zone_root) is allowed when ws_base_dir=
@@ -191,5 +193,5 @@ def test_file_zone_root_from_holder_anchors_default_zone(tmp_path, monkeypatch):
     repo = tmp_path / "container_repo"
     sandbox = SandboxPolicy(write_paths=[str(repo)])
     default_zone_target = str(repo / ".reyn" / "x.yaml")
-    assert _web_can_write(default_zone_target, sandbox, grant=False, ws=repo) is True
-    assert _web_can_write(default_zone_target, sandbox, grant=False, ws=None) is False
+    assert await _web_can_write(default_zone_target, sandbox, grant=False, ws=repo) is True
+    assert await _web_can_write(default_zone_target, sandbox, grant=False, ws=None) is False

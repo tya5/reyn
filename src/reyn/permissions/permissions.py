@@ -991,35 +991,36 @@ class PermissionResolver:
 
     # ── Public check methods ──────────────────────────────────────────────────
 
-    def require_file_read(
+    async def require_file_read(
         self,
         decl: PermissionDecl,
         path: str,
         skill_name: str = "",
         *,
         sandbox_policy: "SandboxPolicy | None" = None,
+        bus: "RequestBus | None" = None,
     ) -> None:
         """
         Raise PermissionError if read/glob/grep access to path is not allowed.
         Default zone (CWD and below) is always granted.
-        Outside CWD, the path must have been approved at startup or via config.
+        Outside CWD: ask via ``bus`` when provided (JIT prompt, mirrors
+        ``require_http_get``); deny when bus=None (non-interactive).
 
-        #1199 S3.1c-1: this gate is **decl-less** (zone OR approved) — the same
-        decision ``is_read_allowed`` makes (divergence resolved). A skill's
-        declared path is NOT auto-granted; it must be in the default zone or
-        approved (interactively at startup, or via config). A non-interactive
-        declared-but-unapproved path therefore denies — the operator pre-approves
-        (reyn.yaml ``permissions.file.read: allow``) or runs interactively.
+        Config ``file.read: deny`` overrides even the default zone.
 
-        #1199 S3.1c-2: ``sandbox_policy`` (the phase ``default_sandbox_policy``,
-        passed by the op handler) folds in the SandboxLayer ∩ — the path must
-        ALSO fall within the policy's ``read_paths`` caps. ``None`` (the OS's own
-        in-process ops / non-sandboxed callers) → SandboxLayer is ⊤ (unchanged).
-        ProfileLayer is omitted: it constrains only skill/mcp, never files (⊤).
+        #1505: async-ified + JIT ask — outside-zone access now prompts the
+        user at gate time (bus≠None) instead of hard-denying. bus=None
+        (non-interactive / eval) preserves the prior deny behavior.
+
+        #1199 S3.1c-1: decl-less (zone OR approved). #1199 S3.1c-2:
+        SandboxLayer ∩ for sandbox_policy path caps.
         """
-        # #1199 S3.1c-1/-2: decl-less AgentLayer ∩ SandboxLayer (zone OR approved,
-        # then narrowed by the sandbox path caps). Approvals fold INSIDE the agent
-        # layer (② grant-back-safe).
+        # Config-tier deny always wins — overrides even the default zone.
+        if self._is_config_denied("file.read"):
+            raise PermissionError(
+                f"read from '{path}' denied by config (file.read: deny)."
+            )
+
         from reyn.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
@@ -1039,41 +1040,51 @@ class PermissionResolver:
             SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_READ, path):
             return
+
+        # JIT ask: outside zone, not yet approved. Mirrors require_http_get wildcard path.
+        if bus is not None:
+            if await self._prompt_file_access(path, "just_path", skill_name, "file.read", bus):
+                return
+
         raise PermissionError(
             f"read from '{path}' was not approved (declared but not granted).\n"
-            f"Why: it is outside the default read zone (CWD) and has no approval; "
-            f"the skill's declaration alone does not auto-grant it.\n"
+            f"Why: it is outside the default read zone (CWD) and has no approval.\n"
             f"Options:\n"
             f"  - pre-approve in reyn.yaml: permissions.file.read: allow (or the "
             f"specific path), then re-run; or\n"
-            f"  - run interactively so the startup guard can prompt for approval."
+            f"  - run interactively — a prompt will appear at the time of access."
         )
 
-    def require_file_write(
+    async def require_file_write(
         self,
         decl: PermissionDecl,
         path: str,
         skill_name: str = "",
         *,
         sandbox_policy: "SandboxPolicy | None" = None,
+        bus: "RequestBus | None" = None,
     ) -> None:
         """
         Raise PermissionError if write/edit/delete access to path is not allowed.
         Default zone (.reyn/, reyn/) is always granted.
-        Outside the default zone, the path must have been approved at startup.
+        Outside the default zone: ask via ``bus`` when provided (JIT prompt,
+        mirrors ``require_http_get``); deny when bus=None (non-interactive).
 
-        #1199 S3.1c-1: decl-less (zone OR approved) — the same decision
-        ``is_write_allowed`` makes (divergence resolved). A declared path is not
-        auto-granted; a non-interactive declared-but-unapproved path denies (the
-        operator pre-approves via reyn.yaml or runs interactively).
+        Config ``file.write: deny`` overrides even the default zone.
 
-        #1199 S3.1c-2: ``sandbox_policy`` folds in the SandboxLayer ∩ — the path
-        must ALSO fall within the policy's ``write_paths`` caps. ``None`` → ⊤
-        (unchanged). ProfileLayer omitted (⊤ for files).
+        #1505: async-ified + JIT ask — outside-zone writes now prompt the
+        user at gate time (bus≠None) instead of hard-denying. bus=None
+        (non-interactive / eval) preserves the prior deny behavior.
+
+        #1199 S3.1c-1: decl-less (zone OR approved). #1199 S3.1c-2:
+        SandboxLayer ∩ for sandbox_policy path caps.
         """
-        # #1199 S3.1c-1/-2: decl-less AgentLayer ∩ SandboxLayer (zone OR approved,
-        # then narrowed by the sandbox path caps). Approvals fold INSIDE the agent
-        # layer (② grant-back-safe).
+        # Config-tier deny always wins — overrides even the default zone.
+        if self._is_config_denied("file.write"):
+            raise PermissionError(
+                f"write to '{path}' denied by config (file.write: deny)."
+            )
+
         from reyn.permissions.effective import (
             AgentLayer,
             CapabilityAxis,
@@ -1091,14 +1102,20 @@ class PermissionResolver:
             SandboxLayer(sandbox_policy),
         ]).allows(CapabilityAxis.FILE_WRITE, path):
             return
+
+        # JIT ask: outside zone, not yet approved. Mirrors require_http_get wildcard path.
+        if bus is not None:
+            if await self._prompt_file_access(path, "just_path", skill_name, "file.write", bus):
+                return
+
         raise PermissionError(
             f"write to '{path}' was not approved (declared but not granted).\n"
             f"Why: it is outside the default write zone (.reyn/, reyn/) and has no "
-            f"approval; the skill's declaration alone does not auto-grant it.\n"
+            f"approval.\n"
             f"Options:\n"
             f"  - pre-approve in reyn.yaml: permissions.file.write: allow (or the "
             f"specific path), then re-run; or\n"
-            f"  - run interactively so the startup guard can prompt for approval."
+            f"  - run interactively — a prompt will appear at the time of access."
         )
 
     async def require_http_get(

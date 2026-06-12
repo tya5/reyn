@@ -45,21 +45,24 @@ def _out_of_zone(tmp_path: Path) -> tuple[PermissionResolver, Path, Path]:
     return _resolver(proj), offloaded, state
 
 
-def test_out_of_zone_read_denied_without_grant(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_out_of_zone_read_denied_without_grant(tmp_path: Path) -> None:
     """Tier 2c: baseline — an out-of-zone offload path is denied with no grant (the 13236 bug)."""
     r, offloaded, _ = _out_of_zone(tmp_path)
     with pytest.raises(PermissionError):
-        r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
+        await r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
 
 
-def test_grant_offload_read_allows_exact_path(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_grant_offload_read_allows_exact_path(tmp_path: Path) -> None:
     """Tier 2c: after grant_offload_read, the exact out-of-zone path is readable."""
     r, offloaded, _ = _out_of_zone(tmp_path)
     r.grant_offload_read(str(offloaded))
-    r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")  # no raise
+    await r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")  # no raise
 
 
-def test_grant_is_exact_scoped_not_sibling(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_grant_is_exact_scoped_not_sibling(tmp_path: Path) -> None:
     """Tier 2c: the grant is exact-path scoped — a SIBLING in the same dir stays denied
     (least-privilege: granting one offloaded artifact does NOT open the state-dir)."""
     r, offloaded, state = _out_of_zone(tmp_path)
@@ -67,10 +70,11 @@ def test_grant_is_exact_scoped_not_sibling(tmp_path: Path) -> None:
     sibling = state / "other_secret.json"
     sibling.write_text("{}")
     with pytest.raises(PermissionError):
-        r.require_file_read(PermissionDecl(), str(sibling), "swe_bench")
+        await r.require_file_read(PermissionDecl(), str(sibling), "swe_bench")
 
 
-def test_register_reaches_check_seam(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_register_reaches_check_seam(tmp_path: Path) -> None:
     """Tier 2c: register→check wiring falsification — the SAME resolver instance that
     registered the grant is the one the read gate consults. Without the register the
     read fails; with it, it passes. (A grant stored where the check never reads it
@@ -78,13 +82,14 @@ def test_register_reaches_check_seam(tmp_path: Path) -> None:
     r, offloaded, _ = _out_of_zone(tmp_path)
     # before register: denied
     with pytest.raises(PermissionError):
-        r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
+        await r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
     # register on this instance → the check (same instance) now passes
     r.grant_offload_read(str(offloaded))
-    r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
+    await r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
 
 
-def test_emit_artifact_ref_registers_grant_end_to_end(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_emit_artifact_ref_registers_grant_end_to_end(tmp_path: Path) -> None:
     """Tier 2c: the artifact_ref emit point (maybe_ref_artifact) → grant → check chain.
     A large artifact emits an artifact_ref AND the path becomes readable via the grant."""
     r, offloaded, _ = _out_of_zone(tmp_path)
@@ -94,10 +99,11 @@ def test_emit_artifact_ref_registers_grant_end_to_end(tmp_path: Path) -> None:
     )
     assert out["type"] == "artifact_ref"  # large → offloaded to a ref
     # the emit registered the grant → the agent can read what it was told to read
-    r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
+    await r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")
 
 
-def test_emit_control_ir_offload_registers_grant_end_to_end(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_emit_control_ir_offload_registers_grant_end_to_end(tmp_path: Path) -> None:
     """Tier 2c: the generic offload emit point (offload_control_ir_result) → grant → check.
     Covers the second of the two exhaustive emit points."""
     r, _, state = _out_of_zone(tmp_path)
@@ -106,10 +112,11 @@ def test_emit_control_ir_offload_registers_grant_end_to_end(tmp_path: Path) -> N
         big_result, 0, state, cap=1024, on_offload_ref=r.grant_offload_read
     )
     ref_path = inline["_offload_ref"]
-    r.require_file_read(PermissionDecl(), str(ref_path), "swe_bench")  # granted → no raise
+    await r.require_file_read(PermissionDecl(), str(ref_path), "swe_bench")  # granted → no raise
 
 
-def test_offload_grant_still_intersects_sandbox(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_offload_grant_still_intersects_sandbox(tmp_path: Path) -> None:
     """Tier 2c: the AgentLayer offload grant is conjunctive-∩ with the SandboxLayer —
     a sandbox that restricts reads to other paths still denies the offloaded path."""
     r, offloaded, _ = _out_of_zone(tmp_path)
@@ -117,7 +124,7 @@ def test_offload_grant_still_intersects_sandbox(tmp_path: Path) -> None:
     # SandboxLayer with a non-empty read allowlist that excludes the offloaded path
     policy = SandboxPolicy(read_paths=[str(tmp_path / "elsewhere")])
     with pytest.raises(PermissionError):
-        r.require_file_read(
+        await r.require_file_read(
             PermissionDecl(), str(offloaded), "swe_bench", sandbox_policy=policy
         )
 
@@ -135,7 +142,8 @@ def test_is_read_allowed_honors_offload_grant(tmp_path: Path) -> None:
     assert r.is_read_allowed(str(offloaded), "swe_bench") is True  # after grant
 
 
-def test_both_read_gates_in_sync_for_offload_grant(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_both_read_gates_in_sync_for_offload_grant(tmp_path: Path) -> None:
     """Tier 2c: the two read gates make the SAME decision for an offloaded path —
     require_file_read (op-runtime) and is_read_allowed (Workspace) both admit it
     after the grant. (The follow-up restores the symmetry the merged D12 broke by
@@ -143,12 +151,13 @@ def test_both_read_gates_in_sync_for_offload_grant(tmp_path: Path) -> None:
     r, offloaded, _ = _out_of_zone(tmp_path)
     r.grant_offload_read(str(offloaded))
     # op-runtime gate
-    r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")  # no raise
+    await r.require_file_read(PermissionDecl(), str(offloaded), "swe_bench")  # no raise
     # Workspace gate
     assert r.is_read_allowed(str(offloaded), "swe_bench") is True
 
 
-def test_read_gates_symmetric_granted_and_nongranted(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_read_gates_symmetric_granted_and_nongranted(tmp_path: Path) -> None:
     """Tier 2c: symmetry-invariant (falsifies future divergence) — for BOTH a
     granted offload path AND a non-granted out-of-zone path, require_file_read and
     is_read_allowed return the SAME admit/deny. They share `_read_base_approved`
@@ -156,19 +165,19 @@ def test_read_gates_symmetric_granted_and_nongranted(tmp_path: Path) -> None:
     r, offloaded, state = _out_of_zone(tmp_path)
     nongranted = state / "not_granted.json"
 
-    def _require_ok(p: Path) -> bool:
+    async def _require_ok(p: Path) -> bool:
         try:
-            r.require_file_read(PermissionDecl(), str(p), "swe_bench")
+            await r.require_file_read(PermissionDecl(), str(p), "swe_bench")
             return True
         except PermissionError:
             return False
 
     # non-granted out-of-zone: both DENY (symmetric)
-    assert _require_ok(nongranted) is False
+    assert await _require_ok(nongranted) is False
     assert r.is_read_allowed(str(nongranted), "swe_bench") is False
     # granted: both ALLOW (symmetric)
     r.grant_offload_read(str(offloaded))
-    assert _require_ok(offloaded) is True
+    assert await _require_ok(offloaded) is True
     assert r.is_read_allowed(str(offloaded), "swe_bench") is True
 
 
