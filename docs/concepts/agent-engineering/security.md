@@ -20,7 +20,7 @@ phase declarations → user approves at startup
 project-wide pre-approval (reyn.yaml)
 ```
 
-Defaults are conservative — read anywhere under the project root, write only under `.reyn/` and `reyn/`, no shell, no MCP, no Python. Anything beyond requires opt-in at one of the upper layers.
+Defaults are conservative — read anywhere under the project root, write only under `.reyn/`, no shell, no MCP, no Python. Anything beyond requires opt-in at one of the upper layers.
 
 ### Phase-level declarations + interactive approval
 
