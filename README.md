@@ -16,7 +16,7 @@ reyn chat                      # talk to the agent — persistent memory, RAG re
 
 ## Why Reyn
 
-Self-hosted, open-source general agents — like the widely-adopted OpenClaw and Hermes — run on your own infrastructure with persistent memory, tool-calling, and autonomous execution, and they shine at connecting to the apps you already use. Reyn makes a different bet: a general agent whose entire loop is an OS-enforced contract, for when you want the loop itself to be predictable, verifiable, and fully yours to design. Four guarantees anchor 1.0:
+Self-hosted, open-source general agents — like the widely-adopted OpenClaw and Hermes — run on your own infrastructure with persistent memory, tool-calling, and autonomous execution, and they shine at connecting to the apps you already use. Reyn speaks the standard agent protocols too (MCP, A2A), but it makes a different bet: a general agent whose entire loop is an OS-enforced contract, for when you want the loop itself to be predictable, verifiable, and fully yours to design. Four guarantees anchor 1.0:
 
 - **Constrained-decision LLM (P3, P4).** The LLM picks only from an OS-provided candidate set: next phase + typed artifact + Control IR ops. It cannot invent a transition or bypass validation. Hallucinated phase names are rejected before any side effect.
 - **Workspace + Events as single source of truth (P5, P6).** Every inter-phase value lives in the workspace; every state change emits an event into an append-only log. Crash recovery, replay, and audit derive from those primitives — not from in-memory state or application logs.
@@ -91,7 +91,7 @@ Full walkthrough: [docs/guide/getting-started/03-your-first-skill.md](docs/guide
 
 ## How Reyn compares
 
-Reyn is in the same broad category as self-hosted, open-source general agents like **OpenClaw** and **Hermes** — but it makes a different bet. Those agents are built around **connectivity**: they plug into the apps and messaging platforms you already use and act autonomously across them. That reach is their strength, and Reyn doesn't try to compete on it.
+Reyn is in the same broad category as self-hosted, open-source general agents like **OpenClaw** and **Hermes** — but it makes a different bet. Those agents specialize in **broad, deep connectivity**: they integrate directly with the apps and messaging platforms you already use and act autonomously across them. That reach is their strength. Reyn connects too, but keeps connectivity to a **standard, protocol-based set — MCP (client + server) and A2A** — rather than chasing the per-app integration those agents are built around; its bet is elsewhere.
 
 Reyn aims at a different niche: **architectural integrity, experimentation, and full-custom workflows.** The whole agent loop is an OS-enforced contract — constrained decisions (P3, P4), a workspace + event log as the single source of truth (P5, P6), replayable runs, per-agent cost caps, and per-skill credential scoping. It fits when you want to design a predictable, verifiable agent loop end to end yourself, and to inspect or replay every decision it makes.
 
