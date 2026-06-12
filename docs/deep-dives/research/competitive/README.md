@@ -82,7 +82,7 @@
 | **Dify** | ★★★ | 50+ ツールプラグイン、Knowledge Base (PDF/Word/HTML)、RAG ハイブリッド検索、Code Node (Python/Node.js)、HTTP Request Node |
 | **OpenClaw** | ★★☆ | 8 コアツール (read/write/edit/apply_patch/exec/browser/web_search/web_fetch)。公式スキル 53、コミュニティスキル 44,000+（ClawHub）。RAG・DB 接続は stdlib 未実装 |
 | **Hermes Agent** | ★★★ | 68+ ツール / 52 toolset。118 バンドルスキル。Web 制御・PDF・コード実行・MCP クライアント (v0.6.0+)。RAG はベクトル DB なし (FTS5 のみ)。GEPA でスキル自動生成 |
-| **Reyn** | ★★☆ | **OS 組み込み Control IR ops**: file (read/write/edit/grep/glob/delete)・web_search (DuckDuckGo)・web_fetch・shell・ask_user・run_skill。stdlib skill は skill_router/eval/improver の 3 本のみ。RAG・DB 接続・コード実行環境・PDF 処理等のドメインスキルは未実装 |
+| **Reyn** | ★★☆ | **OS 組み込み Control IR ops**: file (read/write/edit/grep/glob/delete)・web_search (DuckDuckGo)・web_fetch・sandboxed_exec・mcp・recall・ask_user・run_skill。stdlib skill は 12 本。RAG (`recall`/`index_docs`) とコード実行 (`sandboxed_exec` + Docker backend ⚗MVP) は landed、残るは DB 接続・PDF 処理等のドメインスキル breadth |
 
 ### エコシステム規模
 

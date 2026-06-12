@@ -16,6 +16,14 @@ based_on:
 
 # Reyn — OSS ローンチ前戦略的優先事項
 
+> ⚠️ **2026-06-13 supersession note**: 本ドキュメントは **2026-05-10 時点の
+> pre-launch スナップショット（歴史的記録）**です。以降、当時「未実装 / Phase 2 /
+> 計画中」とされた **MCP client・A2A（sync/async/webhook）・RAG framework
+> (`recall`/`index_docs`)・コード実行（`sandboxed_exec` + Docker backend ⚗MVP）・
+> stdlib 3→12** は既に landed しました。現在の実装状況は
+> [`docs/feature-map.md`](../../../feature-map.md) を source of truth として参照。
+> 以下の本文は当時の計画を保持するため inline 修正していません。
+
 ## エグゼクティブサマリー
 
 競合 5 社 + 新興プレイヤー群の分析から見えた最重要発見は 2 点ある。第一に、**Reyn の設計上の差別化（P4/P5/P6）は genuine で競合に存在しない**が、その優位性が「動くコードで示せるもの」になっていない。第二に、**Stdlib の空洞化が Reyn の商品性を現時点でゼロに近づけている**。競合が 30〜600 本の実用ツールを揃えている中、Reyn は meta skill 3 本のみで、インストールして試した人間が即座に離脱する状態にある。OSS ローンチ前に最低限すべきことは「Stdlib の最小セット構築」と「可観測性の外部接続」の 2 つに集約される。それ以外の差別化（WAL・P4・P6 設計）はすでに実装済みであり、ドキュメントと訴求言語の整備で活かせる。

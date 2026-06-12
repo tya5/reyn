@@ -168,9 +168,9 @@ skill-name/
 | カテゴリ | Reyn | OpenClaw | 評価 |
 |---|---|---|---|
 | コアツール（OS ops） | file / web / shell / mcp / lint / run_skill | 8 種（file 系 4 + exec + browser + web 2） | 同等（browser は Reyn 未実装） |
-| ドメインスキル | 3 メタスキル (skill_router / eval / skill_improver) | 53 公式 + 44,000+ コミュニティ | **OpenClaw が圧倒** |
-| RAG / Vector DB | なし | なし（ワークスペース Markdown 検索のみ） | 同等（両者未実装） |
-| コード実行 | shell op | `exec` ツール | 同等 |
+| ドメインスキル | 12 stdlib skills (eval / skill_builder / index_docs / recall 系 等) | 53 公式 + 44,000+ コミュニティ | **OpenClaw が breadth で優位** |
+| RAG / Vector DB | RAG framework landed (`recall` / `index_docs` / SQLite backend) | なし（ワークスペース Markdown 検索のみ） | **Reyn が優位** |
+| コード実行 | `sandboxed_exec` op + Docker backend (⚗MVP) | `exec` ツール | 同等 |
 | ブラウザ操作 | なし | `browser` ツール | OpenClaw が優位 |
 
 ---
