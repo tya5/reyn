@@ -228,7 +228,7 @@ are relevant:
 systems) make the opposite bet: optimize for reach. Rich integration catalogs,
 flexible tool wiring, protocol-agnostic connectivity are their strengths. Reyn's
 bet is orthogonal — optimize for structural integrity of the loop itself. Both
-families implement MCP and A2A connectivity; what differs is what the runtime
+families implement MCP connectivity; what differs is what the runtime
 guarantees about the loop. In connectivity-first systems, the loop contract
 is absent by design — flexibility requires it. In Reyn, the contract is the
 product.
