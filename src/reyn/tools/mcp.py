@@ -201,6 +201,12 @@ async def _handle_list_mcp_tools(
         for t in (result or []):
             if not isinstance(t, Mapping):
                 continue
+            if "error" in t:
+                # Surface MCP-layer errors so the LLM can diagnose the failure
+                # instead of seeing an empty tool list with no explanation.
+                # Return without "mcp_tools" key so _normalise_router_tool_result
+                # passes the dict through verbatim rather than unwrapping it.
+                return {"error": t["error"]}
             inner_name = t.get("name", "")
             if not inner_name:
                 continue

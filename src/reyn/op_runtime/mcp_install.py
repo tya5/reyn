@@ -401,6 +401,21 @@ async def handle(
         existing_args = server_entry.get("args", [])
         server_entry["args"] = list(existing_args) + list(op.extra_args)
 
+    # Guard: if runtime detection failed (unknown GitHub URL with no npm/pypi
+    # package list), server_entry has neither command nor url — writing an
+    # empty entry would silently create a broken config. Fail loud instead.
+    if not server_entry.get("command") and not server_entry.get("url"):
+        return {
+            "kind": "mcp_install",
+            "status": "error",
+            "source": op.source or "",
+            "error": (
+                f"GitHub URL '{op.source}' のランタイムを自動判定できませんでした。"
+                " npm: / pypi: / docker: prefix を明示するか、"
+                " mcp__install_local で command/args を直接指定してください。"
+            ),
+        }
+
     # Merge into existing config
     if "mcp" not in existing or not isinstance(existing.get("mcp"), dict):
         existing["mcp"] = {}
