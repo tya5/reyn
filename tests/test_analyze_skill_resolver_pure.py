@@ -9,8 +9,8 @@ Invariants tested:
   - unresolved input (resolved=False) -> error dict with null path fields
   - missing _skill_resolved_op key -> treated as unresolved (graceful fallback)
   - skill_root derived from skill_dir by stripping /<target_skill> suffix
-  - eval_output_path redirects absolute paths (= stdlib) to reyn/local/<name>/eval.md
-  - eval_output_path for relative paths (= local/project) stays alongside skill.md
+  - eval_output_path resolves to .reyn/evals/<name>/eval.md for all skill types
+  - eval_output_path is in-zone (.reyn/) — same for stdlib, local, project
 
 Testing policy (docs/deep-dives/contributing/testing.ja.md):
   - No mocks (real instances only)

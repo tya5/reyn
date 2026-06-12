@@ -54,7 +54,7 @@ def test_resolve_paths_from_op_translates_resolved_input():
     assert result["skill_slug"] == "my_skill"
     assert result["target_skill_path"] == skill_dir + "/skill.md"
     assert result["target_skill_root"] == skill_dir
-    assert result["eval_spec_path"] == skill_dir + "/eval.md"
+    assert result["eval_spec_path"] == ".reyn/evals/my_skill/eval.md"
     assert "error" not in result
 
 
