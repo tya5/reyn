@@ -28,18 +28,27 @@ from tests.test_router_host_adapter_invariants import _make_adapter
 class _FakeContainerBackendWithInfo:
     """ContainerBackend with get_environment_info() — the future-ready path."""
 
-    def __init__(self, repo_dir: str, platform: str, os_version: str, shell: str) -> None:
+    def __init__(
+        self, repo_dir: str, platform: str, os_version: str, shell: str,
+        is_git_repo: bool | None = None,
+    ) -> None:
         self.repo_dir = repo_dir
         self._platform = platform
         self._os_version = os_version
         self._shell = shell
+        # #1481: a real container backend probes .git IN-container. None =
+        # the probe omitted it (degrade) → adapter omits is_git_repo.
+        self._is_git_repo = is_git_repo
 
     def get_environment_info(self) -> dict:
-        return {
+        info = {
             "platform": self._platform,
             "os_version": self._os_version,
             "shell": self._shell,
         }
+        if self._is_git_repo is not None:
+            info["is_git_repo"] = self._is_git_repo
+        return info
 
 
 class _FakeHostBackend:
@@ -125,15 +134,15 @@ def test_env_info_no_backend_derives_from_platform_module(tmp_path: Path) -> Non
 
 
 def test_env_info_git_repo_detection_true(tmp_path: Path) -> None:
-    """Tier 2: #1479 — is_git_repo=True when .git exists at the agent-visible cwd.
+    """Tier 2: #1481 — is_git_repo reflects the backend's IN-CONTAINER probe.
 
-    Uses a container backend with repo_dir=tmp_path so get_cwd() returns
-    tmp_path, then creates tmp_path/.git to make the git check return True.
+    The container backend probes .git inside the container (repo_dir lives in
+    the container, not on the host), so is_git_repo comes from the backend's
+    get_environment_info — NOT a host-path check on the adapter side.
     """
-    (tmp_path / ".git").mkdir()
-    # Container backend: repo_dir=str(tmp_path) → get_cwd() returns tmp_path
     backend = _FakeContainerBackendWithInfo(
-        repo_dir=str(tmp_path), platform="linux", os_version="5.15.0", shell="/bin/bash"
+        repo_dir=str(tmp_path), platform="linux", os_version="5.15.0",
+        shell="/bin/bash", is_git_repo=True,
     )
     adapter = _make_adapter(
         agent_workspace_dir=tmp_path / "agents" / "test",
@@ -144,14 +153,10 @@ def test_env_info_git_repo_detection_true(tmp_path: Path) -> None:
 
 
 def test_env_info_git_repo_detection_false(tmp_path: Path) -> None:
-    """Tier 2: #1479 — is_git_repo=False when .git does not exist at cwd.
-
-    Uses a container backend pointing at tmp_path/no_git (no .git there).
-    """
-    no_git_dir = tmp_path / "no_git"
-    no_git_dir.mkdir()
+    """Tier 2: #1481 — is_git_repo=False when the in-container probe says so."""
     backend = _FakeContainerBackendWithInfo(
-        repo_dir=str(no_git_dir), platform="linux", os_version="5.15.0", shell="/bin/bash"
+        repo_dir=str(tmp_path), platform="linux", os_version="5.15.0",
+        shell="/bin/bash", is_git_repo=False,
     )
     adapter = _make_adapter(
         agent_workspace_dir=tmp_path / "agents" / "test",
@@ -159,6 +164,21 @@ def test_env_info_git_repo_detection_false(tmp_path: Path) -> None:
     )
     info = adapter.get_environment_info()
     assert info.get("is_git_repo") is False
+
+
+def test_env_info_git_repo_omitted_when_probe_degrades(tmp_path: Path) -> None:
+    """Tier 2: #1481 — is_git_repo OMITTED when the container probe doesn't
+    supply it (degrade) — NOT back-filled from a host-path .git check."""
+    backend = _FakeContainerBackendWithInfo(
+        repo_dir=str(tmp_path), platform="linux", os_version="5.15.0",
+        shell="/bin/bash", is_git_repo=None,
+    )
+    adapter = _make_adapter(
+        agent_workspace_dir=tmp_path / "agents" / "test",
+        environment_backend=backend,
+    )
+    info = adapter.get_environment_info()
+    assert "is_git_repo" not in info
 
 
 # ── 2. SP rendering ───────────────────────────────────────────────────────────

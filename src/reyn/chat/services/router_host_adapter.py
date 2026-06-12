@@ -545,8 +545,9 @@ class RouterHostAdapter:
             (degrade, don't guess — returning host darwin/zsh for a linux
             container would repeat the #1477 host-value-leak pattern)
 
-        Container probe (uname -sr + $SHELL + .git check) is a follow-up
-        tracked in #1481; this PR establishes the correct omission semantics.
+        Container probe (#1481): ``DockerEnvironmentBackend.get_environment_info``
+        collects platform/os_version/shell/is_git_repo from INSIDE the container.
+        The omission semantics above still hold when a probe sub-field fails.
         """
         import datetime
         import os
@@ -575,8 +576,13 @@ class RouterHostAdapter:
                 result["os_version"] = backend_info.get("os_version", "")
                 if backend_info.get("shell"):
                     result["shell"] = backend_info["shell"]
-                cwd_path = Path(self.get_cwd())
-                result["is_git_repo"] = (cwd_path / ".git").exists()
+                # #1481: is_git_repo from the IN-CONTAINER probe — NOT a host-path
+                # check. ``get_cwd()`` returns the container ``repo_dir``, so
+                # ``(repo_dir / ".git").exists()`` on the host tests the wrong (or
+                # absent) path — a #1477-class host/container frame mismatch. Use
+                # the backend's value; omit when the probe didn't supply it.
+                if "is_git_repo" in backend_info:
+                    result["is_git_repo"] = bool(backend_info["is_git_repo"])
             # else: non-host backend without probe → omit platform/shell/git
         else:
             # Host backend or no backend: derive from local environment.

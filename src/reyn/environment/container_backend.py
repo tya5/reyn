@@ -205,6 +205,27 @@ _GREP = (
     "print(json.dumps(out))\n"
 )
 
+# #1481: probe the CONTAINER environment for the SP Environment section. Each
+# field is independently guarded so a single failure omits only that key (the
+# degrade contract) — OS family / kernel / shell / .git all come from inside the
+# container, never the host.
+_ENV_INFO = (
+    "import sys,os,json,platform\n"
+    "repo=sys.argv[1] if len(sys.argv)>1 else os.getcwd()\n"
+    "out={}\n"
+    "try: out['platform']=platform.system().lower()\n"
+    "except Exception: pass\n"
+    "try: out['os_version']=platform.release()\n"
+    "except Exception: pass\n"
+    "sh=os.environ.get('SHELL','')\n"
+    "if sh: out['shell']=sh\n"
+    # os.path.exists (not isdir) for host parity: a git worktree's .git is a
+    # FILE (a gitdir pointer), which isdir would mis-judge as not-a-repo.
+    "try: out['is_git_repo']=os.path.exists(os.path.join(repo,'.git'))\n"
+    "except Exception: pass\n"
+    "print(json.dumps(out))\n"
+)
+
 
 class DockerEnvironmentBackend:
     """Repo FS + exec inside a Docker container (dual-Protocol, bridge-free)."""
@@ -316,6 +337,31 @@ class DockerEnvironmentBackend:
             count=int(data.get("count", 0)),
             matches=[{**m, "path": Path(m["path"])} for m in data.get("matches", [])],
         )
+
+    # ── Environment info (#1481 — in-container probe for SP Environment) ───────
+
+    def get_environment_info(self) -> dict:
+        """Probe the CONTAINER environment for the SP Environment section (#1481).
+
+        Runs a single ``python3 -c`` in-container (via the sync FS runner) to
+        collect ``platform`` / ``os_version`` / ``shell`` / ``is_git_repo`` from
+        the container OS — NOT the host. The host adapter's non-host branch
+        (router_host_adapter.get_environment_info) consumes these.
+
+        Degrade contract (#1477 host-value-leak prevention): a probe that fails
+        is OMITTED from the result — never back-filled with a host value (e.g.
+        showing host ``darwin`` / ``zsh`` for a Linux container). A full exec
+        failure (no container / docker error) returns ``{}`` so the adapter
+        omits every host-derived field rather than guessing.
+        """
+        res = self._py(_ENV_INFO, self.repo_dir)
+        if not self._ok(res):
+            return {}
+        try:
+            info = json.loads(res.stdout.decode("utf-8", "replace"))
+        except (ValueError, UnicodeDecodeError):
+            return {}
+        return info if isinstance(info, dict) else {}
 
     # ── SandboxBackend (exec, async — plain container exec, NO bridge) ─────────
 
