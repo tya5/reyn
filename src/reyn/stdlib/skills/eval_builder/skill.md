@@ -51,6 +51,11 @@ permissions:
       scope: recursive
     - path: reyn/project
       scope: recursive
+  # write_eval writes the generated eval.md to reyn/local/<name>/eval.md.
+  # Declared explicitly because reyn/local/ is outside the .reyn/ default zone.
+  file.write:
+    - path: reyn/local
+      scope: recursive
   python:
     # FP-0042 Phase 2.5 (2026-05-23): the legacy unsafe-mode
     # ``analyze_skill_resolver.resolve_paths`` was deleted — it had no

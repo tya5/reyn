@@ -4,7 +4,7 @@ approvals/config base (project_root).
 
 Permission-layer parallel of the #1410 base_dir(container)-vs-state_dir(host)
 split: a non-grant container run can write into the container repo's own
-`.reyn`/`reyn` default zone while approvals.yaml stays host-side. Host /
+`.reyn` default zone while approvals.yaml stays host-side. Host /
 interactive behaviour is byte-identical (file_zone_root defaults to project_root).
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ _CONTAINER = Path("/testbed")
 # ─── PermissionResolver: zone anchors on file_zone_root, approvals on project_root ──
 
 
-def test_container_file_zone_allows_container_reyn_write() -> None:
+def test_container_file_zone_allows_container_dot_reyn_write() -> None:
     """Tier 2: #1414 — file_zone_root=/testbed lets a non-grant run write into
     /testbed/.reyn (the container default zone). (The approvals/config base stays
     host-side by construction — anchored on project_root, untouched by the fix.)"""
