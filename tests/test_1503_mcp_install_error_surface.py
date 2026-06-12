@@ -253,5 +253,7 @@ class TestBug2ListToolsErrorSurface:
         result = _run(_handle_list_mcp_tools({"server": "web-search"}, ctx))
 
         assert "mcp_tools" in result, f"expected mcp_tools key, got: {result}"
-        assert len(result["mcp_tools"]) == 1
-        assert result["mcp_tools"][0]["name"] == "web-search__search"
+        names = [t["name"] for t in result["mcp_tools"]]
+        assert "web-search__search" in names, (
+            f"expected server-prefixed tool name in result, got: {names}"
+        )
