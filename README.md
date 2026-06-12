@@ -1,6 +1,6 @@
 # Reyn
 
-**LLM workflow OS — predictable, auditable, constrained.** · 🏠 <https://tya5.github.io/reyn/>
+**Self-hosted general agent — every decision constrained, auditable, replayable.** · 🏠 <https://tya5.github.io/reyn/>
 
 [![CI](https://github.com/tya5/reyn/actions/workflows/test.yml/badge.svg)](https://github.com/tya5/reyn/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -9,21 +9,21 @@
 git clone https://github.com/tya5/reyn.git
 cd reyn && pip install -e ".[dev]"
 reyn init
-reyn run my_skill "Write a report on AI in education."
+reyn chat                      # talk to the agent — persistent memory, RAG recall, MCP + A2A built in
 ```
 
 ---
 
 ## Why Reyn
 
-Most agent frameworks expose the act-sense-react loop as a programmable surface — the developer wires the graph, the LLM picks transitions, and keeping the loop coherent is the developer's problem. Reyn encodes the loop as a validated runtime contract. Four claims anchor 1.0:
+Self-hosted, open-source general agents — like the widely-adopted OpenClaw and Hermes — run on your own infrastructure with persistent memory, tool-calling, and autonomous execution. What they don't give you is guarantees: the agent loop is free-running, so a hallucinated tool call, a wrong transition, or an unbounded loop is yours to detect after the fact. Reyn is a self-hosted general agent whose loop is an OS-enforced contract. Four guarantees anchor 1.0:
 
 - **Constrained-decision LLM (P3, P4).** The LLM picks only from an OS-provided candidate set: next phase + typed artifact + Control IR ops. It cannot invent a transition or bypass validation. Hallucinated phase names are rejected before any side effect.
 - **Workspace + Events as single source of truth (P5, P6).** Every inter-phase value lives in the workspace; every state change emits an event into an append-only log. Crash recovery, replay, and audit derive from those primitives — not from in-memory state or application logs.
-- **RAG framework foundation, not a finished RAG product.** Five primitive ops (`embed`, `index_write`, `index_query`, `recall`, `index_drop`) plus the `IndexBackend` protocol and the stdlib `index_docs` skill let you describe an indexing strategy as `skill.md` instead of a Python pipeline. Override the chunker per-source with a single python step. SQLite ships in 1.0; Qdrant / FAISS / Weaviate / Pinecone are post-1.0 plugin territory.
-- **Dogfood-derived fix templates.** Two named, evidence-bound templates emerged from the pre-1.0 dogfood batches: a cognitive-bias callout (= named anti-attractor in instructions) and a multi-layer schema reinforcement (= system-prompt rule + tool-description rewrite together) for affordance-bias attractors. The latter restored a natural-concept-query scenario from 0/3 to 3/3 in one commit (batch 22).
+- **Predictable cost.** A closed candidate set prevents surprise tool invention and unbounded loops; token + USD caps per agent / chain / model refuse-on-exceed before runaway spend (see [budget.md](docs/reference/config/budget.md)).
+- **Credential scoping + audit identity.** Per-skill credential scoping stops one skill reaching another's secrets (Confused Deputy mitigation); `agent_id` propagates through every P6 event for SOC2 / ISO 27001 / METI audit trails; `reyn auth login` runs the RFC 8628 device-grant flow with silent token refresh.
 
-The trade-off is explicit: predictability and auditability over maximum autonomy. If you want maximum LLM creative latitude with the densest ecosystem, LangGraph + LangChain will feel less restrictive.
+The trade-off is explicit: predictability and auditability over maximum autonomy. A welcome consequence is **weak-model viability** — because the OS absorbs capability gaps structurally (P4, P5), low-cost models run agent workflows reliably without prompt-level workarounds. If you want maximum LLM latitude with the densest ecosystem, a workflow framework like LangGraph + LangChain will feel less restrictive.
 
 ---
 
@@ -42,74 +42,32 @@ reyn init                      # creates reyn.yaml + .reyn/config.yaml
 > and dissolve on stronger models:
 >
 > - **Occasional empty replies on tool-heavy queries** (e.g. "list
->   available skills" / "explain how X works"). Measured ~15% rate on
->   `gemini-2.5-flash-lite`. Tracked as G12 in
->   `docs/deep-dives/journal/dogfood/giveup-tracker.md`.
-> - **Capability questions leak router-internal vocabulary** in
->   non-English replies (e.g. asking 「何ができる?」 may return text
->   that mentions `invoke_action` / `list_actions` / `skill__X` / etc.
->   verbatim). Trace-driven A/B at N=10: weak `gemini-2.5-flash-lite`
->   clean rate 20%, strong `gemini-2.5-flash` 87.5% with no prompt
->   change. Tracked as G31 in the same file with the full matrix.
+>   available skills" / "explain how X works"), measured around 15% on
+>   `gemini-2.5-flash-lite`.
+> - **Capability questions can leak router-internal vocabulary** in
+>   non-English replies (e.g. asking 「何ができる?」 may surface
+>   `invoke_action` / `list_actions` / `skill__X` verbatim). In an N=10
+>   A/B, weak `gemini-2.5-flash-lite` answered cleanly ~20% of the time
+>   versus ~88% on the stronger `gemini-2.5-flash`, with no prompt change.
 >
 > Edit `reyn.yaml`'s `models.standard` to point at a stronger model
-> if either rate matters for your use.
+> if either matters for your use.
 
-### Build a minimal skill
-
-Create files under `reyn/local/my_skill/`:
-
-```yaml
-# artifacts/request.yaml
-name: request
-wrapped: false
-schema:
-  type: object
-  properties:
-    topic: {type: string}
-  required: [topic]
-```
-
-```markdown
-<!-- phases/draft.md -->
----
-type: phase
-name: draft
-input: request
----
-
-Write a concise summary on the topic.
-```
-
-```markdown
-<!-- skill.md -->
----
-type: skill
-name: my_skill
-entry: draft
-final_output: draft_result
-graph:
-  draft: []
----
-```
-
-Run it:
+### Chat with the agent
 
 ```bash
-reyn run my_skill '{"type":"request","data":{"topic":"AI in education"}}'
-# or pass natural language directly:
-reyn run my_skill "Summarize AI trends in education."
+reyn chat
+> What can you do?
 ```
 
-Full tutorial: [docs/guide/getting-started/03-your-first-skill.md](docs/guide/getting-started/03-your-first-skill.md)
+`reyn chat` opens a session with persistent per-agent history, tool-calling (file ops, web, MCP), and automatic `recall` over any indexed source. The same agent is reachable over MCP and A2A out of the box (see below), so other LLMs and agents converse with it directly.
 
-### Index documents and chat
+### Index documents for recall
 
 ```bash
 # Index any glob into a named source — one source per chunking strategy.
 # The CLI also accepts the bare data dict
-#   '{"source":..., "path":..., "description":...}'
-# and auto-wraps it with the artifact envelope.
+#   '{"source":..., "path":..., "description":...}' and auto-wraps it.
 reyn run index_docs '{"type":"index_docs_input","data":{"source":"my_docs","path":"docs/**/*.md","description":"Project documentation"}}'
 
 # Chat — the LLM calls `recall` automatically when an indexed source covers the topic.
@@ -117,11 +75,43 @@ reyn chat
 > What is the care boundary in Reyn?
 ```
 
-The LLM picks the chunking strategy from a closed candidate set (P4); the chunk → embed → write chain runs deterministically in the skill postprocessor (no LLM, no attractor surface). To override the chunker for a specialised corpus (Python AST, SQL schemas, structured YAML), drop in a `skill.md` that extends `stdlib/index_docs` and swap one python step. Details and the full op surface in [docs/concepts/data-retrieval/rag.md](docs/concepts/data-retrieval/rag.md).
+The LLM picks the chunking strategy from a closed candidate set (P4); the chunk → embed → write chain runs deterministically in the skill postprocessor (no LLM, no attractor surface). To override the chunker for a specialised corpus (Python AST, SQL schemas, structured YAML), extend `stdlib/index_docs` and swap one python step. Details and the full op surface in [docs/concepts/data-retrieval/rag.md](docs/concepts/data-retrieval/rag.md).
+
+### Write a reusable workflow (skill)
+
+When you want a repeatable, validated procedure rather than open-ended chat, write it as a **skill** — a typed phase graph the OS checks at every transition. This is one feature of the agent, not the headline: a minimal skill is three small files under `reyn/local/my_skill/` (an input artifact schema, a phase with instructions, and a `skill.md` graph), then run it with a natural-language goal:
+
+```bash
+reyn run my_skill "Summarize AI trends in education."
+```
+
+Full walkthrough: [docs/guide/getting-started/03-your-first-skill.md](docs/guide/getting-started/03-your-first-skill.md).
 
 ---
 
 ## How Reyn compares
+
+Reyn is in the same category as self-hosted, open-source general agents like **OpenClaw** and **Hermes** — you run it on your own infrastructure, it has persistent memory and tool-calling, and it executes autonomously. The difference is what surrounds the agent loop: there it is free-running; in Reyn it is an OS-enforced contract.
+
+| | Self-hosted general agents (OpenClaw, Hermes) | Reyn |
+|---|---|---|
+| Deployment | Self-hosted, open-source | Self-hosted, open-source |
+| Memory & tools | Persistent memory, tool-calling | Persistent memory, tool-calling, MCP client + server, A2A peers |
+| Agent loop | Free-running — the model drives each step | OS-constrained — the LLM picks from a validated candidate set (P3, P4); hallucinated transitions / tools are rejected before any side effect |
+| State & audit | Application-managed | Workspace single source of truth + append-only event log (P5, P6); crash recovery and audit derive from the primitives |
+| Replay | Not a documented guarantee | Replay-capable event log: step-by-step replay + run-diff CLI |
+| Cost control | Not a documented guarantee | Token + USD caps per agent / chain / model, refuse-on-exceed |
+| Weak-model viability | Tuned for strong models | Structural constraints keep low-cost models reliable |
+| Skills | Emergent — Hermes auto-generates procedure docs after a task | Explicit, typed, validated, OS-constrained — reviewable and versioned |
+| Credentials | Application-managed | Per-skill credential scoping (Confused Deputy mitigation); `agent_id` audit identity in every event |
+
+The skills row is the crux of the positioning. **Skills are table-stakes** for a general agent — Hermes generates them automatically. Reyn's bet is not that it *has* skills, but that its skills are *explicit and validated*: a typed phase graph the OS checks at each transition, not an emergent text file. When the agent runs unattended, predictable beats clever.
+
+> Comparison reflects publicly documented features as of 2026-06; general-agent capabilities evolve quickly — check upstream for the current state.
+
+### If you want a workflow framework instead
+
+If your need is a graph / workflow framework rather than a general agent, the closer comparison is LangGraph / CrewAI / AutoGen / Semantic Kernel. Reyn differs by enforcing the loop at the OS level instead of exposing it as a programmable surface:
 
 | Framework | Loop enforcement | State persistence | Replay | Strength |
 |---|---|---|---|---|
@@ -133,7 +123,7 @@ The LLM picks the chunking strategy from a closed candidate set (P4); the chunk 
 
 **Reyn is more constrained.** If you want maximum LLM autonomy and creative agent behavior, LangGraph or AutoGen will feel less restrictive.
 
-**Reyn ships a RAG framework foundation, not a mature RAG product.** The differentiator is that you write your indexing strategy as a `skill.md` — LLM-driven adaptive chunking with a deterministic postprocessor chain — not a Python pipeline. Override the chunker per-source by swapping a single python step. End-to-end smoke (= `reyn run index_docs` against `docs/concepts/*.md` → 418 chunks via real `gemini-embedding-001` → `reyn chat` with natural concept queries) returned indexed semantic answers in 3/3 runs (batch 22, 2026-05-10). Maturity gaps (rerank / HyDE / contextual retrieval / RAG eval framework / IDE integration / vector store variety beyond SQLite) live downstream — see [Project Status](#project-status) and [docs/concepts/data-retrieval/rag.md](docs/concepts/data-retrieval/rag.md).
+**Reyn ships a RAG framework foundation, not a mature RAG product.** The differentiator is that you write your indexing strategy as a `skill.md` — LLM-driven adaptive chunking with a deterministic postprocessor chain — not a Python pipeline. Override the chunker per-source by swapping a single python step. An end-to-end smoke (`reyn run index_docs` over `docs/concepts/*.md` → real embeddings → `reyn chat` with natural concept queries) returns indexed semantic answers. Maturity gaps (rerank / HyDE / contextual retrieval / RAG eval framework / IDE integration / vector store variety beyond SQLite) live downstream — see [Project Status](#project-status) and [docs/concepts/data-retrieval/rag.md](docs/concepts/data-retrieval/rag.md).
 
 **Reyn is smaller.** No chain abstractions, no rich vector store ecosystem — those live downstream (see [care-boundary.md](docs/concepts/architecture/care-boundary.md)).
 
@@ -356,7 +346,7 @@ reyn_src_read(path)   # read text of <reyn_root>/path
 
 `<reyn_root>` is the directory holding the running Reyn install's `pyproject.toml`. `path` is the same path you'd see on GitHub. Pass `""` to list the repo top level. Path traversal outside the root is refused; binaries and oversized files are refused. There is no permission gate — Reyn's own repo is public OSS content (= GitHub secret-scanning blocks credentials at push time).
 
-When `recall` is available against an indexed source whose description covers Reyn (= the typical setup once you've run `reyn run index_docs '{"source":"reyn_concepts",...}'`), the chat agent prefers `recall` for "what is X?" / "explain X" / "how does X work?" questions and falls back to `reyn_src_read("README.md")` only when no indexed source matches. This routing is what batch 22's affordance-bias fix established.
+When `recall` is available against an indexed source whose description covers Reyn (= the typical setup once you've run `reyn run index_docs '{"source":"reyn_concepts",...}'`), the chat agent prefers `recall` for "what is X?" / "explain X" / "how does X work?" questions and falls back to `reyn_src_read("README.md")` only when no indexed source matches.
 
 ### Top-level layout
 
@@ -387,12 +377,12 @@ When in doubt: `reyn_src_list("")` to see the top, `reyn_src_read(<path>)` to di
 
 ## Project Status
 
-**1.0 OSS launch ready.** The release-blocker schema-layer fix landed in batch 22; the framework foundation is green; the dogfood discipline is operational. As of 2026-05-16:
+**1.0 OSS launch ready.** The framework foundation is green and the dogfood discipline is operational. As of 2026-06-12:
 
-- Test suite: **3007 collected** on `main`.
-- Recent main HEAD: `45c7035` — FP-0016 authentication stack (MCP bearer headers + OAuth refresh lifecycle + `reyn auth login` device grant CLI + per-skill credential scoping + agent_id propagation) + FP-0034 wrapper-only universal action catalog (N=5 production-grade, batch 26) + RAG framework foundation (ADR-0033 Phase 1 Accepted) + Flywheel milestone.
+- Test suite: **7013 collected** on `main`.
+- Recent main HEAD: `5e9608f1`. Capabilities in the 1.0 line: the FP-0016 authentication stack (MCP bearer headers, OAuth refresh, `reyn auth login` device-grant CLI, per-skill credential scoping, agent_id propagation), the FP-0034 wrapper-only universal action catalog, the RAG framework foundation (ADR-0033 Phase 1), and the Flywheel groundwork.
 - Stable surfaces: DSL (skill.md / phase.md / artifact YAML), CLI (`reyn run` / `reyn chat` / `reyn web` / `reyn mcp serve` / `reyn source` / `reyn auth`), event log envelope (`ts`, `kind`, `phase`, `run_id`, `agent_id`, payload).
-- Dogfood evidence: batch 22 restored a natural-concept-query scenario (Q1–Q3 against indexed `docs/concepts/*.md`) from 0/3 to 3/3 in one commit by combining a system-prompt routing rule with two tool-description rewrites — see `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`. FP-0034 wrapper-only universal action catalog reached N=5 production-grade stability (batch 26).
+- Dogfood evidence: continuous dogfooding against weak default models drives the fix-template discipline — e.g. a natural-concept-query retrieval scenario was restored from 0/3 to 3/3 by a single structural fix (a system-prompt routing rule plus tool-description rewrites), not a model upgrade. See [dogfood-discipline.md](docs/deep-dives/contributing/dogfood-discipline.md).
 
 ### What's not in 1.0 (= maturity gaps, deliberate)
 
