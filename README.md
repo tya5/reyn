@@ -79,7 +79,7 @@ The LLM picks the chunking strategy from a closed candidate set (P4); the chunk 
 
 ### Write a reusable workflow (skill)
 
-When you want a repeatable, validated procedure rather than open-ended chat, write it as a **skill** — a typed phase graph the OS checks at every transition. This is one feature of the agent, not the headline: a minimal skill is three small files under `reyn/local/my_skill/` (an input artifact schema, a phase with instructions, and a `skill.md` graph), then run it with a natural-language goal:
+When you want a repeatable, validated procedure rather than open-ended chat, write it as a **skill** — a typed phase graph the OS checks at every transition. This is one feature of the agent: a minimal skill is three small files under `reyn/local/my_skill/` (an input artifact schema, a phase with instructions, and a `skill.md` graph), then run it with a natural-language goal:
 
 ```bash
 reyn run my_skill "Summarize AI trends in education."
