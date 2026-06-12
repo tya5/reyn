@@ -92,7 +92,7 @@ MCP（Model Context Protocol、Anthropic 主導）と A2A（Agent-to-Agent、Goo
 - CrewAI: `a2a-sdk` によるクロス-Crew デリゲーション
 - Microsoft Agent Framework: A2A エンドポイント対応
 
-**Reyn への含意**: Reyn の `mcp_search` stdlib skill は対応済み。MCP Client（`run_mcp_tool` op）と A2A（`run_remote_agent` op）の実装が Phase 2 ロードマップにある。非対応のままでは「閉じた OS」と評価されるリスクあり。
+**Reyn への含意**: Reyn の `mcp_search` stdlib skill は対応済み。MCP Client（外部 MCP server を呼ぶ側、`mcp` op）と A2A（sync + async tasks + webhook push）は実装済み（landed） — op_runtime/mcp.py, web/routers/a2a.py。
 
 ---
 
@@ -168,7 +168,7 @@ emerging-players.md より重要点を抜粋。
 | Agno（★39,000+） | "5,000x faster" パフォーマンス訴求。旧 Phidata | 速度競争に入らない。Reyn は「確実性（N 回完走率）」ベンチマークで応じる |
 | Microsoft Agent Framework | AutoGen + Semantic Kernel 統合。Entra ID + Azure Monitor + SOC2。2026-04 GA | Reyn の最大の enterprise 脅威。「クラウドロックインなし + P7 OS agnosticism」で対抗 |
 | OpenAI Agents SDK（★19,000+） | OpenAI ブランド。Guardrails・Tracing。月間 DL 1,030 万 | OTel 標準との interop 設計は Reyn のイベントログ外部接続に参照価値 |
-| Google ADK（★15,600+） | A2A プロトコルネイティブ。急成長中 | A2A 対応を Phase 2 後のロードマップに明示すべき |
+| Google ADK（★15,600+） | A2A プロトコルネイティブ。急成長中 | Reyn の A2A は実装済み（sync + async tasks + webhook push）|
 | smolagents（★26,000+） | HuggingFace 製ミニマリスト。1,000 行以下実装 | Code Execution Agent パターンの普及は Reyn `eval` skill 設計に参照価値 |
 
 ---
