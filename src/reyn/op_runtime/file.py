@@ -208,22 +208,22 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
         _sandbox = _sandbox_policy_from_ctx(ctx)
         if op.op in _WRITE_OPS:
             write_target = op.output_path if op.op == "regenerate_index" and op.output_path else op.path
-            ctx.permission_resolver.require_file_write(
+            await ctx.permission_resolver.require_file_write(
                 ctx.permission_decl, _resolve_for_gate(ctx, write_target), ctx.skill_name,
-                sandbox_policy=_sandbox,
+                sandbox_policy=_sandbox, bus=ctx.intervention_bus,
             )
             # move also writes to dest_path — gate both source (= the file
             # being effectively deleted) and dest (= the file being created).
             if op.op == "move" and op.dest_path:
-                ctx.permission_resolver.require_file_write(
+                await ctx.permission_resolver.require_file_write(
                     ctx.permission_decl, _resolve_for_gate(ctx, op.dest_path), ctx.skill_name,
-                    sandbox_policy=_sandbox,
+                    sandbox_policy=_sandbox, bus=ctx.intervention_bus,
                 )
         elif op.op in _READ_OPS:
             # read / glob / grep / stat — gate against read scope
-            ctx.permission_resolver.require_file_read(
+            await ctx.permission_resolver.require_file_read(
                 ctx.permission_decl, _resolve_for_gate(ctx, op.path), ctx.skill_name,
-                sandbox_policy=_sandbox,
+                sandbox_policy=_sandbox, bus=ctx.intervention_bus,
             )
 
     if op.op == "write":

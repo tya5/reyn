@@ -53,7 +53,7 @@ async def handle(
     if ctx.permission_resolver is not None:
         sandbox_policy = sandbox_policy_from_ctx(ctx)
         sources_yaml = workspace_root / ".reyn" / "index" / "sources.yaml"
-        ctx.permission_resolver.require_file_write(
+        await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(sources_yaml), ctx.skill_name,
             sandbox_policy=sandbox_policy,
         )
@@ -62,7 +62,7 @@ async def handle(
         # sandbox write_paths cap (S3.1c-2 ∩). The SQLite/dir removal stays
         # host-direct; the gate fires before backend.drop opens/removes it.
         source_dir = workspace_root / ".reyn" / "index" / op.source
-        ctx.permission_resolver.require_file_write(
+        await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(source_dir), ctx.skill_name,
             sandbox_policy=sandbox_policy,
         )

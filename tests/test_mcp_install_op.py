@@ -205,7 +205,8 @@ def _run(coro):
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_yaml_write_is_default_granted_protect_at_use(tmp_path):
+@pytest.mark.asyncio
+async def test_mcp_yaml_write_is_default_granted_protect_at_use(tmp_path):
     """Tier 2: #571 protect-at-use / #1316 — writing the mcp install target
     ``.reyn/mcp.yaml`` needs NO explicit file.write declaration: it sits in the
     default project write zone (removed from the protected carve-out because
@@ -219,12 +220,12 @@ def test_mcp_yaml_write_is_default_granted_protect_at_use(tmp_path):
     not a loosening.)"""
     resolver = _make_resolver(tmp_path)  # project_root = tmp_path
     # mcp.yaml under project_root/.reyn = default write zone → granted (no decl)
-    resolver.require_file_write(
+    await resolver.require_file_write(
         PermissionDecl(), str(tmp_path / ".reyn" / "mcp.yaml"), "mcp_install_test"
     )
     # contrast: the approval store IS carved out → still needs an explicit grant
     with pytest.raises(PermissionError):
-        resolver.require_file_write(
+        await resolver.require_file_write(
             PermissionDecl(), str(tmp_path / ".reyn" / "approvals.yaml"), "t"
         )
 

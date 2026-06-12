@@ -42,7 +42,8 @@ def _out_of_zone_path(tmp_path: Path) -> str:
     return str(tmp_path / "workspace" / "patch_target.py")
 
 
-def test_flat_config_shape_clears_require_file_write(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_flat_config_shape_clears_require_file_write(tmp_path: Path) -> None:
     """Tier 2: a PermissionResolver built from the DOCUMENTED flat shape
     (``file.write: allow``) clears ``require_file_write`` for an
     out-of-zone path without raising.
@@ -58,10 +59,11 @@ def test_flat_config_shape_clears_require_file_write(tmp_path: Path) -> None:
     )
     decl = PermissionDecl()  # empty — no per-path declaration
     # Must NOT raise: config grant covers the write-class kind.
-    resolver.require_file_write(decl, _out_of_zone_path(tmp_path), "swe_bench")
+    await resolver.require_file_write(decl, _out_of_zone_path(tmp_path), "swe_bench")
 
 
-def test_nested_glob_shape_does_not_clear_require_file_write(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_nested_glob_shape_does_not_clear_require_file_write(tmp_path: Path) -> None:
     """Tier 2: the WRONG nested-glob shape (``file.write: {"*": allow}``)
     does NOT clear ``require_file_write`` — it raises PermissionError.
 
@@ -78,10 +80,11 @@ def test_nested_glob_shape_does_not_clear_require_file_write(tmp_path: Path) -> 
     )
     decl = PermissionDecl()
     with pytest.raises(PermissionError):
-        resolver.require_file_write(decl, _out_of_zone_path(tmp_path), "swe_bench")
+        await resolver.require_file_write(decl, _out_of_zone_path(tmp_path), "swe_bench")
 
 
-def test_nested_to_string_shape_also_clears(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_nested_to_string_shape_also_clears(tmp_path: Path) -> None:
     """Tier 2: the alternate nested-to-string shape (``file: {write: allow}``)
     also clears — documenting that the loader accepts both the flat
     dotted-key and the nested-to-string forms (but NOT the glob dict).
@@ -92,7 +95,7 @@ def test_nested_to_string_shape_also_clears(tmp_path: Path) -> None:
         interactive=False,
     )
     decl = PermissionDecl()
-    resolver.require_file_write(decl, _out_of_zone_path(tmp_path), "swe_bench")
+    await resolver.require_file_write(decl, _out_of_zone_path(tmp_path), "swe_bench")
 
 
 def test_example_documents_flat_file_write_allow() -> None:

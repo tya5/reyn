@@ -41,34 +41,37 @@ def _resolver(*, granted: bool) -> PermissionResolver:
     )
 
 
-def _can_write(resolver: PermissionResolver, path: str) -> bool:
+async def _can_write(resolver: PermissionResolver, path: str) -> bool:
     sandbox = SandboxPolicy(write_paths=[_REPO])
     try:
-        resolver.require_file_write(_DECL, path, "swe_bench", sandbox_policy=sandbox)
+        await resolver.require_file_write(_DECL, path, "swe_bench", sandbox_policy=sandbox)
         return True
     except PermissionError:
         return False
 
 
-def test_grant_allows_in_repo_write() -> None:
+@pytest.mark.asyncio
+async def test_grant_allows_in_repo_write() -> None:
     """Tier 2: grant + sandbox[repo] → an in-repo write is allowed (apply can edit)."""
-    assert _can_write(_resolver(granted=True), f"{_REPO}/astropy/io/ascii/html.py") is True
+    assert await _can_write(_resolver(granted=True), f"{_REPO}/astropy/io/ascii/html.py") is True
 
 
-def test_grant_still_denies_outside_sandbox_zone() -> None:
+@pytest.mark.asyncio
+async def test_grant_still_denies_outside_sandbox_zone() -> None:
     """Tier 2: the SandboxLayer ∩ scopes the grant — a write OUTSIDE write_paths
     (e.g. /etc) is DENIED even with the resolver grant. This is the scoping that
     makes the blanket resolver-`allow` safe: scope comes from the sandbox, not a
     (non-functional) scoped resolver config."""
-    assert _can_write(_resolver(granted=True), "/etc/passwd") is False
+    assert await _can_write(_resolver(granted=True), "/etc/passwd") is False
 
 
-def test_no_grant_denies_in_repo_write() -> None:
+@pytest.mark.asyncio
+async def test_no_grant_denies_in_repo_write() -> None:
     """Tier 2: opt-out (flag absent → no grant) → even an in-repo write is DENIED.
 
     This is the #183 bug the flag fixes: a declared-but-not-granted file.write in
     a non-interactive run. Falsification pair for the grant test above."""
-    assert _can_write(_resolver(granted=False), f"{_REPO}/astropy/io/ascii/html.py") is False
+    assert await _can_write(_resolver(granted=False), f"{_REPO}/astropy/io/ascii/html.py") is False
 
 
 def test_run_parser_exposes_grant_file_write_flag() -> None:

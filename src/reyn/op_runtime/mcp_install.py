@@ -269,7 +269,7 @@ async def handle(
         # same as op_runtime/file.py — was missing here, so the write/http gates
         # ran permission-only (SandboxLayer ⊤). None → ⊤ (unchanged).
         _sandbox = _sandbox_policy_from_ctx(ctx)
-        ctx.permission_resolver.require_file_write(
+        await ctx.permission_resolver.require_file_write(
             ctx.permission_decl, str(config_path), ctx.skill_name,
             sandbox_policy=_sandbox,
         )
