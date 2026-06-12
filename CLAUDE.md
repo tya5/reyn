@@ -231,6 +231,7 @@ and run the checklist below before continuing:
 - **ContextFrame / Output schemas**: `src/reyn/models.py`
 - **Op catalog and dispatch**: `src/reyn/op_runtime/`
 - **LLM trace analysis**: `docs/reference/dogfood-tracing.md` — `scripts/dogfood_trace.py --mode llm-payloads` is the canonical entry point for inspecting LLM payloads; do not hand-parse JSONL.
+- **Full feature inventory**: `docs/feature-map.md` — every implemented feature grouped by subsystem, each linked to its reference/concept doc (impl-extracted; impl↔doc mirror).
 
 ## Goal
 

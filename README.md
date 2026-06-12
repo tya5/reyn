@@ -178,6 +178,7 @@ Built with MkDocs Material; English + Japanese (translation in progress).
 | How-to | [/docs/guide/for-skill-authors/](https://tya5.github.io/reyn/docs/guide/for-skill-authors/validate-artifacts/) | [docs/guide/for-skill-authors/](docs/guide/for-skill-authors/) |
 | Reference | [/docs/reference/](https://tya5.github.io/reyn/docs/reference/cli/run/) | [docs/reference/](docs/reference/) |
 | Concepts | [/docs/concepts/](https://tya5.github.io/reyn/docs/concepts/principles/) | [docs/concepts/](docs/concepts/) |
+| Feature inventory | — | [docs/feature-map.md](docs/feature-map.md) |
 
 Build and serve locally:
 
