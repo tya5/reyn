@@ -8,50 +8,52 @@ audience: [human, agent]
 
 Full feature inventory of the Reyn Agent OS, extracted from implementation. Each entry links to its reference or concept documentation.
 
+Per-group **Differentiation vs general agents** callouts position each capability against self-hosted general agents (OpenClaw / Hermes) — Skill is one feature among many, not the headline. Maturity marks: entries are production unless tagged **⚗ experimental / MVP** or noted as an **optional dependency**.
+
 ## Visual overview
 
 ```mermaid
 mindmap
   root((Reyn<br/>Agent OS))
-    OS Core
-      Phase Engine
+    🧩 OS Core
+      🌀 Phase Engine
         Act/Decide loop
         Context build
         Candidate gate
         Phase rollback
-      LLM Validation
+      ✅ LLM Validation
         JSON contract
         Type-decision check
         Next-phase allowlist
         Artifact schema
         Normalization retry
-      Preprocessor
+      ⏩ Preprocessor
         run_op
         iterate
         validate
         lint_plan
         python
-      Postprocessor
+      ⏪ Postprocessor
         Same step types
         Skill-finish transform
         Step memoization
-      Workspace P5
+      🗂️ Workspace P5
         Artifact storage
         Permission-gated IO
-      Crash Recovery
+      ♻️ Crash Recovery
         WAL state log
         Forward-replay resume
         CommittedStep memo
-      Event System P6
-        113+ event types
+      📜 Event System P6
+        171 event types
         Append-only JSONL
         Replay
-      Chat Compaction
+      🗜️ Chat Compaction
         Head+tail+body budget
         Overflow retry loop
         Adaptive token estimation
         Multimodal token estimation
-      Plan Mode
+      📋 Plan Mode
         LLM decomposition
         Persistent plan artifact
         Async dispatch
@@ -60,7 +62,7 @@ mindmap
         Plan resume
         Per-step compaction
         Multi-plan concurrency
-    Control IR Ops
+    ⚙️ Control IR Ops
       file
       ask_user
       run_skill
@@ -69,18 +71,21 @@ mindmap
       web_search
       web_fetch
       mcp
+      mcp_install
       lint
-      embed
-      index_write
       index_query
       recall
       index_drop
+      compact
+      skill_resolve
       judge_output
-    DSL
+    📝 DSL
       skill.md
       phase.md
       artifact YAML
-    Stdlib Skills
+      topology YAML
+      profile YAML
+    📦 Stdlib Skills
       direct_llm
       eval
       eval_builder
@@ -91,8 +96,9 @@ mindmap
       skill_builder
       skill_importer
       skill_improver
+      skill_search
       word_stats_demo
-    CLI
+    ⌨️ CLI
       reyn run
       reyn chat
       reyn eval
@@ -107,9 +113,11 @@ mindmap
       reyn secret
       reyn source
       reyn config
+      reyn auth
+      reyn cron
       reyn web
       reyn init
-    Config
+    🔧 Config
       3-layer cascade
       safety
       cost
@@ -123,37 +131,64 @@ mindmap
       events
       skill_search
       models
-    Permissions
+      auth
+      mcp
+      multimodal
+      python
+      cron
+      self_improvement
+      skill_resume
+      action_retrieval
+    🔒 Permissions
       Tier 0-3 model
       4-layer resolution
       Skill declarations
       CLI gates
-    Budget and Cost
+    🛡️ Safety
+      Force-close wrap-up
+      limit_denied event
+      On-limit modes
+    💰 Budget and Cost
       Per-agent caps
       Per-chain caps
       Rate limits
       Daily/monthly quotas
-    Memory and RAG
+    🧠 Memory and RAG
       Embedding
       SQLite index
       Recall
       Chat compaction
-    MCP
+    🔌 MCP
       Transports
       mcp serve
       mcp install
-    Web and Protocol
+    🌐 Web and Protocol
       FastAPI gateway
       WebSocket chat
-      A2A protocol
+      A2A sync message/send
+      A2A async tasks
+      Webhook push
       MCP-over-SSE
       REST API
-    Multi-Agent
+    🙋 Intervention
+      ask_user routing
+      InterventionBus family
+      InterventionRegistry
+    🤝 Multi-Agent
       Agent registry
       Topology system
       MessageBus
       delegate_to_agent
-    Sandbox
+    🖥️ TUI
+      Conversation view
+      Right Panel tabs
+      tool-result viewers
+      Input + command palette
+    🐳 Environment
+      EnvironmentBackend
+      HostBackend
+      Container backend
+    🏖️ Sandbox
       SeatbeltBackend
       LandlockBackend
       NoopBackend
@@ -216,9 +251,11 @@ mindmap
 #### Event System (P6)
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| 113+ event types | Complete taxonomy: workflow / phase / LLM / tool / budget / permission / etc. | [Events reference](reference/runtime/events.md) · [Concepts: Events](concepts/runtime/events.md) |
+| 171 event types | Complete taxonomy: workflow / phase / LLM / tool / budget / permission / etc. | [Events reference](reference/runtime/events.md) · [Concepts: Events](concepts/runtime/events.md) |
 | Append-only JSONL | `.reyn/events/` per-run files with size/age-based rotation | [Events reference](reference/runtime/events.md) |
 | Replay | `reyn events <path>` streams events for audit and debug | [reyn events CLI](reference/cli/events.md) |
+
+> **Differentiation vs general agents:** the agent loop is an OS-enforced contract — the LLM decides only from OS-provided candidates (P3/P4), every output is schema-validated, every inter-phase value lives in the workspace (P5), and every state change emits an append-only, replayable event (P6). Constrained and auditable by construction, not by developer discipline.
 
 ---
 
@@ -234,6 +271,8 @@ mindmap
 | Multimodal token estimation | Estimates tokens for text and image content; image parts use a fixed per-part cost | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | Compaction lock | Async mutex prevents concurrent turn appends from racing with an in-flight compaction call | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 
+> **Differentiation vs general agents:** instead of naive truncation or an unbounded growing memory, Reyn budgets context as head + tail + LLM summary with a monotonic overflow-shrink retry, adaptive per-model token estimation, and multimodal estimation — predictable context management under a hard model limit.
+
 #### Plan Mode
 
 | Feature | Description | Documentation |
@@ -248,29 +287,36 @@ mindmap
 | Multi-plan concurrency | Multiple plans can be in flight simultaneously; each has its own `plan_id` with results delivered in completion order | [Plan Mode](concepts/multi-agent/plan-mode.md) |
 | Operator slash commands | `/plan list` / `/plan discard` / `/plan resume --from <step>` for plan lifecycle management | [Plan Mode](concepts/multi-agent/plan-mode.md) |
 
+> **Differentiation vs general agents:** plan decomposition is OS-governed — persisted, resumable per-step (completed steps replay without LLM cost), with per-step compaction and multi-plan concurrency — not an ad-hoc in-prompt task loop.
+
 ---
 
 ### Control IR Ops
 
 All ops are documented in the single reference page: **[Control IR](reference/runtime/control-ir.md)**
 
+The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py` (20 kinds — the six `file` sub-ops are grouped into one row).
+
 | Op | Description |
 |----|-------------|
-| `file` | `read` / `write` / `edit` / `delete` / `glob` / `grep` / `regenerate_index` |
+| `file` | `read` / `write` / `edit` / `delete` / `glob` / `grep` / `regenerate_index` (six fine-grained registry kinds) |
 | `ask_user` | Pause phase, collect user answer, re-run same phase |
 | `run_skill` | Invoke sub-skill and return `final_output` artifact |
-| `shell` | Raw shell exec — deprecated, use `sandboxed_exec` |
 | `sandboxed_exec` | `argv` under `SandboxPolicy` via platform-selected backend |
+| `shell` | Raw shell exec — deprecated; prefer `sandboxed_exec` |
 | `web_search` | DuckDuckGo search — Tier 1, default-allow |
 | `web_fetch` | URL fetch + text extract — Tier 1, default-allow |
 | `mcp` | Call a configured MCP server tool by name |
+| `mcp_install` | Install / register an MCP server (registry / package / local source) |
 | `lint` | Run DSL linter on a skill directory |
-| `embed` | Chunk text via LiteLLM embedding model |
-| `index_write` | Write embedded chunks to SQLite backend |
 | `index_query` | Vector similarity search over one indexed source |
-| `recall` | Macro: embed → `index_query` per source → merge top-K |
+| `recall` | Macro: embed query → `index_query` per source → merge top-K |
 | `index_drop` | Destructive source removal — requires approval |
+| `compact` | Summarise / compact context within budget (chat + phase results) |
+| `skill_resolve` | Resolve a skill reference to its local / project / stdlib source |
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
+
+> The `embed` and `index_write` ops were removed in #1303 Stage I — embedding and index-writing now run provider-direct inside `reyn.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
 
 ---
 
@@ -303,7 +349,10 @@ All ops are documented in the single reference page: **[Control IR](reference/ru
 | `skill_builder` | Scaffold a new skill from a natural-language description | [Reference](reference/stdlib/skill_builder.md) |
 | `skill_importer` | Find and import an external skill with DSL conversion | [Reference](reference/stdlib/skill_importer.md) |
 | `skill_improver` | Iterative skill improvement via eval-plan-apply loop | [Reference](reference/stdlib/skill_improver.md) |
+| `skill_search` | Search a public skills registry for skills matching a natural-language capability request | [Reference](reference/stdlib/skill_search.md) |
 | `word_stats_demo` | Demo of the `python` preprocessor step pattern | [Reference](reference/stdlib/word_stats_demo.md) |
+
+> **Differentiation vs general agents:** skills are *one* feature here, not the headline. Where agents like Hermes auto-generate procedure docs (emergent), Reyn's skills (DSL above + this stdlib set) are explicit, typed, and OS-validated — a reviewable, versioned phase graph the OS checks at each transition. The bet is predictable over emergent.
 
 ---
 
@@ -326,6 +375,8 @@ All ops are documented in the single reference page: **[Control IR](reference/ru
 | `reyn source` | List, describe, and remove indexed RAG sources | [Reference](reference/cli/source.md) |
 | `reyn embeddings` | `status` / `rebuild` / `clear` for the action embedding index (`search_actions`) | [Reference](reference/cli/embeddings.md) |
 | `reyn config` | Show, query, and set effective configuration | [Reference](reference/cli/config.md) |
+| `reyn auth` | Manage OAuth credentials — `login` (RFC 8628 device grant against `auth.providers`) / `list` / `revoke` | [reyn.yaml § auth](reference/config/reyn-yaml.md) |
+| `reyn cron` | Manage and run cron-scheduled skill jobs — foreground scheduler / list jobs + next-run / status | [reyn.yaml § cron](reference/config/reyn-yaml.md) |
 | `reyn web` | Start FastAPI + WebSocket gateway server | [Reference](reference/cli/web.md) |
 | `reyn init` | Scaffold `reyn.yaml` and `.reyn/` in current directory | [Reference](reference/cli/init.md) |
 
@@ -343,7 +394,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `cost` | Per-agent / per-chain / daily / monthly token+USD caps | [Budget config](reference/config/budget.md) |
 | `sandbox` | Backend selection (auto/seatbelt/landlock/noop) + `on_unsupported` | [reyn-yaml § sandbox](reference/config/reyn-yaml.md#sandbox-block) |
 | `web` | `web.fetch` SSL `verify_ssl` and `ca_bundle` override | [reyn-yaml § web](reference/config/reyn-yaml.md#web-block) |
-| `eval` | Trace exporters: file / langfuse / otlp / ietf_audit | [reyn-yaml § eval](reference/config/reyn-yaml.md#eval-block) |
+| `eval` | Trace exporters: file / langfuse / **otlp** (optional dep `opentelemetry-exporter-otlp-proto-http`) / ietf_audit | [reyn-yaml § eval](reference/config/reyn-yaml.md#eval-block) |
 | `plan` | `step_max_iterations` / `retry_limit` per plan step | [reyn-yaml § plan](reference/config/reyn-yaml.md#plan-block) |
 | `chat` | Compaction trigger / head+tail retention / section token caps | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | `embedding` | Model classes / batch_size / cost_warn_threshold | [RAG concepts](concepts/data-retrieval/rag.md) |
@@ -354,6 +405,14 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `permissions` | Project-wide default capability policy | [Permissions config](reference/config/permissions.md) |
 | `multi-agent` | Agent and topology defaults | [Multi-agent config](reference/config/multi-agent.md) |
 | `state_dir` | Runtime state directory (default `.reyn/`) | [State dir](reference/config/state-dir.md) |
+| `auth` | OAuth provider definitions for `reyn auth login` (RFC 8628 device grant) | [reyn-yaml](reference/config/reyn-yaml.md) |
+| `mcp` | Configured external MCP server connections (transport + env) | [Concepts: MCP](concepts/tools-integrations/mcp.md) |
+| `multimodal` | Media handling caps (`max_bytes`, per-part token cost) | [reyn-yaml](reference/config/reyn-yaml.md) |
+| `python` | `python`-step execution policy (safe / unsafe subprocess) | [Preprocessor](reference/dsl/preprocessor.md) |
+| `cron` | Cron-scheduled skill job definitions | [reyn-yaml](reference/config/reyn-yaml.md) |
+| `self_improvement` | Skill self-improvement (eval-plan-apply) settings | [reyn-yaml](reference/config/reyn-yaml.md) |
+| `skill_resume` | Crash-resume behaviour for skill runs | [Skill Resume](concepts/skills/skill-resume.md) |
+| `action_retrieval` | Action-catalog `search_actions` retrieval tuning | [Universal catalog](concepts/tools-integrations/universal-catalog.md) |
 
 ---
 
@@ -371,6 +430,23 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | Skill-level declarations | `shell` / `file.read+write` / `http.get` / `secret.write` / `mcp` / `python` / `tool` | [Skill frontmatter](reference/dsl/skill-md.md) |
 | CLI gates | `--allow-shell` / `--allow-unsafe-python` required at invocation | [Common flags](reference/cli/common-flags.md) |
 
+> **Differentiation vs general agents:** autonomous agents typically execute tools with minimal gating. Reyn requires per-capability declaration + 4-layer just-in-time approval (config → saved → session → interactive), a `.reyn/` write zone, and per-skill credential scoping (Confused Deputy mitigation).
+
+---
+
+### Safety / limit-handling
+
+Bounded-operation checkpoints that stop the agent gracefully rather than hard-failing. See [Safety framework](concepts/runtime/safety.md).
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| On-limit modes | `interactive` (ask) / `auto_extend` (budgeted) / `unattended` (abort) via `safety.on_limit.mode` | [Safety framework](concepts/runtime/safety.md) |
+| Force-close wrap-up (#1496) | On a denied limit the LLM gets one final tool-less turn to summarise what was accomplished; delivered as a `kind="agent"` message with `meta.limit_stopped` | [Safety framework](concepts/runtime/safety.md) |
+| `limit_denied` event | P6 audit event on every deny path (`max_iterations` / `router_cap`) | [Events reference](reference/runtime/events.md) |
+| Decision-enabling fallback | When the wrap-up fails or is empty, a structured error states the limit hit, the config key to change, and partial-data availability | [Safety framework](concepts/runtime/safety.md) |
+
+> **Differentiation vs general agents:** where free-running agents hard-stop or run away at a limit, Reyn's force-close turns a denied limit into a graceful LLM wrap-up plus an operator decision — it reports what it accomplished instead of vanishing or looping unbounded.
+
 ---
 
 ### Budget & Cost
@@ -383,6 +459,8 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | Daily quotas | Persistent JSONL ledger, resets at local midnight | [Budget config](reference/config/budget.md) |
 | Monthly quotas | Persistent JSONL ledger, resets at month boundary | [Budget config](reference/config/budget.md) |
 | `ask_on_exceed` | User-approval extension flow on hard cap hit | [Budget config](reference/config/budget.md) |
+
+> **Differentiation vs general agents:** token + USD caps per agent / chain / model with refuse-on-exceed and an `ask_on_exceed` extension flow — runaway spend is structurally bounded, not merely observed after the fact.
 
 ---
 
@@ -401,6 +479,8 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | Action embedding index | `ActionEmbeddingIndex` (SQLite-WAL, class-swap detection, cross-process build lock) — backs the `search_actions` tool the chat LLM uses | [Universal catalog § search_actions](concepts/tools-integrations/universal-catalog.md#what-stays-out-of-phase-1) · [`reyn embeddings`](reference/cli/embeddings.md) |
 | Memory CRUD | `list` / `read` / `remember_shared` / `remember_agent` / `forget` | [Memory concepts](concepts/data-retrieval/memory.md) · [reyn memory CLI](reference/cli/memory.md) |
 
+> **Differentiation vs general agents:** beyond chat memory, Reyn ships a RAG *framework* — you declare an indexing strategy as a `skill.md` (LLM-picked chunking + a deterministic embed/write chain) over a pluggable `IndexBackend`, with a credential-free local-embedding option. A foundation to build on, not a fixed memory feature.
+
 ---
 
 ### MCP
@@ -415,6 +495,8 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | Secret management | Per-server env vars in `~/.reyn/secrets.env` | [reyn secret CLI](reference/cli/secret.md) |
 | Tool dispatch | Lazy-load and cache `MCPClient` per server connection | [Concepts: MCP](concepts/tools-integrations/mcp.md) |
 
+> **Differentiation vs general agents:** Reyn is both an MCP client (consumes external servers) and an MCP server (exposes its own agents) — standard-protocol interop in both directions, with stdio MCP servers subprocess-sandboxed under Seatbelt (#1344).
+
 ---
 
 ### Web & Protocol
@@ -426,8 +508,43 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | A2A Agent Card | Per-agent `/.well-known/agent-card.json` capability declaration | [reyn web CLI](reference/cli/web.md) |
 | A2A `message/send` | Synchronous JSON-RPC 2.0 single-turn endpoint per agent | [reyn web CLI](reference/cli/web.md) |
 | A2A agent discovery | `GET /a2a/agents` server-level listing | [reyn web CLI](reference/cli/web.md) |
+| A2A async tasks | `async_mode` → `Task` envelope; `GET /a2a/tasks/{run_id}` poll, `…/events` SSE stream, `…/cancel`; mid-run `ask_user` surfaces as `input-required` | [A2A concepts](concepts/multi-agent/a2a.md) |
+| Webhook push | Status-transition POSTs to `params.webhook_url` for async tasks (`reyn.web.notifications`) | [A2A concepts](concepts/multi-agent/a2a.md) |
 | MCP-over-SSE | `/mcp/sse` + `/mcp/messages` for MCP client connections | [reyn web CLI](reference/cli/web.md) · [reyn mcp CLI](reference/cli/mcp.md) |
 | REST API | `/api/*` for agents / skills / runs / topologies / budget / permissions | [reyn web CLI](reference/cli/web.md) |
+
+> **Differentiation vs general agents:** competitors specialise in broad, deep connectivity to the messaging apps you already use. Reyn keeps connectivity to standard protocols — MCP (client + server), A2A (sync + async tasks with webhook push), and a REST / WebSocket gateway — rather than per-app integrations.
+
+---
+
+### TUI
+
+The Textual terminal interface for `reyn chat` (`src/reyn/chat/tui/`).
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| Conversation view | Streaming conversation with inline thinking rows and tool-call rendering | — |
+| Right Panel tabs | Live side panels: Agents / Cost / Docs / Events / Keys / Memory / Pending | — |
+| Tool-result viewers | Content-type-aware result cards — text / image / web-page summary (#1154) | — |
+| Input + command palette | Input bar with slash commands (`/plan`, `/compact`, `/find`, `/help`, `/clear`) via a command palette | — |
+| Intervention widget | In-TUI `ask_user` prompt rendering | — |
+| Chainlit web chat (⚗ PoC) | Alternative browser chat UI sharing the same agent — `reyn chainlit` + `chainlit_app/` (agent picker, settings, uploads, slash routing); coexists with the TUI | — |
+
+> **Differentiation vs general agents:** Reyn's chat surface is a local, inspectable TUI with live audit panels (events / cost / permissions) beside the conversation — the operator sees what the agent is doing and spending in real time.
+
+---
+
+### Intervention
+
+Cross-surface `ask_user` and permission routing — the same prompt reaches the operator over whichever surface is active (`chat/services/intervention_registry.py`).
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| InterventionBus family | `ChatInterventionBus` (TUI) / `StdinInterventionBus` (CLI) / `A2AInterventionBus` (web) / `_MCPInterventionBus` (MCP) | [Permission model](concepts/runtime/permission-model.md) |
+| InterventionRegistry | Tracks pending interventions and pairs each answer back to the waiting run | — |
+| `ask_user` lifecycle | Pause run → surface prompt → resume on answer; async wait works across surfaces | [Control IR — ask_user](reference/runtime/control-ir.md) |
+
+> **Differentiation vs general agents:** human-in-the-loop is a first-class, surface-agnostic primitive — a permission ask or `ask_user` routes to the operator identically whether the agent runs in the TUI, CLI, web / A2A, or MCP.
 
 ---
 
@@ -445,6 +562,8 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | Agent hops cap | Max delegation depth via `safety.loop.max_agent_hops` | [reyn-yaml § safety](reference/config/reyn-yaml.md#safety-block) |
 | `chain_id` propagation | Trace multi-hop chains in P6 events | [Events reference](reference/runtime/events.md) |
 
+> **Differentiation vs general agents:** delegation is topology-gated (network / team / pipeline) with a hop-depth cap and `chain_id` audit propagation — multi-agent reach is bounded and traceable, not free-form.
+
 ---
 
 ### Sandbox
@@ -456,3 +575,20 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `NoopBackend` | Fallback audit-only with one-time WARN log | [Concepts: Sandbox](concepts/runtime/sandbox.md) |
 | `SandboxPolicy` | `network` / `read_paths` / `write_paths` / `subprocess` / `env_passthrough` / `timeout` | [Control IR — sandboxed_exec](reference/runtime/control-ir.md) |
 | Auto-selection | Platform detection + `on_unsupported: warn\|error\|ignore` | [reyn-yaml § sandbox](reference/config/reyn-yaml.md#sandbox-block) · [Concepts: Sandbox](concepts/runtime/sandbox.md) |
+
+> **Differentiation vs general agents:** tool / code execution runs under an OS-level sandbox (Seatbelt / Landlock + seccomp-BPF) with an explicit `SandboxPolicy`, rather than unsandboxed tool calls. Stdio MCP servers are also subprocess-wrapped under Seatbelt (#1344).
+
+---
+
+### Environment — ⚗ Stage 2 (experimental MVP)
+
+Repo-filesystem mechanism abstraction (FP-0008 #1115) decoupling the workspace from where the repo FS lives. The host backend is production; the container backend is an exec-per-op MVP. See `src/reyn/environment/`.
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| `EnvironmentBackend` protocol | Abstracts repo-FS read / write / exec away from the OS + permission layer | — |
+| `HostBackend` | Default — identity over the local filesystem (production) | — |
+| `DockerEnvironmentBackend` | ⚗ Stage 2 MVP — repo FS + exec inside a Docker container (`--container` attach); exec-per-op | — |
+| Mount-mode launcher | ⚗ container launch with the repo mounted (#1324) + `devcontainer.json` awareness / build-on-demand (#1341) | — |
+
+> **Differentiation vs general agents:** Reyn adopts the container-exec pattern those agents popularised (e.g. Hermes docker-exec), but keeps the OS + permission + audit layer on the host while only the repo FS lives in the container — sandboxed execution without surrendering governance. (⚗ Stage 2 / experimental.)
