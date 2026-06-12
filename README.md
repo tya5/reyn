@@ -16,7 +16,7 @@ reyn chat                      # talk to the agent — persistent memory, RAG re
 
 ## Why Reyn
 
-Self-hosted, open-source general agents — like the widely-adopted OpenClaw and Hermes — run on your own infrastructure with persistent memory, tool-calling, and autonomous execution. What they don't give you is guarantees: the agent loop is free-running, so a hallucinated tool call, a wrong transition, or an unbounded loop is yours to detect after the fact. Reyn is a self-hosted general agent whose loop is an OS-enforced contract. Four guarantees anchor 1.0:
+Self-hosted, open-source general agents — like the widely-adopted OpenClaw and Hermes — run on your own infrastructure with persistent memory, tool-calling, and autonomous execution, and they shine at connecting to the apps you already use. Reyn makes a different bet: a general agent whose entire loop is an OS-enforced contract, for when you want the loop itself to be predictable, verifiable, and fully yours to design. Four guarantees anchor 1.0:
 
 - **Constrained-decision LLM (P3, P4).** The LLM picks only from an OS-provided candidate set: next phase + typed artifact + Control IR ops. It cannot invent a transition or bypass validation. Hallucinated phase names are rejected before any side effect.
 - **Workspace + Events as single source of truth (P5, P6).** Every inter-phase value lives in the workspace; every state change emits an event into an append-only log. Crash recovery, replay, and audit derive from those primitives — not from in-memory state or application logs.
@@ -91,23 +91,11 @@ Full walkthrough: [docs/guide/getting-started/03-your-first-skill.md](docs/guide
 
 ## How Reyn compares
 
-Reyn is in the same category as self-hosted, open-source general agents like **OpenClaw** and **Hermes** — you run it on your own infrastructure, it has persistent memory and tool-calling, and it executes autonomously. The difference is what surrounds the agent loop: there it is free-running; in Reyn it is an OS-enforced contract.
+Reyn is in the same broad category as self-hosted, open-source general agents like **OpenClaw** and **Hermes** — but it makes a different bet. Those agents are built around **connectivity**: they plug into the apps and messaging platforms you already use and act autonomously across them. That reach is their strength, and Reyn doesn't try to compete on it.
 
-| | Self-hosted general agents (OpenClaw, Hermes) | Reyn |
-|---|---|---|
-| Deployment | Self-hosted, open-source | Self-hosted, open-source |
-| Memory & tools | Persistent memory, tool-calling | Persistent memory, tool-calling, MCP client + server, A2A peers |
-| Agent loop | Free-running — the model drives each step | OS-constrained — the LLM picks from a validated candidate set (P3, P4); hallucinated transitions / tools are rejected before any side effect |
-| State & audit | Application-managed | Workspace single source of truth + append-only event log (P5, P6); crash recovery and audit derive from the primitives |
-| Replay | Not a documented guarantee | Replay-capable event log: step-by-step replay + run-diff CLI |
-| Cost control | Not a documented guarantee | Token + USD caps per agent / chain / model, refuse-on-exceed |
-| Weak-model viability | Tuned for strong models | Structural constraints keep low-cost models reliable |
-| Skills | Emergent — Hermes auto-generates procedure docs after a task | Explicit, typed, validated, OS-constrained — reviewable and versioned |
-| Credentials | Application-managed | Per-skill credential scoping (Confused Deputy mitigation); `agent_id` audit identity in every event |
+Reyn aims at a different niche: **architectural integrity, experimentation, and full-custom workflows.** The whole agent loop is an OS-enforced contract — constrained decisions (P3, P4), a workspace + event log as the single source of truth (P5, P6), replayable runs, per-agent cost caps, and per-skill credential scoping. It fits when you want to design a predictable, verifiable agent loop end to end yourself, and to inspect or replay every decision it makes.
 
-The skills row is the crux of the positioning. **Skills are table-stakes** for a general agent — Hermes generates them automatically. Reyn's bet is not that it *has* skills, but that its skills are *explicit and validated*: a typed phase graph the OS checks at each transition, not an emergent text file. When the agent runs unattended, predictable beats clever.
-
-> Comparison reflects publicly documented features as of 2026-06; general-agent capabilities evolve quickly — check upstream for the current state.
+Skills illustrate the difference rather than rank it: Hermes auto-generates procedure docs after a task (emergent, low-friction); Reyn's skills are explicit, typed, and validated by the OS (reviewable, versioned). Different preferences for different goals.
 
 ### If you want a workflow framework instead
 
