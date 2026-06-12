@@ -3101,7 +3101,7 @@ class ChatSession:
         try:
             await self._run_router_loop(text, chain_id)
         except RouterCapExceeded as exc:
-            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
+            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id, user_text=text)
             return
         except Exception as exc:
             # #187 B1 instrument: a mid-work router-loop exception (e.g. the final
@@ -3386,12 +3386,68 @@ class ChatSession:
     # ── router ──────────────────────────────────────────────────────────────────
 
     async def _emit_router_cap_exhausted_user(
-        self, exc: "RouterCapExceeded", *, chain_id: str,
+        self, exc: "RouterCapExceeded", *, chain_id: str, user_text: str = "",
+        _llm_caller: "Any | None" = None,  # Tier 2 test seam: scripted-fake injection
     ) -> None:
         """User-facing fallback when the per-turn router cap is reached.
-        Emits a structured error + a polite agent reply on the outbox so
-        the chat loop recovers cleanly. The underlying event was already
-        emitted by `_check_and_increment_router_cap`."""
+
+        #1496 (site C): attempt a force-close wrap-up so the LLM can
+        summarize what was accomplished before the turn ends. Uses the
+        session's accumulated history (not run_loop's local messages —
+        router_cap fires BEFORE run_loop starts). Falls back to the
+        original canned error + hardcoded reply if wrap-up fails or
+        produces no text.
+        """
+        # #1496: emit audit event + attempt LLM wrap-up
+        self._chat_events.emit(
+            "limit_denied",
+            kind="router_cap",
+            count=exc.count,
+            cap=exc.cap,
+            chain_id=chain_id,
+        )
+        try:
+            from reyn.chat.router_loop import RouterLoop
+            history = self._history_buffer.build_history()
+            messages: list[dict] = [
+                *history,
+                *(
+                    [{"role": "user", "content": user_text}]
+                    if user_text else []
+                ),
+            ]
+            _temp_loop = RouterLoop(
+                host=self._router_host, chain_id=chain_id, llm_caller=_llm_caller,
+            )
+            _resolved = self._router_host.resolve_model(self.model)
+            _reason = (
+                f"router cap exhausted ({exc.count}/{exc.cap})"
+                f"{'; last reason: ' + exc.last_reason if exc.last_reason else ''}"
+            )
+            _wrapup = await _temp_loop._force_close_call_with_retry(
+                messages, resolved_model=_resolved, reason=_reason,
+            )
+            if _wrapup.content:
+                await self._put_outbox(OutboxMessage(
+                    kind="agent",
+                    text=_wrapup.content,
+                    meta={
+                        "chain_id": chain_id,
+                        "limit_stopped": True,
+                        "limit_kind": "router_cap",
+                    },
+                ))
+                self._append_history(ChatMessage(
+                    role="assistant",
+                    content=_wrapup.content,
+                    ts=_now_iso(),
+                    meta={"chain_id": chain_id, "source": "router_cap_exhausted_wrap_up"},
+                ))
+                return
+        except Exception:  # noqa: BLE001 — wrap-up failed; degrade to canned reply
+            pass
+
+        # Fallback: original canned error + hardcoded reply
         await self._put_outbox(OutboxMessage(
             kind="error",
             text=(
@@ -4420,7 +4476,7 @@ class ChatSession:
         try:
             await self._run_router_loop(injected_text, chain_id)
         except RouterCapExceeded as exc:
-            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
+            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id, user_text=injected_text)
             return
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
