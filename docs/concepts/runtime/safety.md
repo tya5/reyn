@@ -73,6 +73,17 @@ every allow=False path ──► force-close wrap-up (#1496)
           └─ wrap-up fails/empty ──► decision-enabling outbox error (fallback)
 ```
 
+**A2A peer sessions.** A2A sessions use the same `on_limit` config as CLI
+sessions (default: `interactive`). When a limit fires in `interactive` mode,
+the intervention is surfaced to the A2A peer via `A2AInterventionBus`:
+the run's status is mirrored to `"input-required"` and the payload is appended
+to the SSE stream / POSTed to the webhook. The peer answers via the A2A answer
+endpoint (`POST /a2a/agents/<name>` `{task_id, answer}`), which resolves the
+iv and allows the loop to continue. If a caller wants bounded behaviour instead
+of waiting indefinitely for a peer answer, set `safety.on_limit.ask_timeout_seconds`
+to a finite value (e.g. `ask_timeout_seconds: 60.0`) — a timeout refusal produces
+the same decision-enabling error as a "no" answer.
+
 **Force-close wrap-up on deny (#1496).** A denied limit no longer goes
 straight to a canned error. The OS first emits a `limit_denied` event
 (audit truth, P6) and gives the LLM one final **tool-less** turn to
