@@ -6,6 +6,8 @@ audience: [human, agent]
 
 # アーキテクチャ概要
 
+Reyn は agent OS です。その核心にある設計判断は一点です: コネクティビティの豊富さや柔軟なオーケストレーションよりも、OS レイヤーの構造的保証 — 遷移候補の限定（P4）、workspace 経由のデータフロー（P5）、追記専用のイベントログ（P6）、OS コード無変更での Skill 追加（P7）— のほうが信頼性の高い agent を実現する、という判断です。MCP・A2A・Skill は Reyn が提供する機能の一部です。それらを監査可能・再現可能にしているのが OS の contract です。
+
 ```
 User → Agent → Skill → OS → Phase → Workspace
                   ↘ Event（すべてを記録）
@@ -22,6 +24,8 @@ User → Agent → Skill → OS → Phase → Workspace
 ### Skill
 
 マークダウンと YAML ファイルのディレクトリです。Phase グラフと最終出力スキーマを定義します。実行可能コードは含みません（オプションの Python プリプロセッサーステップはサンドボックス内で動作します）。
+
+Skill はこのランタイムスタックにある capability の一つです。OS は Skill がゼロでも、stdlib skill のみでも、カスタム skill のみでも同様に機能します。全機能の一覧（Skill・RAG・コード実行・MCP・A2A・安全機構・メモリ・権限管理など）は [`docs/feature-map.md`](../../feature-map.md) を参照してください。
 
 ### Phase
 
@@ -163,7 +167,11 @@ Reyn はこのループを名目上ではなく **構造的に** 実装してい
 
 これが [P3 (OS controls execution)](../architecture/principles.md#p3-os-controls-execution) をループの framing で具体化したものです: OS がループ構造を所有し、LLM がその中で決定を行います。
 
-LangGraph・AutoGen・Semantic Kernel といった他の agent フレームワークに慣れている読者にとって、この対応は直接的な置き換えマッピングを提供します。それらのシステムがループをプログラム可能な surface として公開しているのに対し、Reyn はそれを検証済みの runtime contract としてエンコードします。LLM の役割はどのシステムでも同じ (次のステップを決定すること) ですが、ループの境界がコードによって強制されるか、慣習に委ねられるかが異なります。
+現在の agent 市場との対比では、2 つの系統が対照的な参照点となります。
+
+**汎用 agent**（OpenClaw・Hermes など、到達範囲の広さを軸に設計されたシステム）は対極の判断をしています。豊富な統合カタログ、柔軟なツール接続、プロトコル非依存のリーチがその強みです。Reyn の判断はこれと直交します — ループそのものの構造的整合性を軸に置く判断です。両者は MCP コネクティビティを実装しています。違いは runtime がループに対して何を保証するかです。到達範囲優先のシステムでは、ループの contract をあえて持たない設計が柔軟性を実現しています。Reyn では、その contract こそが製品の本体です。
+
+**ワークフローフレームワーク**（LangGraph・AutoGen・Semantic Kernel）は act-sense-react ループをプログラム可能な surface として公開しています: グラフエッジ、ノード関数、agent が定義するステップがその単位です。Reyn は同じループを OS 検証済みの contract としてエンコードしています: 遷移は Skill graph に、artifact はスキーマに、各状態変化は実行継続前にイベントログに対してそれぞれ検証されます。LLM が担う意思決定の役割はどのシステムでも変わりません。違いは、ループの境界を OS が強制するか、実装者の規律に委ねるかです。
 
 ## カーネルランタイムレイヤー（FP-0020）
 

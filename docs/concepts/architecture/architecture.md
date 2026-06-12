@@ -30,7 +30,7 @@ In practice the "Agent" today is the CLI plus chat router — both are thin and 
 
 A directory of markdown + YAML files. Defines the phase graph and the final output schema. Does not contain executable code (except optional Python preprocessor steps, which are sandboxed).
 
-Skill is **one capability group** in the runtime stack — not the OS's defining characteristic. The OS runs equally well with no skills, stdlib skills, or custom skills. The full capability inventory (Skills, RAG, code execution, MCP, A2A, safety, memory, permissions, …) is in [`docs/feature-map.md`](../../feature-map.md).
+Skill is **one capability group** in the runtime stack. The OS runs equally well with no skills, stdlib skills, or custom skills. The full capability inventory (Skills, RAG, code execution, MCP, A2A, safety, memory, permissions, …) is in [`docs/feature-map.md`](../../feature-map.md).
 
 ### Phase
 
