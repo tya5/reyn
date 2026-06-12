@@ -55,20 +55,41 @@ Rows marked ❌ have autonomous behaviour that does not require operator input.
 limit hit
   │
   ├─ mode=unattended  ──► allow=False, reason="unattended"
-  │                       caller → decision-enabling outbox error
   │
   ├─ mode=auto_extend ──► within budget  → allow=True,  reason="auto_extended"
   │                       budget exhausted → allow=False, reason="unattended"
   │
   └─ mode=interactive
         ├─ bus=None   ──► allow=False, reason="no_bus"
-        │                 caller → decision-enabling outbox error (not silent)
         └─ bus present ──► UserIntervention dispatched
               ├─ yes  ──► allow=True,  reason="user_approved"
               └─ no   ──► allow=False, reason="user_refused"
+
+every allow=False path ──► force-close wrap-up (#1496)
+      emit `limit_denied` event (kind = max_iterations | router_cap)
+      → one final tool-less LLM turn summarizing what was accomplished
+          ├─ wrap-up has text ──► outbox kind="agent",
+          │                        meta.limit_stopped=True, meta.limit_kind=<kind>
+          └─ wrap-up fails/empty ──► decision-enabling outbox error (fallback)
 ```
 
-**Decision-enabling error message contract** (all `allow=False` paths):
+**Force-close wrap-up on deny (#1496).** A denied limit no longer goes
+straight to a canned error. The OS first emits a `limit_denied` event
+(audit truth, P6) and gives the LLM one final **tool-less** turn to
+summarize what was accomplished before the turn ends. The stop cause is
+injected into that wrap-up's system prompt (the steady-state SP stays
+cause-neutral; the cause is not appended as a trailing user message
+because some providers reject a user turn immediately after a
+`tool_result`). When the wrap-up produces text it is delivered as an
+ordinary `kind="agent"` outbox message carrying a structured
+`meta.limit_stopped=True` + `meta.limit_kind` marker — the UI reads the
+marker to indicate a forced stop without a competing prose block. For
+phase/plan hosts the wrap-up is also handed back for checkpoint
+persistence (`record_force_close`); chat hosts no-op that hook.
+
+**Decision-enabling error message contract** — emitted only on the
+**fallback** path (the wrap-up call raised or produced no text). All
+`allow=False` paths still degrade to a message containing:
 1. What limit was hit and its current configured value
 2. The config key to increase, or the `safety.on_limit.mode` to set for
    interactive or auto-extend behaviour
