@@ -700,7 +700,7 @@ def _register_spec(eval_sub) -> None:
     )
     p.add_argument(
         "spec", metavar="FILE",
-        help="Path to the eval.md spec file (e.g. reyn/local/my_app/eval.md)",
+        help="Path to the eval.md spec file (e.g. .reyn/evals/my_app/eval.md)",
     )
     add_model_arg(p)
     p.add_argument(

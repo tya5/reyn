@@ -68,5 +68,5 @@ def resolve_paths_from_op(artifact: dict) -> dict:
         "skill_slug":          skill_slug,
         "target_skill_path":   skill_dir + "/skill.md",
         "target_skill_root":   skill_dir,
-        "eval_spec_path":      skill_dir + "/eval.md",
+        "eval_spec_path":      ".reyn/evals/" + skill_slug + "/eval.md",
     }

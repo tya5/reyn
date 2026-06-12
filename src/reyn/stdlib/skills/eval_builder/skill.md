@@ -51,11 +51,8 @@ permissions:
       scope: recursive
     - path: reyn/project
       scope: recursive
-  # write_eval writes the generated eval.md to reyn/local/<name>/eval.md.
-  # Declared explicitly because reyn/local/ is outside the .reyn/ default zone.
-  file.write:
-    - path: reyn/local
-      scope: recursive
+  # write_eval writes to .reyn/evals/<name>/eval.md (inside .reyn/ default zone —
+  # no file.write declaration needed).
   python:
     # FP-0042 Phase 2.5 (2026-05-23): the legacy unsafe-mode
     # ``analyze_skill_resolver.resolve_paths`` was deleted — it had no
@@ -123,7 +120,7 @@ type and extracts the skill name without requiring the LLM to construct paths.
 ```markdown
 ---
 type: eval
-skill: reyn/local/my_skill/skill.md
+skill: .reyn/evals/my_skill/eval.md
 skill_root: reyn/local/
 ---
 
@@ -151,7 +148,7 @@ criteria are tracked but excluded from pass/fail. The judge model is set in `jud
 total criterion count, and a brief summary including the next-step command:
 
 ```
-reyn eval reyn/local/my_skill/eval.md --model standard
+reyn eval .reyn/evals/my_skill/eval.md --model standard
 ```
 
 Combine with `skill_improver` for a tight quality-improvement cycle: build a spec with

@@ -66,7 +66,7 @@ def resolve_paths_from_op(artifact: dict) -> dict:
         "skill_dsl_path": skill_dir_str + "/skill.md",
         "phases_glob": skill_dir_str + "/phases/*.md",
         "artifacts_glob": skill_dir_str + "/artifacts/*.yaml",
-        "existing_eval_path": skill_dir_str + "/eval.md",
+        "existing_eval_path": ".reyn/evals/" + target_skill + "/eval.md",
         "eval_output_path": eval_output,
     }
 
@@ -93,19 +93,12 @@ def _derive_skill_root(skill_dir_str: str, target_skill: str, source: str | None
 def _derive_eval_output_path(skill_dir_str: str, target_skill: str) -> str:
     """Derive the eval.md write destination.
 
-    For stdlib skills the skill directory is an absolute path (installed
-    inside the package tree), which is outside the workspace write zone.
-    Redirect to reyn/local/<name>/eval.md so write_eval can write there.
+    All skills (stdlib, local, project) write to ``.reyn/evals/<name>/eval.md``
+    — inside the default write zone.
 
-    For reyn/local/ and reyn/project/ skills the skill directory is a
-    CWD-relative path — write alongside skill.md.
-
-    Mirrors the logic from analyze_skill_resolver._derive_eval_output_path
-    without importing pathlib (not required — an absolute path always starts
-    with "/").
+    Canonical formula: ``.reyn/evals/<name>/eval.md``.
+    Mirrors ``skill_paths.eval_md_path_for``; import is not possible from a
+    safe-mode module. Consistency is enforced by ``test_eval_md_path_consistency``.
     """
-    if skill_dir_str.startswith("/"):
-        # Stdlib skill: absolute path -> redirect to workspace-local
-        return "reyn/local/" + target_skill + "/eval.md"
-    # Local/project skill: relative path -> write alongside skill.md
-    return skill_dir_str + "/eval.md"
+    # canonical: .reyn/evals/<name>/eval.md (in-zone, single location for all skill types)
+    return ".reyn/evals/" + target_skill + "/eval.md"

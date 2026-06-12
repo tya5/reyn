@@ -122,7 +122,7 @@ Pass an `eval_case_input` artifact:
   "data": {
     "case_name": "my_case",
     "case_input": "Build an article skill",
-    "spec_path": "reyn/local/my_app/eval.md",
+    "spec_path": ".reyn/evals/my_app/eval.md",
     "target_skill_path": "reyn/local/my_app/skill.md",
     "phase_criteria": [
       {

@@ -12,8 +12,8 @@ Generate the eval.md content, write it to the workspace, and report the result.
 ## Output path
 
 Use `skill_analysis.eval_output_path` directly — the OS preprocessor has already
-resolved the correct write destination (including the stdlib redirect to
-`reyn/local/<name>/eval.md`). Do NOT re-derive the path from `skill_dsl_path`.
+resolved the correct write destination (`.reyn/evals/<name>/eval.md` for all skill types).
+Do NOT re-derive the path from `skill_dsl_path`.
 
 Do NOT apply any path-derivation logic here. The preprocessor in `analyze_skill`
 called `resolve_skill_path` and stored the result; this phase is a pure formatter.

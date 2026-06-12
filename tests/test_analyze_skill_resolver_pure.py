@@ -83,9 +83,9 @@ def test_resolve_paths_from_op_translates_resolved_input_stdlib():
     assert result["skill_dsl_path"] == skill_dir + "/skill.md"
     assert result["phases_glob"] == skill_dir + "/phases/*.md"
     assert result["artifacts_glob"] == skill_dir + "/artifacts/*.yaml"
-    assert result["existing_eval_path"] == skill_dir + "/eval.md"
-    # Stdlib (absolute path) -> redirect eval_output_path to workspace-local
-    assert result["eval_output_path"] == "reyn/local/my_skill/eval.md"
+    assert result["existing_eval_path"] == ".reyn/evals/my_skill/eval.md"
+    # All skill types write/read eval.md at .reyn/evals/<name>/eval.md (in-zone)
+    assert result["eval_output_path"] == ".reyn/evals/my_skill/eval.md"
     # skill_root is parent of skill_dir (strips /<name> suffix)
     assert result["skill_root"] == "/absolute/path/to/stdlib/skills"
     # No error key in happy path
@@ -93,10 +93,10 @@ def test_resolve_paths_from_op_translates_resolved_input_stdlib():
 
 
 def test_resolve_paths_from_op_translates_resolved_input_local():
-    """Tier 2: resolved local skill (relative path) -> eval_output_path alongside skill.md.
+    """Tier 2: resolved local skill (relative path) -> eval paths at .reyn/evals/.
 
-    Guards that relative-path (= local/project) skills write eval.md in the skill
-    directory, not redirected to reyn/local/.
+    Guards that local skills also use the canonical .reyn/evals/<name>/eval.md
+    location (same as stdlib — all skill types unified, owner directive).
     """
     skill_dir = "reyn/local/my_local_skill"
     op_result = _resolved_op("my_local_skill", skill_dir)
@@ -109,9 +109,9 @@ def test_resolve_paths_from_op_translates_resolved_input_local():
     assert result["skill_dsl_path"] == skill_dir + "/skill.md"
     assert result["phases_glob"] == skill_dir + "/phases/*.md"
     assert result["artifacts_glob"] == skill_dir + "/artifacts/*.yaml"
-    assert result["existing_eval_path"] == skill_dir + "/eval.md"
-    # Local (relative path) -> write alongside skill.md
-    assert result["eval_output_path"] == skill_dir + "/eval.md"
+    # All skill types: eval.md is at .reyn/evals/<name>/eval.md
+    assert result["existing_eval_path"] == ".reyn/evals/my_local_skill/eval.md"
+    assert result["eval_output_path"] == ".reyn/evals/my_local_skill/eval.md"
     # skill_root strips /<name> suffix
     assert result["skill_root"] == "reyn/local"
 
