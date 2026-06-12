@@ -271,6 +271,30 @@ plan:
 | `summarize_older_threshold_tokens` | int \| null | `null` | Total token threshold above which older step_results are compacted. `null` derives the threshold from `ComputedBudgets` (= `step_results_ratio × main_pool`). |
 | `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out, mirrors `chat.compaction.use_chars4_estimate`). |
 
+## `phase` block
+
+Per-phase runtime settings.
+
+```yaml
+phase:
+  act_results_compaction:
+    recent_act_turns_raw: 5
+    control_ir_results_ratio: 0.50
+    summarize_older_threshold_tokens: null
+    use_chars4_estimate: false
+```
+
+### `phase.act_results_compaction` fields
+
+Controls how the act-loop's accumulated `control_ir_results` are compacted when they approach the context budget. Sibling to `plan.step_compaction` (planner step) and `chat.compaction` (conversation history).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `recent_act_turns_raw` | int | `5` | Keep the last N act-turn results verbatim; compact older ones. Higher than `plan.step_compaction.recent_step_results_raw` (= 3) because phase ops carry specific structured data (paths, line numbers, exit codes) the LLM needs for planning next ops. |
+| `control_ir_results_ratio` | float | `0.50` | Fraction of `main_pool` (= `T_max - T_SP`) allocated for the `control_ir_results` portion of the act-loop context. Sibling to `chat.compaction.component_weights["body"]`. |
+| `summarize_older_threshold_tokens` | int \| null | `null` | Total token threshold above which older results are compacted. `null` derives the threshold from `control_ir_results_ratio × main_pool` (via `ComputedBudgets`). |
+| `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation (latency opt-out). |
+
 ## `web` block
 
 SSL settings for `web_fetch` and the MCP package registry.

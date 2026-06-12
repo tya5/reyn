@@ -35,6 +35,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 | `--events` | Print the full event log after execution. |
 | `--strict` | Enforce required fields at every nesting depth (default: top-level only). |
 | `--allow-unsafe-python` | Enable unsafe-mode Python preprocessor steps (no AST sandbox). `--allow-untrusted-python` is a legacy alias for backwards compatibility. |
+| `--grant-file-write` | Grant `file.write` at the resolver layer, bounded by the sandbox write zone. Enables editing the working tree in a single `reyn run` invocation without a per-skill approval prompt. |
 
 ## Examples
 
