@@ -33,8 +33,7 @@ per-app 統合は追わない。
 
 Skill はこの違いを *ランク付けする* のでなく *示す*: Hermes はタスク後に手順文書（skill）を
 自動生成する（emergent、低摩擦）。Reyn の skill は explicit・typed・OS-validated で、OS が
-各遷移を検証する reviewable / versioned な phase graph。**skill は差別化の1機能であって
-headline ではない**。狙う領域が違うだけで、優劣ではない。
+各遷移を検証する reviewable / versioned な phase graph。**skill は差別化要素の1つ**。狙う領域が違うだけで、優劣ではない。
 
 ---
 
@@ -42,7 +41,7 @@ headline ではない**。狙う領域が違うだけで、優劣ではない。
 
 self-hosted agent loop の各機能について、OpenClaw / Hermes 等の general agent との差別化
 ポイント。実装状況の source of truth は [`feature-map.md`](../../../feature-map.md)。
-**skill はこの一覧の1機能**であって headline ではない。
+**skill はこの一覧にある機能の1つ**。
 
 - **Agent loop enforcement (P3/P4)** — 競合は free-running（モデルが各 step を駆動）。Reyn は
   OS が候補セットを提示し LLM はその enum 内から選ぶ。hallucinated な遷移 / ツールは side
