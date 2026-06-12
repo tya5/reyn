@@ -124,7 +124,7 @@ def _make_frame(skill, validation_ok: bool) -> ContextFrame:
                 "_resolved_paths": {
                     "target_skill_path": ".reyn/skill_improver_work/direct_llm/skill.md",
                     "target_skill_root": ".reyn/skill_improver_work/direct_llm",
-                    "eval_spec_path": "reyn/local/direct_llm/phases/eval.md",
+                    "eval_spec_path": ".reyn/evals/direct_llm/eval.md",
                     "original_skill_root": "reyn/local/direct_llm",
                 },
             },

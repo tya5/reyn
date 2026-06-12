@@ -200,3 +200,22 @@ async def test_file_read_default_zone_passes_silently(tmp_path: Path, monkeypatc
     monkeypatch.chdir(tmp_path)
     r = _resolver(tmp_path)
     await r.require_file_read(PermissionDecl(), str(tmp_path / "README.md"), "skill_x")
+
+
+# ── eval_builder zone regression guard ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_file_write_dot_reyn_evals_passes_bus_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 2: #1505 PR-B — eval_builder's .reyn/evals/<name>/eval.md write passes
+    with bus=None (non-interactive / eval pipeline), no prompt needed.
+
+    Guards the zone change: .reyn/ is the default write zone; .reyn/evals/<name>/eval.md
+    is in-zone and must never require a grant or interactive prompt.
+    """
+    monkeypatch.chdir(tmp_path)
+    r = _resolver(tmp_path)
+    eval_path = ".reyn/evals/my_skill/eval.md"
+
+    # Must not raise — in-zone, bus=None is fine for default-zone paths
+    await r.require_file_write(PermissionDecl(), eval_path, "eval_builder", bus=None)

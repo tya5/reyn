@@ -19,8 +19,8 @@ Invariants tested:
   - extract_skill_name accepts both eval_builder_request and user_message
     artifacts (top-level / wrapped / regex-fallback shapes)
   - user_message with unrecognisable text raises ValueError (hard reject)
-  - eval_output_path redirects stdlib skills to reyn/local/<name>/eval.md
-  - eval_output_path for reyn/local/ skills stays alongside skill.md
+  - eval_output_path resolves to .reyn/evals/<name>/eval.md for all skill types
+  - eval_output_path is in-zone (.reyn/) — no redirect or declaration needed
   - inject_resolved_paths mirrors _prep into _resolved for LLM use
   - eval_builder skill.md declares all 3 python steps as mode=safe
 
@@ -240,38 +240,32 @@ def test_compute_paths_user_message_unrecognised_raises(tmp_path, monkeypatch):
 # ── eval_output_path routing ──────────────────────────────────────────────────
 
 
-def test_eval_output_path_stdlib_skill_redirects_to_local(tmp_path, monkeypatch):
-    """Tier 2: stdlib skills get eval_output_path redirected to reyn/local/<name>/eval.md.
+def test_eval_output_path_stdlib_skill_in_zone(tmp_path, monkeypatch):
+    """Tier 2: stdlib skills get eval_output_path at .reyn/evals/<name>/eval.md.
 
-    Stdlib skills live under src/ which is outside the write zone. The resolver
-    must redirect the write destination to reyn/local/<name>/eval.md so write_eval
-    can write without hitting a [denied] error.
+    All skill types (stdlib, local, project) use the same in-zone location.
+    No redirect to reyn/local/ — the .reyn/ default zone covers the path.
     """
     monkeypatch.chdir(tmp_path)
     result = compute_paths(_eval_builder_request("direct_llm"))
 
-    assert result["eval_output_path"] == "reyn/local/direct_llm/eval.md", (
-        "stdlib skill eval_output_path must redirect to reyn/local/<name>/eval.md"
+    assert result["eval_output_path"] == ".reyn/evals/direct_llm/eval.md", (
+        "eval_output_path must be at .reyn/evals/<name>/eval.md for all skill types"
     )
-    # existing_eval_path still points into stdlib (for reading only)
-    assert "stdlib" in result["existing_eval_path"] or "src/" in result["existing_eval_path"]
+    assert result["existing_eval_path"] == ".reyn/evals/direct_llm/eval.md"
 
 
-def test_eval_output_path_local_skill_stays_alongside(tmp_path, monkeypatch):
-    """Tier 2: reyn/local/ skills get eval_output_path alongside their skill.md.
+def test_eval_output_path_local_skill_in_zone(tmp_path, monkeypatch):
+    """Tier 2: local skills also get eval_output_path at .reyn/evals/<name>/eval.md.
 
-    For skills already under reyn/local/, the write destination is skill_dir/eval.md —
-    no redirect needed.
+    All skill types unified to the in-zone location — no path depends on skill_dir.
     """
     monkeypatch.chdir(tmp_path)
     _make_local_skill(tmp_path, "my_local_skill")
     result = compute_paths(_eval_builder_request("my_local_skill"))
 
-    skill_dir, _ = resolve_skill_path("my_local_skill")
-    expected = str(skill_dir).rstrip("/") + "/eval.md"
-
-    assert result["eval_output_path"] == expected
-    assert "reyn/local/my_local_skill" in result["eval_output_path"]
+    assert result["eval_output_path"] == ".reyn/evals/my_local_skill/eval.md"
+    assert result["existing_eval_path"] == ".reyn/evals/my_local_skill/eval.md"
 
 
 # ── inject_resolved_paths (pure-mode) ────────────────────────────────────────

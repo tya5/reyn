@@ -84,8 +84,8 @@ injected into `data._resolved`:
 - `data._resolved.skill_dir`      — the skill's directory (no trailing slash)
 - `data._resolved.skill_root`       — the skill-tree root for this skill
 - `data._resolved.artifacts_glob` — glob pattern for artifact yaml files
-- `data._resolved.existing_eval_path` — where an existing eval.md would be
-- `data._resolved.eval_output_path`   — canonical write destination for eval.md
+- `data._resolved.existing_eval_path` — where an existing eval.md would be (`.reyn/evals/<name>/eval.md`)
+- `data._resolved.eval_output_path`   — canonical write destination for eval.md (`.reyn/evals/<name>/eval.md`)
 
 Proceed immediately to Step 2 using these values.
 

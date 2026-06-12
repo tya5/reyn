@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from .models import Skill
 
 
-_DEFAULT_WRITE_ZONES = (".reyn", "reyn")
+_DEFAULT_WRITE_ZONES = (".reyn",)
 
 # #571 collapse arc Phase 2 / realignment: canonical paths whose write
 # must NOT be silently default-zone-allowed because a direct write would
@@ -123,7 +123,7 @@ def _is_canonical_protected_write(path_str: str, base: "Path | None" = None) -> 
 
 
 def _in_default_write_zone(path_str: str, base: "Path | None" = None) -> bool:
-    """Return True if path falls within a default-granted write zone (.reyn/ or reyn/).
+    """Return True if path falls within a default-granted write zone (.reyn/).
 
     Exception: canonical protected paths (see
     ``_CANONICAL_PROTECTED_WRITE_PATHS`` — ``.reyn/index/sources.yaml``
@@ -1066,7 +1066,7 @@ class PermissionResolver:
     ) -> None:
         """
         Raise PermissionError if write/edit/delete access to path is not allowed.
-        Default zone (.reyn/, reyn/) is always granted.
+        Default zone (.reyn/) is always granted.
         Outside the default zone: ask via ``bus`` when provided (JIT prompt,
         mirrors ``require_http_get``); deny when bus=None (non-interactive).
 

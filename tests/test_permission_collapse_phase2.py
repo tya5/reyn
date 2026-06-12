@@ -58,7 +58,6 @@ def test_other_reyn_paths_still_in_default_zone(tmp_path, monkeypatch):
         # see test_require_file_write_rejects_approvals_yaml.
         ".reyn/events.jsonl",
         ".reyn/scratch/anything.txt",
-        "reyn/local/whatever.py",
         # realignment: mcp.yaml + cron.yaml REMOVED from the carve-out
         # (protect-at-use) — they are now ordinary default-zone writes.
         ".reyn/mcp.yaml",
@@ -268,7 +267,7 @@ async def test_mcp_cron_now_allowed_after_carveout_removal(tmp_path, monkeypatch
 
     safe_file._set_permission_context(
         read_paths=[str(tmp_path)],
-        write_paths=[str(tmp_path / ".reyn"), str(tmp_path / "reyn")],
+        write_paths=[str(tmp_path / ".reyn")],
     )
 
     for rel in (".reyn/mcp.yaml", ".reyn/cron.yaml"):

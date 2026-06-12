@@ -74,18 +74,21 @@ def is_stdlib_skill(skill_dir: Path) -> bool:
 def eval_md_path_for(name: str) -> Path:
     """Return the canonical eval.md path for a skill name.
 
-    Uses resolve_skill_path to find the skill directory, then appends
-    ``eval.md``.  Both ``prepare`` (reader) and ``eval_builder`` (writer)
-    MUST derive the eval.md path through this helper so structural path
-    mismatch (B4-M1) is impossible by construction.
+    All skills (stdlib, local, project) write/read eval.md at
+    ``.reyn/evals/<name>/eval.md`` — inside the default write zone.
 
-    The returned path is relative to CWD (same convention as
-    resolve_skill_path).  For stdlib skills the skill_dir lives under
-    ``src/reyn/stdlib/skills/<name>/`` which is outside the write zone;
-    callers that need to *write* eval.md for a stdlib skill should redirect
-    to ``reyn/local/<name>/eval.md`` — see eval_builder/phases/write_eval.md.
+    Validates that the skill exists (SkillNotFoundError if not). The path
+    itself is independent of the skill_dir.
+
+    Canonical formula: ``.reyn/evals/<name>/eval.md``.
+
+    This is the authoritative single source. Safe-mode preprocessors
+    (``analyze_skill_resolver_pure._derive_eval_output_path`` and
+    ``copy_to_work_resolver_pure``) mirror this formula independently due to
+    the safe-mode no-reyn-import restriction; consistency is enforced by
+    ``test_eval_md_path_consistency``.
 
     Raises SkillNotFoundError if the skill cannot be found.
     """
-    skill_dir, _ = resolve_skill_path(name)
-    return skill_dir / "eval.md"
+    _, _ = resolve_skill_path(name)  # validate skill exists
+    return Path(".reyn") / "evals" / name / "eval.md"

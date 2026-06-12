@@ -2,9 +2,9 @@
 
 Tests introduced by Wave 1 (B6-S1-H1 + B4-M1 fix):
 
-1. ``eval_md_path_for`` — contract: returns <skill_dir>/eval.md derived via
-   ``resolve_skill_path``; both prepare (reader) and eval_builder (writer)
-   MUST use this helper so path mismatch is structurally impossible.
+1. ``eval_md_path_for`` — contract: returns .reyn/evals/<name>/eval.md for any
+   skill (local/project/stdlib); validates existence via ``resolve_skill_path``
+   but path is independent of skill_dir.
 
 2. ``compute_paths`` resolver contract — the copy_to_work preprocessor must
    derive all paths from ``target_skill`` (a short name) via ``resolve_skill_path``,
@@ -123,44 +123,33 @@ def _make_local_skill(tmp_path: Path, name: str) -> Path:
 # ── eval_md_path_for invariants ────────────────────────────────────────────────
 
 
-def test_eval_md_path_for_derives_from_resolve_skill_path(tmp_path, monkeypatch):
-    """Tier 2: eval_md_path_for returns skill_dir/eval.md, same root as resolve_skill_path.
+def test_eval_md_path_for_local_skill(tmp_path, monkeypatch):
+    """Tier 2: eval_md_path_for returns .reyn/evals/<name>/eval.md for a local skill.
 
-    Guards B4-M1: the eval.md path used by prepare (reader) and eval_builder
-    (writer) must be structurally identical — both derived by the same helper.
+    All skills (local, project, stdlib) use .reyn/evals/<name>/eval.md — the
+    canonical in-zone location. Validates skill existence via resolve_skill_path
+    but path is independent of skill_dir.
     """
     monkeypatch.chdir(tmp_path)
-    skill_dir = _make_local_skill(tmp_path, "my_app")
+    _make_local_skill(tmp_path, "my_app")
 
-    resolved_dir, _ = resolve_skill_path("my_app")
     eval_path = eval_md_path_for("my_app")
 
-    assert eval_path == resolved_dir / "eval.md", (
-        "eval_md_path_for must derive path from resolve_skill_path — mismatch is B4-M1"
-    )
-    assert str(eval_path).endswith("/my_app/eval.md"), (
-        "eval.md must be directly under the skill directory"
+    assert eval_path == Path(".reyn") / "evals" / "my_app" / "eval.md", (
+        "eval_md_path_for must return .reyn/evals/<name>/eval.md"
     )
 
 
 def test_eval_md_path_for_stdlib_skill(tmp_path, monkeypatch):
-    """Tier 2: eval_md_path_for resolves stdlib skills to the stdlib path.
+    """Tier 2: eval_md_path_for returns .reyn/evals/<name>/eval.md for a stdlib skill.
 
-    Stdlib skills live under src/reyn/stdlib/skills/<name>/.  eval_md_path_for
-    must return that path (writes are forbidden there by the permission system —
-    callers that need to *write* must redirect to reyn/local/<name>/eval.md).
+    Stdlib skills use the same in-zone location as local skills — no redirect
+    to reyn/local/ needed (eval.md is not written to the stdlib tree).
     """
-    # stdlib path is absolute (no chdir needed for the stdlib itself)
     monkeypatch.chdir(tmp_path)
-    # skill_improver is a real stdlib skill — use it as the test subject
-    skill_dir, _ = resolve_skill_path("skill_improver")
     eval_path = eval_md_path_for("skill_improver")
 
-    assert eval_path == skill_dir / "eval.md"
-    # The stdlib path must be inside the package, not in reyn/local
-    assert "stdlib" in str(eval_path), (
-        "stdlib skill eval.md path must resolve inside the stdlib tree"
-    )
+    assert eval_path == Path(".reyn") / "evals" / "skill_improver" / "eval.md"
 
 
 def test_eval_md_path_for_missing_skill_raises(tmp_path, monkeypatch):
@@ -217,7 +206,7 @@ def test_compute_paths_uses_resolve_skill_path(tmp_path, monkeypatch):
     )
     assert result["target_skill_root"] == expected_root
     assert result["target_skill_path"] == expected_root + "/skill.md"
-    assert result["eval_spec_path"] == expected_root + "/eval.md"
+    assert result["eval_spec_path"] == ".reyn/evals/direct_llm/eval.md"
     assert result["work_dir"] == ".reyn/skill_improver_work/direct_llm"
 
 
@@ -292,3 +281,47 @@ def test_compute_paths_no_path_in_target_skill_field(tmp_path, monkeypatch):
     assert result.get("target_skill_root") is None
     assert result.get("work_dir") is None
     assert "skill not found" in (result.get("error") or "").lower()
+
+
+# ── consistency enforcement ─────────────────────────────────────────────────
+
+
+def test_eval_md_path_consistency(tmp_path, monkeypatch):
+    """Tier 2: eval_md_path_for, _derive_eval_output_path, and copy_to_work_resolver
+    all return the same .reyn/evals/<name>/eval.md formula for the same skill name.
+
+    Drift-prevention gate: safe-mode preprocessors cannot import eval_md_path_for
+    (no reyn imports). They mirror the formula independently. This test enforces
+    that all three agree — a single formula change without updating the others fails CI.
+    """
+    from reyn.stdlib.skills.eval_builder.analyze_skill_resolver_pure import (
+        _derive_eval_output_path,
+    )
+    from reyn.stdlib.skills.skill_improver.copy_to_work_resolver_pure import (
+        resolve_paths_from_op as ctw_resolve,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    _make_local_skill(tmp_path, "my_skill")
+    skill_dir, _ = resolve_skill_path("my_skill")
+
+    # canonical source of truth
+    canonical = str(eval_md_path_for("my_skill"))
+
+    # eval_builder preprocessor (write path, any skill_dir_str)
+    assert _derive_eval_output_path(str(skill_dir), "my_skill") == canonical, (
+        "_derive_eval_output_path must mirror eval_md_path_for formula"
+    )
+
+    # copy_to_work preprocessor (read/spec path)
+    ctw_resolved = {
+        "resolved": True,
+        "name": "my_skill",
+        "skill_dir": str(skill_dir),
+        "error": None,
+    }
+    ctw_artifact = {"type": "improvement_session", "data": {"_resolved": ctw_resolved}}
+    ctw_result = ctw_resolve(ctw_artifact)
+    assert ctw_result["eval_spec_path"] == canonical, (
+        "copy_to_work_resolver eval_spec_path must mirror eval_md_path_for formula"
+    )
