@@ -13,7 +13,7 @@ Every phase, regardless of skill, expects the LLM to return a single JSON object
 ```json
 {
   "control": {
-    "type": "transition | finish | abort",
+    "type": "transition | finish | abort | rollback",
     "decision": "continue | finish | abort",
     "next_phase": "<phase_name> or null",
     "confidence": 0.0,
@@ -23,7 +23,7 @@ Every phase, regardless of skill, expects the LLM to return a single JSON object
     "type": "<schema_name>",
     "data": { ... }
   },
-  "control_ir": []
+  "ops": []
 }
 ```
 
@@ -36,6 +36,7 @@ The shape of the transition the LLM is requesting.
 - `transition` — go to another phase.
 - `finish` — terminate the workflow cleanly. The artifact must match the skill's `final_output_schema`.
 - `abort` — unrecoverable error. The artifact may be empty.
+- `rollback` — send the immediately preceding phase back for revision. The OS determines the rollback target automatically. `next_phase` must be `null`. Set `decision` to `continue` by convention; the OS does not enforce a specific `decision` value for rollback. The artifact may be empty; put the rejection reason in `reason.summary`.
 
 ### `decision`
 
@@ -65,7 +66,7 @@ One-sentence rationale. Stored in the event log.
 
 In `--strict` mode, required fields are enforced at every nesting level. In default lenient mode, only top-level required fields are enforced.
 
-## `control_ir` block
+## `ops` block
 
 A list of side-effect ops. Each op is dispatched in order. See [control-ir.md](control-ir.md).
 
@@ -76,6 +77,7 @@ These are checked before dispatch. Violations are rejected.
 - `type=finish` ⇔ `decision=finish` ⇔ `next_phase=null`.
 - `type=transition` ⇔ `decision=continue` ⇔ `next_phase` is a non-null, allowed phase.
 - `type=abort` ⇔ `decision=abort` ⇔ `next_phase=null`.
+- `type=rollback` → `next_phase=null` (enforced). `decision=continue` is the recommended convention but is not checked by the OS.
 - `artifact.type` matches the schema implied by the chosen target.
 
 ## Why this contract is rigid
