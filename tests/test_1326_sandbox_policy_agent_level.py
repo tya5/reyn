@@ -90,7 +90,7 @@ class _RecordingExecBackend:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None) -> SandboxResult:
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None) -> SandboxResult:
         self.policy = policy
         return SandboxResult(returncode=0, stdout=b"ok", stderr=b"")
 

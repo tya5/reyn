@@ -58,6 +58,7 @@ def build_router_op_context(
     media_store: Any = None,  # #383
     compact_now: Any = None,  # #272/#1128
     run_id: str | None = None,  # chat router is outside run scope (#FP-0021)
+    cancel_event: Any = None,  # #1470: asyncio.Event for mid-subprocess cancel
 ) -> Any:
     """Build the chat-router OpContext (the single source for both hosts).
 
@@ -130,4 +131,5 @@ def build_router_op_context(
             sandbox_policy,
             write_paths=[str(workspace.base_dir)],
         ),
+        cancel_event=cancel_event,
     )

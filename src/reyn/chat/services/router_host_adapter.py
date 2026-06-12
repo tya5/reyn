@@ -8,6 +8,7 @@ it via `self._router_host`.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -357,6 +358,9 @@ class RouterHostAdapter:
         self._media_followup_budget = media_followup_budget
         # #272/#1128 compact op: voluntary-compaction callable (or None).
         self._compact_now = compact_now
+        # #1470: per-turn cancel event set by RouterLoopDriver._set_cancel_event.
+        # None until RouterLoopDriver registers itself at construction time.
+        self._cancel_event: asyncio.Event | None = None
         # #272/#1128 context-size signal: live budget provider (or None).
         self._context_window_status = context_window_status
 
@@ -1532,7 +1536,15 @@ class RouterHostAdapter:
             multimodal_config=self._multimodal_config,
             media_store=self._media_store,
             compact_now=self._compact_now,
+            cancel_event=self._cancel_event,
         )
+
+    def _set_cancel_event(self, event: asyncio.Event) -> None:
+        """#1470: called by RouterLoopDriver at construction to register the
+        per-turn cancel event. make_router_op_context threads it into OpContext
+        so sandboxed_exec backends can observe cancel_inflight() mid-subprocess.
+        """
+        self._cancel_event = event
 
     def make_intervention_bus(self) -> "Any | None":
         """Return the current intervention bus for safety-limit checkpoints.

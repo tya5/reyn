@@ -7,6 +7,7 @@ execution under the declared policy.
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -19,12 +20,14 @@ class SandboxResult:
 
     `truncated` indicates that stdout/stderr were capped by the backend.
     `returncode` is -1 if the process was killed (timeout / signal).
+    `cancelled` is True when the run was terminated by cancel_inflight() (#1470).
     """
 
     returncode: int
     stdout: bytes
     stderr: bytes
     truncated: bool = False
+    cancelled: bool = False
 
 
 @runtime_checkable
@@ -49,6 +52,7 @@ class SandboxBackend(Protocol):
         *,
         stdin: bytes | None = None,
         cwd: str | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> SandboxResult:
         """Execute argv under the given policy and return the result.
 
@@ -60,5 +64,9 @@ class SandboxBackend(Protocol):
         lives at an in-container path) may ignore this host-side ``cwd`` and use
         its own baked working directory — same asymmetry as policy enforcement,
         which such a backend also scopes to the fidelity boundary.
+
+        ``cancel_event``: when provided and set, the backend kills the running
+        subprocess (SIGTERM → SIGKILL grace) and returns a SandboxResult with
+        ``cancelled=True``. None = no cancel-awareness (#1470).
         """
         ...

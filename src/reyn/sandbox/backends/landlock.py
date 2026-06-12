@@ -19,6 +19,7 @@ import asyncio
 import logging
 import os
 import platform
+import signal
 import subprocess
 
 from ..backend import SandboxResult
@@ -121,6 +122,7 @@ class LandlockBackend:
         *,
         stdin: bytes | None = None,
         cwd: str | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> SandboxResult:
         """Execute argv under Landlock isolation and return the result.
 
@@ -237,9 +239,61 @@ class LandlockBackend:
 
         loop = asyncio.get_running_loop()
 
-        def _run_blocking() -> SandboxResult:
-            try:
-                proc = subprocess.Popen(
+        if cancel_event is None:
+            # No cancel support: original blocking path (byte-identical).
+            def _run_blocking() -> SandboxResult:
+                try:
+                    proc = subprocess.Popen(
+                        argv,
+                        stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=env,
+                        cwd=cwd,
+                        start_new_session=True,
+                        preexec_fn=lambda: _build_preexec(ruleset),
+                    )
+                    try:
+                        stdout_b, stderr_b = proc.communicate(
+                            input=stdin,
+                            timeout=policy.timeout_seconds,
+                        )
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        stdout_b, stderr_b = proc.communicate()
+                        return SandboxResult(
+                            returncode=-1,
+                            stdout=stdout_b or b"",
+                            stderr=(stderr_b or b"")
+                            + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
+                            truncated=False,
+                        )
+                    return SandboxResult(
+                        returncode=proc.returncode,
+                        stdout=stdout_b or b"",
+                        stderr=stderr_b or b"",
+                        truncated=False,
+                    )
+                except OSError as exc:
+                    return SandboxResult(
+                        returncode=-1,
+                        stdout=b"",
+                        stderr=str(exc).encode(),
+                        truncated=False,
+                    )
+
+            return await loop.run_in_executor(None, _run_blocking)
+
+        # #1470: cancel-aware path — Popen in executor + asyncio.wait race.
+        # ⚠ Linux-only, untested on macOS dev env; logic mirrors SeatbeltBackend
+        # (verified on macOS). Needs Linux CI / contributor verification before this
+        # path can be considered confirmed. Worst-case: if cancel does not work,
+        # behaviour degrades to pre-#1470 (subprocess runs to completion) — no
+        # regression beyond the cooperative-cancel latency that already existed.
+        try:
+            proc = await loop.run_in_executor(
+                None,
+                lambda: subprocess.Popen(
                     argv,
                     stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
@@ -248,34 +302,81 @@ class LandlockBackend:
                     cwd=cwd,
                     start_new_session=True,
                     preexec_fn=lambda: _build_preexec(ruleset),
-                )
-                try:
-                    stdout_b, stderr_b = proc.communicate(
-                        input=stdin,
-                        timeout=policy.timeout_seconds,
-                    )
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    stdout_b, stderr_b = proc.communicate()
-                    return SandboxResult(
-                        returncode=-1,
-                        stdout=stdout_b or b"",
-                        stderr=(stderr_b or b"")
-                        + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
-                        truncated=False,
-                    )
-                return SandboxResult(
-                    returncode=proc.returncode,
-                    stdout=stdout_b or b"",
-                    stderr=stderr_b or b"",
-                    truncated=False,
-                )
-            except OSError as exc:
-                return SandboxResult(
-                    returncode=-1,
-                    stdout=b"",
-                    stderr=str(exc).encode(),
-                    truncated=False,
-                )
+                ),
+            )
+        except OSError as exc:
+            return SandboxResult(returncode=-1, stdout=b"", stderr=str(exc).encode())
 
-        return await loop.run_in_executor(None, _run_blocking)
+        if stdin is not None:
+            try:
+                proc.stdin.write(stdin)
+                proc.stdin.close()
+            except OSError:
+                pass
+
+        comm_future: asyncio.Future = loop.run_in_executor(None, proc.communicate)
+        cancel_task = asyncio.create_task(cancel_event.wait())
+
+        done, _ = await asyncio.wait(
+            {comm_future, cancel_task},
+            timeout=policy.timeout_seconds,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if cancel_task in done:
+            await _kill_proc_group(proc, loop)
+            cancel_task.cancel()
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    asyncio.shield(comm_future), timeout=3.0,
+                )
+            except (asyncio.TimeoutError, Exception):
+                stdout_b, stderr_b = b"", b""
+            return SandboxResult(
+                returncode=-int(signal.SIGTERM),
+                stdout=stdout_b or b"",
+                stderr=stderr_b or b"",
+                cancelled=True,
+            )
+        elif not done:
+            cancel_task.cancel()
+            await _kill_proc_group(proc, loop)
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    asyncio.shield(comm_future), timeout=3.0,
+                )
+            except (asyncio.TimeoutError, Exception):
+                stdout_b, stderr_b = b"", b""
+            return SandboxResult(
+                returncode=-1,
+                stdout=stdout_b or b"",
+                stderr=(stderr_b or b"")
+                + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
+            )
+        else:
+            cancel_task.cancel()
+            stdout_b, stderr_b = await comm_future
+            return SandboxResult(
+                returncode=proc.returncode,
+                stdout=stdout_b or b"",
+                stderr=stderr_b or b"",
+            )
+
+
+async def _kill_proc_group(
+    proc: subprocess.Popen, loop: asyncio.AbstractEventLoop, grace_seconds: float = 2.0
+) -> None:
+    """SIGTERM the process group, then SIGKILL after grace_seconds if still alive."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        return
+    try:
+        await asyncio.wait_for(
+            loop.run_in_executor(None, proc.wait), timeout=grace_seconds,
+        )
+    except (asyncio.TimeoutError, Exception):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass

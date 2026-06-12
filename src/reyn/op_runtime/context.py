@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import Awaitable, Callable
 
     from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
@@ -163,6 +164,12 @@ class OpContext:
     # (= not inside a plan step). Shape: ``{"n_done": int, "n_total": int,
     # "step_id": str}``.
     plan_step: dict | None = None
+
+    # #1470: per-turn asyncio.Event fired by cancel_inflight(). When set,
+    # sandboxed_exec backends kill the running subprocess instead of waiting
+    # for it to complete. None = no cancel-awareness (OS-internal ops,
+    # non-interactive callers, pre-#1470 tests).
+    cancel_event: "asyncio.Event | None" = None
 
 
 def sandbox_policy_from_ctx(ctx: "OpContext") -> "SandboxPolicy | None":

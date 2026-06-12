@@ -24,6 +24,7 @@ import logging
 import os
 import platform
 import shutil
+import signal
 import subprocess
 import tempfile
 from pathlib import Path
@@ -160,12 +161,16 @@ class SeatbeltBackend:
         *,
         stdin: bytes | None = None,
         cwd: str | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> SandboxResult:
         """Execute *argv* under the SBPL policy derived from *policy*.
 
         ``cwd`` (= the run's ``workspace.base_dir``) is the working directory the
         sandboxed child inherits, so repo-relative ``git`` / ``pytest`` resolve
         correctly. The SBPL profile still bounds what that child may read/write.
+
+        ``cancel_event``: when provided and set, kills the sandbox-exec wrapper
+        process group (SIGTERM → SIGKILL) and returns SandboxResult(cancelled=True).
         """
         profile_text = _build_sbpl_profile(policy)
 
@@ -179,58 +184,149 @@ class SeatbeltBackend:
 
         loop = asyncio.get_running_loop()
 
-        def _run_blocking() -> SandboxResult:
-            profile_path: str | None = None
-            try:
-                # Write SBPL to a named temp file (suffix required by sandbox-exec).
-                with tempfile.NamedTemporaryFile(
-                    suffix=".sb",
-                    mode="w",
-                    delete=False,
-                    encoding="utf-8",
-                ) as fh:
-                    fh.write(profile_text)
-                    profile_path = fh.name
+        # Write SBPL profile to a temp file (shared between blocking and cancel paths).
+        profile_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".sb", mode="w", delete=False, encoding="utf-8",
+            ) as fh:
+                fh.write(profile_text)
+                profile_path = fh.name
+        except OSError as exc:
+            return SandboxResult(returncode=-1, stdout=b"", stderr=str(exc).encode())
 
-                full_argv = ["sandbox-exec", "-f", profile_path, *argv]
-                try:
-                    completed = subprocess.run(
-                        full_argv,
-                        input=stdin,
-                        capture_output=True,
-                        env=env,
-                        cwd=cwd,
-                        timeout=policy.timeout_seconds,
-                        check=False,
-                    )
-                    return SandboxResult(
-                        returncode=completed.returncode,
-                        stdout=completed.stdout or b"",
-                        stderr=completed.stderr or b"",
-                        truncated=False,
-                    )
-                except subprocess.TimeoutExpired as exc:
-                    stdout_b = exc.stdout if isinstance(exc.stdout, bytes) else b""
-                    stderr_b = exc.stderr if isinstance(exc.stderr, bytes) else b""
-                    return SandboxResult(
-                        returncode=-1,
-                        stdout=stdout_b,
-                        stderr=stderr_b
-                        + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
-                        truncated=False,
-                    )
-                except OSError as exc:
-                    return SandboxResult(
-                        returncode=-1,
-                        stdout=b"",
-                        stderr=str(exc).encode(),
-                        truncated=False,
-                    )
-            finally:
-                if profile_path is not None:
+        full_argv = ["sandbox-exec", "-f", profile_path, *argv]
+
+        try:
+            if cancel_event is None:
+                # No cancel support: original blocking path (byte-identical).
+                def _run_blocking() -> SandboxResult:
                     try:
-                        os.unlink(profile_path)
-                    except OSError:
-                        pass
+                        completed = subprocess.run(
+                            full_argv,
+                            input=stdin,
+                            capture_output=True,
+                            env=env,
+                            cwd=cwd,
+                            timeout=policy.timeout_seconds,
+                            check=False,
+                        )
+                        return SandboxResult(
+                            returncode=completed.returncode,
+                            stdout=completed.stdout or b"",
+                            stderr=completed.stderr or b"",
+                            truncated=False,
+                        )
+                    except subprocess.TimeoutExpired as exc:
+                        stdout_b = exc.stdout if isinstance(exc.stdout, bytes) else b""
+                        stderr_b = exc.stderr if isinstance(exc.stderr, bytes) else b""
+                        return SandboxResult(
+                            returncode=-1,
+                            stdout=stdout_b,
+                            stderr=stderr_b
+                            + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
+                            truncated=False,
+                        )
+                    except OSError as exc:
+                        return SandboxResult(
+                            returncode=-1,
+                            stdout=b"",
+                            stderr=str(exc).encode(),
+                            truncated=False,
+                        )
 
-        return await loop.run_in_executor(None, _run_blocking)
+                return await loop.run_in_executor(None, _run_blocking)
+
+            # #1470: cancel-aware path — Popen with process group + asyncio.wait race.
+            try:
+                proc = subprocess.Popen(
+                    full_argv,
+                    stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=env,
+                    cwd=cwd,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                return SandboxResult(returncode=-1, stdout=b"", stderr=str(exc).encode())
+
+            if stdin is not None:
+                try:
+                    proc.stdin.write(stdin)
+                    proc.stdin.close()
+                except OSError:
+                    pass
+
+            comm_future: asyncio.Future = loop.run_in_executor(None, proc.communicate)
+            cancel_task = asyncio.create_task(cancel_event.wait())
+
+            done, _ = await asyncio.wait(
+                {comm_future, cancel_task},
+                timeout=policy.timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if cancel_task in done:
+                await _kill_proc_group(proc, loop)
+                cancel_task.cancel()
+                try:
+                    stdout_b, stderr_b = await asyncio.wait_for(
+                        asyncio.shield(comm_future), timeout=3.0,
+                    )
+                except (asyncio.TimeoutError, Exception):
+                    stdout_b, stderr_b = b"", b""
+                return SandboxResult(
+                    returncode=-int(signal.SIGTERM),
+                    stdout=stdout_b or b"",
+                    stderr=stderr_b or b"",
+                    cancelled=True,
+                )
+            elif not done:
+                cancel_task.cancel()
+                await _kill_proc_group(proc, loop)
+                try:
+                    stdout_b, stderr_b = await asyncio.wait_for(
+                        asyncio.shield(comm_future), timeout=3.0,
+                    )
+                except (asyncio.TimeoutError, Exception):
+                    stdout_b, stderr_b = b"", b""
+                return SandboxResult(
+                    returncode=-1,
+                    stdout=stdout_b or b"",
+                    stderr=(stderr_b or b"")
+                    + f"\nCommand timed out after {policy.timeout_seconds}s".encode(),
+                )
+            else:
+                cancel_task.cancel()
+                stdout_b, stderr_b = await comm_future
+                return SandboxResult(
+                    returncode=proc.returncode,
+                    stdout=stdout_b or b"",
+                    stderr=stderr_b or b"",
+                )
+        finally:
+            if profile_path is not None:
+                try:
+                    os.unlink(profile_path)
+                except OSError:
+                    pass
+
+
+async def _kill_proc_group(
+    proc: subprocess.Popen, loop: asyncio.AbstractEventLoop, grace_seconds: float = 2.0
+) -> None:
+    """SIGTERM the process group, then SIGKILL after grace_seconds if still alive."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        return
+    try:
+        await asyncio.wait_for(
+            loop.run_in_executor(None, proc.wait), timeout=grace_seconds,
+        )
+    except (asyncio.TimeoutError, Exception):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass

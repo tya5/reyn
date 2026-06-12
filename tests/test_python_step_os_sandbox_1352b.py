@@ -36,7 +36,7 @@ class _RecordingBackend:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None) -> SandboxResult:
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None) -> SandboxResult:
         self.calls.append({"argv": list(argv), "policy": policy, "stdin": stdin, "cwd": cwd})
         payload = {"ok": True, "result": {"echoed": "ok"}}
         return SandboxResult(
