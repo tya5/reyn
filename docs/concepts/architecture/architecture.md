@@ -226,7 +226,7 @@ layers, each owning one depth-level of skill execution:
 
 | Layer | Module | Responsibility |
 |---|---|---|
-| 1 (top) | `run_orchestrator.py` *(planned, Component D)* | Phase sequence + transitions + rollback + lifecycle |
+| 1 (top) | `run_orchestrator.py` | Phase sequence + transitions + rollback + lifecycle |
 | 2 | `phase_executor.py` | Act/decide loop for one phase + retry |
 | 3 | `llm_call_recorder.py` | One LLM call + WAL recording + budget enforcement |
 | state | `run_state.py` | Mutable run-scope state threaded through layers 1-3 |
