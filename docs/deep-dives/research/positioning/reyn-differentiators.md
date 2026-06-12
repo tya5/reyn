@@ -57,7 +57,7 @@ self-hosted agent loop の各機能について、OpenClaw / Hermes 等の gener
   全 P6 event に伝播（SOC2 / ISO 27001 / METI 監査証跡）、`reyn auth` の OAuth device grant
   (RFC 8628)。
 - **Safety / force-close** — limit 到達時、free-running な競合は hard-stop か runaway。Reyn は
-  graceful な limit-deny → LLM の最終 tool-less wrap-up turn → operator 判断（#1496）。「何を
+  graceful な limit-deny → LLM の最終 tool-less wrap-up turn → operator 判断。「何を
   達成したか」を報告して止まる。
 - **Permission / execution safety** — 競合は最小限の gating でツール実行。Reyn は per-capability
   宣言 + 4-layer JIT 承認 + `.reyn/` write zone + OS-level sandbox backend（Seatbelt / Landlock
@@ -68,8 +68,8 @@ self-hosted agent loop の各機能について、OpenClaw / Hermes 等の gener
   意図的に scope。競合の広く深い per-app 統合（彼らの強み）は追わない。
 - **Multi-agent delegation** — topology-gated（network / team / pipeline）+ hop-depth cap +
   `chain_id` 監査伝播。free-form でなく bounded かつ traceable。
-- **Weak-model viability** — 構造的制約（P4/P5）が capability gap を吸収し、低コストモデルが
-  prompt-level の workaround なしに reliable に動く。
+- **Weak-model viability** — 構造的制約（P4/P5）が capability gap を *部分的に* 吸収し、
+  モデル能力への依存度を下げる（補正後も弱モデルの限界は残る）。
 - **Skill architecture（差別化の1機能）** — Hermes 等の emergent auto-skill に対し、Reyn の skill
   は explicit / typed / validated。OS が各遷移を検証する reviewable / versioned な phase graph。
   predictable over emergent。**ある事ではなく、検証される事**が差別化。
