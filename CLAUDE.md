@@ -52,14 +52,14 @@ Single format for all phases:
 ```json
 {
   "control": {
-    "type": "transition|finish|abort",
+    "type": "transition|finish|abort|rollback",
     "decision": "continue|finish|abort",
     "next_phase": "<name> or null",
     "confidence": 0.0,
     "reason": {"summary": "..."}
   },
   "artifact": {"type": "<schema_name>", "data": {}},
-  "control_ir": []
+  "ops": []
 }
 ```
 
@@ -70,6 +70,7 @@ Single format for all phases:
   - `type=finish` → `decision=finish`, `next_phase=null`
   - `type=transition` → `next_phase` non-null
   - `type=abort` → `decision=abort`, `next_phase=null`
+  - `type=rollback` → `decision=continue`, `next_phase=null`
 
 ## Validation (MANDATORY)
 
