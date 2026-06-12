@@ -6,6 +6,13 @@ audience: [human, agent]
 
 # Architecture overview
 
+Reyn is an agent OS. Its defining bet: structural guarantees at the OS
+layer — constrained transitions (P4), workspace-only data flow (P5),
+append-only events (P6), OS-agnostic Skills (P7) — produce more
+trustworthy agents than connectivity breadth or flexible orchestration
+do. MCP, A2A, and Skills are capabilities Reyn provides; the OS
+contract is what makes them auditable and reproducible.
+
 ```
 User → Agent → Skill → OS → Phase → Workspace
                   ↘ Event (record everything)
@@ -22,6 +29,8 @@ In practice the "Agent" today is the CLI plus chat router — both are thin and 
 ### Skill
 
 A directory of markdown + YAML files. Defines the phase graph and the final output schema. Does not contain executable code (except optional Python preprocessor steps, which are sandboxed).
+
+Skill is **one capability group** in the runtime stack. The OS runs equally well with no skills, stdlib skills, or custom skills. The full capability inventory (Skills, RAG, code execution, MCP, A2A, safety, memory, permissions, …) is in [`docs/feature-map.md`](../../feature-map.md).
 
 ### Phase
 
@@ -212,12 +221,25 @@ This is what [P3 (OS controls execution)](../architecture/principles.md#p3-os-co
 makes concrete in the loop framing: the OS owns the loop structure; the LLM
 makes decisions inside it.
 
-For readers familiar with other agent frameworks — LangGraph, AutoGen, Semantic
-Kernel — this mapping provides a direct correspondence. Where those systems
-expose the loop as a programmable surface, Reyn encodes it as a validated
-runtime contract. The LLM's role is the same in all cases (deciding the next
-step); what differs is whether the loop boundary is enforced by code or by
-convention.
+For readers mapping Reyn against the current agent landscape, two families
+are relevant:
+
+**General-purpose agents** (OpenClaw, Hermes, and similar connectivity-first
+systems) make the opposite bet: optimize for reach. Rich integration catalogs,
+flexible tool wiring, protocol-agnostic connectivity are their strengths. Reyn's
+bet is orthogonal — optimize for structural integrity of the loop itself. Both
+families implement MCP connectivity; what differs is what the runtime
+guarantees about the loop. In connectivity-first systems, the loop contract
+is absent by design — flexibility requires it. In Reyn, the contract is the
+product.
+
+**Workflow frameworks** (LangGraph, AutoGen, Semantic Kernel) expose the
+act-sense-react loop as a programmable surface: graph edges, node functions,
+agent-defined steps. Reyn encodes the same loop as an OS-validated contract:
+transitions are validated against the Skill graph, artifacts against schemas,
+and every state change against the event log before execution continues. The
+LLM makes the same decisions it would in any of these systems; what differs
+is whether the loop boundary is enforced by the OS or by the author's discipline.
 
 ## Kernel runtime layers (FP-0020)
 
