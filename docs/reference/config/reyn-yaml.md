@@ -51,7 +51,6 @@ models:
 | `plan_resume_raw` | map | Raw resume-policy dict for plan-mode runs. Parsed lazily by the plan coordinator. |
 | `prompt_cache_enabled` | bool | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
 | `project_context_path` | string | Markdown file injected into every phase system prompt. Default `REYN.md`. |
-| `shell_allowed` | bool | Pre-approve the `shell` op so it is not gated per-call. Default `false`. |
 | `api_base` | string | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
 | `tool_calls_op_loop_skills` | list | **Transitional.** Skill names opted into the native-tools op-loop — the phase act-loop drives the shared `RouterLoop.run_loop` (the converged op-loop, #1092): ops are emitted as native `tool_calls`, run through the shared executor, and threaded as native tool-role message-history. Default empty = all skills use json-mode (unchanged). Removed once the op-loop becomes the default. (#1092 PR-C-3 merged the former separate `routerloop_convergence_skills` gate into this one — the converged path is now the op-loop's implementation.) |
 

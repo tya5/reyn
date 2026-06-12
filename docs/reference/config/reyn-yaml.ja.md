@@ -51,7 +51,6 @@ models:
 | `plan_resume_raw` | マップ | プランモードのレジューム ポリシーの raw dict。プランコーディネーターが遅延パース。 |
 | `prompt_cache_enabled` | bool | システムプロンプトに Anthropic プロンプトキャッシュマーカーを付与。デフォルト `true`。 |
 | `project_context_path` | 文字列 | すべての Phase システムプロンプトに注入する Markdown ファイル。デフォルト `REYN.md`。 |
-| `shell_allowed` | bool | `shell` op を事前承認（呼び出しごとのゲートを skip）。デフォルト `false`。 |
 | `api_base` | 文字列 | LiteLLM プロキシベース URL。通常は `reyn.local.yaml`（gitignored）に設定。 |
 
 ## `models` ブロック
