@@ -36,7 +36,6 @@ applies_to: [reyn run, reyn eval, reyn chat]
 
 | フラグ | 利用可能 | デフォルト | 説明 |
 |------|---------|---------|-------------|
-| `--allow-shell` | `run` | オフ | `shell` Control IR op を有効にする。サブプロセスを呼び出す Skill に必要。 |
 | `--allow-unsafe-python` | `run`、`chat` | オフ | `mode: unsafe` の Python preprocessor ステップを許可（AST サンドボックスなし）。`--allow-untrusted-python` はレガシーエイリアス。safe モードのステップはこれなしで動作します。 |
 | `--strict` | `run` | オフ | すべてのネスト深さで必須フィールドを検証します（デフォルト: トップレベルのみ）。 |
 

@@ -57,8 +57,6 @@ permissions:
 
 `true` to enable the `shell` Control IR op for this phase. Off by default.
 
-Even with `shell: true`, the runtime requires `--allow-shell` at startup; otherwise the op emits `shell_not_allowed`.
-
 ### `mcp`, `tool`
 
 List of MCP server names / named tool ids the phase may call.

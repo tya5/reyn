@@ -19,7 +19,7 @@ Demo skill showing the `python` preprocessor step pattern. Produces a short comm
 
 ## How it composes
 
-A single `review` phase. The `stats.py` preprocessor (safe mode, 5 s timeout) runs deterministically before the LLM, injecting `char_count`, `word_count`, `line_count`, `longest_line_chars`, and `estimated_tokens` into `data.stats`. The LLM writes commentary citing the exact values — it does not recount anything.
+A single `review` phase. The `stats.py:compute_text_stats` preprocessor (safe mode, 5 s timeout) runs deterministically before the LLM, replacing `data` with `{"text": ..., "stats": {"char_count", "word_count", "line_count", "longest_line_chars", "estimated_tokens"}}`. The LLM writes commentary citing the exact values — it does not recount anything.
 
 ## Caveats
 

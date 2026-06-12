@@ -51,8 +51,6 @@ permissions:
 
 この Phase で `shell` Control IR op を有効にするには `true`。デフォルトはオフ。
 
-`shell: true` でも、ランタイムの起動に `--allow-shell` が必要です。そうでなければ op は `shell_not_allowed` を発行します。
-
 ### `mcp`、`tool`
 
 Phase が呼び出せる MCP サーバー名 / 名前付きツール ID のリスト。

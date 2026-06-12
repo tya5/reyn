@@ -34,7 +34,6 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 | `--max-phase-visits N` | Cap on single-phase revisits per run. `0` = unlimited. Default `25`. |
 | `--events` | Print the full event log after execution. |
 | `--strict` | Enforce required fields at every nesting depth (default: top-level only). |
-| `--allow-shell` | Enable the `shell` Control IR op. Off by default. |
 | `--allow-unsafe-python` | Enable unsafe-mode Python preprocessor steps (no AST sandbox). `--allow-untrusted-python` is a legacy alias for backwards compatibility. |
 
 ## Examples
@@ -61,12 +60,6 @@ Replay events afterwards:
 
 ```bash
 reyn run direct_llm "..." --events
-```
-
-Run a meta-skill that needs shell access:
-
-```bash
-reyn run skill_improver "improve my_skill" --allow-shell
 ```
 
 ## See also
