@@ -243,7 +243,7 @@ mindmap
 #### Crash Recovery
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| WAL state log | `step_started` / `step_completed` / `step_failed` written to JSONL | [Skill Resume](concepts/skills/skill-resume.md) |
+| WAL state log | `step_started` / `step_completed` / `step_failed` written to `.reyn/state/wal.jsonl` (`StateLog`); fsync'd per append (synchronous durability for recovery). Truncatable after snapshot. **Not** the audit trail — see Event System (P6). | [Skill Resume](concepts/skills/skill-resume.md) |
 | Forward-replay resume | `SkillResumeAnalyzer` reconstructs run state from state log | [Skill Resume](concepts/skills/skill-resume.md) |
 | `CommittedStep` memo | Replay recorded op results on resume without re-invoking | [Skill Resume](concepts/skills/skill-resume.md) |
 | World-op bypass | Transient ops (web_search, web_fetch) re-execute fresh on resume | [Skill Resume](concepts/skills/skill-resume.md) |
@@ -252,7 +252,7 @@ mindmap
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | 171 event types | Complete taxonomy: workflow / phase / LLM / tool / budget / permission / etc. | [Events reference](reference/runtime/events.md) · [Concepts: Events](concepts/runtime/events.md) |
-| Append-only JSONL | `.reyn/events/` per-run files with size/age-based rotation | [Events reference](reference/runtime/events.md) |
+| Append-only JSONL | `.reyn/events/<run_id>.jsonl` per-run (`EventStore`); audit trail — append-only, rotation-based (not per-append fsync). Separate log and lifecycle from the recovery WAL (`.reyn/state/wal.jsonl`). | [Events reference](reference/runtime/events.md) |
 | Replay | `reyn events <path>` streams events for audit and debug | [reyn events CLI](reference/cli/events.md) |
 
 > **Differentiation vs general agents:** the agent loop is an OS-enforced contract — the LLM decides only from OS-provided candidates (P3/P4), every output is schema-validated, every inter-phase value lives in the workspace (P5), and every state change emits an append-only, replayable event (P6). Constrained and auditable by construction, not by developer discipline.
