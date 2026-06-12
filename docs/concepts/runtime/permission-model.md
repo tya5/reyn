@@ -28,7 +28,7 @@ reyn's permission system gates four kinds of capability: file paths, shell, MCP 
 
 ### Layer 1: defaults
 
-Read/glob/grep anywhere under the project root. Write/edit/delete only under `.reyn/` or `reyn/`. No shell, no MCP, no Python.
+Read/glob/grep anywhere under the project root. Write/edit/delete only under `.reyn/`. No shell, no MCP, no Python.
 
 **Exception — protected write paths:** A small set of paths inside `.reyn/` are carved out from the default write grant because a direct write would bypass an authorization or audit surface. The carve-out is deliberately narrow — a path needs it only when it lacks a *downstream* gate.
 
@@ -193,7 +193,7 @@ Four resolution layers in `PermissionResolver._approve()`:
 | 0 | `run_skill`, `ask_user` | not required | unconditional pass | not possible |
 | 1 | `web_search`, `web_fetch` | not required | allow | `deny` blocks |
 | 2 | `mcp` | required | ask (4-layer) | `allow` pre-approves |
-| 3 | `shell`, `file` (outside zone) | required | ask (4-layer) | `allow` pre-approves |
+| 3 | `shell`, `file` (outside zone) | required | ✅ ask (JIT — `bus≠None` prompt at gate time; `bus=None` deny) | `allow` pre-approves; `deny` blocks even the default zone |
 
 Tier 0 is "unconditional pass", not "default allow" — there is no config key
 that could block these ops without breaking skill execution semantics.
@@ -262,8 +262,8 @@ Each side-effect kind has a corresponding declarable axis. The axis vocabulary i
 
 | Axis | Type | Granularity | Gate site | Notes |
 |---|---|---|---|---|
-| `file.read` | `list[{path, scope}]` | per-path | `require_file_read()` | scope ∈ {`just_path`, `recursive`} |
-| `file.write` | `list[{path, scope}]` | per-path | `require_file_write()` | covers write / edit / delete |
+| `file.read` | `list[{path, scope}]` | per-path | `require_file_read()` | scope ∈ {`just_path`, `recursive`}. Default zone = CWD. Outside zone: JIT ask (bus≠None) or deny (bus=None). `file.read: deny` blocks even CWD. Mirrors `http.get` pattern. |
+| `file.write` | `list[{path, scope}]` | per-path | `require_file_write()` | covers write / edit / delete. Default zone = `.reyn/`. Outside zone: JIT ask (bus≠None) or deny (bus=None). `file.write: deny` blocks even `.reyn/`. Mirrors `http.get` pattern. |
 | `http.get` | `list[{host}]` | per-host | `require_http_get()` | specific host = startup prompt + silent runtime; `"*"` wildcard = per-host runtime prompt. Covers both `reyn.safe.http.*` (skill-internal, specific only) and `web_fetch` (LLM-driven, accepts wildcard) |
 | `secret.write` | `list[<key>]` | per-key | `require_secret_write()` | per-key for `~/.reyn/secrets.env`; `"*"` wildcard for runtime-determined keys (= the per-value prompt is the actual gate) |
 | `mcp` | `list[str]` | per-server | implicit at MCP call | per-server-name allowlist |
