@@ -36,7 +36,7 @@ The shape of the transition the LLM is requesting.
 - `transition` — go to another phase.
 - `finish` — terminate the workflow cleanly. The artifact must match the skill's `final_output_schema`.
 - `abort` — unrecoverable error. The artifact may be empty.
-- `rollback` — send the immediately preceding phase back for revision. The OS determines the rollback target automatically. `next_phase` must be `null`; `decision` must be `continue`. The artifact may be empty; put the rejection reason in `reason.summary`.
+- `rollback` — send the immediately preceding phase back for revision. The OS determines the rollback target automatically. `next_phase` must be `null`. Set `decision` to `continue` by convention; the OS does not enforce a specific `decision` value for rollback. The artifact may be empty; put the rejection reason in `reason.summary`.
 
 ### `decision`
 
@@ -77,7 +77,7 @@ These are checked before dispatch. Violations are rejected.
 - `type=finish` ⇔ `decision=finish` ⇔ `next_phase=null`.
 - `type=transition` ⇔ `decision=continue` ⇔ `next_phase` is a non-null, allowed phase.
 - `type=abort` ⇔ `decision=abort` ⇔ `next_phase=null`.
-- `type=rollback` ⇔ `decision=continue` ⇔ `next_phase=null`.
+- `type=rollback` → `next_phase=null` (enforced). `decision=continue` is the recommended convention but is not checked by the OS.
 - `artifact.type` matches the schema implied by the chosen target.
 
 ## Why this contract is rigid
