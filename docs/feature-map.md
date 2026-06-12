@@ -15,45 +15,45 @@ Per-group **Differentiation vs general agents** callouts position each capabilit
 ```mermaid
 mindmap
   root((Reyn<br/>Agent OS))
-    OS Core:::c1
-      Phase Engine:::c2
+    🧩 OS Core
+      🌀 Phase Engine
         Act/Decide loop
         Context build
         Candidate gate
         Phase rollback
-      LLM Validation:::c3
+      ✅ LLM Validation
         JSON contract
         Type-decision check
         Next-phase allowlist
         Artifact schema
         Normalization retry
-      Preprocessor:::c4
+      ⏩ Preprocessor
         run_op
         iterate
         validate
         lint_plan
         python
-      Postprocessor:::c5
+      ⏪ Postprocessor
         Same step types
         Skill-finish transform
         Step memoization
-      Workspace P5:::c6
+      🗂️ Workspace P5
         Artifact storage
         Permission-gated IO
-      Crash Recovery:::c7
+      ♻️ Crash Recovery
         WAL state log
         Forward-replay resume
         CommittedStep memo
-      Event System P6:::c8
+      📜 Event System P6
         171 event types
         Append-only JSONL
         Replay
-      Chat Compaction:::c2
+      🗜️ Chat Compaction
         Head+tail+body budget
         Overflow retry loop
         Adaptive token estimation
         Multimodal token estimation
-      Plan Mode:::c3
+      📋 Plan Mode
         LLM decomposition
         Persistent plan artifact
         Async dispatch
@@ -62,7 +62,7 @@ mindmap
         Plan resume
         Per-step compaction
         Multi-plan concurrency
-    Control IR Ops:::c2
+    ⚙️ Control IR Ops
       file
       ask_user
       run_skill
@@ -79,13 +79,13 @@ mindmap
       compact
       skill_resolve
       judge_output
-    DSL:::c3
+    📝 DSL
       skill.md
       phase.md
       artifact YAML
       topology YAML
       profile YAML
-    Stdlib Skills:::c4
+    📦 Stdlib Skills
       direct_llm
       eval
       eval_builder
@@ -98,7 +98,7 @@ mindmap
       skill_improver
       skill_search
       word_stats_demo
-    CLI:::c5
+    ⌨️ CLI
       reyn run
       reyn chat
       reyn eval
@@ -117,7 +117,7 @@ mindmap
       reyn cron
       reyn web
       reyn init
-    Config:::c6
+    🔧 Config
       3-layer cascade
       safety
       cost
@@ -139,30 +139,30 @@ mindmap
       self_improvement
       skill_resume
       action_retrieval
-    Permissions:::c7
+    🔒 Permissions
       Tier 0-3 model
       4-layer resolution
       Skill declarations
       CLI gates
-    Safety:::c8
+    🛡️ Safety
       Force-close wrap-up
       limit_denied event
       On-limit modes
-    Budget and Cost:::c1
+    💰 Budget and Cost
       Per-agent caps
       Per-chain caps
       Rate limits
       Daily/monthly quotas
-    Memory and RAG:::c2
+    🧠 Memory and RAG
       Embedding
       SQLite index
       Recall
       Chat compaction
-    MCP:::c3
+    🔌 MCP
       Transports
       mcp serve
       mcp install
-    Web and Protocol:::c4
+    🌐 Web and Protocol
       FastAPI gateway
       WebSocket chat
       A2A sync message/send
@@ -170,37 +170,29 @@ mindmap
       Webhook push
       MCP-over-SSE
       REST API
-    Intervention:::c5
+    🙋 Intervention
       ask_user routing
       InterventionBus family
       InterventionRegistry
-    Multi-Agent:::c6
+    🤝 Multi-Agent
       Agent registry
       Topology system
       MessageBus
       delegate_to_agent
-    TUI:::c7
+    🖥️ TUI
       Conversation view
       Right Panel tabs
       tool-result viewers
       Input + command palette
-    Environment:::c8
+    🐳 Environment
       EnvironmentBackend
       HostBackend
       Container backend
-    Sandbox:::c1
+    🏖️ Sandbox
       SeatbeltBackend
       LandlockBackend
       NoopBackend
       SandboxPolicy
-  classDef c1 fill:#e3f2fd,color:#0d3c61;
-  classDef c2 fill:#e8f5e9,color:#1b5e20;
-  classDef c3 fill:#fff3e0,color:#7c4a00;
-  classDef c4 fill:#f3e5f5,color:#4a148c;
-  classDef c5 fill:#e0f7fa,color:#006064;
-  classDef c6 fill:#fce4ec,color:#880e4f;
-  classDef c7 fill:#f1f8e9,color:#33691e;
-  classDef c8 fill:#fff8e1,color:#7a5c00;
 ```
 
 ---
