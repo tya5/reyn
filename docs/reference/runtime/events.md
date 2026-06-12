@@ -89,6 +89,7 @@ Each Control IR op kind emits its own event:
 | `skill_resolve_completed` | `skill_resolve` op — `name`, `resolved: bool`, `source: "local"\|"project"\|"stdlib"\|null` |
 | `control_ir_skipped`, `control_ir_failed`, `control_ir_validation_error` | dispatch failures (`control_ir_skipped` reasons include `shell_not_allowed`, `handler_not_implemented`, `not_allowed_in_phase`) |
 | `permission_denied` | When an op is denied by the resolver |
+| `control_ir_offload_pruned` | Offloaded Control IR results were pruned from the in-memory frame after persistence. Payload: `count` (number pruned). |
 
 ## Credentials and OAuth
 
@@ -119,6 +120,7 @@ See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md)
 | `user_message_received` | A new user turn enters the runtime. Carries `chain_id` (the uuid minted by `submit_user_text` and propagated through any agent-to-agent messages this turn produces) |
 | `user_intervention_received` | An `ask_user` op got its answer |
 | `chat_started`, `chat_stopped` | Chat session lifecycle |
+| `turn_cancelled` | A user turn was cancelled mid-router-loop (e.g. `/cancel` or a new submission supersedes the running turn). Payload: `chain_id`. |
 
 ## Skill spawning (chat)
 
@@ -126,6 +128,7 @@ See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md)
 |------|------|
 | `skill_run_spawned` | A skill was launched from a router decision (`run_id`, `skill`) |
 | `skill_spawn_refused` | `_spawn_skill` rejected a skill not in the agent's `allowed_skills`. Payload: `reason="allowlist"`, `skill`, `agent` |
+| `skill_node_started` | A skill-graph node began executing (sub-skill node in a composite skill graph). Payload: `node` (node id), `skill_path`. |
 
 ## Agent-to-agent messaging
 
@@ -151,6 +154,40 @@ See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md)
 | Kind | Payload fields | Emitted when |
 |------|---------------|--------------|
 | `skill_rolled_back` | `skill: str`, `from_version: int`, `to_version: int`, `reason: str` (default `"user rollback via CLI"`) | A `reyn skill rollback` invocation restores a prior version. Written to `.reyn/events/direct/cli/<YYYY-MM-DD>.jsonl`. See [Reference: CLI — `reyn skill rollback`](../cli/skill.md). |
+
+## Memory
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `memory_saved` | The `memory` tool persisted a memory file to a layer | `layer`, `slug`, `path` |
+| `memory_deleted` | The `memory` tool deleted a memory file | `layer`, `slug`, `path` |
+
+## Compaction and context budget
+
+These fire on chat turns as the context-budget advisor and compaction
+controller evaluate whether history needs summarising. Most carry a
+"checked but did not compact" outcome — they are high-frequency and
+mostly informational.
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `compaction_check` | The compaction gate ran for a turn. `outcome` records the decision — e.g. `too_few_turns`, `below_min_batch`, `pre_frame_overflow`, `already_running`, `forced_sync`, `forced_sync_no_turns`. Some outcomes also carry `turns`, `head`, `tail`. | `outcome`, plus outcome-specific fields |
+| `compaction_failed` | A compaction attempt raised. | `error` |
+| `compact_op_unavailable` | The `compact` Control IR op was dispatched in a context where no compaction engine is wired. | `run_id`, `phase` |
+| `summary_resummarize_failed` | Re-summarising an existing summary (nested compaction) raised. | `error` |
+| `budget_reset` | The chat budget gateway reset its per-window accounting. | `before` (prior accumulated value) |
+
+## Safety limits
+
+See [Concepts: safety framework](../../concepts/runtime/safety.md) for the
+intervention flow and force-close wrap-up.
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `limit_denied` | A safety limit was denied (no extension granted) and the OS is about to attempt the `#1496` force-close wrap-up. | `kind` (`max_iterations` \| `router_cap`), `chain_id`, plus `limit` (router iterations) or `count`/`cap` (router cap) |
+
+`loop_limit_exceeded` and `phase_budget_exceeded` (see [Lifecycle
+events](#lifecycle-events)) cover phase-visit and wall-clock limits.
 
 ## Replay
 
