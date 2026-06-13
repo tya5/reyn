@@ -272,8 +272,9 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b) are
 | Multi-fork tree UX | Always-tree picker with per-branch anchor labels (#1547 integration) | — |
 | Act-turn runtime-only rewind | Ghost-Replay memo truncate for rewind within an in-flight turn (no substrate round-trip) | — |
 | Container-mode shadow-git | Shadow-git `as-of-N` rewind supported inside the container environment backend | — |
-| Deterministic CI live-fork gate | `test_live_rewind_gate.py` — P1 undo + P2 fork-switch pass deterministically (#1564) | — |
-| tmux live e2e | P1 undo + P2 fork-switch verified on real terminal (#1549 / #1550 / #1562) | — |
+| Deterministic CI rewind gate | `test_live_rewind_gate.py` — Phase-1 rewind deterministic gate (#1553) | — |
+| Deterministic CI live-fork gate | `test_live_fork_gate.py` — Phase-2 fork / checkout deterministic gate (#1564) | — |
+| tmux live e2e | P1 undo + P2 fork-switch verified on real terminal (#1533 tui-coder ledger / #1549) | — |
 | Phase 2c: fork-then-edit ⏳ | New branch on edit (in-progress) | — |
 | Phase 2d: web surface ⏳ | `/rewind` picker over WebSocket / A2A (in-progress) | — |
 
