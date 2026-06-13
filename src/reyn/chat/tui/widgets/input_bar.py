@@ -395,6 +395,16 @@ class InputBar(Widget):
         last_row = len(lines) - 1
         ta.move_cursor((last_row, len(lines[last_row])))
 
+    def _edit_mode_active(self) -> bool:
+        """True while the app is in fork-picker edit-mode (#1533 2c).
+
+        Read off the running App's public ``edit_mode_active`` (single-owner
+        flag). When set, ↑/↓ move the cursor within the loaded message instead
+        of recalling input history (which would clobber the edit). Best-effort:
+        no app / no property → False (normal history nav).
+        """
+        return bool(getattr(self.app, "edit_mode_active", False))
+
     def set_text(self, text: str) -> None:
         """Replace the input buffer with ``text`` + move cursor to end.
 
@@ -511,6 +521,13 @@ class InputBar(Widget):
         if picker is not None and picker.visible_ and picker.has_matches:
             picker.move_selection(-1)
             return
+        if self._edit_mode_active():
+            # #1533 2c: editing a checkpoint's loaded message — ↑ moves the
+            # cursor within it, never recalls history (which would overwrite
+            # the edit). The picker is open but its nav is suspended, so ↑
+            # reaches here.
+            ta.action_cursor_up()
+            return
         if self._restore_pristine:
             self._history_up(ta)
             return
@@ -534,6 +551,10 @@ class InputBar(Widget):
             return
         if picker is not None and picker.visible_ and picker.has_matches:
             picker.move_selection(+1)
+            return
+        if self._edit_mode_active():
+            # #1533 2c: cursor-only within the loaded message, never history.
+            ta.action_cursor_down()
             return
         if self._restore_pristine:
             self._history_down(ta)

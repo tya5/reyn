@@ -1064,6 +1064,13 @@ class ReynTUIApp(App):
         if not text:
             return
 
+        # ADR-0038 2c: submitting while editing a checkpoint forks from the
+        # edited turn's predecessor (edit-and-retry) rather than appending a
+        # fresh turn to the live branch.
+        if self.edit_mode_active:
+            await self._submit_edited_fork(text)
+            return
+
         conv = self.query_one("#conversation", ConversationView)
         # B1: render with grouped header
         conv.render_user_message(text)
@@ -2692,6 +2699,58 @@ class ReynTUIApp(App):
             self.query_one("#inputbar", InputBar).set_text(full)
         except Exception:
             pass
+
+    async def _submit_edited_fork(self, edited_text: str) -> None:
+        """Edit-and-retry (ADR-0038 2c): fork from the edited checkpoint's
+        predecessor turn, then re-run the edited message as a new turn.
+
+        The original turn stays on a now-inactive branch (append-only); the
+        edited message produces a sibling fork. The **submit** edit-exit — routes
+        through ``exit_edit_mode`` (the shared reset seam, like the Esc exit) and
+        ALSO dismisses the picker (Esc keeps it; submit closes it).
+
+        Checkout target = the **predecessor TURN-kind checkpoint** on the edited
+        seq's lineage (substrate-computed: cross-fork-point + plan-step-skip).
+        ``None`` = first turn → no earlier state to fork from → graceful reject.
+        """
+        seq = self._edit_mode_seq          # capture BEFORE exit clears it
+        self.exit_edit_mode()              # flag + banner + Esc-Esc reset (shared seam)
+        self._dismiss_rewind_menu()        # submit dismisses the picker
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+        except Exception:
+            conv = None
+        registry = self._agent_registry
+        if registry is None or seq is None:
+            if conv is not None:
+                conv.render_message(OutboxMessage(kind="error", text="⏪ edit unavailable"))
+            return
+        pred = registry.predecessor_turn_checkpoint(seq)
+        if pred is None:
+            if conv is not None:
+                conv.render_message(OutboxMessage(
+                    kind="system",
+                    text="✋ cannot edit the first turn — no earlier checkpoint to fork from",
+                ))
+            return
+        try:
+            await registry.checkout(pred)
+        except Exception as exc:  # noqa: BLE001 — surface the reason in-timeline
+            if conv is not None:
+                conv.render_message(
+                    OutboxMessage(kind="error", text=f"⏪ edit checkout failed: {exc}")
+                )
+            return
+        # Re-run the edited message from the predecessor = a new fork; the
+        # original turn is now on an inactive branch.
+        session = self._get_session()
+        if session is None:
+            return
+        if conv is not None:
+            conv.render_user_message(edited_text)
+            conv.start_thinking()
+        self._latest_user_message = edited_text
+        await session.submit_user_text(edited_text)
 
     def _voice_config(self):
         """Best-effort fetch of the user's voice config block."""
