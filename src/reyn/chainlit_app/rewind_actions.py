@@ -128,10 +128,13 @@ async def handle_rewind_edit_submit(registry, fork_target: int, edited: str) -> 
     (checkout(predecessor) → submit); only the prompt shell differs
     (cl.AskUserMessage vs InputBar edit-mode).
 
-    **Re-fetches the session AFTER checkout**: ``checkout`` cancels in-flight work
-    and *reconstructs* the agent session, so a session captured before the call is
-    stale — the edited turn must submit on the freshly-reconstructed session (the
-    TUI mirror re-fetches via ``_get_session()`` for the same reason).
+    **Submit MUST follow checkout (ordering invariant)**: ``checkout`` →
+    ``reset_for_rewind`` *drains the session inbox* (session.py), so a message
+    submitted *before* checkout would be discarded. We submit after. The session
+    is mutated in-place (not reconstructed — ``_agents[name]`` is not reassigned),
+    so ``attached_session()`` returns the same object a pre-call capture would;
+    the re-fetch is defensive (and mirrors TUI 2c's ``_get_session()``-after-
+    checkout), not identity-critical.
 
     Returns an empty string on success — the agent response flows through the
     existing repl_outbox → cl.Message drain. A checkout failure / missing
