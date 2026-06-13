@@ -44,6 +44,10 @@ After any rewind or fork, the picker switches to a **tree view** showing all bra
 - Selecting a seq on the **current branch**: undo (rewinds the current branch).
 - Selecting a seq on an **inactive branch**: fork-switch (activates that branch).
 
+## Web edit (Phase 2d)
+
+When using Reyn through the web interface (WebSocket / A2A), `/rewind` opens the same checkpoint picker. After selecting a checkpoint to branch from, the web edit flow presents the original message for you to retype your edited version and submit — inline prefill is not supported in the web surface, so you enter the replacement text directly. Submitting creates a new fork from the rewound checkpoint.
+
 ## Container mode
 
 When using the container environment backend (`--container`), the workspace
@@ -56,7 +60,7 @@ user experience applies; the substrate is container-side.
 |---------|--------|
 | `/rewind` with in-turn edit (`ctrl+t`) to create a new fork-and-edit branch | ✅ Phase 2c, landed |
 | Retention window config (`retention: keep_generations: N`) to GC old checkpoints | ⏳ ADR-0038 Stage 1e — designed, not yet wired |
-| `/rewind` picker over WebSocket / A2A web surface | ⏳ Phase 2d, in-progress |
+| `/rewind` picker over WebSocket / A2A web surface; web edit via `AskUserMessage` UX | ✅ Phase 2d, landed (#1574) |
 
 ## See also
 
