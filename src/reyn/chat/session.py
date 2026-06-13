@@ -1499,6 +1499,12 @@ class ChatSession:
             state_log=state_log,
             generation_store=self._generation_store,
         )
+        # ADR-0038 Stage 1c: turn-idle event for quiescence. Set = no turn in
+        # flight; cleared while run_one_iteration processes a turn. Lets a global
+        # rewind await all in-flight WAL appends settling (await_quiescent) before
+        # appending the reset-record — so no append lands past the reset seq.
+        self._turn_idle = asyncio.Event()
+        self._turn_idle.set()
         # Track state_log directly for skill resume (PR-skill-resume): the
         # journal owns it for inbox / chain mutations, but skills launched
         # from this session also need it so dispatch_tool can emit step
@@ -2211,6 +2217,32 @@ class ChatSession:
         if cancelled_plans:
             parts.append(f"{cancelled_plans} plan{'s' if cancelled_plans != 1 else ''}")
         return f"✗ cancelled {' + '.join(parts)}"
+
+    async def await_quiescent(self) -> None:
+        """Block until no turn / skill / plan is in flight (ADR-0038 Stage 1c).
+
+        Used by global rewind: after ``cancel_inflight()``, the caller awaits this
+        so the rewind reset-record is appended only once every in-flight operation
+        has settled. **Critical invariant**: when this returns, no WAL append can
+        still land — a straggler past the reset-record seq would contaminate the
+        active branch. It *waits for* cooperative in-flight tool/subprocess work to
+        settle (whose append lands before the reset-record, inside the abandoned
+        segment) rather than returning early; subprocess hard-kill is a wall-clock
+        optimization, not a correctness prerequisite.
+        """
+        # 1. wait for the current turn (if any) to finish its WAL appends.
+        await self._turn_idle.wait()
+        # 2. join cancelled in-flight skill / plan tasks (their final appends settle).
+        pending = [
+            t for t in (*self.running_skills.values(), *self.running_plans.values())
+            if not t.done()
+        ]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        # 3. re-confirm turn-idle — a joined task may have enqueued a follow-up
+        #    turn; with cancel already requested it breaks immediately, so this
+        #    settles. The double wait closes the join↔turn race.
+        await self._turn_idle.wait()
 
     @property
     def pending_user_images(self) -> list[dict]:
@@ -2937,25 +2969,30 @@ class ChatSession:
         # cron, now Bob from Slack just said something" instead of
         # seeing a confused linear feed.
         self._handle_sender_attribution(payload)
-        if kind == "user":
-            await self._handle_user_message(
-                payload.get("text", ""),
-                chain_id=payload.get("chain_id") or _new_chain_id(),
-            )
-        elif kind == "agent_request":
-            await self._handle_agent_request(payload)
-        elif kind == "agent_response":
-            await self._handle_agent_response(payload)
-        elif kind == "skill_completed":
-            # FP-0012: a background-spawned skill finished. Inject a
-            # user-role completion message into the existing thread
-            # and run one router LLM turn for narration.
-            await self._handle_skill_completed(payload)
-        elif kind == "plan_completed":
-            # FP-0025 C: a background plan finished. Inject a
-            # user-role message with step_results and run one
-            # router LLM turn for synthesis narration.
-            await self._handle_plan_completed(payload)
+        # ADR-0038 Stage 1c: busy until this turn settles (its WAL appends done).
+        self._turn_idle.clear()
+        try:
+            if kind == "user":
+                await self._handle_user_message(
+                    payload.get("text", ""),
+                    chain_id=payload.get("chain_id") or _new_chain_id(),
+                )
+            elif kind == "agent_request":
+                await self._handle_agent_request(payload)
+            elif kind == "agent_response":
+                await self._handle_agent_response(payload)
+            elif kind == "skill_completed":
+                # FP-0012: a background-spawned skill finished. Inject a
+                # user-role completion message into the existing thread
+                # and run one router LLM turn for narration.
+                await self._handle_skill_completed(payload)
+            elif kind == "plan_completed":
+                # FP-0025 C: a background plan finished. Inject a
+                # user-role message with step_results and run one
+                # router LLM turn for synthesis narration.
+                await self._handle_plan_completed(payload)
+        finally:
+            self._turn_idle.set()
         return True
 
     async def run(self) -> None:
