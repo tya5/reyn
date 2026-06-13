@@ -116,6 +116,15 @@ policy**. Rewind is **bounded by the retention window** — you cannot rewind in
 truncated history. The resume window (WAL, truncatable) and inspect window
 (EventStore rotation) stay separate; the latter is longer.
 
+**Abandoned-branch retention** (clarified in review): after a rewind, the inactive
+branch `(N+1 .. reset-1)` is **not needed for recovery** (recovery follows the
+active pointer, D3), so it could be WAL-truncated immediately — a direct benefit of
+WAL/audit separation. **But Phase-2 fork needs it** to reconstruct a forked branch.
+Resolution: within the retention window the abandoned branch is **retained
+(fork-capable)**; outside the window it is **GC'd**. Audit history of the abandoned
+branch survives in the EventStore regardless (independent rotation). The blob store
+(D9) GCs unreferenced workspace blobs on the same window boundary.
+
 ### D6. granularity — phased
 - User-facing = **chat-turn / plan-step / phase** boundaries (snapshot generations).
 - **act-turn** is not a durable checkpoint (ADR-0002 rejected mid-act-turn state on
@@ -139,6 +148,51 @@ shared workspace + global rewind (D2). The reconstruct/reset foundation is
 **fork-capable from Phase 1** (Phase 1 must not design fork *out*); only the fork
 surface/UX lands in Phase 2. Mental model = git: a tree of branches, one checked
 out; undo and fork coexist on the same substrate.
+
+### D9. Workspace file-content rewind — content-addressed blob store (raised in review)
+D2's "workspace moves to as-of-N" requires rewinding **workspace file content**,
+not just runtime state. **Distinction surfaced in lead review**: `AgentSnapshot`
+(D1) carries **runtime state only** (inbox / chains / skill-run ids /
+interventions / plan ids) — it holds **no** workspace artifact/code blob, and there
+is **no workspace versioning in `src` today**. So a global cut has two halves:
+"restore agent/conversation state" (runtime AgentSnapshot) **and** "restore code"
+(workspace files). The second is missing and must be added.
+
+Owner's "snapshots are small → full snapshot" applies to the **runtime
+AgentSnapshot**; **workspace files are a separate axis and can be large**, so
+full-copy generations would be heavy. **Recommended (for owner confirm)**: a
+**content-addressed / git-like blob store** — each generation references workspace
+files by content hash, unchanged files shared (de-duplicated) across generations;
+reconstruct-as-of-N restores the tree from the generation's blob manifest + WAL
+file-op delta. This matches the git mental model (D8) and the shadow-git approach
+Claude Code uses for code restore. **Storage strategy is an owner question**:
+full-copy vs content-addressed blob store vs OS-level CoW/reflink — cost vs
+simplicity. (Like Claude Code, external/irreversible side effects — sent
+messages, real subprocess writes outside the workspace — are **not** rewound; only
+workspace files + runtime state.)
+
+### Reset-record + active-pointer semantics (incl. nested rewind) — proposed for (b)
+**Reset-record** (WAL entry, fsync'd like any append):
+`{kind: "rewind", seq: R, target_n: N, supersedes: <prior active-pointer seq | null>}`.
+- **Active pointer** = the reset-record with the **highest `seq`** (latest wins);
+  if none, the active pointer is `head`.
+- **Active path** = the WAL minus the **abandoned segments** `[target_n, R)` defined
+  by the reset-record chain, resolved **latest-first** (a later rewind can abandon
+  an earlier rewind's branch). `reconstruct(N)` = nearest snapshot generation `≤ N`
+  on the active path + replay of active entries `≤ N`.
+- **Nested rewind** (rewind of a rewind) is just another reset-record at a higher
+  `seq`; it supersedes the prior active pointer and may abandon an earlier rewind's
+  branch. No special case — the "latest reset-record wins + abandoned-segment
+  union" rule composes.
+- **Crash-mid-rewind idempotence (keystone)**: because the reset-record is fsync'd
+  **before** reconstruction begins, a restart re-derives the same active pointer and
+  thus the same as-of-N state — the discarded future is never resurrected. The
+  correctness test must cover **nested rewind + crash mid-rewind**.
+- *Alternative considered*: tag every WAL entry with a `branch_id` and resolve by
+  branch lineage (direct git model). Rejected for Phase 1 as a heavier per-entry
+  schema change; the reset-record-on-single-WAL model fits the global-single-seq
+  substrate (D2) with no per-entry change. Revisit if nested-rewind path resolution
+  proves expensive at scale.
 
 ---
 
@@ -171,10 +225,16 @@ out; undo and fork coexist on the same substrate.
 ## Implementation plan (phased; impl gated on review + owner confirm)
 
 ### Phase 1 — boundary-granularity global rewind + PITR + reset-record
-1. **Snapshot generations**: extend `SnapshotJournal` / `AgentSnapshot` persistence
-   to retain *generations* keyed by boundary seq (turn / plan-step / phase), not
-   just the latest. Fold `PlanSnapshot` in as a generation kind. (Atomic-write
-   pattern reused.)
+1. **Snapshot generations (runtime)**: extend `SnapshotJournal` / `AgentSnapshot`
+   persistence to retain *generations* keyed by boundary seq (turn / plan-step /
+   phase), not just the latest. Fold `PlanSnapshot` in as a generation kind.
+   (Atomic-write pattern reused.)
+1b. **Workspace blob store (D9)**: content-addressed store for workspace file
+   content; each generation carries a blob manifest (file → content hash); blobs
+   shared across generations. `reconstruct(N)` restores the tree from the
+   generation manifest + WAL file-op delta. (Owner picks storage strategy; the seam
+   — capture workspace tree at each generation boundary, restore on rewind — is the
+   same regardless.)
 2. **PITR reconstruct(N)**: add a reconstruct-as-of-N path = nearest generation
    `≤ N` + `StateLog.iter_from` replayed to N. Crash-recovery `restore_all`
    becomes `reconstruct(head)`.
@@ -210,9 +270,12 @@ out; undo and fork coexist on the same substrate.
 - **Cost**: snapshot generations increase storage in the coarse window (bounded by
   retention config); the reset-record-honor wiring touches the replay/derivation
   hot path (must be correctness-tested, incl. crash-mid-rewind).
-- **Risk surfaced for review**: (a) generation cut frequency vs storage; (b) the
-  reset-record semantics under nested rewinds (rewind of a rewind); (c) multi-agent
-  concurrent-rewind UX (warn vs quiescent-gate) — flagged for owner.
+- **Risk surfaced for review / owner questions**: (a) generation cut frequency vs
+  storage **+ workspace blob-store strategy (D9): full-copy vs content-addressed vs
+  OS-level CoW/reflink**; (b) reset-record semantics under nested rewinds — *proposed
+  above (latest-reset-wins + abandoned-segment union, crash-idempotent); needs
+  lead sign-off + nested+crash test*; (c) multi-agent concurrent-rewind UX (warn vs
+  quiescent-gate) — flagged for owner.
 
 ---
 
