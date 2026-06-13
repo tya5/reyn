@@ -35,3 +35,11 @@ def test_rewind_checkout_callback_registered():
     fn = getattr(chainlit_app, "on_rewind_checkout", None)
     assert fn is not None, "app.py must define on_rewind_checkout"
     assert inspect.iscoroutinefunction(fn)
+
+
+def test_rewind_edit_callback_registered():
+    """Tier 1: the ``rewind_edit`` action callback exists as an async handler
+    (= the picker's ✎ edit buttons name=\"rewind_edit\" have a target). 2d-3."""
+    fn = getattr(chainlit_app, "on_rewind_edit", None)
+    assert fn is not None, "app.py must define on_rewind_edit"
+    assert inspect.iscoroutinefunction(fn)

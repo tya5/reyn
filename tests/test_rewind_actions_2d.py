@@ -20,6 +20,7 @@ if str(_SRC) not in sys.path:
 from reyn.chainlit_app.rewind_actions import (
     build_rewind_action_specs,
     handle_rewind_checkout,
+    resolve_edit_target,
 )
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
@@ -47,6 +48,25 @@ def test_action_specs_label_active_vs_fork() -> None:
     assert "deploy fix" in by_seq[12]["label"] and "(fork)" not in by_seq[12]["label"]
     assert by_seq[9]["is_active"] is False
     assert "(fork)" in by_seq[9]["label"] and "try other" in by_seq[9]["label"]
+
+
+def test_action_specs_editable_only_on_turns() -> None:
+    """Tier 2: turn checkpoints are editable (glue renders the ✎ action);
+    non-turn (plan-step) checkpoints are checkout-only (decision A)."""
+    branches = [{"branch_id": 0, "fork_point_seq": 0, "head_seq": 9, "parent_branch_id": None, "is_active": True}]
+    cps = [
+        {"seq": 8, "ts": "", "kind": "turn", "anchor": "", "branch_id": 0},
+        {"seq": 5, "ts": "", "kind": "plan_step", "anchor": "", "branch_id": 0},
+    ]
+    by_seq = {s["seq"]: s for s in build_rewind_action_specs(branches, cps)}
+    assert by_seq[8]["editable"] is True
+    assert by_seq[5]["editable"] is False
+
+
+def test_resolve_edit_target_no_registry() -> None:
+    """Tier 2: resolve_edit_target with no registry → can_edit False, no raise."""
+    info = resolve_edit_target(None, 5)
+    assert info["can_edit"] is False and info["fork_target"] is None
 
 
 def test_action_specs_only_checkpoints() -> None:

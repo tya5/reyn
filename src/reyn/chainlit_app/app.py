@@ -835,16 +835,25 @@ async def _render_rewind_picker(session) -> None:
         await cl.Message(content="⏪ no rewind points yet").send()
         return
 
-    actions = [
-        cl.Action(
+    # Each checkpoint gets a checkout (↩) action; turn checkpoints ALSO get an
+    # edit (✎) action (ADR-0038 2d-3 decision A) — clicking it re-runs an edited
+    # version as a new fork. First-turn edit is rejected on click (decision B),
+    # not filtered here, so the spec builder stays pure.
+    actions = []
+    for spec in specs:
+        actions.append(cl.Action(
             name="rewind_checkout",
-            label=spec["label"],
+            label=f"↩ {spec['label']}",
             payload={"seq": spec["seq"]},
-        )
-        for spec in specs
-    ]
+        ))
+        if spec.get("editable"):
+            actions.append(cl.Action(
+                name="rewind_edit",
+                label=f"✎ edit #{spec['seq']}",
+                payload={"seq": spec["seq"]},
+            ))
     await cl.Message(
-        content="⏪ **Rewind** — pick a point to return to (a fork point reopens that branch):",
+        content="⏪ **Rewind** — ↩ returns to a point (a fork point reopens that branch); ✎ edits a turn as a new fork:",
         actions=actions,
     ).send()
 
@@ -862,6 +871,47 @@ async def on_rewind_checkout(action: "cl.Action") -> None:
     registry = await _get_or_build_registry()
     result = await handle_rewind_checkout(registry, seq)
     await cl.Message(content=result).send()
+
+
+@cl.action_callback("rewind_edit")
+async def on_rewind_edit(action: "cl.Action") -> None:
+    """Handle an edit (✎) picker button: prompt for an edited message, then
+    re-run it from the turn's predecessor = a new fork (ADR-0038 2d-3).
+
+    Thin glue — ``resolve_edit_target`` (genesis reject + full-original lookup)
+    and ``handle_rewind_edit_submit`` (checkout(predecessor) → submit) are
+    chainlit-free. Chainlit has no input pre-fill, so the original message is
+    shown in the prompt and the user retypes the edited version (owner-accepted
+    UX). The agent response flows back through the existing repl_outbox drain.
+    """
+    from reyn.chainlit_app.rewind_actions import (
+        handle_rewind_edit_submit,
+        resolve_edit_target,
+    )
+
+    seq = (action.payload or {}).get("seq")
+    registry = await _get_or_build_registry()
+    info = resolve_edit_target(registry, seq)
+    if not info["can_edit"]:
+        await cl.Message(content=f"✋ {info['reason']}").send()
+        return
+
+    prompt = "✎ Edit your message, then send to fork from here"
+    if info["original"]:
+        prompt += f" (original below):\n\n> {info['original']}"
+    reply = await cl.AskUserMessage(content=prompt, timeout=600).send()
+    if reply is None:
+        await cl.Message(content="✎ edit cancelled").send()
+        return
+    # ``AskUserMessage`` returns a step dict; the typed text is under "output".
+    edited = (reply.get("output") if isinstance(reply, dict) else None) or ""
+    if not edited.strip():
+        await cl.Message(content="✎ edit cancelled (empty)").send()
+        return
+
+    result = await handle_rewind_edit_submit(registry, info["fork_target"], edited)
+    if result:  # non-empty = an error/notice; success drains via repl_outbox
+        await cl.Message(content=result).send()
 
 
 async def _clear_chainlit_thread() -> None:
