@@ -34,6 +34,7 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 from reyn.events.agent_snapshot import AgentSnapshot
+from reyn.events.anchor_store import AnchorStore
 from reyn.events.retention import RetentionPolicy, compute_retention_floor
 from reyn.events.snapshot_generations import (
     RewindBeyondRetentionError,
@@ -146,6 +147,9 @@ class AgentRegistry:
         # tracked follow-up (#1544). Lazily built so non-chat / no-WAL callers
         # never touch git.
         self._workspace_store: WorkspaceVersionStore | None = None
+        # #1547: per-checkpoint anchor text (rewind-timeline preview). One global
+        # store keyed by WAL seq; lazily built. None when no WAL.
+        self._anchor_store: AnchorStore | None = None
         # Single queue the REPL drains; registry routes each attached agent's
         # outbox into here.
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
@@ -521,6 +525,7 @@ class AgentRegistry:
             if isinstance(s, int) and s in seqs:
                 wal_at[s] = entry
 
+        anchors = self.anchor_store
         rows: list[dict] = []
         for s in sorted(seqs):
             entry = wal_at.get(s, {})
@@ -528,6 +533,10 @@ class AgentRegistry:
                 "seq": s,
                 "ts": entry.get("ts", ""),
                 "kind": _rewind_point_kind(entry.get("kind", "")),
+                # #1547: per-checkpoint preview anchor ("" when none). Additive —
+                # existing consumers ignore it; the timeline widget renders it as
+                # a 2nd dim line. Keyed by the same WAL seq → trivial lookup.
+                "anchor": anchors.get(s) if anchors is not None else "",
             })
         return rows
 
@@ -547,6 +556,17 @@ class AgentRegistry:
                 self._project_root / ".reyn" / "workspace-shadow.git",
             )
         return self._workspace_store
+
+    @property
+    def anchor_store(self) -> AnchorStore | None:
+        """The per-checkpoint anchor store (#1547), lazily built. None w/o WAL."""
+        if self._state_log is None:
+            return None
+        if self._anchor_store is None:
+            self._anchor_store = AnchorStore(
+                self._project_root / ".reyn" / "generation-anchors.json",
+            )
+        return self._anchor_store
 
     async def _materialize_rewind(
         self, *, reconstruct_seq: int, workspace_at_or_below: int,
@@ -875,6 +895,10 @@ class AgentRegistry:
             ws = self.workspace_store
             if ws is not None and ws.git_available():
                 ws.prune_below(floor)
+            # #1547: anchors GC'd on the same boundary as generations/blobs.
+            anchors = self.anchor_store
+            if anchors is not None:
+                anchors.prune_below(floor)
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("Stage 1e generation GC failed (floor=%d): %s", floor, e)
 
@@ -1112,6 +1136,12 @@ class AgentRegistry:
         attach = getattr(session, "attach_workspace_store", None)
         if ws is not None and callable(attach):
             attach(ws)
+        # #1547: hand the session the shared anchor store so cut_generation
+        # records the rewind-timeline preview text at each boundary.
+        anchors = self.anchor_store
+        attach_anchor = getattr(session, "attach_anchor_store", None)
+        if anchors is not None and callable(attach_anchor):
+            attach_anchor(anchors)
         self._agents[name] = session
         return session
 
