@@ -34,11 +34,11 @@ The rewind is **atomic**: either both substrates revert or neither does. There i
 
 ### Append-only history
 
-Reyn never rewrites history. When you rewind to seq R:
+Reyn never rewrites history. When you rewind to a past checkpoint (seq **N**):
 
-- A **reset-record** is appended at seq R on the current branch, marking it as the new tip.
-- The commit history before R is preserved.
-- Conversation turns and workspace states beyond R become **abandoned** on the current branch — they are accessible via the branch tree, not erased.
+- A reset-record is appended at a **new seq R** (beyond the current tip) carrying target **N**; that record becomes the new tip, and the agent state is restored **as-of-N**.
+- History before N is preserved.
+- Turns and workspace states in **`(N, R)`** become **abandoned** on the current branch — reachable via the branch tree, not erased.
 
 This means rewind is always recoverable: you can navigate back to an abandoned future by switching branches.
 
