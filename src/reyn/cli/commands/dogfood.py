@@ -491,6 +491,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
             session_factory=_session_factory,
             state_log=None,
             environment_backend=env_backend,   # #1544: container shadow-git
+            workspace_state_dir=ws_state_dir,  # #1557 gap-#1: shadow git-dir under --state-dir
         )
         _reg_cell.append(reg)
         return reg

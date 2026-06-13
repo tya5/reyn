@@ -114,6 +114,7 @@ class AgentRegistry:
         state_log: StateLog | None = None,
         retention_policy: RetentionPolicy | None = None,
         environment_backend: "object | None" = None,
+        workspace_state_dir: "Path | None" = None,
     ) -> None:
         """
         session_factory: returns a configured ChatSession given an AgentProfile.
@@ -157,6 +158,11 @@ class AgentRegistry:
         # backend.run with the container path context (the work-tree is
         # container-side; host git can't reach it).
         self._environment_backend = environment_backend
+        # ADR-0038 #1557 (gap-#1): host-side OS-state dir (--state-dir). When set,
+        # the shadow git-dir lives under it (a first-class member of the persisted
+        # OS-state set, alongside events/artifacts — one persistence switch) rather
+        # than at project_root/.reyn. None → default project_root/.reyn location.
+        self._workspace_state_dir = workspace_state_dir
         # #1547: per-checkpoint anchor text (rewind-timeline preview). One global
         # store keyed by WAL seq; lazily built. None when no WAL.
         self._anchor_store: AnchorStore | None = None
@@ -657,8 +663,15 @@ class AgentRegistry:
         visible in-container. (Attach/baked mode has no bind-mount → host FS and
         container git diverge → degrades; attach-mode persistence is a tracked
         follow-up, #1544 checklist.)
+
+        #1557 gap-#1: the host git-dir is routed under ``workspace_state_dir``
+        (``--state-dir``) when provided, so the workspace-version history persists
+        alongside the rest of the host-side OS state (one switch); otherwise it
+        defaults to ``project_root/.reyn``. (Container persistence *modes* — bind-
+        mount injection / attach-sync — remain the deferred #1557 follow-up.)
         """
-        host_git_dir = self._project_root / ".reyn" / "workspace-shadow.git"
+        host_git_root = self._workspace_state_dir or (self._project_root / ".reyn")
+        host_git_dir = host_git_root / "workspace-shadow.git"
         backend = self._environment_backend
         if backend is not None and getattr(backend, "name", "") == "container":
             from reyn.events.workspace_version_store import _ContainerGitRunner
