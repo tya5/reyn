@@ -44,7 +44,11 @@ async def rewind_cmd(session: "object", args: str) -> None:
         return
 
     try:
-        result = await registry.rewind_to(target)
+        # Unified checkout (ADR-0038 D8): the same op the picker dispatches —
+        # undo for a live-branch seq, fork-switch for a dead-branch seq. Keeps
+        # the two "go to seq N" entries (slash + picker) behaviourally identical
+        # (no sibling-gap); checkout subsumes rewind_to for active seqs.
+        result = await registry.checkout(target)
     except Exception as exc:  # noqa: BLE001 — surface the reason to the user
         await reply_error(session, f"/rewind: {exc}")
         return
@@ -52,7 +56,7 @@ async def rewind_cmd(session: "object", args: str) -> None:
     agents = result.get("agents", [])
     await reply(
         session,
-        f"⏪ rewound to seq {result.get('target_n', target)} "
+        f"⏪ checked out to seq {result.get('target_n', target)} "
         f"· {len(agents)} agent(s) reset · in-flight cancelled",
     )
 

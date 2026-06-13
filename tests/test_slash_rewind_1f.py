@@ -72,12 +72,12 @@ async def test_bare_rewind_emits_menu_sentinel() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rewind_with_seq_invokes_rewind_to(tmp_path) -> None:
-    """Tier 2: /rewind <N> calls AgentRegistry.rewind_to(N) and reports success.
+async def test_rewind_with_seq_invokes_checkout(tmp_path) -> None:
+    """Tier 2: /rewind <N> calls AgentRegistry.checkout(N) and reports success.
 
-    Drives a real registry: WAL seq 1 + 2 appended, rewind to seq 1. The
-    reply names the target seq and the agent-reset count; the WAL grows a
-    reset-record (proof rewind_to actually ran).
+    The slash uses the SAME unified checkout the picker dispatches (D8) — no
+    sibling-gap. Drives a real registry: WAL seq 1 + 2 appended, checkout to
+    seq 1. The reply names the target seq; the WAL grows a reset-record.
     """
     reg = _make_registry(tmp_path)
     log = reg.state_log
@@ -88,11 +88,11 @@ async def test_rewind_with_seq_invokes_rewind_to(tmp_path) -> None:
     session = _CapturingSession(registry=reg)
     await _handler().handler(session, "1")
 
-    # A reset-record was appended (rewind_to ran).
+    # A reset-record was appended (checkout ran).
     assert log.current_seq > head_before
     # The reply names the target seq.
     texts = [getattr(m, "text", "") for m in session.outbox_msgs]
-    assert any("seq 1" in t and "rewound" in t for t in texts)
+    assert any("seq 1" in t and "checked out" in t for t in texts)
 
 
 @pytest.mark.asyncio
@@ -113,15 +113,27 @@ async def test_rewind_seq_without_registry_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rewind_abandoned_target_surfaces_error(tmp_path) -> None:
-    """Tier 2: /rewind <N> into an abandoned branch surfaces rewind_to's error."""
+async def test_rewind_abandoned_target_checks_out_fork_switch(tmp_path) -> None:
+    """Tier 2: /rewind <N> into an abandoned branch now SUCCEEDS (fork-switch).
+
+    Contract reversal from the rewind_to era: rewind_to rejected an abandoned
+    target (RewindIntoAbandonedError); the unified checkout (D8) has no
+    active-target guard, so checking out a dead-branch seq revives that lineage
+    — a fork-switch, not an error. Pins the new behaviour decisively.
+    """
     from reyn.events.snapshot_generations import rewind as _rewind_record
     reg = _make_registry(tmp_path)
     log = reg.state_log
     await log.append("inbox_put", target="alpha", msg_id="a", msg_kind="user", payload={})
     await log.append("inbox_put", target="alpha", msg_id="b", msg_kind="user", payload={})
-    await _rewind_record(log, target_n=1)  # abandons seq 2
+    await _rewind_record(log, target_n=1)  # abandons seq 2 (dead branch)
+    head_before = log.current_seq
 
     session = _CapturingSession(registry=reg)
-    await _handler().handler(session, "2")  # seq 2 is abandoned
-    assert [m.kind for m in session.outbox_msgs] == ["error"]
+    await _handler().handler(session, "2")  # checkout the dead-branch seq
+
+    # No error — the dead-branch checkout succeeded (fork-switch).
+    assert "error" not in [m.kind for m in session.outbox_msgs]
+    assert log.current_seq > head_before  # a reset-record reviving seq 2's lineage
+    texts = [getattr(m, "text", "") for m in session.outbox_msgs]
+    assert any("checked out" in t for t in texts)

@@ -34,6 +34,7 @@ from reyn.chat.tui._palette import (
     _TEXT_DIM,
     _TEXT_MUTED,
 )
+from reyn.chat.tui.widgets._branch_tree import ROW_CHECKPOINT, ROW_HEADER
 
 # Max checkpoint rows rendered at once (mirrors SlashPicker._MAX_VISIBLE). The
 # window slides to keep the selected row visible when the list is longer.
@@ -99,37 +100,73 @@ class RewindMenuWidget(Widget):
 
     def __init__(
         self,
-        points: list[dict],
+        points: list[dict] | None = None,
         *,
         rel_time_fn=None,
         id: str | None = None,
+        _tree_rows: list[dict] | None = None,
     ) -> None:
         super().__init__(id=id)
-        self._points = list(points)
         self._rel_time_fn = rel_time_fn or format_rel_time
-        # Default selection = the most-recent checkpoint (bottom). The user
-        # rewinds *backward*, so they navigate up from "now".
-        self._selected = max(0, len(self._points) - 1)
+        if _tree_rows is not None:
+            # Tree mode (Phase-2 fork picker): rows from build_branch_tree_rows
+            # — header decorators (non-selectable) interleaved with selectable
+            # checkpoint rows. Selection indexes the selectable subset.
+            self._mode = "tree"
+            self._rows = list(_tree_rows)
+            self._selectable = [
+                i for i, r in enumerate(self._rows) if r.get("row") == ROW_CHECKPOINT
+            ]
+            self._points = []
+            # Default = the working-tree head: the first selectable row, which
+            # (active-first, newest-first ordering) is the active branch's newest
+            # checkpoint → Enter immediately = undo (Phase-1 parity).
+            self._selected = 0
+        else:
+            # Flat mode (Phase-1 /rewind timeline).
+            self._mode = "flat"
+            self._points = list(points or [])
+            self._rows = []
+            self._selectable = []
+            # Default selection = the most-recent checkpoint (bottom).
+            self._selected = max(0, len(self._points) - 1)
+
+    @classmethod
+    def from_tree_rows(
+        cls,
+        rows: list[dict],
+        *,
+        rel_time_fn=None,
+        id: str | None = None,
+    ) -> "RewindMenuWidget":
+        """Construct the Phase-2 fork picker over branch-tree rows (always-tree)."""
+        return cls(rel_time_fn=rel_time_fn, id=id, _tree_rows=rows)
 
     # ── selection (app-driven nav) ────────────────────────────────────────────
 
     @property
     def selected_index(self) -> int:
+        """0-based index of the current selection within the selectable rows."""
         return self._selected
 
     def move_selection(self, delta: int) -> None:
-        """Move the highlight by ``delta`` rows, clamped to the list bounds.
+        """Move the highlight by ``delta`` *selectable* rows, clamped.
 
-        Clamp (not wrap): the timeline is finite and ordered, so wrapping from
-        oldest to newest would be disorienting.
+        Clamp (not wrap): the timeline is finite and ordered. In tree mode the
+        cursor moves among checkpoint rows only — header rows are skipped.
         """
-        if not self._points:
+        n = len(self._selectable) if self._mode == "tree" else len(self._points)
+        if n == 0:
             return
-        self._selected = max(0, min(len(self._points) - 1, self._selected + delta))
+        self._selected = max(0, min(n - 1, self._selected + delta))
         self.refresh()
 
     def selected_point(self) -> dict | None:
         """The currently highlighted checkpoint row, or None when empty."""
+        if self._mode == "tree":
+            if not self._selectable:
+                return None
+            return self._rows[self._selectable[self._selected]]
         if not self._points:
             return None
         return self._points[self._selected]
@@ -147,7 +184,59 @@ class RewindMenuWidget(Widget):
         start = max(0, min(self._selected - half, n - _MAX_VISIBLE))
         return start, start + _MAX_VISIBLE
 
+    def _render_tree(self) -> Text:
+        """Render the branch-tree fork picker (Phase-2 2b, always-tree).
+
+        Header rows are dim/bright decorators (active vs inactive branch); the
+        ▌ caret sits only on the selected checkpoint row. Indent = depth. The
+        `▸` marks the working-tree head's branch.
+        """
+        body = Text()
+        body.append(
+            "  ⏪ checkout a checkpoint   (Enter = go here · Esc cancel)\n",
+            style=f"bold {_CORAL}",
+        )
+        if not self._rows:
+            body.append("  (no checkpoints yet)\n", style=f"dim {_TEXT_DIM}")
+            return body
+
+        sel_abs = self._selectable[self._selected] if self._selectable else -1
+        for i, r in enumerate(self._rows):
+            indent = "  " * (r.get("depth", 0) + 1)
+            if r.get("row") == ROW_HEADER:
+                active = r.get("is_active")
+                glyph = "● " if active else "◌ "
+                mark = "▸ " if active else "  "
+                style = _TEXT_BRIGHT if active else f"dim {_TEXT_DIM}"
+                tag = "active" if active else "inactive"
+                line = Text()
+                line.append(f"{mark}{indent}{glyph}{r.get('label', '')}", style=style)
+                line.append(f"   {tag}\n", style=f"dim {_TEXT_DIM}")
+                body.append_text(line)
+                continue
+            # checkpoint (selectable) row
+            is_sel = i == sel_abs
+            line = Text()
+            line.append("▌ " if is_sel else "  ", style=_CORAL if is_sel else _BG_HEADER)
+            line.append(indent)
+            line.append(
+                f"#{r.get('seq')}", style=f"bold {_CORAL}" if is_sel else _TEXT_BRIGHT,
+            )
+            kind = _KIND_LABEL.get(r.get("kind", ""), r.get("kind", ""))
+            line.append(f"  {kind.ljust(10)}", style=_TEXT_MUTED)
+            rel = self._rel_time_fn(r.get("ts", ""))
+            if rel:
+                line.append(f"  {rel}", style=f"dim {_TEXT_DIM}")
+            line.append("\n")
+            body.append_text(line)
+        body.append(
+            "  ↑/↓ select · Enter checkout · Esc cancel\n", style=f"dim {_TEXT_DIM}",
+        )
+        return body
+
     def render(self) -> Text:
+        if self._mode == "tree":
+            return self._render_tree()
         body = Text()
         body.append("  ⏪ rewind — pick a checkpoint\n", style=f"bold {_CORAL}")
 
