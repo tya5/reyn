@@ -57,7 +57,7 @@ async def test_reconstruct_skips_abandoned_after_rewind(tmp_path):
 
 @pytest.mark.asyncio
 async def test_post_rewind_work_yields_current_state(tmp_path):
-    """Tier 2 (refinement): reconstruct(head) keeps work done AFTER the rewind.
+    """Tier 2: reconstruct(head) keeps work done AFTER the rewind (refinement).
 
     reconstruct(active-pointer-target) would lose 'd' — reconstruct(head)+is_active
     keeps it (active = ≤N ∪ (R, head]).
@@ -73,7 +73,7 @@ async def test_post_rewind_work_yields_current_state(tmp_path):
 
 @pytest.mark.asyncio
 async def test_crash_mid_rewind_idempotent(tmp_path):
-    """Tier 2 (keystone): crash mid-rewind ⇒ restore yields as-of-N, idempotently.
+    """Tier 2: crash mid-rewind ⇒ restore yields as-of-N, idempotently (keystone).
 
     Reset-record is fsync'd before reconstruction; with head == the rewind record
     (no new work yet), reconstruct(head) collapses to as-of-N and never resurrects
@@ -91,7 +91,7 @@ async def test_crash_mid_rewind_idempotent(tmp_path):
 
 @pytest.mark.asyncio
 async def test_nested_rewind_subsuming(tmp_path):
-    """Tier 2 (nested shape a): a 2nd rewind further back subsumes the 1st."""
+    """Tier 2: a 2nd rewind further back subsumes the 1st (nested shape a)."""
     log = StateLog(tmp_path / "wal")
     await _put(log, "a")           # seq 1
     await _put(log, "b")           # seq 2
@@ -104,7 +104,7 @@ async def test_nested_rewind_subsuming(tmp_path):
 
 @pytest.mark.asyncio
 async def test_nested_rewind_partial(tmp_path):
-    """Tier 2 (nested shape b): a 2nd rewind on the new branch does NOT subsume.
+    """Tier 2: a 2nd rewind on the new branch does NOT subsume (nested shape b).
 
     Exercises the non-trivial 'skip rewinds on abandoned branches' path NOT
     firing for the 1st rewind (it stays active), so both abandoned segments hold.
@@ -122,7 +122,7 @@ async def test_nested_rewind_partial(tmp_path):
 
 @pytest.mark.asyncio
 async def test_rewind_to_abandoned_seq_rejected(tmp_path):
-    """Tier 2 (Phase-1 guard): rewinding into an abandoned segment is rejected."""
+    """Tier 2: rewinding into an abandoned segment is rejected (Phase-1 guard)."""
     log = StateLog(tmp_path / "wal")
     await _put(log, "a")           # seq 1
     await _put(log, "b")           # seq 2
