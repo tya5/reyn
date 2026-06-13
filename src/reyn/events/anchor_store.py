@@ -34,20 +34,36 @@ def truncate_anchor(text: str, *, limit: int = _DEFAULT_LIMIT) -> str:
 class AnchorStore:
     """Maps a WAL checkpoint seq → its anchor text (truncated last user message).
 
-    JSON-backed (``{seq: text}``); anchors are tiny and bounded by the retention
-    window. ``get`` returns ``""`` for an unknown seq so callers can slot the
-    field in unconditionally.
+    JSON-backed; each entry is ``{"anchor": <truncated display>, "full": <full
+    original user message>}``. The truncated ``anchor`` drives the rewind-timeline
+    preview (1f); the ``full`` message is the source for the 2c edit-prefill (a
+    truncated re-run would lose the original tail = correctness, #1533 2c). Both
+    are captured at ``cut_generation`` time, where the full message is in hand —
+    robust vs fragile after-the-fact WAL/history mining. Entries are tiny and
+    bounded by the retention window.
+
+    ``get`` / ``get_full`` return ``""`` for an unknown seq so callers can slot the
+    field in unconditionally. **Back-compatible**: a pre-2c file stores ``{seq:
+    <str>}``; such values load as ``{"anchor": <str>, "full": ""}`` so the display
+    still works and the edit-prefill degrades to empty (manual re-type).
     """
 
     def __init__(self, path: Path) -> None:
         self._path = Path(path)
-        self._anchors: dict[int, str] | None = None
+        self._anchors: dict[int, dict[str, str]] | None = None
 
-    def _load(self) -> dict[int, str]:
+    @staticmethod
+    def _normalize(value: object) -> dict[str, str]:
+        """Coerce a stored value to ``{"anchor", "full"}`` (legacy str → full="")."""
+        if isinstance(value, dict):
+            return {"anchor": str(value.get("anchor", "")), "full": str(value.get("full", ""))}
+        return {"anchor": str(value), "full": ""}   # pre-2c str value
+
+    def _load(self) -> dict[int, dict[str, str]]:
         if self._anchors is None:
             try:
                 raw = json.loads(self._path.read_text(encoding="utf-8"))
-                self._anchors = {int(k): str(v) for k, v in raw.items()}
+                self._anchors = {int(k): self._normalize(v) for k, v in raw.items()}
             except FileNotFoundError:
                 self._anchors = {}
             except (OSError, ValueError) as e:
@@ -70,16 +86,31 @@ class AnchorStore:
         )
         tmp.replace(self._path)
 
-    def capture(self, seq: int, text: str) -> None:
-        """Record the anchor ``text`` for checkpoint ``seq`` (idempotent overwrite)."""
+    def capture(self, seq: int, text: str, *, full: str = "") -> None:
+        """Record the anchor for checkpoint ``seq`` (idempotent overwrite).
+
+        ``text`` = truncated display anchor (required — empty → no-op, so non-turn
+        checkpoints store nothing). ``full`` = the full original user message for
+        the 2c edit-prefill (defaults empty for callers that have only the anchor).
+        """
         if not text:
             return
-        self._load()[int(seq)] = text
+        self._load()[int(seq)] = {"anchor": text, "full": full}
         self._save()
 
     def get(self, seq: int) -> str:
-        """Return the anchor for ``seq``, or ``""`` when none is recorded."""
-        return self._load().get(int(seq), "")
+        """Return the truncated display anchor for ``seq``, or ``""`` when none."""
+        entry = self._load().get(int(seq))
+        return entry["anchor"] if entry else ""
+
+    def get_full(self, seq: int) -> str:
+        """Return the full original message for ``seq`` (2c edit-prefill source).
+
+        ``""`` when none recorded or when the entry predates 2c (legacy str value)
+        — the edit-prefill then degrades to empty (manual re-type).
+        """
+        entry = self._load().get(int(seq))
+        return entry["full"] if entry else ""
 
     def prune_below(self, min_keep_seq: int) -> int:
         """Drop anchors with seq < ``min_keep_seq`` (Stage 1e retention GC)."""

@@ -73,7 +73,7 @@ class SnapshotJournal:
         """
         self._anchor_store = anchor_store
 
-    async def cut_generation(self, anchor: str = "") -> None:
+    async def cut_generation(self, anchor: str = "", full_message: str = "") -> None:
         """Record the current snapshot as a PITR generation (ADR-0038 Stage 1a/1d).
 
         Called at user-facing checkpoint boundaries (turn / plan-step) — a
@@ -87,6 +87,9 @@ class SnapshotJournal:
         ``anchor`` (#1547): the truncated last user message for the rewind-timeline
         preview, captured against the same boundary seq. Empty / no anchor store →
         skipped (turn boundaries pass it; plan-step / phase cuts leave it empty).
+        ``full_message`` (#1533 2c): the full original user message for the
+        edit-prefill, persisted alongside the truncated anchor (turn boundaries
+        only — same as ``anchor``).
         """
         if self._generation_store is None or self._state_log is None:
             return
@@ -94,7 +97,9 @@ class SnapshotJournal:
         if self._workspace_store is not None:
             await self._workspace_store.capture(self._snapshot.applied_seq)
         if self._anchor_store is not None and anchor:
-            self._anchor_store.capture(self._snapshot.applied_seq, anchor)
+            self._anchor_store.capture(
+                self._snapshot.applied_seq, anchor, full=full_message,
+            )
 
     # ── public read access ────────────────────────────────────────────────
 
