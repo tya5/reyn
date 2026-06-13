@@ -58,10 +58,17 @@ class AnchorStore:
     def _save(self) -> None:
         anchors = self._load()
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
+        # Atomic tmp+rename: a torn write must never wipe ALL anchors (this store
+        # is rewritten every turn, so torn-write risk is higher than a once-written
+        # profile, and _load degrades a corrupt file to {} → the next save would
+        # overwrite with {}). fsync is intentionally omitted — anchors are
+        # preview-tier, not sync-durability-critical (WAL/audit separation intent).
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        tmp.write_text(
             json.dumps({str(k): v for k, v in anchors.items()}),
             encoding="utf-8",
         )
+        tmp.replace(self._path)
 
     def capture(self, seq: int, text: str) -> None:
         """Record the anchor ``text`` for checkpoint ``seq`` (idempotent overwrite)."""
