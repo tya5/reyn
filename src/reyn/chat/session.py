@@ -53,6 +53,7 @@ from reyn.config import (  # noqa: F401
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
+from reyn.events.snapshot_generations import SnapshotGenerationStore
 from reyn.events.state_log import StateLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.permissions.permissions import PermissionResolver
@@ -1488,10 +1489,15 @@ class ChatSession:
         self._snapshot_path = snapshot_path or (
             Path(".reyn") / "agents" / self.agent_name / "state" / "snapshot.json"
         )
+        # ADR-0038 Stage 1a: PITR generation store, kept beside snapshot.json.
+        self._generation_store = SnapshotGenerationStore(
+            self.agent_name, self._snapshot_path.parent / "generations",
+        )
         self._journal = SnapshotJournal(
             agent_name=self.agent_name,
             snapshot_path=self._snapshot_path,
             state_log=state_log,
+            generation_store=self._generation_store,
         )
         # Track state_log directly for skill resume (PR-skill-resume): the
         # journal owns it for inbox / chain mutations, but skills launched
@@ -4886,6 +4892,8 @@ class ChatSession:
     ) -> None:
         """Forwarding → RouterLoopDriver.run_turn (PR-3)."""
         await self._loop_driver.run_turn(user_text, chain_id)
+        # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint.
+        self._journal.cut_generation()
 
     async def _router_run_with_shrink(self, loop, user_text: str) -> "Any":
         """Forwarding → RouterLoopDriver._run_with_shrink (PR-3)."""

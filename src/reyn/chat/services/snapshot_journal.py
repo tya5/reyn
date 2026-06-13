@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 
 from reyn.events.agent_snapshot import AgentSnapshot
+from reyn.events.snapshot_generations import SnapshotGenerationStore
 from reyn.events.state_log import StateLog
 
 
@@ -37,11 +38,28 @@ class SnapshotJournal:
         agent_name: str,
         snapshot_path: Path,
         state_log: StateLog | None,
+        generation_store: SnapshotGenerationStore | None = None,
     ) -> None:
         self._agent_name = agent_name
         self._snapshot_path = Path(snapshot_path)
         self._state_log = state_log
+        # ADR-0038 Stage 1a: PITR generation store. When None (tests /
+        # non-chat), generation cuts are no-ops and the single snapshot.json
+        # path is unchanged (no behavior change).
+        self._generation_store = generation_store
         self._snapshot: AgentSnapshot = AgentSnapshot.empty(agent_name)
+
+    def cut_generation(self) -> None:
+        """Record the current snapshot as a PITR generation (ADR-0038 Stage 1a).
+
+        Called at user-facing checkpoint boundaries (turn / plan-step) — a
+        single seam so cuts are neither missed nor doubled. Additive to the
+        per-mutation ``save()``; the latest generation equals the current
+        snapshot. No-op when no generation store / WAL is configured.
+        """
+        if self._generation_store is None or self._state_log is None:
+            return
+        self._generation_store.record(self._snapshot)
 
     # ── public read access ────────────────────────────────────────────────
 
@@ -361,6 +379,8 @@ class SnapshotJournal:
         )
         self._snapshot.applied_seq = seq
         self.save()
+        # ADR-0038 Stage 1a: plan-step boundary = a user-facing checkpoint.
+        self.cut_generation()
         return seq
 
     async def record_plan_step_failed(
