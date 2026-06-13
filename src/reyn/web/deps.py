@@ -382,6 +382,7 @@ def _get_registry():
             workspace_state_dir=get_cli_scoped_overrides().workspace_state_dir,
             # #1582: time-travel workspace-capture opt-out (reyn.yaml config).
             workspace_capture=config.time_travel.workspace_capture,
+            act_turn_capture=config.time_travel.act_turn_capture,  # #1560 opt-in
         )
         registry_ref.append(registry)
         _registry = registry

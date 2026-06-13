@@ -493,6 +493,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
             environment_backend=env_backend,   # #1544: container shadow-git
             workspace_state_dir=ws_state_dir,  # #1557 gap-#1: shadow git-dir under --state-dir
             workspace_capture=config.time_travel.workspace_capture,  # #1582 opt-out
+            act_turn_capture=config.time_travel.act_turn_capture,  # #1560 opt-in
         )
         _reg_cell.append(reg)
         return reg

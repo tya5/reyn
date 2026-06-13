@@ -50,6 +50,7 @@ from reyn.events.snapshot_generations import (
 )
 from reyn.events.snapshot_generations import checkout as _append_reset_record
 from reyn.events.state_log import StateLog
+from reyn.events.workspace_op_content_log import WorkspaceOpContentLog
 from reyn.events.workspace_version_store import WorkspaceVersionStore
 
 from .profile import PROFILE_FILENAME, AgentProfile
@@ -116,6 +117,7 @@ class AgentRegistry:
         environment_backend: "object | None" = None,
         workspace_state_dir: "Path | None" = None,
         workspace_capture: bool = True,
+        act_turn_capture: bool = False,
     ) -> None:
         """
         session_factory: returns a configured ChatSession given an AgentProfile.
@@ -172,6 +174,17 @@ class AgentRegistry:
         # coherent by construction. Run-level (construction-time), like
         # retention_policy — not a mid-session toggle.
         self._workspace_capture = workspace_capture
+        # #1560: opt-in per-step (act-turn) workspace capture (default off). When
+        # on, a generic post-append observer on the WAL captures a write-tree
+        # snapshot at each ``step_completed`` into the op-content-log, so act-turn
+        # rewind can restore mid-skill-run workspace state (restore = PR-2). The
+        # callback is registered ONLY when on, so default users pay zero per-append
+        # cost (the WAL's observer list stays empty). Gated additionally by the
+        # Tier-1 workspace store (off / None → no-op).
+        self._act_turn_capture = act_turn_capture
+        self._op_content_log: "WorkspaceOpContentLog | None" = None
+        if act_turn_capture and state_log is not None:
+            state_log.register_post_append(self._on_wal_append_capture)
         # #1547: per-checkpoint anchor text (rewind-timeline preview). One global
         # store keyed by WAL seq; lazily built. None when no WAL.
         self._anchor_store: AnchorStore | None = None
@@ -699,6 +712,41 @@ class AgentRegistry:
                 self._project_root, host_git_dir, git_runner=runner,
             )
         return WorkspaceVersionStore(self._project_root, host_git_dir)
+
+    @property
+    def op_content_log(self) -> "WorkspaceOpContentLog | None":
+        """The op-granular (act-turn) content log (#1560), lazily built.
+
+        ``None`` when act-turn capture is off or there is no WAL. Lives beside the
+        shadow git-dir (under ``--state-dir`` when set, #1557) — the same root as
+        the boundary generations, so the persistence switch covers both.
+        """
+        if not self._act_turn_capture or self._state_log is None:
+            return None
+        if self._op_content_log is None:
+            root = self._workspace_state_dir or (self._project_root / ".reyn")
+            self._op_content_log = WorkspaceOpContentLog(root / "op-content-log.jsonl")
+        return self._op_content_log
+
+    async def _on_wal_append_capture(self, kind: str, seq: int, fields: dict) -> None:
+        """Generic WAL post-append observer: per-step act-turn workspace capture.
+
+        Fires only for ``step_completed`` (the act-turn step boundary, whose seq is
+        ``CommittedStep.seq``). Gated by the Tier-1 workspace store: when workspace
+        capture is off (``workspace_store is None``), this is a no-op too (one
+        switch). Captures a bare ``write-tree`` snapshot and records ``(seq,
+        tree_sha)``. Best-effort — runs on the swallow-safe observer path, so any
+        failure here never affects the WAL append (the store/log already swallow).
+        """
+        if kind != "step_completed":
+            return
+        ws = self.workspace_store
+        log = self.op_content_log
+        if ws is None or log is None:
+            return
+        tree_sha = await ws.capture_tree()
+        if tree_sha is not None:
+            log.append(seq, tree_sha)
 
     @property
     def anchor_store(self) -> AnchorStore | None:

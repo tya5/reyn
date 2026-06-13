@@ -349,6 +349,12 @@
 # -----------------------------------------------------------------------------
 # time_travel:
 #   workspace_capture: true
+#   # act_turn_capture (default false): opt-in per-step capture. When true, each
+#   # skill-run op (step_completed) also snapshots the workspace (a cheap
+#   # write-tree) so a rewind can land mid-skill-run, not just at turn/plan-step
+#   # boundaries. High-frequency (per op) → opt-in. No-op when workspace_capture
+#   # is false.
+#   act_turn_capture: false
 
 
 # -----------------------------------------------------------------------------
