@@ -109,6 +109,7 @@ class AgentRegistry:
         session_factory: Callable[[AgentProfile], "object"],
         state_log: StateLog | None = None,
         retention_policy: RetentionPolicy | None = None,
+        environment_backend: "object | None" = None,
     ) -> None:
         """
         session_factory: returns a configured ChatSession given an AgentProfile.
@@ -147,6 +148,11 @@ class AgentRegistry:
         # tracked follow-up (#1544). Lazily built so non-chat / no-WAL callers
         # never touch git.
         self._workspace_store: WorkspaceVersionStore | None = None
+        # ADR-0038 #1544: FS+exec backend. None / name!="container" → host mode
+        # (host subprocess git runner). When container, git runs in-container via
+        # backend.run with the container path context (the work-tree is
+        # container-side; host git can't reach it).
+        self._environment_backend = environment_backend
         # #1547: per-checkpoint anchor text (rewind-timeline preview). One global
         # store keyed by WAL seq; lazily built. None when no WAL.
         self._anchor_store: AnchorStore | None = None
@@ -551,11 +557,36 @@ class AgentRegistry:
         if self._state_log is None:
             return None
         if self._workspace_store is None:
-            self._workspace_store = WorkspaceVersionStore(
-                self._project_root,
-                self._project_root / ".reyn" / "workspace-shadow.git",
-            )
+            self._workspace_store = self._build_workspace_store()
         return self._workspace_store
+
+    def _build_workspace_store(self) -> WorkspaceVersionStore:
+        """Build the workspace store for the active environment (#1544).
+
+        Host (default): a host subprocess git runner over the host git-dir.
+        Container (``environment_backend.name == "container"``): git runs
+        in-container via ``backend.run`` with the CONTAINER path context, while
+        the small FS surface (init dir + ``info/exclude``) stays on the host
+        git-dir — which in mount-mode is the bind-mount source, so the write is
+        visible in-container. (Attach/baked mode has no bind-mount → host FS and
+        container git diverge → degrades; attach-mode persistence is a tracked
+        follow-up, #1544 checklist.)
+        """
+        host_git_dir = self._project_root / ".reyn" / "workspace-shadow.git"
+        backend = self._environment_backend
+        if backend is not None and getattr(backend, "name", "") == "container":
+            from reyn.events.workspace_version_store import _ContainerGitRunner
+
+            repo_dir = str(getattr(backend, "repo_dir", "/workspace"))
+            runner = _ContainerGitRunner(
+                backend,
+                git_dir=f"{repo_dir}/.reyn/workspace-shadow.git",
+                work_tree=repo_dir,
+            )
+            return WorkspaceVersionStore(
+                self._project_root, host_git_dir, git_runner=runner,
+            )
+        return WorkspaceVersionStore(self._project_root, host_git_dir)
 
     @property
     def anchor_store(self) -> AnchorStore | None:
