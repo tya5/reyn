@@ -25,12 +25,13 @@ Architecture choice (= per the design doc):
     that narrows the tool catalogue to the step's allowed tools and
     swaps the system prompt for a step-specific template. The phase
     LLM caller is untouched; we don't introduce a third caller.
-  - **No skill abstraction reuse for MVP.** Plan is transient (= one
-    chat turn), not persistable. Lifting plan onto skills (= plan as
-    stdlib skill, persisted via skill_resume infra) is a later
-    migration when resume / replay become hard requirements.
-  - **In-memory plan artifact.** No workspace persistence in MVP.
-    Plan steps emit ``plan_*`` events for audit (= P6).
+  - **Plan not on the skill abstraction.** Plan does not reuse the skill
+    machinery; lifting plan onto skills (= plan as stdlib skill) remains a
+    possible later migration.
+  - **Plan artifact is workspace-persisted (since ADR-0023 Phase 2).** The
+    original MVP kept the plan in-memory only; ADR-0023 promoted it to a
+    workspace-persisted decomposition (``write_plan_decomposition``, P5 SSoT)
+    with crash-resume via ``PlanSnapshot`` + ``plan_*`` WAL / audit events (P6).
 
 P7-clean: this module contains no skill-specific strings. Step names
 and descriptions come entirely from the LLM-emitted plan; the OS only
