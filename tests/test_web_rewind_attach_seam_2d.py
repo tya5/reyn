@@ -110,7 +110,10 @@ async def test_web_path_session_records_anchor_for_picker(tmp_path) -> None:
     await session._run_router_loop("A", "c1")
     seq_a = session.current_snapshot.applied_seq
 
-    # The anchor store (auto-attached) recorded this boundary — the picker can
-    # show a preview / the edit pre-fill has a source. (Anchor text comes from
-    # the turn's user_text via cut_generation; non-empty proves the attach.)
-    assert reg.anchor_store.get(seq_a) != "" or reg.anchor_store.get_full(seq_a) != ""
+    # The anchor store (auto-attached) recorded this boundary — both the
+    # picker's truncated preview (get) AND the edit pre-fill's full source
+    # (get_full) come from the turn's user_text via cut_generation, which now
+    # persists both. Asserting both non-empty proves the attach end-to-end
+    # (a #1556-class runtime-only acquisition would leave both empty).
+    assert reg.anchor_store.get(seq_a) != ""
+    assert reg.anchor_store.get_full(seq_a) != ""
