@@ -44,6 +44,13 @@ mindmap
         WAL state log
         Forward-replay resume
         CommittedStep memo
+      ⏱️ Time-Travel
+        /rewind picker
+        Consistent-cut rewind
+        Branch registry
+        checkout(seq) primitive
+        Multi-fork UX
+        Live-fork gate
       📜 Event System P6
         171 event types
         Append-only JSONL
@@ -247,6 +254,28 @@ mindmap
 | Forward-replay resume | `SkillResumeAnalyzer` reconstructs run state from state log | [Skill Resume](concepts/skills/skill-resume.md) |
 | `CommittedStep` memo | Replay recorded op results on resume without re-invoking | [Skill Resume](concepts/skills/skill-resume.md) |
 | World-op bypass | Transient ops (web_search, web_fetch) re-execute fresh on resume | [Skill Resume](concepts/skills/skill-resume.md) |
+
+#### Time-Travel / Rewind (Resume)
+
+User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b) are production; Phase 2c (fork-then-edit) and 2d (web surface) are in-progress. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: ADR-0038 (PR #1536, pending merge). Change ledger: #1533.
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| `/rewind` picker | Interactive checkpoint timeline (seq / timestamp / kind columns); Esc-Esc double-tap shortcut | — |
+| Per-checkpoint anchor preview | Each picker row shows a rendered scroll-hint anchor (#1547) | — |
+| PITR reconstruct | Point-in-time snapshot + WAL-diff reconstruction to target seq | [Crash Recovery](concepts/skills/skill-resume.md) |
+| Consistent-cut rewind | Both substrates (runtime state + workspace shadow-git `as-of-N`) rewound atomically | — |
+| Append-only reset-record | Undo appends a reset-record at seq R; history before R is preserved on the current branch (no destructive rewrite) | — |
+| Retention window + GC | Configurable checkpoint retention window; stale snapshots GC'd automatically | — |
+| Branch registry | Abandoned-interval lineage: each fork receives a registry entry with origin seq | — |
+| `checkout(seq)` unified primitive | Active-branch seq → undo; inactive-branch seq → fork-switch. One primitive for both directions | — |
+| Multi-fork tree UX | Always-tree picker with per-branch anchor labels (#1547 integration) | — |
+| Act-turn runtime-only rewind | Ghost-Replay memo truncate for rewind within an in-flight turn (no substrate round-trip) | — |
+| Container-mode shadow-git | Shadow-git `as-of-N` rewind supported inside the container environment backend | — |
+| Deterministic CI live-fork gate | `test_live_rewind_gate.py` — P1 undo + P2 fork-switch pass deterministically (#1564) | — |
+| tmux live e2e | P1 undo + P2 fork-switch verified on real terminal (#1549 / #1550 / #1562) | — |
+| Phase 2c: fork-then-edit ⏳ | New branch on edit (in-progress) | — |
+| Phase 2d: web surface ⏳ | `/rewind` picker over WebSocket / A2A (in-progress) | — |
 
 #### Event System (P6)
 | Feature | Description | Documentation |
