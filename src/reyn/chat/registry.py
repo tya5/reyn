@@ -115,6 +115,7 @@ class AgentRegistry:
         retention_policy: RetentionPolicy | None = None,
         environment_backend: "object | None" = None,
         workspace_state_dir: "Path | None" = None,
+        workspace_capture: bool = True,
     ) -> None:
         """
         session_factory: returns a configured ChatSession given an AgentProfile.
@@ -163,6 +164,14 @@ class AgentRegistry:
         # OS-state set, alongside events/artifacts — one persistence switch) rather
         # than at project_root/.reyn. None → default project_root/.reyn location.
         self._workspace_state_dir = workspace_state_dir
+        # #1582: time-travel cost opt-out. False → "runtime-only rewind": the
+        # workspace store is never built/attached, so cut_generation skips the
+        # per-boundary shadow-git capture (the largest constant cost) while the
+        # runtime substrate (AgentSnapshot generations + WAL) is untouched. The
+        # existing None-guards (attach / capture / restore / prune) make this
+        # coherent by construction. Run-level (construction-time), like
+        # retention_policy — not a mid-session toggle.
+        self._workspace_capture = workspace_capture
         # #1547: per-checkpoint anchor text (rewind-timeline preview). One global
         # store keyed by WAL seq; lazily built. None when no WAL.
         self._anchor_store: AnchorStore | None = None
@@ -642,10 +651,14 @@ class AgentRegistry:
     def workspace_store(self) -> WorkspaceVersionStore | None:
         """The shadow-git workspace store (ADR-0038 1d), lazily built.
 
-        ``None`` when there is no WAL (non-chat / tests that opt out). Host-mode
-        worktree = ``project_root``; git-dir under ``.reyn``. Container mode is a
-        tracked follow-up (#1544).
+        ``None`` when there is no WAL (non-chat / tests that opt out), OR when
+        ``workspace_capture`` is disabled (#1582 runtime-only rewind — the opt-out
+        for the per-boundary shadow-git capture cost). Host-mode worktree =
+        ``project_root``; git-dir under ``.reyn`` (or ``--state-dir``, #1557).
+        Container mode is a tracked follow-up (#1544).
         """
+        if not self._workspace_capture:
+            return None
         if self._state_log is None:
             return None
         if self._workspace_store is None:

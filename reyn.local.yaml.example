@@ -337,6 +337,21 @@
 
 
 # -----------------------------------------------------------------------------
+# time_travel: cost knobs for the time-travel (rewind/resume) feature (#1582).
+#
+# workspace_capture (default true): when true, every checkpoint boundary (turn /
+# plan-step) captures the workspace into a shadow-git generation so a rewind can
+# restore the repo files too. This is time-travel's LARGEST constant cost (a
+# ``git add -A`` + commit per boundary; in container mode a ``docker exec`` per
+# boundary). Set to false for "runtime-only rewind": rewind/checkout restore the
+# agent + conversation state but NOT repo files — a documented escape for large
+# workspaces / container runs / no-file-rewind use. Run-level (read at startup).
+# -----------------------------------------------------------------------------
+# time_travel:
+#   workspace_capture: true
+
+
+# -----------------------------------------------------------------------------
 # plan_resume_raw: how the resume coordinator treats
 # interrupted plan-mode runs on restart. Parsed lazily by the coordinator,
 # so the shape lives in ``reyn.plan`` rather than here. Set to a dict only

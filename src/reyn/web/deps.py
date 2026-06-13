@@ -380,6 +380,8 @@ def _get_registry():
             environment_backend=get_cli_scoped_overrides().environment_backend,
             # #1557 gap-#1: shadow git-dir under --state-dir (same accessor scope).
             workspace_state_dir=get_cli_scoped_overrides().workspace_state_dir,
+            # #1582: time-travel workspace-capture opt-out (reyn.yaml config).
+            workspace_capture=config.time_travel.workspace_capture,
         )
         registry_ref.append(registry)
         _registry = registry

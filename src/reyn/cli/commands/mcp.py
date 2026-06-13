@@ -443,6 +443,7 @@ def run_serve(args: argparse.Namespace) -> None:
         project_root=project_root,
         session_factory=_session_factory,
         state_log=state_log,
+        workspace_capture=session_cfg.config.time_travel.workspace_capture,  # #1582 opt-out
     )
 
     timeout = float(getattr(args, "timeout", 60.0) or 60.0)
