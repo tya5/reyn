@@ -190,13 +190,15 @@ async def test_esc_during_edit_exits_edit_keeps_picker(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ctrl_e_enters_edit_mode_on_selected_seq(tmp_path) -> None:
-    """Tier 2: ``ctrl+e`` while the picker is open enters edit-mode on the
+async def test_ctrl_t_enters_edit_mode_on_selected_seq(tmp_path) -> None:
+    """Tier 2: ``ctrl+t`` while the picker is open enters edit-mode on the
     highlighted checkpoint's seq (action_edit_checkpoint → enter_edit_mode).
 
-    ``ctrl+e`` (not bare ``e``): the can_focus=False picker keeps the InputBar
-    focused, which swallows printable keys before any app priority binding — so
-    only a non-printable chord reaches the binding (like the ↑/↓/Enter nav)."""
+    ``ctrl+t`` (not bare ``e``: the can_focus=False picker keeps the InputBar
+    focused and swallows printable keys; and not ``ctrl+e``: the focused
+    TextArea binds ctrl+e → cursor_line_end). ``ctrl+t`` is TextArea-unbound, so
+    the app priority binding reaches it — verified in tmux (run_test alone gave
+    a false positive for ctrl+e, hence the tmux gate)."""
     reg = await _registry_with_checkpoints(tmp_path)
     app = _make_app(reg)
     async with app.run_test(headless=True) as pilot:
@@ -207,7 +209,7 @@ async def test_ctrl_e_enters_edit_mode_on_selected_seq(tmp_path) -> None:
         assert selected is not None
         expected_seq = int(selected["seq"])
 
-        await pilot.press("ctrl+e")
+        await pilot.press("ctrl+t")
         await pilot.pause()
         assert app.edit_mode_active is True
         assert f"editing checkpoint #{expected_seq}" in _sticky(app).snapshot().get("body", "")
@@ -216,7 +218,7 @@ async def test_ctrl_e_enters_edit_mode_on_selected_seq(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_edit_checkpoint_noop_when_already_editing(tmp_path) -> None:
     """Tier 2: the edit binding is inert while already editing — check_action
-    gates ``edit_checkpoint`` off so ``ctrl+e`` does not re-enter (and a direct
+    gates ``edit_checkpoint`` off so ``ctrl+t`` does not re-enter (and a direct
     action call is guarded)."""
     reg = await _registry_with_checkpoints(tmp_path)
     app = _make_app(reg)

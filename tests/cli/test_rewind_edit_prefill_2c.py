@@ -92,11 +92,12 @@ async def test_prefill_edit_no_message_is_noop(tmp_path) -> None:
         assert bar.query_one("#input").text == "draft"   # untouched
 
 
-def test_tree_footer_advertises_ctrl_e_edit() -> None:
-    """Tier 2: the tree footer surfaces ctrl+e edit (discoverability; ctrl+e
-    because printable keys are swallowed by the focused InputBar)."""
+def test_tree_footer_advertises_ctrl_t_edit() -> None:
+    """Tier 2: the tree footer surfaces ctrl+t edit (discoverability). ctrl+t,
+    not ctrl+e: the focused TextArea binds ctrl+e → cursor_line_end and consumes
+    it (verified in tmux); ctrl+t is TextArea-unbound so the app binding fires."""
     branches = [{"branch_id": 0, "fork_point_seq": 0, "head_seq": 6, "parent_branch_id": None, "is_active": True}]
     cps = [{"seq": 3, "ts": "", "kind": "turn", "anchor": "", "branch_id": 0}]
     w = RewindMenuWidget.from_tree_rows(build_branch_tree_rows(branches, cps))
     rendered = w.render().plain
-    assert "ctrl+e" in rendered and "edit" in rendered
+    assert "ctrl+t" in rendered and "edit" in rendered

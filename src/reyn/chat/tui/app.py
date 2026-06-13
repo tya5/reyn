@@ -139,13 +139,16 @@ class ReynTUIApp(App):
         Binding("up", "rewind_prev", "Rewind: prev checkpoint", priority=True, show=False),
         Binding("down", "rewind_next", "Rewind: next checkpoint", priority=True, show=False),
         Binding("enter", "rewind_confirm", "Rewind: select checkpoint", priority=True, show=False),
-        # ADR-0038 2c: edit the selected checkpoint's input. ``ctrl+e`` (not bare
-        # ``e``): the picker is can_focus=False so the InputBar is always focused
-        # and SWALLOWS printable keys before any app priority binding — only
-        # non-printable chords (like the ↑/↓/Enter nav above) reach the app
-        # binding. Gated (check_action) to fire only while the picker is open AND
-        # not already editing.
-        Binding("ctrl+e", "edit_checkpoint", "Rewind: edit checkpoint input", priority=True, show=False),
+        # ADR-0038 2c: edit the selected checkpoint's input. ``ctrl+t`` — NOT bare
+        # ``e`` (the can_focus=False picker keeps the InputBar focused, which
+        # swallows printable keys), and NOT ``ctrl+e`` (the focused Textual
+        # TextArea binds ctrl+e → cursor_line_end and consumes it in a real
+        # terminal — verified in tmux that ctrl+e never reaches this binding,
+        # though run_test gave a false positive). ``ctrl+t`` is unbound by the
+        # TextArea / InputBar / App, so the app priority binding wins (same as the
+        # ctrl+b panel binding). Gated (check_action) to fire only while the
+        # picker is open AND not already editing.
+        Binding("ctrl+t", "edit_checkpoint", "Rewind: edit checkpoint input", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
         # Wave-4 AR5: keyboard scroll for the conv log. RichLog has
         # ``can_focus=False`` (intentional — prevents inadvertent
@@ -2552,12 +2555,12 @@ class ReynTUIApp(App):
     _EDIT_BANNER = "✎ editing checkpoint #{seq} — Enter to fork · Esc to cancel"
 
     def action_edit_checkpoint(self) -> None:
-        """``ctrl+e`` while the picker is open — edit the highlighted checkpoint.
+        """``ctrl+t`` while the picker is open — edit the highlighted checkpoint.
 
         Enters edit-mode on the selected checkpoint's seq, then hands off to the
         2c data-flow's pre-fill (loads the FULL user message of that turn into
         the InputBar). Gated by ``check_action`` to fire only while the picker is
-        open AND not already editing; otherwise the binding is inert (``ctrl+e``
+        open AND not already editing; otherwise the binding is inert (``ctrl+t``
         is non-printable, so nothing is typed when it doesn't fire).
         """
         menu = self._rewind_menu
@@ -2723,9 +2726,9 @@ class ReynTUIApp(App):
             except Exception:
                 return False
         if action in {"rewind_prev", "rewind_next", "rewind_confirm", "edit_checkpoint"}:
-            # ADR-0038 1f: navigation keys (+ 2c's ``ctrl+e`` edit) are live only
+            # ADR-0038 1f: navigation keys (+ 2c's ``ctrl+t`` edit) are live only
             # while the /rewind picker is mounted. Otherwise ↑/↓/Enter fall
-            # through to the InputBar (history / submit); ``ctrl+e`` is inert.
+            # through to the InputBar (history / submit); ``ctrl+t`` is inert.
             #
             # ADR-0038 2c: ...AND not while editing. During edit-mode the picker
             # stays mounted but its nav is suspended so ↑/↓/Enter reach the
