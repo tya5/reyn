@@ -1,7 +1,9 @@
 # ADR-0038: User-facing time-travel — global consistent-cut rewind + PITR snapshot generations
 
-**Status**: **DRAFT / Proposed** (design-first — pending lead review + owner
-final confirm; NO impl until gate passes). Authored 2026-06-13 for issue #1533.
+**Status**: **Accepted** (2026-06-13) — owner final ack obtained + lead-coder
+sign-off; **impl gate OPEN** (Phase 1 may start). Authored design-first for issue
+#1533; flow-trace verified by docs-maintainer (5/5 seams); ADR + plan reviewed and
+signed off by lead-coder.
 **Track**: Core state-model — successor seam to ADR-0001 (WAL+snapshot),
 ADR-0002 (forward-replay), ADR-0023 (PlanSnapshot).
 **Owner status**: design judgments co-designed + confirmed with owner (issue
@@ -165,13 +167,25 @@ full-copy generations would be heavy. **Recommended (for owner confirm)**: a
 files by content hash, unchanged files shared (de-duplicated) across generations;
 reconstruct-as-of-N restores the tree from the generation's blob manifest + WAL
 file-op delta. This matches the git mental model (D8) and the shadow-git approach
-Claude Code uses for code restore. **Storage strategy is an owner question**:
-full-copy vs content-addressed blob store vs OS-level CoW/reflink — cost vs
-simplicity. (Like Claude Code, external/irreversible side effects — sent
-messages, real subprocess writes outside the workspace — are **not** rewound; only
-workspace files + runtime state.)
+Claude Code uses for code restore. **Storage strategy (owner-confirmed)**:
+**content-addressed shadow-git** (Claude Code / Cline style); full-copy and
+OS-level CoW/reflink are **rejected** — content-addressing makes a generation at
+every turn / plan-step / phase boundary cheap (unchanged blobs shared). (Like
+Claude Code, external/irreversible side effects — sent messages, real subprocess
+writes outside the workspace — are **not** rewound; only workspace files + runtime
+state.)
 
-### Reset-record + active-pointer semantics (incl. nested rewind) — proposed for (b)
+**Two-substrate consistency (owner addition).** rewind/fork moves **two
+substrates**: runtime (WAL/snapshot + reset-record, D1/D3) and workspace
+(shadow-git, D9). A **generation ties them at the boundary seq**:
+`generation(N) = (AgentSnapshot + WAL @ seq N) ⊗ (shadow-git commit)`.
+`reconstruct(N)` restores both as-of-N **atomically** — runtime from snapshot + WAL
+delta, workspace from the tied shadow-git commit + file-op WAL delta. **undo =
+reset both substrates; fork = branch both.** The boundary-seq tie is the
+consistency anchor: a generation is cut only when both substrates are captured
+together, so a rewind never leaves runtime/workspace skew.
+
+### Reset-record + active-pointer semantics (incl. nested rewind) — signed off (b)
 **Reset-record** (WAL entry, fsync'd like any append):
 `{kind: "rewind", seq: R, target_n: N, supersedes: <prior active-pointer seq | null>}`.
 - **Active pointer** = the reset-record with the **highest `seq`** (latest wins);
@@ -249,8 +263,8 @@ workspace files + runtime state.)
    threshold / semantic-boundary gate; add the coarse snapshot-generation window;
    default current + opt-in deeper. Rewind bounded by window.
 6. **TUI `/rewind` (+ Esc-Esc)**: timeline of snapshot generations; select → global
-   rewind. Quiescent-only or system-wide-rollback **warn** when multi-agent
-   concurrency is live.
+   rewind. Multi-agent concurrency = **just-do-it** (owner): global rewind is
+   **always allowed**, no warn / no quiescent-gate; D4 cancels all in-flight.
 7. **Doc-fix**: stale `planner.py:32` "in-memory, no workspace persistence MVP"
    comment (ADR-0023 already persists).
 
@@ -270,12 +284,13 @@ workspace files + runtime state.)
 - **Cost**: snapshot generations increase storage in the coarse window (bounded by
   retention config); the reset-record-honor wiring touches the replay/derivation
   hot path (must be correctness-tested, incl. crash-mid-rewind).
-- **Risk surfaced for review / owner questions**: (a) generation cut frequency vs
-  storage **+ workspace blob-store strategy (D9): full-copy vs content-addressed vs
-  OS-level CoW/reflink**; (b) reset-record semantics under nested rewinds — *proposed
-  above (latest-reset-wins + abandoned-segment union, crash-idempotent); needs
-  lead sign-off + nested+crash test*; (c) multi-agent concurrent-rewind UX (warn vs
-  quiescent-gate) — flagged for owner.
+- **Owner questions — RESOLVED (2026-06-13)**: (a) workspace blob store =
+  **content-addressed shadow-git** (full-copy / CoW rejected); generations at
+  turn/plan-step/phase boundaries (cheap via content-addressing). (b) nested-rewind
+  reset semantics **signed off** (latest-reset-wins + abandoned-segment union,
+  crash-mid-rewind idempotent); nested+crash test required in Phase 1. (c)
+  multi-agent rewind = **just-do-it** — always allowed, no warn / no quiescent-gate;
+  D4 cancels all in-flight.
 
 ---
 
