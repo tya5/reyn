@@ -52,6 +52,9 @@ class SnapshotJournal:
         # cut_generation captures workspace files at the SAME boundary as the
         # runtime snapshot. None → no workspace versioning (capture is skipped).
         self._workspace_store = None
+        # #1547: per-checkpoint anchor text (truncated last user message). Set
+        # post-construction by the registry. None → no anchor capture.
+        self._anchor_store = None
         self._snapshot: AgentSnapshot = AgentSnapshot.empty(agent_name)
 
     def set_workspace_store(self, workspace_store) -> None:
@@ -62,7 +65,15 @@ class SnapshotJournal:
         """
         self._workspace_store = workspace_store
 
-    def cut_generation(self) -> None:
+    def set_anchor_store(self, anchor_store) -> None:
+        """Attach the shared per-checkpoint anchor store (#1547).
+
+        Injected by the registry so the capture seam (cut_generation) and the
+        timeline surface (list_rewind_points) share one store keyed by WAL seq.
+        """
+        self._anchor_store = anchor_store
+
+    def cut_generation(self, anchor: str = "") -> None:
         """Record the current snapshot as a PITR generation (ADR-0038 Stage 1a/1d).
 
         Called at user-facing checkpoint boundaries (turn / plan-step) — a
@@ -72,12 +83,18 @@ class SnapshotJournal:
         shadow-git commit. Additive to the per-mutation ``save()``. No-op when no
         generation store / WAL is configured; workspace capture is skipped when
         no workspace store is attached (or git is unavailable — handled there).
+
+        ``anchor`` (#1547): the truncated last user message for the rewind-timeline
+        preview, captured against the same boundary seq. Empty / no anchor store →
+        skipped (turn boundaries pass it; plan-step / phase cuts leave it empty).
         """
         if self._generation_store is None or self._state_log is None:
             return
         self._generation_store.record(self._snapshot)
         if self._workspace_store is not None:
             self._workspace_store.capture(self._snapshot.applied_seq)
+        if self._anchor_store is not None and anchor:
+            self._anchor_store.capture(self._snapshot.applied_seq, anchor)
 
     # ── public read access ────────────────────────────────────────────────
 

@@ -51,6 +51,7 @@ from reyn.config import (  # noqa: F401
     SandboxConfig,
 )
 from reyn.events.agent_snapshot import AgentSnapshot
+from reyn.events.anchor_store import truncate_anchor as _truncate_anchor
 from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
 from reyn.events.snapshot_generations import SnapshotGenerationStore
@@ -2299,6 +2300,15 @@ class ChatSession:
         restores from.
         """
         self._journal.set_workspace_store(workspace_store)
+
+    def attach_anchor_store(self, anchor_store) -> None:
+        """Attach the shared per-checkpoint anchor store (#1547).
+
+        The registry injects its single ``AnchorStore`` so the journal's
+        ``cut_generation`` records the rewind-timeline preview text against the
+        same boundary seq the registry's ``list_rewind_points`` surfaces.
+        """
+        self._journal.set_anchor_store(anchor_store)
 
     async def reset_for_rewind(self) -> None:
         """Clear all in-memory state ``restore_state`` repopulates (ADR-0038 1c-2).
@@ -5039,8 +5049,9 @@ class ChatSession:
     ) -> None:
         """Forwarding → RouterLoopDriver.run_turn (PR-3)."""
         await self._loop_driver.run_turn(user_text, chain_id)
-        # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint.
-        self._journal.cut_generation()
+        # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
+        # user message is this checkpoint's anchor for the rewind-timeline preview.
+        self._journal.cut_generation(anchor=_truncate_anchor(user_text))
 
     async def _router_run_with_shrink(self, loop, user_text: str) -> "Any":
         """Forwarding → RouterLoopDriver._run_with_shrink (PR-3)."""

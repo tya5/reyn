@@ -179,6 +179,13 @@ class RewindMenuWidget(Widget):
                 row.append(f"  {rel}", style=f"dim {_TEXT_DIM}")
             row.append("\n")
             body.append_text(row)
+            # #1547: per-checkpoint anchor (truncated last user message) as a 2nd
+            # dim line, aligned under the kind column. Additive — empty = omitted.
+            anchor = p.get("anchor", "")
+            if anchor:
+                body.append(
+                    f"{' ' * (4 + seq_w)}{anchor}\n", style=f"dim {_TEXT_DIM}",
+                )
 
         if end < n:
             body.append(f"  ↓ {n - end} later…\n", style=f"dim {_TEXT_DIM}")
