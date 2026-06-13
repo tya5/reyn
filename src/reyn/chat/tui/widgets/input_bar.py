@@ -539,23 +539,20 @@ class InputBar(Widget):
         """
         self.dismiss_slash_prefix()
 
-    def dismiss_slash_prefix(self) -> bool:
-        """Hide the picker and clear the slash prefix it was tracking.
+    def has_slash_entry(self) -> bool:
+        """True when there is a slash-entry state Esc would dismiss.
 
-        Returns True if there was a slash-entry state to abandon (and it
-        got cleared). The App's ``action_cancel_inflight`` calls this as
-        an early branch on Ctrl+C so an open picker dismisses instead of
-        producing a misleading "nothing in-flight" message.
+        Public read for the App's Esc multiplex (#1546 Esc-Esc): the App
+        treats a *truly clean* Esc (nothing dismissable anywhere) as the
+        rewind double-tap trigger, so it must know whether InputBar would
+        consume this Esc for slash-entry dismissal first. Non-mutating —
+        the single source of truth for ``dismiss_slash_prefix``'s gate.
 
-        Trigger surface — clear in any of these states:
-          * picker has matches and is ``visible_`` (= the user is still
-            choosing a command — original Slack/Discord-style dismiss)
-          * the buffer holds a typo-shaped slash prefix (= ``/<token>``
-            with no space/newline) that produced **zero** matches and
-            therefore left ``picker.visible_`` false. Without this case,
-            ``/attch<Esc>`` was a silent no-op and the stale prefix
-            concatenated with the user's next keystrokes into garbage
-            like ``/attch/attach default``.
+        True in either state:
+          * the picker has matches and is ``visible_`` (user is choosing a
+            command), or
+          * the buffer holds a typo-shaped slash prefix (``/<token>`` with
+            no space/newline) that produced zero matches.
         """
         ta = self._textarea()
         text = ta.text if ta is not None else ""
@@ -564,10 +561,23 @@ class InputBar(Widget):
         )
         picker = self._picker()
         picker_visible = picker is not None and picker.visible_
-        if not picker_visible and not in_slash_prefix:
+        return picker_visible or in_slash_prefix
+
+    def dismiss_slash_prefix(self) -> bool:
+        """Hide the picker and clear the slash prefix it was tracking.
+
+        Returns True if there was a slash-entry state to abandon (and it
+        got cleared). The App's ``action_cancel_inflight`` calls this as
+        an early branch on Ctrl+C so an open picker dismisses instead of
+        producing a misleading "nothing in-flight" message. The dismiss
+        condition is ``has_slash_entry()`` (single source of truth).
+        """
+        if not self.has_slash_entry():
             return False
+        picker = self._picker()
         if picker is not None:
             picker.hide()
+        ta = self._textarea()
         if ta is not None:
             ta.load_text("")
         return True
