@@ -74,7 +74,7 @@ All WAL events share a **global single sequence namespace**. A consistent-cut re
 
 ### Append-only reset-record and branch state
 
-When rewind commits, a **reset-record** is written to the WAL at the target seq. The branch registry derives branch state from this chain: a seq between a reset-record at R and the next reset-record (or current tip) belongs to the interval `[R, next_R)`. Abandoned intervals — seqs that were reachable before a rewind but are now beyond the current tip — form the inactive branches in the branch tree.
+When rewind commits, a **reset-record** is appended to the WAL at its own new seq **R** (distinct from the rewind target **N**). The record carries `target_n=N`. The open interval `(N, R)` — seqs that existed between the rewind target and the reset-record itself — is marked **abandoned** (dead-branch id=R). Active seqs are the complement: every seq not in any abandoned interval on the current branch chain. The branch registry derives branch state from the chain of reset-records: each record's `target_n` and `id=R` define one abandoned interval.
 
 ### Branch registry
 
@@ -82,12 +82,14 @@ The branch registry tracks all fork lineages: when a fork-switch creates a new b
 
 ### checkout primitive
 
-`checkout(seq)` is the unified primitive:
+`checkout(seq)` is the **core primitive** for all rewind and fork-switch operations. `rewind_to` is a thin wrapper that adds an `is_active` guard around `checkout`.
 
-- If seq is on the **active branch** (seq ≤ current tip): undo — rewinds the active branch to seq.
-- If seq is on an **inactive branch** (in an abandoned interval): fork-switch — activates that branch at seq, leaving the current branch as a new abandoned interval.
+- If `is_active_seq(seq)` is true: undo — rewinds the current branch to seq.
+- If `is_active_seq(seq)` is false (seq is in an abandoned interval): fork-switch — activates the abandoned branch at seq, leaving the current branch tip as a new abandoned interval.
 
-The implementation uses the `rewind_to` path with a minus-guard to prevent rewinding past the branch's own origin.
+`is_active_seq` is **not** equivalent to `seq ≤ tip` — a seq can be ≤ the current tip but still be in an abandoned interval from a prior rewind. Activeness is derived from the reset-record chain, not from position relative to tip.
+
+At rewind and fork-switch, both the runtime reconstruct and the workspace restore honor `is_active` (following the correct fork-lineage path for the target branch).
 
 ### Shadow-git workspace versioning
 
