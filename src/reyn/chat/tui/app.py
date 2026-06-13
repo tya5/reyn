@@ -2355,6 +2355,13 @@ class ReynTUIApp(App):
                 menu.remove()
             except Exception:
                 pass
+            # Clear the scrolled-up "⏪ rewind menu below ↓" cue (#1550) so it
+            # doesn't linger after the picker is gone. Mirrors the
+            # intervention_resolved hide_status on both answer paths.
+            try:
+                self.query_one("#conversation", ConversationView).hide_status()
+            except Exception:
+                pass
 
     def _open_rewind_menu(self) -> None:
         """Open the inline /rewind checkpoint picker.
