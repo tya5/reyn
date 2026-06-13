@@ -230,7 +230,8 @@ class RewindMenuWidget(Widget):
             line.append("\n")
             body.append_text(line)
         body.append(
-            "  ↑/↓ select · Enter checkout · Esc cancel\n", style=f"dim {_TEXT_DIM}",
+            "  ↑/↓ select · Enter checkout · ctrl+t edit · Esc cancel\n",
+            style=f"dim {_TEXT_DIM}",
         )
         return body
 
