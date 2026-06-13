@@ -139,6 +139,13 @@ class ReynTUIApp(App):
         Binding("up", "rewind_prev", "Rewind: prev checkpoint", priority=True, show=False),
         Binding("down", "rewind_next", "Rewind: next checkpoint", priority=True, show=False),
         Binding("enter", "rewind_confirm", "Rewind: select checkpoint", priority=True, show=False),
+        # ADR-0038 2c: edit the selected checkpoint's input. ``ctrl+e`` (not bare
+        # ``e``): the picker is can_focus=False so the InputBar is always focused
+        # and SWALLOWS printable keys before any app priority binding — only
+        # non-printable chords (like the ↑/↓/Enter nav above) reach the app
+        # binding. Gated (check_action) to fire only while the picker is open AND
+        # not already editing.
+        Binding("ctrl+e", "edit_checkpoint", "Rewind: edit checkpoint input", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
         # Wave-4 AR5: keyboard scroll for the conv log. RichLog has
         # ``can_focus=False`` (intentional — prevents inadvertent
@@ -245,6 +252,12 @@ class ReynTUIApp(App):
         # open, else None. Navigation (↑/↓/Enter) + Esc dismiss are gated on
         # this being non-None via check_action.
         self._rewind_menu = None  # type: ignore[assignment]
+        # ADR-0038 2c: the checkpoint seq being edited while the fork picker is
+        # open (else None). edit-mode repurposes the focused InputBar for the
+        # checkpoint's input; entering it suspends the picker's ↑/↓/Enter nav
+        # (so those reach the InputBar) and gives Esc a priority-3.5 "exit edit,
+        # keep picker" branch. Mutated only via enter_edit_mode/exit_edit_mode.
+        self._edit_mode_seq: int | None = None
         # #1546: monotonic ts of the last *truly clean* Esc (nothing dismissed).
         # A second clean Esc within _ESC_ESC_WINDOW_S opens the /rewind picker
         # (Esc-Esc double-tap). 0.0 = no pending first tap. Any Esc that
@@ -321,6 +334,21 @@ class ReynTUIApp(App):
         Exposed for tests so they read state through the public surface.
         """
         return self._rewind_menu is not None
+
+    @property
+    def edit_mode_active(self) -> bool:
+        """Public read of the fork-picker edit-mode state (ADR-0038 2c).
+
+        ``True`` while the user is editing a checkpoint's input (the picker is
+        mounted but its ↑/↓/Enter nav is suspended so those keys reach the
+        InputBar). Consulted by ``check_action`` to gate the nav + ``e``
+        bindings, and by ``action_voice_cancel``'s priority-3.5 branch. Mutate
+        via ``enter_edit_mode()`` / ``exit_edit_mode()`` — direct assignment to
+        ``_edit_mode_seq`` is not the public contract. Single-owner: this App
+        owns the flag; both exits (Esc here, submit in the data-flow) route
+        through ``exit_edit_mode()``.
+        """
+        return self._edit_mode_seq is not None
 
     @property
     def outbox_router(self) -> "OutboxRouter | None":
@@ -2338,8 +2366,11 @@ class ReynTUIApp(App):
           1. If recording → cancel recording.
           2. **Else if InputBar is in slash-entry → dismiss picker + clear**
              prefix (= wave-2 P2).
+          3.5 Else if editing a checkpoint → exit edit-mode, keep the picker
+             (ADR-0038 2c). Before 3 because the picker stays mounted in edit.
           3. Else if the rewind menu is open → dismiss it (ADR-0038 1f).
           4. Else if side panel is visible → close it.
+          5. Else (truly clean Esc) → Esc-Esc double-tap detection (#1546).
 
         Gated by check_action so this never fires when no condition holds
         (allowing InputBar's own Esc binding to handle slash-picker
@@ -2359,6 +2390,15 @@ class ReynTUIApp(App):
                 return
         except Exception:
             pass
+        # ADR-0038 2c (priority 3.5): edit-mode exit comes BEFORE the rewind-menu
+        # dismiss — during edit the picker is still mounted, so without this an
+        # Esc would dismiss the whole picker instead of just leaving the edit.
+        # exit_edit_mode() clears the flag + banner + resets the Esc-Esc first
+        # tap; the picker STAYS (the user returns to it). Picker lifecycle is the
+        # caller's: submit (data-flow) dismisses it, Esc here keeps it.
+        if self.edit_mode_active:
+            self.exit_edit_mode()
+            return
         # ADR-0038 1f: dismiss the rewind menu before the side panel — the
         # menu is the most-recently-opened overlay, so Esc should close it
         # first (matches "abort the visible thing" priority).
@@ -2507,6 +2547,74 @@ class ReynTUIApp(App):
         if self._rewind_menu is not None:
             self._rewind_menu.move_selection(+1)
 
+    # ── fork-picker edit-mode (ADR-0038 2c) ─────────────────────────────────
+
+    _EDIT_BANNER = "✎ editing checkpoint #{seq} — Enter to fork · Esc to cancel"
+
+    def action_edit_checkpoint(self) -> None:
+        """``ctrl+e`` while the picker is open — edit the highlighted checkpoint.
+
+        Enters edit-mode on the selected checkpoint's seq, then hands off to the
+        2c data-flow's pre-fill (loads the FULL user message of that turn into
+        the InputBar). Gated by ``check_action`` to fire only while the picker is
+        open AND not already editing; otherwise the binding is inert (``ctrl+e``
+        is non-printable, so nothing is typed when it doesn't fire).
+        """
+        menu = self._rewind_menu
+        if menu is None or self.edit_mode_active:
+            return
+        point = menu.selected_point()
+        if point is None or point.get("seq") is None:
+            return
+        seq = int(point["seq"])
+        self.enter_edit_mode(seq)
+        # Hand off to the data-flow's pre-fill (full-message load). Best-effort:
+        # the flag + banner are set regardless, so the binding gates are correct
+        # even before the data-flow half lands — the pre-fill only populates the
+        # text. ``_prefill_edit`` is the co-impl seam (e2e, #1533).
+        prefill = getattr(self, "_prefill_edit", None)
+        if callable(prefill):
+            try:
+                prefill(seq)
+            except Exception:
+                pass
+
+    def enter_edit_mode(self, seq: int) -> None:
+        """Enter fork-picker edit-mode on checkpoint ``seq`` (ADR-0038 2c).
+
+        Sets the edit-mode flag (which suspends the picker's ↑/↓/Enter nav via
+        ``check_action`` so those reach the InputBar) and shows the
+        ``✎ editing checkpoint #N`` banner. Pure state + banner — the InputBar
+        pre-fill is the data-flow's concern (``action_edit_checkpoint`` orchestrates).
+        """
+        self._edit_mode_seq = seq
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.show_status(self._EDIT_BANNER.format(seq=seq), kind="mode")
+        except Exception:
+            pass
+
+    def exit_edit_mode(self) -> None:
+        """Leave edit-mode (ADR-0038 2c) — the single reset point for BOTH exits.
+
+        Esc (priority-3.5 in ``action_voice_cancel``) and submit (the data-flow's
+        handler, which calls this first) both route through here. Pure: clears
+        the flag, resets the Esc-Esc first tap (the #1554 every-exit-must-reset
+        discipline), and hides the banner — kind-checked so it never clobbers a
+        status another path set in the meantime. Does NOT touch the picker: its
+        lifecycle is the caller's (Esc keeps it, submit dismisses it).
+        """
+        self._edit_mode_seq = None
+        self._reset_clean_esc()
+        try:
+            from .widgets.sticky_status import StickyStatus
+            conv = self.query_one("#conversation", ConversationView)
+            sticky = conv.query_one("#sticky-status", StickyStatus)
+            if sticky.snapshot().get("kind") == "mode":
+                conv.hide_status()
+        except Exception:
+            pass
+
     async def action_rewind_confirm(self) -> None:
         """Enter while the picker is open — checkout the highlighted checkpoint.
 
@@ -2588,11 +2696,18 @@ class ReynTUIApp(App):
                 return self.query_one("#right_panel", RightPanel).panel_type == "events"
             except Exception:
                 return False
-        if action in {"rewind_prev", "rewind_next", "rewind_confirm"}:
-            # ADR-0038 1f: navigation keys are live only while the /rewind
-            # picker is mounted. Otherwise they fall through to the InputBar
-            # (↑/↓ history, Enter submit).
-            return self._rewind_menu is not None
+        if action in {"rewind_prev", "rewind_next", "rewind_confirm", "edit_checkpoint"}:
+            # ADR-0038 1f: navigation keys (+ 2c's ``ctrl+e`` edit) are live only
+            # while the /rewind picker is mounted. Otherwise ↑/↓/Enter fall
+            # through to the InputBar (history / submit); ``ctrl+e`` is inert.
+            #
+            # ADR-0038 2c: ...AND not while editing. During edit-mode the picker
+            # stays mounted but its nav is suspended so ↑/↓/Enter reach the
+            # focused InputBar (history/cursor + submit-the-edit). The
+            # load-bearing seam: without ``and not edit_mode_active``, Enter would
+            # checkout-the-selection instead of submitting the edit. (e2e
+            # flow-trace catch, #1533.)
+            return self._rewind_menu is not None and not self.edit_mode_active
         if action == "voice_cancel":
             # Intercept Esc when there's an overlay/recording to dismiss:
             # voice recording, the rewind menu, or the side panel.

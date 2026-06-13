@@ -41,6 +41,10 @@ _GLYPHS: dict[str, str] = {
     # failure terminals, so the cross-surface vocabulary stays
     # uniform.
     "error": "✗",
+    # ADR-0038 2c: a persistent *mode* banner (e.g. the fork picker's
+    # "editing checkpoint #N"). ``✎`` reads as "you are editing", distinct
+    # from the ``●`` routine flash and the ``✗`` failure terminal.
+    "mode": "✎",
 }
 
 # Wave-10 G-F8 + I-F8: overwrite-priority hierarchy.
@@ -71,6 +75,13 @@ _KIND_PRIORITY: dict[str, int] = {
     # breadcrumbs / turn-position flashes shouldn't overwrite an
     # error the user hasn't read yet).
     "error": 80,
+    # ADR-0038 2c: a deliberate edit *mode* banner. Above ``general`` (a
+    # routine breadcrumb fired mid-edit must NOT wipe "editing checkpoint
+    # #N") and above ``error`` (the edit banner is the active modal context);
+    # still below the terminal-error tier (110) so a budget-exceeded failure
+    # surfaces over it. Hidden explicitly by ``exit_edit_mode`` (body/kind-
+    # checked), not by priority alone.
+    "mode": 85,
     # Transient flashes / breadcrumbs / one-shot notices.
     "general": 50,
 }
