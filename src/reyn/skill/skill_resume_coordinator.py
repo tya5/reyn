@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from reyn.config import SkillResumeConfig
     from reyn.events.state_log import StateLog
     from reyn.skill.skill_registry import SkillRegistry
+    from reyn.skill.skill_snapshot import SkillSnapshot
 
 
 ResumeAction = Literal["resume", "retry", "skip", "discard", "prompt_required"]
@@ -166,6 +167,45 @@ class SkillResumeCoordinator:
             plan=result_plan,
             action=action,
             ambiguous_steps=list(plan.ambiguous_steps),
+        )
+
+    def plan_for_act_turn_rewind(
+        self,
+        *,
+        snapshot: "SkillSnapshot",
+        wal_events: Iterable[dict],
+        target_seq: int,
+    ) -> ResumePlan:
+        """Resume plan rewound to act-turn boundary ``target_seq`` (ADR-0038 D6 Phase-2).
+
+        Act-turn granularity is *reachable* (not durable): rewinding a skill run
+        to a mid-turn step K = truncating the 0-token Ghost-Replay memo at K. We
+        analyze the full run, then keep only the ``committed_steps`` with
+        ``seq <= target_seq`` (they Ghost-Replay on relaunch via the dispatch memo)
+        and drop the later ones (they fall out of the memo and re-execute) — that
+        is the rewind. ``ambiguous_steps`` are bounded the same way (a step started
+        after K is not part of the rewound-to state).
+
+        **Runtime-only by construction**: this only shapes a ``ResumePlan`` (the
+        skill-run / memo layer) — it never touches the workspace. The workspace is
+        NOT rewound to mid-act-turn coherence (file ops within an act-turn are not
+        per-op content-versioned; the shadow-git blob store captures at boundary
+        generations). UX framing: act-turn rewind = "re-run from step K with
+        memoized history", not "the repo as it was mid-step K". Coherent
+        act-turn-workspace rewind (per-file-op content log) is a tracked deferral.
+
+        The returned plan feeds the existing ``OSRuntime.run(resume_plan=...)``
+        launch path unchanged — no new runtime wiring.
+        """
+        plan = self._analyzer.analyze(snapshot=snapshot, wal_events=wal_events)
+        return replace(
+            plan,
+            committed_steps=[
+                c for c in plan.committed_steps if c.seq <= target_seq
+            ],
+            ambiguous_steps=[
+                a for a in plan.ambiguous_steps if a.started_seq <= target_seq
+            ],
         )
 
     async def apply_decisions(
