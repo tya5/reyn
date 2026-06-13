@@ -66,6 +66,11 @@ _IDLE_CANCEL_DEDUP_S = 1.5
 _COST_SUFFIX_DEFER_INTERVAL_S = 1.0
 _COST_SUFFIX_DEFER_MAX_ATTEMPTS = 30
 
+# #1546: max gap between the two clean Escs of an Esc-Esc → /rewind double-tap.
+# 600ms (tui-coder UX call) gives the "Esc again to rewind" hint time to be
+# read while staying tight enough to not fire on unrelated paired Escs.
+_ESC_ESC_WINDOW_S = 0.6
+
 
 class ReynTUIApp(App):
     """Main Textual application for `reyn chat`."""
@@ -240,6 +245,13 @@ class ReynTUIApp(App):
         # open, else None. Navigation (↑/↓/Enter) + Esc dismiss are gated on
         # this being non-None via check_action.
         self._rewind_menu = None  # type: ignore[assignment]
+        # #1546: monotonic ts of the last *truly clean* Esc (nothing dismissed).
+        # A second clean Esc within _ESC_ESC_WINDOW_S opens the /rewind picker
+        # (Esc-Esc double-tap). 0.0 = no pending first tap. Any Esc that
+        # dismisses something resets this so "dismiss then clean-Esc" cannot
+        # masquerade as a double-tap.
+        self._last_clean_esc_ts: float = 0.0
+        self._esc_hint_timer = None  # type: ignore[assignment]
         self._cancel_event: asyncio.Event = asyncio.Event()
         # Most-recent "nothing-in-flight cancel" timestamp, used to
         # suppress repeated identical lines from accumulating in the conv
@@ -287,6 +299,17 @@ class ReynTUIApp(App):
         testing policy.
         """
         return self._panel_visible
+
+    @property
+    def esc_esc_pending(self) -> bool:
+        """Public read of the Esc-Esc first-tap state (#1546).
+
+        ``True`` after one *truly clean* Esc, while a second clean Esc within
+        ``_ESC_ESC_WINDOW_S`` would open the /rewind picker; ``False`` once the
+        window lapses, the double-tap fires, or any Esc dismisses something.
+        Exposed so tests read state through the public surface.
+        """
+        return self._last_clean_esc_ts != 0.0
 
     @property
     def rewind_menu_open(self) -> bool:
@@ -2327,10 +2350,12 @@ class ReynTUIApp(App):
             self._voice_set_input_locked(False)
             self._voice_set_header_state(None)
             self._voice_status("✗ recording cancelled", style="dim " + _TEXT_DIM)
+            self._reset_clean_esc()
             return
         try:
             input_bar = self.query_one("#inputbar", InputBar)
             if input_bar.dismiss_slash_prefix():
+                self._reset_clean_esc()
                 return
         except Exception:
             pass
@@ -2339,9 +2364,74 @@ class ReynTUIApp(App):
         # first (matches "abort the visible thing" priority).
         if self._rewind_menu is not None:
             self._dismiss_rewind_menu()
+            self._reset_clean_esc()
             return
         if self._panel_visible:
             self.action_toggle_panel()
+            self._reset_clean_esc()
+            return
+        # #1546: nothing was dismissed → this is a *truly clean* Esc. A second
+        # clean Esc within the window opens the /rewind picker (Esc-Esc).
+        now = _now_monotonic()
+        if self._last_clean_esc_ts and (now - self._last_clean_esc_ts) < _ESC_ESC_WINDOW_S:
+            self._reset_clean_esc()
+            self._open_rewind_menu()
+        else:
+            self._last_clean_esc_ts = now
+            self._show_esc_esc_hint()
+
+    _ESC_HINT_TEXT = "⏪ Esc again to rewind"
+
+    def _reset_clean_esc(self) -> None:
+        """Disarm the pending Esc-Esc first-tap (#1546).
+
+        Pure ts reset — touches no status/timer, so the four dismiss branches
+        (and the check_action slash-entry branch) can call it without clobbering
+        their own status. The hint sticky is self-clearing via its own timer
+        (``_clear_esc_esc_hint``), which only hides when *its* text is showing.
+        """
+        self._last_clean_esc_ts = 0.0
+
+    def _cancel_esc_hint_timer(self) -> None:
+        timer = self._esc_hint_timer
+        self._esc_hint_timer = None
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:
+                pass
+
+    def _show_esc_esc_hint(self) -> None:
+        """Sticky "Esc again to rewind" cue on the first clean Esc, auto-cleared
+        after the window so it doesn't linger once the double-tap chance lapses.
+        Re-arming cancels any prior timer; opening the picker is handled by
+        ``mount_rewind_menu``'s own status."""
+        self._cancel_esc_hint_timer()
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.show_status(self._ESC_HINT_TEXT, kind="general")
+            self._esc_hint_timer = self.set_timer(
+                _ESC_ESC_WINDOW_S, self._clear_esc_esc_hint,
+            )
+        except Exception:
+            pass
+
+    def _clear_esc_esc_hint(self) -> None:
+        # Window lapsed: the double-tap chance is gone, so the first-tap is no
+        # longer pending (keeps esc_esc_pending semantically accurate).
+        self._esc_hint_timer = None
+        self._last_clean_esc_ts = 0.0
+        # Hide the sticky ONLY if our hint is still the one showing — never
+        # clobber a status another path set in the meantime (e.g. a dismiss
+        # breadcrumb, or the open picker's own cue).
+        try:
+            from .widgets.sticky_status import StickyStatus
+            conv = self.query_one("#conversation", ConversationView)
+            sticky = conv.query_one("#sticky-status", StickyStatus)
+            if self._ESC_HINT_TEXT in sticky.snapshot().get("body", ""):
+                conv.hide_status()
+        except Exception:
+            pass
 
     # ── rewind menu (ADR-0038 1f) ───────────────────────────────────────────
 
@@ -2473,16 +2563,31 @@ class ReynTUIApp(App):
             return self._rewind_menu is not None
         if action == "voice_cancel":
             # Intercept Esc when there's an overlay/recording to dismiss:
-            # voice recording, the rewind menu, or the side panel. The slash
-            # picker / prefix case is handled by InputBar's own Esc binding
-            # when no other overlay is present (= simpler dispatch path).
+            # voice recording, the rewind menu, or the side panel.
             if self._voice_input is not None and self._voice_input.is_recording:
                 return True
             if self._rewind_menu is not None:
                 return True
             if self._panel_visible:
                 return True
-            return False
+            # #1546: also grab a *truly clean* Esc — nothing dismissable here
+            # AND no InputBar slash-entry to clear — so action_voice_cancel can
+            # run the Esc-Esc double-tap detection. When InputBar HAS a
+            # slash-entry we return False so its own Esc binding clears the
+            # prefix (not stolen). has_slash_entry() is the public read.
+            try:
+                if self.query_one("#inputbar", InputBar).has_slash_entry():
+                    # The slash-clearing Esc is consumed by InputBar — the App
+                    # never runs action_voice_cancel for it, so this branch is
+                    # the ONLY place to reset the pending Esc-Esc first-tap.
+                    # Without it, `Esc(arm) → /x → Esc(clear) → Esc` false-fires
+                    # the double-tap (tui-coder #1554 repro). Same reset
+                    # discipline as the four dismiss branches.
+                    self._reset_clean_esc()
+                    return False
+                return True
+            except Exception:
+                return False
         if action == "voice_stop_and_submit":
             # Same gate as voice_cancel: Enter only behaves as "stop+send"
             # while recording. Outside of recording it falls through to
