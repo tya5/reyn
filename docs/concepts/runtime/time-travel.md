@@ -129,6 +129,32 @@ Do not conflate or merge the two logs. See [Events](events.md) for details.
 
 ---
 
+## Cost and the runtime-only opt-out
+
+Time-travel is on by default and carries a constant per-boundary cost. The three contributors, largest first:
+
+1. **Workspace shadow-git capture** (the largest). At every checkpoint boundary — *every turn and every plan-step* — the workspace is committed as a shadow-git generation: a `git add -A` (which stats the whole work-tree) + `commit` + `tag`. In container mode each of these is a `docker exec` into the container. This is what makes a rewind able to restore *repo files*.
+2. **WAL fsync-per-append** — synchronous durability so a crash loses nothing (see the WAL table above).
+3. **AgentSnapshot generation** — the runtime half of each paired generation.
+
+### When to opt out
+
+The workspace capture is the one cost you can shed without weakening crash recovery, via `time_travel.workspace_capture: false` (reyn.yaml — see the [config reference](../../reference/config/reyn-yaml.md#time_travel-block)). It is worth considering when:
+
+- the workspace is **large** (so `git add -A` per boundary is expensive),
+- you run in a **container** (each capture is a `docker exec` round-trip), or
+- you only ever rewind to **re-run from a past point**, never to inspect *the repo as it was* at that point.
+
+Setting it `false` selects **runtime-only rewind**: the registry attaches no workspace store, so the boundary capture is skipped entirely. Rewind, `/rewind`, the fork picker, branching, and checkout all still work — they restore the **runtime** substrate (agent + conversation state) but leave the working tree untouched. This is the same fidelity that **act-turn rewind** already offers ("re-run from step K with memoized history", not "the repo as it was mid-step K").
+
+WAL fsync (2) is deliberately **not** made opt-out — weakening crash durability is a separate trade-off the project does not offer here.
+
+### Why it is coherent (not a special mode)
+
+Runtime-only rewind needs no special code path. The two substrates are independent — `reconstruct` derives the consistent cut purely from the WAL + AgentSnapshot generations + `is_active`, with no workspace dependency — and every workspace seam (attach, capture, restore, retention-prune) already short-circuits when no workspace store is present. So `workspace_capture: false` simply means "don't attach the workspace store," and the existing guards make the rest coherent by construction. The setting is **run-level** (read at startup), not a mid-session toggle, so a generation captured while it was on is never left half-restorable after a flip.
+
+---
+
 ## Relationship to crash recovery
 
 | | Crash recovery | Time-travel |
