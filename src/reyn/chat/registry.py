@@ -281,9 +281,18 @@ class AgentRegistry:
            pending_chains and re-arm chain timeout watchdogs
 
         Idempotent: calling twice on a clean state is a no-op.
+
+        ADR-0038 Stage 1d: crash-mid-rewind recovery runs FIRST (before loading
+        snapshots) so a reset-record fsync'd before its materialisation completed
+        re-materialises both substrates as-of-N — every startup path that calls
+        ``restore_all`` gets crash-recovery by construction. No-op without a
+        rewind record.
         """
         if self._state_log is None:
             return {}
+
+        # 0. crash-mid-rewind recovery (no-op without an active reset-record).
+        await self.recover_rewind_if_needed()
 
         # 1. Load snapshots
         snapshots: dict[str, AgentSnapshot] = {}

@@ -264,3 +264,33 @@ async def test_recover_rewind_is_noop_without_reset_record(tmp_path):
     _seed_agent(tmp_path, "alpha")
     await _put(reg.state_log, "alpha", "a1")
     assert await reg.recover_rewind_if_needed() is None
+
+
+@_needs_git
+@pytest.mark.asyncio
+async def test_restore_all_triggers_crash_recovery(tmp_path):
+    """Tier 2: restore_all (production startup seam) TRIGGERS crash-mid-rewind recovery.
+
+    Wiring proof — recovery must run via ``restore_all`` (the path the 3 startup
+    sites call), NOT only via a direct ``recover_rewind_if_needed`` call. Simulate
+    a crash mid-rewind (reset-record present, workspace still at the undone-future
+    v2), then call ``restore_all``: the workspace must be restored to the ACTIVE
+    gen-N (v1). Events target an unseeded agent so no non-empty snapshot pulls in
+    the session factory.
+    """
+    reg = _make_registry(tmp_path)          # only the auto 'default' agent (empty)
+    log = reg.state_log
+    ws = reg.workspace_store
+
+    (tmp_path / "code.py").write_text("v1", encoding="utf-8")
+    await _put(log, "ghost", "g1")          # seq 1 (advances seq; 'ghost' not in list_names)
+    ws.capture(1)
+    (tmp_path / "code.py").write_text("v2", encoding="utf-8")
+    await _put(log, "ghost", "g2")          # seq 2
+    ws.capture(2)
+    await rewind(log, target_n=1)           # seq 3 — abandons (1,3); crash before materialise
+    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "v2"   # pre-recovery
+
+    await reg.restore_all()                 # production seam — must trigger recovery
+
+    assert (tmp_path / "code.py").read_text(encoding="utf-8") == "v1"   # recovered to active gen-N
