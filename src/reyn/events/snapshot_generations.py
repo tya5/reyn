@@ -89,31 +89,130 @@ class SnapshotGenerationStore:
         return dropped
 
 
+# ── rewind / branch model (ADR-0038 Stage 1b — keystone) ────────────────────
+
+REWIND_KIND = "rewind"
+
+
+class RewindIntoAbandonedError(Exception):
+    """Phase-1 rewind target is on an abandoned branch.
+
+    Phase-1 undo moves HEAD along the *active* timeline. Targeting a seq inside
+    an abandoned segment means switching to an abandoned branch — that is a
+    Phase-2 *fork* (branch checkout), not Phase-1 undo, so it is rejected with a
+    decision-enabling message.
+    """
+
+
+def _rewind_records(state_log: StateLog) -> list[tuple[int, int]]:
+    """All rewind reset-records as ``(R, target_n)`` (R = the record's own seq)."""
+    out: list[tuple[int, int]] = []
+    for e in state_log.iter_from(1):
+        if e.get("kind") == REWIND_KIND and isinstance(e.get("seq"), int):
+            out.append((e["seq"], int(e["target_n"])))
+    return out
+
+
+def _abandoned_intervals(rewinds: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Open intervals ``(target_n, R)`` abandoned by the rewind chain.
+
+    Resolved **latest-first** (descending by R): a rewind ``(R, N)`` abandons
+    ``(N, R)`` *unless* ``R`` itself is already abandoned by a later rewind — i.e.
+    the rewind sits on an already-abandoned branch, so its undo is moot. With the
+    Phase-1 active-target guard, each rewind targets a then-active seq, so the
+    composition is well-defined (subsuming and partial nesting both fall out).
+    """
+    abandoned: list[tuple[int, int]] = []
+
+    def _is_abandoned(s: int) -> bool:
+        return any(lo < s < hi for (lo, hi) in abandoned)
+
+    for (R, N) in sorted(rewinds, key=lambda t: t[0], reverse=True):
+        if _is_abandoned(R):
+            continue
+        abandoned.append((N, R))
+    return abandoned
+
+
+def _make_is_active(abandoned: list[tuple[int, int]]):
+    def is_active(seq: int) -> bool:
+        return not any(lo < seq < hi for (lo, hi) in abandoned)
+    return is_active
+
+
+def is_active_seq(state_log: StateLog, seq: int) -> bool:
+    """True if ``seq`` is on the current active branch (not in any abandoned segment)."""
+    return _make_is_active(_abandoned_intervals(_rewind_records(state_log)))(seq)
+
+
+async def rewind(
+    state_log: StateLog, *, target_n: int, supersedes: int | None = None,
+) -> int:
+    """Append a rewind reset-record after validating ``target_n`` is active (Phase 1).
+
+    Append-only: the abandoned future is retained as an inactive branch (P6 /
+    WAL stay append-only); reconstruction honors the active pointer. The
+    reset-record is fsync'd by ``StateLog.append`` *before* any reconstruction —
+    the crash-mid-rewind idempotence keystone.
+
+    ``supersedes`` is **audit-only** (records the prior active pointer for the
+    branch-tree audit trail); ``is_active`` derivation walks all rewind records and
+    does not depend on it.
+
+    Raises ``RewindIntoAbandonedError`` when ``target_n`` is on an abandoned branch.
+    """
+    is_active = _make_is_active(_abandoned_intervals(_rewind_records(state_log)))
+    if not is_active(target_n):
+        raise RewindIntoAbandonedError(
+            f"rewind target seq {target_n} is on an abandoned branch — switching "
+            "to an abandoned branch is a Phase-2 fork, not supported by Phase-1 "
+            "undo. Rewind only to a seq on the active timeline."
+        )
+    return await state_log.append(
+        REWIND_KIND, target_n=int(target_n), supersedes=supersedes,
+    )
+
+
 def reconstruct(
     agent_name: str,
     store: SnapshotGenerationStore,
     state_log: StateLog,
     target_seq: int,
 ) -> AgentSnapshot:
-    """Reconstruct ``agent_name``'s state as-of WAL ``target_seq`` (PITR).
+    """Reconstruct ``agent_name``'s state as-of WAL ``target_seq`` (PITR), on the
+    **active branch**.
 
-    = nearest generation ``<= target_seq`` (or empty if none) + forward-replay
-    of WAL entries in ``(base.applied_seq, target_seq]``. The returned
-    snapshot's ``applied_seq`` is the highest seq ``<= target_seq`` whose effects
-    affected this agent (``<= target_seq`` always).
+    = nearest **active** generation ``<= target_seq`` (or empty if none) +
+    forward-replay of the **active** WAL entries in ``(base.applied_seq,
+    target_seq]`` (Stage 1b: entries in abandoned segments are skipped, generations
+    cut on an abandoned branch are not used as the base).
 
-    Crash recovery is ``reconstruct(head)`` where ``head = state_log.current_seq``.
+    With no rewind records every seq is active, so this is identical to the
+    Stage-1a behavior (backward compatible). Crash recovery is
+    ``reconstruct(head)`` where ``head = state_log.current_seq`` — which, after a
+    rewind, yields the current active-branch state (and collapses to as-of-N when
+    the rewind reset-record is itself head).
     """
-    base_seq = store.nearest_at_or_below(target_seq)
+    abandoned = _abandoned_intervals(_rewind_records(state_log))
+    is_active = _make_is_active(abandoned)
+
+    # Base = nearest ACTIVE generation <= target_seq (never an abandoned-branch
+    # generation); empty if none.
+    base_seq = next(
+        (s for s in reversed(store.seqs()) if s <= target_seq and is_active(s)),
+        None,
+    )
     base = store.load(base_seq) if base_seq is not None else AgentSnapshot.empty(agent_name)
 
-    # Forward-replay the WAL delta, bounded above by target_seq. apply_events
-    # already skips seq <= base.applied_seq; we additionally cap at target_seq so
-    # reconstruction is point-in-time, not head.
+    # Replay the ACTIVE WAL delta, bounded above by target_seq. apply_events skips
+    # seq <= base.applied_seq; we additionally cap at target_seq (point-in-time)
+    # and skip abandoned-branch entries (active-path honoring).
     delta = [
         entry
         for entry in state_log.iter_from(base.applied_seq + 1)
-        if isinstance(entry.get("seq"), int) and entry["seq"] <= target_seq
+        if isinstance(entry.get("seq"), int)
+        and entry["seq"] <= target_seq
+        and is_active(entry["seq"])
     ]
     base.apply_events(delta)
     return base
