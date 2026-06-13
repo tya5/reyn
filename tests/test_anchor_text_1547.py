@@ -13,6 +13,7 @@ import pytest
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.services.snapshot_journal import SnapshotJournal
+from reyn.chat.tui.widgets._branch_tree import build_branch_tree_rows
 from reyn.chat.tui.widgets.rewind_menu import RewindMenuWidget
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.anchor_store import AnchorStore, truncate_anchor
@@ -114,12 +115,21 @@ async def test_list_rewind_points_surfaces_anchor(tmp_path):
 
 
 def test_widget_renders_anchor_dim_line():
-    """Tier 2: RewindMenuWidget renders the anchor as a 2nd line; empty = omitted."""
-    with_anchor = RewindMenuWidget(
-        [{"seq": 1, "ts": "", "kind": "turn", "anchor": "fix the parser bug"}],
-    )
+    """Tier 2: RewindMenuWidget renders the per-checkpoint anchor as a dim line;
+    empty = omitted. Tree mode (the only mode since #1561); per-checkpoint anchor
+    restored for tree in #1576. Single branch so the anchor surfaces only via the
+    per-row render (no fork header to carry it)."""
+    branches = [{"branch_id": 0, "fork_point_seq": 0, "head_seq": 3,
+                 "parent_branch_id": None, "is_active": True}]
+    with_anchor = RewindMenuWidget.from_tree_rows(build_branch_tree_rows(
+        branches,
+        [{"seq": 1, "ts": "", "kind": "turn", "anchor": "fix the parser bug", "branch_id": 0}],
+    ))
     assert "fix the parser bug" in with_anchor.render().plain
 
-    # additive: a row without an anchor renders exactly as before (no extra line).
-    without = RewindMenuWidget([{"seq": 1, "ts": "", "kind": "turn", "anchor": ""}])
+    # additive: a row without an anchor renders no extra line.
+    without = RewindMenuWidget.from_tree_rows(build_branch_tree_rows(
+        branches,
+        [{"seq": 1, "ts": "", "kind": "turn", "anchor": "", "branch_id": 0}],
+    ))
     assert "fix the parser bug" not in without.render().plain

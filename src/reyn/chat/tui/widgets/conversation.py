@@ -2267,20 +2267,18 @@ class ConversationView(Widget):
 
     def mount_rewind_menu(
         self,
-        points: list[dict] | None = None,
+        tree_rows: list[dict],
         *,
-        tree_rows: list[dict] | None = None,
         rel_time_fn=None,
     ) -> "RewindMenuWidget":
-        """Mount the inline time-travel checkpoint picker.
+        """Mount the inline time-travel fork picker (ADR-0038 2b, always-tree).
 
-        ``tree_rows`` (Phase-2 fork picker, always-tree) are rows from
-        ``build_branch_tree_rows``; ``points`` (Phase-1 flat timeline) are rows
-        from ``AgentRegistry.list_rewind_points()``. Exactly one is supplied.
-        The widget is passive (``can_focus = False``) — the App drives
-        navigation and removes it via ``widget.remove()`` on selection / Esc
-        (decoupled from the intervention unmount path). Returns the mounted
-        widget so the App can hold a reference for nav + dismiss.
+        ``tree_rows`` are rows from ``build_branch_tree_rows`` (the only mode
+        since #1561; the Phase-1 flat timeline was removed in #1563). The widget
+        is passive (``can_focus = False``) — the App drives navigation and
+        removes it via ``widget.remove()`` on selection / Esc (decoupled from
+        the intervention unmount path). Returns the mounted widget so the App
+        can hold a reference for nav + dismiss.
         """
         from .rewind_menu import RewindMenuWidget
         self._consume_empty_hint()
@@ -2293,10 +2291,7 @@ class ConversationView(Widget):
             self.show_status("⏪ rewind menu below ↓", kind="general")
         else:
             self.hide_status()
-        if tree_rows is not None:
-            widget = RewindMenuWidget.from_tree_rows(tree_rows, rel_time_fn=rel_time_fn)
-        else:
-            widget = RewindMenuWidget(points or [], rel_time_fn=rel_time_fn)
+        widget = RewindMenuWidget.from_tree_rows(tree_rows, rel_time_fn=rel_time_fn)
         self.mount(widget)
         if not self._scroll_ctrl.user_scrolled:
             try:

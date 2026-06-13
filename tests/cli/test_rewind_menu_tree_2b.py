@@ -119,3 +119,21 @@ def test_tree_render_omits_empty_anchor() -> None:
     lines = [ln for ln in w.render().plain.splitlines() if ln.strip()]
     # header + #5 row + footer hint = 3 non-empty lines; no extra anchor line.
     assert sum(1 for ln in lines if "#5" in ln) == 1
+
+
+def test_tree_widget_can_focus_is_false() -> None:
+    """Tier 2: trap 2 — the widget never steals focus from the InputBar
+    (migrated from the removed flat 1f suite; #1563)."""
+    assert RewindMenuWidget.from_tree_rows(_rows_two_branches()).can_focus is False
+
+
+def test_tree_render_shows_kind_and_reltime() -> None:
+    """Tier 2: each checkpoint row renders its kind label + a relative-time
+    column (migrated from the removed flat 1f suite; #1563)."""
+    branches = [{"branch_id": 0, "fork_point_seq": 0, "head_seq": 6, "parent_branch_id": None, "is_active": True}]
+    cps = [{"seq": 5, "ts": "2026-06-13T00:00:00", "kind": "phase", "anchor": "", "branch_id": 0}]
+    w = RewindMenuWidget.from_tree_rows(
+        build_branch_tree_rows(branches, cps), rel_time_fn=lambda ts: "2m ago",
+    )
+    rendered = w.render().plain
+    assert "#5" in rendered and "phase" in rendered and "2m ago" in rendered
