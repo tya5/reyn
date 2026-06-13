@@ -2454,26 +2454,48 @@ class ReynTUIApp(App):
                 pass
 
     def _open_rewind_menu(self) -> None:
-        """Open the inline /rewind checkpoint picker.
+        """Open the inline /rewind fork picker (ADR-0038 2b, always-tree).
 
-        Reads ``AgentRegistry.list_rewind_points()`` and mounts the menu. When
-        there are no checkpoints (or no registry), writes a system message
-        instead of mounting an empty picker.
+        Builds the branch tree from ``list_branches()`` + the lineage-tagged
+        ``list_rewind_points(include_abandoned=True)`` and mounts it. When there
+        are no checkpoints (or no registry), writes a system message instead of
+        mounting an empty picker.
         """
         try:
             conv = self.query_one("#conversation", ConversationView)
         except Exception:
             return
-        registry = self._agent_registry
-        points = registry.list_rewind_points() if registry is not None else []
-        if not points:
+        rows = self._build_rewind_tree_rows()
+        if not rows:
             conv.render_message(
                 OutboxMessage(kind="system", text="⏪ no checkpoints to rewind to yet")
             )
             return
         # Replace any already-open menu (idempotent re-open).
         self._dismiss_rewind_menu()
-        self._rewind_menu = conv.mount_rewind_menu(points)
+        self._rewind_menu = conv.mount_rewind_menu(tree_rows=rows)
+
+    def _build_rewind_tree_rows(self) -> list[dict]:
+        """Branch-tree rows for the fork picker, or [] when unavailable.
+
+        Converts the ``Branch`` dataclasses to dicts and groups the
+        lineage-tagged checkpoints by ``branch_id`` (the substrate already did
+        the lineage-correct membership — 2a). Best-effort: any registry error
+        yields [] so the picker degrades to the "no checkpoints" notice rather
+        than crashing the TUI.
+        """
+        import dataclasses
+
+        from .widgets._branch_tree import build_branch_tree_rows
+        registry = self._agent_registry
+        if registry is None:
+            return []
+        try:
+            branches = [dataclasses.asdict(b) for b in registry.list_branches()]
+            checkpoints = registry.list_rewind_points(include_abandoned=True)
+        except Exception:
+            return []
+        return build_branch_tree_rows(branches, checkpoints)
 
     def action_rewind_prev(self) -> None:
         """↑ while the rewind menu is open — highlight the previous (older) checkpoint."""
@@ -2486,17 +2508,27 @@ class ReynTUIApp(App):
             self._rewind_menu.move_selection(+1)
 
     async def action_rewind_confirm(self) -> None:
-        """Enter while the rewind menu is open — rewind to the highlighted checkpoint."""
+        """Enter while the picker is open — checkout the highlighted checkpoint.
+
+        Unified checkout (ADR-0038 D8): the same op whether the node is on the
+        live branch (= undo) or a dead branch (= fork-switch) — the user just
+        "goes to this checkpoint".
+        """
         menu = self._rewind_menu
         if menu is None:
             return
         point = menu.selected_point()
         self._dismiss_rewind_menu()
         if point is not None:
-            await self._do_rewind(int(point["seq"]))
+            await self._do_checkout(int(point["seq"]))
 
-    async def _do_rewind(self, target_seq: int) -> None:
-        """Invoke ``AgentRegistry.rewind_to`` and write a timeline breadcrumb."""
+    async def _do_checkout(self, target_seq: int) -> None:
+        """Invoke ``AgentRegistry.checkout(seq)`` and write a timeline breadcrumb.
+
+        ``checkout`` is the unified time-travel primitive (active-seq = undo,
+        dead-branch seq = fork-switch); the guard-lifted reset-record moves both
+        substrates to the target's lineage.
+        """
         try:
             conv = self.query_one("#conversation", ConversationView)
         except Exception:
@@ -2505,21 +2537,21 @@ class ReynTUIApp(App):
         if registry is None:
             if conv is not None:
                 conv.render_message(
-                    OutboxMessage(kind="error", text="⏪ rewind unavailable (no registry)")
+                    OutboxMessage(kind="error", text="⏪ checkout unavailable (no registry)")
                 )
             return
         try:
-            result = await registry.rewind_to(target_seq)
+            result = await registry.checkout(target_seq)
         except Exception as exc:  # noqa: BLE001 — surface the reason in-timeline
             if conv is not None:
-                conv.render_message(OutboxMessage(kind="error", text=f"⏪ rewind failed: {exc}"))
+                conv.render_message(OutboxMessage(kind="error", text=f"⏪ checkout failed: {exc}"))
             return
         if conv is not None:
             agents = result.get("agents", [])
             conv.render_message(OutboxMessage(
                 kind="system",
                 text=(
-                    f"⏪ rewound to seq {result.get('target_n', target_seq)} "
+                    f"⏪ checked out to seq {result.get('target_n', target_seq)} "
                     f"· {len(agents)} agent(s) reset · in-flight cancelled"
                 ),
             ))
