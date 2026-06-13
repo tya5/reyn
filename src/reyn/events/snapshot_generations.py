@@ -104,6 +104,16 @@ class RewindIntoAbandonedError(Exception):
     """
 
 
+class RewindBeyondRetentionError(Exception):
+    """Rewind target is older than the retained WAL (ADR-0038 Stage 1e, D5).
+
+    Rewind is bounded by the retention window — history truncated below the
+    WAL's oldest kept seq cannot be reconstructed. Raised with a decision-enabling
+    message (set retention deeper) rather than failing silently or reconstructing
+    a partial state.
+    """
+
+
 def _rewind_records(state_log: StateLog) -> list[tuple[int, int]]:
     """All rewind reset-records as ``(R, target_n)`` (R = the record's own seq)."""
     out: list[tuple[int, int]] = []

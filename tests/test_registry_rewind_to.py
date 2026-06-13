@@ -294,3 +294,93 @@ async def test_restore_all_triggers_crash_recovery(tmp_path):
     await reg.restore_all()                 # production seam — must trigger recovery
 
     assert (tmp_path / "code.py").read_text(encoding="utf-8") == "v1"   # recovered to active gen-N
+
+
+# ── Stage 1e: retention clamp + GC + window guard ─────────────────────────────
+
+
+class _WatermarkShim:
+    """Minimal session exposing iter_applied_seqs (the floor-calc public surface)."""
+
+    def __init__(self, seqs: list[int]) -> None:
+        self._seqs = seqs
+
+    def iter_applied_seqs(self, *, now_ts: float, long_await_threshold: float) -> list[int]:
+        return list(self._seqs)
+
+
+@pytest.mark.asyncio
+async def test_compute_truncate_floor_clamped_by_retention(tmp_path):
+    """Tier 2: a deeper retention policy clamps the truncate floor below the live floor."""
+    from reyn.chat.registry import AgentRegistry
+    from reyn.events.retention import RetentionPolicy
+
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = AgentRegistry(
+        project_root=tmp_path, session_factory=_no_factory, state_log=state_log,
+        retention_policy=RetentionPolicy(keep_generations=2),
+    )
+    _seed_agent(tmp_path, "alpha")
+    reg._agents["alpha"] = _WatermarkShim([10])         # live floor = 11
+
+    store = reg._store_for("alpha")                      # record 3 checkpoints
+    for s in (1, 2, 3):
+        snap = AgentSnapshot.empty("alpha")
+        snap.applied_seq = s
+        store.record(snap)
+
+    # keep last 2 gens (2, 3) → oldest retained = 2 → floor = min(11, 2) = 2.
+    assert reg.compute_truncate_floor() == 2
+
+
+@pytest.mark.asyncio
+async def test_live_policy_floor_unchanged(tmp_path):
+    """Tier 2: default (live) policy applies NO clamp — floor stays the live floor."""
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    reg = AgentRegistry(
+        project_root=tmp_path, session_factory=_no_factory, state_log=state_log,
+    )  # default policy = live
+    _seed_agent(tmp_path, "alpha")
+    reg._agents["alpha"] = _WatermarkShim([10])
+    store = reg._store_for("alpha")
+    for s in (1, 2, 3):
+        snap = AgentSnapshot.empty("alpha")
+        snap.applied_seq = s
+        store.record(snap)
+
+    assert reg.compute_truncate_floor() == 11            # min(watermark)+1, no clamp
+
+
+@pytest.mark.asyncio
+async def test_truncate_gcs_generations_below_floor(tmp_path):
+    """Tier 2: generation GC drops gens below the floor (retained gens stay)."""
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    store = reg._store_for("alpha")
+    for s in (1, 2, 3):
+        snap = AgentSnapshot.empty("alpha")
+        snap.applied_seq = s
+        store.record(snap)
+    assert store.seqs() == [1, 2, 3]
+
+    reg._prune_generations_below(3)
+
+    kept = reg._store_for("alpha").seqs()
+    assert kept == [3]                                   # 1, 2 GC'd; 3 (>= floor) kept
+
+
+@pytest.mark.asyncio
+async def test_rewind_to_rejects_target_truncated_out_of_wal(tmp_path):
+    """Tier 2: rewinding to a seq below the retained WAL raises (decision-enabling, Q4)."""
+    from reyn.events.snapshot_generations import RewindBeyondRetentionError
+
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+    await _put(log, "alpha", "a")          # seq 1
+    await _put(log, "alpha", "b")          # seq 2
+    await _put(log, "alpha", "c")          # seq 3
+    await log.truncate_below(3)            # drop seq 1, 2; oldest kept = 3
+
+    with pytest.raises(RewindBeyondRetentionError):
+        await reg.rewind_to(2)             # seq 2 truncated → outside retention window

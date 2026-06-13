@@ -34,7 +34,9 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 from reyn.events.agent_snapshot import AgentSnapshot
+from reyn.events.retention import RetentionPolicy, compute_retention_floor
 from reyn.events.snapshot_generations import (
+    RewindBeyondRetentionError,
     RewindIntoAbandonedError,
     SnapshotGenerationStore,
     active_rewind_target,
@@ -88,6 +90,7 @@ class AgentRegistry:
         *,
         session_factory: Callable[[AgentProfile], "object"],
         state_log: StateLog | None = None,
+        retention_policy: RetentionPolicy | None = None,
     ) -> None:
         """
         session_factory: returns a configured ChatSession given an AgentProfile.
@@ -97,6 +100,9 @@ class AgentRegistry:
             disabled (tests / non-chat invocation). Owned by the caller; the
             registry just hands it to each constructed session and uses it
             during `restore_all()`.
+        retention_policy: ADR-0038 Stage 1e (D5) retention window. ``None`` →
+            live (current behaviour, no deeper retention). When deeper, clamps the
+            truncation floor + GCs generations/blobs to the configured window.
         """
         self._dir = project_root / ".reyn" / "agents"
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -115,6 +121,8 @@ class AgentRegistry:
         # set, ``maybe_truncate_for_size`` no-ops so a compaction can't advance
         # the WAL keep-floor over the reset-record / reconstruct reads mid-cut.
         self._rewind_in_progress: bool = False
+        # ADR-0038 Stage 1e (D5): retention window. None → live (current).
+        self._retention_policy = retention_policy or RetentionPolicy()
         # ADR-0038 Stage 1d: the workspace half of a generation. One shadow-git
         # for the (single-SSoT) workspace, git-dir under .reyn (out of the
         # tracked tree). Host-mode worktree = project_root; container mode is a
@@ -409,6 +417,18 @@ class AgentRegistry:
             raise RewindIntoAbandonedError(
                 f"rewind target seq {target_n} is on an abandoned branch — "
                 "Phase-1 undo only rewinds to a seq on the active timeline."
+            )
+        # 1e (D5): bounded by retention — reject targets truncated out of the WAL.
+        # Guard on the PHYSICAL oldest kept seq (not the policy floor): under a
+        # live policy nothing is truncated between turns, so recent history stays
+        # rewindable; only genuinely-truncated history is rejected.
+        oldest = next(iter(self._state_log.iter_from(1)), None)
+        oldest_seq = oldest.get("seq") if oldest else None
+        if oldest_seq is not None and target_n < oldest_seq:
+            raise RewindBeyondRetentionError(
+                f"checkpoint seq {target_n} is outside the retained WAL (oldest "
+                f"kept = {oldest_seq}) — it has been truncated. Configure a deeper "
+                "retention window to rewind this far back."
             )
 
         self._rewind_in_progress = True
@@ -761,7 +781,28 @@ class AgentRegistry:
         # Stamp success so throttle gates the next attempt. (We don't gate
         # on dropped==0 — even a no-op rewrite resets the throttle window.)
         self._last_truncation_ts = now
+        # ADR-0038 Stage 1e (D5): GC generations + workspace blobs on the SAME
+        # boundary (Q3 piggyback). prune_below(floor) drops only what is below the
+        # (retention-clamped) WAL floor — generations >= floor stay reconstructable,
+        # so this never drops rewind history within the retention window.
+        self._prune_generations_below(floor)
         return stats
+
+    def _prune_generations_below(self, floor: int) -> None:
+        """Drop snapshot + workspace generations below ``floor`` (Stage 1e GC).
+
+        ``floor`` is the truncation floor (already retention-clamped), so a
+        generation at-or-above it stays reconstructable. Defensive — never raises
+        into the truncation hot path.
+        """
+        try:
+            for name in self.list_names():
+                self._store_for(name).prune_below(floor)
+            ws = self.workspace_store
+            if ws is not None and ws.git_available():
+                ws.prune_below(floor)
+        except Exception as e:  # noqa: BLE001 — defensive; never fail caller
+            logger.warning("Stage 1e generation GC failed (floor=%d): %s", floor, e)
 
     async def maybe_truncate_for_size(
         self, *, threshold_bytes: int | None = None,
@@ -884,7 +925,36 @@ class AgentRegistry:
     _LONG_AWAIT_THRESHOLD_SEC: float = 300.0
 
     def compute_truncate_floor(self) -> int:
-        """Return the lowest seq that MUST remain in the WAL.
+        """Lowest seq that must remain in the WAL, clamped by the retention policy.
+
+        ``= min(live_floor, retention_floor)``. **Live policy → ``live_floor``
+        unchanged** (the in-memory fast path below; no disk reads — preserves
+        PR-N7). Only the **opt-in deeper** policy reads generation seqs (bounded
+        disk) to clamp the floor down so the retention window stays
+        reconstructable (ADR-0038 Stage 1e, D5).
+        """
+        live_floor = self._compute_live_floor()
+        if self._retention_policy.is_live or live_floor <= 0:
+            return live_floor
+        return compute_retention_floor(
+            self._retention_policy,
+            live_floor=live_floor,
+            checkpoint_seqs=self._checkpoint_seqs(),
+        )
+
+    def _checkpoint_seqs(self) -> list[int]:
+        """Global checkpoint (generation) seqs — union across agents' gen stores.
+
+        Disk-backed (gen-dir glob); called ONLY on the non-live retention path so
+        the default floor computation stays in-memory (PR-N7).
+        """
+        seqs: set[int] = set()
+        for name in self.list_names():
+            seqs.update(self._store_for(name).seqs())
+        return sorted(seqs)
+
+    def _compute_live_floor(self) -> int:
+        """Return the lowest seq that MUST remain in the WAL (live floor).
 
         ``floor = min(全 active session applied_seq, 全 active skill
         last_phase_applied_seq, 全 active plan last_step_applied_seq) + 1``
