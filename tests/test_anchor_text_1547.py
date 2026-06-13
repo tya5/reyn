@@ -19,7 +19,6 @@ from reyn.events.anchor_store import AnchorStore, truncate_anchor
 from reyn.events.snapshot_generations import SnapshotGenerationStore
 from reyn.events.state_log import StateLog
 
-
 # ── truncate_anchor ──────────────────────────────────────────────────────────
 
 
