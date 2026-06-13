@@ -785,6 +785,16 @@ async def _on_message(message: cl.Message) -> None:
     # (including unknown slashes, which get a hint on the outbox).
     text = message.content or ""
     if is_slash(text):
+        # Bare ``/rewind`` (no seq arg) gets the web-native picker: a
+        # branch tree rendered as ``cl.Action`` buttons instead of the
+        # TUI's keyboard-driven menu (Chainlit has no focusable list
+        # widget). ``/rewind <N>`` keeps flowing through the shared slash
+        # dispatcher → ``registry.checkout`` (parity with CUI/TUI). The
+        # picker's buttons call back into the same ``checkout`` path, so
+        # both surfaces converge on one substrate. (ADR-0038 2d-2)
+        if text.strip() == "/rewind":
+            await _render_rewind_picker(session)
+            return
         await session._maybe_handle_slash(text)
         # Chainlit-side cleanup: when reyn just wiped its own history,
         # remove the corresponding rendered messages from the browser
@@ -795,6 +805,63 @@ async def _on_message(message: cl.Message) -> None:
         return
 
     await session.submit_user_text(text)
+
+
+async def _render_rewind_picker(session) -> None:
+    """Render the branch tree as ``cl.Action`` buttons (web /rewind picker).
+
+    Thin glue (ADR-0038 2d-2): all shaping lives in the chainlit-free
+    ``rewind_actions`` module — this only gathers branches/checkpoints
+    from the registry, hands them to ``build_rewind_action_specs``, and
+    emits one ``cl.Action`` per checkpoint. The button click is handled
+    by ``on_rewind_checkout`` below, which calls back into the shared
+    ``checkout`` substrate. Best-effort: a registry/empty-history miss
+    degrades to a plain message rather than raising into the browser.
+    """
+    from dataclasses import asdict
+
+    from reyn.chainlit_app.rewind_actions import build_rewind_action_specs
+
+    try:
+        registry = await _get_or_build_registry()
+        branches = [asdict(b) for b in registry.list_branches()]
+        checkpoints = registry.list_rewind_points(include_abandoned=True)
+    except Exception as exc:  # noqa: BLE001 - surface, don't crash the thread
+        await cl.Message(content=f"⏪ rewind unavailable: {exc}").send()
+        return
+
+    specs = build_rewind_action_specs(branches, checkpoints)
+    if not specs:
+        await cl.Message(content="⏪ no rewind points yet").send()
+        return
+
+    actions = [
+        cl.Action(
+            name="rewind_checkout",
+            label=spec["label"],
+            payload={"seq": spec["seq"]},
+        )
+        for spec in specs
+    ]
+    await cl.Message(
+        content="⏪ **Rewind** — pick a point to return to (a fork point reopens that branch):",
+        actions=actions,
+    ).send()
+
+
+@cl.action_callback("rewind_checkout")
+async def on_rewind_checkout(action: "cl.Action") -> None:
+    """Handle a rewind-picker button: checkout the chosen seq.
+
+    Thin glue — the ``checkout`` + confirmation text live in the
+    chainlit-free ``handle_rewind_checkout``. (ADR-0038 2d-2)
+    """
+    from reyn.chainlit_app.rewind_actions import handle_rewind_checkout
+
+    seq = (action.payload or {}).get("seq")
+    registry = await _get_or_build_registry()
+    result = await handle_rewind_checkout(registry, seq)
+    await cl.Message(content=result).send()
 
 
 async def _clear_chainlit_thread() -> None:
