@@ -291,6 +291,17 @@ class ChainManager:
         """
         await self.cancel_and_join_timers()
 
+    async def reset(self) -> None:
+        """Drop all chain state + watchdogs (ADR-0038 Stage 1c-2 rewind).
+
+        Cancels+joins every timeout watchdog and clears the pending-chain map.
+        After this the manager holds no chains and no armed timers — the global
+        rewind path re-populates via ``restore()`` from the reconstructed
+        snapshot, leaving no pre-rewind residue. Idempotent.
+        """
+        await self.cancel_and_join_timers()
+        self._chains.clear()
+
     async def _chain_timeout_watch(
         self,
         chain_id: str,

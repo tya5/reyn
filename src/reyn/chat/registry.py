@@ -34,6 +34,13 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 from reyn.events.agent_snapshot import AgentSnapshot
+from reyn.events.snapshot_generations import (
+    RewindIntoAbandonedError,
+    SnapshotGenerationStore,
+    is_active_seq,
+    reconstruct,
+)
+from reyn.events.snapshot_generations import rewind as _append_rewind_record
 from reyn.events.state_log import StateLog
 
 from .profile import PROFILE_FILENAME, AgentProfile
@@ -102,6 +109,10 @@ class AgentRegistry:
         # WAL truncation throttle (skill resume design). monotonic ts of last
         # successful truncation attempt; ``None`` means no throttle is active.
         self._last_truncation_ts: float | None = None
+        # ADR-0038 Stage 1c-2: set for the duration of a global rewind. While
+        # set, ``maybe_truncate_for_size`` no-ops so a compaction can't advance
+        # the WAL keep-floor over the reset-record / reconstruct reads mid-cut.
+        self._rewind_in_progress: bool = False
         # Single queue the REPL drains; registry routes each attached agent's
         # outbox into here.
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
@@ -327,6 +338,101 @@ class AgentRegistry:
                 )
 
         return snapshots
+
+    # ── Global rewind (ADR-0038 Stage 1c-2, D2 consistent-cut) ──────────────
+
+    def _store_for(self, name: str) -> SnapshotGenerationStore:
+        """Return the snapshot-generation store for ``name``.
+
+        Reuses the live session's store when the agent is loaded (so an
+        in-flight session and the rewind path share one view of the
+        generations dir); otherwise constructs one over the on-disk path.
+        """
+        session = self._agents.get(name)
+        store = getattr(session, "_generation_store", None)
+        if isinstance(store, SnapshotGenerationStore):
+            return store
+        return SnapshotGenerationStore(
+            name, self._dir / name / "state" / "generations",
+        )
+
+    async def rewind_to(self, target_n: int) -> dict:
+        """Global consistent-cut rewind to WAL seq ``target_n`` (ADR-0038 1c-2).
+
+        Architecture-enforced global cut (D2): one global single-seq WAL + one
+        workspace SSoT means a single reset-record rewinds *every* agent
+        atomically. Sequence:
+
+          1. validate ``target_n`` is on the active branch (1b guard) BEFORE
+             disrupting any live work — a bad target must not cancel turns.
+          2. all-cancel  — ``cancel_inflight`` on every loaded session.
+          3. all-quiesce — ``await_quiescent`` on every loaded session (1c-1):
+             stop-world THEN settle, so no cross-session straggler appends past
+             the reset-record.
+          4. append ONE global rewind reset-record (fsync'd before any
+             reconstruct — the crash-mid-rewind idempotence keystone, 1b).
+          5. reconstruct every KNOWN agent as-of-N (honoring is_active) and
+             persist a **self-contained** snapshot at ``applied_seq = R`` so
+             ``restore_all`` replays only post-rewind (> R) entries and never
+             needs the abandoned segment — correct-or-absent without a
+             floor-clamp (is_active-honoring restore_all + retention = 1e).
+             Loaded sessions are reset (``reset_for_rewind``) then re-adopt the
+             reconstructed snapshot; unloaded agents are reconstructed on disk
+             only (next load reflects the rewound state — partial-honor).
+
+        ``_rewind_in_progress`` gates compaction for the whole window.
+
+        Raises ``RewindIntoAbandonedError`` if ``target_n`` is on an abandoned
+        branch (switching branches is a Phase-2 fork, not Phase-1 undo).
+        """
+        if self._state_log is None:
+            raise RuntimeError("rewind_to requires a state log")
+        # 1. validate up front (no live work touched yet).
+        if not is_active_seq(self._state_log, target_n):
+            raise RewindIntoAbandonedError(
+                f"rewind target seq {target_n} is on an abandoned branch — "
+                "Phase-1 undo only rewinds to a seq on the active timeline."
+            )
+
+        self._rewind_in_progress = True
+        try:
+            sessions = list(self._agents.values())
+            # 2. all-cancel (stop-world).
+            for session in sessions:
+                await session.cancel_inflight()
+            # 3. all-quiesce (settle every WAL-append task).
+            for session in sessions:
+                await session.await_quiescent()
+            # 4. single global reset-record; supersedes = prior active head (audit).
+            prior_head = self._state_log.current_seq
+            reset_seq = await _append_rewind_record(
+                self._state_log, target_n=target_n, supersedes=prior_head,
+            )
+            # 5. reconstruct + persist self-contained snapshots for every agent.
+            agents: list[str] = []
+            for name in self.list_names():
+                store = self._store_for(name)
+                snap = reconstruct(
+                    name, store, self._state_log, target_seq=reset_seq,
+                )
+                # Self-contained: the reset-record carries no agent target, so
+                # reconstruct leaves applied_seq at the last active entry (<= N).
+                # Pin it to R so restore_all's replay floor skips the abandoned
+                # (N, R] segment entirely (no is_active honoring needed there).
+                snap.applied_seq = reset_seq
+                snap.save(self._dir / name / "state" / "snapshot.json")
+                session = self._agents.get(name)
+                if session is not None:
+                    await session.reset_for_rewind()
+                    session.restore_state(snap)
+                agents.append(name)
+            return {
+                "target_n": target_n,
+                "reset_seq": reset_seq,
+                "agents": agents,
+            }
+        finally:
+            self._rewind_in_progress = False
 
     # ── Plan resume recovery (ADR-0023 Phase 2 step 7d) ─────────────────────
 
@@ -585,6 +691,12 @@ class AgentRegistry:
         advanced, etc.).
         """
         if self._state_log is None:
+            return None
+        # ADR-0038 Stage 1c-2: no compaction during a global rewind — it would
+        # risk advancing the keep-floor over the reset-record / reconstruct WAL
+        # reads. Compaction resumes (against the new active state) once the
+        # rewind clears the flag.
+        if self._rewind_in_progress:
             return None
         threshold = (
             threshold_bytes if threshold_bytes is not None
