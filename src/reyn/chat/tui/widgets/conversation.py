@@ -2281,6 +2281,15 @@ class ConversationView(Widget):
         """
         from .rewind_menu import RewindMenuWidget
         self._consume_empty_hint()
+        # Parity with mount_intervention (#1550): when the user has scrolled up
+        # to read history, the menu renders at the tail where they can't see it.
+        # Surface a "⏪ rewind menu below ↓" cue (same mechanism as the
+        # intervention "⚑ … below ↓" hint) so they know the picker is waiting.
+        # At the tail, a bare hide_status suffices — the widget is visible.
+        if self._scroll_ctrl.user_scrolled:
+            self.show_status("⏪ rewind menu below ↓", kind="general")
+        else:
+            self.hide_status()
         widget = RewindMenuWidget(points, rel_time_fn=rel_time_fn)
         self.mount(widget)
         if not self._scroll_ctrl.user_scrolled:
