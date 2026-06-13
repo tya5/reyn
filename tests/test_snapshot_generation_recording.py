@@ -60,7 +60,7 @@ async def test_plan_step_boundary_cuts_generation(tmp_path):
 
 @pytest.mark.asyncio
 async def test_reconstruct_head_equals_live_snapshot(tmp_path):
-    """Tier 2 (parity): reconstruct(head) from the store == the live snapshot.
+    """Tier 2: reconstruct(head) from the store == the live snapshot (parity).
 
     A generation is cut, then more state lands past it; reconstructing head must
     fold the post-generation WAL delta back to exactly the live snapshot — the
