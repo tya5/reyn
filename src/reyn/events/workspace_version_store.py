@@ -76,6 +76,44 @@ class _HostGitRunner:
         return result.returncode, result.stdout
 
 
+class _ContainerGitRunner:
+    """Runs git INSIDE a container via ``backend.run`` (docker exec) — #1544.
+
+    The work-tree is container-side (the agent edits files there), so host git
+    cannot reach it; git must run in-container. Owns the CONTAINER
+    ``--git-dir`` / ``--work-tree`` path context (e.g. ``/workspace/.reyn/...`` /
+    ``/workspace``). git-absence in the container surfaces as rc 127
+    (``command not found``) → ``GitUnavailable`` so the store degrades — the
+    correct check (vs the host PATH, which is meaningless for a container).
+    """
+
+    def __init__(self, backend: "object", *, git_dir: str, work_tree: str) -> None:
+        self._backend = backend
+        self._git_dir = git_dir
+        self._work_tree = work_tree
+
+    async def run(self, args: list[str], *, check: bool = True) -> tuple[int, str]:
+        from reyn.sandbox.policy import SandboxPolicy
+
+        argv = [
+            "git",
+            "--git-dir", self._git_dir,
+            "--work-tree", self._work_tree,
+            "-c", f"user.name={_SHADOW_NAME}",
+            "-c", f"user.email={_SHADOW_EMAIL}",
+            *args,
+        ]
+        # backend.run honors only policy.timeout_seconds (the container is the
+        # isolation boundary); defaults suffice for this trusted infra command.
+        res = await self._backend.run(argv, SandboxPolicy())
+        out = res.stdout.decode() if isinstance(res.stdout, bytes) else (res.stdout or "")
+        if res.returncode == 127:  # shell: git not found in the container
+            raise GitUnavailable("git binary not found in container")
+        if check and res.returncode != 0:
+            raise subprocess.CalledProcessError(res.returncode, argv, out)
+        return res.returncode, out
+
+
 class WorkspaceVersionStore:
     """Content-addressed shadow-git store for workspace files (ADR-0038 1d, #1544).
 

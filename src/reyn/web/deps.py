@@ -375,6 +375,9 @@ def _get_registry():
             project_root=root,
             session_factory=_session_factory,
             state_log=state_log,
+            # #1544: container shadow-git. ``_scoped`` is local to the session
+            # factory above; fetch the overrides at this scope via the accessor.
+            environment_backend=get_cli_scoped_overrides().environment_backend,
         )
         registry_ref.append(registry)
         _registry = registry
