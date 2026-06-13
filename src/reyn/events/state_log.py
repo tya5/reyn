@@ -73,6 +73,11 @@ WAL_EVENT_KINDS = (
     "plan_step_started",
     "plan_step_completed",
     "plan_step_failed",
+    # NEW (ADR-0038 Stage 1b) — user-facing time-travel rewind reset-record.
+    # Append-only compensating record: moves the active pointer to ``target_n``;
+    # the abandoned future is retained as an inactive branch (reconstruct honors
+    # the active path). A non-state marker — apply_events no-ops it.
+    "rewind",
 )
 
 
