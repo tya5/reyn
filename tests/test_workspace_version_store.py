@@ -1,0 +1,121 @@
+"""Tier 2: OS invariant — WorkspaceVersionStore content-addressed shadow-git.
+
+ADR-0038 Stage 1d (D9). Real ``git`` + real filesystem (no mocks). The store is
+the workspace half of a generation: capture the work-tree at a boundary seq,
+restore it as-of-N on rewind. Covers the round-trip (files revert, later-added
+files removed, excluded OS state survives), idempotent capture, nearest-at-or-
+below restore, retention prune, and git-absent graceful degrade.
+"""
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+import pytest
+
+from reyn.events.workspace_version_store import WorkspaceVersionStore
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("git") is None, reason="git not on PATH",
+)
+
+
+def _store(tmp_path: Path) -> WorkspaceVersionStore:
+    ws = tmp_path / "ws"
+    (ws / ".reyn").mkdir(parents=True)
+    return WorkspaceVersionStore(ws, ws / ".reyn" / "workspace-shadow.git")
+
+
+def _write(tmp_path: Path, rel: str, content: str) -> None:
+    p = tmp_path / "ws" / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content, encoding="utf-8")
+
+
+def _read(tmp_path: Path, rel: str) -> str:
+    return (tmp_path / "ws" / rel).read_text(encoding="utf-8")
+
+
+def test_capture_restore_round_trip(tmp_path):
+    """Tier 2: restore reverts tracked files to as-of-N; later-added files gone; .reyn survives."""
+    store = _store(tmp_path)
+    _write(tmp_path, "file.txt", "v1")
+    _write(tmp_path, ".reyn/wal.jsonl", "os-state")     # OS state — must NOT be tracked/wiped
+
+    store.capture(10)
+
+    # later work: mutate a tracked file + add a new one
+    _write(tmp_path, "file.txt", "v2")
+    _write(tmp_path, "added.txt", "new")
+    store.capture(20)
+    assert _read(tmp_path, "file.txt") == "v2"
+
+    # rewind: restore to as-of-10
+    store.restore_at_or_below(10)
+
+    assert _read(tmp_path, "file.txt") == "v1"               # reverted
+    assert not (tmp_path / "ws" / "added.txt").exists()       # later-added removed
+    assert _read(tmp_path, ".reyn/wal.jsonl") == "os-state"   # excluded OS state survives
+
+
+def test_capture_is_idempotent_per_seq(tmp_path):
+    """Tier 2: capturing the same seq twice returns the same sha (no duplicate gen).
+
+    A global seq may be hit by more than one agent's boundary; the second
+    capture must be a no-op returning the existing commit.
+    """
+    store = _store(tmp_path)
+    _write(tmp_path, "file.txt", "v1")
+
+    first = store.capture(10)
+    second = store.capture(10)
+
+    assert first is not None
+    assert first == second
+    assert store.seqs() == [10]
+
+
+def test_restore_picks_nearest_at_or_below(tmp_path):
+    """Tier 2: restore_at_or_below(s) restores the nearest generation with seq <= s."""
+    store = _store(tmp_path)
+    _write(tmp_path, "file.txt", "gen10")
+    store.capture(10)
+    _write(tmp_path, "file.txt", "gen20")
+    store.capture(20)
+
+    store.restore_at_or_below(15)   # between gens → nearest below = 10
+    assert _read(tmp_path, "file.txt") == "gen10"
+
+
+def test_restore_with_no_generation_returns_none(tmp_path):
+    """Tier 2: restore with no captured generation is a safe no-op (returns None)."""
+    store = _store(tmp_path)
+    _write(tmp_path, "file.txt", "v1")
+    assert store.restore_at_or_below(5) is None
+    assert _read(tmp_path, "file.txt") == "v1"   # untouched
+
+
+def test_seqs_and_prune_below(tmp_path):
+    """Tier 2: seqs() lists captured generations; prune_below drops older ones."""
+    store = _store(tmp_path)
+    _write(tmp_path, "file.txt", "v")
+    for s in (10, 20, 30):
+        _write(tmp_path, "file.txt", f"v{s}")
+        store.capture(s)
+    assert store.seqs() == [10, 20, 30]
+
+    removed = store.prune_below(20)
+    assert removed == 1                 # only gen 10 dropped
+    assert store.seqs() == [20, 30]
+
+
+def test_git_unavailable_degrades_to_noop(tmp_path, monkeypatch):
+    """Tier 2: with no git on PATH, capture/restore degrade to None (runtime rewind still works)."""
+    monkeypatch.setenv("PATH", "")      # real env: no git resolvable
+    store = _store(tmp_path)
+    _write(tmp_path, "file.txt", "v1")
+
+    assert store.git_available() is False
+    assert store.capture(10) is None
+    assert store.restore_at_or_below(10) is None
+    assert store.seqs() == []
