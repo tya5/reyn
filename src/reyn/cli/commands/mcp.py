@@ -444,6 +444,7 @@ def run_serve(args: argparse.Namespace) -> None:
         session_factory=_session_factory,
         state_log=state_log,
         workspace_capture=session_cfg.config.time_travel.workspace_capture,  # #1582 opt-out
+        act_turn_capture=session_cfg.config.time_travel.act_turn_capture,  # #1560 opt-in
     )
 
     timeout = float(getattr(args, "timeout", 60.0) or 60.0)

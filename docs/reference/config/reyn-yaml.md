@@ -279,11 +279,13 @@ Cost knobs for the time-travel (rewind/resume) feature (#1582).
 ```yaml
 time_travel:
   workspace_capture: true   # default; false = runtime-only rewind
+  act_turn_capture: false   # opt-in; true = per-step (act-turn) workspace capture
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `workspace_capture` | bool | `true` | When `true`, every checkpoint boundary (turn / plan-step) captures the workspace into a shadow-git generation so a rewind restores repo files too. This is time-travel's **largest** constant cost — a `git add -A` + commit per boundary (in container mode, a `docker exec` per boundary). Set to `false` for **runtime-only rewind**: rewind/checkout restore agent + conversation state but **not** repo files — a documented escape for large workspaces, container runs, or no-file-rewind use. Run-level (read at startup; not a mid-session toggle). |
+| `act_turn_capture` | bool | `false` | Opt-in **per-step** (act-turn) workspace capture. When `true`, each skill-run op (`step_completed`) also snapshots the workspace as a cheap `write-tree` (no commit) into an op-content-log, so a rewind can land *mid-skill-run*, not just at turn/plan-step boundaries. High-frequency (per op), so opt-in by default. A no-op when `workspace_capture` is `false` (the per-step capture rides the same shadow store). |
 
 ## `phase` block
 

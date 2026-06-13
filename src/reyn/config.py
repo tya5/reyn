@@ -1603,14 +1603,21 @@ class TimeTravelConfig:
     """
 
     workspace_capture: bool = True
+    # #1560 — opt-in per-step (act-turn) workspace capture (default OFF). When on,
+    # each `step_completed` inside a skill run records a write-tree snapshot in the
+    # op-content-log so act-turn rewind can restore mid-run workspace state. High
+    # frequency (per op), so opt-in by default per the perf policy. Gated by
+    # `workspace_capture` (the Tier-1 store) — off there ⇒ this is a no-op too.
+    act_turn_capture: bool = False
 
 
 def _build_time_travel_config(raw: object) -> TimeTravelConfig:
     """Parse ``time_travel:`` from reyn.yaml. None / missing / empty → defaults.
 
-    ``workspace_capture`` accepts a bool; a missing key keeps the default
-    (``true``). A non-mapping block or non-bool value is a config error (fail
-    loud rather than silently mis-defaulting a cost/durability knob).
+    Each known key accepts a bool; a missing key keeps its default
+    (``workspace_capture`` true, ``act_turn_capture`` false). A non-mapping block
+    or non-bool value is a config error (fail loud rather than silently
+    mis-defaulting a cost/durability knob).
     """
     if raw is None:
         return TimeTravelConfig()
@@ -1618,15 +1625,21 @@ def _build_time_travel_config(raw: object) -> TimeTravelConfig:
         raise ValueError(
             f"time_travel must be a mapping, got {type(raw).__name__}"
         )
-    if "workspace_capture" not in raw:
-        return TimeTravelConfig()
-    val = raw["workspace_capture"]
-    if not isinstance(val, bool):
-        raise ValueError(
-            "time_travel.workspace_capture must be a bool, got "
-            f"{type(val).__name__}"
-        )
-    return TimeTravelConfig(workspace_capture=val)
+
+    def _bool(key: str, default: bool) -> bool:
+        if key not in raw:
+            return default
+        val = raw[key]
+        if not isinstance(val, bool):
+            raise ValueError(
+                f"time_travel.{key} must be a bool, got {type(val).__name__}"
+            )
+        return val
+
+    return TimeTravelConfig(
+        workspace_capture=_bool("workspace_capture", True),
+        act_turn_capture=_bool("act_turn_capture", False),
+    )
 
 
 @dataclass

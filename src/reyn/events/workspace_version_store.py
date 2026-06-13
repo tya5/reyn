@@ -185,6 +185,25 @@ class WorkspaceVersionStore:
         except GitUnavailable:
             return self._degrade("capture", seq)
 
+    async def capture_tree(self) -> str | None:
+        """Capture the current workspace as a bare **tree** object (#1560 act-turn).
+
+        ``add -A`` + ``write-tree`` — a content-addressed tree snapshot with **no
+        commit and no tag**, so it is much cheaper than :meth:`capture` (the
+        per-boundary generation) yet fully coherent (multi-file, deletions, renames
+        are all captured; git dedups unchanged subtrees/blobs). Used by the opt-in
+        per-step act-turn content log: a caller records ``(op_seq, tree_sha)`` and
+        later restores via ``read-tree`` of the tree. Returns the tree sha, or
+        ``None`` when git is unavailable (degrade) — best-effort, never raises.
+        """
+        try:
+            await self._ensure_repo()
+            await self._git(["add", "-A"])
+            out = await self._git(["write-tree"])
+            return out.strip() or None
+        except GitUnavailable:
+            return self._degrade("capture_tree", None)
+
     async def restore_at_or_below(self, seq: int) -> str | None:
         """Restore to the nearest generation with **raw** tag-seq <= ``seq``.
 

@@ -89,6 +89,12 @@ class StateLog:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
         self._counter = self._scan_max_seq()
+        # Generic post-append observers (#1560). Each is invoked AFTER a durable
+        # append (post-fsync, outside the lock) with `(kind, seq, fields)`. The
+        # WAL stays workspace/feature-agnostic (P7) — observers carry all domain
+        # knowledge. Empty by default → zero cost on the append path; a registrant
+        # (e.g. the registry's act-turn workspace capture) opts in explicitly.
+        self._post_append_cbs: list = []
 
     @property
     def path(self) -> Path:
@@ -127,7 +133,38 @@ class StateLog:
                 f.write(payload)
                 f.flush()
                 os.fsync(f.fileno())
-            return seq
+        # Post-append observers fire AFTER the durable write and OUTSIDE the lock
+        # (#1560): durability is already secured, so a slow/failing observer
+        # neither weakens crash-recovery nor serializes other appends. Best-effort
+        # — failures are swallowed, so the append's result is never blocked.
+        await self._fire_post_append(kind, seq, fields)
+        return seq
+
+    def register_post_append(self, cb) -> None:
+        """Register a generic post-append observer ``cb(kind, seq, fields)``.
+
+        Invoked after each durable append (post-fsync, outside the lock). The WAL
+        passes only WAL vocabulary — observers own all domain knowledge (P7). Used
+        by the registry's opt-in act-turn workspace capture (#1560); unregistered
+        by default so the append path stays zero-cost.
+        """
+        self._post_append_cbs.append(cb)
+
+    async def _fire_post_append(self, kind: str, seq: int, fields: dict) -> None:
+        """Invoke each post-append observer, swallowing failures (best-effort).
+
+        A raising / hanging-then-failing observer must never fail or corrupt the
+        append — the WAL entry is already durable. Each callback is isolated.
+        """
+        for cb in self._post_append_cbs:
+            try:
+                await cb(kind, seq, fields)
+            except Exception as e:  # noqa: BLE001 — never let an observer fail the append
+                import logging
+                logging.getLogger(__name__).warning(
+                    "StateLog post-append observer failed (kind=%s seq=%s): %s",
+                    kind, seq, e,
+                )
 
     def _needs_lead_newline(self) -> bool:
         if not self._path.is_file():
