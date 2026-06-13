@@ -18,6 +18,10 @@ Invariants pinned:
    ChatSession._emit_router_cap_exhausted_user emits an outbox message with
    meta["limit_stopped"] is True — proving the dead code is now reachable and
    the user receives a contextual summary instead of a canned string.
+3. (end-to-end a2a path) Driving through handle_agent_response with a
+   pre-exhausted cap produces meta.limit_stopped=True in the outbox —
+   live proof that the a2a accumulation path (no-reset) reaches the
+   wrap-up, not just compositional reasoning (#1538 definitive closure).
 
 No mocks — real A2AHandler + real ChatSession + real scripted LLM callable.
 """
@@ -31,6 +35,7 @@ import pytest
 from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.chain_manager import ChainManager
 from reyn.chat.session import ChatSession, RouterCapExceeded
+from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from tests.test_router_loop import FakeEventLog
@@ -200,3 +205,71 @@ async def test_a2a_router_cap_wrapup_produces_limit_stopped_meta() -> None:
     )
     assert limit_stopped_msgs[0].kind == "agent"
     assert scripted.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_a2a_handle_agent_response_cap_hit_delivers_wrapup_e2e(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: end-to-end a2a path drives handle_agent_response with a
+    no-reset accumulated cap to produce meta.limit_stopped=True in the
+    outbox — live proof that the a2a accumulation path reaches the wrap-up.
+
+    Setup: max_router_calls_per_turn=1 + on_limit=unattended. First
+    _run_router_loop call (scripted LLM returns text) exhausts the single
+    cap slot. Second call (from handle_agent_response, no-reset) raises
+    RouterCapExceeded → _emit_router_cap_exhausted_user → wrap-up →
+    outbox meta.limit_stopped=True.
+
+    This is invariant 3 — definitive closure for #1538/#1500: the a2a
+    accumulation path is live, not dead code.
+    """
+    safety = SafetyConfig(
+        loop=LoopConfig(max_router_calls_per_turn=1),
+        on_limit=OnLimitConfig(mode="unattended"),
+    )
+    session = ChatSession(agent_name="a2a-e2e-test", safety=safety)
+
+    # Scripted LLM: call 0 = router loop text reply; call 1 = wrap-up text.
+    class _SequencedLLM:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def __call__(self, **kwargs: Any) -> LLMToolCallResult:
+            n = self.call_count
+            self.call_count += 1
+            text = "Task done." if n == 0 else "Turn ended at cap — here is your summary."
+            return LLMToolCallResult(
+                content=text, tool_calls=[], finish_reason="stop",
+                usage=_EMPTY_USAGE,
+            )
+
+    scripted = _SequencedLLM()
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+
+    # First router call: exhausts the single cap slot (counter 0→1, cap=1).
+    await session._run_router_loop("original user request", "chain-first")
+
+    # Second call via the a2a path (no-reset): counter 1→2 > cap=1
+    # → RouterCapExceeded → _emit_router_cap_exhausted_user → wrap-up.
+    await session._handle_agent_response({
+        "from_agent": "peer-agent",
+        "response": "task completed",
+        "chain_id": "chain-a2a-e2e",
+        "depth": 1,
+    })
+
+    messages = []
+    while not session.outbox.empty():
+        messages.append(session.outbox.get_nowait())
+
+    limit_stopped_msgs = [
+        m for m in messages
+        if hasattr(m, "meta") and m.meta.get("limit_stopped") is True
+    ]
+    assert limit_stopped_msgs, (
+        f"No meta.limit_stopped=True message in outbox after a2a cap hit; "
+        f"messages={[vars(m) for m in messages]}"
+    )
+    assert limit_stopped_msgs[0].kind == "agent"
+    assert scripted.call_count >= 2
