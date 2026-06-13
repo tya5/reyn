@@ -102,22 +102,35 @@ class WorkspaceVersionStore:
         return self._rev_parse("HEAD")
 
     def restore_at_or_below(self, seq: int) -> str | None:
-        """Restore the workspace to the nearest generation with tag-seq <= ``seq``.
+        """Restore to the nearest generation with **raw** tag-seq <= ``seq``.
+
+        Convenience for the no-rewind / single-branch case. **When rewind records
+        exist, callers MUST use** :meth:`restore_to_seq` with an is_active-resolved
+        seq instead — a raw nearest-below can land on an abandoned-branch
+        generation (tags in the abandoned segment ``(N, R)`` still exist), the
+        workspace analogue of the runtime active-branch honoring in
+        ``snapshot_generations.reconstruct``. Returns the restored sha or ``None``.
+        """
+        if not self.git_available() or not self._git_dir.exists():
+            return None
+        base = self._nearest_at_or_below(seq)
+        return self.restore_to_seq(base) if base is not None else None
+
+    def restore_to_seq(self, seq: int) -> str | None:
+        """Restore the workspace to the EXACT generation tagged ``seq``.
 
         ``reset --hard`` to that commit + ``clean -fd`` (honoring the excludes)
         so files added after the generation are removed while excluded OS state
-        (``.reyn/``) survives. Returns the restored commit sha, or ``None`` when
-        git is unavailable or no generation at-or-below ``seq`` exists.
+        (``.reyn/``) survives. The caller supplies the precise generation seq
+        (e.g. the nearest **active** gen, is_active-resolved against the WAL), so
+        this never has to know about rewind/abandoned branches. Returns the
+        restored sha, or ``None`` when git is unavailable or no such tag exists.
         """
-        if not self.git_available():
-            logger.debug("git unavailable — workspace restore(%s) skipped", seq)
+        if not self.git_available() or not self._git_dir.exists():
             return None
-        if not self._git_dir.exists():
+        tag = self._tag(seq)
+        if self._tag_sha(tag) is None:
             return None
-        base = self._nearest_at_or_below(seq)
-        if base is None:
-            return None
-        tag = self._tag(base)
         self._git("reset", "--hard", "-q", tag)
         clean_args = ["clean", "-fdq"]
         for pat in self._exclude:

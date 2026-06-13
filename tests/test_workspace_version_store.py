@@ -109,6 +109,29 @@ def test_seqs_and_prune_below(tmp_path):
     assert store.seqs() == [20, 30]
 
 
+def test_restore_to_seq_exact_and_missing(tmp_path):
+    """Tier 2: restore_to_seq targets an EXACT generation; unknown seq is a no-op.
+
+    This is the is_active-aware entry the registry uses with an active-resolved
+    gen seq — it restores precisely that tag (never a nearest-below that could be
+    an abandoned-branch gen).
+    """
+    store = _store(tmp_path)
+    _write(tmp_path, "file.txt", "gen10")
+    store.capture(10)
+    _write(tmp_path, "file.txt", "gen20")
+    store.capture(20)
+
+    # exact restore to the older gen even though a newer one exists
+    sha = store.restore_to_seq(10)
+    assert sha is not None
+    assert _read(tmp_path, "file.txt") == "gen10"
+
+    # unknown gen seq → safe no-op (workspace untouched)
+    assert store.restore_to_seq(999) is None
+    assert _read(tmp_path, "file.txt") == "gen10"
+
+
 def test_git_unavailable_degrades_to_noop(tmp_path, monkeypatch):
     """Tier 2: with no git on PATH, capture/restore degrade to None (runtime rewind still works)."""
     monkeypatch.setenv("PATH", "")      # real env: no git resolvable
