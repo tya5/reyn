@@ -24,6 +24,7 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.tui.app import ReynTUIApp
 from reyn.chat.tui.widgets import ConversationView
+from reyn.chat.tui.widgets._branch_tree import build_branch_tree_rows
 from reyn.chat.tui.widgets.sticky_status import StickyStatus
 
 
@@ -34,8 +35,14 @@ def _make_app() -> ReynTUIApp:
     )
 
 
-def _points() -> list[dict]:
-    return [{"seq": i, "ts": "", "kind": "turn"} for i in range(3)]
+def _tree_rows() -> list[dict]:
+    """Branch-tree rows for the picker (the only mode since #1561 / flat path
+    removed in #1563): one active branch + 3 checkpoints."""
+    branches = [{"branch_id": 0, "fork_point_seq": 0, "head_seq": 3,
+                 "parent_branch_id": None, "is_active": True}]
+    cps = [{"seq": i, "ts": "", "kind": "turn", "anchor": "", "branch_id": 0}
+           for i in range(3)]
+    return build_branch_tree_rows(branches, cps)
 
 
 def _fill_log(log: RichLog, n: int) -> None:
@@ -62,7 +69,7 @@ async def test_scrolled_up_mount_shows_rewind_cue() -> None:
         await pilot.pause()
         assert conv.user_scrolled is True
 
-        conv.mount_rewind_menu(_points())
+        conv.mount_rewind_menu(_tree_rows())
         await pilot.pause()
 
         snap = sticky.snapshot()
@@ -80,7 +87,7 @@ async def test_at_tail_mount_shows_no_cue() -> None:
         sticky = conv.query_one("#sticky-status", StickyStatus)
         assert conv.user_scrolled is False
 
-        conv.mount_rewind_menu(_points())
+        conv.mount_rewind_menu(_tree_rows())
         await pilot.pause()
 
         # No rewind cue while at the tail (hide_status path).
@@ -103,7 +110,7 @@ async def test_dismiss_clears_rewind_cue() -> None:
         await pilot.pause()
         await pilot.pause()
 
-        app._rewind_menu = conv.mount_rewind_menu(_points())
+        app._rewind_menu = conv.mount_rewind_menu(_tree_rows())
         await pilot.pause()
         assert "rewind menu below" in sticky.snapshot()["body"].lower()
 
