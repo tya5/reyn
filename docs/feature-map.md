@@ -275,7 +275,7 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b) are
 | Deterministic CI rewind gate | `test_live_rewind_gate.py` — Phase-1 rewind deterministic gate (#1553) | — |
 | Deterministic CI live-fork gate | `test_live_fork_gate.py` — Phase-2 fork / checkout deterministic gate (#1564) | — |
 | tmux live e2e | P1 undo + P2 fork-switch verified on real terminal (#1533 tui-coder ledger / #1549) | — |
-| Phase 2c: fork-then-edit ⏳ | New branch on edit (in-progress) | — |
+| Phase 2c: fork-then-edit | New branch on edit via `ctrl+t` | [How-to: rewind](guide/for-users/time-travel.md) |
 | Phase 2d: web surface ⏳ | `/rewind` picker over WebSocket / A2A (in-progress) | — |
 
 #### Event System (P6)
