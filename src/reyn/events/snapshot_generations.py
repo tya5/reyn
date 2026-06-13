@@ -254,6 +254,47 @@ def list_branches(state_log: StateLog) -> list[Branch]:
     return out
 
 
+def lineage_predecessor(
+    state_log: StateLog, candidates: "list[int]", target: int,
+) -> int | None:
+    """The greatest candidate seq strictly below ``target`` on ``target``'s lineage.
+
+    "Lineage" = ``target``'s branch + its ancestor branches back through each
+    fork-point (the active path one would see if checked out to ``target``). Walks
+    the derived branch tree (``parent_branch_id`` + ``fork_point_seq``), so when
+    ``target`` is the FIRST checkpoint on a forked branch the predecessor correctly
+    resolves to the PARENT branch's checkpoint at the fork-point — a same-branch-only
+    max would miss it (the over-include sibling trap, #1533 2c). ``None`` when no
+    ancestor candidate exists (e.g. ``target`` is the first checkpoint = genesis).
+
+    ``candidates`` is the caller-filtered set (e.g. turn-kind checkpoint seqs);
+    this function only resolves lineage ordering, staying kind-agnostic (P7).
+    """
+    cand = [int(c) for c in candidates]
+    if not cand:
+        return None
+    abandoned = _abandoned_intervals(_rewind_records(state_log))
+    by_id = {b.branch_id: b for b in list_branches(state_log)}
+    cur: int | None = _branch_of_seq(int(target), abandoned)
+    cutoff = int(target)            # collect candidates strictly below this on `cur`
+    best: int | None = None
+    seen: set[int] = set()
+    while cur is not None and cur not in seen:
+        seen.add(cur)
+        for s in cand:
+            if s < cutoff and _branch_of_seq(s, abandoned) == cur:
+                if best is None or s > best:
+                    best = s
+        branch = by_id.get(cur)
+        if branch is None or branch.parent_branch_id is None:
+            break                   # reached the active root — done
+        # Jump to the parent at the fork-point: its checkpoints up to and including
+        # fork_point are `target`'s ancestors (anything after is a divergent line).
+        cutoff = branch.fork_point_seq + 1
+        cur = branch.parent_branch_id
+    return best
+
+
 async def checkout(
     state_log: StateLog, *, target_seq: int, supersedes: int | None = None,
 ) -> int:
