@@ -48,7 +48,7 @@ mindmap
         /rewind picker
         Consistent-cut rewind
         Branch registry
-        checkout(seq) primitive
+        checkout-seq primitive
         Multi-fork UX
         Live-fork gate
       📜 Event System P6
