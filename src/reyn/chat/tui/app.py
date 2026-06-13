@@ -2380,10 +2380,17 @@ class ReynTUIApp(App):
             self._last_clean_esc_ts = now
             self._show_esc_esc_hint()
 
+    _ESC_HINT_TEXT = "⏪ Esc again to rewind"
+
     def _reset_clean_esc(self) -> None:
-        """Clear the pending Esc-Esc first-tap + its hint (#1546)."""
+        """Disarm the pending Esc-Esc first-tap (#1546).
+
+        Pure ts reset — touches no status/timer, so the four dismiss branches
+        (and the check_action slash-entry branch) can call it without clobbering
+        their own status. The hint sticky is self-clearing via its own timer
+        (``_clear_esc_esc_hint``), which only hides when *its* text is showing.
+        """
         self._last_clean_esc_ts = 0.0
-        self._cancel_esc_hint_timer()
 
     def _cancel_esc_hint_timer(self) -> None:
         timer = self._esc_hint_timer
@@ -2397,11 +2404,12 @@ class ReynTUIApp(App):
     def _show_esc_esc_hint(self) -> None:
         """Sticky "Esc again to rewind" cue on the first clean Esc, auto-cleared
         after the window so it doesn't linger once the double-tap chance lapses.
-        Opening the picker clears it via mount_rewind_menu's own hide_status."""
+        Re-arming cancels any prior timer; opening the picker is handled by
+        ``mount_rewind_menu``'s own status."""
         self._cancel_esc_hint_timer()
         try:
             conv = self.query_one("#conversation", ConversationView)
-            conv.show_status("⏪ Esc again to rewind", kind="general")
+            conv.show_status(self._ESC_HINT_TEXT, kind="general")
             self._esc_hint_timer = self.set_timer(
                 _ESC_ESC_WINDOW_S, self._clear_esc_esc_hint,
             )
@@ -2409,12 +2417,19 @@ class ReynTUIApp(App):
             pass
 
     def _clear_esc_esc_hint(self) -> None:
+        # Window lapsed: the double-tap chance is gone, so the first-tap is no
+        # longer pending (keeps esc_esc_pending semantically accurate).
         self._esc_hint_timer = None
-        if self._rewind_menu is not None:
-            # The picker opened (its own status owns the bar now) — don't clobber.
-            return
+        self._last_clean_esc_ts = 0.0
+        # Hide the sticky ONLY if our hint is still the one showing — never
+        # clobber a status another path set in the meantime (e.g. a dismiss
+        # breadcrumb, or the open picker's own cue).
         try:
-            self.query_one("#conversation", ConversationView).hide_status()
+            from .widgets.sticky_status import StickyStatus
+            conv = self.query_one("#conversation", ConversationView)
+            sticky = conv.query_one("#sticky-status", StickyStatus)
+            if self._ESC_HINT_TEXT in sticky.snapshot().get("body", ""):
+                conv.hide_status()
         except Exception:
             pass
 
@@ -2561,7 +2576,16 @@ class ReynTUIApp(App):
             # slash-entry we return False so its own Esc binding clears the
             # prefix (not stolen). has_slash_entry() is the public read.
             try:
-                return not self.query_one("#inputbar", InputBar).has_slash_entry()
+                if self.query_one("#inputbar", InputBar).has_slash_entry():
+                    # The slash-clearing Esc is consumed by InputBar — the App
+                    # never runs action_voice_cancel for it, so this branch is
+                    # the ONLY place to reset the pending Esc-Esc first-tap.
+                    # Without it, `Esc(arm) → /x → Esc(clear) → Esc` false-fires
+                    # the double-tap (tui-coder #1554 repro). Same reset
+                    # discipline as the four dismiss branches.
+                    self._reset_clean_esc()
+                    return False
+                return True
             except Exception:
                 return False
         if action == "voice_stop_and_submit":

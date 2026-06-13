@@ -114,6 +114,34 @@ async def test_double_esc_outside_window_rearms() -> None:
 
 
 @pytest.mark.asyncio
+async def test_slash_clear_esc_resets_pending() -> None:
+    """Tier 2: a slash-prefix-clearing Esc resets the pending first-tap.
+
+    Regression for the tui-coder #1554 repro: `Esc(arm) → /x → Esc(clear slash)
+    → Esc(clean)` must NOT false-fire the picker. The slash-clearing Esc is
+    consumed by InputBar, so check_action's slash-entry branch is the only place
+    that can disarm the first-tap — without that reset, the 3rd Esc lands inside
+    the still-open window and wrongly opens the picker.
+    """
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        await pilot.press("escape")              # arm
+        assert app.esc_esc_pending is True
+        await pilot.press("/", "x")              # slash-entry appears
+        await pilot.pause()
+        await pilot.press("escape")              # clears the slash prefix
+        await pilot.pause()
+        # The slash-clearing Esc must have disarmed the first-tap.
+        assert app.esc_esc_pending is False
+        await pilot.press("escape")              # now a fresh clean Esc
+        await pilot.pause()
+        # It re-arms (new first tap) rather than completing a false double-tap.
+        assert not _conv_has(app, "no checkpoints")
+        assert app.esc_esc_pending is True
+
+
+@pytest.mark.asyncio
 async def test_dismiss_resets_pending() -> None:
     """Tier 2: an Esc that dismisses something resets the pending first-tap, so
     "dismiss then clean-Esc" can't masquerade as a double-tap (reset discipline)."""
