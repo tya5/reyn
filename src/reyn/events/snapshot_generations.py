@@ -19,6 +19,7 @@ written atomically with the same tmp→fsync→rename discipline as
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from reyn.events.agent_snapshot import AgentSnapshot
@@ -167,6 +168,84 @@ def active_rewind_target(state_log: StateLog) -> int | None:
     if not records:
         return None
     return max(records, key=lambda t: t[0])[1]
+
+
+# ── Phase-2 fork: derived branch tree (ADR-0038 D8, #1533) ─────────────────────
+#
+# Grounded in the SAME abandoned-interval machinery as is_active (inherits the
+# 1b-1e correctness), NOT a fresh segment walk. Branch identity:
+#   - the **active** branch (id 0) = the current live lineage = every is_active seq
+#     (undo continues the active branch; the rewound-past content is NOT root, it's
+#     a dead branch — distinguishing undo from a "new branch" was the subtlety
+#     e2e's over-include repro exposed);
+#   - each **abandoned interval** (N, R) = a dead branch (id R, forked at N) holding
+#     the rewound-past content.
+# Range-intersection over `[fork_point, head]` over-includes (an active parent's
+# range physically spans its abandoned children); membership is interval-resolved.
+
+ACTIVE_BRANCH_ID = 0
+
+
+@dataclass(frozen=True)
+class Branch:
+    """One node of the derived branch tree (ADR-0038 D8 Phase-2 fork)."""
+
+    branch_id: int            # 0 = the active live branch; else the reset-record R that orphaned it
+    fork_point_seq: int       # where it diverges; active = 0
+    head_seq: int             # highest seq owned (active = WAL head; dead = R-1)
+    parent_branch_id: int | None  # branch owning fork_point; active = None
+    is_active: bool
+
+
+def _branch_of_seq(seq: int, abandoned: list[tuple[int, int]]) -> int:
+    """Owning branch_id of ``seq``: 0 (active) if not abandoned, else the R of the
+    tightest abandoned interval ``(N, R)`` containing it (innermost fork = max N)."""
+    best: tuple[int, int] | None = None
+    for (n, r) in abandoned:
+        if n < seq < r and (best is None or n > best[0]):
+            best = (n, r)
+    return ACTIVE_BRANCH_ID if best is None else best[1]
+
+
+def branch_ids_for(state_log: StateLog, seqs: "list[int]") -> dict[int, int]:
+    """Map each seq → its owning branch_id (lineage-correct membership, #1533 2a→2b).
+
+    ``is_active`` seqs → the active branch (0); a rewound-past seq → the dead branch
+    (the reset-record ``R`` that abandoned it). NOT range-intersection (an active
+    parent's ``[fork_point, head]`` range physically spans its abandoned children,
+    so a naive intersect over-includes — e2e's repro). Grounded in the proven
+    ``_abandoned_intervals`` (inherits 1b-1e correctness). ``list_rewind_points``
+    tags each row with this so the UX groups by branch_id.
+    """
+    abandoned = _abandoned_intervals(_rewind_records(state_log))
+    return {s: _branch_of_seq(s, abandoned) for s in seqs}
+
+
+def list_branches(state_log: StateLog) -> list[Branch]:
+    """Derive the branch tree (#1533 Phase-2 2a / D8).
+
+    The active branch (id 0) = the live lineage (all is_active seqs). Each abandoned
+    interval ``(N, R)`` = a dead branch (id R) forked at N, with ``parent`` = the
+    branch owning N (active or an enclosing dead branch → nesting). Returns the
+    active branch first, then dead branches ascending by id. Empty WAL → [].
+    """
+    head = state_log.current_seq
+    if head <= 0:
+        return []
+    abandoned = _abandoned_intervals(_rewind_records(state_log))
+    out: list[Branch] = [Branch(
+        branch_id=ACTIVE_BRANCH_ID, fork_point_seq=0, head_seq=head,
+        parent_branch_id=None, is_active=True,
+    )]
+    for (n, r) in sorted(abandoned, key=lambda t: t[1]):  # ascending by R (dead-branch id)
+        out.append(Branch(
+            branch_id=r,
+            fork_point_seq=n,
+            head_seq=r - 1,                       # top of the rewound-past content (N, R)
+            parent_branch_id=_branch_of_seq(n, abandoned),  # branch owning the fork point (nesting)
+            is_active=False,
+        ))
+    return out
 
 
 async def rewind(
