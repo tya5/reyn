@@ -257,7 +257,7 @@ mindmap
 
 #### Time-Travel / Rewind (Resume)
 
-User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b) are production; Phase 2c (fork-then-edit) and 2d (web surface) are in-progress. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: ADR-0038 (PR #1536, pending merge). Change ledger: #1533.
+User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c) are production; Phase 2d (web surface) is in-progress. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: ADR-0038 (PR #1536, pending merge). Change ledger: #1533.
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
