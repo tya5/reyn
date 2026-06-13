@@ -47,7 +47,7 @@ from reyn.events.snapshot_generations import (
     list_branches,
     reconstruct,
 )
-from reyn.events.snapshot_generations import rewind as _append_rewind_record
+from reyn.events.snapshot_generations import checkout as _append_reset_record
 from reyn.events.state_log import StateLog
 from reyn.events.workspace_version_store import WorkspaceVersionStore
 
@@ -411,54 +411,54 @@ class AgentRegistry:
             name, self._dir / name / "state" / "generations",
         )
 
-    async def rewind_to(self, target_n: int) -> dict:
-        """Global consistent-cut rewind to WAL seq ``target_n`` (ADR-0038 1c-2).
+    async def checkout(self, seq: int) -> dict:
+        """Global consistent-cut checkout to ANY WAL ``seq`` (ADR-0038 D8 Phase-2).
+
+        The unified time-travel primitive: jump the whole world's active cut to
+        ``seq`` — whether ``seq`` is on the live branch (= undo, the ``rewind_to``
+        special case) or on an abandoned/dead branch (= branch-switch / fork
+        revival). Unlike ``rewind_to`` there is **no active-target guard**: a
+        target on a dead branch is allowed and revives that lineage.
+
+        This needs no new persisted field and no lineage-walk: a single
+        guard-lifted reset-record ``(R, seq)`` composes correctly through the
+        latest-first ``_abandoned_intervals`` machinery (a newer record subsumes
+        an intervening one when its R falls inside the new interval, and an older
+        abandonment resurrects when the subsuming record is itself later
+        abandoned). Because ``reconstruct`` / ``_materialize_rewind`` /
+        ``_restore_workspace_active`` all recompute ``is_active`` from the full
+        chain, both substrates follow the *target's* lineage automatically.
 
         Architecture-enforced global cut (D2): one global single-seq WAL + one
-        workspace SSoT means a single reset-record rewinds *every* agent
-        atomically. Sequence:
+        workspace SSoT ⇒ one reset-record moves *every* agent atomically:
 
-          1. validate ``target_n`` is on the active branch (1b guard) BEFORE
-             disrupting any live work — a bad target must not cancel turns.
+          1. retention guard — reject a target truncated out of the WAL (1e).
           2. all-cancel  — ``cancel_inflight`` on every loaded session.
           3. all-quiesce — ``await_quiescent`` on every loaded session (1c-1):
-             stop-world THEN settle, so no cross-session straggler appends past
-             the reset-record.
-          4. append ONE global rewind reset-record (fsync'd before any
-             reconstruct — the crash-mid-rewind idempotence keystone, 1b).
-          5. reconstruct every KNOWN agent as-of-N (honoring is_active) and
-             persist a **self-contained** snapshot at ``applied_seq = R`` so
-             ``restore_all`` replays only post-rewind (> R) entries and never
-             needs the abandoned segment — correct-or-absent without a
-             floor-clamp (is_active-honoring restore_all + retention = 1e).
-             Loaded sessions are reset (``reset_for_rewind``) then re-adopt the
-             reconstructed snapshot; unloaded agents are reconstructed on disk
-             only (next load reflects the rewound state — partial-honor).
+             stop-world THEN settle, so no straggler appends past the record.
+          4. append ONE global reset-record (fsync'd before any reconstruct —
+             the crash-mid-rewind idempotence keystone, 1b).
+          5. reconstruct every KNOWN agent as-of the target lineage (honoring the
+             recomputed is_active) + persist a **self-contained** snapshot at
+             ``applied_seq = R`` (``restore_all`` replays only > R); loaded
+             sessions reset (``reset_for_rewind``) + re-adopt; the workspace is
+             restored to the nearest active generation ``<= seq``.
 
         ``_rewind_in_progress`` gates compaction for the whole window.
-
-        Raises ``RewindIntoAbandonedError`` if ``target_n`` is on an abandoned
-        branch (switching branches is a Phase-2 fork, not Phase-1 undo).
         """
         if self._state_log is None:
-            raise RuntimeError("rewind_to requires a state log")
-        # 1. validate up front (no live work touched yet).
-        if not is_active_seq(self._state_log, target_n):
-            raise RewindIntoAbandonedError(
-                f"rewind target seq {target_n} is on an abandoned branch — "
-                "Phase-1 undo only rewinds to a seq on the active timeline."
-            )
+            raise RuntimeError("checkout requires a state log")
         # 1e (D5): bounded by retention — reject targets truncated out of the WAL.
         # Guard on the PHYSICAL oldest kept seq (not the policy floor): under a
         # live policy nothing is truncated between turns, so recent history stays
-        # rewindable; only genuinely-truncated history is rejected.
+        # reachable; only genuinely-truncated history is rejected.
         oldest = next(iter(self._state_log.iter_from(1)), None)
         oldest_seq = oldest.get("seq") if oldest else None
-        if oldest_seq is not None and target_n < oldest_seq:
+        if oldest_seq is not None and seq < oldest_seq:
             raise RewindBeyondRetentionError(
-                f"checkpoint seq {target_n} is outside the retained WAL (oldest "
+                f"checkpoint seq {seq} is outside the retained WAL (oldest "
                 f"kept = {oldest_seq}) — it has been truncated. Configure a deeper "
-                "retention window to rewind this far back."
+                "retention window to reach this far back."
             )
 
         self._rewind_in_progress = True
@@ -472,20 +472,43 @@ class AgentRegistry:
                 await session.await_quiescent()
             # 4. single global reset-record; supersedes = prior active head (audit).
             prior_head = self._state_log.current_seq
-            reset_seq = await _append_rewind_record(
-                self._state_log, target_n=target_n, supersedes=prior_head,
+            reset_seq = await _append_reset_record(
+                self._state_log, target_seq=seq, supersedes=prior_head,
             )
-            # 5. materialise both substrates as-of-N (runtime snapshots + workspace).
+            # 5. materialise both substrates along the target lineage.
             agents = await self._materialize_rewind(
-                reconstruct_seq=reset_seq, workspace_at_or_below=target_n,
+                reconstruct_seq=reset_seq, workspace_at_or_below=seq,
             )
             return {
-                "target_n": target_n,
+                "target_n": seq,
                 "reset_seq": reset_seq,
                 "agents": agents,
             }
         finally:
             self._rewind_in_progress = False
+
+    async def rewind_to(self, target_n: int) -> dict:
+        """Phase-1 undo: the active-node special case of ``checkout`` (ADR-0038 1c-2).
+
+        Thin wrapper — validates ``target_n`` is on the **active branch** up front
+        (so a bad target never cancels live work), then delegates to ``checkout``.
+        The active-target guard lives HERE, not in the shared core: Phase-1 undo
+        only rewinds along the live timeline, while ``checkout`` lifts it for
+        Phase-2 branch-switch.
+
+        Raises ``RewindIntoAbandonedError`` if ``target_n`` is on an abandoned
+        branch (switching branches is a Phase-2 fork, not Phase-1 undo — use
+        ``checkout``).
+        """
+        if self._state_log is None:
+            raise RuntimeError("rewind_to requires a state log")
+        if not is_active_seq(self._state_log, target_n):
+            raise RewindIntoAbandonedError(
+                f"rewind target seq {target_n} is on an abandoned branch — "
+                "Phase-1 undo only rewinds to a seq on the active timeline "
+                "(use checkout for a Phase-2 branch-switch)."
+            )
+        return await self.checkout(target_n)
 
     def list_rewind_points(self, *, include_abandoned: bool = False) -> list[dict]:
         """Enumerate rewind targets for the time-travel UI (1f / Phase-2 fork).

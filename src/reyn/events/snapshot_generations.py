@@ -129,9 +129,15 @@ def _abandoned_intervals(rewinds: list[tuple[int, int]]) -> list[tuple[int, int]
 
     Resolved **latest-first** (descending by R): a rewind ``(R, N)`` abandons
     ``(N, R)`` *unless* ``R`` itself is already abandoned by a later rewind — i.e.
-    the rewind sits on an already-abandoned branch, so its undo is moot. With the
-    Phase-1 active-target guard, each rewind targets a then-active seq, so the
-    composition is well-defined (subsuming and partial nesting both fall out).
+    the record sits on an already-abandoned branch, so it is moot (subsumed).
+
+    The composition is well-defined for **both** Phase-1 undo (active target) and
+    Phase-2 ``checkout`` (target on a dead branch — guard lifted): ``N < R`` always
+    holds (the target is a real prior seq), so no degenerate interval; a later
+    record subsumes an intervening one when its ``R`` falls inside the new
+    interval, and an older abandonment *resurrects* when the subsuming record is
+    itself later abandoned (the checkout-back case). Subsuming and partial nesting
+    both fall out of the single latest-first pass.
     """
     abandoned: list[tuple[int, int]] = []
 
@@ -248,19 +254,38 @@ def list_branches(state_log: StateLog) -> list[Branch]:
     return out
 
 
+async def checkout(
+    state_log: StateLog, *, target_seq: int, supersedes: int | None = None,
+) -> int:
+    """Append a reset-record to ``target_seq`` UNCONDITIONALLY (Phase-2 D8 fork).
+
+    The unified time-travel primitive: no active-target guard, so it can switch
+    the active cut to a seq on a *dead* branch (branch-switch / fork revival).
+    ``rewind`` is the active-target-guarded special case (Phase-1 undo).
+
+    Append-only: the just-left future is retained as an inactive branch (P6 / WAL
+    stay append-only); ``is_active`` is re-derived from the full reset-record
+    chain, so a single record ``(R, target_seq)`` flips the active lineage via the
+    latest-first ``_abandoned_intervals`` composition — no new persisted field.
+    The reset-record is fsync'd by ``StateLog.append`` *before* any
+    reconstruction — the crash-mid-rewind idempotence keystone.
+
+    ``supersedes`` is **audit-only** (records the prior active pointer for the
+    branch-tree audit trail); ``is_active`` derivation does not depend on it.
+    """
+    return await state_log.append(
+        REWIND_KIND, target_n=int(target_seq), supersedes=supersedes,
+    )
+
+
 async def rewind(
     state_log: StateLog, *, target_n: int, supersedes: int | None = None,
 ) -> int:
-    """Append a rewind reset-record after validating ``target_n`` is active (Phase 1).
+    """Phase-1 undo: ``checkout`` guarded to an **active** target.
 
-    Append-only: the abandoned future is retained as an inactive branch (P6 /
-    WAL stay append-only); reconstruction honors the active pointer. The
-    reset-record is fsync'd by ``StateLog.append`` *before* any reconstruction —
-    the crash-mid-rewind idempotence keystone.
-
-    ``supersedes`` is **audit-only** (records the prior active pointer for the
-    branch-tree audit trail); ``is_active`` derivation walks all rewind records and
-    does not depend on it.
+    Validates ``target_n`` is on the active branch, then delegates to
+    ``checkout``. The guard lives here (not in ``checkout``) — Phase-1 undo only
+    rewinds along the live timeline; Phase-2 ``checkout`` lifts it.
 
     Raises ``RewindIntoAbandonedError`` when ``target_n`` is on an abandoned branch.
     """
@@ -269,11 +294,9 @@ async def rewind(
         raise RewindIntoAbandonedError(
             f"rewind target seq {target_n} is on an abandoned branch — switching "
             "to an abandoned branch is a Phase-2 fork, not supported by Phase-1 "
-            "undo. Rewind only to a seq on the active timeline."
+            "undo (use checkout). Rewind only to a seq on the active timeline."
         )
-    return await state_log.append(
-        REWIND_KIND, target_n=int(target_n), supersedes=supersedes,
-    )
+    return await checkout(state_log, target_seq=target_n, supersedes=supersedes)
 
 
 def reconstruct(
