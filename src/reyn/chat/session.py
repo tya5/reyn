@@ -2310,6 +2310,17 @@ class ChatSession:
         """
         self._journal.set_anchor_store(anchor_store)
 
+    @property
+    def current_snapshot(self) -> "AgentSnapshot":
+        """Read-only view of the live in-memory AgentSnapshot (ADR-0038).
+
+        Public accessor over the journal's snapshot so callers (e.g. the
+        live-rewind gate) can assert the live session reflects as-of-N AFTER a
+        global rewind — ``reset_for_rewind`` + ``restore_state`` update this live
+        snapshot via ``journal.install``, a wiring distinct from the on-disk save.
+        """
+        return self._journal.snapshot
+
     async def reset_for_rewind(self) -> None:
         """Clear all in-memory state ``restore_state`` repopulates (ADR-0038 1c-2).
 
