@@ -952,6 +952,13 @@ class AgentRegistry:
             )
         profile = self.load_profile(name)
         session = self._factory(profile)
+        # ADR-0038 Stage 1d: hand the session the single shared workspace
+        # shadow-git store so cut_generation captures the workspace at each
+        # boundary against the same git-dir the registry's rewind/recovery uses.
+        ws = self.workspace_store
+        attach = getattr(session, "attach_workspace_store", None)
+        if ws is not None and callable(attach):
+            attach(ws)
         self._agents[name] = session
         return session
 

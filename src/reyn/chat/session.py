@@ -2290,6 +2290,16 @@ class ChatSession:
         task.add_done_callback(self._inflight_wal_tasks.discard)
         return task
 
+    def attach_workspace_store(self, workspace_store) -> None:
+        """Attach the shared workspace shadow-git store (ADR-0038 Stage 1d).
+
+        The registry injects its single ``WorkspaceVersionStore`` after building
+        this session so the journal's ``cut_generation`` captures workspace files
+        at each boundary against the same git-dir the registry's rewind/recovery
+        restores from.
+        """
+        self._journal.set_workspace_store(workspace_store)
+
     async def reset_for_rewind(self) -> None:
         """Clear all in-memory state ``restore_state`` repopulates (ADR-0038 1c-2).
 
