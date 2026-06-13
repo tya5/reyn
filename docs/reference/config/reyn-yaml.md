@@ -39,6 +39,7 @@ models:
 | `events` | map | Audit-log rotation policy for chat-session event files. See below. |
 | `skill_search` | map | BM25 skill pre-filter settings. See below. |
 | `skill_resume` | map | Resume policy for ambiguous steps on restart. See below. |
+| `time_travel` | map | Time-travel (rewind/resume) cost knobs. See below. |
 | `self_improvement` | map | `skill_improver` apply-gate and version cap. See below. |
 | `mcp` | map | MCP server definitions and `search_threshold`. See below. |
 | `python` | map | Python preprocessor additional allowed-modules. See below. |
@@ -270,6 +271,19 @@ plan:
 | `step_results_ratio` | float | `0.50` | Fraction of `main_pool` (= `T_max - T_SP`) allocated for the step_results portion of the next step's sys_prompt. Sibling to `chat.compaction.component_weights` body allocation. |
 | `summarize_older_threshold_tokens` | int \| null | `null` | Total token threshold above which older step_results are compacted. `null` derives the threshold from `ComputedBudgets` (= `step_results_ratio × main_pool`). |
 | `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out, mirrors `chat.compaction.use_chars4_estimate`). |
+
+## `time_travel` block
+
+Cost knobs for the time-travel (rewind/resume) feature (#1582).
+
+```yaml
+time_travel:
+  workspace_capture: true   # default; false = runtime-only rewind
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `workspace_capture` | bool | `true` | When `true`, every checkpoint boundary (turn / plan-step) captures the workspace into a shadow-git generation so a rewind restores repo files too. This is time-travel's **largest** constant cost — a `git add -A` + commit per boundary (in container mode, a `docker exec` per boundary). Set to `false` for **runtime-only rewind**: rewind/checkout restore agent + conversation state but **not** repo files — a documented escape for large workspaces, container runs, or no-file-rewind use. Run-level (read at startup; not a mid-session toggle). |
 
 ## `phase` block
 

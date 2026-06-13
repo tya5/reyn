@@ -445,6 +445,7 @@ def run(args: argparse.Namespace) -> None:
         state_log=state_log,
         environment_backend=env_backend,   # #1544: container shadow-git runs via this
         workspace_state_dir=ws_state_dir,  # #1557 gap-#1: shadow git-dir under --state-dir
+        workspace_capture=session_cfg.config.time_travel.workspace_capture,  # #1582 opt-out
     )
 
     name = args.agent_name or DEFAULT_AGENT_NAME

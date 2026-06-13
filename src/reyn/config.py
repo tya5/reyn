@@ -1582,6 +1582,54 @@ def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
 
 
 @dataclass
+class TimeTravelConfig:
+    """``time_travel:`` — time-travel (rewind/resume) cost knobs (#1582).
+
+    ADR-0038 ships time-travel always-on. ``workspace_capture`` is the opt-out
+    for its **largest** constant cost: the per-boundary shadow-git capture
+    (``git add -A`` + commit + tag at every turn / plan-step; in container mode a
+    ``docker exec`` per boundary). Setting it ``false`` selects **runtime-only
+    rewind** — the registry attaches no workspace store, so ``cut_generation``
+    skips the workspace capture while the runtime substrate (AgentSnapshot
+    generations + WAL) is untouched. Rewind/checkout then restore agent /
+    conversation state but NOT repo files (same framing as act-turn rewind).
+
+    Default ``true`` (capture-on): the full-fidelity rewind UX stays the default;
+    opt-out is a first-class documented escape for large workspaces / container
+    runs / no-file-rewind use. Run-level (read at registry construction) — not a
+    mid-session toggle, which would leave captured-while-on generations
+    non-restorable after a flip-off. Extensible block (the #1560 op-granular tier
+    is intended to ride sibling keys here).
+    """
+
+    workspace_capture: bool = True
+
+
+def _build_time_travel_config(raw: object) -> TimeTravelConfig:
+    """Parse ``time_travel:`` from reyn.yaml. None / missing / empty → defaults.
+
+    ``workspace_capture`` accepts a bool; a missing key keeps the default
+    (``true``). A non-mapping block or non-bool value is a config error (fail
+    loud rather than silently mis-defaulting a cost/durability knob).
+    """
+    if raw is None:
+        return TimeTravelConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"time_travel must be a mapping, got {type(raw).__name__}"
+        )
+    if "workspace_capture" not in raw:
+        return TimeTravelConfig()
+    val = raw["workspace_capture"]
+    if not isinstance(val, bool):
+        raise ValueError(
+            "time_travel.workspace_capture must be a bool, got "
+            f"{type(val).__name__}"
+        )
+    return TimeTravelConfig(workspace_capture=val)
+
+
+@dataclass
 class ReynConfig:
     model: str = field(
         default="standard",
@@ -1694,6 +1742,10 @@ class ReynConfig:
     # Skill resume policy (PR-skill-resume) — how to handle ambiguous
     # steps on restart.
     skill_resume: SkillResumeConfig = field(default_factory=SkillResumeConfig)
+    # #1582 — time-travel cost knobs. ``time_travel.workspace_capture: false``
+    # selects runtime-only rewind (skip the per-boundary shadow-git capture, the
+    # largest constant cost). Default-on (full-fidelity rewind). Extensible block.
+    time_travel: TimeTravelConfig = field(default_factory=TimeTravelConfig)
     # Plan resume policy (ADR-0023 Phase 2) — how the resume coordinator
     # treats interrupted plan-mode runs on restart. Loaded as a raw dict
     # and parsed lazily by the coordinator (= keeps PlanResumeConfig in
@@ -2186,6 +2238,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         events=_build_events_config(merged.get("events")),
         cost=cost,
         skill_resume=_build_skill_resume_config(merged.get("skill_resume")),
+        time_travel=_build_time_travel_config(merged.get("time_travel")),
         plan_resume_raw=(
             merged.get("plan_resume")
             if isinstance(merged.get("plan_resume"), dict) else None

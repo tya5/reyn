@@ -214,6 +214,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
             project_root=project_root,
             session_factory=_session_factory,
             state_log=state_log,
+            workspace_capture=session_cfg.config.time_travel.workspace_capture,  # #1582 opt-out
         )
         registry_ref.append(registry)
         _REGISTRY = registry
