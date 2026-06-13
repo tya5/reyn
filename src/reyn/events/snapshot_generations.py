@@ -145,6 +145,20 @@ def is_active_seq(state_log: StateLog, seq: int) -> bool:
     return _make_is_active(_abandoned_intervals(_rewind_records(state_log)))(seq)
 
 
+def active_rewind_target(state_log: StateLog) -> int | None:
+    """``target_n`` of the active reset-record, or ``None`` when no rewind exists.
+
+    The active reset-record is the **highest-seq** rewind (latest wins — a later
+    rewind can never be abandoned by an earlier one, so the max-R record is always
+    the active pointer). Crash recovery uses this to re-materialise the active
+    branch as-of-N idempotently (ADR-0038 Stage 1d two-substrate crash-safety).
+    """
+    records = _rewind_records(state_log)
+    if not records:
+        return None
+    return max(records, key=lambda t: t[0])[1]
+
+
 async def rewind(
     state_log: StateLog, *, target_n: int, supersedes: int | None = None,
 ) -> int:
