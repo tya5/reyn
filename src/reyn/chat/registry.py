@@ -44,6 +44,7 @@ from reyn.events.snapshot_generations import (
     active_rewind_target,
     branch_ids_for,
     is_active_seq,
+    lineage_predecessor,
     list_branches,
     reconstruct,
 )
@@ -595,6 +596,41 @@ class AgentRegistry:
         if self._state_log is None:
             return []
         return list_branches(self._state_log)
+
+    def predecessor_turn_checkpoint(self, seq: int) -> int | None:
+        """The lineage-correct prior **turn** checkpoint of ``seq`` (#1533 2c edit).
+
+        The 2c edit flow re-runs an edited turn from the state before it: checkout
+        this predecessor, then submit the edit (a new fork). The result is the
+        immediately-prior checkpoint that is a **turn** (plan-step / phase cuts are
+        skipped — ``record_plan_step_completed`` cuts intra-turn checkpoints, but an
+        edit must return to the prior *turn*) AND on ``seq``'s **lineage** (its branch
+        + ancestors back to the fork-point — so a forked branch's first turn resolves
+        to the parent's fork-point turn, not a same-branch-only miss).
+
+        ``None`` when there is no prior turn (``seq`` is the first turn = genesis):
+        the UX disables first-turn edit. Genesis-checkout is intentionally NOT
+        offered — there is no captured pre-turn-1 workspace version, so it would be
+        workspace-incoherent (coherent genesis = a future session-start capture).
+        """
+        if self._state_log is None:
+            return None
+        # Checkpoint seqs = generation boundaries across every known agent (all
+        # branches — the lineage walk may cross to a parent/ancestor branch).
+        cps: set[int] = set()
+        for name in self.list_names():
+            cps.update(self._store_for(name).seqs())
+        if not cps:
+            return None
+        # Turn-kind filter via the WAL entry kind at each boundary (one pass;
+        # reuses _rewind_point_kind for consistency with list_rewind_points — the
+        # audit EventStore is not consulted, WAL/audit stay decoupled).
+        turn_cps: list[int] = []
+        for entry in self._state_log.iter_from(1):
+            s = entry.get("seq")
+            if isinstance(s, int) and s in cps and _rewind_point_kind(entry.get("kind", "")) == "turn":
+                turn_cps.append(s)
+        return lineage_predecessor(self._state_log, turn_cps, seq)
 
     @property
     def workspace_store(self) -> WorkspaceVersionStore | None:
