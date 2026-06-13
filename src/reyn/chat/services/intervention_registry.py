@@ -143,6 +143,23 @@ class InterventionRegistry:
         """Return True iff the registry was constructed with enforce_listener_presence=True."""
         return self._enforce_listener_presence
 
+    def clear(self) -> None:
+        """Drop all active + stalled interventions (ADR-0038 Stage 1c-2 rewind).
+
+        Cancels each pending iv future (their awaiters are already cancelled by
+        the rewind's ``cancel_inflight``, so this just releases the handles) and
+        clears the active / ordering / stalled collections. Listener
+        registration (``_listeners``) is intentionally preserved — the attached
+        channel survives a rewind. The rewind path re-populates via ``restore()``
+        from the reconstructed snapshot, leaving no pre-rewind residue.
+        """
+        for iv in (*self._active.values(), *self._stalled.values()):
+            if iv.future is not None and not iv.future.done():
+                iv.future.cancel()
+        self._active.clear()
+        self._order.clear()
+        self._stalled.clear()
+
     # ── Stalled queue operations (issue #268 Phase 1) ────────────────────────
 
     def mark_stalled(self, iv_id: str) -> bool:

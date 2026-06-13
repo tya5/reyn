@@ -2290,6 +2290,56 @@ class ChatSession:
         task.add_done_callback(self._inflight_wal_tasks.discard)
         return task
 
+    async def reset_for_rewind(self) -> None:
+        """Clear all in-memory state ``restore_state`` repopulates (ADR-0038 1c-2).
+
+        Called in the global-rewind path **after** ``await_quiescent`` (every
+        WAL-append task settled) and **before** ``restore_state(reconstructed)``.
+        Its clear-scope EXACTLY mirrors ``restore_state``'s set-scope so that
+        re-adopting the reconstructed snapshot leaves ZERO pre-rewind residue —
+        a single missed holder would be stale state on the rewound branch.
+
+        ``journal.install`` (inside restore_state) replaces the AgentSnapshot
+        *data* wholesale; this clears the separate in-memory holders that
+        restore_state writes into, mapped to AgentSnapshot fields:
+
+            inbox                          → self.inbox (drain queue)
+            pending_chains                 → self._chains (reset: timers + chains)
+            outstanding_interventions      → self._interventions (clear)
+                                             + self._restore_intervention_tasks
+            buffered_intervention_answers  → self._buffered_intervention_answers
+            active_skill_run_ids           → self.running_skills (+ started_at / chain)
+            active_plan_ids                → self.running_plans
+
+        The running_*/_inflight_wal_tasks task handles are already settled by
+        await_quiescent; this drops the (now-done) handles so the rewound
+        session starts clean.
+        """
+        # inbox (AgentSnapshot.inbox)
+        while True:
+            try:
+                self.inbox.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        # pending_chains
+        await self._chains.reset()
+        # outstanding_interventions + restore watcher tasks
+        self._interventions.clear()
+        restore_tasks = getattr(self, "_restore_intervention_tasks", None)
+        if restore_tasks:
+            for t in restore_tasks:
+                if not t.done():
+                    t.cancel()
+            self._restore_intervention_tasks = []
+        # buffered_intervention_answers
+        self._buffered_intervention_answers.clear()
+        # active_skill_run_ids / active_plan_ids live mirrors (handles settled)
+        self.running_skills.clear()
+        self.running_skills_started_at.clear()
+        self.running_skills_chain.clear()
+        self.running_plans.clear()
+        self._inflight_wal_tasks.clear()
+
     @property
     def pending_user_images(self) -> list[dict]:
         """Read-only accessor for the per-session image upload queue.
