@@ -15,7 +15,7 @@ There is no separate logger, tracer, or telemetry hook. The same channel powers:
 - **Live debug output.** Console reporters subscribe to the event stream and render each event as it arrives.
 - **Replay.** `reyn events <log_file>` re-renders a saved log to the console without re-invoking the LLM.
 - **Eval analytics.** Eval reports aggregate event data (token usage, phase counts, validation errors) per case.
-- **Future checkpoint/resume.** A complete event log is, by construction, a complete description of execution. Resume from N is a matter of replaying the log up to event N.
+- **Time-travel debugging and crash recovery (both implemented).** `ReplayEngine` provides read-only step-by-step inspection of any past run. Crash recovery uses the WAL (`.reyn/state/wal.jsonl`) as its substrate — not the audit log. User-facing rewind/resume (PITR + global rewind) is a separate design tracked in [#1533](https://github.com/tya5/reyn/issues/1533).
 
 If the OS is the only mutator (P3) and every mutation emits an event, the log is sufficient. There's no "what else happened" to chase down.
 
