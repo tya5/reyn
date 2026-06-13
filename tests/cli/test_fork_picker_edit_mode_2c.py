@@ -233,3 +233,30 @@ async def test_edit_checkpoint_noop_when_already_editing(tmp_path) -> None:
         app.action_edit_checkpoint()   # direct call is a no-op (guard)
         await pilot.pause()
         assert app.edit_mode_active is True   # still seq 1, not re-entered
+
+
+@pytest.mark.asyncio
+async def test_ctrl_t_gated_off_on_first_turn_checkpoint(tmp_path) -> None:
+    """Tier 2: edit (ctrl+t) is inert on the FIRST-turn checkpoint — there is no
+    prior turn to fork from (predecessor_turn_checkpoint None, #1567), so the
+    affordance fails open elsewhere but is gated off here rather than entering
+    edit-mode then bouncing on submit. The newer checkpoint (has a predecessor)
+    stays editable."""
+    reg = await _registry_with_checkpoints(tmp_path)   # 2 turn checkpoints, 1 branch
+    app = _make_app(reg)
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        app._open_rewind_menu()
+        await pilot.pause()
+        # default selection = newest checkpoint → has a predecessor turn → editable
+        newest = app._rewind_menu.selected_point()
+        assert reg.predecessor_turn_checkpoint(int(newest["seq"])) is not None
+        assert app.check_action("edit_checkpoint", ()) is True
+        # navigate to the oldest (= first turn) → no predecessor → ctrl+t gated off
+        app._rewind_menu.move_selection(+1)
+        await pilot.pause()
+        oldest = app._rewind_menu.selected_point()
+        assert reg.predecessor_turn_checkpoint(int(oldest["seq"])) is None
+        assert app.check_action("edit_checkpoint", ()) is False
+        # nav bindings stay live regardless of predecessor (only edit is gated)
+        assert app.check_action("rewind_prev", ()) is True

@@ -2625,6 +2625,32 @@ class ReynTUIApp(App):
         except Exception:
             pass
 
+    def _selected_has_predecessor_turn(self) -> bool:
+        """Whether the picker's selected checkpoint can be edited (ADR-0038 2c).
+
+        ``True`` unless we can *affirmatively* determine the selection has no
+        predecessor turn checkpoint (= it is the first turn; genesis-checkout is
+        not offered, #1567). Defaults to ``True`` whenever the answer is
+        undeterminable (no registry / no selection / helper absent) so the
+        affordance fails open — the submit-handler then rejects None as the
+        backstop. Short-circuited behind the cheap picker-open gate in
+        ``check_action`` so the lineage scan only runs on a real ``ctrl+t``.
+        """
+        menu = self._rewind_menu
+        registry = self._agent_registry
+        if menu is None or registry is None:
+            return True
+        point = menu.selected_point()
+        if point is None or point.get("seq") is None:
+            return True
+        pred_fn = getattr(registry, "predecessor_turn_checkpoint", None)
+        if not callable(pred_fn):
+            return True
+        try:
+            return pred_fn(int(point["seq"])) is not None
+        except Exception:
+            return True
+
     async def action_rewind_confirm(self) -> None:
         """Enter while the picker is open — checkout the highlighted checkpoint.
 
@@ -2795,7 +2821,17 @@ class ReynTUIApp(App):
             # load-bearing seam: without ``and not edit_mode_active``, Enter would
             # checkout-the-selection instead of submitting the edit. (e2e
             # flow-trace catch, #1533.)
-            return self._rewind_menu is not None and not self.edit_mode_active
+            if self._rewind_menu is None or self.edit_mode_active:
+                return False
+            if action == "edit_checkpoint":
+                # ADR-0038 2c: you cannot edit-and-re-run the FIRST turn — there
+                # is no prior turn checkpoint to fork from (genesis-checkout is
+                # workspace-incoherent, #1567). Gate ctrl+t off when the selected
+                # checkpoint has no predecessor turn, so the affordance is inert
+                # rather than entering edit-mode then bouncing on submit. (The
+                # submit-handler also rejects None — defense in depth.)
+                return self._selected_has_predecessor_turn()
+            return True
         if action == "voice_cancel":
             # Intercept Esc when there's an overlay/recording to dismiss:
             # voice recording, the rewind menu, or the side panel.
