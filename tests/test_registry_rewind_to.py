@@ -15,6 +15,7 @@ import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
+from reyn.chat.session import ChatSession
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.snapshot_generations import RewindIntoAbandonedError, rewind
 from reyn.events.state_log import StateLog
@@ -151,3 +152,42 @@ async def test_rewind_to_gates_compaction_during_window(tmp_path):
     reg._rewind_in_progress = True
     result = await reg.maybe_truncate_for_size(threshold_bytes=1)
     assert result is None                  # gated — no compaction during rewind
+
+
+@pytest.mark.asyncio
+async def test_rewind_to_drives_loaded_session_to_as_of_n_zero_residue(tmp_path):
+    """Tier 2: rewind_to drives a REAL loaded session through the full path.
+
+    A real ChatSession (aligned to the registry's on-disk paths) is injected; the
+    user-facing rewind cancels + quiesces it, reconstructs as-of-N, clears live
+    in-memory residue (reset_for_rewind), and re-adopts the as-of-N snapshot
+    (restore_state). Post-rewind the session reflects as-of-N with zero pre-rewind
+    residue — and its on-disk snapshot is the self-contained recovery artifact.
+    """
+    reg = _make_registry(tmp_path)
+    _seed_agent(tmp_path, "alpha")
+    log = reg.state_log
+    session = ChatSession(
+        agent_name="alpha", state_log=log,
+        snapshot_path=_snap_path(tmp_path, "alpha"),
+    )
+    session.register_intervention_listener("test")
+    reg._agents["alpha"] = session
+
+    await _put(log, "alpha", "a1")         # seq 1 (kept by rewind to 1)
+    await _put(log, "alpha", "a2")         # seq 2 (abandoned)
+    # live in-memory residue that ONLY reset_for_rewind can clear (no WAL append):
+    session.inbox.put_nowait(("user", {"text": "OLD-residue"}))
+
+    result = await reg.rewind_to(1)
+
+    # the live session reflects as-of-N (a1), OLD residue gone.
+    drained = []
+    while not session.inbox.empty():
+        drained.append(session.inbox.get_nowait())
+    assert drained == [("user", {"text": "a1"})]
+
+    # on-disk snapshot for the loaded agent is as-of-N + self-contained (applied_seq=R).
+    snap = AgentSnapshot.load("alpha", _snap_path(tmp_path, "alpha"))
+    assert _inbox_ids(snap) == ["a1"]
+    assert snap.applied_seq == result["reset_seq"]

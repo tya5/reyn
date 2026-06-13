@@ -73,6 +73,32 @@ async def test_reset_for_rewind_then_restore_state_zero_residue(tmp_path):
     assert drained == [("user", {"text": "NEW"})]
 
 
+def test_reset_for_rewind_clear_scope_covers_all_agentsnapshot_fields():
+    """Tier 2: by-construction drift guard — clear-scope covers EVERY snapshot field.
+
+    reset_for_rewind clears the in-memory mirror of each AgentSnapshot field that
+    restore_state repopulates. This pin maps every field to its reset disposition;
+    adding/removing an AgentSnapshot field breaks it, forcing the author to make
+    the new field's disposition explicit. A missed mirror would be silent stale
+    residue on the rewound branch — so drift must not pass silently.
+    """
+    disposition = {
+        "agent_name": "identity — unchanged by rewind (same agent)",
+        "applied_seq": "replaced wholesale by journal.install (no separate holder)",
+        "inbox": "session.inbox drained",
+        "pending_chains": "session._chains.reset()",
+        "active_skill_run_ids": "session.running_skills (+ started_at / chain) cleared",
+        "active_plan_ids": "session.running_plans cleared",
+        "outstanding_interventions": "session._interventions.clear() + restore tasks",
+        "buffered_intervention_answers": "session._buffered_intervention_answers cleared",
+    }
+    assert set(disposition) == set(AgentSnapshot.__dataclass_fields__), (
+        "AgentSnapshot fields changed — update reset_for_rewind (and this map) so "
+        "the new/removed field's in-memory-mirror disposition is explicit; a "
+        "missed holder is silent stale residue on the rewound branch."
+    )
+
+
 @pytest.mark.asyncio
 async def test_reset_for_rewind_is_idempotent_on_clean_session(tmp_path):
     """Tier 2: reset_for_rewind on an already-empty session is a safe no-op."""
