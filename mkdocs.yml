@@ -80,6 +80,7 @@ nav:
           - guide/for-users/index.md
           - Using Reyn:
               - guide/for-users/chat-and-web-ui.md
+              - guide/for-users/time-travel.md
               - guide/for-users/manage-permissions.md
               - guide/for-users/configure-sandbox.md
               - guide/for-users/ask-user-mid-phase.md
@@ -221,6 +222,7 @@ nav:
       - Runtime:
           - concepts/runtime/workspace.md
           - concepts/runtime/events.md
+          - concepts/runtime/time-travel.md
           - concepts/runtime/permission-model.md
           - concepts/runtime/sandbox.md
           - concepts/runtime/secret-handling.md

@@ -257,25 +257,25 @@ mindmap
 
 #### Time-Travel / Rewind (Resume)
 
-User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b) are production; Phase 2c (fork-then-edit) and 2d (web surface) are in-progress. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: ADR-0038 (PR #1536, pending merge). Change ledger: #1533.
+User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c) are production; Phase 2d (web surface) is in-progress. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: ADR-0038 (PR #1536, pending merge). Change ledger: #1533.
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| `/rewind` picker | Interactive checkpoint timeline (seq / timestamp / kind columns); Esc-Esc double-tap shortcut | — |
-| Per-checkpoint anchor preview | Each picker row shows a rendered scroll-hint anchor (#1547) | — |
-| PITR reconstruct | Point-in-time snapshot + WAL-diff reconstruction to target seq | [Crash Recovery](concepts/skills/skill-resume.md) |
-| Consistent-cut rewind | Both substrates (runtime state + workspace shadow-git `as-of-N`) rewound atomically | — |
-| Append-only reset-record | Undo appends a reset-record at seq R; history before R is preserved on the current branch (no destructive rewrite) | — |
-| Retention window + GC | Configurable checkpoint retention window; stale snapshots GC'd automatically | — |
-| Branch registry | Abandoned-interval lineage: each fork receives a registry entry with origin seq | — |
-| `checkout(seq)` unified primitive | Active-branch seq → undo; inactive-branch seq → fork-switch. One primitive for both directions | — |
-| Multi-fork tree UX | Always-tree picker with per-branch anchor labels (#1547 integration) | — |
-| Act-turn runtime-only rewind | Ghost-Replay memo truncate for rewind within an in-flight turn (no substrate round-trip) | — |
-| Container-mode shadow-git | Shadow-git `as-of-N` rewind supported inside the container environment backend | — |
+| `/rewind` picker | Interactive checkpoint timeline (seq / timestamp / kind columns); Esc-Esc double-tap shortcut | [How-to: rewind](guide/for-users/time-travel.md) |
+| Per-checkpoint anchor preview | Each picker row shows a rendered scroll-hint anchor (#1547) | [How-to: rewind](guide/for-users/time-travel.md) |
+| PITR reconstruct | Point-in-time snapshot + WAL-diff reconstruction to target seq | [Time-Travel concepts](concepts/runtime/time-travel.md) · [Crash Recovery](concepts/skills/skill-resume.md) |
+| Consistent-cut rewind | Both substrates (runtime state + workspace shadow-git `as-of-N`) rewound atomically | [Time-Travel concepts](concepts/runtime/time-travel.md) |
+| Append-only reset-record | Undo appends a reset-record at seq R; history before R is preserved on the current branch (no destructive rewrite) | [Time-Travel concepts](concepts/runtime/time-travel.md) |
+| Retention window + GC | Configurable checkpoint retention window; stale snapshots GC'd automatically | [How-to: rewind](guide/for-users/time-travel.md) |
+| Branch registry | Abandoned-interval lineage: each fork receives a registry entry with origin seq | [Time-Travel concepts](concepts/runtime/time-travel.md) |
+| `checkout(seq)` unified primitive | Active-branch seq → undo; inactive-branch seq → fork-switch. One primitive for both directions | [Time-Travel concepts](concepts/runtime/time-travel.md) |
+| Multi-fork tree UX | Always-tree picker with per-branch anchor labels (#1547 integration) | [How-to: rewind](guide/for-users/time-travel.md) |
+| Act-turn runtime-only rewind | Ghost-Replay memo truncate for rewind within an in-flight turn (no substrate round-trip) | [Time-Travel concepts](concepts/runtime/time-travel.md) |
+| Container-mode shadow-git | Shadow-git `as-of-N` rewind supported inside the container environment backend | [How-to: rewind](guide/for-users/time-travel.md) |
 | Deterministic CI rewind gate | `test_live_rewind_gate.py` — Phase-1 rewind deterministic gate (#1553) | — |
 | Deterministic CI live-fork gate | `test_live_fork_gate.py` — Phase-2 fork / checkout deterministic gate (#1564) | — |
 | tmux live e2e | P1 undo + P2 fork-switch verified on real terminal (#1533 tui-coder ledger / #1549) | — |
-| Phase 2c: fork-then-edit ⏳ | New branch on edit (in-progress) | — |
+| Phase 2c: fork-then-edit | New branch on edit via `ctrl+t` | [How-to: rewind](guide/for-users/time-travel.md) |
 | Phase 2d: web surface ⏳ | `/rewind` picker over WebSocket / A2A (in-progress) | — |
 
 #### Event System (P6)
