@@ -1505,6 +1505,12 @@ class ChatSession:
         # appending the reset-record — so no append lands past the reset seq.
         self._turn_idle = asyncio.Event()
         self._turn_idle.set()
+        # ADR-0038 Stage 1c coverage: joinable handle for fire-and-forget WAL-append
+        # tasks (intervention dispatch / intervention_answer_consumed) that would
+        # otherwise escape await_quiescent. Each spawn registers via
+        # _track_wal_task; await_quiescent joins this set so no such append can land
+        # past the rewind reset-record seq. discard-on-done keeps it bounded.
+        self._inflight_wal_tasks: set[asyncio.Task] = set()
         # Track state_log directly for skill resume (PR-skill-resume): the
         # journal owns it for inbox / chain mutations, but skills launched
         # from this session also need it so dispatch_tool can emit step
@@ -2219,7 +2225,7 @@ class ChatSession:
         return f"✗ cancelled {' + '.join(parts)}"
 
     async def await_quiescent(self) -> None:
-        """Block until no turn / skill / plan is in flight (ADR-0038 Stage 1c).
+        """Block until every append-capable task has settled (ADR-0038 Stage 1c).
 
         Used by global rewind: after ``cancel_inflight()``, the caller awaits this
         so the rewind reset-record is appended only once every in-flight operation
@@ -2229,20 +2235,59 @@ class ChatSession:
         settle (whose append lands before the reset-record, inside the abandoned
         segment) rather than returning early; subprocess hard-kill is a wall-clock
         optimization, not a correctness prerequisite.
+
+        Coverage (the exhaustive set of append-capable spawned tasks in this
+        surface — see #1533 source→gated-by table): the current turn (``_turn_idle``),
+        in-flight skills / plans (``running_skills`` / ``running_plans``), chain-timeout
+        watchdogs (``_chains`` timers, cancel+join), and fire-and-forget WAL-append
+        tasks — intervention dispatch + intervention_answer_consumed (``_inflight_wal_tasks``).
         """
         # 1. wait for the current turn (if any) to finish its WAL appends.
         await self._turn_idle.wait()
-        # 2. join cancelled in-flight skill / plan tasks (their final appends settle).
+        # 2. cancel + join chain-timeout watchdogs. A cancelled timer cannot fire
+        #    (no chain_timeout_fired append); join settles any callback already
+        #    in-progress before this returns. On reconstruct, restore() re-arms a
+        #    fresh watchdog from the recovered snapshot, so cancelling is reversible.
+        await self._chains.cancel_and_join_timers()
+        # 3. cancel tracked fire-and-forget WAL-append tasks, then join. Cancel
+        #    (not join-only) is required: the intervention-dispatch task awaits the
+        #    user-answer future indefinitely, so a bare join would hang here. These
+        #    tasks are documented drop-safe (a dropped append is harmlessly
+        #    reconstructed on restore), so cancelling is correct. await_quiescent
+        #    owns this internal plumbing itself — independent of cancel_inflight.
+        for task in list(self._inflight_wal_tasks):
+            if not task.done():
+                task.cancel()
+        # 4. join cancelled skill / plan tasks (cancelled by the prior
+        #    cancel_inflight) + the now-cancelled fire-and-forget tasks. Each is an
+        #    append-capable spawned task that must settle before the reset-record.
         pending = [
-            t for t in (*self.running_skills.values(), *self.running_plans.values())
+            t for t in (
+                *self.running_skills.values(),
+                *self.running_plans.values(),
+                *self._inflight_wal_tasks,
+            )
             if not t.done()
         ]
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-        # 3. re-confirm turn-idle — a joined task may have enqueued a follow-up
+        # 5. re-confirm turn-idle — a joined task may have enqueued a follow-up
         #    turn; with cancel already requested it breaks immediately, so this
         #    settles. The double wait closes the join↔turn race.
         await self._turn_idle.wait()
+
+    def _track_wal_task(self, task: asyncio.Task) -> asyncio.Task:
+        """Register a fire-and-forget WAL-append task for quiescence (Stage 1c).
+
+        Fire-and-forget tasks that append to the WAL (intervention dispatch,
+        intervention_answer_consumed) have no natural join handle, so they would
+        escape ``await_quiescent`` and could append past a rewind reset-record.
+        Tracking them in ``_inflight_wal_tasks`` (with discard-on-done to keep the
+        set bounded) makes them joinable. Returns the task for call-site chaining.
+        """
+        self._inflight_wal_tasks.add(task)
+        task.add_done_callback(self._inflight_wal_tasks.discard)
+        return task
 
     @property
     def pending_user_images(self) -> list[dict]:
@@ -3825,7 +3870,7 @@ class ChatSession:
         # iv resolution — the iv.future will resolve when the new
         # channel's listener calls deliver_answer, independent of this
         # method's return.
-        asyncio.ensure_future(self._dispatch_intervention(iv))
+        self._track_wal_task(asyncio.ensure_future(self._dispatch_intervention(iv)))
         return PendingOpView.from_intervention(iv)
 
     async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
@@ -4145,11 +4190,13 @@ class ChatSession:
                 except RuntimeError:
                     loop = None
                 if loop is not None:
-                    loop.create_task(
-                        self._journal.record_intervention_answer_consumed(
-                            run_id=run_id,
-                        ),
-                        name=f"buffered-answer-dropped-{run_id}",
+                    self._track_wal_task(
+                        loop.create_task(
+                            self._journal.record_intervention_answer_consumed(
+                                run_id=run_id,
+                            ),
+                            name=f"buffered-answer-dropped-{run_id}",
+                        )
                     )
 
     def consume_buffered_intervention_answer(
@@ -4179,11 +4226,13 @@ class ChatSession:
             except RuntimeError:
                 loop = None
             if loop is not None:
-                loop.create_task(
-                    self._journal.record_intervention_answer_consumed(
-                        run_id=run_id,
-                    ),
-                    name=f"buffered-answer-consumed-{run_id}",
+                self._track_wal_task(
+                    loop.create_task(
+                        self._journal.record_intervention_answer_consumed(
+                            run_id=run_id,
+                        ),
+                        name=f"buffered-answer-consumed-{run_id}",
+                    )
                 )
         return answer
 

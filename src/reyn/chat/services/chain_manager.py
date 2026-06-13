@@ -265,10 +265,14 @@ class ChainManager:
         if timer is not None and not timer.done():
             timer.cancel()
 
-    async def shutdown(self) -> None:
+    async def cancel_and_join_timers(self) -> None:
         """Cancel all timeout watchdogs and wait for them to settle.
 
-        Idempotent — safe to call from session drain on shutdown.
+        Idempotent. After this returns no watchdog can fire (no
+        ``chain_timeout_fired`` append), and any callback already in-progress
+        has settled. The chain state itself is untouched — ADR-0038 Stage 1c
+        rewind quiescence uses this so no timeout append lands past the reset
+        seq; ``restore()`` re-arms fresh watchdogs from the recovered snapshot.
         """
         for task in list(self._timers.values()):
             if not task.done():
@@ -278,6 +282,14 @@ class ChainManager:
                 *self._timers.values(), return_exceptions=True
             )
         self._timers.clear()
+
+    async def shutdown(self) -> None:
+        """Cancel all timeout watchdogs and wait for them to settle.
+
+        Idempotent — safe to call from session drain on shutdown. Alias of
+        ``cancel_and_join_timers`` (teardown-named seam for shutdown callers).
+        """
+        await self.cancel_and_join_timers()
 
     async def _chain_timeout_watch(
         self,
