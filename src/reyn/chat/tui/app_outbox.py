@@ -238,6 +238,7 @@ class OutboxRouter:
         self.HANDLERS: dict[str, Callable[..., str | None]] = {
             "__end__":                  self._on_end,
             "__quit__":                 self._on_quit,
+            "__rewind_menu__":          self._on_rewind_menu,
             "__attach_request__":       self._on_attach_request,
             "__matrix__":               self._on_matrix,
             "__donut__":                self._on_donut,
@@ -456,6 +457,19 @@ class OutboxRouter:
         graceful teardown + WAL flush).
         """
         self._app.call_later(self._app.action_quit_tui)
+
+    def _on_rewind_menu(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """`__rewind_menu__` — bare ``/rewind`` slash; open the inline
+        time-travel checkpoint picker (ADR-0038 1f).
+
+        Mirrors the ``__quit__`` sentinel routing: the slash command stays in
+        the registry (single source of truth + palette/`/help` visibility)
+        while the App owns the TUI surface. The App reads
+        ``AgentRegistry.list_rewind_points()`` and mounts the menu.
+        """
+        self._app.call_later(self._app._open_rewind_menu)
 
     def _on_attach_request(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,

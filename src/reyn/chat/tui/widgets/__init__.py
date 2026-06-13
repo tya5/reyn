@@ -18,6 +18,7 @@ from .conversation import ConversationView
 from .header import ReynHeader
 from .input_bar import InputBar
 from .intervention import InterventionWidget
+from .rewind_menu import RewindMenuWidget
 from .right_panel import PANEL_TYPES, RightPanel
 from .streaming_row import StreamingRow
 
@@ -26,6 +27,7 @@ __all__ = [
     "ConversationView",
     "InputBar",
     "InterventionWidget",
+    "RewindMenuWidget",
     "StreamingRow",
     "RightPanel",
     "PANEL_TYPES",

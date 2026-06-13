@@ -36,6 +36,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.theme import Theme
 
+from reyn.chat.outbox import OutboxMessage
 from reyn.chat.tui._palette import (
     _BORDER_DIM,
     _CORAL,
@@ -124,8 +125,15 @@ class ReynTUIApp(App):
         # so plain Enter in the input bar still does its normal submit.
         Binding("enter", "voice_stop_and_submit", "Voice send", priority=True, show=False),
         # Esc multiplexes: cancel voice recording / close right panel /
-        # close slash picker — see ``action_voice_cancel``.
+        # close slash picker / dismiss rewind menu — see ``action_voice_cancel``.
         Binding("escape", "voice_cancel", "Cancel / close", priority=True, show=False),
+        # ADR-0038 1f: rewind-menu navigation. Priority + check_action-gated to
+        # when the /rewind picker is open, so plain ↑/↓/Enter fall through to
+        # the InputBar (history recall / submit) at all other times — same
+        # gating discipline as ``voice_stop_and_submit`` (Enter) above.
+        Binding("up", "rewind_prev", "Rewind: prev checkpoint", priority=True, show=False),
+        Binding("down", "rewind_next", "Rewind: next checkpoint", priority=True, show=False),
+        Binding("enter", "rewind_confirm", "Rewind: select checkpoint", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
         # Wave-4 AR5: keyboard scroll for the conv log. RichLog has
         # ``can_focus=False`` (intentional — prevents inadvertent
@@ -228,6 +236,10 @@ class ReynTUIApp(App):
         # can reach the find-cycle state living on the router.
         self._outbox_router = None  # type: ignore[assignment]
         self._panel_visible = False
+        # ADR-0038 1f: the mounted RewindMenuWidget while the /rewind picker is
+        # open, else None. Navigation (↑/↓/Enter) + Esc dismiss are gated on
+        # this being non-None via check_action.
+        self._rewind_menu = None  # type: ignore[assignment]
         self._cancel_event: asyncio.Event = asyncio.Event()
         # Most-recent "nothing-in-flight cancel" timestamp, used to
         # suppress repeated identical lines from accumulating in the conv
@@ -275,6 +287,17 @@ class ReynTUIApp(App):
         testing policy.
         """
         return self._panel_visible
+
+    @property
+    def rewind_menu_open(self) -> bool:
+        """Public read of the /rewind picker visibility state (ADR-0038 1f).
+
+        ``True`` while the inline RewindMenuWidget is mounted, ``False``
+        otherwise. Mutate via ``_open_rewind_menu()`` / ``_dismiss_rewind_menu()``
+        — direct assignment to ``_rewind_menu`` is not the public contract.
+        Exposed for tests so they read state through the public surface.
+        """
+        return self._rewind_menu is not None
 
     @property
     def outbox_router(self) -> "OutboxRouter | None":
@@ -2285,13 +2308,15 @@ class ReynTUIApp(App):
         )
 
     def action_voice_cancel(self) -> None:
-        """Esc — cancel voice recording, dismiss slash picker, or close panel.
+        """Esc — cancel voice recording, dismiss slash picker, dismiss rewind
+        menu, or close panel.
 
         Priority:
           1. If recording → cancel recording.
           2. **Else if InputBar is in slash-entry → dismiss picker + clear**
              prefix (= wave-2 P2).
-          3. Else if side panel is visible → close it.
+          3. Else if the rewind menu is open → dismiss it (ADR-0038 1f).
+          4. Else if side panel is visible → close it.
 
         Gated by check_action so this never fires when no condition holds
         (allowing InputBar's own Esc binding to handle slash-picker
@@ -2309,8 +2334,98 @@ class ReynTUIApp(App):
                 return
         except Exception:
             pass
+        # ADR-0038 1f: dismiss the rewind menu before the side panel — the
+        # menu is the most-recently-opened overlay, so Esc should close it
+        # first (matches "abort the visible thing" priority).
+        if self._rewind_menu is not None:
+            self._dismiss_rewind_menu()
+            return
         if self._panel_visible:
             self.action_toggle_panel()
+
+    # ── rewind menu (ADR-0038 1f) ───────────────────────────────────────────
+
+    def _dismiss_rewind_menu(self) -> None:
+        """Unmount the rewind picker, if mounted. Decoupled from the
+        intervention unmount path — a plain ``widget.remove()`` + state clear."""
+        menu = self._rewind_menu
+        self._rewind_menu = None
+        if menu is not None:
+            try:
+                menu.remove()
+            except Exception:
+                pass
+
+    def _open_rewind_menu(self) -> None:
+        """Open the inline /rewind checkpoint picker.
+
+        Reads ``AgentRegistry.list_rewind_points()`` and mounts the menu. When
+        there are no checkpoints (or no registry), writes a system message
+        instead of mounting an empty picker.
+        """
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+        except Exception:
+            return
+        registry = self._agent_registry
+        points = registry.list_rewind_points() if registry is not None else []
+        if not points:
+            conv.render_message(
+                OutboxMessage(kind="system", text="⏪ no checkpoints to rewind to yet")
+            )
+            return
+        # Replace any already-open menu (idempotent re-open).
+        self._dismiss_rewind_menu()
+        self._rewind_menu = conv.mount_rewind_menu(points)
+
+    def action_rewind_prev(self) -> None:
+        """↑ while the rewind menu is open — highlight the previous (older) checkpoint."""
+        if self._rewind_menu is not None:
+            self._rewind_menu.move_selection(-1)
+
+    def action_rewind_next(self) -> None:
+        """↓ while the rewind menu is open — highlight the next (newer) checkpoint."""
+        if self._rewind_menu is not None:
+            self._rewind_menu.move_selection(+1)
+
+    async def action_rewind_confirm(self) -> None:
+        """Enter while the rewind menu is open — rewind to the highlighted checkpoint."""
+        menu = self._rewind_menu
+        if menu is None:
+            return
+        point = menu.selected_point()
+        self._dismiss_rewind_menu()
+        if point is not None:
+            await self._do_rewind(int(point["seq"]))
+
+    async def _do_rewind(self, target_seq: int) -> None:
+        """Invoke ``AgentRegistry.rewind_to`` and write a timeline breadcrumb."""
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+        except Exception:
+            conv = None
+        registry = self._agent_registry
+        if registry is None:
+            if conv is not None:
+                conv.render_message(
+                    OutboxMessage(kind="error", text="⏪ rewind unavailable (no registry)")
+                )
+            return
+        try:
+            result = await registry.rewind_to(target_seq)
+        except Exception as exc:  # noqa: BLE001 — surface the reason in-timeline
+            if conv is not None:
+                conv.render_message(OutboxMessage(kind="error", text=f"⏪ rewind failed: {exc}"))
+            return
+        if conv is not None:
+            agents = result.get("agents", [])
+            conv.render_message(OutboxMessage(
+                kind="system",
+                text=(
+                    f"⏪ rewound to seq {result.get('target_n', target_seq)} "
+                    f"· {len(agents)} agent(s) reset · in-flight cancelled"
+                ),
+            ))
 
     def _voice_config(self):
         """Best-effort fetch of the user's voice config block."""
@@ -2344,12 +2459,19 @@ class ReynTUIApp(App):
                 return self.query_one("#right_panel", RightPanel).panel_type == "events"
             except Exception:
                 return False
+        if action in {"rewind_prev", "rewind_next", "rewind_confirm"}:
+            # ADR-0038 1f: navigation keys are live only while the /rewind
+            # picker is mounted. Otherwise they fall through to the InputBar
+            # (↑/↓ history, Enter submit).
+            return self._rewind_menu is not None
         if action == "voice_cancel":
             # Intercept Esc when there's an overlay/recording to dismiss:
-            # voice recording or the side panel. The slash picker / prefix
-            # case is handled by InputBar's own Esc binding when no other
-            # overlay is present (= simpler dispatch path).
+            # voice recording, the rewind menu, or the side panel. The slash
+            # picker / prefix case is handled by InputBar's own Esc binding
+            # when no other overlay is present (= simpler dispatch path).
             if self._voice_input is not None and self._voice_input.is_recording:
+                return True
+            if self._rewind_menu is not None:
                 return True
             if self._panel_visible:
                 return True
