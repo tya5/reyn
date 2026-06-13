@@ -250,3 +250,44 @@ async def test_applied_seq_monotonically_increases(tmp_path):
         assert seqs[i] > seqs[i - 1], (
             f"seq did not increase between op {i-1} and {i}: {seqs}"
         )
+
+
+# ── Stage 1d: two-substrate generation cut (runtime ⊗ workspace) ──────────────
+
+
+@pytest.mark.skipif(__import__("shutil").which("git") is None, reason="git not on PATH")
+@pytest.mark.asyncio
+async def test_cut_generation_captures_both_substrates_at_same_seq(tmp_path):
+    """Tier 2: cut_generation records the runtime gen AND the workspace gen, tied at seq.
+
+    ADR-0038 Stage 1d: a generation ties both substrates at the boundary seq
+    (= snapshot.applied_seq, a WAL seq). With a workspace store attached, one
+    cut_generation must produce a runtime generation AND a shadow-git commit
+    keyed by the same seq, so rewind/recovery can restore them together.
+    """
+    from reyn.events.snapshot_generations import SnapshotGenerationStore
+    from reyn.events.workspace_version_store import WorkspaceVersionStore
+
+    state_log = StateLog(tmp_path / "state.wal")
+    seq = await state_log.append(
+        "inbox_put", target="test_agent", msg_id="m", msg_kind="user", payload={},
+    )
+    gen_store = SnapshotGenerationStore("test_agent", tmp_path / "gens")
+    ws_root = tmp_path / "ws"
+    (ws_root / ".reyn").mkdir(parents=True)
+    (ws_root / "code.py").write_text("v1", encoding="utf-8")
+    ws_store = WorkspaceVersionStore(ws_root, ws_root / ".reyn" / "shadow.git")
+
+    journal = SnapshotJournal(
+        agent_name="test_agent",
+        snapshot_path=tmp_path / "snapshot.json",
+        state_log=state_log,
+        generation_store=gen_store,
+    )
+    journal.set_workspace_store(ws_store)
+    journal.snapshot.applied_seq = seq   # simulate the boundary snapshot
+
+    journal.cut_generation()
+
+    assert seq in gen_store.seqs()       # runtime generation recorded
+    assert seq in ws_store.seqs()        # workspace generation captured at SAME seq

@@ -47,19 +47,37 @@ class SnapshotJournal:
         # non-chat), generation cuts are no-ops and the single snapshot.json
         # path is unchanged (no behavior change).
         self._generation_store = generation_store
+        # ADR-0038 Stage 1d: the workspace half of a generation. Set post-
+        # construction by the registry (the single shared shadow-git store) so
+        # cut_generation captures workspace files at the SAME boundary as the
+        # runtime snapshot. None → no workspace versioning (capture is skipped).
+        self._workspace_store = None
         self._snapshot: AgentSnapshot = AgentSnapshot.empty(agent_name)
 
+    def set_workspace_store(self, workspace_store) -> None:
+        """Attach the shared workspace shadow-git store (ADR-0038 Stage 1d).
+
+        Injected by the registry after session construction so the capture seam
+        (cut_generation) and the rewind/recovery restore use the SAME git-dir.
+        """
+        self._workspace_store = workspace_store
+
     def cut_generation(self) -> None:
-        """Record the current snapshot as a PITR generation (ADR-0038 Stage 1a).
+        """Record the current snapshot as a PITR generation (ADR-0038 Stage 1a/1d).
 
         Called at user-facing checkpoint boundaries (turn / plan-step) — a
-        single seam so cuts are neither missed nor doubled. Additive to the
-        per-mutation ``save()``; the latest generation equals the current
-        snapshot. No-op when no generation store / WAL is configured.
+        single seam so cuts are neither missed nor doubled. Records BOTH
+        substrates tied at the boundary seq (= ``snapshot.applied_seq``, a WAL
+        seq): the runtime AgentSnapshot generation AND (Stage 1d) the workspace
+        shadow-git commit. Additive to the per-mutation ``save()``. No-op when no
+        generation store / WAL is configured; workspace capture is skipped when
+        no workspace store is attached (or git is unavailable — handled there).
         """
         if self._generation_store is None or self._state_log is None:
             return
         self._generation_store.record(self._snapshot)
+        if self._workspace_store is not None:
+            self._workspace_store.capture(self._snapshot.applied_seq)
 
     # ── public read access ────────────────────────────────────────────────
 

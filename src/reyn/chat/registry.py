@@ -37,11 +37,13 @@ from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.snapshot_generations import (
     RewindIntoAbandonedError,
     SnapshotGenerationStore,
+    active_rewind_target,
     is_active_seq,
     reconstruct,
 )
 from reyn.events.snapshot_generations import rewind as _append_rewind_record
 from reyn.events.state_log import StateLog
+from reyn.events.workspace_version_store import WorkspaceVersionStore
 
 from .profile import PROFILE_FILENAME, AgentProfile
 from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
@@ -113,6 +115,12 @@ class AgentRegistry:
         # set, ``maybe_truncate_for_size`` no-ops so a compaction can't advance
         # the WAL keep-floor over the reset-record / reconstruct reads mid-cut.
         self._rewind_in_progress: bool = False
+        # ADR-0038 Stage 1d: the workspace half of a generation. One shadow-git
+        # for the (single-SSoT) workspace, git-dir under .reyn (out of the
+        # tracked tree). Host-mode worktree = project_root; container mode is a
+        # tracked follow-up (#1544). Lazily built so non-chat / no-WAL callers
+        # never touch git.
+        self._workspace_store: WorkspaceVersionStore | None = None
         # Single queue the REPL drains; registry routes each attached agent's
         # outbox into here.
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
@@ -273,9 +281,18 @@ class AgentRegistry:
            pending_chains and re-arm chain timeout watchdogs
 
         Idempotent: calling twice on a clean state is a no-op.
+
+        ADR-0038 Stage 1d: crash-mid-rewind recovery runs FIRST (before loading
+        snapshots) so a reset-record fsync'd before its materialisation completed
+        re-materialises both substrates as-of-N — every startup path that calls
+        ``restore_all`` gets crash-recovery by construction. No-op without a
+        rewind record.
         """
         if self._state_log is None:
             return {}
+
+        # 0. crash-mid-rewind recovery (no-op without an active reset-record).
+        await self.recover_rewind_if_needed()
 
         # 1. Load snapshots
         snapshots: dict[str, AgentSnapshot] = {}
@@ -408,24 +425,10 @@ class AgentRegistry:
             reset_seq = await _append_rewind_record(
                 self._state_log, target_n=target_n, supersedes=prior_head,
             )
-            # 5. reconstruct + persist self-contained snapshots for every agent.
-            agents: list[str] = []
-            for name in self.list_names():
-                store = self._store_for(name)
-                snap = reconstruct(
-                    name, store, self._state_log, target_seq=reset_seq,
-                )
-                # Self-contained: the reset-record carries no agent target, so
-                # reconstruct leaves applied_seq at the last active entry (<= N).
-                # Pin it to R so restore_all's replay floor skips the abandoned
-                # (N, R] segment entirely (no is_active honoring needed there).
-                snap.applied_seq = reset_seq
-                snap.save(self._dir / name / "state" / "snapshot.json")
-                session = self._agents.get(name)
-                if session is not None:
-                    await session.reset_for_rewind()
-                    session.restore_state(snap)
-                agents.append(name)
+            # 5. materialise both substrates as-of-N (runtime snapshots + workspace).
+            agents = await self._materialize_rewind(
+                reconstruct_seq=reset_seq, workspace_at_or_below=target_n,
+            )
             return {
                 "target_n": target_n,
                 "reset_seq": reset_seq,
@@ -433,6 +436,98 @@ class AgentRegistry:
             }
         finally:
             self._rewind_in_progress = False
+
+    @property
+    def workspace_store(self) -> WorkspaceVersionStore | None:
+        """The shadow-git workspace store (ADR-0038 1d), lazily built.
+
+        ``None`` when there is no WAL (non-chat / tests that opt out). Host-mode
+        worktree = ``project_root``; git-dir under ``.reyn``. Container mode is a
+        tracked follow-up (#1544).
+        """
+        if self._state_log is None:
+            return None
+        if self._workspace_store is None:
+            self._workspace_store = WorkspaceVersionStore(
+                self._project_root,
+                self._project_root / ".reyn" / "workspace-shadow.git",
+            )
+        return self._workspace_store
+
+    async def _materialize_rewind(
+        self, *, reconstruct_seq: int, workspace_at_or_below: int,
+    ) -> list[str]:
+        """Bring BOTH substrates to the active branch as-of ``reconstruct_seq``.
+
+        Idempotent — shared by ``rewind_to`` (right after the reset-record) and
+        crash ``recover_rewind_if_needed`` (at restart). Per agent: ``reconstruct``
+        as-of the active branch + persist a self-contained snapshot pinned to
+        ``reconstruct_seq`` (so ``restore_all`` replays only beyond it); loaded
+        sessions are reset + re-adopt it. Then the workspace substrate is
+        restored to the nearest **active** generation ``<= workspace_at_or_below``.
+
+        ``reconstruct_seq`` is the WAL head at call time (= R in rewind_to, =
+        current head in recovery); ``workspace_at_or_below`` is ``target_n`` in
+        rewind_to (= gen-N) or head in recovery (= latest active gen, keeping
+        post-rewind workspace work). Returns the agents materialised.
+        """
+        agents: list[str] = []
+        for name in self.list_names():
+            store = self._store_for(name)
+            snap = reconstruct(
+                name, store, self._state_log, target_seq=reconstruct_seq,
+            )
+            # Self-contained: the reset-record carries no agent target, so
+            # reconstruct leaves applied_seq at the last active entry. Pin it to
+            # the head so restore_all's replay floor skips the abandoned segment.
+            snap.applied_seq = reconstruct_seq
+            snap.save(self._dir / name / "state" / "snapshot.json")
+            session = self._agents.get(name)
+            if session is not None:
+                await session.reset_for_rewind()
+                session.restore_state(snap)
+            agents.append(name)
+        self._restore_workspace_active(at_or_below=workspace_at_or_below)
+        return agents
+
+    def _restore_workspace_active(self, *, at_or_below: int) -> None:
+        """Restore the workspace to the nearest ACTIVE generation <= ``at_or_below``.
+
+        Honors is_active (mirrors ``reconstruct`` for runtime): gen-tags in an
+        abandoned segment ``(N, R)`` are skipped, so a crash-after-rewind-before-
+        any-post-rewind-capture never restores the undone-future workspace.
+        No-op when git / the store / a matching active gen is unavailable.
+        """
+        ws = self.workspace_store
+        if ws is None or not ws.git_available():
+            return
+        active = [
+            s for s in ws.seqs()
+            if s <= at_or_below and is_active_seq(self._state_log, s)
+        ]
+        if active:
+            ws.restore_to_seq(max(active))
+
+    async def recover_rewind_if_needed(self) -> dict | None:
+        """Re-materialise both substrates as-of-N after a crash mid-rewind (1d).
+
+        The reset-record is fsync'd before any reconstruction (1b keystone), so
+        on restart an active reset-record means "a rewind was decided"; recovery
+        re-runs the idempotent materialisation BEFORE ``restore_all`` loads
+        sessions, closing the window where the crash hit after the reset-record
+        but before snapshots / workspace were brought to as-of-N. No-op when no
+        rewind record exists. Returns a summary or ``None``.
+        """
+        if self._state_log is None:
+            return None
+        target = active_rewind_target(self._state_log)
+        if target is None:
+            return None
+        head = self._state_log.current_seq
+        agents = await self._materialize_rewind(
+            reconstruct_seq=head, workspace_at_or_below=head,
+        )
+        return {"recovered_target_n": target, "head": head, "agents": agents}
 
     # ── Plan resume recovery (ADR-0023 Phase 2 step 7d) ─────────────────────
 
@@ -866,6 +961,13 @@ class AgentRegistry:
             )
         profile = self.load_profile(name)
         session = self._factory(profile)
+        # ADR-0038 Stage 1d: hand the session the single shared workspace
+        # shadow-git store so cut_generation captures the workspace at each
+        # boundary against the same git-dir the registry's rewind/recovery uses.
+        ws = self.workspace_store
+        attach = getattr(session, "attach_workspace_store", None)
+        if ws is not None and callable(attach):
+            attach(ws)
         self._agents[name] = session
         return session
 
