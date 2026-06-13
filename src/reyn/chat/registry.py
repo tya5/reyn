@@ -52,6 +52,23 @@ from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 
 DEFAULT_AGENT_NAME = "default"
 
+# ADR-0038 1f: WAL-entry-kind → rewind-point boundary label. All inputs are
+# OS-level ``WAL_EVENT_KINDS`` (P7-safe — no skill/domain strings). The three
+# output labels are the D6 Phase-1 granularity (turn / plan-step / phase).
+_REWIND_PLAN_STEP_KINDS = frozenset({
+    "step_completed", "step_failed",
+    "plan_step_completed", "plan_step_failed",
+})
+
+
+def _rewind_point_kind(wal_kind: str) -> str:
+    """Map a WAL entry kind to a rewind-point boundary label (turn / plan-step / phase)."""
+    if wal_kind == "skill_phase_advanced":
+        return "phase"
+    if wal_kind in _REWIND_PLAN_STEP_KINDS:
+        return "plan-step"
+    return "turn"
+
 # PR13: synthesized auto-network topology. Members = every known agent
 # that does NOT belong to any user-declared topology. Computed on demand
 # (no caching — registry state mutates and stale caches are a footgun).
@@ -456,6 +473,63 @@ class AgentRegistry:
             }
         finally:
             self._rewind_in_progress = False
+
+    def list_rewind_points(self) -> list[dict]:
+        """Enumerate the active rewind targets for the time-travel UI (1f).
+
+        Returns one row per snapshot-generation boundary on the **active**
+        branch, ascending by seq::
+
+            [{"seq": int, "ts": str, "kind": str}, ...]
+
+        ``seq`` is the WAL boundary the user can ``rewind_to``. ``ts`` and
+        ``kind`` are read from the WAL entry at that seq (the EventStore /
+        audit log is a *separate* log and is intentionally not consulted —
+        WAL and audit stay decoupled). ``kind`` is an OS-level execution
+        boundary derived from the WAL entry kind (P7-safe — all source kinds
+        live in ``WAL_EVENT_KINDS``, none are skill/domain strings):
+
+          - ``skill_phase_advanced``                      → ``phase``
+          - ``step_completed`` / ``step_failed`` /
+            ``plan_step_completed`` / ``plan_step_failed`` → ``plan-step``
+          - anything else (``inbox_consume``, …)           → ``turn``
+
+        Generations are per-agent but keyed by the single global WAL seq, so
+        the union across known agents is the global rewind-point set. Abandoned
+        (rewound-past) boundaries are filtered out via ``is_active_seq``.
+
+        Empty when there is no WAL or no generations.
+        """
+        if self._state_log is None:
+            return []
+
+        # Union of generation boundary seqs across every known agent, keeping
+        # only seqs on the active branch.
+        seqs: set[int] = set()
+        for name in self.list_names():
+            for s in self._store_for(name).seqs():
+                if is_active_seq(self._state_log, s):
+                    seqs.add(s)
+        if not seqs:
+            return []
+
+        # One pass over the WAL to map boundary seq → (ts, kind). The audit
+        # EventStore is NOT consulted — keeping WAL and audit decoupled.
+        wal_at: dict[int, dict] = {}
+        for entry in self._state_log.iter_from(1):
+            s = entry.get("seq")
+            if isinstance(s, int) and s in seqs:
+                wal_at[s] = entry
+
+        rows: list[dict] = []
+        for s in sorted(seqs):
+            entry = wal_at.get(s, {})
+            rows.append({
+                "seq": s,
+                "ts": entry.get("ts", ""),
+                "kind": _rewind_point_kind(entry.get("kind", "")),
+            })
+        return rows
 
     @property
     def workspace_store(self) -> WorkspaceVersionStore | None:

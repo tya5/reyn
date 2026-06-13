@@ -2265,6 +2265,31 @@ class ConversationView(Widget):
                 pass
         return widget
 
+    def mount_rewind_menu(
+        self,
+        points: list[dict],
+        *,
+        rel_time_fn=None,
+    ) -> "RewindMenuWidget":
+        """Mount the inline time-travel checkpoint picker (ADR-0038 1f).
+
+        ``points`` are rows from ``AgentRegistry.list_rewind_points()``. The
+        widget is passive (``can_focus = False``) — the App drives navigation
+        and removes it via ``widget.remove()`` on selection / Esc (decoupled
+        from the intervention unmount path). Returns the mounted widget so the
+        App can hold a reference for nav + dismiss.
+        """
+        from .rewind_menu import RewindMenuWidget
+        self._consume_empty_hint()
+        widget = RewindMenuWidget(points, rel_time_fn=rel_time_fn)
+        self.mount(widget)
+        if not self._scroll_ctrl.user_scrolled:
+            try:
+                widget.scroll_visible()
+            except Exception:
+                pass
+        return widget
+
     # ── cost suffix (A4) ──────────────────────────────────────────────────────
 
     def render_cost_suffix(
