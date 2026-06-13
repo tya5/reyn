@@ -136,7 +136,7 @@ Do not conflate or merge the two logs. See [Events](events.md) for details.
 | Workspace | Not rewound | Rewound to as-of-N |
 | Branching | None | Fork / branch tree |
 | Mechanism | `SkillResumeAnalyzer` + WAL forward-replay | PITR snapshot + WAL-diff + shadow-git |
-| Design | [ADR-0002](../../deep-dives/decisions/) | [ADR-0038 draft](https://github.com/tya5/reyn/pull/1536) |
+| Design | [ADR-0002](../../deep-dives/decisions/0002-forward-replay-resume.md) | [ADR-0038 draft](https://github.com/tya5/reyn/pull/1536) |
 
 ## See also
 

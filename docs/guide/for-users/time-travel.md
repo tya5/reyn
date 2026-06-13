@@ -44,20 +44,6 @@ After any rewind or fork, the picker switches to a **tree view** showing all bra
 - Selecting a seq on the **current branch**: undo (rewinds the current branch).
 - Selecting a seq on an **inactive branch**: fork-switch (activates that branch).
 
-## Configuration
-
-### Retention window
-
-By default Reyn retains all checkpoints. To limit retention:
-
-```yaml
-# reyn.yaml
-skill_resume:
-  checkpoint_retention_turns: 50   # keep the last N turn boundaries
-```
-
-Checkpoints older than the retention window are GC'd automatically. Adjust based on your storage budget.
-
 ## Container mode
 
 When using the container environment backend (`--container`), the workspace
@@ -68,7 +54,8 @@ user experience applies; the substrate is container-side.
 
 | Feature | Status |
 |---------|--------|
-| `/rewind` with in-turn edit (`ctrl+e` / `ctrl+t`) to create a new fork-and-edit branch | ⏳ Phase 2c, in-progress |
+| `/rewind` with in-turn edit (`ctrl+t` / F-key) to create a new fork-and-edit branch | ⏳ Phase 2c, in-progress |
+| Retention window config (`retention: keep_generations: N`) to GC old checkpoints | ⏳ ADR-0038 Stage 1e — designed, not yet wired |
 | `/rewind` picker over WebSocket / A2A web surface | ⏳ Phase 2d, in-progress |
 
 ## See also
