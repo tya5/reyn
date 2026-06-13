@@ -268,6 +268,9 @@ class ReynTUIApp(App):
         # masquerade as a double-tap.
         self._last_clean_esc_ts: float = 0.0
         self._esc_hint_timer = None  # type: ignore[assignment]
+        # #1533 2c: the InputBar draft saved before an edit pre-fill replaces it,
+        # restored on Esc-cancel (full undo). Discarded on submit (committed).
+        self._pre_edit_input: str = ""
         self._cancel_event: asyncio.Event = asyncio.Event()
         # Most-recent "nothing-in-flight cancel" timestamp, used to
         # suppress repeated identical lines from accumulating in the conv
@@ -2722,9 +2725,29 @@ class ReynTUIApp(App):
         if not full:
             return
         try:
-            self.query_one("#inputbar", InputBar).set_text(full)
+            inputbar = self.query_one("#inputbar", InputBar)
+            # Save the pre-edit draft so Esc-cancel can restore it (the pre-fill
+            # replaces the buffer; #1533 2c full-undo). Only saved when we
+            # actually replace (full present), so a no-op pre-fill never
+            # clobbers a stored draft.
+            self._pre_edit_input = inputbar.current_text()
+            inputbar.set_text(full)
         except Exception:
             pass
+
+    def _restore_pre_edit_input(self) -> None:
+        """Restore the pre-edit draft on Esc-cancel from edit-mode (#1533 2c).
+
+        Cancel = full undo of the pre-fill: the loaded checkpoint message is
+        replaced by whatever draft the user had before ``ctrl+t``. Called by the
+        Esc-cancel path (NOT submit — submit consumes the edited text and the
+        normal submit flow clears the buffer). Keeps ``exit_edit_mode`` pure
+        (it never touches the InputBar; the text lifecycle is this surface)."""
+        try:
+            self.query_one("#inputbar", InputBar).set_text(self._pre_edit_input)
+        except Exception:
+            pass
+        self._pre_edit_input = ""
 
     async def _submit_edited_fork(self, edited_text: str) -> None:
         """Edit-and-retry (ADR-0038 2c): fork from the edited checkpoint's
@@ -2740,6 +2763,9 @@ class ReynTUIApp(App):
         ``None`` = first turn → no earlier state to fork from → graceful reject.
         """
         seq = self._edit_mode_seq          # capture BEFORE exit clears it
+        self._pre_edit_input = ""          # submit commits the edit — discard the
+                                           # saved draft so a later cancel can't
+                                           # restore a stale message.
         self.exit_edit_mode()              # flag + banner + Esc-Esc reset (shared seam)
         self._dismiss_rewind_menu()        # submit dismisses the picker
         try:

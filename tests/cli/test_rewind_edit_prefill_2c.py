@@ -92,6 +92,30 @@ async def test_prefill_edit_no_message_is_noop(tmp_path) -> None:
         assert bar.query_one("#input").text == "draft"   # untouched
 
 
+@pytest.mark.asyncio
+async def test_prefill_saves_draft_and_restore_recovers_it(tmp_path) -> None:
+    """Tier 2: prefill saves the pre-edit draft; _restore_pre_edit_input recovers
+    it (Esc-cancel = full undo of the pre-fill). #1533 2c-cancel follow-up."""
+    reg = AgentRegistry(
+        project_root=tmp_path, session_factory=_no_factory,
+        state_log=StateLog(tmp_path / ".reyn" / "wal.jsonl"),
+    )
+    AgentProfile.new("alpha", role="").save(tmp_path / ".reyn" / "agents" / "alpha")
+    reg.anchor_store.capture(7, "anchor…", full="the full original message")
+
+    app = ReynTUIApp(registry=reg, agent_name="alpha", model="m", budget_tracker=None)
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        bar = app.query_one("#inputbar", InputBar)
+        bar.set_text("my unfinished draft")          # pre-edit draft
+        app._prefill_edit(7)                           # replaces with the full message
+        await pilot.pause()
+        assert bar.current_text() == "the full original message"
+        app._restore_pre_edit_input()                  # Esc-cancel restore
+        await pilot.pause()
+        assert bar.current_text() == "my unfinished draft"   # draft recovered
+
+
 def test_tree_footer_advertises_ctrl_t_edit() -> None:
     """Tier 2: the tree footer surfaces ctrl+t edit (discoverability). ctrl+t,
     not ctrl+e: the focused TextArea binds ctrl+e → cursor_line_end and consumes
