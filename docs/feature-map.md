@@ -257,7 +257,7 @@ mindmap
 
 #### Time-Travel / Rewind (Resume)
 
-User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c) are production; Phase 2d (web surface) is in-progress. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: ADR-0038 (PR #1536, pending merge). Change ledger: #1533.
+User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c/2d) are production. Concurrent-live-fork (parallel live branches) is owner-rejected out-of-scope. Full design: ADR-0038 (PR #1536, pending merge). Change ledger: #1533.
 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
@@ -276,7 +276,7 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2b/2c) 
 | Deterministic CI live-fork gate | `test_live_fork_gate.py` — Phase-2 fork / checkout deterministic gate (#1564) | — |
 | tmux live e2e | P1 undo + P2 fork-switch verified on real terminal (#1533 tui-coder ledger / #1549) | — |
 | Phase 2c: fork-then-edit | New branch on edit via `ctrl+t` | [How-to: rewind](guide/for-users/time-travel.md) |
-| Phase 2d: web surface ⏳ | `/rewind` picker over WebSocket / A2A (in-progress) | — |
+| Phase 2d: web surface | `/rewind` picker over WebSocket / A2A; web edit via `AskUserMessage` UX (original message presented for edit + submit) | [How-to: rewind](guide/for-users/time-travel.md) |
 
 #### Event System (P6)
 | Feature | Description | Documentation |

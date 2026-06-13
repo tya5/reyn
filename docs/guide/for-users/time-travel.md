@@ -56,7 +56,7 @@ user experience applies; the substrate is container-side.
 |---------|--------|
 | `/rewind` with in-turn edit (`ctrl+t`) to create a new fork-and-edit branch | ✅ Phase 2c, landed |
 | Retention window config (`retention: keep_generations: N`) to GC old checkpoints | ⏳ ADR-0038 Stage 1e — designed, not yet wired |
-| `/rewind` picker over WebSocket / A2A web surface | ⏳ Phase 2d, in-progress |
+| `/rewind` picker over WebSocket / A2A web surface; web edit via `AskUserMessage` UX | ✅ Phase 2d, landed (#1574) |
 
 ## See also
 
