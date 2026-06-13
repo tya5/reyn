@@ -95,3 +95,27 @@ def test_empty_tree_safe() -> None:
     assert w.selected_point() is None
     w.move_selection(-1)
     assert "no checkpoints" in w.render().plain
+
+
+def test_tree_render_shows_per_checkpoint_anchor() -> None:
+    """Tier 2: the #1547 per-checkpoint anchor renders as a dim line UNDER its
+    checkpoint row in tree mode (#1576 regression fix) — not only at fork-point
+    branch headers. Single branch (no fork header), so the anchor can only
+    surface via the per-row render; FAILS before the fix."""
+    branches = [{"branch_id": 0, "fork_point_seq": 0, "head_seq": 9, "parent_branch_id": None, "is_active": True}]
+    cps = [{"seq": 5, "ts": "", "kind": "turn", "anchor": "fix the auth bug", "branch_id": 0}]
+    w = RewindMenuWidget.from_tree_rows(build_branch_tree_rows(branches, cps))
+    rendered = w.render().plain
+    assert "fix the auth bug" in rendered          # per-checkpoint anchor, not a header
+    assert "#5" in rendered                          # ...under its checkpoint row
+
+
+def test_tree_render_omits_empty_anchor() -> None:
+    """Tier 2: a checkpoint with no anchor renders no dim anchor line (additive —
+    parity with the old flat render)."""
+    branches = [{"branch_id": 0, "fork_point_seq": 0, "head_seq": 9, "parent_branch_id": None, "is_active": True}]
+    cps = [{"seq": 5, "ts": "", "kind": "turn", "anchor": "", "branch_id": 0}]
+    w = RewindMenuWidget.from_tree_rows(build_branch_tree_rows(branches, cps))
+    lines = [ln for ln in w.render().plain.splitlines() if ln.strip()]
+    # header + #5 row + footer hint = 3 non-empty lines; no extra anchor line.
+    assert sum(1 for ln in lines if "#5" in ln) == 1

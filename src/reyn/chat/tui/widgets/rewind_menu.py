@@ -229,6 +229,16 @@ class RewindMenuWidget(Widget):
                 line.append(f"  {rel}", style=f"dim {_TEXT_DIM}")
             line.append("\n")
             body.append_text(line)
+            # #1547 (restored for tree mode, #1576): per-checkpoint anchor
+            # (truncated last user message) as a dim line under the row, so the
+            # user can tell "which turn was this?" per checkpoint — not only at
+            # fork-point headers. Aligned past the caret + depth indent. Additive:
+            # empty anchor → omitted (parity with the old flat render).
+            anchor = r.get("anchor", "")
+            if anchor:
+                body.append(
+                    f"  {indent}  {anchor}\n", style=f"dim {_TEXT_DIM}",
+                )
         body.append(
             "  ↑/↓ select · Enter checkout · ctrl+t edit · Esc cancel\n",
             style=f"dim {_TEXT_DIM}",
