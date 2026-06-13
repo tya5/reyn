@@ -165,6 +165,7 @@ def _build_handler(
         send_request_callback=_send_request_callback,
         send_response_callback=_send_response_callback,
         on_chain_timeout_fire=_on_chain_timeout_fire,
+        emit_router_cap_exhausted_fn=lambda exc, *, chain_id, **_kw: asyncio.sleep(0),
         get_router_loop_delegations=lambda: _state["delegations"],
         set_router_loop_delegations=lambda v: _state.update({"delegations": v}),
         get_router_loop_agent_replies=lambda: _state["agent_replies"],

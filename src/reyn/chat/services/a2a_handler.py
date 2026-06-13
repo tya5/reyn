@@ -167,6 +167,7 @@ class A2AHandler:
         send_request_callback: "Callable[[str, str, str, int, str], Awaitable[None]]",
         send_response_callback: "Callable[[str, str, str, int, str], Awaitable[None]]",
         on_chain_timeout_fire: "Callable[[str], Awaitable[None]]",
+        emit_router_cap_exhausted_fn: "Callable",  # async (exc, *, chain_id) → None
         # Delegation tracking (mutable list refs owned by ChatSession)
         get_router_loop_delegations: "Callable[[], list[dict] | None]",
         set_router_loop_delegations: "Callable[[list[dict] | None], None]",
@@ -188,6 +189,7 @@ class A2AHandler:
         self._send_request_callback = send_request_callback
         self._send_response_callback = send_response_callback
         self._on_chain_timeout_fire = on_chain_timeout_fire
+        self._emit_router_cap_exhausted_fn = emit_router_cap_exhausted_fn
 
         self._get_router_loop_delegations = get_router_loop_delegations
         self._set_router_loop_delegations = set_router_loop_delegations
@@ -586,16 +588,11 @@ class A2AHandler:
         try:
             await self._run_router_loop(pending.original_request, chain_id)
         except RouterCapExceeded as exc:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=(
-                    f"Router exhausted retry budget ({exc.count}/{exc.cap}) "
-                    f"resolving chain {chain_id}. "
-                    f"Last reason: {exc.last_reason or '(none)'}."
-                ),
-                meta={"chain_id": chain_id},
-            ))
-            # F6/F7 fix: structured marker upstream, not "".
+            # User-facing wrap-up (LLM summary or canned fallback) via shared fn.
+            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
+            # F6/F7 fix: structured marker upstream, not "". Always send regardless
+            # of whether LLM wrap-up succeeded — user-facing and agent-protocol are
+            # orthogonal: origin agent must know the chain ended on cap (#1538).
             await self.send_agent_response(
                 to=pending.origin_agent,
                 response=_no_reply_marker(
@@ -659,36 +656,13 @@ class A2AHandler:
     async def _emit_router_cap_exhausted_user(
         self, exc: Any, *, chain_id: str,
     ) -> None:
-        """User-facing fallback when the per-turn router cap is reached.
+        """User-facing wrap-up when the per-turn router cap is reached.
 
-        Mirrors ChatSession._emit_router_cap_exhausted_user for the
-        agent_response path (user-initiated chain).
+        Delegates to ChatSession._emit_router_cap_exhausted_user (injected at
+        construction) so both the SkillPlanGlue and A2AHandler paths call a
+        single implementation — zero drift by construction (#1538).
         """
-        from reyn.chat.session import _ROUTER_RETRY_EXHAUSTED_MSG  # noqa: PLC0415
-
-        await self._put_outbox(OutboxMessage(
-            kind="error",
-            text=(
-                f"Router exhausted retry budget ({exc.count}/{exc.cap}) "
-                f"for this turn. Last reason: "
-                f"{exc.last_reason or '(none)'}. Falling back to direct reply."
-            ),
-            meta={"chain_id": chain_id},
-        ))
-        fallback = _ROUTER_RETRY_EXHAUSTED_MSG.get(
-            self._output_language,
-            _ROUTER_RETRY_EXHAUSTED_MSG["en"],
-        )
-        await self._put_outbox(OutboxMessage(
-            kind="agent", text=fallback, meta={"chain_id": chain_id},
-        ))
-        self._append_history(
-            "agent", fallback, _now_iso(),
-            {
-                "chain_id": chain_id,
-                "source": "router_cap_exhausted",
-            },
-        )
+        await self._emit_router_cap_exhausted_fn(exc, chain_id=chain_id)
 
 
 __all__ = ["A2AHandler"]

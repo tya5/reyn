@@ -1950,6 +1950,7 @@ class ChatSession:
             send_request_callback=self._a2a_send_request,
             send_response_callback=self._a2a_send_response,
             on_chain_timeout_fire=self._on_chain_timeout_fire,
+            emit_router_cap_exhausted_fn=self._emit_router_cap_exhausted_user,
             get_router_loop_delegations=lambda: self._router_loop_delegations,
             set_router_loop_delegations=lambda v: setattr(self, "_router_loop_delegations", v),
             get_router_loop_agent_replies=lambda: self._router_loop_agent_replies,
