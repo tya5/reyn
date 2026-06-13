@@ -2411,6 +2411,10 @@ class ReynTUIApp(App):
         # caller's: submit (data-flow) dismisses it, Esc here keeps it.
         if self.edit_mode_active:
             self.exit_edit_mode()
+            # #1571: Esc-cancel = full undo of the pre-fill — restore whatever
+            # draft the user had before ctrl+t (the prod call-site for the
+            # data-flow's _restore_pre_edit_input; exit_edit_mode stays pure).
+            self._restore_pre_edit_input()
             return
         # ADR-0038 1f: dismiss the rewind menu before the side panel — the
         # menu is the most-recently-opened overlay, so Esc should close it

@@ -6,8 +6,9 @@ edit-mode binding). Pins:
 - ``_prefill_edit(seq)`` loads the **full** original message (AnchorStore.get_full,
   NOT the truncated display anchor) into the InputBar, so an edited re-run keeps
   the whole message.
-- the tree footer advertises ``ctrl+e edit`` (discoverability; ctrl+e not bare
-  ``e`` — printable keys are swallowed by the focused InputBar).
+- the tree footer advertises ``ctrl+t edit`` (discoverability; ctrl+t not
+  ``ctrl+e`` — the focused TextArea binds ctrl+e → cursor_line_end and consumes
+  it, verified in tmux; ctrl+t is TextArea-unbound so the app binding fires).
 
 run_test real-DOM (mount-path) + a real AgentRegistry/AnchorStore — no mocks.
 The submit-handler (predecessor-turn checkout + fork) lands once sandbox_2's
