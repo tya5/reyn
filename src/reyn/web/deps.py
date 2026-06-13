@@ -375,6 +375,7 @@ def _get_registry():
             project_root=root,
             session_factory=_session_factory,
             state_log=state_log,
+            environment_backend=_scoped.environment_backend,   # #1544: container shadow-git
         )
         registry_ref.append(registry)
         _registry = registry
