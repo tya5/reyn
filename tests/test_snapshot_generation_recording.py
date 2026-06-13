@@ -42,7 +42,7 @@ async def test_cut_generation_records_current_snapshot(tmp_path):
     log, store, journal = _journal(tmp_path)
     await journal.append_inbox(kind="user", payload={"text": "hi"})
     assert store.seqs() == []          # state change alone does not cut
-    journal.cut_generation()           # turn boundary
+    await journal.cut_generation()           # turn boundary
     seq = journal.snapshot.applied_seq
     assert store.seqs() == [seq]
     assert store.load(seq) == journal.snapshot
@@ -68,7 +68,7 @@ async def test_reconstruct_head_equals_live_snapshot(tmp_path):
     """
     log, store, journal = _journal(tmp_path)
     await journal.append_inbox(kind="user", payload={"text": "a"})
-    journal.cut_generation()
+    await journal.cut_generation()
     await journal.append_inbox(kind="user", payload={"text": "b"})  # past the gen
     rebuilt = reconstruct(AGENT, store, log, log.current_seq)
     assert rebuilt == journal.snapshot
@@ -84,5 +84,5 @@ async def test_no_store_is_noop_no_behavior_change(tmp_path):
     log, store, journal = _journal(tmp_path, with_store=False)
     assert store is None
     await journal.append_inbox(kind="user", payload={"text": "x"})
-    journal.cut_generation()  # must not raise
+    await journal.cut_generation()  # must not raise
     assert (tmp_path / "snapshot.json").is_file()

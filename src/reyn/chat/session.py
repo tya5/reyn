@@ -5062,7 +5062,7 @@ class ChatSession:
         await self._loop_driver.run_turn(user_text, chain_id)
         # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
         # user message is this checkpoint's anchor for the rewind-timeline preview.
-        self._journal.cut_generation(anchor=_truncate_anchor(user_text))
+        await self._journal.cut_generation(anchor=_truncate_anchor(user_text))
 
     async def _router_run_with_shrink(self, loop, user_text: str) -> "Any":
         """Forwarding → RouterLoopDriver._run_with_shrink (PR-3)."""

@@ -73,7 +73,7 @@ class SnapshotJournal:
         """
         self._anchor_store = anchor_store
 
-    def cut_generation(self, anchor: str = "") -> None:
+    async def cut_generation(self, anchor: str = "") -> None:
         """Record the current snapshot as a PITR generation (ADR-0038 Stage 1a/1d).
 
         Called at user-facing checkpoint boundaries (turn / plan-step) — a
@@ -92,7 +92,7 @@ class SnapshotJournal:
             return
         self._generation_store.record(self._snapshot)
         if self._workspace_store is not None:
-            self._workspace_store.capture(self._snapshot.applied_seq)
+            await self._workspace_store.capture(self._snapshot.applied_seq)
         if self._anchor_store is not None and anchor:
             self._anchor_store.capture(self._snapshot.applied_seq, anchor)
 
@@ -415,7 +415,7 @@ class SnapshotJournal:
         self._snapshot.applied_seq = seq
         self.save()
         # ADR-0038 Stage 1a: plan-step boundary = a user-facing checkpoint.
-        self.cut_generation()
+        await self.cut_generation()
         return seq
 
     async def record_plan_step_failed(

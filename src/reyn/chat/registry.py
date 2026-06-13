@@ -601,26 +601,27 @@ class AgentRegistry:
                 await session.reset_for_rewind()
                 session.restore_state(snap)
             agents.append(name)
-        self._restore_workspace_active(at_or_below=workspace_at_or_below)
+        await self._restore_workspace_active(at_or_below=workspace_at_or_below)
         return agents
 
-    def _restore_workspace_active(self, *, at_or_below: int) -> None:
+    async def _restore_workspace_active(self, *, at_or_below: int) -> None:
         """Restore the workspace to the nearest ACTIVE generation <= ``at_or_below``.
 
         Honors is_active (mirrors ``reconstruct`` for runtime): gen-tags in an
         abandoned segment ``(N, R)`` are skipped, so a crash-after-rewind-before-
-        any-post-rewind-capture never restores the undone-future workspace.
-        No-op when git / the store / a matching active gen is unavailable.
+        any-post-rewind-capture never restores the undone-future workspace. Git
+        absence degrades at exec time inside the store (#1544 — no git_available()
+        pre-gate, which would test the host PATH meaninglessly in container mode).
         """
         ws = self.workspace_store
-        if ws is None or not ws.git_available():
+        if ws is None:
             return
         active = [
-            s for s in ws.seqs()
+            s for s in await ws.seqs()
             if s <= at_or_below and is_active_seq(self._state_log, s)
         ]
         if active:
-            ws.restore_to_seq(max(active))
+            await ws.restore_to_seq(max(active))
 
     async def recover_rewind_if_needed(self) -> dict | None:
         """Re-materialise both substrates as-of-N after a crash mid-rewind (1d).
@@ -879,26 +880,27 @@ class AgentRegistry:
         # boundary (Q3 piggyback). prune_below(floor) drops only what is below the
         # (retention-clamped) WAL floor — generations >= floor stay reconstructable,
         # so this never drops rewind history within the retention window.
-        self._prune_generations_below(floor)
+        await self._prune_generations_below(floor)
         return stats
 
-    def _prune_generations_below(self, floor: int) -> None:
+    async def _prune_generations_below(self, floor: int) -> None:
         """Drop snapshot + workspace generations below ``floor`` (Stage 1e GC).
 
         ``floor`` is the truncation floor (already retention-clamped), so a
         generation at-or-above it stays reconstructable. Defensive — never raises
-        into the truncation hot path.
+        into the truncation hot path. Workspace GC degrades at exec time inside
+        the store (#1544 — no host-PATH git_available pre-gate).
         """
         try:
             for name in self.list_names():
-                self._store_for(name).prune_below(floor)
+                self._store_for(name).prune_below(floor)   # SnapshotGenerationStore (sync)
             ws = self.workspace_store
-            if ws is not None and ws.git_available():
-                ws.prune_below(floor)
+            if ws is not None:
+                await ws.prune_below(floor)
             # #1547: anchors GC'd on the same boundary as generations/blobs.
             anchors = self.anchor_store
             if anchors is not None:
-                anchors.prune_below(floor)
+                anchors.prune_below(floor)                  # AnchorStore (sync)
         except Exception as e:  # noqa: BLE001 — defensive; never fail caller
             logger.warning("Stage 1e generation GC failed (floor=%d): %s", floor, e)
 
