@@ -29,7 +29,7 @@ if str(_SRC) not in sys.path:
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ConversationView
+from reyn.chat.tui.widgets import ConversationView, InputBar
 from reyn.chat.tui.widgets.sticky_status import StickyStatus
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
@@ -260,3 +260,32 @@ async def test_ctrl_t_gated_off_on_first_turn_checkpoint(tmp_path) -> None:
         assert app.check_action("edit_checkpoint", ()) is False
         # nav bindings stay live regardless of predecessor (only edit is gated)
         assert app.check_action("rewind_prev", ()) is True
+
+
+@pytest.mark.asyncio
+async def test_esc_cancel_restores_pre_edit_draft(tmp_path) -> None:
+    """Tier 2: Esc-cancel from edit-mode restores the pre-edit draft (full undo
+    of the pre-fill) — the binding path (action_voice_cancel priority-3.5) calls
+    _restore_pre_edit_input, the prod call-site for the data-flow's restore. #1571.
+
+    Wire test (verify-live-dispatch): drives the real Esc key, not the restore
+    method directly, so it pins that the binding actually reaches it."""
+    reg = await _registry_with_checkpoints(tmp_path)
+    app = _make_app(reg)
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        bar = app.query_one("#inputbar", InputBar)
+        bar.set_text("my unfinished draft")
+        app._open_rewind_menu()
+        await pilot.pause()
+        seq = int(app._rewind_menu.selected_point()["seq"])
+        reg.anchor_store.capture(seq, "anchor…", full="the loaded checkpoint message")
+        app.action_edit_checkpoint()       # enter edit-mode + prefill (saves draft)
+        await pilot.pause()
+        assert app.edit_mode_active is True
+        assert bar.current_text() == "the loaded checkpoint message"   # prefilled
+        await pilot.press("escape")        # Esc-cancel via the binding path
+        await pilot.pause()
+        assert app.edit_mode_active is False                # edit exited
+        assert app.rewind_menu_open is True                 # picker kept (priority-3.5)
+        assert bar.current_text() == "my unfinished draft"  # draft restored (full undo)

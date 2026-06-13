@@ -405,6 +405,17 @@ class InputBar(Widget):
         """
         return bool(getattr(self.app, "edit_mode_active", False))
 
+    def current_text(self) -> str:
+        """Return the current input buffer text (public read).
+
+        Used to save a pre-edit draft before the /rewind edit pre-fill replaces
+        it (#1533 2c), so Esc-cancel can restore it. ``""`` if no TextArea.
+        """
+        try:
+            return self.query_one("#input", TextArea).text
+        except Exception:
+            return ""
+
     def set_text(self, text: str) -> None:
         """Replace the input buffer with ``text`` + move cursor to end.
 
