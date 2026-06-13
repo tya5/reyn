@@ -72,13 +72,13 @@ async def test_cut_generation_captures_anchor(tmp_path):
     journal.set_anchor_store(anchors)
     journal.snapshot.applied_seq = seq
 
-    journal.cut_generation(anchor="rewind me here")
+    await journal.cut_generation(anchor="rewind me here")
     assert anchors.get(seq) == "rewind me here"
 
     # a later cut with no anchor (e.g. plan-step) leaves the slot empty.
     seq2 = await log.append("inbox_put", target="a", msg_id="n", msg_kind="user", payload={})
     journal.snapshot.applied_seq = seq2
-    journal.cut_generation()                 # no anchor
+    await journal.cut_generation()           # no anchor
     assert anchors.get(seq2) == ""
 
 

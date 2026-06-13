@@ -108,7 +108,7 @@ async def test_live_rewind_reverts_both_substrates_to_as_of_n(tmp_path):
     assert (tmp_path / _WORKSPACE_FILE).read_text(encoding="utf-8") == "v2"
     assert _turn_markers(session.current_snapshot) == ["turn A", "turn B"]
     # the auto-capture actually fired (else the gate would be vacuous).
-    assert seq_a in reg.workspace_store.seqs()
+    assert seq_a in await reg.workspace_store.seqs()
 
     # ── global rewind to the turn-A checkpoint ──
     await reg.rewind_to(seq_a)

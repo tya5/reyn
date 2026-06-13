@@ -210,10 +210,10 @@ async def test_rewind_to_restores_workspace_to_active_gen(tmp_path):
 
     (tmp_path / "code.py").write_text("v1", encoding="utf-8")
     await _put(log, "alpha", "a1")          # seq 1
-    ws.capture(1)
+    await ws.capture(1)
     (tmp_path / "code.py").write_text("v2", encoding="utf-8")
     await _put(log, "alpha", "a2")          # seq 2
-    ws.capture(2)
+    await ws.capture(2)
 
     await reg.rewind_to(1)
 
@@ -237,10 +237,10 @@ async def test_recover_rewind_restores_active_gen_not_abandoned(tmp_path):
 
     (tmp_path / "code.py").write_text("v1", encoding="utf-8")
     await _put(log, "alpha", "a1")          # seq 1  (active, gen-1 = v1)
-    ws.capture(1)
+    await ws.capture(1)
     (tmp_path / "code.py").write_text("v2", encoding="utf-8")
     await _put(log, "alpha", "a2")          # seq 2  (will be abandoned, gen-2 = v2)
-    ws.capture(2)
+    await ws.capture(2)
 
     # reset-record appended (rewind to 1), then crash BEFORE materialisation.
     R = await rewind(log, target_n=1)       # seq 3 — abandons (1, 3) incl. gen-2@2
@@ -284,10 +284,10 @@ async def test_restore_all_triggers_crash_recovery(tmp_path):
 
     (tmp_path / "code.py").write_text("v1", encoding="utf-8")
     await _put(log, "ghost", "g1")          # seq 1 (advances seq; 'ghost' not in list_names)
-    ws.capture(1)
+    await ws.capture(1)
     (tmp_path / "code.py").write_text("v2", encoding="utf-8")
     await _put(log, "ghost", "g2")          # seq 2
-    ws.capture(2)
+    await ws.capture(2)
     await rewind(log, target_n=1)           # seq 3 — abandons (1,3); crash before materialise
     assert (tmp_path / "code.py").read_text(encoding="utf-8") == "v2"   # pre-recovery
 
@@ -363,7 +363,7 @@ async def test_truncate_gcs_generations_below_floor(tmp_path):
         store.record(snap)
     assert store.seqs() == [1, 2, 3]
 
-    reg._prune_generations_below(3)
+    await reg._prune_generations_below(3)
 
     kept = reg._store_for("alpha").seqs()
     assert kept == [3]                                   # 1, 2 GC'd; 3 (>= floor) kept

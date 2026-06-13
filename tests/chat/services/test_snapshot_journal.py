@@ -287,7 +287,7 @@ async def test_cut_generation_captures_both_substrates_at_same_seq(tmp_path):
     journal.set_workspace_store(ws_store)
     journal.snapshot.applied_seq = seq   # simulate the boundary snapshot
 
-    journal.cut_generation()
+    await journal.cut_generation()
 
-    assert seq in gen_store.seqs()       # runtime generation recorded
-    assert seq in ws_store.seqs()        # workspace generation captured at SAME seq
+    assert seq in gen_store.seqs()        # runtime generation recorded (sync gen store)
+    assert seq in await ws_store.seqs()   # workspace generation captured at SAME seq
