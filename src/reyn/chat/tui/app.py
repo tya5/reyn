@@ -2664,6 +2664,32 @@ class ReynTUIApp(App):
                 ),
             ))
 
+    def _prefill_edit(self, seq: int) -> None:
+        """Load checkpoint ``seq``'s FULL user message into the InputBar (2c).
+
+        The data-flow's pre-fill — the co-impl seam ``action_edit_checkpoint``
+        calls via ``getattr``. Fetches the full original message from the
+        AnchorStore (``get_full`` — NOT the truncated display anchor, so the
+        edited re-run preserves the whole message; #1533) and replaces the
+        InputBar buffer. Best-effort: no message / no registry / no store →
+        no-op (the edit-mode flag + banner are set by ``enter_edit_mode``
+        regardless; only the text population is conditional).
+        """
+        registry = self._agent_registry
+        store = getattr(registry, "anchor_store", None) if registry is not None else None
+        if store is None:
+            return
+        try:
+            full = store.get_full(seq)
+        except Exception:
+            return
+        if not full:
+            return
+        try:
+            self.query_one("#inputbar", InputBar).set_text(full)
+        except Exception:
+            pass
+
     def _voice_config(self):
         """Best-effort fetch of the user's voice config block."""
         try:

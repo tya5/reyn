@@ -395,6 +395,23 @@ class InputBar(Widget):
         last_row = len(lines) - 1
         ta.move_cursor((last_row, len(lines[last_row])))
 
+    def set_text(self, text: str) -> None:
+        """Replace the input buffer with ``text`` + move cursor to end.
+
+        Unlike ``append_text`` (voice dictation, which concatenates), this is a
+        full replace — used by the /rewind edit pre-fill (#1533 2c) to load a
+        past turn's full user message for editing, discarding any unrelated
+        draft. Cursor lands at the end so the user edits/Enter-forks directly.
+        """
+        try:
+            ta = self.query_one("#input", TextArea)
+        except Exception:
+            return
+        ta.load_text(text or "")
+        lines = (text or "").split("\n")
+        last_row = len(lines) - 1
+        ta.move_cursor((last_row, len(lines[last_row])))
+
     # ── input events ─────────────────────────────────────────────────────────
 
     @on(TextArea.Changed, "#input")
