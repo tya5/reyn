@@ -37,11 +37,14 @@ from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.anchor_store import AnchorStore
 from reyn.events.retention import RetentionPolicy, compute_retention_floor
 from reyn.events.snapshot_generations import (
+    Branch,
     RewindBeyondRetentionError,
     RewindIntoAbandonedError,
     SnapshotGenerationStore,
     active_rewind_target,
+    branch_ids_for,
     is_active_seq,
+    list_branches,
     reconstruct,
 )
 from reyn.events.snapshot_generations import rewind as _append_rewind_record
@@ -484,13 +487,20 @@ class AgentRegistry:
         finally:
             self._rewind_in_progress = False
 
-    def list_rewind_points(self) -> list[dict]:
-        """Enumerate the active rewind targets for the time-travel UI (1f).
+    def list_rewind_points(self, *, include_abandoned: bool = False) -> list[dict]:
+        """Enumerate rewind targets for the time-travel UI (1f / Phase-2 fork).
 
-        Returns one row per snapshot-generation boundary on the **active**
-        branch, ascending by seq::
+        Returns one row per snapshot-generation boundary, ascending by seq::
 
-            [{"seq": int, "ts": str, "kind": str}, ...]
+            [{"seq": int, "ts": str, "kind": str, "anchor": str, "branch_id": int}, ...]
+
+        Default (``include_abandoned=False``) keeps only **active-branch** boundaries
+        (Phase-1 1f timeline). Phase-2 fork UX passes ``include_abandoned=True`` to
+        get every branch's boundaries (the tree), each tagged with its
+        ``branch_id`` (#1533 2a→2b). **`branch_id` is the lineage-correct membership
+        source** — group rows by it (a branch's `[fork_point, head]` *range*
+        physically contains its abandoned children's seqs, so range-intersection
+        over-includes; the substrate segment-map resolves true ownership).
 
         ``seq`` is the WAL boundary the user can ``rewind_to``. ``ts`` and
         ``kind`` are read from the WAL entry at that seq (the EventStore /
@@ -513,12 +523,12 @@ class AgentRegistry:
         if self._state_log is None:
             return []
 
-        # Union of generation boundary seqs across every known agent, keeping
-        # only seqs on the active branch.
+        # Union of generation boundary seqs across every known agent. Default =
+        # active branch only (1f); include_abandoned = all branches (Phase-2 tree).
         seqs: set[int] = set()
         for name in self.list_names():
             for s in self._store_for(name).seqs():
-                if is_active_seq(self._state_log, s):
+                if include_abandoned or is_active_seq(self._state_log, s):
                     seqs.add(s)
         if not seqs:
             return []
@@ -532,6 +542,8 @@ class AgentRegistry:
                 wal_at[s] = entry
 
         anchors = self.anchor_store
+        # #1533 2a→2b: lineage-correct branch membership per checkpoint seq.
+        branch_of = branch_ids_for(self._state_log, sorted(seqs))
         rows: list[dict] = []
         for s in sorted(seqs):
             entry = wal_at.get(s, {})
@@ -543,8 +555,23 @@ class AgentRegistry:
                 # existing consumers ignore it; the timeline widget renders it as
                 # a 2nd dim line. Keyed by the same WAL seq → trivial lookup.
                 "anchor": anchors.get(s) if anchors is not None else "",
+                # #1533 2a→2b: the branch this checkpoint belongs to (group by this).
+                "branch_id": branch_of.get(s, 0),
             })
         return rows
+
+    def list_branches(self) -> "list[Branch]":
+        """The derived branch tree for the fork UX (#1533 Phase-2 2a / D8).
+
+        ``[Branch(branch_id, fork_point_seq, head_seq, parent_branch_id,
+        is_active)]`` derived from the reset-record chain (no stored registry).
+        Tree topology (nesting/active); per-branch checkpoint *membership* comes
+        from ``list_rewind_points(include_abandoned=True)`` rows' ``branch_id``.
+        Empty when there is no WAL.
+        """
+        if self._state_log is None:
+            return []
+        return list_branches(self._state_log)
 
     @property
     def workspace_store(self) -> WorkspaceVersionStore | None:
