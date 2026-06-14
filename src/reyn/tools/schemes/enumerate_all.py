@@ -44,12 +44,14 @@ class EnumerateAllScheme:
 
     name = "enumerate-all"
 
-    def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
+    async def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
         # Self-contained presentation (e2e-agreed seam, #1593): compose the flat
         # tools= from the router's building-block ops — the prior-shape base tools
         # + every catalog action flat (no universal wrappers / no discovery). The
         # router holds host context + catalog, so the scheme stays P7-clean.
-        flat_tools = list(ops.base_tools(available, layer_ctx)) + list(ops.catalog_entries())
+        # catalog_entries is async (the live-catalog enumeration awaits the
+        # router caller-state / rag manifest); base_tools stays sync.
+        flat_tools = list(ops.base_tools(available, layer_ctx)) + list(await ops.catalog_entries())
         # Prior-shape (no wrapper-chain) SP — the existing gate yields the minimal
         # tool-use instructions enumerate-all wants; no build_system_prompt change
         # (the fragment-extraction the earlier plan floated is unnecessary).

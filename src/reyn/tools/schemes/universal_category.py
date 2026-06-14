@@ -39,8 +39,11 @@ class UniversalCategoryScheme:
 
     name = "universal-category"
 
-    def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
+    async def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
         # ops.present → today's build_tools (or the phase op-catalog) + SP params.
+        # #1593 PR-2 seam: build_presentation is async (enumerate-all/PR-4 do I/O),
+        # but universal's body is unchanged — ops.present stays sync and is NOT
+        # awaited, so the tools=/sp_params bytes are byte-identical to PR-1.
         return ops.present(available, layer_ctx)
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:

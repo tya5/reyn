@@ -44,7 +44,7 @@ class _FakeOps:
     def base_tools(self, available, layer_ctx) -> list[dict]:
         return [{"function": {"name": "file__read"}}]
 
-    def catalog_entries(self) -> list[dict]:
+    async def catalog_entries(self) -> list[dict]:
         return [{"function": {"name": "git__commit"}}, {"function": {"name": "web__fetch"}}]
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
@@ -65,11 +65,13 @@ def test_enumerate_all_conforms_to_protocol() -> None:
     assert s.name == "enumerate-all"
 
 
-def test_build_presentation_is_base_plus_catalog_flat() -> None:
+@pytest.mark.asyncio
+async def test_build_presentation_is_base_plus_catalog_flat() -> None:
     """Tier 2: presentation = base_tools + catalog_entries, flat (no universal
-    wrappers / no discovery). The scheme composes the router building blocks."""
+    wrappers / no discovery). The scheme composes the router building blocks
+    (catalog_entries awaited — #1593 PR-2 async seam)."""
     s = EnumerateAllScheme()
-    pres = s.build_presentation(
+    pres = await s.build_presentation(
         {"skills_for_tools": [], "hot_list_aliases": []}, {"search_visible": False}, _FakeOps(),
     )
     names = [t["function"]["name"] for t in pres.llm_tools_payload]
@@ -77,11 +79,12 @@ def test_build_presentation_is_base_plus_catalog_flat() -> None:
     assert "WRAPPER" not in names                                   # NOT via ops.present
 
 
-def test_build_presentation_sp_params_disable_wrappers() -> None:
+@pytest.mark.asyncio
+async def test_build_presentation_sp_params_disable_wrappers() -> None:
     """Tier 2: SP params drive the prior-shape (no wrapper-chain) minimal SP —
     no build_system_prompt surgery (the existing gate yields enumerate-all's SP)."""
     s = EnumerateAllScheme()
-    pres = s.build_presentation(
+    pres = await s.build_presentation(
         {"skills_for_tools": [], "hot_list_aliases": []}, {"search_visible": True}, _FakeOps(),
     )
     assert pres.sp_params["universal_wrappers_enabled"] is False
