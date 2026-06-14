@@ -1644,24 +1644,23 @@ class RouterLoop:
         # the window is ample (then compact stays hidden + the SP header is
         # omitted); non-None when filling (compact tool + header appear together).
         _ctx_signal = _render_context_size_signal_for_host(host)
-        if _phase_op_catalog is not None:
-            # #1092 PR-A (FD1): phase op catalog REPLACES chat-discovery. The
-            # chat-discovery setup above ran on the phase host's stubs
-            # (empty skills/agents/mcp, universal off) — harmless; its build_tools
-            # result is discarded here in favor of the op catalog.
-            tools = list(_phase_op_catalog)
-        else:
-            tools = build_tools(
-                skills_for_tools,
-                host.list_available_agents(),
-                file_permissions=host.get_file_permissions(),
-                mcp_servers=host.get_mcp_servers(),
-                web_fetch_allowed=host.get_web_fetch_allowed(),
-                universal_wrappers_enabled=_univ_enabled,
-                search_actions_visible=_search_visible,
-                hot_list_aliases=_hot_list_aliases,
-                compact_visible=_ctx_signal is not None,
-            )
+        # #1593: build the presentation via the active scheme (tools= payload + SP
+        # params). Universal delegates to the router's `present` op → byte-identical
+        # (the phase op-catalog REPLACES build_tools for the phase layer; chat/step
+        # use build_tools with the catalog wrappers). PR-2/3 schemes shape tools=
+        # differently. The OS still projects _catalog from the payload + builds the
+        # (monolithic) SP from sp_params below.
+        _pres = self._scheme.build_presentation(
+            {"skills_for_tools": skills_for_tools, "hot_list_aliases": _hot_list_aliases},
+            {
+                "phase_op_catalog": _phase_op_catalog,
+                "univ_enabled": _univ_enabled,
+                "search_visible": _search_visible,
+                "ctx_signal_present": _ctx_signal is not None,
+            },
+            ops=self,
+        )
+        tools = _pres.llm_tools_payload
         # #187 STEP 1c (owner principle): actions are enumerated ONLY by
         # list_actions, and their schemas ONLY by describe_action. The former
         # ARS block (B37/B38) inlined the whole session action catalog into
@@ -1701,7 +1700,9 @@ class RouterLoop:
                 # Hosts without get_universal_wrappers_enabled (= FakeRouterHost
                 # in LLMReplay tests) default to False so SP byte content stays
                 # unchanged for cached fixtures.
-                universal_wrappers_enabled=_univ_enabled,
+                # #1593: the scheme owns the SP-shaping params (PR-1 parameterizes
+                # the monolithic build_system_prompt; identical values to _univ_enabled).
+                universal_wrappers_enabled=_pres.sp_params["universal_wrappers_enabled"],
                 cwd=_cwd_str,
                 # FP-0034 §D14: propagate the search_actions D14 visibility gate
                 # into the SP so the wrapper enumeration matches tools=.
@@ -1713,7 +1714,7 @@ class RouterLoop:
                 # truth derived from is_search_available() (= embedding_class
                 # configured + index ready); False there means the SP and tools=
                 # both exclude search_actions, eliminating the N5 hallucination.
-                search_actions_enabled=_search_visible if _univ_enabled else True,
+                search_actions_enabled=_pres.sp_params["search_actions_enabled"],
                 # #272/#1128: OS-injected context-size signal (header), computed
                 # once above. Rendered LAST in the SP (most volatile section →
                 # preserves the cached prefix above it); None when ample.
@@ -2993,6 +2994,39 @@ class RouterLoop:
     # UniversalCategoryScheme delegates here, so the seam is byte-identical (no
     # universal-category logic is physically relocated). PR-2/3 schemes implement
     # their own logic instead of delegating.
+
+    def present(self, available, layer_ctx):
+        """SchemeOps.present: today's universal-category presentation — the phase
+        op-catalog (when the phase layer supplies one) OR ``build_tools`` with the
+        catalog wrappers, plus the SP-shaping params (``universal_wrappers_enabled`` /
+        ``search_actions_enabled``) the monolithic ``build_system_prompt`` consumes
+        (PR-1 parameterizes the SP; PR-2 extracts a scheme-owned fragment)."""
+        from reyn.tools.scheme import Presentation
+
+        phase_op_catalog = layer_ctx.get("phase_op_catalog")
+        univ = layer_ctx["univ_enabled"]
+        search_visible = layer_ctx["search_visible"]
+        if phase_op_catalog is not None:
+            tools = list(phase_op_catalog)
+        else:
+            tools = build_tools(
+                available["skills_for_tools"],
+                self.host.list_available_agents(),
+                file_permissions=self.host.get_file_permissions(),
+                mcp_servers=self.host.get_mcp_servers(),
+                web_fetch_allowed=self.host.get_web_fetch_allowed(),
+                universal_wrappers_enabled=univ,
+                search_actions_visible=search_visible,
+                hot_list_aliases=available["hot_list_aliases"],
+                compact_visible=layer_ctx["ctx_signal_present"],
+            )
+        return Presentation(
+            llm_tools_payload=tools,
+            sp_params={
+                "universal_wrappers_enabled": univ,
+                "search_actions_enabled": search_visible if univ else True,
+            },
+        )
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         """SchemeOps.resolve: dedupe + #229 salvage → actions carrying the original
