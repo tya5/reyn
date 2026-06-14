@@ -16,9 +16,19 @@ so the OS can exclude-gate **pre-dispatch** (preserving the #1406/#187 order);
 basic tool_result messages (the op-specific plan / invoke_skill handling stays in
 the OS loop, around it). Universal emits only ``Execute`` — never ``RePresent`` /
 ``CodeBlock`` — so the loop's other tag paths are unreached in PR-1.
+
+#1627 Stage 1: ``build_presentation`` now owns its tool-use SP via the slot-map.
+It calls ``build_universal_tool_use_slots`` with the 5 inputs derived from
+``layer_ctx`` (the OS-supplied raw FACTS), and attaches the resulting slot-map to
+the returned ``Presentation`` as ``tool_use_sp``. This relocates the tier→discovery-
+mandate POLICY out of the OS and into the scheme layer (CHAR-IDENTICAL: Stage 0
+proved the two paths produce the same SP bytes).
 """
 from __future__ import annotations
 
+import dataclasses
+
+from reyn.chat.router_system_prompt import build_universal_tool_use_slots
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -29,6 +39,7 @@ from reyn.tools.scheme import (
     SchemeOps,
     register_scheme,
 )
+from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
 
 
 class UniversalCategoryScheme:
@@ -46,7 +57,34 @@ class UniversalCategoryScheme:
         # #1593 PR-2 seam: build_presentation is async (enumerate-all/PR-4 do I/O),
         # but universal's body is unchanged — ops.present stays sync and is NOT
         # awaited, so the tools=/sp_params bytes are byte-identical to PR-1.
-        return ops.present(available, layer_ctx)
+        pres = ops.present(available, layer_ctx)
+
+        # #1627 Stage 1: own the tool-use SP via the slot-map.
+        # Derive the 5 builder inputs from the raw FACTS in layer_ctx (the OS
+        # supplies facts; the scheme computes policy). The EXACT formulas below
+        # must match what the OS computed for the None-path (router_loop.py):
+        #
+        #   universal_wrappers_enabled = layer_ctx["univ_enabled"]
+        #   search_actions_enabled     = sv if univ else True   ← CRITICAL subtlety
+        #   discovery_mandate          = tier_wants_discovery_mandate(router_model)
+        #   has_hot_list_aliases       = bool(available["hot_list_aliases"])
+        #   non_interactive            = layer_ctx["non_interactive"]
+        univ: bool = bool(layer_ctx.get("univ_enabled", False))
+        sv: bool = bool(layer_ctx.get("search_visible", True))
+        sa: bool = sv if univ else True  # mirrors ops.present's sp_params formula
+        dm: bool = tier_wants_discovery_mandate(layer_ctx.get("router_model"))
+        hl: bool = bool((available or {}).get("hot_list_aliases"))
+        ni: bool = bool(layer_ctx.get("non_interactive", False))
+
+        slots = build_universal_tool_use_slots(
+            universal_wrappers_enabled=univ,
+            search_actions_enabled=sa,
+            discovery_mandate=dm,
+            has_hot_list_aliases=hl,
+            non_interactive=ni,
+        )
+        # Keep sp_params AS-IS (Stage 4 removes it; harmless now).
+        return dataclasses.replace(pres, tool_use_sp=slots)
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
         # ops.resolve = dedupe + salvage/unwrap → actions with effective names; the

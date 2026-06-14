@@ -12,47 +12,6 @@ from collections import defaultdict
 from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING
 
 # ---------------------------------------------------------------------------
-# #187 Stage C: mechanical discovery mandate (weak-tier list_actions-first)
-# ---------------------------------------------------------------------------
-# Weak models under-explore the catalog: they satisfice (refuse / give up /
-# act on the visible hot-list) instead of calling list_actions to discover the
-# action they need. The fix composes INTO the existing V18 intent taxonomy
-# rather than bolting on a standalone unconditional mandate: branch-3 (task →
-# single-target) already routes "obvious/named action → invoke directly;
-# OTHERWISE <discovery chain>", but that OTHERWISE is a SOFT routing hint —
-# the ~33% under-fire root. Stage C strengthens ONLY that OTHERWISE branch into
-# a mechanical MUST, reinforced 3x (branch-3 / §D9 hot-list / Behaviour), each
-# carrying a "NON-obvious / unknown / not-named action" scope qualifier.
-#
-# Why scoped, not unconditional (owner decision + B11-R3 evidence): a bare
-# "list_actions FIRST always" reverses B11-R3 (named-skill → invoke directly,
-# skip the list-hop) whose mandatory hop made weak models fall through to
-# clarification = the exact non-invoke attractor #187 fights. The obvious/named
-# clause (branch-3) and the Conversation (branch-1) / Question (branch-2)
-# branches are UNTOUCHED, so chitchat / named-skill / direct routing are
-# preserved by construction. The mechanical lever (MUST) + 3x reinforcement
-# lifts list_actions-first ~25-55% → ~75-85% for genuine unnamed-discovery.
-#
-# VERBATIM wording — do NOT paraphrase (fire-rate is wording-sensitive). The
-# explicit-action-enumeration "before reading, writing, or editing" is the
-# verified lever (25-55%); the generic "before acting / any other tool" detunes
-# to 0-10%. Gated to weak tiers; lives in the static cacheable prefix.
-
-# Tier-gate: only tiers empirically shown to under-explore receive the mandate.
-# ``light`` is the default intent tier (flash-lite-backed). Unknown/future and
-# strong tiers stay OFF — strong-flexibility-preserving default (owner knob:
-# don't weak-specialise away strong models' latitude).
-_WEAK_TIERS = frozenset({"light"})
-
-
-def tier_wants_discovery_mandate(router_model: str | None) -> bool:
-    """True if the router tier should receive the mechanical list_actions
-    discovery mandate (#187 Stage C). Only verified weak tier(s) opt in;
-    unknown / strong tiers stay OFF (strong-flexibility-preserving default)."""
-    return router_model in _WEAK_TIERS
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -65,7 +24,7 @@ def build_universal_tool_use_slots(
     has_hot_list_aliases: bool,
     non_interactive: bool = False,
 ) -> "dict[str, str]":
-    """Build the three positional tool-use SP slots for the universal-category path.
+    """Build the four positional tool-use SP slots for the universal-category path.
 
     Called only when ``tool_use_sp`` is None — i.e. the OS owns the full tool-use
     SP construction (universal / enumerate / retrieval today).  Returns a dict with
@@ -79,6 +38,8 @@ def build_universal_tool_use_slots(
                                     and ``## Behaviour``).
       - ``slot_in_behaviour``     — R3: never-invent / search guidance + ROUTING RULE
                                     (inside ``## Behaviour``, after the errors line).
+      - ``slot_in_environment``   — the cwd-idiom file-discovery HOW clause injected
+                                    inside ``## Environment``.
 
     Each slot value equals ``"\\n".join(<elements>)`` where ``<elements>`` is the
     exact list that the corresponding inline region would have appended to ``parts``
@@ -264,6 +225,16 @@ def build_universal_tool_use_slots(
         "",
     ])
     slots["slot_in_behaviour"] = "\n".join(_r3)
+
+    # ── R4: cwd-idiom file-discovery HOW clause (slot_in_environment) ────────
+    # Scheme-owned HOW tail for the ## Environment cwd block.  The OS keeps only
+    # the generic neutral default; universal schemes deliver the list_actions
+    # idiom here so the OS stays P7-clean (no scheme-specific strings).
+    slots["slot_in_environment"] = (
+        "discover the contents with `list_actions(category=['file'])` →"
+        " `invoke_action(file__list, ...)` → `invoke_action(file__read, ...)`"
+        " within the cwd's read scope."
+    )
 
     return slots
 
@@ -458,30 +429,23 @@ def build_system_prompt(
                 parts.append(f"git repo: {'yes' if environment_info['is_git_repo'] else 'no'}")
         parts.append("")
         if cwd:
-            # #1618 root-3: the cwd semantic mapping ("this repo" → the project at cwd)
-            # is OS-level (kept for every scheme), but its HOW clause ("discover with
-            # list_actions → invoke_action") is universal-wrapper idiom — the same
-            # tool-use-specific content the discovery-mandate (L453) gates. A
-            # replace-capable scheme owns its own file-discovery idiom (CodeAct's
-            # tool() proxy), so render the universal HOW only when ``tool_use_sp`` is
-            # None (byte-identical), and a scheme-neutral variant otherwise.
-            if tool_use_sp is None:
-                parts.append(
-                    "When the user refers to \"this repo\", \"this code\", \"the codebase\","
-                    " \"this project\", \"ここ\", or any other unqualified reference to"
-                    " surrounding source, interpret it as the project at the cwd above."
-                    " Do NOT ask for a repository URL or path — discover the contents"
-                    " with `list_actions(category=['file'])` → `invoke_action(file__list, ...)`"
-                    " → `invoke_action(file__read, ...)` within the cwd's read scope."
-                )
-            else:
-                parts.append(
-                    "When the user refers to \"this repo\", \"this code\", \"the codebase\","
-                    " \"this project\", \"ここ\", or any other unqualified reference to"
-                    " surrounding source, interpret it as the project at the cwd above."
-                    " Do NOT ask for a repository URL or path — read the contents using"
-                    " your available actions within the cwd's read scope."
-                )
+            # #1627 Stage 1: the cwd semantic mapping ("this repo" → the project at
+            # cwd) is OS-level and kept for every scheme.  The HOW clause (how to
+            # discover file contents) is scheme-owned — delivered via
+            # ``slot_in_environment`` (set unconditionally by
+            # build_universal_tool_use_slots, absent from the CodeAct str-shim).
+            # OS keeps only the generic neutral default; the slot overrides it for
+            # universal schemes (P7-clean: no isinstance / shape-check on slot-map).
+            _cwd_how = _slots.get(
+                "slot_in_environment",
+                "read the contents using your available actions within the cwd's read scope.",
+            )
+            parts.append(
+                "When the user refers to \"this repo\", \"this code\", \"the codebase\","
+                " \"this project\", \"ここ\", or any other unqualified reference to"
+                " surrounding source, interpret it as the project at the cwd above."
+                " Do NOT ask for a repository URL or path — " + _cwd_how
+            )
             parts.append("")
 
     # ── 3.5. Universal catalog + discovery mandate (R2) ─────────────────────

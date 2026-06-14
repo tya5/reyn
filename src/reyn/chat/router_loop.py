@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from reyn.chat.router_system_prompt import (
     build_system_prompt,
-    tier_wants_discovery_mandate,
 )
 from reyn.chat.router_tools import (
     _DESCRIBE_SKILL_STRIP_FIELDS,
@@ -31,6 +30,7 @@ from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 from reyn.services.turn_budget import wrap_up_system_prompt
+from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
 
 if TYPE_CHECKING:
     from reyn.config import SkillSearchConfig
@@ -1697,6 +1697,11 @@ class RouterLoop:
             "univ_enabled": _univ_enabled,
             "search_visible": _search_visible,
             "ctx_signal_present": _ctx_signal is not None,
+            # #1627 Stage 1: raw FACTS the scheme turns into policy. The scheme
+            # (not the OS) derives discovery_mandate + non_interactive idiom from
+            # these. OS does NOT pre-compute discovery_mandate here (P7-clean).
+            "router_model": self.router_model,
+            "non_interactive": self._non_interactive,
         }
         self._scheme_available = _scheme_available
         self._scheme_layer_ctx = _scheme_layer_ctx
