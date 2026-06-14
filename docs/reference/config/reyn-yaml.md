@@ -290,7 +290,7 @@ time_travel:
 
 ## `tool_use` block
 
-Per-layer tool-use scheme selector (#1593). Each layer picks a registered `ToolUseScheme` by name — generalizing the binary `universal_wrappers_enabled` toggle into a pluggable, per-layer mechanism.
+Per-layer tool-use scheme selector. Each layer picks a registered `ToolUseScheme` by name — a pluggable, per-layer mechanism for how tools are presented to and dispatched from the LLM.
 
 ```yaml
 tool_use:
@@ -306,6 +306,8 @@ tool_use:
 | `phase` | string | `universal-category` | Tool-use scheme for the OS phase layer. |
 
 Defaults preserve today's behaviour (all `universal-category`). A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping a layer's scheme changes the whole tool-use loop for that layer without OS changes.
+
+For what each scheme does and **when to choose which** (`enumerate-all` / `retrieval` / `CodeAct` vs the default), see [Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.md).
 
 ## `phase` block
 

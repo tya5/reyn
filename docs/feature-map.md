@@ -86,6 +86,13 @@ mindmap
       compact
       skill_resolve
       judge_output
+    🔧 Tool-Use Schemes
+      Pluggable per-layer
+      universal-category default
+      enumerate-all
+      retrieval
+      CodeAct
+      Per-call gate unchanged
     📝 DSL
       skill.md
       phase.md
@@ -347,6 +354,23 @@ The op kinds below mirror `OP_KIND_MODEL_MAP` in `op_runtime/registry.py` (20 ki
 | `judge_output` | LLM scorer with rubric + threshold + `on_fail` policy |
 
 > The `embed` and `index_write` ops were removed in #1303 Stage I — embedding and index-writing now run provider-direct inside `reyn.safe.embed_index` and the `recall` op, not as standalone ops. See [Control IR](reference/runtime/control-ir.md).
+
+---
+
+### Tool-Use Schemes
+
+How tools are presented to the LLM and how its calls are dispatched is a **pluggable scheme**, selectable per layer (`tool_use: {chat, step, phase}` in `reyn.yaml`). The default is `universal-category` — identical to the shipped behaviour — so this is opt-in. All schemes route every tool call through the same OS gate (exclude → permission → dispatch), so the security and validation pipeline is unchanged whichever scheme is active.
+
+| Feature | Description | Documentation |
+|---------|-------------|---------------|
+| Pluggable scheme protocol | `ToolUseScheme` seam — tool presentation + interpretation + dispatch + feedback behind one interface; schemes are swapped by config, no OS change | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
+| Per-layer selection | Independent scheme per layer — chat / plan-step / OS-phase — via `tool_use` config | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) · [`reyn.yaml` § tool_use](reference/config/reyn-yaml.md#tool_use-block) |
+| `universal-category` (default) | The universal action catalog — 4 wrappers over every category, qualified-name discover + dispatch | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) · [Universal catalog](concepts/tools-integrations/universal-catalog.md) |
+| `enumerate-all` | Flat-native-JSON baseline — every usable tool presented flatly, dispatched by name. Best for small tool sets where determinism matters | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
+| `retrieval` | RAG-over-tools — present a search tool, the LLM searches, the OS re-presents matched tools as callable. Best for very large tool sets where full-catalog token cost is prohibitive | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
+| `CodeAct` | Code-as-tools — the LLM writes a Python snippet whose in-code `tool()` calls run in a sandboxed subprocess under the same permission gate as a JSON call. Strongest for weak models | [Tool-Use Schemes](concepts/tools-integrations/tool-use-schemes.md) |
+
+> **Differentiation vs general agents:** the tool-use strategy is a swappable scheme — `enumerate-all` / `retrieval` / `CodeAct` / the default catalog — chosen per layer by config, *without* changing the OS. Because every scheme dispatches through the same exclude → permission → `dispatch_tool` gate (P4/P5), swapping the LLM-facing tool surface never weakens the security or validation pipeline. The presentation is data; the gate is constant.
 
 ---
 
