@@ -27,7 +27,13 @@ import re
 from typing import Any
 
 from reyn.kernel.codeact_runner import CodeActRunner
-from reyn.tools.scheme import CodeBlock, ExecContext, ExecutionResult, Presentation
+from reyn.tools.scheme import (
+    CodeBlock,
+    ExecContext,
+    ExecutionResult,
+    Presentation,
+    register_scheme,
+)
 
 # A fenced ```python ... ``` (or bare ``` ... ```) block — how the CodeAct LLM
 # emits its snippet in the message content.
@@ -175,3 +181,7 @@ class CodeActScheme:
             {"role": "user", "content": _format_codeact_observation(out)}
             for out in exec_result.tool_results
         ]
+
+
+# #1608: self-register on import (P7 — the OS resolve no longer names this class).
+register_scheme(CodeActScheme())

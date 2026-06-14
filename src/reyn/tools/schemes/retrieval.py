@@ -31,6 +31,7 @@ from reyn.tools.scheme import (
     Presentation,
     RePresent,
     SchemeOps,
+    register_scheme,
 )
 
 _SEARCH_TOOL_NAME = "search_actions"
@@ -168,3 +169,6 @@ class RetrievalScheme:
 
 
 __all__ = ["RetrievalScheme"]
+
+# #1608: self-register on import (P7 — the OS resolve no longer names this class).
+register_scheme(RetrievalScheme())

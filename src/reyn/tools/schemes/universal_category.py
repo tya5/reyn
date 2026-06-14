@@ -27,6 +27,7 @@ from reyn.tools.scheme import (
     PlainText,
     Presentation,
     SchemeOps,
+    register_scheme,
 )
 
 
@@ -75,3 +76,8 @@ class UniversalCategoryScheme:
 
 
 __all__ = ["UniversalCategoryScheme"]
+
+# #1608: self-register on import (the scheme bundle self-describes; the OS resolve
+# no longer names built-in classes — P7). ``schemes/__init__`` imports all built-in
+# modules so importing the package (or any submodule) registers the full set.
+register_scheme(UniversalCategoryScheme())
