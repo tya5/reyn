@@ -42,6 +42,7 @@ def _resolve_tool_use_scheme(name: "str | None" = None):
     defaulting to universal-category — PR-1 byte-identical. Per-layer config
     (``tool_use:{chat,step,phase}``) passes the selected name here."""
     from reyn.tools.scheme import DEFAULT_SCHEME_NAME, get_scheme, register_scheme
+    from reyn.tools.schemes.codeact import CodeActScheme
     from reyn.tools.schemes.enumerate_all import EnumerateAllScheme
     from reyn.tools.schemes.retrieval import RetrievalScheme
     from reyn.tools.schemes.universal_category import UniversalCategoryScheme
@@ -52,7 +53,12 @@ def _resolve_tool_use_scheme(name: "str | None" = None):
     # NOT being registered yet — so anything that registers universal first (a
     # direct register_scheme caller, a test) would leave enumerate-all absent and
     # silently fall back to default. Per-scheme guard avoids that sibling gap.
-    for _builtin in (UniversalCategoryScheme(), EnumerateAllScheme(), RetrievalScheme()):  # #1593 PR-2/4
+    for _builtin in (
+        UniversalCategoryScheme(),
+        EnumerateAllScheme(),  # #1593 PR-2
+        RetrievalScheme(),  # #1593 PR-4
+        CodeActScheme(),  # #1593 PR-3 — selectable via tool_use=codeact (not default)
+    ):
         if get_scheme(_builtin.name) is None:
             register_scheme(_builtin)
     # Unknown / unconfigured name → default (universal-category) — byte-identical.

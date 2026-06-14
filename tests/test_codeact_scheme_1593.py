@@ -156,3 +156,18 @@ async def test_build_presentation_omits_excluded_actions() -> None:
     )
     assert "file__read" in pres.sp_fragment   # kept
     assert "web__fetch" not in pres.sp_fragment  # excluded → omitted
+
+
+# ── S4: registration + selectability ─────────────────────────────────────────
+
+
+def test_codeact_scheme_registered_and_selectable() -> None:
+    """Tier 2: CodeActScheme is registered under 'codeact' and resolves by name
+    (selectable via tool_use=codeact); universal stays the default (not codeact)."""
+    from reyn.chat.router_loop import _resolve_tool_use_scheme
+
+    selected = _resolve_tool_use_scheme("codeact")
+    assert selected.name == "codeact"
+    assert isinstance(selected, CodeActScheme)
+    # Default is unchanged (universal-category), not codeact.
+    assert _resolve_tool_use_scheme(None).name == "universal-category"
