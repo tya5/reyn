@@ -348,14 +348,30 @@ def build_system_prompt(
                 parts.append(f"git repo: {'yes' if environment_info['is_git_repo'] else 'no'}")
         parts.append("")
         if cwd:
-            parts.append(
-                "When the user refers to \"this repo\", \"this code\", \"the codebase\","
-                " \"this project\", \"ここ\", or any other unqualified reference to"
-                " surrounding source, interpret it as the project at the cwd above."
-                " Do NOT ask for a repository URL or path — discover the contents"
-                " with `list_actions(category=['file'])` → `invoke_action(file__list, ...)`"
-                " → `invoke_action(file__read, ...)` within the cwd's read scope."
-            )
+            # #1618 root-3: the cwd semantic mapping ("this repo" → the project at cwd)
+            # is OS-level (kept for every scheme), but its HOW clause ("discover with
+            # list_actions → invoke_action") is universal-wrapper idiom — the same
+            # tool-use-specific content the discovery-mandate (L453) gates. A
+            # replace-capable scheme owns its own file-discovery idiom (CodeAct's
+            # tool() proxy), so render the universal HOW only when ``tool_use_sp`` is
+            # None (byte-identical), and a scheme-neutral variant otherwise.
+            if tool_use_sp is None:
+                parts.append(
+                    "When the user refers to \"this repo\", \"this code\", \"the codebase\","
+                    " \"this project\", \"ここ\", or any other unqualified reference to"
+                    " surrounding source, interpret it as the project at the cwd above."
+                    " Do NOT ask for a repository URL or path — discover the contents"
+                    " with `list_actions(category=['file'])` → `invoke_action(file__list, ...)`"
+                    " → `invoke_action(file__read, ...)` within the cwd's read scope."
+                )
+            else:
+                parts.append(
+                    "When the user refers to \"this repo\", \"this code\", \"the codebase\","
+                    " \"this project\", \"ここ\", or any other unqualified reference to"
+                    " surrounding source, interpret it as the project at the cwd above."
+                    " Do NOT ask for a repository URL or path — read the contents using"
+                    " your available actions within the cwd's read scope."
+                )
             parts.append("")
 
     # ── 3.5. Universal catalog (FP-0034 §D9, opt-in via action_retrieval) ────
