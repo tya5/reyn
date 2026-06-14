@@ -1683,7 +1683,14 @@ class RouterLoop:
         # accumulated `presented` set. Stashed on self (RouterLoop is per-run state,
         # like self._catalog) — NOT the scheme (a registered singleton).
         _scheme_available = {
-            "skills_for_tools": skills_for_tools, "hot_list_aliases": _hot_list_aliases,
+            "skills_for_tools": skills_for_tools,
+            "hot_list_aliases": _hot_list_aliases,
+            # #1593 PR-3: the session exclude-set so a scheme presenting actions
+            # outside tools= (CodeAct's code-API) omits excluded ones — presentation
+            # parity with the JSON path (the OS applies _apply_tool_exclusions to
+            # tools= below; sp_fragment schemes self-omit). Stashed too, so a
+            # RePresent re-present keeps it.
+            "exclude_tools": self._exclude_tools,
         }
         _scheme_layer_ctx = {
             "phase_op_catalog": _phase_op_catalog,
@@ -2023,9 +2030,34 @@ class RouterLoop:
                 result, tool_catalog=self._catalog, ops=self,
             )
             if isinstance(interp, CodeBlock):
-                raise NotImplementedError(
-                    "CodeAct CodeBlock arm — PR-3 fills _run_codeblock_round"
-                )
+                # #1593 PR-3 CodeAct (design (a)): run the snippet in the sandboxed
+                # CodeActRunner — each in-code tool() call re-enters the SAME exclude
+                # + dispatch_tool + permission gate per call (so a CodeAct call is
+                # gated >= a JSON call) — then append the [assistant: code] turn + the
+                # scheme's format_feedback message(s) and loop. Separate path from the
+                # Execute zip (a CodeBlock turn has no tool_calls): the scheme OWNS the
+                # feedback message shape, the OS only appends (no synthetic tool_call =
+                # provider-safe). Documented contract divergence (Execute →
+                # tool_results-for-zip / CodeBlock → messages-for-append); unification
+                # is a tracked follow-up, out of PR-3 scope.
+                cb_feedback = await self._run_codeblock_round(interp)
+                _cb_content = result.content or ""
+                messages.append({"role": "assistant", "content": _cb_content})
+                _cb_append = getattr(host, "append_history_entry", None)
+                if _cb_append is not None:
+                    _cb_append(
+                        role="assistant", content=_cb_content,
+                        meta={"chain_id": self.chain_id, "source": "router_codeact_turn"},
+                    )
+                for _cb_msg in cb_feedback:
+                    messages.append(_cb_msg)
+                    if _cb_append is not None:
+                        _cb_append(
+                            role=_cb_msg.get("role", "user"),
+                            content=_cb_msg.get("content", ""),
+                            meta={"chain_id": self.chain_id, "source": "router_codeact_turn"},
+                        )
+                continue
             if isinstance(interp, RePresent):
                 # #1593 PR-4: the generic OS RePresent mechanism (ratified seam). The
                 # scheme classified the LLM output as a re-present request (e.g. a
@@ -3290,14 +3322,40 @@ class RouterLoop:
         )
         return tool_calls, tool_results
 
-    async def _run_codeblock_round(self, interp) -> "tuple[list[dict], list[dict]]":
-        """The ``CodeBlock`` arm — CodeAct (PR-3). The snippet runs in a sandboxed
-        subprocess (S2 ``CodeActRunner``: duplex socketpair + concurrent parent
-        service loop) where the only world-effect path is the permission-proxy — each
-        proxied call re-enters the SAME OS exclude + ``dispatch_tool`` + permission
-        gate (P5), so a CodeAct call is gated ≥ a JSON call. Body lands in PR-3
-        S2/S3; the match arm is wired here so the seam structure is single-owned."""
-        raise NotImplementedError("CodeAct CodeBlock execute — PR-3 S2/S3")
+    async def _run_codeblock_round(self, interp) -> "list[dict]":
+        """The ``CodeBlock`` arm body — run the CodeAct snippet via the scheme's
+        ``execute`` under the OS per-call gate + sandbox, and return the scheme's
+        ``format_feedback`` message(s) for the loop to append (design (a)).
+
+        ``_os_gate`` is the SAME gate the Execute path uses, per in-code ``tool()``
+        call: ``_excluded_result`` (exclude, pre-dispatch, resolved effective name) →
+        ``_dispatch_resolved`` (``dispatch_tool`` → permission_resolver, P5). The
+        snippet runs in the sandboxed subprocess (``CodeActRunner`` via
+        ``exec_ctx.sandbox``, fail-closed); the scheme orchestrates, the OS gates."""
+        from reyn.sandbox import get_default_backend  # noqa: PLC0415
+        from reyn.tools.scheme import ExecContext  # noqa: PLC0415
+
+        async def _os_gate(name: str, args: dict) -> dict:
+            excluded = self._excluded_result(name, args)
+            if excluded is not None:
+                return excluded
+            return await self._dispatch_resolved(name, args)
+
+        # CodeAct-safe default policy (operator-overridable in S4 via the host's
+        # configured sandbox policy); the backend auto-selects per platform and the
+        # runner is fail-closed when no real sandbox is available.
+        sandbox = get_default_backend(getattr(self.host, "sandbox_config", None))
+        exec_ctx = ExecContext(
+            tool_catalog=self._catalog,
+            sandbox=sandbox,
+            extra={
+                "dispatch": _os_gate,
+                "sandbox_policy": getattr(self.host, "default_sandbox_policy", None)
+                or {"network": False, "allow_subprocess": False, "env_passthrough": ["PATH"]},
+            },
+        )
+        exec_res = await self._scheme.execute(interp, exec_ctx, ops=self)
+        return self._scheme.format_feedback(exec_res, ops=self)
 
     def _maybe_salvage_qualified_direct_call(
         self, name: str, args: dict,

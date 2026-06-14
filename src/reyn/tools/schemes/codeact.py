@@ -22,6 +22,7 @@ permission internals — it orchestrates, the OS gates (P3/P7).
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -74,6 +75,17 @@ def _extract_code(llm_response: Any) -> str:
     return content.strip()
 
 
+def _format_codeact_observation(out: dict) -> str:
+    """Render a ``CodeActRunner`` result envelope as the user-role observation text
+    the model reads after its code turn (success result, or the error/kind on
+    failure / timeout / sandbox-unavailable)."""
+    if out.get("ok"):
+        body = json.dumps(out.get("result"), default=str, ensure_ascii=False)
+        return f"[codeact result]\n{body}"
+    kind = out.get("kind", "Error")
+    return f"[codeact {kind}]\n{out.get('error', '')}"
+
+
 class CodeActScheme:
     """CodeAct scheme (#1593 PR-3). Own logic (not delegating)."""
 
@@ -102,6 +114,13 @@ class CodeActScheme:
         Presentation-level omission is deferred to a follow-up (it needs the exclude
         set, which the OS applies post-presentation to ``tools=`` today)."""
         entries = await ops.catalog_entries()
+        # Presentation parity with the JSON path (#1400): omit excluded actions from
+        # the code-API too, so CodeAct's presentation is not looser than JSON tools=
+        # ("CodeAct >= JSON" on the presentation face, not just the per-call gate).
+        # The OS supplies the session exclude-set via ``available``.
+        exclude = (available or {}).get("exclude_tools") or frozenset()
+        if exclude:
+            entries = [e for e in entries if e.get("name") not in exclude]
         return Presentation(
             llm_tools_payload=[],
             sp_params={
@@ -145,6 +164,14 @@ class CodeActScheme:
         return ExecutionResult(tool_results=[out])
 
     def format_feedback(self, exec_result: ExecutionResult, ops: Any) -> list[dict]:
-        """The runner result envelope(s) become the loop's tool_results unchanged;
-        the CodeBlock arm shapes them into the LLM feedback message (S3 wiring)."""
-        return exec_result.tool_results
+        """Shape the CodeAct execution result(s) as loop-appendable feedback
+        **messages** — a user-role 'observation' carrying the snippet's result /
+        stdout / error (the CodeAct ReAct-style observation turn). The OS loop's
+        CodeBlock arm appends these verbatim after the [assistant: code] turn (it owns
+        no CodeAct message shape — P7). NOTE the documented divergence: the Execute
+        path's format_feedback returns tool_results (for the zip); CodeAct returns
+        messages (for direct append)."""
+        return [
+            {"role": "user", "content": _format_codeact_observation(out)}
+            for out in exec_result.tool_results
+        ]
