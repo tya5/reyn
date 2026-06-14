@@ -31,14 +31,17 @@ from reyn.tools.scheme import (
     CodeBlock,
     ExecContext,
     ExecutionResult,
+    PlainText,
     Presentation,
     flat_catalog_entries,
     register_scheme,
 )
 
-# A fenced ```python ... ``` (or bare ``` ... ```) block — how the CodeAct LLM
-# emits its snippet in the message content.
-_FENCE_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+# A fenced code block — how the CodeAct LLM emits its snippet in the message
+# content. #1618 root-3 (#5): accept the Gemini-native ``tool_code`` fence label
+# alongside ``python`` / ``py`` / bare ``` (fence-label variation — weak models
+# vary the label; the snippet body is the same Python the runner executes).
+_FENCE_RE = re.compile(r"```(?:python|py|tool_code)?\s*\n(.*?)```", re.DOTALL)
 
 
 def _render_code_api(entries: list[dict]) -> str:
@@ -47,14 +50,31 @@ def _render_code_api(entries: list[dict]) -> str:
     ``tool(...)`` proxy. Pure presentation — the model reads it; it is NOT executed
     Python. The arg names come from each entry's JSON-schema ``parameters.properties``
     (CodeAct's strictest-consumer schema-completeness floor guarantees a dict)."""
+    # #1618 root-3 (②): this is the REPLACEMENT tool-use SP (Presentation.tool_use_sp)
+    # — it is the SOLE tool-use instruction the model sees (the OS drops the universal
+    # invoke_action / list_actions / ROUTING-RULE vocab for this region). So it must
+    # carry the whole CodeAct contract: act = a single fenced python block; prose = the
+    # terminal final answer (the #2 loop-unify contract — the model must KNOW prose ends
+    # the turn, or it never cleanly finishes). Wording is the measured variable for the
+    # fence-compliance oracle (dogfood-coder owns content finalization).
     lines = [
-        "## CodeAct — write a Python script (not JSON tool calls)",
+        "## Tool use — this agent acts by running Python, not JSON tool calls",
         "",
-        "Write a Python snippet. Call any available action with "
-        "``tool('<name>', <arg>=<value>, ...)`` — it returns the action's result, or "
-        "raises if the action is denied / excluded / unknown. Assign your final answer "
-        "to a variable named ``result``. The standard library is available; "
-        "filesystem / network / subprocess are sandboxed.",
+        "To DO anything (read a file, call an action, compute), respond with a "
+        "SINGLE fenced ```python block and NOTHING else — no prose before or after it, "
+        "no \"I am a Reyn agent\" preamble on an action turn. Inside the block, call any "
+        "available action:",
+        "",
+        "    result = tool('<name>', <arg>=<value>, ...)",
+        "",
+        "`tool(...)` returns the action's result, or raises if the action is denied / "
+        "excluded / unknown. Assign your final answer to `result`. The Python standard "
+        "library is available; filesystem / network / subprocess are sandboxed — reach "
+        "the outside world ONLY via `tool()`.",
+        "",
+        "When you are DONE (answer in hand, no more actions to run): reply in plain "
+        "prose with NO code block — that ends the turn. A turn is EITHER one fenced "
+        "```python block OR a plain-prose final answer, never both.",
         "",
         "Available actions:",
     ]
@@ -69,17 +89,24 @@ def _render_code_api(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _extract_code(llm_response: Any) -> str:
+def _extract_fenced_code(llm_response: Any) -> "str | None":
     """Pull the snippet from the LLM response: the first fenced code block in the
-    content, else the whole content (the model may emit bare code). Empty when
-    there is nothing to run (``execute`` then no-ops)."""
+    content, or ``None`` when there is NO recognized fence.
+
+    #1618 root-3 (#2): returning ``None`` (instead of the old "else the whole
+    content" bare-code fallback) is the loop-unify "prose = terminal" contract. The
+    SP demands a fenced block for any action turn, so a no-fence response is the
+    model's plain-prose final answer — NOT bare code to run. The old fallback ran
+    prose as code (no-op → empty observation → the model retries forever → timeout,
+    the oracle-baseline finding); ``interpret`` now maps ``None`` → ``PlainText``
+    (terminal) so the loop cleanly exits."""
     content = getattr(llm_response, "content", None) or ""
     if not isinstance(content, str):
-        return ""
+        return None
     match = _FENCE_RE.search(content)
     if match:
         return match.group(1)
-    return content.strip()
+    return None
 
 
 def _format_codeact_observation(out: dict) -> str:
@@ -119,9 +146,11 @@ class CodeActScheme:
         self, available: Any, layer_ctx: Any, ops: Any,
     ) -> Presentation:
         """Render the permission-eligible actions as a CodeAct *code-API* in the
-        ``sp_fragment`` (#1601 channel) — each action a callable the model invokes via
-        the ``tool(name, **args)`` proxy. No JSON ``tools=`` (``llm_tools_payload``
-        empty): the model writes a Python snippet in its content, not tool calls.
+        ``tool_use_sp`` (#1618 root-3 REPLACE channel — the code-API replaces the
+        universal tool-use SP region, vs the #1601 ``sp_fragment`` APPEND that left the
+        universal vocab in place) — each action a callable the model invokes via the
+        ``tool(name, **args)`` proxy. No JSON ``tools=`` (``llm_tools_payload`` empty):
+        the model writes a Python snippet in its content, not tool calls.
 
         ``ops.catalog_entries()`` is async (the SchemeOps adapter ensures the
         rag/source-populated context — e2e Option A: adapter owns the rs-ensure
@@ -156,14 +185,33 @@ class CodeActScheme:
                 "universal_wrappers_enabled": False,
                 "search_actions_enabled": False,
             },
-            sp_fragment=_render_code_api(rendered),
+            # #1618 root-3 (②): REPLACE the universal tool-use SP region with the
+            # code-API (not the old sp_fragment APPEND, which left the universal
+            # invoke_action / list_actions / ROUTING-RULE vocab in place → leaks
+            # 1/2/5/6). tool_use_sp ⇒ the OS injects this at the ## Capabilities
+            # position + drops the universal tool-use construction, so the code-API is
+            # the SOLE tool-use instruction the model sees.
+            tool_use_sp=_render_code_api(rendered),
         )
 
-    def interpret(self, llm_response: Any, *, tool_catalog: dict, ops: Any) -> CodeBlock:
-        """Extract the snippet as a ``CodeBlock`` (the OS-loop's CodeBlock arm runs
-        ``execute``). No resolution/dedup here — CodeAct tool calls are resolved +
-        gated per call inside ``execute`` (via the OS gate), not up front."""
-        return CodeBlock(code=_extract_code(llm_response))
+    def interpret(
+        self, llm_response: Any, *, tool_catalog: dict, ops: Any,
+    ) -> "CodeBlock | PlainText":
+        """Classify the LLM output: a fenced code snippet ⇒ ``CodeBlock`` (the OS-loop's
+        CodeBlock arm runs ``execute``); no fence ⇒ ``PlainText`` (terminal — the model
+        replied in prose = done, the loop exits to the text-reply path). No
+        resolution/dedup here — CodeAct tool calls are resolved + gated per call inside
+        ``execute`` (via the OS gate), not up front.
+
+        #1618 root-3 (#2): the no-fence ⇒ PlainText branch is what lets a CodeAct turn
+        cleanly TERMINATE. Without it (old: always CodeBlock), a prose final answer ran
+        as bare code → no-op → the model never finishes → loop/timeout (oracle-baseline
+        finding). ``interpret`` is a pure classifier (P-aligned): PlainText is dataless;
+        the OS already holds ``llm_response.content`` for the reply."""
+        code = _extract_fenced_code(llm_response)
+        if code is None:
+            return PlainText()
+        return CodeBlock(code=code)
 
     async def execute(
         self, interp: CodeBlock, exec_ctx: ExecContext, ops: Any,

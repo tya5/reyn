@@ -71,6 +71,16 @@ class Presentation:
     # dispatchable = advertised (``llm_tools_payload``) — byte-identical for
     # universal / enumerate-all / retrieval, whose three catalog notions coincide.
     dispatchable_catalog: "list[dict] | None" = None
+    # #1618 root-2 (②, replace-capable SP): the scheme's REPLACEMENT for the OS-owned
+    # tool-use SP region. ``None`` ⇒ the OS builds today's tool-use SP from sp_params
+    # (universal / enumerate-all — BYTE-IDENTICAL). Non-None ⇒ the OS injects this
+    # verbatim AT the tool-use region position and SKIPS the universal tool-use
+    # construction (wrapper / V18-routing / categories / hot-list / discovery-mandate /
+    # search / ROUTING-RULE) entirely. This is the REPLACE channel (vs the #1601
+    # ``sp_fragment`` APPEND): CodeAct's code-API must not sit beneath a dominant
+    # universal guide that contradicts it. P7: the OS owns the region/position; the
+    # content is scheme-owned. OS retains identity + errors-verbatim + non-tool routing.
+    tool_use_sp: "str | None" = None
 
 
 # ── Canonical catalog-shape projections (#1618 root-1) ──────────────────────

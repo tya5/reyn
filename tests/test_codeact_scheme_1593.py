@@ -1,14 +1,17 @@
 """Tier 2: #1593 PR-3 S3a — CodeActScheme (interpret + execute glue + feedback).
 
 CodeAct is own-logic (not delegating). This pins:
-  - interpret extracts the snippet (fenced or bare) as a CodeBlock.
+  - interpret classifies the LLM output: a fenced code block ⇒ CodeBlock; no fence ⇒
+    PlainText (terminal — #1618 root-3 #2 loop-unify "prose = done" contract). The
+    fence label may be python / py / tool_code (#1618 root-3 #5 fence-label variation).
   - execute threads the OS per-call gate (exec_ctx.extra['dispatch']) + sandbox into
     the CodeActRunner and wraps the result — and REQUIRES the gate (no silent
     ungated run).
   - format_feedback shapes each runner envelope into a user-role observation message
     (the CodeBlock arm's append shape; the documented Execute/CodeBlock divergence).
-  - build_presentation renders the actions as a code-API in sp_fragment (no JSON
-    tools=), with excluded actions omitted (presentation parity with JSON).
+  - build_presentation renders the actions as a code-API in tool_use_sp (#1618 root-3
+    REPLACE channel, not the sp_fragment APPEND), no JSON tools=, with excluded
+    actions omitted (presentation parity with JSON).
 
 The per-call gate RE-ENTRY invariant (N calls → N gate invocations, exclude
 per-call) is pinned at the runner level in test_codeact_runner_1593.py (the gate is
@@ -21,7 +24,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from reyn.tools.scheme import CodeBlock, ExecContext, ExecutionResult
+from reyn.tools.scheme import CodeBlock, ExecContext, ExecutionResult, PlainText
 from reyn.tools.schemes.codeact import CodeActScheme
 
 
@@ -45,11 +48,26 @@ def test_interpret_extracts_fenced_code() -> None:
     assert interp.code.strip() == "result = tool('m')"
 
 
-def test_interpret_bare_content_when_no_fence() -> None:
-    """Tier 2: interpret falls back to the whole content when there is no fence."""
-    resp = SimpleNamespace(content="result = 1 + 1")
+def test_interpret_no_fence_returns_plaintext_terminal() -> None:
+    """Tier 2: #1618 root-3 (#2) — no recognized fence ⇒ PlainText (terminal), NOT a
+    CodeBlock. A prose-only response is the model's final answer (loop-unify "prose =
+    done" contract); the old "run the whole content as bare code" behavior no-op'd →
+    the model never cleanly finished → loop/timeout. PlainText is dataless (the OS
+    holds the content for the reply)."""
+    resp = SimpleNamespace(content="The file contains a config for the build.")
     interp = CodeActScheme().interpret(resp, tool_catalog={}, ops=None)
-    assert interp.code == "result = 1 + 1"
+    assert isinstance(interp, PlainText)
+    # Not misclassified as code (would run prose → no-op → loop).
+    assert not isinstance(interp, CodeBlock)
+
+
+def test_interpret_extracts_tool_code_fence() -> None:
+    """Tier 2: #1618 root-3 (#5) — the Gemini-native ```tool_code fence label is
+    recognized as a code block (fence-label variation), same as ```python."""
+    resp = SimpleNamespace(content="```tool_code\nresult = tool('m')\n```")
+    interp = CodeActScheme().interpret(resp, tool_catalog={}, ops=None)
+    assert isinstance(interp, CodeBlock)
+    assert interp.code.strip() == "result = tool('m')"
 
 
 @pytest.mark.asyncio
@@ -107,7 +125,7 @@ def test_format_feedback_shapes_observation_message() -> None:
     assert "denied" in err[0]["content"]
 
 
-# ── S3b: build_presentation (code-API render into sp_fragment) ────────────────
+# ── S3b: build_presentation (code-API render into tool_use_sp) ────────────────
 
 
 class _CatalogOps:
@@ -123,18 +141,23 @@ class _CatalogOps:
 
 
 @pytest.mark.asyncio
-async def test_build_presentation_renders_code_api_into_sp_fragment() -> None:
-    """Tier 2: build_presentation renders the actions as a code-API in sp_fragment
-    (no JSON tools=); behavior-pinned (action names + tool() proxy instruction
-    present), not format-pinned."""
+async def test_build_presentation_renders_code_api_into_tool_use_sp() -> None:
+    """Tier 2: #1618 root-3 — build_presentation renders the actions as a code-API in
+    tool_use_sp (the REPLACE channel, not sp_fragment APPEND); no JSON tools=.
+    Behavior-pinned (action names + tool() proxy + prose=terminal contract present),
+    not format-pinned."""
     pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
-    # No JSON tools= — CodeAct presents via the SP fragment, model writes a snippet.
+    # No JSON tools= — CodeAct presents via the SP, model writes a snippet.
     assert pres.llm_tools_payload == []
-    # The actions surface in the code-API + the tool() proxy is instructed.
-    assert "file__read" in pres.sp_fragment
-    assert "web__fetch" in pres.sp_fragment
-    assert "tool(" in pres.sp_fragment
-    # The named SP gates are off (CodeAct expresses tool-use via the fragment).
+    # The actions surface in the code-API + the tool() proxy is instructed, via the
+    # REPLACE channel (tool_use_sp), and the old APPEND channel is unused.
+    assert "file__read" in pres.tool_use_sp
+    assert "web__fetch" in pres.tool_use_sp
+    assert "tool(" in pres.tool_use_sp
+    assert not pres.sp_fragment  # root-3: replace channel, not append
+    # The prose=terminal contract (#2) must be stated so the model knows how to finish.
+    assert "plain prose" in pres.tool_use_sp
+    # The named SP gates are off (CodeAct expresses tool-use via tool_use_sp).
     assert pres.sp_params.get("universal_wrappers_enabled") is False
     assert pres.sp_params.get("search_actions_enabled") is False
 
@@ -143,7 +166,7 @@ async def test_build_presentation_renders_code_api_into_sp_fragment() -> None:
 async def test_build_presentation_includes_arg_names() -> None:
     """Tier 2: an action's schema arg names appear in its code-API signature."""
     pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
-    assert "path" in pres.sp_fragment  # file__read's parameters.properties key
+    assert "path" in pres.tool_use_sp  # file__read's parameters.properties key
 
 
 @pytest.mark.asyncio
@@ -154,8 +177,8 @@ async def test_build_presentation_omits_excluded_actions() -> None:
     pres = await CodeActScheme().build_presentation(
         {"exclude_tools": frozenset({"web__fetch"})}, {}, _CatalogOps(),
     )
-    assert "file__read" in pres.sp_fragment   # kept
-    assert "web__fetch" not in pres.sp_fragment  # excluded → omitted
+    assert "file__read" in pres.tool_use_sp   # kept
+    assert "web__fetch" not in pres.tool_use_sp  # excluded → omitted
 
 
 # ── S4: registration + selectability ─────────────────────────────────────────

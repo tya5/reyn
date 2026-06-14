@@ -73,6 +73,7 @@ def build_system_prompt(
     cwd: str | None = None,
     search_actions_enabled: bool = True,  # FP-0034 §D14 — default True preserves byte-compat
     scheme_sp_fragment: str = "",  # #1593 — free-form scheme-owned tool-use SP; OS appends verbatim (P7), default "" = byte-identical named-gate path
+    tool_use_sp: "str | None" = None,  # #1618 root-3 — scheme REPLACEMENT for the tool-use SP region; None = OS builds today's (byte-identical), non-None = inject + skip the universal tool-use construction
     context_size_signal: str | None = None,  # #272/#1128 — pre-rendered, appended LAST
     discovery_mandate: bool = False,  # #187 Stage C — weak-tier list_actions-first mandate (3x)
     non_interactive: bool = False,  # #1439 Fix #1 — run-once (no TTY): no user to ask, proceed instead of clarifying
@@ -191,6 +192,11 @@ def build_system_prompt(
     )
     parts.append("")
 
+    # #1618 root-3: capture the index before the tool-use ## Capabilities region so a
+    # replace-capable scheme (``tool_use_sp``) can slice-replace the whole built region
+    # with its own tool-use SP — no re-indent; byte-identical when ``tool_use_sp`` is
+    # None (no replacement happens).
+    _cap_start = len(parts)
     # ── 3. Capabilities (routing guide) — FP-0023 Change 2 ─────────────────
     # Merges the old "## What you can do (intent axis)" (internal routing
     # labels) and "## When asked what you can do" (user-facing) into one
@@ -305,6 +311,14 @@ def build_system_prompt(
         "",
     ])
 
+    # #1618 root-3: a replace-capable scheme injects its tool-use SP HERE, replacing
+    # the whole built ## Capabilities region (CodeAct's code-API — so the universal
+    # routing guide can't dominate it). discovery / search / ROUTING-RULE below are
+    # separately gated off; the OS-level sections (environment / behaviour-errors /
+    # project / …) remain. Byte-identical when ``tool_use_sp`` is None (no replacement).
+    if tool_use_sp is not None:
+        parts[_cap_start:] = [tool_use_sp]
+
     # ── 3.4. Environment (CWD context, P7-clean) ─────────────────────────────
     # Tells the LLM where it is running so unqualified references like
     # "this repo" / "this code" / "the codebase" / "ここのコード" map to
@@ -334,14 +348,30 @@ def build_system_prompt(
                 parts.append(f"git repo: {'yes' if environment_info['is_git_repo'] else 'no'}")
         parts.append("")
         if cwd:
-            parts.append(
-                "When the user refers to \"this repo\", \"this code\", \"the codebase\","
-                " \"this project\", \"ここ\", or any other unqualified reference to"
-                " surrounding source, interpret it as the project at the cwd above."
-                " Do NOT ask for a repository URL or path — discover the contents"
-                " with `list_actions(category=['file'])` → `invoke_action(file__list, ...)`"
-                " → `invoke_action(file__read, ...)` within the cwd's read scope."
-            )
+            # #1618 root-3: the cwd semantic mapping ("this repo" → the project at cwd)
+            # is OS-level (kept for every scheme), but its HOW clause ("discover with
+            # list_actions → invoke_action") is universal-wrapper idiom — the same
+            # tool-use-specific content the discovery-mandate (L453) gates. A
+            # replace-capable scheme owns its own file-discovery idiom (CodeAct's
+            # tool() proxy), so render the universal HOW only when ``tool_use_sp`` is
+            # None (byte-identical), and a scheme-neutral variant otherwise.
+            if tool_use_sp is None:
+                parts.append(
+                    "When the user refers to \"this repo\", \"this code\", \"the codebase\","
+                    " \"this project\", \"ここ\", or any other unqualified reference to"
+                    " surrounding source, interpret it as the project at the cwd above."
+                    " Do NOT ask for a repository URL or path — discover the contents"
+                    " with `list_actions(category=['file'])` → `invoke_action(file__list, ...)`"
+                    " → `invoke_action(file__read, ...)` within the cwd's read scope."
+                )
+            else:
+                parts.append(
+                    "When the user refers to \"this repo\", \"this code\", \"the codebase\","
+                    " \"this project\", \"ここ\", or any other unqualified reference to"
+                    " surrounding source, interpret it as the project at the cwd above."
+                    " Do NOT ask for a repository URL or path — read the contents using"
+                    " your available actions within the cwd's read scope."
+                )
             parts.append("")
 
     # ── 3.5. Universal catalog (FP-0034 §D9, opt-in via action_retrieval) ────
@@ -436,7 +466,10 @@ def build_system_prompt(
     # obviously matches") so it reinforces the SAME non-obvious scope as
     # branch-3, never a blanket rule (bleed guard). Renders whenever the tier
     # opts in; list_actions is always available.
-    if discovery_mandate:
+    # #1618 root-3: the list_actions-first MANDATE is tool-use-specific (universal
+    # discovery vocab) — a replace-capable scheme owns its own discovery story inside
+    # ``tool_use_sp``, so skip the universal mandate when a scheme replaced the region.
+    if discovery_mandate and tool_use_sp is None:
         parts.append(
             "When no visible tool obviously matches the action you need, "
             "calling list_actions is MANDATORY and comes FIRST — before any "
@@ -474,7 +507,13 @@ def build_system_prompt(
     # when it is actually in tools= (= search_actions_enabled=True).
     # When not available, omit the search_actions signal entirely so the
     # LLM does not attempt to call a tool that does not exist.
-    if search_actions_enabled:
+    # #1618 root-3: the "never invent action names; use list_actions/search_actions"
+    # guidance is universal-vocab tool-use SP — a replace-capable scheme states its
+    # own action-naming contract inside ``tool_use_sp`` (e.g. CodeAct's "Available
+    # actions:" list), so skip the universal guidance when the region was replaced.
+    if tool_use_sp is not None:
+        pass
+    elif search_actions_enabled:
         parts.extend([
             "  - Never invent action names; only use those returned by",
             "    `list_actions` or `search_actions`.",
@@ -493,13 +532,17 @@ def build_system_prompt(
     # B12-R2/B13-R3 V3 ABSOLUTE rule preserved in wrapper vocab (1-line,
     # JA examples dropped — per B23-PRE-1 SP simplification policy).
     # P7-compliant placeholder: `<action_name>` (= qualified name format).
-    parts.append("")
-    parts.extend([
-        "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-        " name (= valid `invoke_action` action_name, e.g. `skill__code_review`),"
-        " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
-        "",
-    ])
+    # #1618 root-3: the invoke_action ROUTING-RULE is universal-wrapper vocab — a
+    # replace-capable scheme encodes its own act-on-named-action rule inside
+    # ``tool_use_sp``, so skip the universal rule when the region was replaced.
+    if tool_use_sp is None:
+        parts.append("")
+        parts.extend([
+            "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
+            " name (= valid `invoke_action` action_name, e.g. `skill__code_review`),"
+            " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
+            "",
+        ])
 
     # ==========================================================================
     # DYNAMIC — varies per session / configuration
