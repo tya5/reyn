@@ -21,7 +21,7 @@ policy** for a specific skill:
 
 Permissions are **skill-level**: each skill declares its own, and the operator
 or user approves them. The runtime enforces them through the AgentLayer of the
-[conjunctive permission model](permission-model.md#effective-permission-conjunctive-restrict-model).
+[conjunctive permission model](../runtime/permission-model.md#effective-permission-conjunctive-restrict-model).
 
 ```yaml
 # skill.md
