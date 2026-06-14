@@ -358,6 +358,20 @@
 
 
 # -----------------------------------------------------------------------------
+# tool_use: the tool-use scheme per layer (#1593). Each of chat / step / phase
+# selects a registered ToolUseScheme by name — generalizing the binary
+# universal_wrappers_enabled toggle into a pluggable, per-layer scheme. Default
+# all "universal-category" (today's behaviour). Future schemes (enumerate-all,
+# codeact) are selected by setting a layer to that name — e.g. chat=enumerate-all
+# (weak-model-friendly at the top level) while step/phase stay universal-category.
+# -----------------------------------------------------------------------------
+# tool_use:
+#   chat: universal-category
+#   step: universal-category
+#   phase: universal-category
+
+
+# -----------------------------------------------------------------------------
 # plan_resume_raw: how the resume coordinator treats
 # interrupted plan-mode runs on restart. Parsed lazily by the coordinator,
 # so the shape lives in ``reyn.plan`` rather than here. Set to a dict only

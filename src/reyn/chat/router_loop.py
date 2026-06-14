@@ -36,6 +36,19 @@ if TYPE_CHECKING:
     from reyn.config import SkillSearchConfig
 
 
+def _resolve_tool_use_scheme(name: "str | None" = None):
+    """Return the active ``ToolUseScheme`` (#1593). Registers the built-in
+    universal-category scheme on first use (idempotent) and resolves by name,
+    defaulting to universal-category — PR-1 byte-identical. Per-layer config
+    (``tool_use:{chat,step,phase}``) passes the selected name here."""
+    from reyn.tools.scheme import DEFAULT_SCHEME_NAME, get_scheme, register_scheme
+    from reyn.tools.schemes.universal_category import UniversalCategoryScheme
+
+    if get_scheme(DEFAULT_SCHEME_NAME) is None:
+        register_scheme(UniversalCategoryScheme())
+    return get_scheme(name or DEFAULT_SCHEME_NAME) or get_scheme(DEFAULT_SCHEME_NAME)
+
+
 # ---------------------------------------------------------------------------
 # Empty-response detection (Option F — ADR-0021)
 # ---------------------------------------------------------------------------
@@ -1399,6 +1412,11 @@ class RouterLoop:
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
+        # #1593: the active tool-use scheme. PR-1 = universal-category (the shipped
+        # behaviour, behind the protocol) for every layer → byte-identical. Per-layer
+        # config selection (tool_use:{chat,step,phase}) plugs in here; with all
+        # layers defaulting to universal-category it is byte-identical today.
+        self._scheme = _resolve_tool_use_scheme()
 
     @property
     def total_usage(self) -> TokenUsage:
@@ -1626,24 +1644,23 @@ class RouterLoop:
         # the window is ample (then compact stays hidden + the SP header is
         # omitted); non-None when filling (compact tool + header appear together).
         _ctx_signal = _render_context_size_signal_for_host(host)
-        if _phase_op_catalog is not None:
-            # #1092 PR-A (FD1): phase op catalog REPLACES chat-discovery. The
-            # chat-discovery setup above ran on the phase host's stubs
-            # (empty skills/agents/mcp, universal off) — harmless; its build_tools
-            # result is discarded here in favor of the op catalog.
-            tools = list(_phase_op_catalog)
-        else:
-            tools = build_tools(
-                skills_for_tools,
-                host.list_available_agents(),
-                file_permissions=host.get_file_permissions(),
-                mcp_servers=host.get_mcp_servers(),
-                web_fetch_allowed=host.get_web_fetch_allowed(),
-                universal_wrappers_enabled=_univ_enabled,
-                search_actions_visible=_search_visible,
-                hot_list_aliases=_hot_list_aliases,
-                compact_visible=_ctx_signal is not None,
-            )
+        # #1593: build the presentation via the active scheme (tools= payload + SP
+        # params). Universal delegates to the router's `present` op → byte-identical
+        # (the phase op-catalog REPLACES build_tools for the phase layer; chat/step
+        # use build_tools with the catalog wrappers). PR-2/3 schemes shape tools=
+        # differently. The OS still projects _catalog from the payload + builds the
+        # (monolithic) SP from sp_params below.
+        _pres = self._scheme.build_presentation(
+            {"skills_for_tools": skills_for_tools, "hot_list_aliases": _hot_list_aliases},
+            {
+                "phase_op_catalog": _phase_op_catalog,
+                "univ_enabled": _univ_enabled,
+                "search_visible": _search_visible,
+                "ctx_signal_present": _ctx_signal is not None,
+            },
+            ops=self,
+        )
+        tools = _pres.llm_tools_payload
         # #187 STEP 1c (owner principle): actions are enumerated ONLY by
         # list_actions, and their schemas ONLY by describe_action. The former
         # ARS block (B37/B38) inlined the whole session action catalog into
@@ -1683,7 +1700,9 @@ class RouterLoop:
                 # Hosts without get_universal_wrappers_enabled (= FakeRouterHost
                 # in LLMReplay tests) default to False so SP byte content stays
                 # unchanged for cached fixtures.
-                universal_wrappers_enabled=_univ_enabled,
+                # #1593: the scheme owns the SP-shaping params (PR-1 parameterizes
+                # the monolithic build_system_prompt; identical values to _univ_enabled).
+                universal_wrappers_enabled=_pres.sp_params["universal_wrappers_enabled"],
                 cwd=_cwd_str,
                 # FP-0034 §D14: propagate the search_actions D14 visibility gate
                 # into the SP so the wrapper enumeration matches tools=.
@@ -1695,7 +1714,7 @@ class RouterLoop:
                 # truth derived from is_search_available() (= embedding_class
                 # configured + index ready); False there means the SP and tools=
                 # both exclude search_actions, eliminating the N5 hallucination.
-                search_actions_enabled=_search_visible if _univ_enabled else True,
+                search_actions_enabled=_pres.sp_params["search_actions_enabled"],
                 # #272/#1128: OS-injected context-size signal (header), computed
                 # once above. Rendered LAST in the SP (most volatile section →
                 # preserves the cached prefix above it); None when ample.
@@ -1951,11 +1970,12 @@ class RouterLoop:
                 # observed). invoke_skill is sync but NOT idempotent
                 # from a cost perspective; deduping is safe because
                 # same args → same deterministic result.
-                tool_calls = self._dedupe_tool_calls_round(result.tool_calls)
-                # parallel execute all tool calls (deduped)
-                tool_results = await asyncio.gather(*[
-                    self._execute_tool(tc) for tc in tool_calls
-                ])
+                # #1593: route the round through the active tool-use scheme
+                # (interpret → OS exclude-gate → execute → format_feedback).
+                # Byte-identical to the former dedupe→gather(_execute_tool): universal
+                # delegates back to the router's SchemeOps; returns (tool_calls,
+                # tool_results) in the original deduped order.
+                tool_calls, tool_results = await self._run_scheme_tool_round(result)
                 # Detect async-deferred dispatches via the canonical
                 # registry (router_tools.get_dispatch_kind() →
                 # ToolDefinition.dispatch_kind).  Async tools'
@@ -2864,6 +2884,19 @@ class RouterLoop:
         and dispatch via the wrapper path so the user-visible behavior
         matches what the LLM intended.
         """
+        name, args = self._resolve_tool_call(tc)
+
+        excluded = self._excluded_result(name, args)
+        if excluded is not None:
+            return excluded
+        return await self._dispatch_resolved(name, args)
+
+    def _resolve_tool_call(self, tc: dict) -> "tuple[str, dict]":
+        """#1593: name + args + #229 salvage → the effective ``(name, args)``.
+
+        **Resolution only** (no dispatch), so the scheme's ``interpret`` runs it and
+        the OS exclude-gates the result BEFORE ``execute`` — preserving the #1406/#187
+        pre-dispatch order across the scheme split (byte-identical)."""
         name = tc["function"]["name"]
         try:
             args = json.loads(tc["function"]["arguments"])
@@ -2872,19 +2905,22 @@ class RouterLoop:
 
         if name not in self._catalog and "__" in name:
             name, args = self._maybe_salvage_qualified_direct_call(name, args)
+        return name, args
 
-        # #1406: execution-level exclude enforcement. ``exclude_tools`` is not just
-        # an advertisement filter (#1400 ``_apply_tool_exclusions`` hides excluded
-        # tools from ``tools[]`` / ``self._catalog``) — the LLM can still call an
-        # excluded tool by name, which the #229 salvage rewrites to
-        # ``invoke_action(action_name=<excluded>)`` (or it is called as
-        # ``invoke_action`` directly), and ``universal_dispatch`` then resolves and
-        # EXECUTES it (the #187 N=3 web__search leak). Compute the effective
-        # resolved action — unwrap ``invoke_action`` — and reject if excluded.
-        # Covers all three bypass paths (native direct / salvaged / direct
-        # invoke_action). Catalog filter (#1400) stays as the hide layer
-        # (defense-in-depth). A distinct ``tool_excluded`` kind + decision-enabling
-        # message lets the model adjust ([[deny-message-decision-enabling]]).
+    def _excluded_result(self, name: str, args: dict) -> "dict | None":
+        """#1406/#187: the **pre-dispatch** exclude gate. Returns the
+        ``tool_excluded`` error result when the effective op is excluded, else None.
+
+        ``exclude_tools`` is not just an advertisement filter (#1400
+        ``_apply_tool_exclusions`` hides excluded tools from ``tools[]`` /
+        ``self._catalog``) — the LLM can still call an excluded tool by name, which
+        the #229 salvage rewrites to ``invoke_action(action_name=<excluded>)`` (or it
+        is called as ``invoke_action`` directly), and ``universal_dispatch`` then
+        resolves and EXECUTES it (the #187 N=3 web__search leak). Compute the
+        effective resolved action — unwrap ``invoke_action`` — and reject if excluded.
+        Covers all three bypass paths (native direct / salvaged / direct
+        invoke_action). The ``tool_excluded`` kind + decision-enabling message lets
+        the model adjust ([[deny-message-decision-enabling]])."""
         if self._exclude_tools:
             effective = args.get("action_name") if name == "invoke_action" else name
             if effective in self._exclude_tools:
@@ -2899,7 +2935,13 @@ class RouterLoop:
                         ),
                     },
                 }
+        return None
 
+    async def _dispatch_resolved(self, name: str, args: dict) -> dict:
+        """#1593: dispatch a resolved, exclude-cleared tool call via the OS substrate
+        (DispatchContext / phase-memo / ``dispatch_tool`` — P5). The pure-OS dispatch
+        half of the former ``_execute_tool``; the scheme's ``execute`` orchestrates
+        calls to it (it never sees the DispatchContext / phase-memo)."""
         # #1092 PR-C-2.5: phase-mode op-dispatch WAL memoization. A phase host
         # returns the per-phase resume wiring; chat hosts don't implement the hook
         # (getattr → None), so the chat dispatch path below is byte-identical
@@ -2946,6 +2988,107 @@ class RouterLoop:
             ctx=dctx,
             invoker=functools.partial(self._invoke_router_tool, name),
         )
+
+    # ── #1593 SchemeOps adapter ─────────────────────────────────────────────
+    # The router IS the ``SchemeOps`` a *delegating* scheme calls. PR-1's
+    # UniversalCategoryScheme delegates here, so the seam is byte-identical (no
+    # universal-category logic is physically relocated). PR-2/3 schemes implement
+    # their own logic instead of delegating.
+
+    def present(self, available, layer_ctx):
+        """SchemeOps.present: today's universal-category presentation — the phase
+        op-catalog (when the phase layer supplies one) OR ``build_tools`` with the
+        catalog wrappers, plus the SP-shaping params (``universal_wrappers_enabled`` /
+        ``search_actions_enabled``) the monolithic ``build_system_prompt`` consumes
+        (PR-1 parameterizes the SP; PR-2 extracts a scheme-owned fragment)."""
+        from reyn.tools.scheme import Presentation
+
+        phase_op_catalog = layer_ctx.get("phase_op_catalog")
+        univ = layer_ctx["univ_enabled"]
+        search_visible = layer_ctx["search_visible"]
+        if phase_op_catalog is not None:
+            tools = list(phase_op_catalog)
+        else:
+            tools = build_tools(
+                available["skills_for_tools"],
+                self.host.list_available_agents(),
+                file_permissions=self.host.get_file_permissions(),
+                mcp_servers=self.host.get_mcp_servers(),
+                web_fetch_allowed=self.host.get_web_fetch_allowed(),
+                universal_wrappers_enabled=univ,
+                search_actions_visible=search_visible,
+                hot_list_aliases=available["hot_list_aliases"],
+                compact_visible=layer_ctx["ctx_signal_present"],
+            )
+        return Presentation(
+            llm_tools_payload=tools,
+            sp_params={
+                "universal_wrappers_enabled": univ,
+                "search_actions_enabled": search_visible if univ else True,
+            },
+        )
+
+    def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
+        """SchemeOps.resolve: dedupe + #229 salvage → actions carrying the original
+        ``tc`` + the resolved effective ``name``/``args``. The OS exclude-gates these
+        (on the effective name) before dispatch."""
+        deduped = self._dedupe_tool_calls_round(llm_response.tool_calls)
+        actions: list[dict] = []
+        for tc in deduped:
+            name, args = self._resolve_tool_call(tc)
+            actions.append({"tc": tc, "name": name, "args": args})
+        return actions
+
+    async def dispatch(self, actions: list[dict]) -> list[dict]:
+        """SchemeOps.dispatch: run the resolved (exclude-cleared) actions in parallel
+        via the OS dispatch substrate (the former gather of _execute_tool's dispatch
+        half)."""
+        return await asyncio.gather(*[
+            self._dispatch_resolved(a["name"], a["args"]) for a in actions
+        ])
+
+    def feedback(self, tool_results: list[dict]) -> list[dict]:
+        """SchemeOps.feedback: PR-1 identity — the OS loop's existing feedback
+        assembly (op-specific plan/invoke_skill + media + message building) consumes
+        ``tool_results`` unchanged. A non-universal scheme (PR-2/3) transforms here."""
+        return tool_results
+
+    async def _run_scheme_tool_round(self, llm_response) -> "tuple[list[dict], list[dict]]":
+        """Route one tool-call round through the active scheme (#1593), byte-identical
+        to the former ``dedupe → gather(_execute_tool)``. Returns ``(tool_calls,
+        tool_results)`` in the original (deduped) order for the downstream loop:
+
+        interpret (resolve) → OS exclude-gate (pre-dispatch) → execute (dispatch
+        survivors) → format_feedback. Universal emits only ``Execute``; the exclude
+        gate produces the same ``tool_excluded`` error result **in place** (not a
+        drop), so order + tool_call_id alignment are preserved."""
+        from reyn.tools.scheme import ExecContext, Execute, ExecutionResult
+
+        interp = self._scheme.interpret(
+            llm_response, tool_catalog=self._catalog, ops=self,
+        )
+        assert isinstance(interp, Execute), "universal-category emits only Execute"
+        actions = interp.actions
+        tool_calls = [a["tc"] for a in actions]
+
+        results: list = [None] * len(actions)
+        to_dispatch: list[tuple[int, dict]] = []
+        for i, a in enumerate(actions):
+            ex = self._excluded_result(a["name"], a["args"])
+            if ex is not None:
+                results[i] = ex
+            else:
+                to_dispatch.append((i, a))
+
+        exec_res = await self._scheme.execute(
+            Execute(actions=[a for _, a in to_dispatch]), ExecContext(), ops=self,
+        )
+        for (i, _), r in zip(to_dispatch, exec_res.tool_results):
+            results[i] = r
+        tool_results = self._scheme.format_feedback(
+            ExecutionResult(tool_results=results), ops=self,
+        )
+        return tool_calls, tool_results
 
     def _maybe_salvage_qualified_direct_call(
         self, name: str, args: dict,
