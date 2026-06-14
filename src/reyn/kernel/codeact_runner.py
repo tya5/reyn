@@ -29,7 +29,26 @@ import signal
 import socket
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any, Awaitable, Callable
+
+
+def _harness_subprocess_env() -> dict[str, str]:
+    """Env for the harness subprocess with the PARENT process's reyn tree propagated
+    onto PYTHONPATH (#1609). Without this, ``python -m reyn.kernel._codeact_harness``
+    resolves ``reyn`` from the spawned interpreter's default ``sys.path`` — which in a
+    multi-worktree editable-install dev env can point at a DIFFERENT worktree lacking
+    this harness module (``No module named reyn.kernel._codeact_harness``). Prepending
+    this process's reyn tree makes the subprocess resolve the SAME tree. Production
+    (single reyn install) is unaffected — same path either way. (``REYN_HARNESS_PYTHON``
+    still overrides the *interpreter*; this fixes the *module-resolution* default.)"""
+    import reyn  # noqa: PLC0415
+
+    tree = str(Path(reyn.__file__).resolve().parent.parent)  # dir containing the reyn pkg
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = tree + (os.pathsep + existing if existing else "")
+    return env
 
 # A dispatch callback: (name, args) -> the dispatch_tool result envelope
 # ({"status": "ok", "data": ...} | {"status": "error", "error": {...}}). The
@@ -107,6 +126,7 @@ class CodeActRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=cwd,
+                env=_harness_subprocess_env(),  # #1609: parent reyn tree on PYTHONPATH
                 start_new_session=True,
             )
         except OSError as exc:

@@ -193,3 +193,35 @@ async def test_seatbelt_real_runner_round_trip() -> None:
     assert out["ok"] is True, out
     assert out["result"] == 42
     assert seen == [("m", {"n": 41})]
+
+
+# ── #1609: harness subprocess PYTHONPATH propagation (multi-worktree drift) ───
+
+
+def test_harness_subprocess_env_prepends_reyn_tree() -> None:
+    """Tier 2: #1609 — the harness subprocess env prepends THIS process's reyn tree
+    to PYTHONPATH, so `python -m reyn.kernel._codeact_harness` resolves the SAME tree
+    (fixes the multi-worktree editable-install import-drift). Single-tree prod is
+    unaffected (same path)."""
+    import os
+    from pathlib import Path
+
+    import reyn
+    from reyn.kernel.codeact_runner import _harness_subprocess_env
+
+    tree = str(Path(reyn.__file__).resolve().parent.parent)
+    env = _harness_subprocess_env()
+    assert env["PYTHONPATH"].split(os.pathsep)[0] == tree  # parent tree resolved first
+
+
+def test_harness_subprocess_env_preserves_existing_pythonpath(monkeypatch) -> None:
+    """Tier 2: #1609 — an existing PYTHONPATH is preserved (appended after the tree),
+    not clobbered."""
+    import os
+
+    monkeypatch.setenv("PYTHONPATH", "/some/existing/path")
+    from reyn.kernel.codeact_runner import _harness_subprocess_env
+
+    parts = _harness_subprocess_env()["PYTHONPATH"].split(os.pathsep)
+    assert "/some/existing/path" in parts
+    assert parts[-1] == "/some/existing/path"  # appended after the prepended tree
