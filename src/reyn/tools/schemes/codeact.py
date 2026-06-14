@@ -31,13 +31,21 @@ from reyn.tools.scheme import (
     CodeBlock,
     ExecContext,
     ExecutionResult,
+    PlainText,
     Presentation,
     register_scheme,
 )
 
-# A fenced ```python ... ``` (or bare ``` ... ```) block — how the CodeAct LLM
-# emits its snippet in the message content.
-_FENCE_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+# A fenced code block — how the CodeAct LLM emits its snippet in the message content.
+# Accept the real code labels (``python`` / ``py`` / Gemini's native ``tool_code``) or
+# a bare fence — but NOT a data label like ``json``: #1593 live-verify showed flash
+# -lite both (a) fences with ```tool_code (a python-only pattern silently dropped it →
+# misclassified as a terminal PlainText turn) and (b) sometimes wraps a JSON tool-call
+# envelope in ```json (matching that exec'd ``{"tool_code": "..."}`` as a no-op dict →
+# ``result`` unset → a misleading "null" observation). A ```json block is the model
+# mis-formatting (an SP-channel pull, #1608②), not a CodeAct snippet — leave it to the
+# no-fence PlainText path rather than exec a data literal.
+_FENCE_RE = re.compile(r"```(?:python|py|tool_code)?[ \t]*\n(.*?)```", re.DOTALL)
 
 
 def _render_code_api(entries: list[dict]) -> str:
@@ -49,36 +57,49 @@ def _render_code_api(entries: list[dict]) -> str:
     lines = [
         "## CodeAct — write a Python script (not JSON tool calls)",
         "",
-        "Write a Python snippet. Call any available action with "
-        "``tool('<name>', <arg>=<value>, ...)`` — it returns the action's result, or "
-        "raises if the action is denied / excluded / unknown. Assign your final answer "
-        "to a variable named ``result``. The standard library is available; "
-        "filesystem / network / subprocess are sandboxed.",
+        "To act, respond with a SINGLE fenced ```python code block and nothing "
+        "else — no prose before or after it, no \"I am a Reyn agent\" preamble. Call "
+        "any available action with ``tool('<name>', <arg>=<value>, ...)`` — it returns "
+        "the action's result, or raises if the action is denied / excluded / unknown. "
+        "Assign your final answer to a variable named ``result``. The standard library "
+        "is available; filesystem / network / subprocess are sandboxed. When you are "
+        "done — you have the answer and need no more actions — reply in plain prose "
+        "with NO code block (that ends the turn).",
         "",
         "Available actions:",
     ]
     for entry in entries:
-        name = entry.get("name", "")
-        params = entry.get("parameters") or {}
+        # The live ``SchemeOps.catalog_entries`` adapter returns the OpenAI
+        # tool-schema shape (``{type, function: {name, description, parameters}}``,
+        # uniform with ``base_tools`` so enumerate-all / retrieval concat into one
+        # ``tools=`` payload). CodeAct is the lone consumer that renders names into a
+        # code-API, so it unwraps the ``function`` envelope here (tolerating a flat
+        # ``{name, ...}`` entry too). #1593 live-verify caught this: reading the
+        # top-level ``name`` yielded ``tool('')`` for every action (empty catalog →
+        # the model's correct ``tool('file__read', ...)`` hit "not in catalog").
+        fn = entry.get("function", entry)
+        name = fn.get("name", "")
+        params = fn.get("parameters") or {}
         arg_names = list((params.get("properties") or {}).keys())
         sig = ", ".join(arg_names)
-        desc_raw = (entry.get("description") or "").strip()
+        desc_raw = (fn.get("description") or "").strip()
         desc = desc_raw.splitlines()[0] if desc_raw else ""
         lines.append(f"- tool('{name}'{', ' + sig if sig else ''}) — {desc}".rstrip(" —"))
     return "\n".join(lines)
 
 
-def _extract_code(llm_response: Any) -> str:
-    """Pull the snippet from the LLM response: the first fenced code block in the
-    content, else the whole content (the model may emit bare code). Empty when
-    there is nothing to run (``execute`` then no-ops)."""
+def _extract_fenced_code(llm_response: Any) -> str | None:
+    """The first fenced ```python block in the response content, or ``None`` when
+    there is no fenced block. A response with no fence is a terminal natural-language
+    reply (→ ``PlainText``), NOT bare code to execute: the SP instructs the model to
+    fence its snippet, and treating un-fenced prose as code made the model's final
+    answer turn raise a spurious ``SyntaxError`` and loop without terminating
+    (#1593 live-verify)."""
     content = getattr(llm_response, "content", None) or ""
     if not isinstance(content, str):
-        return ""
+        return None
     match = _FENCE_RE.search(content)
-    if match:
-        return match.group(1)
-    return content.strip()
+    return match.group(1) if match else None
 
 
 def _format_codeact_observation(out: dict) -> str:
@@ -126,7 +147,14 @@ class CodeActScheme:
         # The OS supplies the session exclude-set via ``available``.
         exclude = (available or {}).get("exclude_tools") or frozenset()
         if exclude:
-            entries = [e for e in entries if e.get("name") not in exclude]
+            # Name lives under the OpenAI ``function`` envelope (live adapter shape);
+            # unwrap it here too — reading the top-level ``name`` made the filter a
+            # silent no-op (excluded actions still rendered = parity/permission leak),
+            # the same nested-shape trap as ``_render_code_api`` (#1593 live-verify).
+            entries = [
+                e for e in entries
+                if (e.get("function", e)).get("name") not in exclude
+            ]
         return Presentation(
             llm_tools_payload=[],
             sp_params={
@@ -136,11 +164,19 @@ class CodeActScheme:
             sp_fragment=_render_code_api(entries),
         )
 
-    def interpret(self, llm_response: Any, *, tool_catalog: dict, ops: Any) -> CodeBlock:
-        """Extract the snippet as a ``CodeBlock`` (the OS-loop's CodeBlock arm runs
-        ``execute``). No resolution/dedup here — CodeAct tool calls are resolved +
-        gated per call inside ``execute`` (via the OS gate), not up front."""
-        return CodeBlock(code=_extract_code(llm_response))
+    def interpret(
+        self, llm_response: Any, *, tool_catalog: dict, ops: Any,
+    ) -> CodeBlock | PlainText:
+        """Classify the response: a fenced ```python block → ``CodeBlock`` (the
+        OS-loop's CodeBlock arm runs ``execute``); no fenced block → ``PlainText``
+        (the terminal text-reply path emits the final answer — the model's natural
+        -language answer turn is NOT code to execute). No resolution/dedup here —
+        CodeAct tool calls are resolved + gated per call inside ``execute`` (via the
+        OS gate), not up front."""
+        code = _extract_fenced_code(llm_response)
+        if code is None:
+            return PlainText()
+        return CodeBlock(code=code)
 
     async def execute(
         self, interp: CodeBlock, exec_ctx: ExecContext, ops: Any,

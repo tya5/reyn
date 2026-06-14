@@ -1,7 +1,8 @@
 """Tier 2: #1593 PR-3 S3a — CodeActScheme (interpret + execute glue + feedback).
 
 CodeAct is own-logic (not delegating). This pins:
-  - interpret extracts the snippet (fenced or bare) as a CodeBlock.
+  - interpret returns a CodeBlock for a fenced ```python block, else PlainText (a
+    response with no fence is a terminal natural-language reply, not code to exec).
   - execute threads the OS per-call gate (exec_ctx.extra['dispatch']) + sandbox into
     the CodeActRunner and wraps the result — and REQUIRES the gate (no silent
     ungated run).
@@ -21,7 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from reyn.tools.scheme import CodeBlock, ExecContext, ExecutionResult
+from reyn.tools.scheme import CodeBlock, ExecContext, ExecutionResult, PlainText
 from reyn.tools.schemes.codeact import CodeActScheme
 
 
@@ -45,11 +46,26 @@ def test_interpret_extracts_fenced_code() -> None:
     assert interp.code.strip() == "result = tool('m')"
 
 
-def test_interpret_bare_content_when_no_fence() -> None:
-    """Tier 2: interpret falls back to the whole content when there is no fence."""
-    resp = SimpleNamespace(content="result = 1 + 1")
+def test_interpret_extracts_tool_code_fence() -> None:
+    """Tier 2: interpret accepts ANY fence language label — flash-lite fences with
+    Gemini's native ```tool_code (not ```python); a python-only pattern dropped it
+    and the snippet never ran (#1593 live-verify)."""
+    resp = SimpleNamespace(
+        content="I will read it.\n```tool_code\nresult = tool('file__read', path='x')\n```",
+    )
     interp = CodeActScheme().interpret(resp, tool_catalog={}, ops=None)
-    assert interp.code == "result = 1 + 1"
+    assert isinstance(interp, CodeBlock)
+    assert interp.code.strip() == "result = tool('file__read', path='x')"
+
+
+def test_interpret_plaintext_when_no_fence() -> None:
+    """Tier 2: a response with no fenced block is a terminal natural-language reply
+    → PlainText (NOT bare code to execute). The SP instructs the model to fence its
+    snippet; treating un-fenced prose as code made the final answer turn raise a
+    spurious SyntaxError and loop without terminating (#1593 live-verify)."""
+    resp = SimpleNamespace(content="The file contains PURPLE-OTTER-42.")
+    interp = CodeActScheme().interpret(resp, tool_catalog={}, ops=None)
+    assert isinstance(interp, PlainText)
 
 
 @pytest.mark.asyncio
@@ -111,14 +127,29 @@ def test_format_feedback_shapes_observation_message() -> None:
 
 
 class _CatalogOps:
-    """A real Fake SchemeOps exposing the async ``catalog_entries`` adapter (#1599)."""
+    """A real Fake SchemeOps exposing the async ``catalog_entries`` adapter (#1599).
+
+    Returns the **OpenAI tool-schema shape** (``{type, function: {name, description,
+    parameters}}``) the LIVE adapter emits (router_loop ``catalog_entries``, uniform
+    with ``base_tools`` / enumerate-all / retrieval). #1593 live-verify: an earlier
+    flat-shape Fake here false-passed while the nested live shape rendered ``tool('')``
+    for every action ([[feedback_fake_backend_unit_misses_real_integration]])."""
+
+    @staticmethod
+    def _fn(name: str, description: str, properties: dict) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {"type": "object", "properties": properties},
+            },
+        }
 
     async def catalog_entries(self) -> list[dict]:
         return [
-            {"name": "file__read", "description": "Read a file.",
-             "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}},
-            {"name": "web__fetch", "description": "Fetch a URL.\nSecond line ignored.",
-             "parameters": {"type": "object", "properties": {}}},
+            self._fn("file__read", "Read a file.", {"path": {"type": "string"}}),
+            self._fn("web__fetch", "Fetch a URL.\nSecond line ignored.", {}),
         ]
 
 

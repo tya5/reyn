@@ -33,6 +33,8 @@ re-gates. Direct FS-write / network / subprocess remain blocked by the sandbox.
 from __future__ import annotations
 
 import ast
+import contextlib
+import io
 import json
 import socket
 import sys
@@ -115,10 +117,14 @@ class ToolError(RuntimeError):
 
 def _exec_codeact(
     code: str, channel: _ControlChannel, allowed_modules: frozenset[str],
-) -> Any:
+) -> tuple[Any, str]:
     """Validate + exec the snippet with the restricted builtins + the tool shim.
 
-    Returns the snippet's ``result`` binding if it defines one, else None. The
+    Returns ``(result, captured_stdout)`` — the snippet's ``result`` binding (or
+    None) and anything it wrote to stdout. The snippet's stdout is captured into a
+    buffer, NOT left on the process stdout: the harness uses stdout for its own JSON
+    result envelope, so an un-captured ``print(...)`` corrupts that envelope (the
+    parent's ``json.loads`` then fails = MalformedResponse, #1593 live-verify). The
     snippet affects the world ONLY through ``tool(...)`` (the parent-gated proxy);
     the restricted builtins block ``open`` / ``eval`` / ``__import__`` of
     non-allowlisted modules (defense-in-depth on top of the sandbox)."""
@@ -132,8 +138,10 @@ def _exec_codeact(
         "tool": _make_tool_shim(channel),
     }
     compiled = compile(tree, filename="<codeact>", mode="exec")
-    exec(compiled, namespace)  # noqa: S102 — sandboxed subprocess + restricted ns
-    return namespace.get("result")
+    stdout_buf = io.StringIO()
+    with contextlib.redirect_stdout(stdout_buf):
+        exec(compiled, namespace)  # noqa: S102 — sandboxed subprocess + restricted ns
+    return namespace.get("result"), stdout_buf.getvalue()
 
 
 def _read_request() -> dict[str, Any]:
@@ -159,7 +167,12 @@ def main() -> int:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, fileno=control_fd)
         channel = _ControlChannel(sock)
 
-        result = _exec_codeact(code, channel, allowed_modules)
+        result, captured_stdout = _exec_codeact(code, channel, allowed_modules)
+        # When the snippet printed instead of assigning ``result`` (a common weak
+        # -model idiom — ``print(tool(...))``), surface the captured stdout as the
+        # result so the turn still yields a usable observation (#1593 live-verify).
+        if result is None and captured_stdout.strip():
+            result = captured_stdout.strip()
         _write_response({"ok": True, "result": result})
         return 0
     except Exception as exc:  # noqa: BLE001 — surface every failure as a response

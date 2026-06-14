@@ -3010,15 +3010,26 @@ class RouterLoop:
                 }
         return None
 
-    async def _dispatch_resolved(self, name: str, args: dict) -> dict:
+    async def _dispatch_resolved(
+        self, name: str, args: dict, *, dispatch_catalog: dict | None = None,
+    ) -> dict:
         """#1593: dispatch a resolved, exclude-cleared tool call via the OS substrate
         (DispatchContext / phase-memo / ``dispatch_tool`` — P5). The pure-OS dispatch
         half of the former ``_execute_tool``; the scheme's ``execute`` orchestrates
-        calls to it (it never sees the DispatchContext / phase-memo)."""
+        calls to it (it never sees the DispatchContext / phase-memo).
+
+        ``dispatch_catalog`` overrides the ``tool_catalog`` the ``dispatch_tool``
+        membership gate checks against (default = ``self._catalog``, the advertised
+        ``tools=`` mirror — the Execute path is byte-identical). CodeAct passes the
+        FULL flat catalog here: its advertised payload is empty (the model writes
+        code, not JSON tool calls), so a gate keyed on ``self._catalog`` would reject
+        every in-code ``tool('<name>')`` call as "not in catalog" — #1593 live-verify
+        (the model's correct ``tool('file__read', ...)`` was rejected)."""
         # #1092 PR-C-2.5: phase-mode op-dispatch WAL memoization. A phase host
         # returns the per-phase resume wiring; chat hosts don't implement the hook
         # (getattr → None), so the chat dispatch path below is byte-identical
         # (``caller_kind="router"``, no state_log/skill_run_id → no WAL step).
+        catalog = dispatch_catalog if dispatch_catalog is not None else self._catalog
         memo = getattr(self.host, "op_dispatch_memo", lambda: None)()
         if memo is not None:
             # Phase op: thread state_log + skill_run_id + resume_plan + a
@@ -3032,7 +3043,7 @@ class RouterLoop:
                 caller_kind="skill_phase",
                 caller_id=self.host.agent_name,
                 chain_id=self.chain_id,
-                tool_catalog=self._catalog,
+                tool_catalog=catalog,
                 events=self.host.events,
                 state_log=memo["state_log"],
                 skill_run_id=memo["skill_run_id"],
@@ -3051,7 +3062,7 @@ class RouterLoop:
             caller_kind="router",
             caller_id=self.host.agent_name,
             chain_id=self.chain_id,
-            tool_catalog=self._catalog,
+            tool_catalog=catalog,
             events=self.host.events,
         )
 
@@ -3313,18 +3324,29 @@ class RouterLoop:
         from reyn.sandbox import get_default_backend  # noqa: PLC0415
         from reyn.tools.scheme import ExecContext  # noqa: PLC0415
 
+        # CodeAct's in-code ``tool('<name>')`` can call ANY catalog action, but the
+        # advertised JSON payload is empty (``self._catalog`` is the wrapper/hot-list
+        # mirror, not the flat catalog). Resolve the per-call gate against the FULL
+        # flat catalog — the same projection enumerate-all advertises — so a correct
+        # ``tool('file__read', ...)`` is not rejected as "not in catalog" (#1593
+        # live-verify). Built once per code round (the catalog is stable mid-round).
+        _full_entries = await self.catalog_entries()
+        _codeact_catalog = {e["function"]["name"]: e for e in _full_entries}
+
         async def _os_gate(name: str, args: dict) -> dict:
             excluded = self._excluded_result(name, args)
             if excluded is not None:
                 return excluded
-            return await self._dispatch_resolved(name, args)
+            return await self._dispatch_resolved(
+                name, args, dispatch_catalog=_codeact_catalog,
+            )
 
         # CodeAct-safe default policy (operator-overridable in S4 via the host's
         # configured sandbox policy); the backend auto-selects per platform and the
         # runner is fail-closed when no real sandbox is available.
         sandbox = get_default_backend(getattr(self.host, "sandbox_config", None))
         exec_ctx = ExecContext(
-            tool_catalog=self._catalog,
+            tool_catalog=_codeact_catalog,
             sandbox=sandbox,
             extra={
                 "dispatch": _os_gate,
