@@ -37,10 +37,14 @@ async def test_tool_call_round_trips_to_parent_dispatch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_multiple_sequential_tool_calls() -> None:
-    """Tier 2: several mid-execution tool() calls each round-trip, in order."""
+async def test_gate_reenters_every_call_not_once() -> None:
+    """Tier 2: the per-call gate re-entry invariant — N in-code tool() calls invoke
+    the gate (exclude + dispatch) N times (EVERY call, not once/cached). This is the
+    "CodeAct call >= JSON call" property: each proxied call is gated like a JSON one."""
+    gate_calls: list[tuple[str, dict]] = []
 
     async def dispatch(name: str, args: dict) -> dict:
+        gate_calls.append((name, args))
         return {"status": "ok", "data": args.get("n", 0) * 2}
 
     runner = CodeActRunner()
@@ -48,6 +52,43 @@ async def test_multiple_sequential_tool_calls() -> None:
     out = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
     assert out["ok"] is True, out
     assert out["result"] == [0, 2, 4]
+    # The gate fired once PER call (3x), in order — not deduped, not cached.
+    assert gate_calls == [("m", {"n": 0}), ("m", {"n": 1}), ("m", {"n": 2})]
+
+
+@pytest.mark.asyncio
+async def test_exclude_gate_blocks_per_call_mixed() -> None:
+    """Tier 2: an excluded tool is rejected on EVERY call (mid a sequence of allowed
+    calls), exactly as the JSON-path #1406/#187 pre-dispatch exclude gate would —
+    the gate re-enters per call, so exclude is enforced per call (not once)."""
+    seen: list[str] = []
+    excluded = {"web__search"}
+
+    async def dispatch(name: str, args: dict) -> dict:
+        seen.append(name)
+        # Mirror the OS pre-dispatch exclude gate on the resolved effective name.
+        if name in excluded:
+            return {"status": "error", "error": {"kind": "tool_excluded", "message": "excluded"}}
+        return {"status": "ok", "data": "ok"}
+
+    runner = CodeActRunner()
+    # allowed, excluded (caught), allowed — the snippet try/excepts the ToolError.
+    code = (
+        "out = [tool('file__read', p=1)]\n"
+        "try:\n"
+        "    tool('web__search', q='x')\n"
+        "except Exception as e:\n"
+        "    out.append('blocked:' + type(e).__name__)\n"
+        "out.append(tool('file__read', p=2))\n"
+        "result = out"
+    )
+    res = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
+    assert res["ok"] is True, res
+    # tool() returns the success envelope's `data` ("ok"); the excluded call raised
+    # ToolError, caught by the snippet → "blocked:ToolError".
+    assert res["result"] == ["ok", "blocked:ToolError", "ok"]
+    # The gate was consulted for EACH call including the excluded one (per-call).
+    assert seen == ["file__read", "web__search", "file__read"]
 
 
 @pytest.mark.asyncio
