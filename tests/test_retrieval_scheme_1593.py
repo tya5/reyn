@@ -86,16 +86,32 @@ async def test_refined_presentation_runs_search_and_exposes_candidates(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_terminal_presentation_drops_search_tool(tmp_path) -> None:
-    """Tier 2: a terminal presentation drops the search tool → the LLM can only
-    Execute (no re-search) → guarantees the OS RePresent loop exits."""
+async def test_convergence_drops_search_tool(tmp_path) -> None:
+    """Tier 2: the SCHEME self-determines terminal (#1593 ratified seam — the OS arm
+    holds no convergence logic). When the search yields nothing NEW beyond what the
+    OS already threaded in via ``presented`` (matched ⊆ presented ⇒ new == ∅), the
+    presentation is terminal: it drops the search tool → the LLM can only Execute
+    (no re-search) → the OS RePresent loop exits."""
     ops = _FakeOps(matches=["file__write"], catalog=[_tool("file__write")])
     pres = await RetrievalScheme().build_presentation(
-        {}, {"refinement": {"query": "edit"}, "terminal": True}, ops,
+        {}, {"refinement": {"query": "edit"}, "presented": ("file__write",)}, ops,
     )
     names = {t["function"]["name"] for t in pres.llm_tools_payload}
     assert "file__write" in names
-    assert _SEARCH_TOOL_NAME not in names                 # search dropped → must Execute
+    assert _SEARCH_TOOL_NAME not in names                 # converged → search dropped → must Execute
+
+
+@pytest.mark.asyncio
+async def test_new_matches_keep_search_tool(tmp_path) -> None:
+    """Tier 2: the contrast — a search that yields a match NOT yet presented
+    (new != ∅) is non-terminal: the search tool stays so the LLM may refine again.
+    Pins that the terminal decision is the scheme's, driven by new-vs-presented."""
+    ops = _FakeOps(matches=["file__read"], catalog=[_tool("file__read"), _tool("file__write")])
+    pres = await RetrievalScheme().build_presentation(
+        {}, {"refinement": {"query": "read"}, "presented": ("file__write",)}, ops,
+    )
+    names = {t["function"]["name"] for t in pres.llm_tools_payload}
+    assert _SEARCH_TOOL_NAME in names                     # file__read is new → not converged → search stays
 
 
 @pytest.mark.asyncio
@@ -112,12 +128,12 @@ async def test_initial_presentation_supplies_search_sp_fragment(tmp_path) -> Non
 
 @pytest.mark.asyncio
 async def test_terminal_presentation_sp_fragment_reflects_dropped_search(tmp_path) -> None:
-    """Tier 2: when the presentation is terminal (search tool dropped), the
+    """Tier 2: when the presentation converges to terminal (search tool dropped), the
     sp_fragment flips from "search first" to "call one of the presented matches"
     — the SP and the tools= stay consistent (no dangling search instruction)."""
     ops = _FakeOps(matches=["file__write"], catalog=[_tool("file__write")])
     pres = await RetrievalScheme().build_presentation(
-        {}, {"refinement": {"query": "edit"}, "terminal": True}, ops,
+        {}, {"refinement": {"query": "edit"}, "presented": ("file__write",)}, ops,
     )
     assert pres.sp_fragment                                        # still guided
     assert _SEARCH_TOOL_NAME not in pres.sp_fragment               # no "call search_actions" — it's gone

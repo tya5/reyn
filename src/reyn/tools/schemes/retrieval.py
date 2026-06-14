@@ -109,6 +109,11 @@ class RetrievalScheme:
         # present the matched catalog subset (∪ everything already presented).
         query = refinement.get("query", "")
         matched = await ops.search_actions(query) if query else []
+        # ``presented`` = the OS loop-local accumulator of every candidate shown so
+        # far this turn, threaded in by the OS RePresent arm (#1593 ratified seam:
+        # the accumulator is an OS loop-local, NOT scheme self-state — schemes are
+        # registered singletons, so per-turn self-state would collide across
+        # concurrent turns). The SCHEME self-determines convergence from it.
         seen = set(layer_ctx.get("presented") or ())
         keep = set(matched) | seen
         catalog = await ops.catalog_entries()
@@ -116,9 +121,14 @@ class RetrievalScheme:
             t for t in catalog if t.get("function", {}).get("name") in keep
         ]
         tools = base + matched_tools
-        # Terminal present drops the search tool → the LLM must Execute (no re-search)
-        # → guarantees a non-RePresent exit (the OS convergence step).
-        terminal = bool(layer_ctx.get("terminal", False))
+        # Convergence is the scheme's decision (the OS arm holds no convergence
+        # logic): the search yielded nothing NEW beyond what is already presented
+        # ⇒ terminal. A terminal present drops the search tool → the LLM can only
+        # Execute (no re-search) → guarantees a non-RePresent exit. Bounded by
+        # construction: ``seen`` grows monotonically over a finite action space, so
+        # ``new`` empties in finite rounds.
+        new = set(matched) - seen
+        terminal = not new
         if not terminal:
             tools = tools + [_search_tool_schema()]
         return Presentation(
