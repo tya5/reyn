@@ -3120,20 +3120,51 @@ class RouterLoop:
         return tool_results
 
     async def _run_scheme_tool_round(self, llm_response) -> "tuple[list[dict], list[dict]]":
-        """Route one tool-call round through the active scheme (#1593), byte-identical
-        to the former ``dedupe → gather(_execute_tool)``. Returns ``(tool_calls,
-        tool_results)`` in the original (deduped) order for the downstream loop:
+        """Route one tool-call round through the active scheme (#1593) by dispatching
+        on the scheme's ``Interpretation`` (the tagged union). Returns ``(tool_calls,
+        tool_results)`` in the original (deduped) order for the downstream loop.
 
-        interpret (resolve) → OS exclude-gate (pre-dispatch) → execute (dispatch
-        survivors) → format_feedback. Universal emits only ``Execute``; the exclude
-        gate produces the same ``tool_excluded`` error result **in place** (not a
-        drop), so order + tool_call_id alignment are preserved."""
-        from reyn.tools.scheme import ExecContext, Execute, ExecutionResult
+        Three arms, **single-owned here** so PR-3 (CodeAct / ``CodeBlock``) and PR-4
+        (retrieval / ``RePresent``) ride one generalized match instead of two
+        competing patches of this load-bearing OS-loop seam (#1593 seam arbitration):
+
+          - ``Execute``   → today's path (resolve → OS exclude-gate pre-dispatch →
+            dispatch survivors → ``format_feedback``), **byte-identical** to the former
+            ``dedupe → gather(_execute_tool)``. Universal-category emits only this.
+          - ``CodeBlock`` → CodeAct (PR-3): the snippet runs in a sandboxed subprocess
+            whose only world-effect path is the permission-proxy, which re-enters the
+            SAME exclude + ``dispatch_tool`` + permission gate per call. Body in
+            ``_run_codeblock_round`` (PR-3 S2/S3).
+          - ``RePresent`` → retrieval (PR-4): bounded re-present loop. PR-4 owns this
+            arm body + the refinement contract; unreached by any PR-3-era scheme.
+        """
+        from reyn.tools.scheme import CodeBlock, Execute, RePresent
 
         interp = self._scheme.interpret(
             llm_response, tool_catalog=self._catalog, ops=self,
         )
-        assert isinstance(interp, Execute), "universal-category emits only Execute"
+        match interp:
+            case Execute():
+                return await self._run_execute_round(interp)
+            case CodeBlock():
+                return await self._run_codeblock_round(interp)
+            case RePresent():
+                # PR-4 owns this arm (bounded re-present loop) + the refinement
+                # contract. No PR-3-era scheme (universal / enumerate-all / CodeAct)
+                # emits RePresent, so this is genuinely unreached until PR-4 lands.
+                raise AssertionError("RePresent not reached — PR-4 owns this arm")
+            case _:
+                raise AssertionError(
+                    f"unknown Interpretation: {type(interp).__name__}"
+                )
+
+    async def _run_execute_round(self, interp) -> "tuple[list[dict], list[dict]]":
+        """The ``Execute`` arm — **byte-identical** to the former
+        ``_run_scheme_tool_round`` body. The OS exclude-gate produces the same
+        ``tool_excluded`` error result **in place** (not a drop), so order +
+        ``tool_call_id`` alignment are preserved across the dispatch."""
+        from reyn.tools.scheme import ExecContext, Execute, ExecutionResult
+
         actions = interp.actions
         tool_calls = [a["tc"] for a in actions]
 
@@ -3155,6 +3186,15 @@ class RouterLoop:
             ExecutionResult(tool_results=results), ops=self,
         )
         return tool_calls, tool_results
+
+    async def _run_codeblock_round(self, interp) -> "tuple[list[dict], list[dict]]":
+        """The ``CodeBlock`` arm — CodeAct (PR-3). The snippet runs in a sandboxed
+        subprocess (S2 ``CodeActRunner``: duplex socketpair + concurrent parent
+        service loop) where the only world-effect path is the permission-proxy — each
+        proxied call re-enters the SAME OS exclude + ``dispatch_tool`` + permission
+        gate (P5), so a CodeAct call is gated ≥ a JSON call. Body lands in PR-3
+        S2/S3; the match arm is wired here so the seam structure is single-owned."""
+        raise NotImplementedError("CodeAct CodeBlock execute — PR-3 S2/S3")
 
     def _maybe_salvage_qualified_direct_call(
         self, name: str, args: dict,
