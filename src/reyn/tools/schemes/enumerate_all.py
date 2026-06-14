@@ -73,7 +73,9 @@ class EnumerateAllScheme:
         return ExecutionResult(tool_results=results)
 
     def format_feedback(self, result: ExecutionResult, ops: SchemeOps) -> list[dict]:
-        return ops.feedback(result.tool_results)
+        # #1608: delegate to the OS substrate (now returns appendable messages);
+        # enumerate-all's Execute feedback is identical to universal's.
+        return ops.feedback(result)
 
 
 __all__ = ["EnumerateAllScheme"]

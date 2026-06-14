@@ -2030,6 +2030,7 @@ class RouterLoop:
             from reyn.tools.scheme import (  # noqa: PLC0415
                 CodeBlock,
                 Execute,
+                ExecutionResult,
                 RePresent,
             )
             interp = self._scheme.interpret(
@@ -2525,112 +2526,23 @@ class RouterLoop:
                             meta={"chain_id": self.chain_id, "source": "spawn_ack"},
                         )
                         return self._total_usage
-                # No delegation — accumulate messages for next iteration.
-                # Use deduped tool_calls so the assistant message and tool
-                # result messages stay in sync (matching tool_call_ids).
-                assistant_content = result.content or ""
-                messages.append({
-                    "role": "assistant",
-                    "content": assistant_content,
-                    "tool_calls": tool_calls,
-                })
-                # E-full PR-E (#383): persist this assistant tool-call turn
-                # into chat history so the next ``_build_history_for_router``
-                # rebuild emits the same message sequence — without this,
-                # follow-up user turns lose visibility into what tools were
-                # invoked + with what args.
-                #
-                # ``getattr`` guard: test fakes that pre-date PR-E may not
-                # implement ``append_history_entry``. Production hosts
-                # (= RouterHostAdapter) always implement it.
-                _append_entry = getattr(host, "append_history_entry", None)
-                if _append_entry is not None:
-                    _append_entry(
-                        role="assistant",
-                        content=assistant_content,
-                        meta={"chain_id": self.chain_id, "source": "router_tool_turn"},
+                # #1608: the active scheme builds the appendable message sequence
+                # (assistant tool-call turn + per-result {role:tool, tool_call_id}
+                # messages + media follow-ups) AND persists each to history; the OS
+                # only *appends*. universal / enumerate-all / retrieval delegate to
+                # ops.feedback (the relocated construction) → the OS loop no longer
+                # inlines the JSON tool_call/result zip (P7). tool_calls[i] aligns
+                # with tool_results[i] (the #1406/#187 excluded-in-place row keeps its
+                # index). CodeBlock/RePresent never reach here (separate arms).
+                for _fb_msg in self._scheme.format_feedback(
+                    ExecutionResult(
+                        tool_results=tool_results,
                         tool_calls=tool_calls,
-                    )
-                for tc, r in zip(tool_calls, tool_results):
-                    # B41-NF-W7-1: tool handlers may attach `_post_text` to
-                    # the result dict to surface a textual directive after
-                    # the JSON-serialised content (= a place the LLM reads
-                    # as instruction, not as part of the structured data).
-                    # The field is stripped before JSON serialisation and
-                    # appended outside the JSON body. P3-clean: OS handles
-                    # the serialisation contract, tool handler declares
-                    # intent via an optional field.
-                    post_text: str | None = None
-                    if isinstance(r, dict) and isinstance(r.get("_post_text"), str):
-                        post_text = r["_post_text"]
-                        r = {k: v for k, v in r.items() if k != "_post_text"}
-
-                    # Issue #362: extract MCP media blocks (= image, etc.)
-                    # BEFORE JSON-serialising the tool result. The blocks
-                    # would JSON-stringify into the tool message as opaque
-                    # base64 (= wasted tokens) — instead, surface them as a
-                    # multimodal follow-up user message so vision-capable
-                    # models actually see the image. Strip from `r` so the
-                    # tool result text stays compact.
-                    media_blocks: list[dict] = []
-                    if isinstance(r, dict) and isinstance(r.get("media_blocks"), list):
-                        media_blocks = list(r["media_blocks"])
-                        r = {k: v for k, v in r.items() if k != "media_blocks"}
-
-                    content_str = json.dumps(r, default=str)
-                    if post_text:
-                        content_str = f"{content_str}\n\n---\n{post_text}"
-                    # #1128 size axis (dead-end #1): cap an oversized tool result
-                    # ONCE at this chokepoint — the full body is offloaded to the
-                    # #385 store (lossless) and content_str becomes a bounded
-                    # preview, so BOTH consumers below (the live prompt append +
-                    # the persisted-history _append_entry) get the capped form.
-                    # This makes every tool turn individually compactable, so the
-                    # chat retry_loop's shrink can always fold it. getattr keeps
-                    # partial/test hosts a no-op.
-                    _cap = getattr(self.host, "cap_tool_result", None)
-                    if _cap is not None:
-                        content_str = _cap(content_str)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": content_str,
-                    })
-                    # E-full PR-E (#383): persist this tool response so the
-                    # next router turn sees what the tool returned (= image
-                    # follow-up / grep result follow-up / multi-step plan
-                    # use cases listed in #383). The path-ref shape from
-                    # PR-C keeps storage light when results contain media.
-                    if _append_entry is not None:
-                        _append_entry(
-                            role="tool",
-                            content=content_str,
-                            meta={"chain_id": self.chain_id, "source": "router_tool_turn"},
-                            tool_call_id=tc["id"],
-                            name=tc.get("function", {}).get("name"),
-                        )
-                    if media_blocks:
-                        # Issue #383 PR-C: pass the host's media_store so
-                        # path-ref blocks are materialised to data URLs at
-                        # the LLM wire boundary. ``getattr`` keeps tests
-                        # that mock the host with bare attributes happy.
-                        # #272: bound the media follow-up to the budget left
-                        # after the (already-capped) tool text, so the whole
-                        # result turn stays ≤ the per-turn cap. Overflow media
-                        # stays a small lossless ref. getattr keeps partial/test
-                        # hosts unbounded (pre-#272 behaviour).
-                        _media_budget = getattr(host, "media_followup_budget", None)
-                        _budget_tokens = (
-                            _media_budget(content_str) if _media_budget is not None else None
-                        )
-                        followup = _build_media_followup_message(
-                            tool_name=tc.get("function", {}).get("name", "tool"),
-                            media_blocks=media_blocks,
-                            media_store=getattr(host, "media_store", None),
-                            budget_tokens=_budget_tokens,
-                        )
-                        if followup is not None:
-                            messages.append(followup)
+                        assistant_content=result.content or "",
+                    ),
+                    ops=self,
+                ):
+                    messages.append(_fb_msg)
 
                 # B51 NF-W6-3: plan_invalid self-correction loop. When the
                 # plan tool returned ``{status:error, error:{kind:plan_invalid}}``
@@ -3293,11 +3205,80 @@ class RouterLoop:
             self._dispatch_resolved(a["name"], a["args"]) for a in actions
         ])
 
-    def feedback(self, tool_results: list[dict]) -> list[dict]:
-        """SchemeOps.feedback: PR-1 identity — the OS loop's existing feedback
-        assembly (op-specific plan/invoke_skill + media + message building) consumes
-        ``tool_results`` unchanged. A non-universal scheme (PR-2/3) transforms here."""
-        return tool_results
+    def feedback(self, result: "ExecutionResult") -> list[dict]:
+        """SchemeOps.feedback (#1608): build the **appendable message sequence** for
+        an Execute round — the assistant tool-call turn + the per-result
+        ``{role:tool, tool_call_id, content}`` messages (+ media follow-ups) — and
+        persist each to chat history. This is the OS loop's former inline zip,
+        relocated **byte-identically**: the delegating schemes (universal /
+        enumerate-all / retrieval) return this, and the OS loop only *appends*, so it
+        no longer knows the JSON tool_call/result correlation shape (P7). Relies on
+        ``result.tool_calls[i]`` aligning with ``result.tool_results[i]`` (un-reordered
+        — the #1406/#187 excluded-in-place result keeps its index)."""
+        host = self.host
+        _append_entry = getattr(host, "append_history_entry", None)
+        out: list[dict] = []
+        assistant_content = result.assistant_content
+        out.append({
+            "role": "assistant",
+            "content": assistant_content,
+            "tool_calls": result.tool_calls,
+        })
+        if _append_entry is not None:
+            _append_entry(
+                role="assistant",
+                content=assistant_content,
+                meta={"chain_id": self.chain_id, "source": "router_tool_turn"},
+                tool_calls=result.tool_calls,
+            )
+        for tc, r in zip(result.tool_calls, result.tool_results):
+            # B41-NF-W7-1: _post_text → appended outside the JSON body.
+            post_text: str | None = None
+            if isinstance(r, dict) and isinstance(r.get("_post_text"), str):
+                post_text = r["_post_text"]
+                r = {k: v for k, v in r.items() if k != "_post_text"}
+            # Issue #362: extract media blocks BEFORE serialising (surfaced as a
+            # multimodal follow-up user message, not base64 in the tool text).
+            media_blocks: list[dict] = []
+            if isinstance(r, dict) and isinstance(r.get("media_blocks"), list):
+                media_blocks = list(r["media_blocks"])
+                r = {k: v for k, v in r.items() if k != "media_blocks"}
+            content_str = json.dumps(r, default=str)
+            if post_text:
+                content_str = f"{content_str}\n\n---\n{post_text}"
+            # #1128: cap oversized tool results once at this chokepoint.
+            _cap = getattr(host, "cap_tool_result", None)
+            if _cap is not None:
+                content_str = _cap(content_str)
+            out.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": content_str,
+            })
+            # E-full PR-E (#383): persist the tool response (capped form).
+            if _append_entry is not None:
+                _append_entry(
+                    role="tool",
+                    content=content_str,
+                    meta={"chain_id": self.chain_id, "source": "router_tool_turn"},
+                    tool_call_id=tc["id"],
+                    name=tc.get("function", {}).get("name"),
+                )
+            if media_blocks:
+                # Issue #383 PR-C / #272: bounded media follow-up message.
+                _media_budget = getattr(host, "media_followup_budget", None)
+                _budget_tokens = (
+                    _media_budget(content_str) if _media_budget is not None else None
+                )
+                followup = _build_media_followup_message(
+                    tool_name=tc.get("function", {}).get("name", "tool"),
+                    media_blocks=media_blocks,
+                    media_store=getattr(host, "media_store", None),
+                    budget_tokens=_budget_tokens,
+                )
+                if followup is not None:
+                    out.append(followup)
+        return out
 
     async def _run_execute_round(self, interp) -> "tuple[list[dict], list[dict]]":
         """The ``Execute`` arm — **byte-identical** to the former
@@ -3323,10 +3304,11 @@ class RouterLoop:
         )
         for (i, _), r in zip(to_dispatch, exec_res.tool_results):
             results[i] = r
-        tool_results = self._scheme.format_feedback(
-            ExecutionResult(tool_results=results), ops=self,
-        )
-        return tool_calls, tool_results
+        # #1608: return the RAW (tool_calls, results) — the 8 lifecycle/audit sites
+        # (async / spawn-ack / plan / error / routing) consume the pair, and the OS
+        # Execute branch hands it to ``format_feedback`` for the message build. (The
+        # former format_feedback call here was a no-op passthrough.)
+        return tool_calls, results
 
     async def _run_codeblock_round(self, interp) -> "list[dict]":
         """The ``CodeBlock`` arm body — run the CodeAct snippet via the scheme's

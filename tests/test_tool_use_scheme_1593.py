@@ -50,9 +50,20 @@ class _RecordingOps:
         self.calls.append("dispatch")
         return [{"status": "ok", "for": a["name"]} for a in actions]
 
-    def feedback(self, tool_results: list[dict]) -> list[dict]:
+    def feedback(self, result) -> list[dict]:
+        # #1608: ops.feedback now receives the enriched ExecutionResult and returns
+        # appendable MESSAGES (the relocated assistant+tool-message build). The Fake
+        # records the delegated result + returns a representative message sequence.
         self.calls.append("feedback")
-        return tool_results
+        self.last_feedback_result = result
+        return [
+            {"role": "assistant", "content": result.assistant_content,
+             "tool_calls": result.tool_calls},
+            *(
+                {"role": "tool", "tool_call_id": tc.get("id"), "content": str(r)}
+                for tc, r in zip(result.tool_calls, result.tool_results)
+            ),
+        ]
 
 
 # ── registry ────────────────────────────────────────────────────────────────
@@ -101,13 +112,22 @@ def test_universal_interpret_execute_with_tool_calls() -> None:
 
 @pytest.mark.asyncio
 async def test_universal_execute_and_feedback_round_trip() -> None:
-    """Tier 2: execute delegates dispatch, format_feedback delegates feedback."""
+    """Tier 2: execute delegates dispatch; format_feedback delegates to ops.feedback
+    with the ENRICHED result and returns appendable MESSAGES (#1608 unified contract,
+    not the former tool_results passthrough)."""
     ops = _RecordingOps()
     scheme = UniversalCategoryScheme()
     res = await scheme.execute(Execute(actions=[{"name": "a"}]), ExecContext(), ops)
     assert res.tool_results == [{"status": "ok", "for": "a"}]
-    fb = scheme.format_feedback(ExecutionResult(tool_results=res.tool_results), ops)
-    assert fb == res.tool_results
+    enriched = ExecutionResult(
+        tool_results=res.tool_results, tool_calls=[{"id": "c1"}], assistant_content="hi",
+    )
+    fb = scheme.format_feedback(enriched, ops)
+    # the full enriched result is delegated (not just tool_results) ...
+    assert ops.last_feedback_result is enriched
+    # ... and the return is appendable messages: assistant turn + one tool message.
+    assert fb[0]["role"] == "assistant" and fb[0]["tool_calls"] == [{"id": "c1"}]
+    assert fb[1]["role"] == "tool" and fb[1]["tool_call_id"] == "c1"
     assert ops.calls.count("dispatch") == 1 and ops.calls.count("feedback") == 1
 
 

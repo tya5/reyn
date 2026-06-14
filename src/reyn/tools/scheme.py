@@ -119,9 +119,18 @@ Interpretation = Execute | RePresent | CodeBlock | PlainText
 class ExecutionResult:
     """The outcome of executing an ``Interpretation`` — per-action tool results
     (JSON-serialisable dicts), consumed by ``format_feedback`` and by the OS loop's
-    scheme-agnostic op-specific handling (plan / invoke_skill)."""
+    scheme-agnostic op-specific handling (plan / invoke_skill).
+
+    ``tool_calls`` + ``assistant_content`` (#1608) enrich the result so a scheme's
+    ``format_feedback`` can build the **full** appendable message sequence (the
+    assistant tool-call turn + the per-result ``{role:tool, tool_call_id}`` messages)
+    — moving the OS loop's former inline zip into the scheme (P7). Both default empty
+    so non-Execute schemes (CodeAct reads only ``tool_results``) are unaffected;
+    ``tool_calls[i]`` aligns with ``tool_results[i]`` (un-reordered — #1406/#187)."""
 
     tool_results: list[dict]
+    tool_calls: list[dict] = field(default_factory=list)
+    assistant_content: str = ""
 
 
 @dataclass
@@ -160,7 +169,7 @@ class SchemeOps(Protocol):
     def present(self, available: Any, layer_ctx: Any) -> Presentation: ...
     def resolve(self, llm_response: Any, tool_catalog: dict) -> list[dict]: ...
     async def dispatch(self, actions: list[dict]) -> list[dict]: ...
-    def feedback(self, tool_results: list[dict]) -> list[dict]: ...
+    def feedback(self, result: "ExecutionResult") -> list[dict]: ...
 
     # Building blocks for SELF-CONTAINED schemes (#1593 PR-2) — a non-delegating
     # scheme composes its own presentation from these instead of calling the
