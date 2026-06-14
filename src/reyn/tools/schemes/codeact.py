@@ -32,6 +32,7 @@ from reyn.tools.scheme import (
     ExecContext,
     ExecutionResult,
     Presentation,
+    flat_catalog_entries,
     register_scheme,
 )
 
@@ -119,21 +120,29 @@ class CodeActScheme:
         in ``execute`` (a code call to an excluded action is rejected at dispatch).
         Presentation-level omission is deferred to a follow-up (it needs the exclude
         set, which the OS applies post-presentation to ``tools=`` today)."""
-        entries = await ops.catalog_entries()
+        entries = await ops.catalog_entries()  # canonical (OpenAI-nested) shape
+        # #1618 root-1: project to the FLAT {name, params} shape the render reads (the
+        # OS-owned projection — no hand-read of a nested dict at a guessed depth, which
+        # was #1: tool('') ×50, and #3: the exclude filter silently never matched).
+        flat = flat_catalog_entries(entries)
         # Presentation parity with the JSON path (#1400): omit excluded actions from
-        # the code-API too, so CodeAct's presentation is not looser than JSON tools=
-        # ("CodeAct >= JSON" on the presentation face, not just the per-call gate).
-        # The OS supplies the session exclude-set via ``available``.
+        # the rendered code-API (defense-in-depth — the real gate is per-call). The OS
+        # supplies the session exclude-set via ``available``.
         exclude = (available or {}).get("exclude_tools") or frozenset()
-        if exclude:
-            entries = [e for e in entries if e.get("name") not in exclude]
+        rendered = [e for e in flat if e["name"] not in exclude] if exclude else flat
         return Presentation(
             llm_tools_payload=[],
+            # #1618 root-1: CodeAct advertises ∅ but dispatches the FULL catalog (the
+            # model writes code). The dispatch gate's membership is sourced from this
+            # (NOT the empty llm_tools_payload → #7 "not in catalog"). Excluded actions
+            # stay IN the dispatchable set so an in-code call to one gets the clear
+            # ``tool_excluded`` message (per-call gate), not ``unknown_tool``.
+            dispatchable_catalog=entries,
             sp_params={
                 "universal_wrappers_enabled": False,
                 "search_actions_enabled": False,
             },
-            sp_fragment=_render_code_api(entries),
+            sp_fragment=_render_code_api(rendered),
         )
 
     def interpret(self, llm_response: Any, *, tool_catalog: dict, ops: Any) -> CodeBlock:

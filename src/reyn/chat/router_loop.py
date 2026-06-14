@@ -1433,7 +1433,11 @@ class RouterLoop:
         # patch``. Production callers leave this as ``None``.
         self._llm_caller = llm_caller
         self._on_limit = on_limit  # FP-0005 max_iterations checkpoint config
-        self._catalog: dict[str, dict] = {}  # populated per run()
+        self._catalog: dict[str, dict] = {}  # populated per run() — the ADVERTISED mirror
+        # #1618 root-1: the DISPATCHABLE membership map (None ⇒ = self._catalog,
+        # byte-identical for schemes whose advertised = dispatchable). Set per run()
+        # from ``Presentation.dispatchable_catalog`` when a scheme decouples them.
+        self._dispatch_catalog: "dict[str, dict] | None" = None
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
         # #1593: the active tool-use scheme. PR-1 = universal-category (the shipped
@@ -1713,6 +1717,15 @@ class RouterLoop:
         tools = _apply_tool_exclusions(tools, self._exclude_tools)
         self._catalog = {t["function"]["name"]: t for t in tools}
         self._tool_names = frozenset(self._catalog.keys())  # backward compat
+        # #1618 root-1: source the dispatch membership map from the scheme's
+        # DISPATCHABLE set when it decouples it from the advertised payload (CodeAct:
+        # advertises ∅, dispatches the full catalog). None ⇒ dispatch gate keys on
+        # self._catalog (byte-identical for universal / enumerate / retrieval).
+        if _pres.dispatchable_catalog is not None:
+            from reyn.tools.scheme import dispatch_catalog_map  # noqa: PLC0415
+            self._dispatch_catalog = dispatch_catalog_map(_pres.dispatchable_catalog)
+        else:
+            self._dispatch_catalog = None
         if self._system_prompt_override is not None:
             system_prompt = self._system_prompt_override
         else:
@@ -3014,7 +3027,20 @@ class RouterLoop:
         """#1593: dispatch a resolved, exclude-cleared tool call via the OS substrate
         (DispatchContext / phase-memo / ``dispatch_tool`` — P5). The pure-OS dispatch
         half of the former ``_execute_tool``; the scheme's ``execute`` orchestrates
-        calls to it (it never sees the DispatchContext / phase-memo)."""
+        calls to it (it never sees the DispatchContext / phase-memo).
+
+        #1618 root-1: the membership/resolution gate (``tool_catalog``) is sourced
+        from the scheme's DISPATCHABLE set (``self._dispatch_catalog``) — decoupled
+        from the ADVERTISED ``tools=`` mirror (``self._catalog``). Default ``None`` ⇒
+        ``self._catalog`` (universal / enumerate / retrieval, where dispatchable =
+        advertised — byte-identical). CodeAct advertises ∅ but dispatches the full
+        catalog, so its gate must key on the dispatchable set, not the empty mirror
+        (the #7 "not in catalog" root)."""
+        catalog = (
+            self._dispatch_catalog
+            if self._dispatch_catalog is not None
+            else self._catalog
+        )
         # #1092 PR-C-2.5: phase-mode op-dispatch WAL memoization. A phase host
         # returns the per-phase resume wiring; chat hosts don't implement the hook
         # (getattr → None), so the chat dispatch path below is byte-identical
@@ -3032,7 +3058,7 @@ class RouterLoop:
                 caller_kind="skill_phase",
                 caller_id=self.host.agent_name,
                 chain_id=self.chain_id,
-                tool_catalog=self._catalog,
+                tool_catalog=catalog,
                 events=self.host.events,
                 state_log=memo["state_log"],
                 skill_run_id=memo["skill_run_id"],
@@ -3051,7 +3077,7 @@ class RouterLoop:
             caller_kind="router",
             caller_id=self.host.agent_name,
             chain_id=self.chain_id,
-            tool_catalog=self._catalog,
+            tool_catalog=catalog,
             events=self.host.events,
         )
 
