@@ -130,6 +130,22 @@ class SchemeOps(Protocol):
     async def dispatch(self, actions: list[dict]) -> list[dict]: ...
     def feedback(self, tool_results: list[dict]) -> list[dict]: ...
 
+    # Building blocks for SELF-CONTAINED schemes (#1593 PR-2) — a non-delegating
+    # scheme composes its own presentation from these instead of calling the
+    # whole-universal ``present``. The router (host-context holder) provides them
+    # so schemes stay P7-clean. Additive → universal's delegation is unchanged
+    # (no PR-1 regression).
+    def base_tools(self, available: Any, layer_ctx: Any) -> list[dict]:
+        """The prior-shape base tools (``build_tools`` with wrappers OFF): the
+        common base every scheme starts from (skills/agents/mcp/file/web)."""
+        ...
+
+    def catalog_entries(self) -> list[dict]:
+        """Every usable catalog action across all categories projected to a flat,
+        directly-callable tool schema (qualified ``<category>__<entry>`` name) —
+        what enumerate-all adds on top of ``base_tools`` instead of the wrappers."""
+        ...
+
 
 @runtime_checkable
 class ToolUseScheme(Protocol):

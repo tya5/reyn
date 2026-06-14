@@ -45,30 +45,19 @@ class EnumerateAllScheme:
     name = "enumerate-all"
 
     def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
-        # NOTE (seam co-vet w/ e2e): a self-contained scheme needs the *building
-        # blocks* PR-1's seam doesn't yet expose — host context (agents /
-        # file_permissions / mcp_servers for the base tools) + the full catalog
-        # entry set (all 13 categories → flat tool schemas). ``available`` only
-        # carries {skills_for_tools, hot_list_aliases}; ``ops`` only offers the
-        # whole-universal ``present``. Pending the seam extension (see #1593 impl
-        # plan), the flat tools= is assembled by ``_build_flat_tools``.
-        flat_tools = self._build_flat_tools(available, layer_ctx, ops)
+        # Self-contained presentation (e2e-agreed seam, #1593): compose the flat
+        # tools= from the router's building-block ops — the prior-shape base tools
+        # + every catalog action flat (no universal wrappers / no discovery). The
+        # router holds host context + catalog, so the scheme stays P7-clean.
+        flat_tools = list(ops.base_tools(available, layer_ctx)) + list(ops.catalog_entries())
         # Prior-shape (no wrapper-chain) SP — the existing gate yields the minimal
-        # tool-use instructions enumerate-all wants; no build_system_prompt change.
+        # tool-use instructions enumerate-all wants; no build_system_prompt change
+        # (the fragment-extraction the earlier plan floated is unnecessary).
         sp_params = {
             "universal_wrappers_enabled": False,
             "search_actions_enabled": bool(layer_ctx.get("search_visible", False)),
         }
         return Presentation(llm_tools_payload=flat_tools, sp_params=sp_params)
-
-    def _build_flat_tools(self, available, layer_ctx, ops: SchemeOps) -> list[dict]:
-        # PENDING seam extension (#1593 PR-2 impl plan, e2e co-vet): project every
-        # usable tool to a flat OpenAI tool dict named by its qualified
-        # ``<category>__<entry>`` (so ops.resolve/dispatch route it unchanged) +
-        # the base tools. Needs an ops building-block accessor (base-tools +
-        # catalog-entries) or a richer ``available``. Stub returns [] until the
-        # seam is agreed; conformance tests assert the method/contract shape.
-        return []
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
         # Flat (qualified) names resolve through the shared resolution (dedupe +

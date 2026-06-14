@@ -3028,6 +3028,39 @@ class RouterLoop:
             },
         )
 
+    def base_tools(self, available, layer_ctx) -> list[dict]:
+        """SchemeOps.base_tools (#1593 PR-2): the prior-shape base tools —
+        ``build_tools`` with the universal wrappers OFF. The common base a
+        self-contained scheme starts from (enumerate-all adds ``catalog_entries``
+        on top instead of the wrappers). The phase layer's op-catalog is its base."""
+        phase_op_catalog = layer_ctx.get("phase_op_catalog")
+        if phase_op_catalog is not None:
+            return list(phase_op_catalog)
+        return build_tools(
+            available["skills_for_tools"],
+            self.host.list_available_agents(),
+            file_permissions=self.host.get_file_permissions(),
+            mcp_servers=self.host.get_mcp_servers(),
+            web_fetch_allowed=self.host.get_web_fetch_allowed(),
+            universal_wrappers_enabled=False,
+            search_actions_visible=False,
+            hot_list_aliases=available["hot_list_aliases"],
+            compact_visible=layer_ctx["ctx_signal_present"],
+        )
+
+    def catalog_entries(self) -> list[dict]:
+        """SchemeOps.catalog_entries (#1593 PR-2): every usable catalog action as
+        a flat callable tool schema (qualified ``<category>__<entry>`` name).
+
+        PENDING sandbox_2's ``universal_catalog.catalog_entries(ctx)`` substrate
+        (the non-paginated all-entries→schemas projection extracted from
+        ``_handle_list_actions``, #1455 list≡describe invariant). Once it lands,
+        this builds a router-state ``ToolContext`` (resource categories —
+        skills/agents/mcp — silently drop without router_state) and maps each
+        entry → ``{type: function, function: {name, description, parameters}}``.
+        Returns [] until then (enumerate-all degrades to base_tools-only)."""
+        return []
+
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         """SchemeOps.resolve: dedupe + #229 salvage → actions carrying the original
         ``tc`` + the resolved effective ``name``/``args``. The OS exclude-gates these
