@@ -52,6 +52,7 @@ from reyn.llm.llm import (
     EmptyLLMResponseError,
     _backoff_s,
     _empty_response_diag,
+    _env_num,
     _is_retryable_exc,
     _llm_call_with_retry,
 )
@@ -568,3 +569,37 @@ async def test_empty_choices_error_message_carries_provider_diag(monkeypatch):
 
     with pytest.raises(EmptyLLMResponseError, match="RECITATION"):
         await _llm_call_with_retry(_RichEmptyCallable(), "model-x", _make_event_log())
+
+
+# ---------------------------------------------------------------------------
+# Test 14: retry tuning-knob env-override (REYN_LLM_RETRY_MAX_ATTEMPTS / _BASE_S)
+# ---------------------------------------------------------------------------
+
+
+def test_env_num_retry_knob(monkeypatch):
+    """Tier 2: OS invariant — _env_num reads an operator retry tuning knob from the
+    environment (clamped, safe fallback), the flaky-provider robustness lever that
+    lets a measurement/operator bump retries+backoff without a code change. Default
+    preserves today's behaviour. Real env (monkeypatch), no mock."""
+    monkeypatch.delenv("REYN_TEST_KNOB", raising=False)
+    assert _env_num("REYN_TEST_KNOB", 3, 1, 10, int) == 3          # unset → default
+    monkeypatch.setenv("REYN_TEST_KNOB", "5")
+    assert _env_num("REYN_TEST_KNOB", 3, 1, 10, int) == 5          # valid override
+    monkeypatch.setenv("REYN_TEST_KNOB", "99")
+    assert _env_num("REYN_TEST_KNOB", 3, 1, 10, int) == 10         # clamp to hi
+    monkeypatch.setenv("REYN_TEST_KNOB", "0")
+    assert _env_num("REYN_TEST_KNOB", 3, 1, 10, int) == 1          # clamp to lo
+    monkeypatch.setenv("REYN_TEST_KNOB", "not-a-number")
+    assert _env_num("REYN_TEST_KNOB", 3, 1, 10, int) == 3          # invalid → default
+    monkeypatch.setenv("REYN_TEST_KNOB", "4.5")
+    assert _env_num("REYN_TEST_KNOB", 2.0, 0.1, 30.0, float) == 4.5  # float knob (base backoff)
+
+
+def test_retry_constants_default_preserved():
+    """Tier 2: the retry constants keep their historical defaults when no env override
+    is set (1 initial + 2 retries; 2s base) — the env-override is opt-in, byte-compat."""
+    import os
+    if "REYN_LLM_RETRY_MAX_ATTEMPTS" not in os.environ:
+        assert _LLM_RETRY_MAX_ATTEMPTS == 3
+    if "REYN_LLM_RETRY_BASE_S" not in os.environ:
+        assert _LLM_RETRY_BASE_S == 2.0
