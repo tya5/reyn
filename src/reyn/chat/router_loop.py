@@ -88,6 +88,23 @@ _EMPTY_RESPONSE_MSG: dict[str, str] = {
 # W3 S1); this deterministic OS message carries the same UX guarantee
 # (= "/tasks" hint) without LLM composition, so the race condition does
 # not re-emerge.  P7-clean: no skill names, no qualified action names.
+# #1593 PR-4: the OS-generic synthetic tool-response the RePresent arm appends for
+# an intercepted re-present tool_call (a retrieval search). The scheme's interpret
+# turned the tool_call into a RePresent (it is never dispatched), but the message
+# history still needs every tool_call answered — this is that answer. P7-clean:
+# OS-level vocabulary, no "search" / scheme concept; the new tools= payload + the
+# scheme's sp_fragment carry the actual re-presentation meaning to the LLM.
+_REPRESENT_ACK = (
+    "The available tools have been updated based on your request. "
+    "The tools you can now call are listed above."
+)
+# Defensive backstop for the RePresent loop (#1593 PR-4). The REAL bound is
+# convergence-by-construction (the scheme's monotonic ``presented`` on a finite
+# catalog + its terminal-search-drop forcing Execute); this valve only fires for a
+# misbehaving scheme that never terminates its re-present loop, well above any
+# realistic search-refine sequence. The outer max_iterations is the ultimate cap.
+_MAX_REPRESENT_ROUNDS = 64
+
 _SPAWN_ACK_MSG: dict[str, str] = {
     "ja": (
         "スキルをバックグラウンドで実行しています。"
@@ -1661,15 +1678,23 @@ class RouterLoop:
         # use build_tools with the catalog wrappers). PR-2/3 schemes shape tools=
         # differently. The OS still projects _catalog from the payload + builds the
         # (monolithic) SP from sp_params below.
+        # #1593 PR-4: capture the build_presentation inputs so the OS RePresent arm
+        # (run_loop) can re-call build_presentation with a refinement + the
+        # accumulated `presented` set. Stashed on self (RouterLoop is per-run state,
+        # like self._catalog) — NOT the scheme (a registered singleton).
+        _scheme_available = {
+            "skills_for_tools": skills_for_tools, "hot_list_aliases": _hot_list_aliases,
+        }
+        _scheme_layer_ctx = {
+            "phase_op_catalog": _phase_op_catalog,
+            "univ_enabled": _univ_enabled,
+            "search_visible": _search_visible,
+            "ctx_signal_present": _ctx_signal is not None,
+        }
+        self._scheme_available = _scheme_available
+        self._scheme_layer_ctx = _scheme_layer_ctx
         _pres = await self._scheme.build_presentation(
-            {"skills_for_tools": skills_for_tools, "hot_list_aliases": _hot_list_aliases},
-            {
-                "phase_op_catalog": _phase_op_catalog,
-                "univ_enabled": _univ_enabled,
-                "search_visible": _search_visible,
-                "ctx_signal_present": _ctx_signal is not None,
-            },
-            ops=self,
+            _scheme_available, _scheme_layer_ctx, ops=self,
         )
         tools = _pres.llm_tools_payload
         # #187 STEP 1c (owner principle): actions are enumerated ONLY by
@@ -1826,6 +1851,13 @@ class RouterLoop:
         # message list. Bounded by ``self._plan_invalid_max_retries``
         # (default 1 = one correction attempt per chat turn).
         _plan_invalid_retries: int = 0
+        # #1593 PR-4: OS RePresent convergence state (per-turn loop-locals — NOT
+        # scheme self-state; schemes are registered singletons). ``_represented``
+        # is the monotonic accumulator of every candidate the scheme has presented
+        # this turn, threaded into build_presentation so the scheme self-determines
+        # convergence. ``_represent_rounds`` feeds the defensive backstop.
+        _represented: set = set()
+        _represent_rounds: int = 0
 
         # FP-0005 max_iterations checkpoint: outer while allows re-entry after
         # an approved extension. _loop_cancelled tracks cancel-break vs exhaustion.
@@ -1995,12 +2027,64 @@ class RouterLoop:
                     "CodeAct CodeBlock arm — PR-3 fills _run_codeblock_round"
                 )
             if isinstance(interp, RePresent):
-                # PR-4 step-2 fills this inline (synthetic tool-response + tools-swap
-                # + ``continue``); the loop-locals (tools / self._catalog / messages)
-                # are in scope here for that. Unreached until retrieval is selectable.
-                raise AssertionError(
-                    "RePresent not reached — PR-4 step-2 owns this inline arm"
+                # #1593 PR-4: the generic OS RePresent mechanism (ratified seam). The
+                # scheme classified the LLM output as a re-present request (e.g. a
+                # retrieval search). The OS, generically (no scheme concepts — P7):
+                #   1. records the assistant turn + a synthetic tool-response for each
+                #      intercepted tool_call (OpenAI requires every tool_call answered);
+                #   2. re-calls build_presentation with the refinement + the
+                #      accumulated ``presented`` set (an OS loop-local, NOT scheme
+                #      self-state — schemes are registered singletons);
+                #   3. swaps the advertised tools + the dispatch ``_catalog`` mirror;
+                #   4. accumulates ``presented`` and re-enters the main iteration via
+                #      ``continue`` (budget / compaction / force-close / memo all keep
+                #      applying — no inner LLM loop).
+                # Convergence is the SCHEME's: it self-determines terminal from
+                # ``presented`` + drops the search tool → the next turn can only
+                # Execute. Bounded by construction (monotonic ``presented`` on a
+                # finite catalog). The round counter is a defensive valve for a
+                # non-converging scheme, never the bound; max_iterations is the cap.
+                _represent_rounds += 1
+                if _represent_rounds > _MAX_REPRESENT_ROUNDS:
+                    raise RuntimeError(
+                        "RePresent did not converge within the defensive backstop "
+                        f"({_MAX_REPRESENT_ROUNDS} rounds) — the active scheme is not "
+                        "terminating its re-present loop"
+                    )
+                messages.append({
+                    "role": "assistant",
+                    "content": result.content or "",
+                    "tool_calls": result.tool_calls,
+                })
+                for _tc in result.tool_calls:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": _tc["id"],
+                        "content": _REPRESENT_ACK,
+                    })
+                _represent_layer_ctx = {
+                    **(getattr(self, "_scheme_layer_ctx", None) or {}),
+                    "refinement": interp.refinement,
+                    "presented": tuple(_represented),
+                }
+                _re_pres = await self._scheme.build_presentation(
+                    getattr(self, "_scheme_available", None) or {},
+                    _represent_layer_ctx,
+                    ops=self,
                 )
+                tools = _apply_tool_exclusions(
+                    _re_pres.llm_tools_payload, self._exclude_tools,
+                )
+                self._catalog = {t["function"]["name"]: t for t in tools}
+                self._tool_names = frozenset(self._catalog.keys())
+                _represented |= set(_re_pres.candidates)
+                host.events.emit(
+                    "router_represent_round",
+                    chain_id=self.chain_id,
+                    round=_represent_rounds,
+                    presented_count=len(_represented),
+                )
+                continue
             if isinstance(interp, Execute):
                 # B28-Q2: count non-empty tool_call rounds for chat_turn_completed_inline.
                 _tool_calls_attempted += 1

@@ -162,6 +162,16 @@ def test_interpret_tool_call_is_execute() -> None:
     assert [a["name"] for a in interp.actions] == ["file__write"]
 
 
+def test_interpret_no_tool_call_is_plaintext() -> None:
+    """Tier 2: NO tool calls → PlainText — the model answered without searching
+    (#1593 loop-unify binds PlainText as the terminal text-reply for every scheme).
+    Without this, the loop-unified OS would route an empty-actions Execute through
+    the tool path instead of the text reply."""
+    from reyn.tools.scheme import PlainText
+    interp = RetrievalScheme().interpret(_Resp([]), tool_catalog={}, ops=_FakeOps())
+    assert isinstance(interp, PlainText)
+
+
 @pytest.mark.asyncio
 async def test_execute_and_feedback_delegate() -> None:
     """Tier 2: execute/format_feedback reuse the universal dispatch substrate."""

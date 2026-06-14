@@ -27,6 +27,7 @@ from reyn.tools.scheme import (
     Execute,
     ExecutionResult,
     Interpretation,
+    PlainText,
     Presentation,
     RePresent,
     SchemeOps,
@@ -137,10 +138,15 @@ class RetrievalScheme:
         )
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
-        # Pure classifier (no I/O): a search call → RePresent(query); the search I/O
-        # itself runs in build_presentation. Any other call → Execute (reuse the
-        # shared resolution so the OS exclude-gates pre-dispatch).
+        # Pure classifier (no I/O): NO tool calls → PlainText (the model answered
+        # without searching/calling = done; the OS routes it to the terminal
+        # text-reply path — #1593 loop-unify binds this for every scheme). A search
+        # call → RePresent(query); the search I/O itself runs in build_presentation.
+        # Any other call → Execute (reuse the shared resolution so the OS
+        # exclude-gates pre-dispatch).
         calls = getattr(llm_response, "tool_calls", None) or []
+        if not calls:
+            return PlainText()
         for tc in calls:
             if tc.get("function", {}).get("name") == _SEARCH_TOOL_NAME:
                 try:
