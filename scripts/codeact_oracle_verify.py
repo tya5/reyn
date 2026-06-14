@@ -41,15 +41,20 @@ from dataclasses import dataclass, field
 # fence — it is the Gemini-native tool-call envelope leak, deliberately not counted).
 _FENCE_RE = re.compile(r"```(?:python|py|tool_code)?[ \t]*\n.*?```", re.DOTALL)
 _FLAKE_MARK = "empty choices"
-_DISPATCH_ERRORS = ("not in catalog", "[codeact ToolError]", "[codeact SyntaxError]",
-                    "[codeact MalformedResponse]")
+# A "clean dispatch" = a tool() call resolved through the OS gate (got a result) with
+# no GATE rejection. Only "not in catalog" (#7) + ToolError are gate failures;
+# SyntaxError is a pre-dispatch code-parse failure (fence/interpret, its own signal)
+# and MalformedResponse is a protocol failure (#8, counted separately) — neither is a
+# dispatch error, so they don't disqualify a clean dispatch on the same run.
+_DISPATCH_ERRORS = ("not in catalog", "[codeact ToolError]")
 
 
 @dataclass
 class RunOutcome:
     agent: str
     flake: bool = False
-    fenced: bool = False
+    fenced_first: bool = False  # the FIRST act turn emitted a recognized fence (clean ② signal)
+    fenced: bool = False        # ANY act turn fenced (secondary)
     clean_dispatch: bool = False
     success: bool = False
     malformed: int = 0
@@ -75,12 +80,13 @@ class Report:
         flakes = sum(o.flake for o in self.outcomes)
         lines = [
             "=== CodeAct oracle report ===",
-            f"runs total      : {len(self.outcomes)}  (flake-excluded: {flakes})",
-            f"scored runs     : {len(self.scored)}",
-            f"fence-compliance: {self._rate('fenced')}",
-            f"clean-dispatch  : {self._rate('clean_dispatch')}",
-            f"success         : {self._rate('success')}",
-            f"MalformedResp=0 : {sum(o.malformed == 0 for o in self.scored)}/{len(self.scored)}",
+            f"runs total          : {len(self.outcomes)}  (flake-excluded: {flakes})",
+            f"scored runs         : {len(self.scored)}",
+            f"fence-compliance 1st: {self._rate('fenced_first')}   <- the clean ② signal (loop-independent)",
+            f"fence-compliance any: {self._rate('fenced')}",
+            f"clean-dispatch      : {self._rate('clean_dispatch')}",
+            f"success             : {self._rate('success')}",
+            f"MalformedResp=0     : {sum(o.malformed == 0 for o in self.scored)}/{len(self.scored)}",
             "--- per run ---",
         ]
         for o in self.outcomes:
@@ -88,50 +94,52 @@ class Report:
                 lines.append(f"  {o.agent}: FLAKE (transient empty-choices)")
             else:
                 lines.append(
-                    f"  {o.agent}: fenced={o.fenced} dispatch={o.clean_dispatch} "
-                    f"success={o.success} malformed={o.malformed} {o.note}"
+                    f"  {o.agent}: fenced_first={o.fenced_first} fenced_any={o.fenced} "
+                    f"dispatch={o.clean_dispatch} success={o.success} malformed={o.malformed} {o.note}"
                 )
         return "\n".join(lines)
 
 
-def _classify(agent: str, stdout: str, dump_path: str, sentinel: str) -> RunOutcome:
+def _classify(agent: str, stdout: str, history_path: str, sentinel: str) -> RunOutcome:
     o = RunOutcome(agent=agent)
     if _FLAKE_MARK in stdout:
         o.flake = True
         return o
-    o.malformed = stdout.count("[codeact MalformedResponse]")
-    # success = objective end-state: the sentinel is in the run output + no malformed.
-    o.success = (sentinel in stdout) and o.malformed == 0
-    # parse the LLM trace dump for fence-compliance (assistant act turns).
-    assistant_turns: list[str] = []
-    observations: list[str] = []
+    # Read the AUTHORITATIVE per-turn record (history.jsonl) — appended per turn (so a
+    # killed/looping run's completed turns persist) and ordered, unlike the request
+    # trace-dump which only carries a turn once a LATER request echoes it (the last /
+    # only assistant turn is then missing — the partial-dump miss the baseline hit).
+    assistant_turns: list[str] = []   # in order
+    observations: list[str] = []      # user-role [codeact ...] feedback
     try:
-        with open(dump_path, encoding="utf-8") as f:
-            seen: set[str] = set()
+        with open(history_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 d = json.loads(line)
-                if "messages" not in d:
-                    continue
-                for m in d["messages"]:
-                    c = m.get("content")
-                    c = c if isinstance(c, str) else json.dumps(c)
-                    if m.get("role") == "assistant" and c not in seen:
-                        seen.add(c)
-                        assistant_turns.append(c)
-                    elif m.get("role") == "user" and c.lstrip().startswith("[codeact"):
-                        observations.append(c)
+                c = d.get("content")
+                c = c if isinstance(c, str) else json.dumps(c)
+                if d.get("role") == "assistant":
+                    assistant_turns.append(c)
+                elif d.get("role") == "user" and c.lstrip().startswith("[codeact"):
+                    observations.append(c)
     except FileNotFoundError:
-        o.note = "(no dump)"
+        o.note = "(no history)"
         return o
-    # fence-compliance: at least one act turn emitted a recognized fenced block.
+    # fence-compliance: FIRST act turn fenced (the clean, loop-independent ② signal)
+    # + ANY act turn fenced (secondary).
+    o.fenced_first = bool(assistant_turns) and bool(_FENCE_RE.search(assistant_turns[0]))
     o.fenced = any(_FENCE_RE.search(t) for t in assistant_turns)
     # clean-dispatch: a [codeact result] observation with no dispatch-error observation.
     got_result = any("[codeact result]" in ob for ob in observations)
     any_error = any(any(e in ob for e in _DISPATCH_ERRORS) for ob in observations)
     o.clean_dispatch = got_result and not any_error
+    o.malformed = sum(ob.count("[codeact MalformedResponse]") for ob in observations)
+    # success = objective end-state: the sentinel reached the user (final reply or any
+    # assistant turn) and nothing MalformedResponse'd.
+    o.success = (sentinel in stdout or any(sentinel in t for t in assistant_turns)) \
+        and o.malformed == 0
     return o
 
 
@@ -144,6 +152,8 @@ def _run_one(agent: str, task: str, model: str, sentinel: str, src: str,
         os.remove(dump)
     except OSError:
         pass
+    # The authoritative per-turn record _classify reads (fresh agent ⇒ this run only).
+    history = os.path.join(os.getcwd(), ".reyn", "agents", agent, "history.jsonl")
     env = dict(os.environ, REYN_LLM_TRACE_DUMP=dump, PYTHONPATH=src)
     # start_new_session=True puts the chat run in its own process GROUP so a timeout
     # kills the WHOLE group (incl. the CodeAct sandbox grandchild) — a plain
@@ -164,10 +174,10 @@ def _run_one(agent: str, task: str, model: str, sentinel: str, src: str,
         except (ProcessLookupError, PermissionError):
             pass
         out, _ = proc.communicate()
-        o = _classify(agent, out or "", dump, sentinel)
+        o = _classify(agent, out or "", history, sentinel)
         o.note = (o.note + " (timeout)").strip()
         return o
-    return _classify(agent, out or "", dump, sentinel)
+    return _classify(agent, out or "", history, sentinel)
 
 
 def main() -> int:
@@ -198,7 +208,7 @@ def main() -> int:
         if not o.flake:
             scored += 1
         print(f"  [{attempt}] {agent}: "
-              f"{'FLAKE' if o.flake else f'fenced={o.fenced} dispatch={o.clean_dispatch} success={o.success}'}"
+              f"{'FLAKE' if o.flake else f'fenced_first={o.fenced_first} dispatch={o.clean_dispatch} success={o.success}'}"
               f"{(' ' + o.note) if o.note else ''}",
               flush=True)
 
