@@ -23,7 +23,7 @@ Python block in its message, and tool use happens as ordinary-looking function
 calls **inside** that snippet:
 
 ```python
-result = tool('files__read', path='README.md')
+result = tool('file__read', path='README.md')
 ```
 
 Each `tool(...)` call performs one action and returns its result (or raises if
