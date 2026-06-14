@@ -746,10 +746,12 @@ class AgentRegistry:
             return
         tree_sha = await ws.capture_tree()
         if tree_sha is not None:
-            log.append(seq, tree_sha)
-            # #1560 PR-3: pin the tree as a gc-root while in-window (the bare
-            # write-tree is otherwise unreachable → auto-gc'd). Dropped at prune.
+            # #1560 PR-3: pin the tree as a gc-root BEFORE logging it (the bare
+            # write-tree is otherwise unreachable → auto-gc'd). Ref-before-append
+            # gives the strict invariant "logged ⇒ gc-protected": any entry the
+            # restore reads is guaranteed to have a surviving tree. Dropped at prune.
             await ws.ref_op_tree(seq, tree_sha)
+            log.append(seq, tree_sha)
 
     async def restore_workspace_to_act_turn(self, target_seq: int) -> str | None:
         """Restore the workspace to the act-turn (per-op) state as-of ``target_seq``.
