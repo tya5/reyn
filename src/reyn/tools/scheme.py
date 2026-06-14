@@ -63,6 +63,51 @@ class Presentation:
     # empty ⇒ stop). Default empty: schemes that never RePresent (universal /
     # enumerate-all) leave it untouched, so it is inert for them.
     candidates: tuple = field(default_factory=tuple)
+    # #1618 root-1: the scheme's DISPATCHABLE action set — the membership/resolution
+    # gate for ANY call (JSON tool_call OR in-code ``tool()``), in the canonical
+    # ``catalog_entries`` shape. Decoupled from ``llm_tools_payload`` (what the LLM
+    # is ADVERTISED): a scheme can advertise nothing yet dispatch everything (CodeAct
+    # writes code, advertises ∅, dispatches the full catalog). Default ``None`` ⇒
+    # dispatchable = advertised (``llm_tools_payload``) — byte-identical for
+    # universal / enumerate-all / retrieval, whose three catalog notions coincide.
+    dispatchable_catalog: "list[dict] | None" = None
+
+
+# ── Canonical catalog-shape projections (#1618 root-1) ──────────────────────
+# ``catalog_entries`` (and ``llm_tools_payload``) carry ONE canonical entry shape —
+# the OpenAI-nested ``{"type":"function","function":{"name","description",
+# "parameters"}}``. The OS owns the projections every consumer needs, so no consumer
+# hand-reads a nested dict at a guessed depth (the #1/#3 root: render + the exclude
+# filter read ``entry["name"]`` top-level on a nested entry → empty / silent no-op).
+
+
+def flat_catalog_entries(entries: "list[dict]") -> "list[dict]":
+    """Project canonical (OpenAI-nested) entries → the FLAT ``{name, description,
+    parameters}`` shape that the code-API render + the dispatch membership map read.
+    Tolerates an already-flat entry (defensive). ``parameters`` is always a valid
+    (possibly empty) JSON-schema object."""
+    out: list[dict] = []
+    for e in entries:
+        fn = e.get("function") if isinstance(e.get("function"), dict) else e
+        out.append({
+            "name": fn.get("name", ""),
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return out
+
+
+def dispatch_catalog_map(entries: "list[dict]") -> "dict[str, dict]":
+    """Project canonical entries → the ``{name → canonical_entry}`` membership map the
+    dispatch gate (``DispatchContext.tool_catalog``) checks. Keyed by the entry's
+    function name."""
+    out: dict[str, dict] = {}
+    for e in entries:
+        fn = e.get("function") if isinstance(e.get("function"), dict) else e
+        name = fn.get("name")
+        if name:
+            out[name] = e
+    return out
 
 
 # ── Interpretation: the tagged union the OS loop dispatches on ──────────────
