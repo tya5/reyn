@@ -164,6 +164,56 @@ async def test_seatbelt_cancel_none_equivalence() -> None:
     assert not result.cancelled
 
 
+# ── 3b Process-group kill (Linux Landlock, if available) — #1527 ─────────────
+# The Landlock cancel path mirrors SeatbeltBackend (verified on macOS) but was
+# untested on Linux: CI lacks the Landlock LSM (Noop default) and e2e is macOS.
+# These run ONLY on Linux 5.13+ with the landlock package + LSM available (skipped
+# elsewhere, incl. the macOS dev env). The cancel logic + `_kill_proc_group`
+# (SIGTERM-pg → SIGKILL grace) are a faithful Seatbelt mirror (code-inspected,
+# #1527); these pin the process-group kill of the landlock-wrapped child live
+# where Landlock actually exists.
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="LandlockBackend is Linux-only")
+@pytest.mark.asyncio
+async def test_landlock_cancel_kills_subprocess() -> None:
+    """Tier 2: LandlockBackend — cancel_event kills the landlock-wrapped child's
+    process group, returning cancelled=True (the #1527 untested path)."""
+    from reyn.sandbox.backends.landlock import LandlockBackend  # noqa: PLC0415
+
+    backend = LandlockBackend()
+    if not backend.available():
+        pytest.skip("Landlock LSM not available (needs Linux 5.13+ + landlock pkg)")
+
+    event = asyncio.Event()
+    event.set()  # pre-set so the cancel path is taken immediately
+
+    result = await backend.run(
+        ["/bin/sleep", "60"], _POLICY, cancel_event=event
+    )
+    assert result.cancelled                       # killed, not run-to-completion
+    assert result.returncode != 0
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="LandlockBackend is Linux-only")
+@pytest.mark.asyncio
+async def test_landlock_cancel_none_equivalence() -> None:
+    """Tier 2: LandlockBackend cancel_event=None → normal completion (Popen-equiv,
+    no-regression guard for the cancel-aware path)."""
+    from reyn.sandbox.backends.landlock import LandlockBackend  # noqa: PLC0415
+
+    backend = LandlockBackend()
+    if not backend.available():
+        pytest.skip("Landlock LSM not available (needs Linux 5.13+ + landlock pkg)")
+
+    result = await backend.run(
+        ["/bin/echo", "landlock_ok"], _POLICY, cancel_event=None
+    )
+    assert result.returncode == 0
+    assert b"landlock_ok" in result.stdout
+    assert not result.cancelled
+
+
 # ── 4 P6 + P5 via op_runtime handler ─────────────────────────────────────────
 
 

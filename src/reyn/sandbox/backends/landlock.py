@@ -285,11 +285,14 @@ class LandlockBackend:
             return await loop.run_in_executor(None, _run_blocking)
 
         # #1470: cancel-aware path — Popen in executor + asyncio.wait race.
-        # ⚠ Linux-only, untested on macOS dev env; logic mirrors SeatbeltBackend
-        # (verified on macOS). Needs Linux CI / contributor verification before this
-        # path can be considered confirmed. Worst-case: if cancel does not work,
-        # behaviour degrades to pre-#1470 (subprocess runs to completion) — no
-        # regression beyond the cooperative-cancel latency that already existed.
+        # ⚠ Linux-only; logic mirrors SeatbeltBackend (verified on macOS) — the
+        # cancel block + `_kill_proc_group` (SIGTERM-pg → SIGKILL grace) are a
+        # faithful mirror (code-inspected, #1527). LIVE-confirmed by
+        # ``tests/test_subprocess_cancel_1470.py::test_landlock_cancel_kills_subprocess``
+        # when run on a Linux 5.13+ host with the landlock LSM (skipif-gated; the
+        # CI Noop default + macOS e2e don't exercise it). Worst-case if cancel does
+        # not work: behaviour degrades to pre-#1470 (subprocess runs to completion)
+        # — no regression beyond the cooperative-cancel latency that already existed.
         try:
             proc = await loop.run_in_executor(
                 None,
