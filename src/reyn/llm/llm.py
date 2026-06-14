@@ -532,6 +532,19 @@ class EmptyLLMResponseError(Exception):
     """
 
 
+def _empty_response_diag(response: object) -> str:
+    """Compact provider-response shape for an empty-choices error (flake
+    observability). The block reason — Gemini ``finish_reason``
+    SAFETY/MAX_TOKENS/RECITATION, ``prompt_feedback``, ``usage`` — lives in
+    vendor-specific fields we can't predict, so dump the whole (truncated) response
+    so a recurrence is diagnosable instead of a bare "empty choices". Best-effort:
+    diagnostics must NEVER mask or replace the empty-choices error itself."""
+    try:
+        return json.dumps(response.model_dump(), default=str)[:500]
+    except Exception:  # noqa: BLE001 — never let a diag failure shadow the real error
+        return repr(response)[:300]
+
+
 def _get_retryable_litellm_exceptions() -> tuple:
     """Return the tuple of retryable litellm exceptions, loading litellm lazily.
 
@@ -604,8 +617,19 @@ async def _llm_call_with_retry(
             # call_llm and call_llm_tools, the two choices[0] callsites), and on
             # exhaustion the caller sees a clear error instead of an IndexError.
             if not getattr(response, "choices", None):
+                # Flake observability: capture the provider response shape (finish_reason
+                # / prompt_feedback / safety-block / usage) so a recurrence is
+                # diagnosable. logging.warning fires per attempt (a flake that self
+                # -recovers on retry still leaves its WHY in the log); the error message
+                # carries it for the exhaustion path.
+                _diag = _empty_response_diag(response)
+                logging.getLogger(__name__).warning(
+                    "LLM returned 200 with empty choices (model=%s) — provider response: %s",
+                    model, _diag,
+                )
                 raise EmptyLLMResponseError(
-                    f"LLM returned a 200 response with empty choices (model={model!r})"
+                    f"LLM returned a 200 response with empty choices (model={model!r}); "
+                    f"provider response: {_diag}"
                 )
             return response
         except BaseException as exc:

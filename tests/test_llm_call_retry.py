@@ -51,6 +51,7 @@ from reyn.llm.llm import (
     _LLM_RETRY_MAX_BACKOFF_S,
     EmptyLLMResponseError,
     _backoff_s,
+    _empty_response_diag,
     _is_retryable_exc,
     _llm_call_with_retry,
 )
@@ -506,3 +507,64 @@ async def test_empty_choices_exhausted_raises_named_error(monkeypatch):
     exhausted = [e for e in log.all() if e.type == "llm_call_retry_exhausted"]
     assert exhausted, "persistent empty choices must emit llm_call_retry_exhausted"
     assert exhausted[0].data["error_kind"] == "EmptyLLMResponseError"
+
+
+# ---------------------------------------------------------------------------
+# Test 11-13: empty-choices flake OBSERVABILITY — capture the provider response
+# shape (finish_reason / prompt_feedback / usage) so a recurrence is diagnosable
+# ---------------------------------------------------------------------------
+
+
+def test_empty_response_diag_includes_vendor_fields():
+    """Tier 2: flake observability — _empty_response_diag dumps the provider response
+    shape (the block reason / prompt_feedback / usage live in vendor-specific fields),
+    so an empty-choices recurrence is diagnosable, not a bare "empty choices". Real
+    Fake with model_dump(), no mock."""
+    class _RichEmpty:
+        choices: list = []
+
+        def model_dump(self):
+            return {
+                "choices": [],
+                "model": "gemini-2.5-flash-lite",
+                "prompt_feedback": {"block_reason": "SAFETY"},
+                "usage": {"prompt_tokens": 12, "completion_tokens": 0},
+            }
+
+    diag = _empty_response_diag(_RichEmpty())
+    assert "SAFETY" in diag          # the actual block reason surfaces
+    assert "prompt_feedback" in diag
+    assert "usage" in diag
+
+
+def test_empty_response_diag_best_effort_when_no_model_dump():
+    """Tier 2: flake observability — diag is best-effort: a response object without a
+    usable model_dump() degrades to repr (returns a non-empty str, never raises) so a
+    diag failure can NEVER mask the empty-choices error itself."""
+    class _Bare:
+        choices: list = []
+
+    diag = _empty_response_diag(_Bare())
+    assert isinstance(diag, str) and diag  # non-empty, no exception
+
+
+@pytest.mark.asyncio
+async def test_empty_choices_error_message_carries_provider_diag(monkeypatch):
+    """Tier 2: flake observability — the raised EmptyLLMResponseError message carries
+    the provider response shape (the WHY), not just the model name, so the exhaustion
+    path is diagnosable. Real Fake (model_dump), sleep no-op'd for speed."""
+    import reyn.llm.llm as llm_mod
+    monkeypatch.setattr(llm_mod.asyncio, "sleep", _fake_sleep_noop)
+
+    class _RichEmptyCallable:
+        async def __call__(self):
+            class _R:
+                choices: list = []
+
+                def model_dump(self):
+                    return {"choices": [], "prompt_feedback": {"block_reason": "RECITATION"}}
+
+            return _R()
+
+    with pytest.raises(EmptyLLMResponseError, match="RECITATION"):
+        await _llm_call_with_retry(_RichEmptyCallable(), "model-x", _make_event_log())
