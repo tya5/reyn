@@ -154,6 +154,58 @@ async def test_represent_round_appends_ack_swaps_tools_and_requeries(monkeypatch
     assert any(e["type"] == "router_represent_round" for e in host.events.emitted)
 
 
+class _TextRepresentScheme:
+    """A scheme that re-presents off assistant TEXT (no tool_call) the first turn,
+    then PlainText — pins that the generic OS arm handles a RePresent with no
+    tool_call to answer (sandbox_2 ``or []`` robustness note)."""
+
+    name = "text-represent"
+
+    def __init__(self) -> None:
+        self.represented = False
+
+    async def build_presentation(self, available, layer_ctx, ops) -> Presentation:
+        sp_params = {"universal_wrappers_enabled": False, "search_actions_enabled": False}
+        return Presentation(llm_tools_payload=[_matched_tool()], sp_params=sp_params,
+                            candidates=("matched_action",))
+
+    def interpret(self, llm_response, *, tool_catalog, ops):
+        if not self.represented:
+            self.represented = True
+            return RePresent(refinement={"q": "x"})   # off text — no tool_call
+        return PlainText()
+
+    async def execute(self, interp, exec_ctx, ops):
+        return ExecutionResult(tool_results=[])
+
+    def format_feedback(self, result, ops):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_represent_without_tool_call_does_not_error(monkeypatch):
+    """Tier 3a: the generic arm handles a RePresent emitted off assistant text (no
+    tool_call) — nothing to synthetic-answer, just re-present + ``continue``. Pins
+    the ``or []`` guard so the arm stays generic for non-retrieval RePresent schemes."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+    loop._scheme = _TextRepresentScheme()
+
+    scripted = _CapturingScriptedLLM([
+        text_result("I need different tools"),   # → RePresent (off text)
+        text_result("done"),                     # → PlainText → exit
+    ])
+    monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", scripted)
+
+    messages = [{"role": "user", "content": "go"}]
+    await loop.run_loop(messages, [_search_tool()], False)   # no exception
+
+    assert scripted.call_count == 2
+    # No synthetic tool-response was appended (there was no tool_call to answer).
+    assert not any(m.get("content") == _REPRESENT_ACK for m in messages)
+    assert host.outbox and host.outbox[-1]["text"] == "done"
+
+
 @pytest.mark.asyncio
 async def test_represent_backstop_raises_on_nonconverging_scheme(monkeypatch):
     """Tier 3a: the defensive backstop — a scheme that NEVER converges (always

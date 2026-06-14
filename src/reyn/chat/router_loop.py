@@ -2051,12 +2051,17 @@ class RouterLoop:
                         f"({_MAX_REPRESENT_ROUNDS} rounds) — the active scheme is not "
                         "terminating its re-present loop"
                     )
+                # ``or []`` guard (sandbox_2 co-vet): retrieval always RePresents off
+                # a tool_call (the search), but the arm is GENERIC — a future scheme
+                # could re-present off assistant text (no tool_call), in which case
+                # there is simply nothing to synthetic-answer.
+                _re_tool_calls = result.tool_calls or []
                 messages.append({
                     "role": "assistant",
                     "content": result.content or "",
-                    "tool_calls": result.tool_calls,
+                    "tool_calls": _re_tool_calls,
                 })
-                for _tc in result.tool_calls:
+                for _tc in _re_tool_calls:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": _tc["id"],
