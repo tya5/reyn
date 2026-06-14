@@ -748,6 +748,47 @@ class AgentRegistry:
         if tree_sha is not None:
             log.append(seq, tree_sha)
 
+    async def restore_workspace_to_act_turn(self, target_seq: int) -> str | None:
+        """Restore the workspace to the act-turn (per-op) state as-of ``target_seq``.
+
+        The workspace half of an act-turn rewind (#1560 PR-2), the coherent
+        counterpart to ``SkillResumeCoordinator.plan_for_act_turn_rewind`` (which
+        truncates the runtime memo at ``target_seq``). Because the op-content-log is
+        keyed by ``op_seq == CommittedStep.seq``, the SAME ``target_seq`` restores
+        both substrates: runtime memo[≤K] (coordinator) ⊗ workspace tree[≤K] (here).
+
+        Lineage resolution is the caller's job (the op-content-log is branch-agnostic
+        — capture is always current-branch): pick the latest op-tree with
+        ``op_seq <= target_seq`` that is **is_active** (skipping abandoned-interval
+        op-trees, mirroring ``_restore_workspace_active`` for generations), then
+        ``read-tree`` it. Falls back to the nearest **boundary** generation
+        (``_restore_workspace_active``) when no active op-tree ``<= target_seq``
+        exists (act-turn capture was off for that span / pre-feature). No-op when
+        act-turn capture or the workspace store is disabled (Tier-1 #1582 / no WAL).
+        Returns the restored tree sha (op-tree path) or ``None``.
+        """
+        if self._state_log is None:
+            return None
+        log = self.op_content_log
+        ws = self.workspace_store
+        if log is None or ws is None:
+            return None
+        # is_active-honoring: the branch-agnostic op-content-log may hold op-trees
+        # from abandoned intervals; skip them (same lineage rule as the boundary
+        # restore) and take the latest active op-tree at-or-below the target.
+        active = [
+            e for e in log.entries()
+            if int(e["op_seq"]) <= target_seq
+            and is_active_seq(self._state_log, int(e["op_seq"]))
+        ]
+        if active:
+            tree_sha = max(active, key=lambda e: int(e["op_seq"]))["tree_sha"]
+            return await ws.restore_tree(tree_sha)
+        # boundary fallback: no act-turn op-tree on the active lineage <= target →
+        # the nearest active generation (today's behaviour) — strictly additive.
+        await self._restore_workspace_active(at_or_below=target_seq)
+        return None
+
     @property
     def anchor_store(self) -> AnchorStore | None:
         """The per-checkpoint anchor store (#1547), lazily built. None w/o WAL."""
