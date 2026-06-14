@@ -70,6 +70,29 @@ class WorkspaceOpContentLog:
                     out.append(rec)
         return out
 
+    def prune_below(self, min_keep_seq: int) -> int:
+        """Drop entries with ``op_seq < min_keep_seq`` (#1560 PR-3 retention).
+
+        Index-only, mirroring the generation prune (``tag -d``): rewrite the JSONL
+        keeping only entries ``>= min_keep_seq``. The gc-root refs for the dropped
+        op-trees are removed separately by
+        ``WorkspaceVersionStore.unref_op_trees_below``, after which git auto-gc
+        reclaims the out-window trees. Returns the count dropped. Best-effort: a
+        rewrite failure logs + leaves the log intact (caller runs on retention)."""
+        entries = self.entries()
+        kept = [e for e in entries if int(e.get("op_seq", -1)) >= min_keep_seq]
+        removed = len(entries) - len(kept)
+        if removed <= 0:
+            return 0
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            body = "".join(json.dumps(e) + "\n" for e in kept)
+            self._path.write_text(body, encoding="utf-8")
+        except Exception as e:  # noqa: BLE001 — never fail the retention pass
+            logger.warning("op-content-log prune failed (floor=%s): %s", min_keep_seq, e)
+            return 0
+        return removed
+
     def latest_tree_at_or_below(self, seq: int) -> str | None:
         """The ``tree_sha`` of the highest ``op_seq <= seq`` (None if none).
 
