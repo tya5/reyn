@@ -43,6 +43,7 @@ def _resolve_tool_use_scheme(name: "str | None" = None):
     (``tool_use:{chat,step,phase}``) passes the selected name here."""
     from reyn.tools.scheme import DEFAULT_SCHEME_NAME, get_scheme, register_scheme
     from reyn.tools.schemes.enumerate_all import EnumerateAllScheme
+    from reyn.tools.schemes.retrieval import RetrievalScheme
     from reyn.tools.schemes.universal_category import UniversalCategoryScheme
 
     # Register each built-in independently + idempotently (keyed on the scheme's
@@ -51,7 +52,7 @@ def _resolve_tool_use_scheme(name: "str | None" = None):
     # NOT being registered yet — so anything that registers universal first (a
     # direct register_scheme caller, a test) would leave enumerate-all absent and
     # silently fall back to default. Per-scheme guard avoids that sibling gap.
-    for _builtin in (UniversalCategoryScheme(), EnumerateAllScheme()):  # #1593 PR-2
+    for _builtin in (UniversalCategoryScheme(), EnumerateAllScheme(), RetrievalScheme()):  # #1593 PR-2/4
         if get_scheme(_builtin.name) is None:
             register_scheme(_builtin)
     # Unknown / unconfigured name → default (universal-category) — byte-identical.
@@ -3126,6 +3127,25 @@ class RouterLoop:
             }
             for entry in universal_catalog.catalog_entries(tool_ctx)
         ]
+
+    async def search_actions(self, query: str, *, top_k: int = 10) -> list[str]:
+        """SchemeOps.search_actions (#1593 PR-4): rank usable actions by semantic
+        match to ``query`` → matched qualified names. Reuses the FP-0034
+        ``ActionEmbeddingIndex`` (the same substrate the ``search_actions`` tool uses);
+        ``query`` awaits the embedding of the dynamic query (the reason presentation
+        is async). Returns ``[]`` when the index / provider is unavailable (degrade)."""
+        index = self.host.get_action_embedding_index()
+        provider = self.host.get_embedding_provider()
+        model_class = self.host.get_embedding_model_class()
+        if index is None or provider is None:
+            return []
+        try:
+            results = await index.query(query, provider, model_class, top_k=top_k)
+        except Exception as e:  # noqa: BLE001 — search is best-effort presentation aid
+            import logging
+            logging.getLogger(__name__).warning("search_actions failed: %s", e)
+            return []
+        return [r["qualified_name"] for r in results if r.get("qualified_name")]
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         """SchemeOps.resolve: dedupe + #229 salvage → actions carrying the original

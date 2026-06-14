@@ -58,6 +58,11 @@ class Presentation:
     llm_tools_payload: list[dict]
     sp_params: dict[str, Any] = field(default_factory=dict)
     sp_fragment: str = ""
+    # #1593 PR-4: the scheme's current candidate set (hashable ids) — the OS reads
+    # this on the RePresent loop to detect convergence (``new = candidates - seen``;
+    # empty ⇒ stop). Default empty: schemes that never RePresent (universal /
+    # enumerate-all) leave it untouched, so it is inert for them.
+    candidates: tuple = field(default_factory=tuple)
 
 
 # ── Interpretation: the tagged union the OS loop dispatches on ──────────────
@@ -175,6 +180,14 @@ class SchemeOps(Protocol):
         Async (#1593 PR-2 seam call): enumerating the live catalog requires the
         async-built router caller-state (resource categories — skills/agents/mcp/
         rag — drop without it; the rag manifest fetch is the genuine await)."""
+        ...
+
+    async def search_actions(self, query: str, *, top_k: int = 10) -> list[str]:
+        """Rank usable actions by semantic match to ``query`` → matched qualified
+        action names (#1593 PR-4 retrieval). Reuses ``ActionEmbeddingIndex.query``
+        (embeds the dynamic query — async, the reason presentation is async). Returns
+        ``[]`` when the index/provider is unavailable (degrade). A generic search
+        building block — the OS holds no "retrieval" concept (P7)."""
         ...
 
 
