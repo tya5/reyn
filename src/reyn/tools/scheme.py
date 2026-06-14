@@ -41,13 +41,23 @@ class ToolUseLayer(str, Enum):
 class Presentation:
     """What a scheme shows the LLM: the ``tools=`` payload + SP-shaping inputs.
 
-    PR-1: ``sp_params`` carries the parameters that drive the (still monolithic)
-    ``build_system_prompt`` — byte-identical. PR-2 (enumerate-all) introduces a
-    scheme-owned SP *fragment* once a scheme needs a divergent prompt.
+    Two channels shape the system prompt, deliberately separated:
+
+    - ``sp_params`` — **named gates** the OS-owned ``build_system_prompt`` already
+      understands (``universal_wrappers_enabled`` / ``search_actions_enabled`` …).
+      universal-category and enumerate-all express their whole SP shape through
+      these → their build is byte-identical (default ``sp_fragment=""``).
+    - ``sp_fragment`` — **free-form, scheme-owned** SP text the OS appends verbatim
+      without interpreting it (P7: the OS must not know "code-API" or "search-SP").
+      A scheme reaches for this only when its tool-use instructions are genuinely
+      new content that no named gate can express — CodeAct (rendered fn-signature
+      code-API) is the first consumer; retrieval's search-tool SP shares the same
+      single channel. Empty by default ⇒ the named-gate path is untouched.
     """
 
     llm_tools_payload: list[dict]
     sp_params: dict[str, Any] = field(default_factory=dict)
+    sp_fragment: str = ""
 
 
 # ── Interpretation: the tagged union the OS loop dispatches on ──────────────
