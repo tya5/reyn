@@ -21,14 +21,21 @@ substrate:
 - ``format_feedback`` → ``ops.feedback`` (the basic tool_result formatting, a JSON-
   scheme shared base — confirmed reuse, lead #1593).
 
-SP: returns ``sp_params{"universal_wrappers_enabled": False}`` → the router's
-``build_system_prompt`` emits the prior-shape (no wrapper-chain) tool-use SP. No
-``build_system_prompt`` surgery (the fragment-extraction the earlier plan floated
-is unnecessary — the existing gate yields the minimal SP), so PR-2 stays under
-``schemes/`` + config and does not collide with PR-3's parallel SP work.
+SP: #1627 Stage 2: ``build_presentation`` now owns its tool-use SP via the slot-map.
+It calls ``build_universal_tool_use_slots`` with enumerate's 5 inputs derived from
+``layer_ctx`` (the OS-supplied raw FACTS), and attaches the resulting slot-map to
+the returned ``Presentation`` as ``tool_use_sp``. This relocates the tier→discovery-
+mandate POLICY out of the OS and into the scheme layer (CHAR-IDENTICAL: Stage 0
+proved the two paths produce the same SP bytes). Key difference from universal:
+``search_actions_enabled = bool(search_visible)`` (NOT ``sv if univ else True`` —
+enumerate never has wrappers, so the fallback-to-True branch does not apply).
+``sp_params`` is kept AS-IS (Stage 4 removes it; harmless now).
 """
 from __future__ import annotations
 
+import dataclasses
+
+from reyn.chat.router_system_prompt import build_universal_tool_use_slots
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -38,6 +45,7 @@ from reyn.tools.scheme import (
     SchemeOps,
     register_scheme,
 )
+from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
 
 
 class EnumerateAllScheme:
@@ -53,14 +61,27 @@ class EnumerateAllScheme:
         # catalog_entries is async (the live-catalog enumeration awaits the
         # router caller-state / rag manifest); base_tools stays sync.
         flat_tools = list(ops.base_tools(available, layer_ctx)) + list(await ops.catalog_entries())
-        # Prior-shape (no wrapper-chain) SP — the existing gate yields the minimal
-        # tool-use instructions enumerate-all wants; no build_system_prompt change
-        # (the fragment-extraction the earlier plan floated is unnecessary).
+        # sp_params kept AS-IS (Stage 4 removes it; harmless now).
         sp_params = {
             "universal_wrappers_enabled": False,
             "search_actions_enabled": bool(layer_ctx.get("search_visible", False)),
         }
-        return Presentation(llm_tools_payload=flat_tools, sp_params=sp_params)
+        # #1627 Stage 2: own the tool-use SP via the slot-map.
+        # Derive the 5 builder inputs from the raw FACTS in layer_ctx. Enumerate
+        # NEVER has universal wrappers, so universal_wrappers_enabled is always
+        # False. CRITICAL: search_actions_enabled = bool(search_visible) directly
+        # (NOT the universal formula ``sv if univ else True`` — that fallback-to-True
+        # branch only applies when universal wrappers are off; enumerate is
+        # always-off so the direct bool(search_visible) is the correct mapping).
+        slots = build_universal_tool_use_slots(
+            universal_wrappers_enabled=False,
+            search_actions_enabled=bool(layer_ctx.get("search_visible", False)),
+            discovery_mandate=tier_wants_discovery_mandate(layer_ctx.get("router_model")),
+            has_hot_list_aliases=bool((available or {}).get("hot_list_aliases")),
+            non_interactive=bool(layer_ctx.get("non_interactive", False)),
+        )
+        pres = Presentation(llm_tools_payload=flat_tools, sp_params=sp_params)
+        return dataclasses.replace(pres, tool_use_sp=slots)
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
         # Flat (qualified) names resolve through the shared resolution (dedupe +
