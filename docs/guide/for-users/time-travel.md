@@ -93,8 +93,8 @@ This adds a cheaper **per-op** workspace snapshot (one per skill-run step, not j
 | Feature | Status |
 |---------|--------|
 | `/rewind` with in-turn edit (`ctrl+t`) to create a new fork-and-edit branch | ✅ Phase 2c, landed |
-| Retention window config (`retention: keep_generations: N`) to GC old checkpoints | ⏳ ADR-0038 Stage 1e — designed, not yet wired |
-| `/rewind` picker over WebSocket / A2A web surface; web edit via `AskUserMessage` UX | ✅ Phase 2d, landed (#1574) |
+| Retention window config (`retention: keep_generations: N`) to GC old checkpoints | ⏳ designed, not yet wired |
+| `/rewind` picker over WebSocket / A2A web surface; web edit via `AskUserMessage` UX | ✅ Phase 2d, landed |
 
 ## See also
 
