@@ -107,28 +107,55 @@ class ExecContext:
 
 
 @runtime_checkable
+class SchemeOps(Protocol):
+    """Router-provided tool-use operations a **delegating** scheme calls.
+
+    PR-1's ``UniversalCategoryScheme`` delegates to these (the router binds its
+    existing universal-category logic) so the seam lands **byte-identical** — zero
+    logic is physically moved. PR-2 (enumerate-all) / PR-3 (CodeAct) implement their
+    own scheme logic instead of delegating, which is what proves the abstraction.
+    Each op is the OS-substrate side of one scheme method:
+
+    - ``present``  → today's ``build_tools`` + SP params (or the phase op-catalog).
+    - ``resolve``  → dedupe + salvage/unwrap → actions carrying **effective names**
+      (so the OS can exclude-gate pre-dispatch).
+    - ``dispatch`` → per-action ``dispatch_tool`` (DispatchContext / phase-memo /
+      permission — the pure-OS substrate, P5).
+    - ``feedback`` → the basic tool_result→message formatting (op-specific plan /
+      invoke_skill handling stays in the OS loop, around this).
+    """
+
+    def present(self, available: Any, layer_ctx: Any) -> Presentation: ...
+    def resolve(self, llm_response: Any, tool_catalog: dict) -> list[dict]: ...
+    async def dispatch(self, actions: list[dict]) -> list[dict]: ...
+    def feedback(self, tool_results: list[dict]) -> list[dict]: ...
+
+
+@runtime_checkable
 class ToolUseScheme(Protocol):
     """The pluggable tool-use scheme contract. The OS calls only these four; it
     holds no scheme-specific strings (P7). Schemes are selected per-layer by name
-    from the registry."""
+    from the registry. ``ops`` is the OS-substrate binding — a delegating scheme
+    (PR-1 universal) uses it; a self-contained scheme (enumerate-all/CodeAct) ignores
+    it."""
 
     name: str
 
-    def build_presentation(self, available: Any, layer_ctx: Any) -> Presentation:
+    def build_presentation(self, available: Any, layer_ctx: Any, ops: "SchemeOps") -> Presentation:
         """Build the ``tools=`` payload + SP-shaping inputs for the layer."""
         ...
 
-    def interpret(self, llm_response: Any, *, tool_catalog: dict) -> Interpretation:
+    def interpret(self, llm_response: Any, *, tool_catalog: dict, ops: "SchemeOps") -> Interpretation:
         """Normalize the LLM output into a tagged ``Interpretation`` (resolution +
-        any de-dup happen here; for JSON schemes → ``Execute`` with resolved
-        effective names)."""
+        de-dup happen here; for JSON schemes → ``Execute`` with resolved effective
+        names)."""
         ...
 
-    async def execute(self, interp: Interpretation, exec_ctx: ExecContext) -> ExecutionResult:
-        """Run the interpretation (permission-gated via ``exec_ctx``)."""
+    async def execute(self, interp: Interpretation, exec_ctx: ExecContext, ops: "SchemeOps") -> ExecutionResult:
+        """Run the interpretation (permission-gated via ``exec_ctx`` / ``ops``)."""
         ...
 
-    def format_feedback(self, result: ExecutionResult) -> list[dict]:
+    def format_feedback(self, result: ExecutionResult, ops: "SchemeOps") -> list[dict]:
         """Turn results into the next round's LLM message(s)."""
         ...
 
@@ -161,7 +188,7 @@ DEFAULT_SCHEME_NAME = "universal-category"
 
 __all__ = [
     "ToolUseLayer", "Presentation", "Execute", "RePresent", "CodeBlock",
-    "Interpretation", "ExecutionResult", "ExecContext", "ToolUseScheme",
+    "Interpretation", "ExecutionResult", "ExecContext", "ToolUseScheme", "SchemeOps",
     "register_scheme", "get_scheme", "registered_scheme_names",
     "DEFAULT_SCHEME_NAME",
 ]
