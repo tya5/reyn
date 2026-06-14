@@ -56,6 +56,218 @@ def tier_wants_discovery_mandate(router_model: str | None) -> bool:
 # Public API
 # ---------------------------------------------------------------------------
 
+
+def build_universal_tool_use_slots(
+    *,
+    universal_wrappers_enabled: bool,
+    search_actions_enabled: bool,
+    discovery_mandate: bool,
+    has_hot_list_aliases: bool,
+    non_interactive: bool = False,
+) -> "dict[str, str]":
+    """Build the three positional tool-use SP slots for the universal-category path.
+
+    Called only when ``tool_use_sp`` is None — i.e. the OS owns the full tool-use
+    SP construction (universal / enumerate / retrieval today).  Returns a dict with
+    ONLY the non-empty slots so ``build_system_prompt`` can inject each with a
+    simple ``if slot_key in _slots`` guard.
+
+    Slots:
+      - ``slot_pre_environment``  — R1: ``## Capabilities (routing guide)`` block.
+      - ``slot_post_environment`` — R2: ``## Action categories`` + hot-list +
+                                    discovery-mandate paragraph (between Environment
+                                    and ``## Behaviour``).
+      - ``slot_in_behaviour``     — R3: never-invent / search guidance + ROUTING RULE
+                                    (inside ``## Behaviour``, after the errors line).
+
+    Each slot value equals ``"\\n".join(<elements>)`` where ``<elements>`` is the
+    exact list that the corresponding inline region would have appended to ``parts``
+    — char-identical by construction.
+
+    ``str`` ⇒ ``{"slot_pre_environment": str}`` (back-compat shim for a bare
+    replacement string; used internally by ``build_system_prompt``).
+    """
+    slots: dict[str, str] = {}
+
+    # ── R1: ## Capabilities (routing guide) ──────────────────────────────────
+    # Mirrors the inline build from _cap_start through parts.extend([..., ""])
+    # in build_system_prompt.  The wrapper-chain and _otherwise construction is
+    # duplicated verbatim so the slot content is char-identical.
+    _wrapper_names_slot = ["`list_actions`"]
+    if search_actions_enabled:
+        _wrapper_names_slot.append("`search_actions`")
+    _wrapper_names_slot.extend(["`describe_action`", "`invoke_action`"])
+    _wrapper_chain_slot = " → ".join(_wrapper_names_slot)
+
+    if discovery_mandate:
+        _otherwise_slot = (
+            "Otherwise — i.e. for any action that is NOT obvious or a named "
+            "skill above — your FIRST tool call MUST be `list_actions` before "
+            "reading, writing, or editing anything (the visible tools are "
+            "universal wrappers, not the full catalog; do NOT skip it, refuse, "
+            f"or guess). Then {_wrapper_chain_slot}. To edit a file you MUST use "
+            "`file__edit`, found via `list_actions`."
+        )
+    else:
+        _otherwise_slot = f"Otherwise {_wrapper_chain_slot}."
+
+    _r1: list[str] = []
+    _r1.append("## Capabilities (routing guide)")
+    _r1.append("")
+    _r1.extend([
+        "Decide what the user wants. Multi-step routing is fine — explore"
+        " briefly when the right path is uncertain, but don't loop.",
+        "",
+        "**Conversation** (\"hi\", \"thanks\", \"who are you?\") → reply"
+        " directly, no tools.",
+        "",
+        "**A question with a substantive answer** — figure out where the"
+        " answer lives:",
+        "- About Reyn itself (how Reyn works, Reyn's CLI / runtime /"
+        " protocols / project conventions):"
+        " `invoke_action(action_name=\"reyn_source__read\","
+        " args={\"path\": \"README.md\"})` → synthesize from README."
+        " (README has the overview + curated map of deep-dive paths;"
+        " chain to a specific doc if README points there.)",
+        "- About external / current information: `web__search` or"
+        " `web__fetch`.",
+        "- Already in your training: answer directly.",
+        "",
+        "**A task to perform** — pick by target shape:",
+        "- Single-target action (= one file, one URL, one skill, one"
+        " item): if the action is obvious (`file__read` for \"read this"
+        " file\", `reyn_source__read` for \"open Reyn doc X\", `web__fetch`"
+        " for a specific URL, `invoke_action`(`skill__X`) for an explicit"
+        " named skill), invoke directly. " + _otherwise_slot,
+        "- Multi-target / iteration (= \"do X for each Y\", \"process N"
+        " files\", \"run X on every Y\"): decompose with plan into"
+        " per-target steps + a final aggregate step. Do NOT invoke a"
+        " per-target action directly without decomposition — it loses"
+        " the iteration shape and gets stuck on the first item.",
+        "",
+        (
+            "**Ambiguous or missing essential information** → there is no"
+            " interactive user to ask; state your best assumption and proceed"
+            " (do NOT stop to ask a clarifying question)."
+            if non_interactive else
+            "**Ambiguous or missing essential information** → ask ONE"
+            " clarifying question instead of guessing."
+        ),
+        "",
+    ])
+    slots["slot_pre_environment"] = "\n".join(_r1)
+
+    # ── R2: ## Action categories + hot-list + discovery-mandate ──────────────
+    # Mirrors the universal_wrappers_enabled block and the discovery_mandate
+    # paragraph that sit between ## Environment and ## Behaviour.
+    # Inside this builder tool_use_sp is always None, so the
+    # ``discovery_mandate and tool_use_sp is None`` guard simplifies to
+    # ``discovery_mandate``.
+    _r2: list[str] = []
+    if universal_wrappers_enabled:
+        _r2.append("## Action categories")
+        _r2.append("")
+        _r2.append(
+            "Actions are addressed by qualified name (`<category>__<entry>`)."
+            " Names in backticks of the form `<category>__<entry>` are invocable action names."
+            " Discover via `list_actions(category=[...])`; describe via"
+            " `describe_action(action_name=...)`; execute via"
+            " `invoke_action(action_name=..., args={...})`."
+        )
+        _r2.append("")
+        _r2.append(
+            "- **skill** — project-defined workflows (e.g. skill__code_review)."
+        )
+        _r2.append(
+            "- **multi_agent** — delegate / list / describe peer agents in this network."
+        )
+        _r2.append(
+            "- **mcp** — MCP server management + tool dispatch."
+        )
+        _r2.append(
+            "- **file** — workspace file ops (read/write/delete/list)."
+        )
+        _r2.append(
+            "- **web** — web search and content fetch."
+        )
+        _r2.append(
+            "- **memory_entry** — persistent memory records; invoke to read body."
+        )
+        _r2.append(
+            "- **memory_operation** — memory CRUD (remember_shared / remember_agent / forget)."
+        )
+        _r2.append(
+            "- **reyn_source** — Reyn source/docs (read-only)."
+        )
+        _r2.append(
+            "- **rag_corpus** — indexed corpora; invoke with `query` for single-source recall."
+        )
+        _r2.append(
+            "- **rag_operation** — RAG management (multi-source recall, drop_source)."
+        )
+        _r2.append(
+            "- **validation** — DSL linting (lint a skill directory and report issues)."
+        )
+        _r2.append(
+            "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
+        )
+        _r2.append("")
+        if has_hot_list_aliases:
+            _r2.append(
+                "The function list visible to you is a HOT-LIST (= a subset of "
+                "the full catalog). Whenever the user requests a capability and "
+                "no listed tool obviously matches, ALWAYS call `list_actions` "
+                "(narrow with `category=[...]` when you know the category) to "
+                "discover the rest of the catalog BEFORE refusing. Refusing "
+                "without that check is a failure mode — the action you assumed "
+                "missing often exists."
+            )
+            _r2.append("")
+    if discovery_mandate:
+        _r2.append(
+            "When no visible tool obviously matches the action you need, "
+            "calling list_actions is MANDATORY and comes FIRST — before any "
+            "read, write, or edit. Treat the visible list as a subset, never "
+            "as complete."
+        )
+        _r2.append("")
+    if _r2:
+        slots["slot_post_environment"] = "\n".join(_r2)
+
+    # ── R3: never-invent / search guidance + ROUTING RULE ────────────────────
+    # Mirrors the search-guidance block and the ROUTING RULE block inside
+    # ## Behaviour (appended after the errors-verbatim lines + blank).
+    # Inside this builder tool_use_sp is always None, so:
+    #   - ``if tool_use_sp is not None: pass`` → branch never taken.
+    #   - ``if tool_use_sp is None: ROUTING RULE`` → always included.
+    _r3: list[str] = []
+    if search_actions_enabled:
+        _r3.extend([
+            "  - Never invent action names; only use those returned by",
+            "    `list_actions` or `search_actions`.",
+            "  - For semantic / natural-language / keyword queries (= 「探し"
+            "たい」 「関連」 「something for X」 「similar to」 「'http' を含む」),",
+            "    USE `search_actions(query=...)`. For category enumeration,",
+            "    USE `list_actions(category=[...])`.",
+        ])
+    else:
+        _r3.extend([
+            "  - Never invent action names; only use those returned by",
+            "    `list_actions`.",
+            "  - For category enumeration, USE `list_actions(category=[...])`.",
+        ])
+    _r3.append("")
+    _r3.extend([
+        "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
+        " name (= valid `invoke_action` action_name, e.g. `skill__code_review`),"
+        " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
+        "",
+    ])
+    slots["slot_in_behaviour"] = "\n".join(_r3)
+
+    return slots
+
+
 def build_system_prompt(
     *,
     agent_name: str,
@@ -192,132 +404,30 @@ def build_system_prompt(
     )
     parts.append("")
 
-    # #1618 root-3: capture the index before the tool-use ## Capabilities region so a
-    # replace-capable scheme (``tool_use_sp``) can slice-replace the whole built region
-    # with its own tool-use SP — no re-indent; byte-identical when ``tool_use_sp`` is
-    # None (no replacement happens).
-    _cap_start = len(parts)
-    # ── 3. Capabilities (routing guide) — FP-0023 Change 2 ─────────────────
-    # Merges the old "## What you can do (intent axis)" (internal routing
-    # labels) and "## When asked what you can do" (user-facing) into one
-    # section with a clear internal-vs-user-facing split.
-    parts.append("## Capabilities (routing guide)")
-    parts.append("")
-    # B23-PRE-1 wrapper-only path: tools= contains only the universal
-    # wrappers + hot list direct aliases + plan + ask_user. All
-    # per-kind tools (list_skills / read_file / web_search / etc.)
-    # are routed via invoke_action(action_name="<category>__<entry>").
-    # The "## Action categories" section below covers the 14-category
-    # taxonomy. Drop the legacy 5-axis "intent" framing — wrapper-only
-    # is binary Action / Reply.
-    #
-    # FP-0034 §D14: ``search_actions`` is only in tools= when the
-    # embedding class is configured.  Build the wrapper name list
-    # dynamically so the SP count matches the actual tools= shape and
-    # the LLM cannot hallucinate a call to a tool that does not exist
-    # (N5 empirical finding: gemini-2.5-flash-lite invented
-    # search_actions when not in tools= → unknown_tool dispatcher
-    # error → gave up without recovering via list_actions).
-    # FP-0034 §D14: ``search_actions`` is only in tools= when the
-    # embedding class is configured.  Build the wrapper chain dynamically
-    # so the SP routing hint matches the actual tools= shape.
-    _wrapper_names = ["`list_actions`"]
-    if search_actions_enabled:
-        _wrapper_names.append("`search_actions`")
-    _wrapper_names.extend(["`describe_action`", "`invoke_action`"])
-    _wrapper_chain = " → ".join(_wrapper_names)
-
-    # V18 — 4-intent multi-step routing (replaces the legacy single-line
-    # wrapper introduction). Designed around how a human assistant
-    # actually disambiguates incoming requests: classify FIRST, then act,
-    # and when classification fails honestly, ask back rather than guess.
-    #
-    # Intent taxonomy:
-    #   1. Conversation        → reply without tools
-    #   2. Information question → lookup (Reyn docs / external / training)
-    #   3. Task / action       → invoke a catalog action
-    #   4. Ambiguous           → ask ONE clarifying question
-    #
-    # Why this shape (= chain-replay experiments documented at
-    # docs/deep-dives/journal/dogfood/known-future-challenges.md):
-    #   - "About Reyn itself" lives as a sub-case of intent 2, not its
-    #     own top-level intent — keeps SP O(1) regardless of how many
-    #     Reyn surfaces get added later.
-    #   - Multi-step routing is named explicitly so the LLM does not
-    #     treat the classification as a single-shot commitment.
-    #   - Ambiguous-ask path matches human-assistant baseline; previous
-    #     SP shapes never offered this and the LLM defaulted to guessing.
-    #
-    # #187 Stage C (1/3 reinforcement): the branch-3 "Otherwise" tail. Default
-    # is the SOFT discovery-chain hint; when ``discovery_mandate`` (weak tier),
-    # strengthen ONLY this OTHERWISE branch into a mechanical MUST. The
-    # obvious/named clause before it (B11-R3) is untouched, so the scope
-    # qualifier is structural: this fires only for NON-obvious / not-named
-    # actions. Verified explicit-action-enumeration ("reading, writing, or
-    # editing"); no generic "before acting".
-    if discovery_mandate:
-        _otherwise = (
-            "Otherwise — i.e. for any action that is NOT obvious or a named "
-            "skill above — your FIRST tool call MUST be `list_actions` before "
-            "reading, writing, or editing anything (the visible tools are "
-            "universal wrappers, not the full catalog; do NOT skip it, refuse, "
-            f"or guess). Then {_wrapper_chain}. To edit a file you MUST use "
-            "`file__edit`, found via `list_actions`."
+    # #1627 Stage 0: normalise tool_use_sp into a positional slot-map.
+    # ``str`` ⇒ back-compat shim (= slot_pre_environment only; R2/R3 absent).
+    # ``None`` ⇒ the OS builds all three slots via build_universal_tool_use_slots.
+    # ``dict`` ⇒ already a slot-map (future schemes; not used in Stage 0).
+    if isinstance(tool_use_sp, str):
+        _slots: "dict[str, str]" = {"slot_pre_environment": tool_use_sp}
+    elif tool_use_sp is None:
+        _slots = build_universal_tool_use_slots(
+            universal_wrappers_enabled=universal_wrappers_enabled,
+            search_actions_enabled=search_actions_enabled,
+            discovery_mandate=discovery_mandate,
+            has_hot_list_aliases=has_hot_list_aliases,
+            non_interactive=non_interactive,
         )
     else:
-        _otherwise = f"Otherwise {_wrapper_chain}."
-    parts.extend([
-        "Decide what the user wants. Multi-step routing is fine — explore"
-        " briefly when the right path is uncertain, but don't loop.",
-        "",
-        "**Conversation** (\"hi\", \"thanks\", \"who are you?\") → reply"
-        " directly, no tools.",
-        "",
-        "**A question with a substantive answer** — figure out where the"
-        " answer lives:",
-        "- About Reyn itself (how Reyn works, Reyn's CLI / runtime /"
-        " protocols / project conventions):"
-        " `invoke_action(action_name=\"reyn_source__read\","
-        " args={\"path\": \"README.md\"})` → synthesize from README."
-        " (README has the overview + curated map of deep-dive paths;"
-        " chain to a specific doc if README points there.)",
-        "- About external / current information: `web__search` or"
-        " `web__fetch`.",
-        "- Already in your training: answer directly.",
-        "",
-        "**A task to perform** — pick by target shape:",
-        "- Single-target action (= one file, one URL, one skill, one"
-        " item): if the action is obvious (`file__read` for \"read this"
-        " file\", `reyn_source__read` for \"open Reyn doc X\", `web__fetch`"
-        " for a specific URL, `invoke_action`(`skill__X`) for an explicit"
-        " named skill), invoke directly. " + _otherwise,
-        "- Multi-target / iteration (= \"do X for each Y\", \"process N"
-        " files\", \"run X on every Y\"): decompose with plan into"
-        " per-target steps + a final aggregate step. Do NOT invoke a"
-        " per-target action directly without decomposition — it loses"
-        " the iteration shape and gets stuck on the first item.",
-        "",
-        # #1439 Fix #1: in run-once (no interactive user), asking a clarifying
-        # question is a structural dead-end (nobody answers → the agent stalls,
-        # 13398). Interactive default is byte-identical.
-        (
-            "**Ambiguous or missing essential information** → there is no"
-            " interactive user to ask; state your best assumption and proceed"
-            " (do NOT stop to ask a clarifying question)."
-            if non_interactive else
-            "**Ambiguous or missing essential information** → ask ONE"
-            " clarifying question instead of guessing."
-        ),
-        "",
-    ])
+        _slots = tool_use_sp  # type: ignore[assignment]  # dict path (Stage 1+)
 
-    # #1618 root-3: a replace-capable scheme injects its tool-use SP HERE, replacing
-    # the whole built ## Capabilities region (CodeAct's code-API — so the universal
-    # routing guide can't dominate it). discovery / search / ROUTING-RULE below are
-    # separately gated off; the OS-level sections (environment / behaviour-errors /
-    # project / …) remain. Byte-identical when ``tool_use_sp`` is None (no replacement).
-    if tool_use_sp is not None:
-        parts[_cap_start:] = [tool_use_sp]
+    # ── 3. Capabilities (routing guide) — FP-0023 Change 2 ─────────────────
+    # #1627 Stage 0: the ## Capabilities region (R1) is now delivered via
+    # slot_pre_environment.  ``None``-path: OS-built by build_universal_tool_use_slots
+    # (char-identical).  ``str``-path: scheme replacement injected verbatim
+    # (back-compat shim = byte-identical to the old parts[_cap_start:] = [tool_use_sp]).
+    if "slot_pre_environment" in _slots:
+        parts.append(_slots["slot_pre_environment"])
 
     # ── 3.4. Environment (CWD context, P7-clean) ─────────────────────────────
     # Tells the LLM where it is running so unqualified references like
@@ -374,109 +484,12 @@ def build_system_prompt(
                 )
             parts.append("")
 
-    # ── 3.5. Universal catalog (FP-0034 §D9, opt-in via action_retrieval) ────
-    # When the operator has enabled the universal catalog (= reyn.yaml
-    # action_retrieval.universal_wrappers_enabled, default True since
-    # PR-3b-iv), prepend a category overview so the LLM knows what
-    # qualified names list_actions / describe_action / invoke_action
-    # produce and consume.
-    #
-    # Wrapped in a flag check so LLMReplay tests + callers that don't
-    # plumb the flag through keep the legacy SP byte content (= fixture
-    # keys stay valid).  Production runtime passes the flag from
-    # ChatSession → RouterHostAdapter → RouterLoop → here.
-    if universal_wrappers_enabled:
-        parts.append("## Action categories")
-        parts.append("")
-        parts.append(
-            "Actions are addressed by qualified name (`<category>__<entry>`)."
-            " Names in backticks of the form `<category>__<entry>` are invocable action names."
-            " Discover via `list_actions(category=[...])`; describe via"
-            " `describe_action(action_name=...)`; execute via"
-            " `invoke_action(action_name=..., args={...})`."
-        )
-        parts.append("")
-        parts.append(
-            "- **skill** — project-defined workflows (e.g. skill__code_review)."
-        )
-        parts.append(
-            "- **multi_agent** — delegate / list / describe peer agents in this network."
-        )
-        parts.append(
-            "- **mcp** — MCP server management + tool dispatch."
-        )
-        parts.append(
-            "- **file** — workspace file ops (read/write/delete/list)."
-        )
-        parts.append(
-            "- **web** — web search and content fetch."
-        )
-        parts.append(
-            "- **memory_entry** — persistent memory records; invoke to read body."
-        )
-        parts.append(
-            "- **memory_operation** — memory CRUD (remember_shared / remember_agent / forget)."
-        )
-        parts.append(
-            "- **reyn_source** — Reyn source/docs (read-only)."
-        )
-        parts.append(
-            "- **rag_corpus** — indexed corpora; invoke with `query` for single-source recall."
-        )
-        parts.append(
-            "- **rag_operation** — RAG management (multi-source recall, drop_source)."
-        )
-        parts.append(
-            "- **validation** — DSL linting (lint a skill directory and report issues)."
-        )
-        parts.append(
-            "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
-        )
-        parts.append("")
-        # Catalog partiality / discovery signal. Two branches:
-        #
-        # has_hot_list_aliases=True (hot_list_n>0, operator opt-in):
-        #   The function list is a HOT-LIST subset — LLM must use list_actions
-        #   before refusing. Trace-replay verified pre-fix vs post-fix on
-        #   sqlite + everything MCP servers: pre-fix the LLM refused;
-        #   post-fix it calls list_actions to discover the rest.
-        #
-        # has_hot_list_aliases=False (default N=0):
-        #   No actions are pre-loaded as functions; list_actions is the sole
-        #   discovery path. The refusal-prevention intent is preserved via an
-        #   explicit ALWAYS-call directive — the signal that was trace-verified.
-        # When hot_list_n>0 (opt-in), signal that the function list is a
-        # HOT-LIST subset and list_actions must precede any refusal.
-        # When N=0 (default), no aliases exist → paragraph absent
-        # (owner decision: nothing to qualify, no misleading subset claim).
-        if has_hot_list_aliases:
-            parts.append(
-                "The function list visible to you is a HOT-LIST (= a subset of "
-                "the full catalog). Whenever the user requests a capability and "
-                "no listed tool obviously matches, ALWAYS call `list_actions` "
-                "(narrow with `category=[...]` when you know the category) to "
-                "discover the rest of the catalog BEFORE refusing. Refusing "
-                "without that check is a failure mode — the action you assumed "
-                "missing often exists."
-            )
-            parts.append("")
-
-    # #187 Stage C (2/3 reinforcement): strengthen the §D9 hot-list discovery
-    # guidance above into a mechanical MUST. Scope-qualified ("no visible tool
-    # obviously matches") so it reinforces the SAME non-obvious scope as
-    # branch-3, never a blanket rule (bleed guard). Renders whenever the tier
-    # opts in; list_actions is always available.
-    # #1618 root-3: the list_actions-first MANDATE is tool-use-specific (universal
-    # discovery vocab) — a replace-capable scheme owns its own discovery story inside
-    # ``tool_use_sp``, so skip the universal mandate when a scheme replaced the region.
-    if discovery_mandate and tool_use_sp is None:
-        parts.append(
-            "When no visible tool obviously matches the action you need, "
-            "calling list_actions is MANDATORY and comes FIRST — before any "
-            "read, write, or edit. Treat the visible list as a subset, never "
-            "as complete."
-        )
-        parts.append("")
+    # ── 3.5. Universal catalog + discovery mandate (R2) ─────────────────────
+    # #1627 Stage 0: the ## Action categories block and discovery-mandate
+    # paragraph are delivered via slot_post_environment (built by
+    # build_universal_tool_use_slots on the None-path; absent on the str-path).
+    if "slot_post_environment" in _slots:
+        parts.append(_slots["slot_post_environment"])
 
     # ── 4 & 5. Behaviour (static core) ─────────────────────────────────────
     # FP-0023 Change 1: Static Behaviour rules moved here (before dynamic
@@ -500,49 +513,11 @@ def build_system_prompt(
     # wrapper-only Behaviour header (Action/Plan/Reply 3-way) is the SP
     # cross-cutting policy — sufficient.
     parts.append("")
-    # Wrapper-only: plan intent routing already encoded in the 3-way
-    # header lines above ("Domain task → invoke_action OR plan ...").
-    # Also add "never invent action names" (= cross-cutting policy 3).
-    # FP-0034 §D14: only reference search_actions in routing guidance
-    # when it is actually in tools= (= search_actions_enabled=True).
-    # When not available, omit the search_actions signal entirely so the
-    # LLM does not attempt to call a tool that does not exist.
-    # #1618 root-3: the "never invent action names; use list_actions/search_actions"
-    # guidance is universal-vocab tool-use SP — a replace-capable scheme states its
-    # own action-naming contract inside ``tool_use_sp`` (e.g. CodeAct's "Available
-    # actions:" list), so skip the universal guidance when the region was replaced.
-    if tool_use_sp is not None:
-        pass
-    elif search_actions_enabled:
-        parts.extend([
-            "  - Never invent action names; only use those returned by",
-            "    `list_actions` or `search_actions`.",
-            "  - For semantic / natural-language / keyword queries (= 「探し"
-            "たい」 「関連」 「something for X」 「similar to」 「'http' を含む」),",
-            "    USE `search_actions(query=...)`. For category enumeration,",
-            "    USE `list_actions(category=[...])`.",
-        ])
-    else:
-        parts.extend([
-            "  - Never invent action names; only use those returned by",
-            "    `list_actions`.",
-            "  - For category enumeration, USE `list_actions(category=[...])`.",
-        ])
-
-    # B12-R2/B13-R3 V3 ABSOLUTE rule preserved in wrapper vocab (1-line,
-    # JA examples dropped — per B23-PRE-1 SP simplification policy).
-    # P7-compliant placeholder: `<action_name>` (= qualified name format).
-    # #1618 root-3: the invoke_action ROUTING-RULE is universal-wrapper vocab — a
-    # replace-capable scheme encodes its own act-on-named-action rule inside
-    # ``tool_use_sp``, so skip the universal rule when the region was replaced.
-    if tool_use_sp is None:
-        parts.append("")
-        parts.extend([
-            "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-            " name (= valid `invoke_action` action_name, e.g. `skill__code_review`),"
-            " call `invoke_action` immediately. NO clarifying questions. NO text replies.",
-            "",
-        ])
+    # ── R3: never-invent / search guidance + ROUTING RULE ────────────────────
+    # #1627 Stage 0: delivered via slot_in_behaviour (built by
+    # build_universal_tool_use_slots on the None-path; absent on the str-path).
+    if "slot_in_behaviour" in _slots:
+        parts.append(_slots["slot_in_behaviour"])
 
     # ==========================================================================
     # DYNAMIC — varies per session / configuration

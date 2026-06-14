@@ -71,16 +71,18 @@ class Presentation:
     # dispatchable = advertised (``llm_tools_payload``) — byte-identical for
     # universal / enumerate-all / retrieval, whose three catalog notions coincide.
     dispatchable_catalog: "list[dict] | None" = None
-    # #1618 root-2 (②, replace-capable SP): the scheme's REPLACEMENT for the OS-owned
-    # tool-use SP region. ``None`` ⇒ the OS builds today's tool-use SP from sp_params
-    # (universal / enumerate-all — BYTE-IDENTICAL). Non-None ⇒ the OS injects this
-    # verbatim AT the tool-use region position and SKIPS the universal tool-use
-    # construction (wrapper / V18-routing / categories / hot-list / discovery-mandate /
-    # search / ROUTING-RULE) entirely. This is the REPLACE channel (vs the #1601
-    # ``sp_fragment`` APPEND): CodeAct's code-API must not sit beneath a dominant
-    # universal guide that contradicts it. P7: the OS owns the region/position; the
-    # content is scheme-owned. OS retains identity + errors-verbatim + non-tool routing.
-    tool_use_sp: "str | None" = None
+    # #1618 root-2 / #1627 Stage 0 — positional slot-map for the tool-use SP regions.
+    # ``None`` ⇒ the OS builds all three slots via build_universal_tool_use_slots
+    # (universal / enumerate-all — BYTE-IDENTICAL).
+    # ``str`` ⇒ back-compat shim: treated as ``{"slot_pre_environment": str}`` — the OS
+    # injects it verbatim AT the R1 position and leaves R2/R3 absent (CodeAct path).
+    # ``dict[str, str]`` ⇒ positional slot-map; keys are one or more of:
+    #   - ``slot_pre_environment``  — R1: replaces ## Capabilities (routing guide).
+    #   - ``slot_post_environment`` — R2: replaces ## Action categories + discovery mandate.
+    #   - ``slot_in_behaviour``     — R3: replaces never-invent + ROUTING RULE inside ## Behaviour.
+    # Absent keys → OS omits that region entirely. P7: the OS owns the region positions;
+    # the content is scheme-owned. OS retains identity + errors-verbatim + non-tool routing.
+    tool_use_sp: "dict[str, str] | str | None" = None
 
 
 # ── Canonical catalog-shape projections (#1618 root-1) ──────────────────────
