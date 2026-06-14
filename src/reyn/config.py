@@ -1643,6 +1643,49 @@ def _build_time_travel_config(raw: object) -> TimeTravelConfig:
 
 
 @dataclass
+class ToolUseConfig:
+    """``tool_use:`` — the tool-use scheme per layer (#1593).
+
+    Each layer (chat / step / phase) selects a registered ``ToolUseScheme`` by name,
+    generalizing the binary ``action_retrieval.universal_wrappers_enabled`` toggle
+    into a pluggable, per-layer scheme selector. Defaults = ``universal-category``
+    for all three (today's behaviour). Future schemes (``enumerate-all``,
+    ``codeact``) are selected by setting a layer to their name.
+    """
+
+    chat: str = "universal-category"
+    step: str = "universal-category"
+    phase: str = "universal-category"
+
+
+def _build_tool_use_config(raw: object) -> ToolUseConfig:
+    """Parse ``tool_use:`` from reyn.yaml. None / missing / empty → all-universal.
+
+    Each layer key accepts a scheme name (string); a missing key keeps the default.
+    A non-mapping block or non-string value is a config error (fail loud)."""
+    if raw is None:
+        return ToolUseConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(f"tool_use must be a mapping, got {type(raw).__name__}")
+
+    def _name(key: str, default: str) -> str:
+        if key not in raw:
+            return default
+        val = raw[key]
+        if not isinstance(val, str) or not val:
+            raise ValueError(
+                f"tool_use.{key} must be a non-empty scheme name, got {val!r}"
+            )
+        return val
+
+    return ToolUseConfig(
+        chat=_name("chat", "universal-category"),
+        step=_name("step", "universal-category"),
+        phase=_name("phase", "universal-category"),
+    )
+
+
+@dataclass
 class ReynConfig:
     model: str = field(
         default="standard",
@@ -1759,6 +1802,9 @@ class ReynConfig:
     # selects runtime-only rewind (skip the per-boundary shadow-git capture, the
     # largest constant cost). Default-on (full-fidelity rewind). Extensible block.
     time_travel: TimeTravelConfig = field(default_factory=TimeTravelConfig)
+    # #1593 — per-layer tool-use scheme selector (chat/step/phase). Default all
+    # universal-category (today's behaviour); generalizes universal_wrappers_enabled.
+    tool_use: ToolUseConfig = field(default_factory=ToolUseConfig)
     # Plan resume policy (ADR-0023 Phase 2) — how the resume coordinator
     # treats interrupted plan-mode runs on restart. Loaded as a raw dict
     # and parsed lazily by the coordinator (= keeps PlanResumeConfig in
@@ -2252,6 +2298,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         cost=cost,
         skill_resume=_build_skill_resume_config(merged.get("skill_resume")),
         time_travel=_build_time_travel_config(merged.get("time_travel")),
+        tool_use=_build_tool_use_config(merged.get("tool_use")),
         plan_resume_raw=(
             merged.get("plan_resume")
             if isinstance(merged.get("plan_resume"), dict) else None

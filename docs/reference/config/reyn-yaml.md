@@ -40,6 +40,7 @@ models:
 | `skill_search` | map | BM25 skill pre-filter settings. See below. |
 | `skill_resume` | map | Resume policy for ambiguous steps on restart. See below. |
 | `time_travel` | map | Time-travel (rewind/resume) cost knobs. See below. |
+| `tool_use` | map | Per-layer tool-use scheme selector (chat/step/phase). See below. |
 | `self_improvement` | map | `skill_improver` apply-gate and version cap. See below. |
 | `mcp` | map | MCP server definitions and `search_threshold`. See below. |
 | `python` | map | Python preprocessor additional allowed-modules. See below. |
@@ -286,6 +287,25 @@ time_travel:
 |-----|------|---------|-------------|
 | `workspace_capture` | bool | `true` | When `true`, every checkpoint boundary (turn / plan-step) captures the workspace into a shadow-git generation so a rewind restores repo files too. This is time-travel's **largest** constant cost — a `git add -A` + commit per boundary (in container mode, a `docker exec` per boundary). Set to `false` for **runtime-only rewind**: rewind/checkout restore agent + conversation state but **not** repo files — a documented escape for large workspaces, container runs, or no-file-rewind use. Run-level (read at startup; not a mid-session toggle). |
 | `act_turn_capture` | bool | `false` | Opt-in **per-step** (act-turn) workspace capture. When `true`, each skill-run op (`step_completed`) also snapshots the workspace as a cheap `write-tree` (no commit) into an op-content-log, so a rewind can land *mid-skill-run*, not just at turn/plan-step boundaries. High-frequency (per op), so opt-in by default. A no-op when `workspace_capture` is `false` (the per-step capture rides the same shadow store). |
+
+## `tool_use` block
+
+Per-layer tool-use scheme selector (#1593). Each layer picks a registered `ToolUseScheme` by name — generalizing the binary `universal_wrappers_enabled` toggle into a pluggable, per-layer mechanism.
+
+```yaml
+tool_use:
+  chat: universal-category    # default
+  step: universal-category    # default
+  phase: universal-category   # default
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `chat` | string | `universal-category` | Tool-use scheme for the top-level chat layer. Set to another registered scheme (e.g. `enumerate-all`) to change how tools are presented to / dispatched from the LLM at that layer. |
+| `step` | string | `universal-category` | Tool-use scheme for the plan/skill step layer. |
+| `phase` | string | `universal-category` | Tool-use scheme for the OS phase layer. |
+
+Defaults preserve today's behaviour (all `universal-category`). A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping a layer's scheme changes the whole tool-use loop for that layer without OS changes.
 
 ## `phase` block
 
