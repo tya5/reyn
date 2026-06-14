@@ -747,6 +747,9 @@ class AgentRegistry:
         tree_sha = await ws.capture_tree()
         if tree_sha is not None:
             log.append(seq, tree_sha)
+            # #1560 PR-3: pin the tree as a gc-root while in-window (the bare
+            # write-tree is otherwise unreachable → auto-gc'd). Dropped at prune.
+            await ws.ref_op_tree(seq, tree_sha)
 
     async def restore_workspace_to_act_turn(self, target_seq: int) -> str | None:
         """Restore the workspace to the act-turn (per-op) state as-of ``target_seq``.
@@ -1129,6 +1132,14 @@ class AgentRegistry:
             ws = self.workspace_store
             if ws is not None:
                 await ws.prune_below(floor)
+            # #1560 PR-3: act-turn op-content-log GC on the same boundary — drop
+            # entries below the floor + unref the out-window op-trees (so auto-gc
+            # reclaims them, the same bounded lifecycle generations get).
+            op_log = self.op_content_log
+            if op_log is not None:
+                op_log.prune_below(floor)                   # WorkspaceOpContentLog (sync)
+                if ws is not None:
+                    await ws.unref_op_trees_below(floor)
             # #1547: anchors GC'd on the same boundary as generations/blobs.
             anchors = self.anchor_store
             if anchors is not None:

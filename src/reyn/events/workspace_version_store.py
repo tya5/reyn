@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 
 _TAG_PREFIX = "reyn-gen-"
 _TAG_RE = re.compile(rf"^{re.escape(_TAG_PREFIX)}(\d+)$")
+# #1560 PR-3: ref namespace that keeps per-op (act-turn) ``write-tree`` snapshots
+# reachable (gc-roots) while in-window. Unlike generations (commit-chained off
+# HEAD, so auto-gc-protected for free), a bare tree object is unreachable and
+# would be auto-gc'd; a ref pins it. Dropped at prune → out-window auto-gc reclaims.
+_OP_REF_PREFIX = "refs/reyn-op/"
+_OP_REF_RE = re.compile(rf"^{re.escape(_OP_REF_PREFIX)}(\d+)$")
 # Marker committer identity — shadow commits never touch the user's git identity.
 _SHADOW_NAME = "reyn-shadow"
 _SHADOW_EMAIL = "reyn@shadow.local"
@@ -203,6 +209,52 @@ class WorkspaceVersionStore:
             return out.strip() or None
         except GitUnavailable:
             return self._degrade("capture_tree", None)
+
+    async def ref_op_tree(self, op_seq: int, tree_sha: str) -> None:
+        """Pin a per-op ``write-tree`` snapshot as a gc-root (#1560 PR-3).
+
+        ``update-ref refs/reyn-op/<op_seq> <tree_sha>`` so the otherwise-unreachable
+        tree survives git auto-gc while it is in-window. The op-content-log still
+        holds ``tree_sha`` as the restore key; this ref is purely gc-protection,
+        dropped by :meth:`unref_op_trees_below` at retention. Best-effort: a failure
+        is swallowed (the caller runs on the swallow-safe WAL post-append path)."""
+        try:
+            await self._ensure_repo()
+            await self._git(["update-ref", f"{_OP_REF_PREFIX}{int(op_seq)}", tree_sha])
+        except GitUnavailable:
+            self._degrade("ref_op_tree", op_seq)
+        except subprocess.CalledProcessError as e:
+            logger.warning("ref_op_tree failed (op_seq=%s): %s", op_seq, e)
+
+    async def unref_op_trees_below(self, min_keep_seq: int) -> int:
+        """Drop op-tree gc-roots with seq < ``min_keep_seq`` (#1560 PR-3 retention).
+
+        ``update-ref -d`` each ``refs/reyn-op/<seq>`` below the floor, so the now-
+        unreachable out-window op-trees become eligible for git's auto-gc (the same
+        bounded-lifecycle model generations get via their commit chain). Returns the
+        number of refs dropped. Mirrors :meth:`prune_below` for generation tags."""
+        try:
+            removed = 0
+            for s in await self._op_ref_seqs():
+                if s < min_keep_seq:
+                    await self._git(
+                        ["update-ref", "-d", f"{_OP_REF_PREFIX}{s}"], check=False,
+                    )
+                    removed += 1
+            return removed
+        except GitUnavailable:
+            return self._degrade("unref_op_trees", min_keep_seq) or 0
+
+    async def _op_ref_seqs(self) -> list[int]:
+        """Sorted op-tree ref seqs (from ``refs/reyn-op/*``); [] if none/degraded."""
+        out = await self._git(["for-each-ref", "--format=%(refname)", _OP_REF_PREFIX],
+                               check=False)
+        found = []
+        for line in (out or "").splitlines():
+            m = _OP_REF_RE.match(line.strip())
+            if m:
+                found.append(int(m.group(1)))
+        return sorted(found)
 
     async def restore_at_or_below(self, seq: int) -> str | None:
         """Restore to the nearest generation with **raw** tag-seq <= ``seq``.
