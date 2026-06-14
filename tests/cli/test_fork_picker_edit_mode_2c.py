@@ -26,6 +26,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+import reyn.chat.tui.app as app_mod
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.tui.app import ReynTUIApp
@@ -94,9 +95,14 @@ async def test_enter_exit_edit_mode_toggles_flag_and_banner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exit_edit_mode_resets_esc_esc_pending() -> None:
+async def test_exit_edit_mode_resets_esc_esc_pending(monkeypatch) -> None:
     """Tier 2: exit_edit_mode resets the pending Esc-Esc first tap, so
-    "exit-edit Esc then clean Esc" can't false-fire the picker (#1554 discipline)."""
+    "exit-edit Esc then clean Esc" can't false-fire the picker (#1554 discipline).
+
+    #1587: the window is widened so the real auto-clear ``set_timer`` can't fire
+    mid-test (a slow 3.11 run zeroed the pending state before the first assert);
+    this test pins the *reset-on-exit* path, not the timer-driven lapse."""
+    monkeypatch.setattr(app_mod, "_ESC_ESC_WINDOW_S", 1_000_000.0)
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()

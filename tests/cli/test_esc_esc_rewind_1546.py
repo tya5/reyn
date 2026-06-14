@@ -14,7 +14,6 @@ Pins (real key path through bindings + check_action, run_test pilot — no mocks
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -24,8 +23,20 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.app import _ESC_ESC_WINDOW_S, ReynTUIApp
+import reyn.chat.tui.app as app_mod
+from reyn.chat.tui.app import ReynTUIApp
 from reyn.chat.tui.widgets import ConversationView, InputBar
+
+
+@pytest.fixture(autouse=True)
+def _wide_esc_window(monkeypatch):
+    """De-flake (#1587): make the Esc-Esc window huge so the real auto-clear
+    ``set_timer`` never fires during a (sub-second) test — removing the
+    wall-clock race that let a slow 3.11 run zero the pending state mid-test.
+    The production window behaviour is unchanged (same monotonic-ts logic, just
+    a value the test controls); tests that need the window to *lapse* advance a
+    faked ``_now_monotonic`` past it instead of sleeping real time."""
+    monkeypatch.setattr(app_mod, "_ESC_ESC_WINDOW_S", 1_000_000.0)
 
 
 def _make_app() -> ReynTUIApp:
@@ -99,14 +110,22 @@ async def test_double_esc_within_window_opens() -> None:
 
 
 @pytest.mark.asyncio
-async def test_double_esc_outside_window_rearms() -> None:
-    """Tier 2: a second Esc AFTER the window re-arms (new first tap), not open."""
+async def test_double_esc_outside_window_rearms(monkeypatch) -> None:
+    """Tier 2: a second Esc AFTER the window re-arms (new first tap), not open.
+
+    Deterministic clock (#1587): the window lapse is simulated by advancing a
+    faked ``_now_monotonic`` past the window — no real ``asyncio.sleep`` (which
+    raced 3.11's timer scheduling at the old +0.05 margin)."""
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(app_mod, "_now_monotonic", lambda: clock["t"])
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        await pilot.press("escape")
-        await asyncio.sleep(_ESC_ESC_WINDOW_S + 0.05)  # let the window lapse
-        await pilot.press("escape")
+        await pilot.press("escape")          # arm at t=1000
+        assert app.esc_esc_pending is True
+        # Advance PAST the window deterministically (no wall-clock sleep).
+        clock["t"] += app_mod._ESC_ESC_WINDOW_S + 1.0
+        await pilot.press("escape")          # 2nd Esc now lands outside the window
         await pilot.pause()
         # Did not double-tap → no open attempt, but re-armed for a fresh pair.
         assert not _conv_has(app, "no checkpoints")
