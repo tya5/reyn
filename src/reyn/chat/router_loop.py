@@ -2864,6 +2864,19 @@ class RouterLoop:
         and dispatch via the wrapper path so the user-visible behavior
         matches what the LLM intended.
         """
+        name, args = self._resolve_tool_call(tc)
+
+        excluded = self._excluded_result(name, args)
+        if excluded is not None:
+            return excluded
+        return await self._dispatch_resolved(name, args)
+
+    def _resolve_tool_call(self, tc: dict) -> "tuple[str, dict]":
+        """#1593: name + args + #229 salvage → the effective ``(name, args)``.
+
+        **Resolution only** (no dispatch), so the scheme's ``interpret`` runs it and
+        the OS exclude-gates the result BEFORE ``execute`` — preserving the #1406/#187
+        pre-dispatch order across the scheme split (byte-identical)."""
         name = tc["function"]["name"]
         try:
             args = json.loads(tc["function"]["arguments"])
@@ -2872,19 +2885,22 @@ class RouterLoop:
 
         if name not in self._catalog and "__" in name:
             name, args = self._maybe_salvage_qualified_direct_call(name, args)
+        return name, args
 
-        # #1406: execution-level exclude enforcement. ``exclude_tools`` is not just
-        # an advertisement filter (#1400 ``_apply_tool_exclusions`` hides excluded
-        # tools from ``tools[]`` / ``self._catalog``) — the LLM can still call an
-        # excluded tool by name, which the #229 salvage rewrites to
-        # ``invoke_action(action_name=<excluded>)`` (or it is called as
-        # ``invoke_action`` directly), and ``universal_dispatch`` then resolves and
-        # EXECUTES it (the #187 N=3 web__search leak). Compute the effective
-        # resolved action — unwrap ``invoke_action`` — and reject if excluded.
-        # Covers all three bypass paths (native direct / salvaged / direct
-        # invoke_action). Catalog filter (#1400) stays as the hide layer
-        # (defense-in-depth). A distinct ``tool_excluded`` kind + decision-enabling
-        # message lets the model adjust ([[deny-message-decision-enabling]]).
+    def _excluded_result(self, name: str, args: dict) -> "dict | None":
+        """#1406/#187: the **pre-dispatch** exclude gate. Returns the
+        ``tool_excluded`` error result when the effective op is excluded, else None.
+
+        ``exclude_tools`` is not just an advertisement filter (#1400
+        ``_apply_tool_exclusions`` hides excluded tools from ``tools[]`` /
+        ``self._catalog``) — the LLM can still call an excluded tool by name, which
+        the #229 salvage rewrites to ``invoke_action(action_name=<excluded>)`` (or it
+        is called as ``invoke_action`` directly), and ``universal_dispatch`` then
+        resolves and EXECUTES it (the #187 N=3 web__search leak). Compute the
+        effective resolved action — unwrap ``invoke_action`` — and reject if excluded.
+        Covers all three bypass paths (native direct / salvaged / direct
+        invoke_action). The ``tool_excluded`` kind + decision-enabling message lets
+        the model adjust ([[deny-message-decision-enabling]])."""
         if self._exclude_tools:
             effective = args.get("action_name") if name == "invoke_action" else name
             if effective in self._exclude_tools:
@@ -2899,7 +2915,13 @@ class RouterLoop:
                         ),
                     },
                 }
+        return None
 
+    async def _dispatch_resolved(self, name: str, args: dict) -> dict:
+        """#1593: dispatch a resolved, exclude-cleared tool call via the OS substrate
+        (DispatchContext / phase-memo / ``dispatch_tool`` — P5). The pure-OS dispatch
+        half of the former ``_execute_tool``; the scheme's ``execute`` orchestrates
+        calls to it (it never sees the DispatchContext / phase-memo)."""
         # #1092 PR-C-2.5: phase-mode op-dispatch WAL memoization. A phase host
         # returns the per-phase resume wiring; chat hosts don't implement the hook
         # (getattr → None), so the chat dispatch path below is byte-identical
