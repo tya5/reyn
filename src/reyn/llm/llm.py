@@ -513,8 +513,25 @@ class LLMToolCallResult:
 # Resolved lazily so importing this module does not trigger `import litellm`.
 _RETRYABLE_LITELLM_EXCEPTIONS: tuple | None = None
 
-_LLM_RETRY_MAX_ATTEMPTS: int = 3   # total attempts = 1 initial + 2 retries
-_LLM_RETRY_BASE_S: float = 2.0     # first backoff: 2s → 4s → 8s (capped at 16s)
+def _env_num(name: str, default: "int | float", lo: "int | float", hi: "int | float",
+             cast):
+    """Operator tuning knob from the environment, clamped to ``[lo, hi]``; falls back
+    to ``default`` on unset/invalid. A flaky-provider robustness lever: bump retries /
+    backoff without a code change (parallels REYN_LLM_TRACE_DUMP + the #1626
+    empty-choices observability). Read once at import — set it in the subprocess env."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(lo, min(hi, cast(raw)))
+    except (TypeError, ValueError):
+        return default
+
+
+# Defaults preserve today's behaviour (3 attempts / 2s base); the env overrides let an
+# operator absorb a transient empty-generation / 5xx storm without editing code.
+_LLM_RETRY_MAX_ATTEMPTS: int = _env_num("REYN_LLM_RETRY_MAX_ATTEMPTS", 3, 1, 10, int)
+_LLM_RETRY_BASE_S: float = _env_num("REYN_LLM_RETRY_BASE_S", 2.0, 0.1, 30.0, float)
 _LLM_RETRY_MAX_BACKOFF_S: float = 16.0
 
 
