@@ -16,6 +16,36 @@ reframe: general-agent positioning (2026-06-13、README #1517 + feature-map.md m
 
 ---
 
+## 構造的差別化の核 — OS は定数、skill は来ては去る
+
+個別の機能差別化（§2 以降）はすべて、ひとつの構造的な賭けから派生する:
+
+> **OS が定数であり、skill は来ては去る。** agent loop の制御・検証・記録・回復は
+> すべて OS 層の不変の contract であり、ドメインの振る舞い（skill）はその上に乗る
+> 純粋なデータにすぎない。新しい能力を足すのに OS コードは一切変わらない。
+
+これが他の self-hosted agent との最大の違いである。競合では agent の振る舞いと
+ランタイムが密結合しており、能力を足すとはコードを書くこと（= ランタイムの変更）に
+等しい。Reyn では:
+
+- **境界が構造で保証される（P1–P8）**: phase は次の phase も出力 schema も親 skill も
+  知らない。skill は遷移グラフと最終出力 schema だけを宣言する。OS は phase 名・
+  artifact 型・field 名のような skill 固有の文字列をコードに一切含まない（P7 検出
+  ルール）。新 skill = `skill.md` を足すだけ、OS は不変。
+- **意思決定が制約される（P3/P4）**: LLM は OS が提示した候補セットの中からのみ選ぶ。
+  任意の遷移・ツールを発明できない。hallucination は副作用の前に reject される。
+- **状態が単一の真実源を持つ（P5/P6）**: phase 間のすべての値は workspace を通り、
+  すべての状態変化は append-only の event log に記録される。in-memory state は
+  workspace に landing するまで信用されない。これが permission enforcement と
+  crash recovery を構造的に可能にする。
+
+つまり Reyn の差別化は「ある機能を持つこと」ではなく、**振る舞いが OS によって
+検証・記録・制約される構造そのもの**である。skill はその構造の上の一機能であって、
+見出しではない。詳細は [phase-vs-skill-vs-os](../../../concepts/architecture/phase-vs-skill-vs-os.md) /
+[principles](../../../concepts/architecture/principles.md) 参照。
+
+---
+
 ## 1. 競合との違い — Reyn は別の賭けをする
 
 Reyn は self-hosted の open-source general agent（OpenClaw / Hermes と同カテゴリ）だが、
@@ -72,6 +102,43 @@ self-hosted agent loop の各機能について、OpenClaw / Hermes 等の gener
 - **Skill architecture（差別化の1機能）** — Hermes 等の emergent auto-skill に対し、Reyn の skill
   は explicit / typed / validated。OS が各遷移を検証する reviewable / versioned な phase graph。
   predictable over emergent。**ある事ではなく、検証される事**が差別化。
+
+---
+
+## 機能グループ別 差別化マップ (scannable)
+
+[`feature-map.md`](../../../feature-map.md) の機能グループ単位で「何が Reyn を差別化するか」を
+1 行で示す。§2 が能力タイプ別の prose、こちらは機能グループ別の早見表。実装状況の
+source of truth は feature-map.md（このマップは差別化の articulation であり inventory ではない）。
+
+| 機能グループ | 差別化の核 (1 行) | 主たる対比軸 |
+|---|---|---|
+| **Phase Engine** | OS が act/decide loop を駆動し、LLM は OS 提示の候補からのみ次 phase を選ぶ (P3/P4) | vs free-running agent |
+| **LLM Validation** | 全出力を `{control, artifact, control_ir}` schema で毎回検証し violation は実行拒否 | vs 型ヒント / constrained decoding 頼み |
+| **Workspace (P5)** | phase 間の全データが workspace 経由・permission-gated IO | vs app-managed in-memory state |
+| **Crash Recovery** | WAL forward-replay で自動 crash recovery、SaaS なし | vs 非 durable checkpoint / 手動 resume |
+| **Time-Travel / Rewind** | user 起点の point-in-time rewind + branch、両 substrate を atomic に巻き戻し、append-only（履歴非破壊）| 競合に同等機能ほぼ無し |
+| **Event System (P6)** | 全状態変化を append-only event log に強制記録、replay 可能 | vs SaaS 依存の可観測性（append-only 保証なし）|
+| **Chat Compaction** | head+tail+LLM summary を budget 化、monotonic overflow-shrink retry | vs naive truncation / 無制限肥大 |
+| **Plan Mode** | OS-governed 分解、永続・per-step resumable（完了 step は LLM コストなく replay）| vs in-prompt ad-hoc task loop |
+| **Control IR Ops** | 全副作用が宣言的 op 経由・permission gate 対象 | vs 直接 tool 実行 |
+| **DSL** | skill/phase/artifact を typed・OS-validated な宣言として定義 | vs コードとしての agent 定義 |
+| **Permissions** | per-capability 宣言 + 4-layer JIT 承認 + `.reyn/` write zone | vs 最小限 gating |
+| **Safety / limit** | limit 到達で graceful force-close → 最終 wrap-up turn → operator 判断 | vs hard-stop / runaway |
+| **Budget & Cost** | token/USD cap を per-agent/chain/model で refuse-on-exceed | vs 事後観測のみ |
+| **Memory & RAG** | indexing strategy を `skill.md` で宣言する RAG *framework* + credential-free local embedding | vs 固定 memory 機能 |
+| **MCP** | client（外部消費）かつ server（自 agent 公開）、stdio server は Seatbelt 下 | vs 一方向のみ |
+| **Web & Protocol** | 標準プロトコル（MCP / A2A sync+async+webhook / REST/WS）に意図的 scope | vs 広い per-app 統合（競合の強み）|
+| **Intervention** | surface 非依存の `ask_user` / permission ルーティング（TUI/CLI/web/MCP 同一）| vs surface 固有の HITL |
+| **Multi-Agent** | topology-gated 委譲 + hop-depth cap + `chain_id` 監査伝播 | vs free-form 委譲 |
+| **Sandbox** | OS-level sandbox backend（Seatbelt / Landlock + seccomp）+ 明示的 `SandboxPolicy` | vs unsandboxed tool 実行 |
+| **Environment** | OS + permission + audit を host に残し、repo FS のみ container 化（⚗ Stage 2 MVP）| vs container に丸ごと委譲 |
+| **Credentials / Identity** | per-skill credential scoping（Confused Deputy 緩和）+ `agent_id` の全 event 伝播 | vs agent 単位の共有資格情報 |
+| **Skill architecture（差別化の1機能）** | explicit / typed / OS-validated な phase graph、各遷移を OS が検証 | vs emergent auto-skill |
+
+> **読み方**: この表のどの行も独立した「機能」ではなく、すべて「構造的差別化の核」
+> （OS-constant / skills-come-and-go）の系である。skill 行はその構造の上の一機能として
+> 意図的に末尾に置いている — 見出しではない。
 
 ---
 
