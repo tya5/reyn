@@ -1725,6 +1725,12 @@ class RouterLoop:
                 # configured + index ready); False there means the SP and tools=
                 # both exclude search_actions, eliminating the N5 hallucination.
                 search_actions_enabled=_pres.sp_params["search_actions_enabled"],
+                # #1593: free-form scheme-owned tool-use SP. Empty for the
+                # named-gate schemes (universal-category / enumerate-all) ⇒ the
+                # SP is byte-identical; a divergent scheme (CodeAct code-API /
+                # retrieval search-SP) supplies its own tool-use text here and
+                # the OS appends it verbatim (P7 — no scheme concepts in the OS).
+                scheme_sp_fragment=_pres.sp_fragment,
                 # #272/#1128: OS-injected context-size signal (header), computed
                 # once above. Rendered LAST in the SP (most volatile section →
                 # preserves the cached prefix above it); None when ample.

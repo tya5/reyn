@@ -72,6 +72,7 @@ def build_system_prompt(
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-v
     cwd: str | None = None,
     search_actions_enabled: bool = True,  # FP-0034 §D14 — default True preserves byte-compat
+    scheme_sp_fragment: str = "",  # #1593 — free-form scheme-owned tool-use SP; OS appends verbatim (P7), default "" = byte-identical named-gate path
     context_size_signal: str | None = None,  # #272/#1128 — pre-rendered, appended LAST
     discovery_mandate: bool = False,  # #187 Stage C — weak-tier list_actions-first mandate (3x)
     non_interactive: bool = False,  # #1439 Fix #1 — run-once (no TTY): no user to ask, proceed instead of clarifying
@@ -568,6 +569,18 @@ def build_system_prompt(
             f"  - Always reply in language: {output_language}."
             "  Do NOT switch language even for error messages or clarifying questions."
         )
+
+    # ── 13b. Scheme-owned SP fragment (#1593) ────────────────────────────────
+    # A tool-use scheme whose tool-use instructions are genuinely new content
+    # (e.g. CodeAct's rendered fn-signature code-API, retrieval's search-tool SP)
+    # supplies them here as free-form text. The OS appends it verbatim and does
+    # NOT interpret it (P7: the OS has no notion of "code-API" / "search-SP").
+    # Empty default ⇒ universal-category / enumerate-all (named-gate schemes) are
+    # byte-identical. Placed before the volatile context-size signal so the
+    # scheme's tool-use SP sits with the rest of the cached prefix.
+    if scheme_sp_fragment:
+        parts.append("")
+        parts.append(scheme_sp_fragment)
 
     # ── 14. Context-size signal (#272/#1128) ─────────────────────────────────
     # OS-injected, pre-rendered by the caller (router_loop / phase runtime) from
