@@ -98,6 +98,32 @@ async def test_terminal_presentation_drops_search_tool(tmp_path) -> None:
     assert _SEARCH_TOOL_NAME not in names                 # search dropped → must Execute
 
 
+@pytest.mark.asyncio
+async def test_initial_presentation_supplies_search_sp_fragment(tmp_path) -> None:
+    """Tier 2: #1601 channel — retrieval runs with universal_wrappers_enabled=False
+    (named-gate SP off), so it MUST supply its own search-tool instructions through
+    Presentation.sp_fragment, else the LLM sees search_actions with no guidance."""
+    ops = _FakeOps()
+    pres = await RetrievalScheme().build_presentation({}, {}, ops)
+    assert pres.sp_params["universal_wrappers_enabled"] is False   # named-gate SP off
+    assert pres.sp_fragment                                        # scheme supplies its own
+    assert _SEARCH_TOOL_NAME in pres.sp_fragment                   # tells the LLM to search first
+
+
+@pytest.mark.asyncio
+async def test_terminal_presentation_sp_fragment_reflects_dropped_search(tmp_path) -> None:
+    """Tier 2: when the presentation is terminal (search tool dropped), the
+    sp_fragment flips from "search first" to "call one of the presented matches"
+    — the SP and the tools= stay consistent (no dangling search instruction)."""
+    ops = _FakeOps(matches=["file__write"], catalog=[_tool("file__write")])
+    pres = await RetrievalScheme().build_presentation(
+        {}, {"refinement": {"query": "edit"}, "terminal": True}, ops,
+    )
+    assert pres.sp_fragment                                        # still guided
+    assert _SEARCH_TOOL_NAME not in pres.sp_fragment               # no "call search_actions" — it's gone
+    assert "available" in pres.sp_fragment.lower()                 # "matching tools are now available"
+
+
 def test_interpret_search_call_is_represent_pure() -> None:
     """Tier 2: a search call → RePresent(query), with NO search I/O in interpret
     (pure classifier — the search runs in build_presentation)."""
