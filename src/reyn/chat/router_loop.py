@@ -42,10 +42,13 @@ def _resolve_tool_use_scheme(name: "str | None" = None):
     defaulting to universal-category — PR-1 byte-identical. Per-layer config
     (``tool_use:{chat,step,phase}``) passes the selected name here."""
     from reyn.tools.scheme import DEFAULT_SCHEME_NAME, get_scheme, register_scheme
+    from reyn.tools.schemes.enumerate_all import EnumerateAllScheme
     from reyn.tools.schemes.universal_category import UniversalCategoryScheme
 
     if get_scheme(DEFAULT_SCHEME_NAME) is None:
         register_scheme(UniversalCategoryScheme())
+        register_scheme(EnumerateAllScheme())  # #1593 PR-2 (lazy, idempotent)
+    # Unknown / unconfigured name → default (universal-category) — byte-identical.
     return get_scheme(name or DEFAULT_SCHEME_NAME) or get_scheme(DEFAULT_SCHEME_NAME)
 
 
@@ -1318,6 +1321,7 @@ class RouterLoop:
         plan_invalid_retries: int = 1,  # B51 NF-W6-3 — safety.loop.plan_invalid_retries
         on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
+        scheme_name: "str | None" = None,  # #1593 PR-2: per-layer tool-use scheme (None → universal default; the construction site resolves config.tool_use.<layer>)
     ):
         self.host = host
         self.chain_id = chain_id
@@ -1416,7 +1420,7 @@ class RouterLoop:
         # behaviour, behind the protocol) for every layer → byte-identical. Per-layer
         # config selection (tool_use:{chat,step,phase}) plugs in here; with all
         # layers defaulting to universal-category it is byte-identical today.
-        self._scheme = _resolve_tool_use_scheme()
+        self._scheme = _resolve_tool_use_scheme(scheme_name)
 
     @property
     def total_usage(self) -> TokenUsage:
