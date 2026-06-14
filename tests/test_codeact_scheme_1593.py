@@ -90,3 +90,42 @@ def test_format_feedback_passthrough() -> None:
     scheme = CodeActScheme(runner=_FakeRunner())
     results = [{"ok": True, "result": 1}]
     assert scheme.format_feedback(ExecutionResult(tool_results=results), ops=None) == results
+
+
+# ── S3b: build_presentation (code-API render into sp_fragment) ────────────────
+
+
+class _CatalogOps:
+    """A real Fake SchemeOps exposing the async ``catalog_entries`` adapter (#1599)."""
+
+    async def catalog_entries(self) -> list[dict]:
+        return [
+            {"name": "file__read", "description": "Read a file.",
+             "parameters": {"type": "object", "properties": {"path": {"type": "string"}}}},
+            {"name": "web__fetch", "description": "Fetch a URL.\nSecond line ignored.",
+             "parameters": {"type": "object", "properties": {}}},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_build_presentation_renders_code_api_into_sp_fragment() -> None:
+    """Tier 2: build_presentation renders the actions as a code-API in sp_fragment
+    (no JSON tools=); behavior-pinned (action names + tool() proxy instruction
+    present), not format-pinned."""
+    pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
+    # No JSON tools= — CodeAct presents via the SP fragment, model writes a snippet.
+    assert pres.llm_tools_payload == []
+    # The actions surface in the code-API + the tool() proxy is instructed.
+    assert "file__read" in pres.sp_fragment
+    assert "web__fetch" in pres.sp_fragment
+    assert "tool(" in pres.sp_fragment
+    # The named SP gates are off (CodeAct expresses tool-use via the fragment).
+    assert pres.sp_params.get("universal_wrappers_enabled") is False
+    assert pres.sp_params.get("search_actions_enabled") is False
+
+
+@pytest.mark.asyncio
+async def test_build_presentation_includes_arg_names() -> None:
+    """Tier 2: an action's schema arg names appear in its code-API signature."""
+    pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
+    assert "path" in pres.sp_fragment  # file__read's parameters.properties key

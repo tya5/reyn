@@ -26,11 +26,39 @@ import re
 from typing import Any
 
 from reyn.kernel.codeact_runner import CodeActRunner
-from reyn.tools.scheme import CodeBlock, ExecContext, ExecutionResult
+from reyn.tools.scheme import CodeBlock, ExecContext, ExecutionResult, Presentation
 
 # A fenced ```python ... ``` (or bare ``` ... ```) block — how the CodeAct LLM
 # emits its snippet in the message content.
 _FENCE_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL)
+
+
+def _render_code_api(entries: list[dict]) -> str:
+    """Render flat ``{name, description, parameters}`` action entries as a CodeAct
+    *code-API*: a reference list of the actions the model invokes via the
+    ``tool(...)`` proxy. Pure presentation — the model reads it; it is NOT executed
+    Python. The arg names come from each entry's JSON-schema ``parameters.properties``
+    (CodeAct's strictest-consumer schema-completeness floor guarantees a dict)."""
+    lines = [
+        "## CodeAct — write a Python script (not JSON tool calls)",
+        "",
+        "Write a Python snippet. Call any available action with "
+        "``tool('<name>', <arg>=<value>, ...)`` — it returns the action's result, or "
+        "raises if the action is denied / excluded / unknown. Assign your final answer "
+        "to a variable named ``result``. The standard library is available; "
+        "filesystem / network / subprocess are sandboxed.",
+        "",
+        "Available actions:",
+    ]
+    for entry in entries:
+        name = entry.get("name", "")
+        params = entry.get("parameters") or {}
+        arg_names = list((params.get("properties") or {}).keys())
+        sig = ", ".join(arg_names)
+        desc_raw = (entry.get("description") or "").strip()
+        desc = desc_raw.splitlines()[0] if desc_raw else ""
+        lines.append(f"- tool('{name}'{', ' + sig if sig else ''}) — {desc}".rstrip(" —"))
+    return "\n".join(lines)
 
 
 def _extract_code(llm_response: Any) -> str:
@@ -54,15 +82,33 @@ class CodeActScheme:
     def __init__(self, runner: CodeActRunner | None = None) -> None:
         self._runner = runner or CodeActRunner()
 
-    async def build_presentation(self, available: Any, layer_ctx: Any, ops: Any):
-        # S3b: render ops.catalog_entries() as a code-API (excluded omitted) + the
-        # "write a script calling these functions" SP; llm_tools_payload native-
-        # minimal. ASYNC per the e2e seam decision (#1593 issuecomment-4700815694):
-        # catalog_entries is async for rag/source completeness + PR-4 dynamic search.
-        # Blocked on the SchemeOps.catalog_entries async adapter (tui PR-2 / e2e);
-        # not wired until CodeAct is a selectable scheme (tui's per-layer selection).
-        raise NotImplementedError(
-            "CodeActScheme.build_presentation — S3b (needs async SchemeOps.catalog_entries)"
+    async def build_presentation(
+        self, available: Any, layer_ctx: Any, ops: Any,
+    ) -> Presentation:
+        """Render the permission-eligible actions as a CodeAct *code-API* in the
+        ``sp_fragment`` (#1601 channel) — each action a callable the model invokes via
+        the ``tool(name, **args)`` proxy. No JSON ``tools=`` (``llm_tools_payload``
+        empty): the model writes a Python snippet in its content, not tool calls.
+
+        ``ops.catalog_entries()`` is async (the SchemeOps adapter ensures the
+        rag/source-populated context — e2e Option A: adapter owns the rs-ensure
+        await; my ``universal_catalog.catalog_entries`` substrate stays sync). The
+        ``sp_params`` named gates are both off (CodeAct expresses its whole tool-use
+        SP through the free-form fragment, not the universal named gates).
+
+        Excluded-tool *omission from the code-API* is defense-in-depth, NOT the safety
+        boundary: the real gate is the per-call exclude + ``dispatch_tool`` re-entry
+        in ``execute`` (a code call to an excluded action is rejected at dispatch).
+        Presentation-level omission is deferred to a follow-up (it needs the exclude
+        set, which the OS applies post-presentation to ``tools=`` today)."""
+        entries = await ops.catalog_entries()
+        return Presentation(
+            llm_tools_payload=[],
+            sp_params={
+                "universal_wrappers_enabled": False,
+                "search_actions_enabled": False,
+            },
+            sp_fragment=_render_code_api(entries),
         )
 
     def interpret(self, llm_response: Any, *, tool_catalog: dict, ops: Any) -> CodeBlock:
