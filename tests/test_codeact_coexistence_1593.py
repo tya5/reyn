@@ -155,9 +155,9 @@ async def test_codeblock_arm_full_round_then_plaintext_exit(monkeypatch) -> None
     # CodeBlock arm appended the [assistant: code] turn + the observation message
     # (NOT via the Execute zip — no tool message / tool_call_id).
     roles = [(h["role"], h["source"]) for h in host.history]
-    assert ("assistant", "router_codeact_turn") in roles
-    assert ("user", "router_codeact_turn") in roles
-    obs = next(h for h in host.history if h["source"] == "router_codeact_turn" and h["role"] == "user")
+    assert ("assistant", "router_codeblock_turn") in roles
+    assert ("user", "router_codeblock_turn") in roles
+    obs = next(h for h in host.history if h["source"] == "router_codeblock_turn" and h["role"] == "user")
     assert "computed" in obs["content"]  # the scheme's observation reached the loop
     # PlainText round 2 exited via the terminal text-reply path.
     assert any("final answer" in o["text"] for o in host.outbox)
