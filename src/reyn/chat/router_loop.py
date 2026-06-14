@@ -1773,6 +1773,12 @@ class RouterLoop:
                 # retrieval search-SP) supplies its own tool-use text here and
                 # the OS appends it verbatim (P7 — no scheme concepts in the OS).
                 scheme_sp_fragment=_pres.sp_fragment,
+                # #1618 root-3: scheme REPLACEMENT for the tool-use SP region. None
+                # (named-gate schemes) ⇒ OS builds today's tool-use SP byte-identical;
+                # non-None (CodeAct code-API) ⇒ OS injects it at the ## Capabilities
+                # position + skips the universal tool-use construction (P7 — OS owns
+                # the region/position, the scheme owns the content).
+                tool_use_sp=_pres.tool_use_sp,
                 # #272/#1128: OS-injected context-size signal (header), computed
                 # once above. Rendered LAST in the SP (most volatile section →
                 # preserves the cached prefix above it); None when ample.
