@@ -51,8 +51,10 @@ class _FakeOps:
     async def dispatch(self, actions):
         return [{"status": "ok", "for": a["name"]} for a in actions]
 
-    def feedback(self, tool_results):
-        return tool_results
+    def feedback(self, result):
+        # #1608: ops.feedback now receives the enriched ExecutionResult; the Fake
+        # echoes its tool_results so the delegation assertion stays meaningful.
+        return result.tool_results
 
 
 def _tool(name):

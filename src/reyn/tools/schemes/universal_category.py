@@ -67,7 +67,11 @@ class UniversalCategoryScheme:
         return ExecutionResult(tool_results=results)
 
     def format_feedback(self, result: ExecutionResult, ops: SchemeOps) -> list[dict]:
-        return ops.feedback(result.tool_results)
+        # #1608: delegate the full appendable-message build to the OS substrate
+        # (ops.feedback now owns the relocated assistant+tool-message construction);
+        # the OS loop appends what this returns. Byte-identical to the former inline
+        # zip — the enriched ``result`` carries tool_calls + assistant_content.
+        return ops.feedback(result)
 
 
 __all__ = ["UniversalCategoryScheme"]

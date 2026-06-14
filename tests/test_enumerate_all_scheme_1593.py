@@ -54,8 +54,10 @@ class _FakeOps:
         self.dispatched = actions
         return [{"name": a["name"], "ok": True} for a in actions]
 
-    def feedback(self, tool_results: list[dict]) -> list[dict]:
-        return [{"role": "tool", "content": tr["name"]} for tr in tool_results]
+    def feedback(self, result) -> list[dict]:
+        # #1608: ops.feedback now receives the enriched ExecutionResult; build the
+        # representative messages from its tool_results (delegation unchanged).
+        return [{"role": "tool", "content": tr["name"]} for tr in result.tool_results]
 
 
 def test_enumerate_all_conforms_to_protocol() -> None:
