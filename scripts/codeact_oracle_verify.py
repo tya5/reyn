@@ -135,7 +135,8 @@ def _classify(agent: str, stdout: str, dump_path: str, sentinel: str) -> RunOutc
     return o
 
 
-def _run_one(agent: str, task: str, model: str, sentinel: str, src: str) -> RunOutcome:
+def _run_one(agent: str, task: str, model: str, sentinel: str, src: str,
+             timeout: float) -> RunOutcome:
     subprocess.run([sys.executable, "-m", "reyn._cli", "agent", "new", agent],
                    capture_output=True, text=True)
     dump = os.path.join(tempfile.gettempdir(), f"oracle_{agent}_dump")
@@ -144,11 +145,29 @@ def _run_one(agent: str, task: str, model: str, sentinel: str, src: str) -> RunO
     except OSError:
         pass
     env = dict(os.environ, REYN_LLM_TRACE_DUMP=dump, PYTHONPATH=src)
-    proc = subprocess.run(
+    # start_new_session=True puts the chat run in its own process GROUP so a timeout
+    # kills the WHOLE group (incl. the CodeAct sandbox grandchild) — a plain
+    # subprocess timeout kills only the direct child, and a grandchild holding the
+    # captured stdout pipe open then hangs the post-kill drain (the bug that stalled
+    # the first oracle run on a partially-fixed branch where runs loop to the cap).
+    proc = subprocess.Popen(
         [sys.executable, "-m", "reyn._cli", "chat", agent, "--cui", "--model", model],
-        input=task, capture_output=True, text=True, env=env, timeout=240,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, env=env, start_new_session=True,
     )
-    return _classify(agent, proc.stdout + proc.stderr, dump, sentinel)
+    try:
+        out, _ = proc.communicate(input=task, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        import signal
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        out, _ = proc.communicate()
+        o = _classify(agent, out or "", dump, sentinel)
+        o.note = (o.note + " (timeout)").strip()
+        return o
+    return _classify(agent, out or "", dump, sentinel)
 
 
 def main() -> int:
@@ -160,6 +179,9 @@ def main() -> int:
     ap.add_argument("--agent-prefix", default="oracle")
     ap.add_argument("--max-attempts", type=int, default=0,
                     help="cap total attempts incl. flakes (0 → n + n//2)")
+    ap.add_argument("--timeout", type=float, default=90.0,
+                    help="per-run wall cap (s); the whole process group is killed on "
+                         "expiry (a looping run on a partially-fixed build hits this)")
     args = ap.parse_args()
 
     src = os.path.join(os.getcwd(), "src")
@@ -170,15 +192,14 @@ def main() -> int:
     while scored < args.n and attempt < max_attempts:
         agent = f"{args.agent_prefix}_{attempt}"
         attempt += 1
-        try:
-            o = _run_one(agent, args.task, args.model, args.sentinel, src)
-        except subprocess.TimeoutExpired:
-            o = RunOutcome(agent=agent, note="(timeout)")
+        print(f"  [{attempt}] {agent}: running…", flush=True)
+        o = _run_one(agent, args.task, args.model, args.sentinel, src, args.timeout)
         report.outcomes.append(o)
         if not o.flake:
             scored += 1
         print(f"  [{attempt}] {agent}: "
-              f"{'FLAKE' if o.flake else f'fenced={o.fenced} dispatch={o.clean_dispatch} success={o.success}'}",
+              f"{'FLAKE' if o.flake else f'fenced={o.fenced} dispatch={o.clean_dispatch} success={o.success}'}"
+              f"{(' ' + o.note) if o.note else ''}",
               flush=True)
 
     print()
