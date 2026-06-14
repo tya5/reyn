@@ -194,6 +194,14 @@ def main() -> int:
                          "expiry (a looping run on a partially-fixed build hits this)")
     args = ap.parse_args()
 
+    # reyn agent names must be [a-z0-9_-] starting [a-z0-9] — normalize the prefix so a
+    # camelCase/typo'd value can't make every `agent new` fail (→ no history → a
+    # spurious all-0 report, as an `abReplace` prefix once did).
+    norm = re.sub(r"[^a-z0-9_-]", "", args.agent_prefix.lower()).lstrip("_-") or "oracle"
+    if norm != args.agent_prefix:
+        print(f"(agent-prefix normalized {args.agent_prefix!r} → {norm!r} for reyn naming)")
+        args.agent_prefix = norm
+
     src = os.path.join(os.getcwd(), "src")
     max_attempts = args.max_attempts or (args.n + args.n // 2 + 2)
     report = Report()
