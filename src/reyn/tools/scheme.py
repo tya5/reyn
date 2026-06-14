@@ -90,7 +90,24 @@ class CodeBlock:
     code: str
 
 
-Interpretation = Execute | RePresent | CodeBlock
+@dataclass
+class PlainText:
+    """The LLM's response carries no actionable operation — no tool call, no code
+    block, no refinement request. It is a plain natural-language reply (the model is
+    done). The OS routes it to the terminal text-reply path: the tool-round loop
+    exits and ``llm_response.content`` becomes the turn reply.
+
+    Dataless by design: ``interpret`` is a pure classifier — it does NOT copy the
+    text into the member. The OS already holds the authoritative ``llm_response``
+    when it calls ``interpret``; duplicating ``content`` here would invite drift over
+    which copy is canonical. (#1593 Issue-2 seam ruling.)
+
+    All three schemes emit it: universal-category (a plain answer, = today's
+    empty-``tool_calls`` → text-reply, byte-identical), CodeAct (final text after N
+    code rounds), retrieval (the model answers without searching)."""
+
+
+Interpretation = Execute | RePresent | CodeBlock | PlainText
 
 
 @dataclass

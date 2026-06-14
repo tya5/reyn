@@ -1,88 +1,62 @@
-"""Tier 2: the #1593 PR-3 S1 three-arm ``Interpretation`` match in the OS loop.
+"""Tier 2: #1593 loop-unify (Issue-1) — interpret-driven routing classification.
 
-``_run_scheme_tool_round`` dispatches on the scheme's ``Interpretation`` tagged
-union (Execute / CodeBlock / RePresent). PR-3 single-owns this generalization so
-PR-3 (CodeAct) and PR-4 (retrieval) ride one match, not two competing patches of
-the same OS-loop seam. This test pins the routing invariant:
+The loop-unify makes routing **interpret-driven**: the OS classifies every LLM
+result via the active scheme's ``interpret()`` and routes on the returned
+``Interpretation`` (instead of sniffing ``result.tool_calls``). universal-category
+returns:
+  - ``Execute``   when the response has tool calls → the tool-round path, and
+  - ``PlainText`` when it has none → the terminal text-reply path,
+which is **byte-identical** to the former ``if result.tool_calls:`` gate (tool path
+vs text-reply). This test pins that classification.
 
-  - Execute   → ``_run_execute_round`` → ``(tool_calls, tool_results)`` (the
-                byte-identical today-path; also covered end-to-end by the 22 exclude
-                / universal-scheme tests).
-  - CodeBlock → ``_run_codeblock_round`` (CodeAct body lands in PR-3 S2/S3).
-  - RePresent → AssertionError (PR-4 owns the arm; unreached by any PR-3-era scheme).
-
-No mocks: ``_FakeScheme`` is a real object implementing the ToolUseScheme surface
-(a Fake, per testing.ja.md), emitting a chosen Interpretation.
+The loop-level dispatch itself (Execute→tool / PlainText→text, plus the defensive
+``CodeBlock``/``RePresent`` guards that no on-main scheme emits) is exercised
+byte-identically by the existing router suite; ``CodeBlock``/``RePresent``
+reachability lands with PR-3 (CodeAct) / PR-4 (retrieval). Real scheme + a real Fake
+SchemeOps — no mocks.
 """
 from __future__ import annotations
 
-import pytest
+from types import SimpleNamespace
 
-from reyn.chat.router_loop import RouterLoop
-from reyn.tools.scheme import (
-    CodeBlock,
-    ExecContext,
-    Execute,
-    ExecutionResult,
-    RePresent,
-)
+from reyn.tools.scheme import Execute, PlainText
+from reyn.tools.schemes.universal_category import UniversalCategoryScheme
 
 
-class _FakeScheme:
-    """A real (non-mock) ToolUseScheme that emits a fixed ``Interpretation`` from
-    ``interpret`` — exercises the OS-loop match without driving a full LLM round.
-    ``execute`` / ``format_feedback`` are the trivial identity used by the Execute
-    arm with an empty action list."""
+class _FakeOps:
+    """A real Fake ``SchemeOps`` — ``resolve`` returns canned actions (universal's
+    ``interpret`` delegates resolution to it for the tool-call case)."""
 
-    def __init__(self, interp: object) -> None:
-        self._interp = interp
-
-    def build_presentation(self, available: object, layer_ctx: object, ops: object):
-        raise AssertionError("build_presentation not exercised by this test")
-
-    def interpret(self, llm_response: object, *, tool_catalog: dict, ops: object):
-        return self._interp
-
-    async def execute(self, interp: object, exec_ctx: ExecContext, ops: object):
-        return ExecutionResult(tool_results=[])
-
-    def format_feedback(self, exec_result: ExecutionResult, ops: object):
-        return exec_result.tool_results
+    def resolve(self, llm_response, tool_catalog):
+        return [
+            {"tc": tc, "name": tc["function"]["name"], "args": {}}
+            for tc in (llm_response.tool_calls or [])
+        ]
 
 
-class _MinimalHost:
-    """Construction-only host. ``RouterLoop.__init__`` stores ``host`` and resolves
-    the scheme without calling any host method, so a bare object suffices for a
-    match-routing test (verified against the __init__ body)."""
+def test_interpret_tool_calls_to_execute() -> None:
+    """Tier 2: a response WITH tool calls → Execute (the tool-round path)."""
+    resp = SimpleNamespace(
+        content="",
+        tool_calls=[{"id": "c1", "function": {"name": "file__read", "arguments": "{}"}}],
+    )
+    interp = UniversalCategoryScheme().interpret(resp, tool_catalog={}, ops=_FakeOps())
+    assert isinstance(interp, Execute)
+    # Behavior: the tool call resolved into an Execute action carrying its effective
+    # name (not a count/shape pin) — the OS exclude-gates this pre-dispatch.
+    assert [a["name"] for a in interp.actions] == ["file__read"]
 
 
-def _loop_with_scheme(interp: object) -> RouterLoop:
-    loop = RouterLoop(host=_MinimalHost(), chain_id="t", max_iterations=1)
-    loop._scheme = _FakeScheme(interp)  # the active scheme under test
-    loop._catalog = {}
-    return loop
+def test_interpret_empty_tool_calls_to_plaintext() -> None:
+    """Tier 2: NO tool calls → PlainText (terminal text-reply) — byte-identical to
+    the former empty-``tool_calls`` → text-reply gate."""
+    resp = SimpleNamespace(content="here is your answer", tool_calls=[])
+    interp = UniversalCategoryScheme().interpret(resp, tool_catalog={}, ops=_FakeOps())
+    assert isinstance(interp, PlainText)
 
 
-@pytest.mark.asyncio
-async def test_execute_arm_routes_and_returns() -> None:
-    """Tier 2: Execute interp routes to the (byte-identical) execute round."""
-    loop = _loop_with_scheme(Execute(actions=[]))
-    tool_calls, tool_results = await loop._run_scheme_tool_round(object())
-    assert tool_calls == []
-    assert tool_results == []
-
-
-@pytest.mark.asyncio
-async def test_codeblock_arm_routes_to_codeact_body() -> None:
-    """Tier 2: CodeBlock interp routes to the CodeAct arm (PR-3 S2/S3 body)."""
-    loop = _loop_with_scheme(CodeBlock(code="x = 1"))
-    with pytest.raises(NotImplementedError):
-        await loop._run_scheme_tool_round(object())
-
-
-@pytest.mark.asyncio
-async def test_represent_arm_unreached_until_pr4() -> None:
-    """Tier 2: RePresent interp is unreached until PR-4 owns the arm."""
-    loop = _loop_with_scheme(RePresent(refinement=None))
-    with pytest.raises(AssertionError, match="RePresent not reached"):
-        await loop._run_scheme_tool_round(object())
+def test_interpret_none_tool_calls_to_plaintext() -> None:
+    """Tier 2: ``tool_calls=None`` (providers that omit the field) → PlainText too."""
+    resp = SimpleNamespace(content="answer", tool_calls=None)
+    interp = UniversalCategoryScheme().interpret(resp, tool_catalog={}, ops=_FakeOps())
+    assert isinstance(interp, PlainText)
