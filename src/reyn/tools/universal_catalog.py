@@ -1009,6 +1009,55 @@ def _describe_one(
     return {"description": description, "input_schema": input_schema}
 
 
+def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
+    """Every usable action as a FLAT generic tool-schema dict
+    ``{name, description, parameters}`` — the #1593 ``SchemeOps.catalog_entries``
+    projection a scheme presents however it likes (enumerate-all flat, CodeAct
+    code-API, retrieval subset). Exposes the **actions**, not the 13-category
+    hierarchy (the P7 boundary: the catalog structure stays universal-internal;
+    what crosses is a flat action list any scheme can render).
+
+    Single-source: built from the SAME ``_enumerate_category`` (availability-gated
+    on ``ctx.router_state``) + ``_describe_one`` (description + input_schema) that
+    ``list_actions`` / ``describe_action`` use, so all agree BY CONSTRUCTION
+    (#1455 list ≡ describe), no logic fork.
+
+    Schema-completeness bar (CodeAct is the strictest consumer — it renders each
+    entry as a Python function signature, so a missing schema = an unusable
+    code-API): every returned entry carries a non-None ``parameters`` object —
+    unresolvable actions are dropped, and an action with no declared input schema
+    gets the empty-but-valid ``{"type": "object", "properties": {}}`` (a valid
+    no-arg signature) rather than ``None``.
+
+    Deterministic ``name`` sort (stable ``tools=`` ordering → replay-fixture
+    stability). **Pass a ``ToolContext`` with ``router_state`` populated** or the
+    resource categories (skills / agents / mcp_servers / …) enumerate empty and
+    only static categories survive (the "usable this session" semantics).
+    """
+    from reyn.tools import get_default_registry
+
+    registry = get_default_registry()
+    entries: list[dict[str, Any]] = []
+    for category in CATEGORIES:
+        for item in _enumerate_category(category, ctx):
+            qualified_name = item["qualified_name"]
+            one = _describe_one(qualified_name, ctx, registry)
+            if one is None:
+                # Unresolvable action (no registry target) — not a usable entry.
+                continue
+            parameters = one.get("input_schema")
+            if not isinstance(parameters, dict):
+                # Completeness bar: a valid no-arg signature, never None.
+                parameters = {"type": "object", "properties": {}}
+            entries.append({
+                "name": qualified_name,
+                "description": one.get("description") or "",
+                "parameters": parameters,
+            })
+    entries.sort(key=lambda entry: entry["name"])
+    return entries
+
+
 async def _handle_describe_action(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
