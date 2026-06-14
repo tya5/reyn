@@ -12,6 +12,8 @@ this pins the transport + proxy core that survives inside the sandbox.
 """
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from reyn.kernel.codeact_runner import CodeActRunner
@@ -28,7 +30,7 @@ async def test_tool_call_round_trips_to_parent_dispatch() -> None:
 
     runner = CodeActRunner()
     code = "r = tool('file__read', path='a.txt')\nresult = r['echoed']['path']"
-    out = await runner.run(code=code, dispatch=dispatch)
+    out = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
     assert out["ok"] is True, out
     assert out["result"] == "a.txt"
     assert seen == [("file__read", {"path": "a.txt"})]
@@ -43,7 +45,7 @@ async def test_multiple_sequential_tool_calls() -> None:
 
     runner = CodeActRunner()
     code = "result = [tool('m', n=i) for i in range(3)]"
-    out = await runner.run(code=code, dispatch=dispatch)
+    out = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
     assert out["ok"] is True, out
     assert out["result"] == [0, 2, 4]
 
@@ -57,7 +59,7 @@ async def test_error_envelope_raises_tool_error_in_snippet() -> None:
 
     runner = CodeActRunner()
     code = "tool('file__write', path='x')"
-    out = await runner.run(code=code, dispatch=dispatch)
+    out = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
     assert out["ok"] is False
     assert out["kind"] == "ToolError"
     assert "no-write" in out["error"]
@@ -71,7 +73,7 @@ async def test_pure_compute_snippet_returns_without_dispatch() -> None:
         raise AssertionError("dispatch must not be called for a pure-compute snippet")
 
     runner = CodeActRunner()
-    out = await runner.run(code="result = sum(range(5))", dispatch=dispatch)
+    out = await runner.run(code="result = sum(range(5))", dispatch=dispatch, allow_unsandboxed=True)
     assert out["ok"] is True, out
     assert out["result"] == 10
 
@@ -84,5 +86,69 @@ async def test_restricted_namespace_blocks_raw_open() -> None:
         return {"status": "ok", "data": None}
 
     runner = CodeActRunner()
-    out = await runner.run(code="result = open('/etc/passwd').read()", dispatch=dispatch)
+    out = await runner.run(code="result = open('/etc/passwd').read()", dispatch=dispatch, allow_unsandboxed=True)
     assert out["ok"] is False  # safe-mode AST/builtins blocks the open reference
+
+
+# ── S2b: fail-closed gate + the real OS sandbox (Seatbelt) ───────────────────
+
+
+@pytest.mark.asyncio
+async def test_fail_closed_when_no_sandbox_backend() -> None:
+    """Tier 2: no sandbox + not allow_unsandboxed → refused (sandbox_unavailable),
+    NOT silently run unsandboxed (the owner-signed fail-closed posture)."""
+
+    async def dispatch(name: str, args: dict) -> dict:
+        raise AssertionError("must not run the snippet when fail-closed")
+
+    runner = CodeActRunner()
+    out = await runner.run(code="result = 1", dispatch=dispatch)  # no backend, no escape
+    assert out["ok"] is False
+    assert out["status"] == "sandbox_unavailable"
+    assert out["kind"] == "SandboxUnavailable"
+
+
+@pytest.mark.asyncio
+async def test_noop_backend_is_fail_closed() -> None:
+    """Tier 2: a noop backend (no real isolation) is treated as no-sandbox → refused."""
+    from reyn.sandbox.noop_backend import NoopBackend  # noqa: PLC0415
+
+    async def dispatch(name: str, args: dict) -> dict:
+        raise AssertionError("must not run under noop")
+
+    runner = CodeActRunner()
+    out = await runner.run(code="result = 1", dispatch=dispatch, sandbox_backend=NoopBackend())
+    assert out["status"] == "sandbox_unavailable"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="SeatbeltBackend macOS only")
+@pytest.mark.asyncio
+async def test_seatbelt_real_runner_round_trip() -> None:
+    """Tier 2: the permission-proxy round-trip works through the REAL CodeActRunner
+    under an actual Seatbelt sandbox (fd-survival re-verified via the runner path,
+    not a standalone probe). Network is denied by the default policy; the AF_UNIX
+    control fd still round-trips."""
+    from reyn.sandbox.backends.seatbelt import SeatbeltBackend  # noqa: PLC0415
+
+    backend = SeatbeltBackend()
+    if not backend.available():
+        pytest.skip("sandbox-exec not available")
+
+    seen: list[tuple[str, dict]] = []
+
+    async def dispatch(name: str, args: dict) -> dict:
+        seen.append((name, args))
+        return {"status": "ok", "data": {"n": args.get("n", 0) + 1}}
+
+    runner = CodeActRunner()
+    code = "result = tool('m', n=41)['n']"
+    out = await runner.run(
+        code=code,
+        dispatch=dispatch,
+        sandbox_backend=backend,
+        sandbox_policy={"network": False, "env_passthrough": ["PATH"]},
+        timeout=30,
+    )
+    assert out["ok"] is True, out
+    assert out["result"] == 42
+    assert seen == [("m", {"n": 41})]

@@ -56,17 +56,39 @@ class CodeActRunner:
         *,
         code: str,
         dispatch: DispatchFn,
+        sandbox_backend: Any = None,
+        sandbox_policy: dict | None = None,
         allowed_modules: list[str] | None = None,
         timeout: float = 30.0,
         cwd: str | None = None,
+        allow_unsandboxed: bool = False,
     ) -> dict[str, Any]:
         """Execute ``code`` in the CodeAct harness; service its tool() proxy via
         ``dispatch``. Returns the harness response dict
         (``{ok: True, result}`` | ``{ok: False, kind, error, traceback?}``), plus a
-        ``status`` field (``ok`` | ``error`` | ``timeout``) for the scheme layer.
+        ``status`` field (``ok`` | ``error`` | ``timeout`` | ``sandbox_unavailable``)
+        for the scheme layer.
 
-        S2a: direct (no-sandbox) spawn. S2b/S2c wrap the spawn in the OS sandbox.
+        **Fail-closed** (owner-signed): CodeAct runs ONLY under an available OS
+        sandbox (Seatbelt / Landlock). When no real backend is available the run is
+        refused (``sandbox_unavailable``), never silently downgraded to an
+        unsandboxed subprocess. ``allow_unsandboxed=True`` is a **test-only** escape
+        for exercising the transport/proxy core without a sandbox; production callers
+        (the CodeAct scheme) never set it.
+
+        S2b wires the Seatbelt wrap (reusing ``_build_sbpl_profile``); S2c wires
+        Landlock.
         """
+        base_argv = [self.python_executable, "-m", "reyn.kernel._codeact_harness"]
+        argv, cleanup, spawn_error = self._resolve_sandbox_spawn(
+            base_argv, sandbox_backend, sandbox_policy, timeout, allow_unsandboxed,
+        )
+        if spawn_error is not None:
+            return {
+                "ok": False, "status": "sandbox_unavailable",
+                "kind": "SandboxUnavailable", "error": spawn_error,
+            }
+
         parent_sock, child_sock = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         child_fd = child_sock.fileno()
         os.set_inheritable(child_fd, True)
@@ -76,10 +98,9 @@ class CodeActRunner:
             "control_fd": child_fd,
             "allowed_modules": list(allowed_modules or []),
         }
-        argv = [self.python_executable, "-m", "reyn.kernel._codeact_harness"]
 
         try:
-            proc = subprocess.Popen(  # noqa: S603 — fixed argv, sandbox wrap in S2b
+            proc = subprocess.Popen(  # noqa: S603 — fixed argv, sandbox-wrapped above
                 argv,
                 pass_fds=[child_fd],
                 stdin=subprocess.PIPE,
@@ -91,6 +112,8 @@ class CodeActRunner:
         except OSError as exc:
             child_sock.close()
             parent_sock.close()
+            if cleanup is not None:
+                cleanup()
             return {"ok": False, "status": "error", "kind": "SpawnError", "error": str(exc)}
 
         # The child inherited its own copy of the fd; the parent keeps only its end.
@@ -123,8 +146,81 @@ class CodeActRunner:
                 parent_sock.close()
             except OSError:
                 pass
+            if cleanup is not None:
+                cleanup()
 
         return self._parse_response(stdout_b, stderr_b, proc.returncode)
+
+    def _resolve_sandbox_spawn(
+        self,
+        base_argv: list[str],
+        sandbox_backend: Any,
+        sandbox_policy: dict | None,
+        timeout: float,
+        allow_unsandboxed: bool,
+    ) -> tuple[list[str] | None, Callable[[], None] | None, str | None]:
+        """Resolve the spawn argv + a cleanup callable for the active sandbox, or an
+        error string (fail-closed). Returns ``(argv, cleanup, error)``; exactly one
+        of ``argv`` / ``error`` is non-None.
+
+        - Seatbelt (available): wrap ``base_argv`` with ``sandbox-exec -f <profile>``
+          using the REUSED ``_build_sbpl_profile`` (the inherited socketpair fd
+          survives — an AF_UNIX socketpair is not a ``network*`` socket).
+        - Landlock (available): S2c (preexec ruleset) — not yet wired → fail-closed.
+        - noop / None / unavailable: fail-closed unless ``allow_unsandboxed`` (a
+          test-only escape for the transport/proxy core).
+        """
+        name = getattr(sandbox_backend, "name", None)
+        available = bool(sandbox_backend is not None and sandbox_backend.available())
+
+        if sandbox_backend is None or name in (None, "noop") or not available:
+            if allow_unsandboxed:
+                return base_argv, None, None
+            return None, None, (
+                "CodeAct requires an available OS sandbox backend (Seatbelt / "
+                "Landlock); none available — refusing to run unsandboxed (fail-closed)."
+            )
+
+        from reyn.sandbox import SandboxPolicy  # noqa: PLC0415
+
+        policy_dict = dict(sandbox_policy or {})
+        policy_dict["timeout_seconds"] = timeout
+        policy = SandboxPolicy(**policy_dict)
+
+        if name == "seatbelt":
+            import tempfile  # noqa: PLC0415
+
+            from reyn.sandbox.backends.seatbelt import (  # noqa: PLC0415
+                _build_sbpl_profile,
+            )
+
+            profile_text = _build_sbpl_profile(policy)
+            try:
+                fh = tempfile.NamedTemporaryFile(
+                    suffix=".sb", mode="w", delete=False, encoding="utf-8",
+                )
+                fh.write(profile_text)
+                fh.close()
+            except OSError as exc:
+                return None, None, f"CodeAct: failed to write Seatbelt profile: {exc}"
+
+            def _cleanup() -> None:
+                try:
+                    os.unlink(fh.name)
+                except OSError:
+                    pass
+
+            return ["sandbox-exec", "-f", fh.name, *base_argv], _cleanup, None
+
+        if name == "landlock":
+            return None, None, (
+                "CodeAct Landlock wrap is S2c (pending Linux+Landlock env "
+                "verification) — not yet available (fail-closed)."
+            )
+
+        return None, None, (
+            f"CodeAct does not support sandbox backend {name!r} yet (fail-closed)."
+        )
 
     async def _service(
         self, sock: socket.socket, dispatch: DispatchFn, loop: asyncio.AbstractEventLoop,
