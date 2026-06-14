@@ -84,7 +84,15 @@ docs = [
     "mkdocs-static-i18n>=1.2",
 ]
 web = [
-    "fastapi>=0.110",
+    # #1621: upper-bounds pin (owner steer) — CI's unpinned resolve pulled
+    # fastapi 0.137 + starlette 1.3.1, whose ``_IncludedRouter`` in ``app.routes``
+    # breaks the flat route-introspection the web tests assert on. Pin below 1.3
+    # (the introducing release; local 1.0.0 + the highest <1.3 are working) and
+    # cap fastapi <0.137 (the release that floors starlette to 1.3) so CI is
+    # reproducible. starlette pinned directly (it is a transitive of fastapi).
+    # forward-migration to the new route model is a separate optional follow-up.
+    "fastapi>=0.110,<0.137",
+    "starlette>=1.0,<1.3",
     "uvicorn[standard]>=0.27",
     "websockets>=12",
 ]
