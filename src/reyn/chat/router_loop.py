@@ -1972,7 +1972,35 @@ class RouterLoop:
                         )
             if result.usage:
                 self._total_usage += result.usage
-            if result.tool_calls:
+            # #1593 loop-unify (Issue-1): interpret-driven routing — the active
+            # scheme classifies EVERY result, instead of the OS sniffing
+            # ``result.tool_calls``. universal-category returns Execute when there
+            # are tool calls and PlainText when there are none, so the Execute gate
+            # below + the PlainText fall-through to the text-reply path are
+            # byte-identical to the former ``if result.tool_calls:`` gate. CodeBlock
+            # (PR-3) / RePresent (PR-4) stay S1 stubs in this seam PR — no scheme on
+            # main emits them, so they are unreached (the seam PR proves the routing
+            # change byte-identically, isolated from CodeAct/retrieval).
+            from reyn.tools.scheme import (  # noqa: PLC0415
+                CodeBlock,
+                Execute,
+                RePresent,
+            )
+            interp = self._scheme.interpret(
+                result, tool_catalog=self._catalog, ops=self,
+            )
+            if isinstance(interp, CodeBlock):
+                raise NotImplementedError(
+                    "CodeAct CodeBlock arm — PR-3 fills _run_codeblock_round"
+                )
+            if isinstance(interp, RePresent):
+                # PR-4 step-2 fills this inline (synthetic tool-response + tools-swap
+                # + ``continue``); the loop-locals (tools / self._catalog / messages)
+                # are in scope here for that. Unreached until retrieval is selectable.
+                raise AssertionError(
+                    "RePresent not reached — PR-4 step-2 owns this inline arm"
+                )
+            if isinstance(interp, Execute):
                 # B28-Q2: count non-empty tool_call rounds for chat_turn_completed_inline.
                 _tool_calls_attempted += 1
                 # F5 fix (dogfood batch 1): dedupe duplicate async
@@ -1986,12 +2014,11 @@ class RouterLoop:
                 # observed). invoke_skill is sync but NOT idempotent
                 # from a cost perspective; deduping is safe because
                 # same args → same deterministic result.
-                # #1593: route the round through the active tool-use scheme
-                # (interpret → OS exclude-gate → execute → format_feedback).
-                # Byte-identical to the former dedupe→gather(_execute_tool): universal
-                # delegates back to the router's SchemeOps; returns (tool_calls,
-                # tool_results) in the original deduped order.
-                tool_calls, tool_results = await self._run_scheme_tool_round(result)
+                # #1593: execute the Execute round (interpret already ran at the
+                # loop level above → ``interp`` carries the resolved actions). The OS
+                # exclude-gates pre-dispatch inside _run_execute_round → dispatch →
+                # format_feedback; returns (tool_calls, tool_results) in deduped order.
+                tool_calls, tool_results = await self._run_execute_round(interp)
                 # Detect async-deferred dispatches via the canonical
                 # registry (router_tools.get_dispatch_kind() →
                 # ToolDefinition.dispatch_kind).  Async tools'
@@ -3124,45 +3151,6 @@ class RouterLoop:
         assembly (op-specific plan/invoke_skill + media + message building) consumes
         ``tool_results`` unchanged. A non-universal scheme (PR-2/3) transforms here."""
         return tool_results
-
-    async def _run_scheme_tool_round(self, llm_response) -> "tuple[list[dict], list[dict]]":
-        """Route one tool-call round through the active scheme (#1593) by dispatching
-        on the scheme's ``Interpretation`` (the tagged union). Returns ``(tool_calls,
-        tool_results)`` in the original (deduped) order for the downstream loop.
-
-        Three arms, **single-owned here** so PR-3 (CodeAct / ``CodeBlock``) and PR-4
-        (retrieval / ``RePresent``) ride one generalized match instead of two
-        competing patches of this load-bearing OS-loop seam (#1593 seam arbitration):
-
-          - ``Execute``   → today's path (resolve → OS exclude-gate pre-dispatch →
-            dispatch survivors → ``format_feedback``), **byte-identical** to the former
-            ``dedupe → gather(_execute_tool)``. Universal-category emits only this.
-          - ``CodeBlock`` → CodeAct (PR-3): the snippet runs in a sandboxed subprocess
-            whose only world-effect path is the permission-proxy, which re-enters the
-            SAME exclude + ``dispatch_tool`` + permission gate per call. Body in
-            ``_run_codeblock_round`` (PR-3 S2/S3).
-          - ``RePresent`` → retrieval (PR-4): bounded re-present loop. PR-4 owns this
-            arm body + the refinement contract; unreached by any PR-3-era scheme.
-        """
-        from reyn.tools.scheme import CodeBlock, Execute, RePresent
-
-        interp = self._scheme.interpret(
-            llm_response, tool_catalog=self._catalog, ops=self,
-        )
-        match interp:
-            case Execute():
-                return await self._run_execute_round(interp)
-            case CodeBlock():
-                return await self._run_codeblock_round(interp)
-            case RePresent():
-                # PR-4 owns this arm (bounded re-present loop) + the refinement
-                # contract. No PR-3-era scheme (universal / enumerate-all / CodeAct)
-                # emits RePresent, so this is genuinely unreached until PR-4 lands.
-                raise AssertionError("RePresent not reached — PR-4 owns this arm")
-            case _:
-                raise AssertionError(
-                    f"unknown Interpretation: {type(interp).__name__}"
-                )
 
     async def _run_execute_round(self, interp) -> "tuple[list[dict], list[dict]]":
         """The ``Execute`` arm — **byte-identical** to the former

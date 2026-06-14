@@ -24,6 +24,7 @@ from reyn.tools.scheme import (
     Execute,
     ExecutionResult,
     Interpretation,
+    PlainText,
     Presentation,
     SchemeOps,
 )
@@ -48,7 +49,12 @@ class UniversalCategoryScheme:
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
         # ops.resolve = dedupe + salvage/unwrap → actions with effective names; the
-        # OS exclude-gates these pre-execute. Universal always yields Execute.
+        # OS exclude-gates these pre-execute. #1593 loop-unify: when the response has
+        # NO tool calls it is a plain answer → PlainText (the OS routes it to the
+        # terminal text-reply path) — byte-identical to the former empty-``tool_calls``
+        # → text-reply branch. Otherwise Execute (the tool-round path).
+        if not getattr(llm_response, "tool_calls", None):
+            return PlainText()
         actions = ops.resolve(llm_response, tool_catalog)
         return Execute(actions=actions)
 

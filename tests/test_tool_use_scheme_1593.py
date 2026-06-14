@@ -11,6 +11,8 @@ Fake ``SchemeOps`` exercises the delegation).
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from reyn.config import ToolUseConfig, _build_tool_use_config
@@ -41,7 +43,8 @@ class _RecordingOps:
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         self.calls.append("resolve")
-        return [{"tc": tc, "name": tc["name"], "args": {}} for tc in llm_response]
+        tcs = getattr(llm_response, "tool_calls", None) or []
+        return [{"tc": tc, "name": tc["name"], "args": {}} for tc in tcs]
 
     async def dispatch(self, actions: list[dict]) -> list[dict]:
         self.calls.append("dispatch")
@@ -84,13 +87,13 @@ async def test_universal_build_presentation_delegates() -> None:
     assert pres.llm_tools_payload == [{"t": 1}] and pres.sp_params == {"x": True}
 
 
-def test_universal_interpret_emits_execute_only() -> None:
-    """Tier 2: universal-category always yields Execute (never RePresent/CodeBlock),
-    carrying the ops-resolved actions — the OS exclude-gates these pre-dispatch."""
+def test_universal_interpret_execute_with_tool_calls() -> None:
+    """Tier 2: with tool calls, universal yields Execute carrying the ops-resolved
+    actions — the OS exclude-gates these pre-dispatch. (#1593 loop-unify: the
+    no-tool-call → PlainText case is pinned in test_scheme_interpretation_match_1593.)"""
     ops = _RecordingOps()
-    interp = UniversalCategoryScheme().interpret(
-        [{"name": "a"}, {"name": "b"}], tool_catalog={}, ops=ops,
-    )
+    resp = SimpleNamespace(content="", tool_calls=[{"name": "a"}, {"name": "b"}])
+    interp = UniversalCategoryScheme().interpret(resp, tool_catalog={}, ops=ops)
     assert isinstance(interp, Execute)
     assert [x["name"] for x in interp.actions] == ["a", "b"]
     assert "resolve" in ops.calls
