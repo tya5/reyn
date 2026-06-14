@@ -100,10 +100,26 @@ already-open socket. The fd is the single, audited hole; it carries **only** mar
 tool-call requests, each re-gated by the parent's exclude + permission + `dispatch_tool`
 pipeline.)
 
+**Empirical verification of the load-bearing claim (primary evidence, not asserted).**
+The transport rests on *"an inherited socketpair fd survives the sandbox even with network
+denied."* Probed directly on macOS/Seatbelt: a unix `socketpair` child fd, passed via
+`Popen(pass_fds=...)` through `sandbox-exec -f <profile>` where the profile is
+`(deny default)` **+** `(deny network*)` (the CodeAct posture), completes a **full duplex
+round-trip** (child→parent `PING`, parent→child `PONG`, child rc=0). ⇒ the AF_UNIX control
+channel is **not** caught by Seatbelt's `network*` filter (it is not a network socket),
+so the control hole stays open **while actual network exfiltration stays blocked** —
+exactly the "single audited hole" property. *Honest scope:* **Seatbelt verified (N=1,
+direct round-trip)**; **Landlock inferred** (Landlock LSM governs filesystem path access,
+not already-open socket fds, so the property is expected to hold — but **not empirically
+verified** without a Linux+Landlock env; live-verify pending, same posture as #1527). The
+probe is reproducible (`/tmp/codeact_fd_probe.py` shape) and becomes a Tier-2 skipif-gated
+test in S2.
+
 > **Design-review question 1 (lead):** confirm the dedicated `CodeActRunner` (duplex
 > socketpair + concurrent parent service loop, reusing policy/profile/harness-namespace)
 > over extending `SandboxBackend.run` with a callback arm. This is the load-bearing
-> transport decision; everything else is wiring.
+> transport decision; everything else is wiring. **The fd-survival premise is now
+> Seatbelt-verified (primary evidence); Landlock live-verify pending a Linux env.**
 
 ---
 
