@@ -73,10 +73,13 @@ def test_universal_conforms_to_protocol() -> None:
 # ── delegation seam + Execute-only invariant ─────────────────────────────────
 
 
-def test_universal_build_presentation_delegates() -> None:
-    """Tier 2: build_presentation delegates to ops.present (the router's logic)."""
+@pytest.mark.asyncio
+async def test_universal_build_presentation_delegates() -> None:
+    """Tier 2: build_presentation delegates to ops.present (the router's logic).
+    Async seam (#1593 PR-2) but universal's body stays a sync delegation — the
+    awaited result equals the unchanged ops.present output (byte-identical)."""
     ops = _RecordingOps()
-    pres = UniversalCategoryScheme().build_presentation({}, {}, ops)
+    pres = await UniversalCategoryScheme().build_presentation({}, {}, ops)
     assert "present" in ops.calls
     assert pres.llm_tools_payload == [{"t": 1}] and pres.sp_params == {"x": True}
 

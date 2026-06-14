@@ -42,10 +42,19 @@ def _resolve_tool_use_scheme(name: "str | None" = None):
     defaulting to universal-category — PR-1 byte-identical. Per-layer config
     (``tool_use:{chat,step,phase}``) passes the selected name here."""
     from reyn.tools.scheme import DEFAULT_SCHEME_NAME, get_scheme, register_scheme
+    from reyn.tools.schemes.enumerate_all import EnumerateAllScheme
     from reyn.tools.schemes.universal_category import UniversalCategoryScheme
 
-    if get_scheme(DEFAULT_SCHEME_NAME) is None:
-        register_scheme(UniversalCategoryScheme())
+    # Register each built-in independently + idempotently (keyed on the scheme's
+    # OWN .name → P7-clean, no scheme-literal in OS code). A single guard on the
+    # default's absence would couple enumerate-all's registration to universal
+    # NOT being registered yet — so anything that registers universal first (a
+    # direct register_scheme caller, a test) would leave enumerate-all absent and
+    # silently fall back to default. Per-scheme guard avoids that sibling gap.
+    for _builtin in (UniversalCategoryScheme(), EnumerateAllScheme()):  # #1593 PR-2
+        if get_scheme(_builtin.name) is None:
+            register_scheme(_builtin)
+    # Unknown / unconfigured name → default (universal-category) — byte-identical.
     return get_scheme(name or DEFAULT_SCHEME_NAME) or get_scheme(DEFAULT_SCHEME_NAME)
 
 
@@ -1318,6 +1327,7 @@ class RouterLoop:
         plan_invalid_retries: int = 1,  # B51 NF-W6-3 — safety.loop.plan_invalid_retries
         on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
+        scheme_name: "str | None" = None,  # #1593 PR-2: per-layer tool-use scheme (None → universal default; the construction site resolves config.tool_use.<layer>)
     ):
         self.host = host
         self.chain_id = chain_id
@@ -1416,7 +1426,7 @@ class RouterLoop:
         # behaviour, behind the protocol) for every layer → byte-identical. Per-layer
         # config selection (tool_use:{chat,step,phase}) plugs in here; with all
         # layers defaulting to universal-category it is byte-identical today.
-        self._scheme = _resolve_tool_use_scheme()
+        self._scheme = _resolve_tool_use_scheme(scheme_name)
 
     @property
     def total_usage(self) -> TokenUsage:
@@ -1650,7 +1660,7 @@ class RouterLoop:
         # use build_tools with the catalog wrappers). PR-2/3 schemes shape tools=
         # differently. The OS still projects _catalog from the payload + builds the
         # (monolithic) SP from sp_params below.
-        _pres = self._scheme.build_presentation(
+        _pres = await self._scheme.build_presentation(
             {"skills_for_tools": skills_for_tools, "hot_list_aliases": _hot_list_aliases},
             {
                 "phase_op_catalog": _phase_op_catalog,
@@ -3027,6 +3037,62 @@ class RouterLoop:
                 "search_actions_enabled": search_visible if univ else True,
             },
         )
+
+    def base_tools(self, available, layer_ctx) -> list[dict]:
+        """SchemeOps.base_tools (#1593 PR-2): the prior-shape base tools —
+        ``build_tools`` with the universal wrappers OFF. The common base a
+        self-contained scheme starts from (enumerate-all adds ``catalog_entries``
+        on top instead of the wrappers). The phase layer's op-catalog is its base."""
+        phase_op_catalog = layer_ctx.get("phase_op_catalog")
+        if phase_op_catalog is not None:
+            return list(phase_op_catalog)
+        return build_tools(
+            available["skills_for_tools"],
+            self.host.list_available_agents(),
+            file_permissions=self.host.get_file_permissions(),
+            mcp_servers=self.host.get_mcp_servers(),
+            web_fetch_allowed=self.host.get_web_fetch_allowed(),
+            universal_wrappers_enabled=False,
+            search_actions_visible=False,
+            hot_list_aliases=available["hot_list_aliases"],
+            compact_visible=layer_ctx["ctx_signal_present"],
+        )
+
+    async def catalog_entries(self) -> list[dict]:
+        """SchemeOps.catalog_entries (#1593 PR-2): every usable catalog action as
+        a flat callable tool schema (qualified ``<category>__<entry>`` name).
+
+        Consumes sandbox_2's ``universal_catalog.catalog_entries(ctx)`` substrate
+        (#1598: the all-entries→schemas projection, single-source with
+        list/describe via ``_enumerate_category`` + ``_describe_one``, #1455
+        invariant; name-sorted; ``parameters`` never None). Async because the
+        complete caller-state is built async (caveat-1: a ``ToolContext`` WITHOUT
+        ``router_state`` drops the resource categories — skills/agents/mcp — and
+        the rag manifest fetch is the genuine await). Maps each generic entry →
+        the OpenAI ``{type: function, function: {name, description, parameters}}``
+        shape so the flat tools= is uniform with ``base_tools``."""
+        from reyn.tools import universal_catalog
+        from reyn.tools.types import ToolContext
+
+        rs = await self._build_router_caller_state()  # caveat-1: populated router_state
+        tool_ctx = ToolContext(
+            events=self.host.events,
+            permission_resolver=getattr(self.host, "permission_resolver", None),
+            workspace=getattr(self.host, "workspace", None),
+            caller_kind="router",
+            router_state=rs,
+        )
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": entry["name"],
+                    "description": entry["description"],
+                    "parameters": entry["parameters"],
+                },
+            }
+            for entry in universal_catalog.catalog_entries(tool_ctx)
+        ]
 
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         """SchemeOps.resolve: dedupe + #229 salvage → actions carrying the original

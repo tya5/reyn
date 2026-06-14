@@ -1179,6 +1179,11 @@ class ChatSession:
         sandbox_backend: "SandboxBackend | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
+        # #1593 PR-2: the chat-layer tool-use scheme name (config.tool_use.chat).
+        # Threaded → RouterLoopDriver → RouterLoop(scheme_name=) so the chat
+        # router resolves the selected ToolUseScheme. Default "universal-category"
+        # keeps today's behaviour (the factory passes the resolved config value).
+        chat_tool_use_scheme: str = "universal-category",
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
         tool_calls_op_loop_skills: list[str] | None = None,  # #1212: op-loop gate for chat-run skills
@@ -1297,6 +1302,8 @@ class ChatSession:
         # constructs an off-flag ActionRetrievalConfig so existing chat
         # behaviour is preserved when callers don't pass one.
         self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
+        # #1593 PR-2: chat-layer scheme name → passed to RouterLoopDriver below.
+        self._chat_tool_use_scheme = chat_tool_use_scheme
         # B25-S5-1 fix: when True, RouterLoop awaits the embedding index build
         # synchronously on the first turn (= Turn 1 blocks for ~2-5s) so the
         # search_actions wrapper is visible to the LLM from the very first
@@ -2005,6 +2012,7 @@ class ChatSession:
             limit_checkpoint_fn=self._handle_chat_limit_checkpoint,
             next_seq_fn=lambda: self._next_seq,
             append_history_fn=self._append_history,
+            chat_scheme_name=self._chat_tool_use_scheme,  # #1593 PR-2
         )
 
         # session.py refactor PR-4 (FP-0019 series final): SkillPlanGlue owns

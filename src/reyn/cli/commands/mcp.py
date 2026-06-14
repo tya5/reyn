@@ -421,6 +421,7 @@ def run_serve(args: argparse.Namespace) -> None:
             multimodal_config=session_cfg.config.multimodal,
             tool_calls_op_loop_skills=session_cfg.config.tool_calls_op_loop_skills,
             action_retrieval_config=session_cfg.config.action_retrieval,
+            chat_tool_use_scheme=session_cfg.config.tool_use.chat,  # #1593 PR-2
             embedding_config=session_cfg.config.embedding,
             # #1402: scoped capability surface, passed EXPLICITLY (required by
             # build_scoped_chat_session). The stdio-MCP factory's current

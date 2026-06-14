@@ -130,6 +130,26 @@ class SchemeOps(Protocol):
     async def dispatch(self, actions: list[dict]) -> list[dict]: ...
     def feedback(self, tool_results: list[dict]) -> list[dict]: ...
 
+    # Building blocks for SELF-CONTAINED schemes (#1593 PR-2) — a non-delegating
+    # scheme composes its own presentation from these instead of calling the
+    # whole-universal ``present``. The router (host-context holder) provides them
+    # so schemes stay P7-clean. Additive → universal's delegation is unchanged
+    # (no PR-1 regression).
+    def base_tools(self, available: Any, layer_ctx: Any) -> list[dict]:
+        """The prior-shape base tools (``build_tools`` with wrappers OFF): the
+        common base every scheme starts from (skills/agents/mcp/file/web)."""
+        ...
+
+    async def catalog_entries(self) -> list[dict]:
+        """Every usable catalog action across all categories projected to a flat,
+        directly-callable tool schema (qualified ``<category>__<entry>`` name) —
+        what enumerate-all adds on top of ``base_tools`` instead of the wrappers.
+
+        Async (#1593 PR-2 seam call): enumerating the live catalog requires the
+        async-built router caller-state (resource categories — skills/agents/mcp/
+        rag — drop without it; the rag manifest fetch is the genuine await)."""
+        ...
+
 
 @runtime_checkable
 class ToolUseScheme(Protocol):
@@ -141,8 +161,13 @@ class ToolUseScheme(Protocol):
 
     name: str
 
-    def build_presentation(self, available: Any, layer_ctx: Any, ops: "SchemeOps") -> Presentation:
-        """Build the ``tools=`` payload + SP-shaping inputs for the layer."""
+    async def build_presentation(self, available: Any, layer_ctx: Any, ops: "SchemeOps") -> Presentation:
+        """Build the ``tools=`` payload + SP-shaping inputs for the layer.
+
+        Async (#1593 PR-2 seam call): presentation is I/O for every non-trivial
+        scheme — enumerate-all awaits the live catalog, and PR-4 retrieval runs a
+        per-round embedding query — so the contract is async even though PR-1
+        universal's body stays a sync delegation (it just isn't awaited)."""
         ...
 
     def interpret(self, llm_response: Any, *, tool_catalog: dict, ops: "SchemeOps") -> Interpretation:
