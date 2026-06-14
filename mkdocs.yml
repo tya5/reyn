@@ -247,6 +247,7 @@ nav:
       - Tools & integrations:
           - concepts/tools-integrations/mcp.md
           - concepts/tools-integrations/universal-catalog.md
+          - concepts/tools-integrations/tool-use-schemes.md
           - concepts/tools-integrations/voice.md
       - Observability:
           - concepts/observability/dogfood-scenarios.md
