@@ -36,6 +36,19 @@ if TYPE_CHECKING:
     from reyn.config import SkillSearchConfig
 
 
+def _resolve_tool_use_scheme(name: "str | None" = None):
+    """Return the active ``ToolUseScheme`` (#1593). Registers the built-in
+    universal-category scheme on first use (idempotent) and resolves by name,
+    defaulting to universal-category — PR-1 byte-identical. Per-layer config
+    (``tool_use:{chat,step,phase}``) passes the selected name here."""
+    from reyn.tools.scheme import DEFAULT_SCHEME_NAME, get_scheme, register_scheme
+    from reyn.tools.schemes.universal_category import UniversalCategoryScheme
+
+    if get_scheme(DEFAULT_SCHEME_NAME) is None:
+        register_scheme(UniversalCategoryScheme())
+    return get_scheme(name or DEFAULT_SCHEME_NAME) or get_scheme(DEFAULT_SCHEME_NAME)
+
+
 # ---------------------------------------------------------------------------
 # Empty-response detection (Option F — ADR-0021)
 # ---------------------------------------------------------------------------
@@ -1399,6 +1412,11 @@ class RouterLoop:
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
+        # #1593: the active tool-use scheme. PR-1 = universal-category (the shipped
+        # behaviour, behind the protocol) for every layer → byte-identical. Per-layer
+        # config selection (tool_use:{chat,step,phase}) plugs in here; with all
+        # layers defaulting to universal-category it is byte-identical today.
+        self._scheme = _resolve_tool_use_scheme()
 
     @property
     def total_usage(self) -> TokenUsage:
@@ -1951,11 +1969,12 @@ class RouterLoop:
                 # observed). invoke_skill is sync but NOT idempotent
                 # from a cost perspective; deduping is safe because
                 # same args → same deterministic result.
-                tool_calls = self._dedupe_tool_calls_round(result.tool_calls)
-                # parallel execute all tool calls (deduped)
-                tool_results = await asyncio.gather(*[
-                    self._execute_tool(tc) for tc in tool_calls
-                ])
+                # #1593: route the round through the active tool-use scheme
+                # (interpret → OS exclude-gate → execute → format_feedback).
+                # Byte-identical to the former dedupe→gather(_execute_tool): universal
+                # delegates back to the router's SchemeOps; returns (tool_calls,
+                # tool_results) in the original deduped order.
+                tool_calls, tool_results = await self._run_scheme_tool_round(result)
                 # Detect async-deferred dispatches via the canonical
                 # registry (router_tools.get_dispatch_kind() →
                 # ToolDefinition.dispatch_kind).  Async tools'
@@ -2968,6 +2987,74 @@ class RouterLoop:
             ctx=dctx,
             invoker=functools.partial(self._invoke_router_tool, name),
         )
+
+    # ── #1593 SchemeOps adapter ─────────────────────────────────────────────
+    # The router IS the ``SchemeOps`` a *delegating* scheme calls. PR-1's
+    # UniversalCategoryScheme delegates here, so the seam is byte-identical (no
+    # universal-category logic is physically relocated). PR-2/3 schemes implement
+    # their own logic instead of delegating.
+
+    def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
+        """SchemeOps.resolve: dedupe + #229 salvage → actions carrying the original
+        ``tc`` + the resolved effective ``name``/``args``. The OS exclude-gates these
+        (on the effective name) before dispatch."""
+        deduped = self._dedupe_tool_calls_round(llm_response.tool_calls)
+        actions: list[dict] = []
+        for tc in deduped:
+            name, args = self._resolve_tool_call(tc)
+            actions.append({"tc": tc, "name": name, "args": args})
+        return actions
+
+    async def dispatch(self, actions: list[dict]) -> list[dict]:
+        """SchemeOps.dispatch: run the resolved (exclude-cleared) actions in parallel
+        via the OS dispatch substrate (the former gather of _execute_tool's dispatch
+        half)."""
+        return await asyncio.gather(*[
+            self._dispatch_resolved(a["name"], a["args"]) for a in actions
+        ])
+
+    def feedback(self, tool_results: list[dict]) -> list[dict]:
+        """SchemeOps.feedback: PR-1 identity — the OS loop's existing feedback
+        assembly (op-specific plan/invoke_skill + media + message building) consumes
+        ``tool_results`` unchanged. A non-universal scheme (PR-2/3) transforms here."""
+        return tool_results
+
+    async def _run_scheme_tool_round(self, llm_response) -> "tuple[list[dict], list[dict]]":
+        """Route one tool-call round through the active scheme (#1593), byte-identical
+        to the former ``dedupe → gather(_execute_tool)``. Returns ``(tool_calls,
+        tool_results)`` in the original (deduped) order for the downstream loop:
+
+        interpret (resolve) → OS exclude-gate (pre-dispatch) → execute (dispatch
+        survivors) → format_feedback. Universal emits only ``Execute``; the exclude
+        gate produces the same ``tool_excluded`` error result **in place** (not a
+        drop), so order + tool_call_id alignment are preserved."""
+        from reyn.tools.scheme import ExecContext, Execute, ExecutionResult
+
+        interp = self._scheme.interpret(
+            llm_response, tool_catalog=self._catalog, ops=self,
+        )
+        assert isinstance(interp, Execute), "universal-category emits only Execute"
+        actions = interp.actions
+        tool_calls = [a["tc"] for a in actions]
+
+        results: list = [None] * len(actions)
+        to_dispatch: list[tuple[int, dict]] = []
+        for i, a in enumerate(actions):
+            ex = self._excluded_result(a["name"], a["args"])
+            if ex is not None:
+                results[i] = ex
+            else:
+                to_dispatch.append((i, a))
+
+        exec_res = await self._scheme.execute(
+            Execute(actions=[a for _, a in to_dispatch]), ExecContext(), ops=self,
+        )
+        for (i, _), r in zip(to_dispatch, exec_res.tool_results):
+            results[i] = r
+        tool_results = self._scheme.format_feedback(
+            ExecutionResult(tool_results=results), ops=self,
+        )
+        return tool_calls, tool_results
 
     def _maybe_salvage_qualified_direct_call(
         self, name: str, args: dict,
