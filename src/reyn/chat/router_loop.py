@@ -37,30 +37,20 @@ if TYPE_CHECKING:
 
 
 def _resolve_tool_use_scheme(name: "str | None" = None):
-    """Return the active ``ToolUseScheme`` (#1593). Registers the built-in
-    universal-category scheme on first use (idempotent) and resolves by name,
-    defaulting to universal-category — PR-1 byte-identical. Per-layer config
-    (``tool_use:{chat,step,phase}``) passes the selected name here."""
-    from reyn.tools.scheme import DEFAULT_SCHEME_NAME, get_scheme, register_scheme
-    from reyn.tools.schemes.codeact import CodeActScheme
-    from reyn.tools.schemes.enumerate_all import EnumerateAllScheme
-    from reyn.tools.schemes.retrieval import RetrievalScheme
-    from reyn.tools.schemes.universal_category import UniversalCategoryScheme
+    """Return the active ``ToolUseScheme`` (#1593), resolving by name and defaulting
+    to universal-category. Per-layer config (``tool_use:{chat,step,phase}``) passes
+    the selected name here.
 
-    # Register each built-in independently + idempotently (keyed on the scheme's
-    # OWN .name → P7-clean, no scheme-literal in OS code). A single guard on the
-    # default's absence would couple enumerate-all's registration to universal
-    # NOT being registered yet — so anything that registers universal first (a
-    # direct register_scheme caller, a test) would leave enumerate-all absent and
-    # silently fall back to default. Per-scheme guard avoids that sibling gap.
-    for _builtin in (
-        UniversalCategoryScheme(),
-        EnumerateAllScheme(),  # #1593 PR-2
-        RetrievalScheme(),  # #1593 PR-4
-        CodeActScheme(),  # #1593 PR-3 — selectable via tool_use=codeact (not default)
-    ):
-        if get_scheme(_builtin.name) is None:
-            register_scheme(_builtin)
+    #1608 ④: the built-ins **self-register at import time** — this function names NO
+    scheme class (P7 cleanliness). Importing the ``schemes`` package runs every
+    built-in module's import-time ``register_scheme`` (the package ``__init__``
+    imports them all), so the full set is present without the OS resolve knowing any
+    concrete scheme."""
+    # Importing the package self-registers all built-in schemes (the bundle
+    # self-describes; no scheme-literal in OS code). Idempotent — modules import once.
+    import reyn.tools.schemes  # noqa: F401  (register_scheme import-time side effect)
+    from reyn.tools.scheme import DEFAULT_SCHEME_NAME, get_scheme
+
     # Unknown / unconfigured name → default (universal-category) — byte-identical.
     return get_scheme(name or DEFAULT_SCHEME_NAME) or get_scheme(DEFAULT_SCHEME_NAME)
 

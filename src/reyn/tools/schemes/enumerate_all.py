@@ -36,6 +36,7 @@ from reyn.tools.scheme import (
     Interpretation,
     Presentation,
     SchemeOps,
+    register_scheme,
 )
 
 
@@ -79,3 +80,6 @@ class EnumerateAllScheme:
 
 
 __all__ = ["EnumerateAllScheme"]
+
+# #1608: self-register on import (P7 — the OS resolve no longer names this class).
+register_scheme(EnumerateAllScheme())
