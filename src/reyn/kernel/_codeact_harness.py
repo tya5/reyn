@@ -60,6 +60,12 @@ class _ControlChannel:
         self._sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
         return self._recv_line()
 
+    def send(self, payload: dict[str, Any]) -> None:
+        """Send one frame with NO reply (#1618 root-2: the snippet's final result
+        envelope travels on this control channel, NOT stdout — so user-code
+        ``print()`` to stdout can never corrupt the protocol)."""
+        self._sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+
     def _recv_line(self) -> dict[str, Any]:
         while b"\n" not in self._buf:
             chunk = self._sock.recv(65536)
@@ -150,6 +156,7 @@ def _write_response(payload: dict[str, Any]) -> None:
 
 def main() -> int:
     sock: socket.socket | None = None
+    channel: "_ControlChannel | None" = None
     try:
         req = _read_request()
         code = str(req["code"])
@@ -160,15 +167,27 @@ def main() -> int:
         channel = _ControlChannel(sock)
 
         result = _exec_codeact(code, channel, allowed_modules)
-        _write_response({"ok": True, "result": result})
+        # #1618 root-2: final result on the CONTROL CHANNEL (op="final"), not stdout
+        # — user code's stdout/stderr stay clean for the parent to capture as data.
+        channel.send({"op": "final", "ok": True, "result": result})
         return 0
     except Exception as exc:  # noqa: BLE001 — surface every failure as a response
-        _write_response({
+        _final = {
+            "op": "final",
             "ok": False,
             "kind": type(exc).__name__,
             "error": str(exc),
             "traceback": traceback.format_exc(limit=20),
-        })
+        }
+        # Prefer the control channel; if it never opened (early error) or is dead,
+        # fall back to stdout so the parent's no-final crash-path still surfaces it.
+        if channel is not None:
+            try:
+                channel.send(_final)
+            except OSError:
+                _write_response(_final)
+        else:
+            _write_response(_final)
         return 1
     finally:
         if sock is not None:
