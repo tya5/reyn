@@ -22,7 +22,7 @@ if str(_SRC) not in sys.path:
 from reyn.chat.tui.app import ReynTUIApp
 from reyn.chat.tui.widgets import ConversationView
 from reyn.chat.tui.widgets._branch_tree import build_branch_tree_rows
-from reyn.chat.tui.widgets.rewind_menu import RewindMenuWidget
+from reyn.chat.tui.widgets.rewind_menu import _MAX_VISIBLE, RewindMenuWidget
 
 
 def _rows_two_branches() -> list[dict]:
@@ -137,3 +137,45 @@ def test_tree_render_shows_kind_and_reltime() -> None:
     )
     rendered = w.render().plain
     assert "#5" in rendered and "phase" in rendered and "2m ago" in rendered
+
+
+def _tall_single_branch(n: int) -> list[dict]:
+    """Tree rows for one active branch with ``n`` checkpoints (newest-first)."""
+    branches = [{"branch_id": 0, "fork_point_seq": 0, "head_seq": n,
+                 "parent_branch_id": None, "is_active": True}]
+    cps = [{"seq": i, "ts": "", "kind": "turn", "anchor": "", "branch_id": 0}
+           for i in range(n)]
+    return build_branch_tree_rows(branches, cps)
+
+
+def test_tree_window_caps_visible_rows() -> None:
+    """Tier 2: #1577 — a long tree windows to <=_MAX_VISIBLE rows with a
+    '↓ N later' overflow marker — not all 30 rows render."""
+    w = RewindMenuWidget.from_tree_rows(_tall_single_branch(30))
+    rendered = w.render().plain
+    cp_rows = [ln for ln in rendered.splitlines()
+               if "#" in ln and "later" not in ln and "earlier" not in ln]
+    assert len(cp_rows) <= _MAX_VISIBLE          # windowed, not 30
+    assert "later" in rendered                    # overflow marker (selection at top)
+
+
+def test_tree_window_keeps_selection_visible_and_pins_header() -> None:
+    """Tier 2: #1577 — navigating deep keeps the selected checkpoint visible and
+    pins its branch header (context) with an '↑ earlier' marker."""
+    w = RewindMenuWidget.from_tree_rows(_tall_single_branch(30))
+    w.move_selection(25)                          # deep into the list
+    sel = w.selected_point()
+    rendered = w.render().plain
+    assert f"#{sel['seq']}" in rendered           # selected checkpoint visible
+    assert "▌" in rendered                         # caret rendered
+    assert "main" in rendered                      # branch header pinned (context)
+    assert "earlier" in rendered                   # overflow-above marker
+
+
+def test_small_tree_no_window() -> None:
+    """Tier 2: #1577 — a tree within _MAX_VISIBLE renders fully, no markers."""
+    w = RewindMenuWidget.from_tree_rows(_tall_single_branch(3))
+    rendered = w.render().plain
+    assert "earlier" not in rendered and "later" not in rendered
+    for i in range(3):
+        assert f"#{i}" in rendered
