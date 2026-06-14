@@ -55,6 +55,7 @@ class RouterLoopDriver:
         limit_checkpoint_fn: Callable,  # async; ChatSession._handle_chat_limit_checkpoint
         next_seq_fn: Callable[[], int], # ChatSession._next_seq reader
         append_history_fn: Callable,    # ChatSession._append_history
+        chat_scheme_name: "str | None" = None,  # #1593 PR-2: chat-layer ToolUseScheme name → RouterLoop(scheme_name=); None → universal default
     ) -> None:
         self._router_host = router_host
         self._safety = safety
@@ -74,6 +75,7 @@ class RouterLoopDriver:
         self._limit_checkpoint_fn = limit_checkpoint_fn
         self._next_seq_fn = next_seq_fn
         self._append_history_fn = append_history_fn
+        self._chat_scheme_name = chat_scheme_name  # #1593 PR-2
         # #1468: per-turn cooperative cancellation flag + asyncio.Event for
         # deep-cancel propagation into running subprocess ops (#1470).
         self._turn_cancel_requested: bool = False
@@ -336,6 +338,8 @@ class RouterLoopDriver:
         )
         loop = RouterLoop(
             host=self._router_host, chain_id=chain_id,
+            # #1593 PR-2: select the chat-layer tool-use scheme (None → universal).
+            scheme_name=self._chat_scheme_name,
             max_iterations=self._router_max_iterations,
             budget=self._budget_tracker,
             # #1440 followup: thread the run-once autonomy flag to the LIVE

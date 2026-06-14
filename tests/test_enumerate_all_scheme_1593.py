@@ -116,3 +116,29 @@ def test_format_feedback_delegates_to_ops() -> None:
     s = EnumerateAllScheme()
     msgs = s.format_feedback(ExecutionResult(tool_results=[{"name": "git__commit"}]), _FakeOps())
     assert msgs == [{"role": "tool", "content": "git__commit"}]
+
+
+def test_per_layer_config_nondefault_selects_enumerate_all() -> None:
+    """Tier 2: a NON-default ``tool_use: {chat: enumerate-all}`` resolves the chat
+    layer to EnumerateAllScheme, while the default stays universal-category
+    (byte-identical) and a chat-only override leaves step/phase untouched.
+
+    Pins the config→selection seam at its public surfaces: the per-layer config
+    dataclass (``ToolUseConfig``), the scheme resolver (``_resolve_tool_use_scheme``),
+    and the scheme's public ``.name`` — NOT a running router or private state. The
+    config value is what each frontend threads (chat_tool_use_scheme) through the
+    factory → ChatSession → RouterLoopDriver → RouterLoop(scheme_name=)."""
+    from reyn.chat.router_loop import _resolve_tool_use_scheme
+    from reyn.config import _build_tool_use_config
+
+    # Default (None / missing tool_use:) → all layers universal-category.
+    default_cfg = _build_tool_use_config(None)
+    assert default_cfg.chat == "universal-category"
+    assert _resolve_tool_use_scheme(default_cfg.chat).name == "universal-category"
+
+    # NON-default chat layer → enumerate-all; sibling layers keep the default.
+    cfg = _build_tool_use_config({"chat": "enumerate-all"})
+    assert cfg.chat == "enumerate-all"
+    assert cfg.step == "universal-category"    # chat-only override is per-layer
+    assert cfg.phase == "universal-category"
+    assert _resolve_tool_use_scheme(cfg.chat).name == "enumerate-all"

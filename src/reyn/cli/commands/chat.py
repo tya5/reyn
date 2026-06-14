@@ -400,6 +400,7 @@ def run(args: argparse.Namespace) -> None:
             multimodal_config=session_cfg.config.multimodal,
             tool_calls_op_loop_skills=session_cfg.config.tool_calls_op_loop_skills,
             action_retrieval_config=session_cfg.config.action_retrieval,
+            chat_tool_use_scheme=session_cfg.config.tool_use.chat,  # #1593 PR-2
             embedding_config=session_cfg.config.embedding,
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
             agent_id=session_cfg.config.agent.id,  # FP-0016 E

@@ -62,6 +62,7 @@ _REQUIRED_SCOPED = frozenset({
     "action_retrieval_config",
     "embedding_config",
     "tool_calls_op_loop_skills",
+    "chat_tool_use_scheme",  # #1593 PR-2 per-layer chat scheme selector
 })
 
 

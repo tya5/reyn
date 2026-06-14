@@ -464,6 +464,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 multimodal_config=config.multimodal,
                 tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
                 action_retrieval_config=config.action_retrieval,
+                chat_tool_use_scheme=config.tool_use.chat,  # #1593 PR-2
                 # #1289: same backend instance to both seams (single-shared-sandbox).
                 environment_backend=env_backend,
                 sandbox_backend=env_backend,

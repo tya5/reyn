@@ -338,6 +338,7 @@ def _get_registry():
                 multimodal_config=config.multimodal,
                 tool_calls_op_loop_skills=config.tool_calls_op_loop_skills,
                 action_retrieval_config=config.action_retrieval,
+                chat_tool_use_scheme=config.tool_use.chat,  # #1593 PR-2
                 embedding_config=config.embedding,
                 eager_embedding_build=_eager_embedding_build,
                 # #1401: the 3 scoped capabilities, filled from the CLI override
