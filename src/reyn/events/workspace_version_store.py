@@ -235,6 +235,30 @@ class WorkspaceVersionStore:
         except GitUnavailable:
             return self._degrade("restore", seq)
 
+    async def restore_tree(self, tree_sha: str) -> str | None:
+        """Restore the work-tree to a bare **tree** object (#1560 act-turn restore).
+
+        The inverse of :meth:`capture_tree`: ``read-tree <sha>`` (load the tree into
+        the index) + ``checkout-index -a -f`` (write the index out to the work-tree,
+        overwriting) + ``clean -fdq`` (honoring the excludes — drop work-tree files
+        not in the tree). Restores the exact mid-act-turn work-tree content for a
+        tree captured by ``capture_tree``. The caller supplies an is_active-resolved
+        ``tree_sha`` from the op-content-log (lineage is the caller's concern; the
+        store just materializes the tree). Returns ``tree_sha``, or ``None`` when
+        git is unavailable (degrade — never raises).
+        """
+        try:
+            await self._ensure_repo()
+            await self._git(["read-tree", tree_sha])
+            await self._git(["checkout-index", "-a", "-f"])
+            clean_args = ["clean", "-fdq"]
+            for pat in self._exclude:
+                clean_args += ["-e", pat]
+            await self._git(clean_args)
+            return tree_sha
+        except GitUnavailable:
+            return self._degrade("restore_tree", None)
+
     # ── queries ──────────────────────────────────────────────────────────
 
     async def seqs(self) -> list[int]:
