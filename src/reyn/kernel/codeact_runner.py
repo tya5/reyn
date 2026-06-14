@@ -141,7 +141,12 @@ class CodeActRunner:
 
         loop = asyncio.get_running_loop()
         parent_sock.setblocking(False)
-        service_task = asyncio.create_task(self._service(parent_sock, dispatch, loop))
+        # #1618 root-2: the snippet's result arrives as an op="final" frame on the
+        # control channel (not stdout); _service captures it here.
+        final_box: list[dict] = []
+        service_task = asyncio.create_task(
+            self._service(parent_sock, dispatch, loop, final_box)
+        )
 
         # ``communicate(input=...)`` writes the request to stdin (the child reads it
         # fully before touching the control channel), then reads stdout/stderr +
@@ -152,16 +157,23 @@ class CodeActRunner:
         comm_future = loop.run_in_executor(
             None, lambda: proc.communicate(input=request_bytes),
         )
+        timed_out = False
         try:
             stdout_b, stderr_b = await asyncio.wait_for(comm_future, timeout=timeout)
         except asyncio.TimeoutError:
-            await _kill_proc_group(proc, loop)
-            return {
-                "ok": False, "status": "timeout",
-                "kind": "Timeout", "error": f"codeact timed out after {timeout}s",
-            }
-        finally:
+            timed_out = True
             service_task.cancel()
+            await _kill_proc_group(proc, loop)
+            stdout_b, stderr_b = b"", b""
+        else:
+            # Normal exit: the child sent op="final" then closed the channel (EOF), so
+            # DRAIN the service task (bounded) to populate final_box, rather than
+            # cancelling it mid-frame.
+            try:
+                await asyncio.wait_for(service_task, timeout=2.0)
+            except Exception:  # noqa: BLE001 — drain best-effort; cancel if it hangs
+                service_task.cancel()
+        finally:
             try:
                 parent_sock.close()
             except OSError:
@@ -169,6 +181,21 @@ class CodeActRunner:
             if cleanup is not None:
                 cleanup()
 
+        if timed_out:
+            return {
+                "ok": False, "status": "timeout",
+                "kind": "Timeout", "error": f"codeact timed out after {timeout}s",
+            }
+        # #1618 root-2: the result is the op="final" frame; stdout/stderr are now PURE
+        # user-program output, captured as data (the format_feedback fallback when the
+        # snippet print()s instead of binding ``result``). No final frame = an early
+        # crash before the channel opened → the stdout crash-path fallback.
+        if final_box:
+            final = dict(final_box[0])
+            final.pop("op", None)
+            final["stdout"] = (stdout_b or b"").decode("utf-8", errors="replace")
+            final["stderr"] = (stderr_b or b"").decode("utf-8", errors="replace")
+            return final
         return self._parse_response(stdout_b, stderr_b, proc.returncode)
 
     def _resolve_sandbox_spawn(
@@ -244,10 +271,13 @@ class CodeActRunner:
 
     async def _service(
         self, sock: socket.socket, dispatch: DispatchFn, loop: asyncio.AbstractEventLoop,
+        final_box: list[dict],
     ) -> None:
         """Service the control channel until the child closes it (EOF). Each
         ``tool_call`` is gated by ``dispatch`` (the parent's exclude + dispatch_tool
-        + permission pipeline) and the result envelope is sent back."""
+        + permission pipeline) and the result envelope is sent back. The terminal
+        ``op="final"`` frame (#1618 root-2: the snippet's result, now on this channel
+        instead of stdout) is captured into ``final_box`` — no reply, the child exits."""
         buf = b""
         while True:
             try:
@@ -262,7 +292,11 @@ class CodeActRunner:
                 if not line:
                     continue
                 req = json.loads(line.decode("utf-8"))
-                if req.get("op") != "tool_call":
+                op = req.get("op")
+                if op == "final":
+                    final_box.append(req)  # the snippet's result envelope
+                    continue
+                if op != "tool_call":
                     continue
                 result = await dispatch(req.get("name", ""), req.get("args", {}) or {})
                 reply = json.dumps({"op": "result", "result": result}).encode("utf-8")

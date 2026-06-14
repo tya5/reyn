@@ -225,3 +225,37 @@ def test_harness_subprocess_env_preserves_existing_pythonpath(monkeypatch) -> No
     parts = _harness_subprocess_env()["PYTHONPATH"].split(os.pathsep)
     assert "/some/existing/path" in parts
     assert parts[-1] == "/some/existing/path"  # appended after the prepended tree
+
+
+@pytest.mark.asyncio
+async def test_user_print_does_not_corrupt_result() -> None:
+    """Tier 2: #1618 root-2 (#8) — user-code ``print()`` to stdout no longer corrupts
+    the result. The result envelope now travels on the control channel (op="final"),
+    so a snippet that prints AND binds ``result`` returns the correct result (was
+    MalformedResponse when the print's repr landed on stdout ahead of the envelope)."""
+    async def dispatch(name: str, args: dict) -> dict:
+        return {"status": "ok", "data": "PURPLE-OTTER-42"}
+
+    runner = CodeActRunner()
+    code = "print('noisy debug line'); print({'a': 1})\nresult = tool('file__read', path='x')"
+    out = await runner.run(code=code, dispatch=dispatch, allow_unsandboxed=True)
+    assert out["ok"] is True, out
+    assert out["result"] == "PURPLE-OTTER-42"          # result intact, not corrupted
+    assert "noisy debug line" in (out.get("stdout") or "")  # user stdout captured as data
+
+
+@pytest.mark.asyncio
+async def test_print_only_snippet_surfaces_via_stdout() -> None:
+    """Tier 2: #1618 root-2 (#6) — a snippet that print()s WITHOUT binding ``result``
+    yields result=None but the captured stdout is returned as data, so the observation
+    is not empty (the model otherwise sees nothing and retries / gives up)."""
+    async def dispatch(name: str, args: dict) -> dict:
+        return {"status": "ok", "data": None}
+
+    runner = CodeActRunner()
+    out = await runner.run(
+        code="print('the answer is 42')", dispatch=dispatch, allow_unsandboxed=True,
+    )
+    assert out["ok"] is True, out
+    assert out.get("result") is None
+    assert "the answer is 42" in (out.get("stdout") or "")
