@@ -50,11 +50,14 @@ def test_call_mcp_tool_router_render_exact_parameters():
     assert params["type"] == "object"
     assert "server" in params["properties"]
     assert "mcp_tool_name" in params["properties"]
-    assert "args" in params["properties"]
+    # #1646: the target tool's params nest under "tool_args" (NOT "args") to avoid the
+    # invoke_action-wrapper "args" collision; "args" must be gone.
+    assert "tool_args" in params["properties"]
+    assert "args" not in params["properties"]
     assert "tool" not in params["properties"], (
         "Legacy 'tool' param must be removed — FP-0032 renames to 'mcp_tool_name'"
     )
-    assert set(params["required"]) == {"server", "mcp_tool_name", "args"}
+    assert set(params["required"]) == {"server", "mcp_tool_name", "tool_args"}
 
 
 def test_call_mcp_tool_router_render_name():
@@ -207,7 +210,10 @@ def test_call_mcp_tool_render_for_phase_shape():
     assert "tool" not in rendered["args_schema"]["properties"], (
         "Legacy 'tool' key must not appear in render_for_phase — FP-0032 rename"
     )
-    assert rendered["args_schema"]["properties"]["args"] == {"type": "object"}
+    # #1646: tool_args (renamed from args) carries the target tool's params; type
+    # object, now with a guidance description (so check type, not exact equality).
+    assert "args" not in rendered["args_schema"]["properties"]
+    assert rendered["args_schema"]["properties"]["tool_args"]["type"] == "object"
     assert rendered["purity"] == "side_effect"
 
 
@@ -275,23 +281,24 @@ def test_registry_lookup_by_name():
 
 # ── 8. Polymorphic args contract for call_mcp_tool ───────────────────────────
 
-def test_call_mcp_tool_args_schema_accepts_object():
-    """Tier 2: call_mcp_tool args parameter schema is {"type": "object"}, making
-    the dynamic MCP tool space polymorphic — any JSON object can be passed as args.
-    This is the key invariant that allows arbitrary MCP servers/tools without
-    OS-level changes (P7 compliance)."""
+def test_call_mcp_tool_tool_args_schema_accepts_object():
+    """Tier 2: #1646 — call_mcp_tool's target-tool params nest under "tool_args" (renamed
+    from "args" to avoid the invoke_action-wrapper collision), schema type "object" — the
+    dynamic MCP tool space stays polymorphic (any JSON object). P7-compliant (arbitrary
+    MCP servers/tools, no OS-level changes)."""
     params = dict(CALL_MCP_TOOL.parameters)
-    assert params["properties"]["args"] == {"type": "object"}
+    assert "args" not in params["properties"]
+    assert params["properties"]["tool_args"]["type"] == "object"
     # No additionalProperties constraint — fully open to arbitrary MCP tool args
-    assert "additionalProperties" not in params["properties"]["args"]
+    assert "additionalProperties" not in params["properties"]["tool_args"]
 
 
 def test_call_mcp_tool_required_fields():
     """Tier 2: call_mcp_tool requires exactly server + mcp_tool_name + args
     (FP-0032 vocabulary: 'tool' renamed to 'mcp_tool_name')."""
     params = dict(CALL_MCP_TOOL.parameters)
-    assert set(params["required"]) == {"server", "mcp_tool_name", "args"}, (
-        "FP-0032: 'tool' must be replaced by 'mcp_tool_name' in required fields"
+    assert set(params["required"]) == {"server", "mcp_tool_name", "tool_args"}, (
+        "FP-0032: 'tool'→'mcp_tool_name'; #1646: 'args'→'tool_args' (collision-kill)"
     )
 
 

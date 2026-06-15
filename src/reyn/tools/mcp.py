@@ -43,7 +43,7 @@ is handled by the caller per ADR-0026 M3 wave pattern.
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Final, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
@@ -90,6 +90,15 @@ _LIST_MCP_TOOLS_PARAMETERS: dict[str, Any] = {
     "required": ["server"],
 }
 
+# #1646: the target MCP tool's OWN parameters are carried under THIS key —
+# deliberately NOT "args". The universal-scheme live path wraps this verb in
+# invoke_action(action_name="mcp__call_tool", args={...}); a nested "args" here would
+# collide with invoke_action's own "args" (two same-named levels), which the LLM
+# collapsed (params flat beside server/mcp_tool_name, inner level dropped) → empty args
+# at the MCP call (owner-observed). A distinct key kills the collision by construction.
+# Single-sourced so the schema decl + both read sites (router + phase) cannot drift.
+_MCP_TOOL_ARGS_KEY: Final[str] = "tool_args"
+
 _CALL_MCP_TOOL_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -104,9 +113,16 @@ _CALL_MCP_TOOL_PARAMETERS: dict[str, Any] = {
                 "the enum. Use describe_mcp_tool for the full input schema."
             ),
         },
-        "args": {"type": "object"},
+        _MCP_TOOL_ARGS_KEY: {
+            "type": "object",
+            "description": (
+                "The target MCP tool's OWN parameters (the shape from "
+                "describe_mcp_tool), as a nested object here — NOT flat alongside "
+                "server / mcp_tool_name."
+            ),
+        },
     },
-    "required": ["server", "mcp_tool_name", "args"],
+    "required": ["server", "mcp_tool_name", _MCP_TOOL_ARGS_KEY],
 }
 
 _DESCRIBE_MCP_TOOL_PARAMETERS: dict[str, Any] = {
@@ -250,7 +266,7 @@ async def _handle_call_mcp_tool(
         # Dotted form "server.tool_name" → extract the bare tool name for MCPClient.
         # If the caller passed a bare name (no dot), use it as-is for compatibility.
         bare_tool = mcp_tool_name.split(".", 1)[-1] if "." in mcp_tool_name else mcp_tool_name
-        tool_args = dict(args.get("args") or {})
+        tool_args = dict(args.get(_MCP_TOOL_ARGS_KEY) or {})  # #1646: distinct key, no invoke_action collision
         return await host.mcp_call_tool(server, bare_tool, tool_args)
 
     # Phase path: build MCPIROp and dispatch through op_runtime.
@@ -264,7 +280,7 @@ async def _handle_call_mcp_tool(
     mcp_tool_name = str(args["mcp_tool_name"])
     # Dotted form → extract bare tool name for MCPIROp.
     tool = mcp_tool_name.split(".", 1)[-1] if "." in mcp_tool_name else mcp_tool_name
-    tool_args = dict(args.get("args") or {})
+    tool_args = dict(args.get(_MCP_TOOL_ARGS_KEY) or {})  # #1646: distinct key, no invoke_action collision
 
     op = MCPIROp(kind="mcp", server=server, tool=tool, args=tool_args)
 
