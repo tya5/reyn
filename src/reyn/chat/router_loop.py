@@ -2709,6 +2709,10 @@ class RouterLoop:
                 ),
                 detail=f"chain_id={self.chain_id}",
                 extension_amount=float(self.max_iterations),
+                # #1649: non-TTY/run-once → handle_limit_exceeded falls back to
+                # bounded auto-extend instead of a silent refuse (the agent
+                # completes instead of an empty exit-0 stop).
+                non_interactive=self._non_interactive,
             )
             if _dec.allow_continue:
                 self.max_iterations += int(_dec.extension)
@@ -2777,7 +2781,15 @@ class RouterLoop:
                 f"Configure safety.on_limit.mode=interactive or auto_extend to "
                 f"extend, or increase safety.loop.max_router_iterations."
             ),
-            meta={"chain_id": self.chain_id},
+            # #1649 PART B: the limit_stopped marker lets the run-once / A2A
+            # caller detect a limit-abort (vs a normal reply) → surface the
+            # message + exit non-zero, so a non-TTY wrapper never sees a silent
+            # exit-0 stop. Mirrors the wrap-up agent message's marker above.
+            meta={
+                "chain_id": self.chain_id,
+                "limit_stopped": True,
+                "limit_kind": "max_iterations",
+            },
         )
         return self._total_usage
 

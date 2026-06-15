@@ -28,16 +28,20 @@ from ..session import Session
 _ONCE_SEND_TIMEOUT = 3600.0
 
 
-async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> str:
+async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> dict:
     """#187 one-shot drive: read the WHOLE *instream* (default stdin) as a SINGLE
     user message and drive the agent to completion via ``send_to_agent_impl``,
-    returning the final reply.
+    returning the result dict (``reply`` + ``limit_stopped`` + …).
 
     This is the structural fix for the #1401 line-fragmentation bug: the WHOLE
     stdin becomes ONE message (one ``send`` call), NOT one message per line (the
     REPL's line-by-line ``readline``). ``instream`` / ``send`` are injectable so
     the whole-message-not-fragmented behavior is testable with a recording double
     (no mock); production uses ``sys.stdin`` + the real ``send_to_agent_impl``.
+
+    #1649: returns the full result dict (not just the reply str) so the caller
+    can detect ``limit_stopped`` and exit non-zero — a limit hit must never be a
+    silent exit-0 stop for a non-TTY wrapper.
     """
     if instream is None:
         instream = sys.stdin
@@ -48,7 +52,7 @@ async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> 
         agent_registry, agent_name=agent_name, message=message,
         timeout=_ONCE_SEND_TIMEOUT,
     )
-    return result.get("reply", "") or ""
+    return result if isinstance(result, dict) else {"reply": result or ""}
 
 
 def register(sub) -> None:
@@ -525,8 +529,14 @@ def run(args: argparse.Namespace) -> None:
             # A2A use (registry.get_or_load returns this attached scoped session, no
             # fresh unscoped build), then print the final reply and exit.
             if getattr(args, "once", False):
-                reply = await _run_once(registry, name)
-                sys.stdout.write(reply + "\n")
+                _once_result = await _run_once(registry, name)
+                sys.stdout.write((_once_result.get("reply", "") or "") + "\n")
+                # #1649: a limit-abort must propagate a non-zero exit so a
+                # non-TTY wrapper/CI detects the runaway-stop (vs a clean reply).
+                # The decision-enabling message is already in the reply above
+                # (never silent). exit(2) distinguishes it from arg/usage errors.
+                if _once_result.get("limit_stopped"):
+                    sys.exit(2)
                 return
             await run_repl(registry, renderer=renderer)
 

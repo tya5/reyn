@@ -99,7 +99,7 @@ def test_one_shot_delivers_whole_stdin_as_one_message() -> None:
         captured["agent"] = agent_name
         return {"reply": "done", "partial": False, "agent": agent_name}
 
-    reply = asyncio.run(
+    result = asyncio.run(
         chat._run_once(
             object(), "default",
             instream=io.StringIO(multi_line),
@@ -111,7 +111,36 @@ def test_one_shot_delivers_whole_stdin_as_one_message() -> None:
     assert captured["message"] == multi_line, "the multi-line task must arrive unsplit"
     assert "\n" in captured["message"]  # newlines preserved (not fragmented)
     assert captured["agent"] == "default"
-    assert reply == "done"
+    # #1649: _run_once now returns the full result dict (so the caller can detect
+    # limit_stopped + exit non-zero); the reply is under the "reply" key.
+    assert result["reply"] == "done"
+
+
+def test_run_once_propagates_limit_stopped_for_nonzero_exit() -> None:
+    """Tier 2: #1649 PART B — _run_once returns the full result incl
+    limit_stopped, so the run-once caller surfaces the decision-enabling message
+    AND exits non-zero (a limit hit is never a silent exit-0 stop for a non-TTY
+    wrapper). Pairs with send_to_agent_impl, which sets limit_stopped + surfaces
+    the message from the router's limit-abort outbox marker."""
+    import asyncio
+    import io
+
+    from reyn.cli.commands import chat
+
+    async def _send_limit(registry, *, agent_name, message, timeout):
+        return {
+            "reply": "Router loop exceeded max iterations (5). Configure "
+                     "safety.on_limit.mode or increase max_router_iterations.",
+            "limit_stopped": True,
+            "partial": False,
+            "agent": agent_name,
+        }
+
+    result = asyncio.run(
+        chat._run_once(object(), "default", instream=io.StringIO("go"), send=_send_limit)
+    )
+    assert result["limit_stopped"] is True  # caller exits non-zero on this
+    assert "exceeded max iterations" in result["reply"]  # message surfaced, not silent
 
 
 # ── R1: in-container execution ────────────────────────────────────────────────

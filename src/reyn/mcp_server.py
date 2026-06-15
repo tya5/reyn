@@ -274,11 +274,29 @@ async def send_to_agent_impl(
             if not task.done():
                 running_skill_run_ids.append(rid)
 
+    # #1649 PART B: detect a limit-abort. The router stamps ``limit_stopped`` on
+    # the limit wrap-up / degrade outbox message. A non-TTY run-once / wrapper
+    # caller uses this to (a) surface the decision-enabling message even when the
+    # history harvest is empty (kind="error" isn't persisted to history) and
+    # (b) exit NON-ZERO — so a limit hit is never a silent exit-0 stop.
+    limit_stopped = any(
+        isinstance(getattr(r, "meta", None), dict) and r.meta.get("limit_stopped")
+        for r in replies
+    )
+    if limit_stopped and not reply_text:
+        _limit_texts = [
+            r.text for r in replies
+            if isinstance(getattr(r, "meta", None), dict)
+            and r.meta.get("limit_stopped") and r.text
+        ]
+        reply_text = "\n\n".join(_limit_texts).strip() or reply_text
+
     return {
         "reply": reply_text,
         "partial": (not idle),
         "agent": agent_name,
         "running_skill_run_ids": running_skill_run_ids,
+        "limit_stopped": limit_stopped,
     }
 
 
