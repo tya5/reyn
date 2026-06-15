@@ -109,6 +109,22 @@ def _make_tool_shim(channel: _ControlChannel):
     return tool
 
 
+def _make_action_stub(qualified_name: str, tool_shim: Any):
+    """#1658: a gated DIRECT-FUNCTION stub for one action — a thin renamed wrapper of
+    the ``tool`` marshalling primitive with the qualified name BAKED IN. Calling
+    ``file__read(path=...)`` marshals ``('file__read', kwargs)`` over the SAME control
+    channel to the SAME parent gate (exclude + dispatch_tool + permission). Gating is
+    identical to the old ``tool('file__read', ...)`` proxy; only the LLM-facing surface
+    changes (a selected identifier, never a produced string). Keyword args only
+    (matches the proxy contract + the SP's keyword example); a positional call raises a
+    clear TypeError the model self-corrects from."""
+
+    def _stub(**kwargs: Any) -> Any:
+        return tool_shim(qualified_name, **kwargs)
+
+    return _stub
+
+
 class ToolError(RuntimeError):
     """Raised inside a CodeAct snippet when a proxied tool call returns an error
     envelope (permission_denied / tool_excluded / unknown_tool / exception)."""
@@ -120,23 +136,38 @@ class ToolError(RuntimeError):
 
 
 def _exec_codeact(
-    code: str, channel: _ControlChannel, allowed_modules: frozenset[str],
+    code: str,
+    channel: _ControlChannel,
+    allowed_modules: frozenset[str],
+    actions: "dict[str, str] | None" = None,
 ) -> Any:
-    """Validate + exec the snippet with the restricted builtins + the tool shim.
+    """Validate + exec the snippet with the restricted builtins + the gated
+    direct-function stubs.
 
     Returns the snippet's ``result`` binding if it defines one, else None. The
-    snippet affects the world ONLY through ``tool(...)`` (the parent-gated proxy);
-    the restricted builtins block ``open`` / ``eval`` / ``__import__`` of
-    non-allowlisted modules (defense-in-depth on top of the sandbox)."""
+    snippet affects the world ONLY through the injected action functions (#1658:
+    ``file__read(...)`` etc., each a parent-gated stub) — or the internal ``tool()``
+    primitive they wrap (kept available but NOT advertised). The restricted builtins
+    block ``open`` / ``eval`` / ``__import__`` of non-allowlisted modules
+    (defense-in-depth on top of the sandbox)."""
     tree = ast.parse(code, filename="<codeact>")
     _validate_safe_ast(tree, allowed_modules)
     builtins_dict = _build_restricted_builtins(allowed_modules)
 
+    tool_shim = _make_tool_shim(channel)
     namespace: dict[str, Any] = {
         "__builtins__": builtins_dict,
         "__name__": "__reyn_codeact__",
-        "tool": _make_tool_shim(channel),
+        # Internal marshalling primitive — the stubs wrap it. Kept callable for
+        # back-compat but NOT advertised in the SP (the code-API lists the direct
+        # functions only; advertising tool('name') would reintroduce the
+        # string-production hallucination path #1658 eliminates).
+        "tool": tool_shim,
     }
+    # #1658: inject one gated direct-function stub per action (identifier →
+    # qualified-name closure over the SAME tool_shim → SAME parent gate).
+    for ident, qualified in (actions or {}).items():
+        namespace[ident] = _make_action_stub(qualified, tool_shim)
     compiled = compile(tree, filename="<codeact>", mode="exec")
     exec(compiled, namespace)  # noqa: S102 — sandboxed subprocess + restricted ns
     return namespace.get("result")
@@ -162,11 +193,12 @@ def main() -> int:
         code = str(req["code"])
         control_fd = int(req["control_fd"])
         allowed_modules = frozenset(req.get("allowed_modules") or [])
+        actions = req.get("actions") or {}  # #1658 {identifier: qualified_name}
 
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM, fileno=control_fd)
         channel = _ControlChannel(sock)
 
-        result = _exec_codeact(code, channel, allowed_modules)
+        result = _exec_codeact(code, channel, allowed_modules, actions)
         # #1618 root-2: final result on the CONTROL CHANNEL (op="final"), not stdout
         # — user code's stdout/stderr stay clean for the parent to capture as data.
         channel.send({"op": "final", "ok": True, "result": result})

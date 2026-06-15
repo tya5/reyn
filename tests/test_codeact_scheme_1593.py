@@ -149,11 +149,13 @@ async def test_build_presentation_renders_code_api_into_tool_use_sp() -> None:
     pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
     # No JSON tools= — CodeAct presents via the SP, model writes a snippet.
     assert pres.llm_tools_payload == []
-    # The actions surface in the code-API + the tool() proxy is instructed, via the
-    # REPLACE channel (tool_use_sp), and the old APPEND channel is unused.
+    # The actions surface in the code-API as DIRECT functions (#1658: def <name>(...),
+    # not the tool('name') string-proxy), via the REPLACE channel (tool_use_sp); the
+    # old APPEND channel is unused.
     assert "file__read" in pres.tool_use_sp
     assert "web__fetch" in pres.tool_use_sp
-    assert "tool(" in pres.tool_use_sp
+    assert "def file__read(" in pres.tool_use_sp  # #1658 direct-function signature
+    assert "tool('" not in pres.tool_use_sp        # #1658: no string-proxy token
     assert not pres.sp_fragment  # root-3: replace channel, not append
     # The prose=terminal contract (#2) must be stated so the model knows how to finish.
     assert "plain prose" in pres.tool_use_sp
@@ -170,19 +172,19 @@ async def test_build_presentation_includes_arg_names() -> None:
 
 
 @pytest.mark.asyncio
-async def test_code_api_has_no_bare_tool_call_for_flashlite() -> None:
-    """Tier 2: #1638 — the rendered code-API carries NO bare quoted ``tool('<x>')``
-    token. gemini-2.5-flash-lite returns ~100% empty-choices on a bare ``tool('<quoted>')``
-    token (content-trigger, lead+sandbox_2 proxy-probe: bare 6/6 empty → backtick 0/6);
-    the CodeAct code-API rendered ~50 such bare lines. Presentation-only — every rendered
-    call is backtick-wrapped; the model still writes bare ``tool(...)`` in its python block."""
-    import re
-
+async def test_code_api_has_no_tool_string_proxy_token() -> None:
+    """Tier 2: #1658 (supersedes #1638) — the rendered code-API carries NO
+    ``tool('<x>')`` string-proxy token at all. The direct-function redesign renders
+    ``def file__read(path)`` signatures the model calls by name, so the quoted
+    ``tool('<quoted>')`` token (which caused ~100% empty-choices on
+    gemini-2.5-flash-lite, #1638) is eliminated entirely — there is no string the
+    model produces for the action name. Strictly stronger than the #1638 backtick-wrap."""
     pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
-    # No bare `tool('` (one not immediately preceded by a backtick) anywhere in the render.
-    assert not re.search(r"(?<!`)tool\('", pres.tool_use_sp)
-    # The call IS present, backtick-wrapped (the action is still discoverable/usable).
-    assert "`tool('file__read'" in pres.tool_use_sp
+    # NO tool('...') string-proxy token anywhere (direct functions only).
+    assert "tool('" not in pres.tool_use_sp
+    assert 'tool("' not in pres.tool_use_sp
+    # The action IS present as a DIRECT function the model calls by name.
+    assert "def file__read(" in pres.tool_use_sp
 
 
 @pytest.mark.asyncio

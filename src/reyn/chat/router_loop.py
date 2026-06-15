@@ -3383,6 +3383,12 @@ class RouterLoop:
             sandbox=sandbox,
             extra={
                 "dispatch": _os_gate,
+                # #1658: the DISPATCHABLE catalog (the gate's membership map — the same
+                # names `_os_gate` accepts). CodeAct builds the {identifier:
+                # qualified_name} direct-function stub map from this; self._catalog (the
+                # ADVERTISED payload) is empty for CodeAct, so the dispatchable map is
+                # the right source. Generic catalog (action names), not scheme vocab (P7).
+                "dispatchable_catalog": self._dispatch_catalog or self._catalog,
                 "sandbox_policy": getattr(self.host, "default_sandbox_policy", None)
                 or {"network": False, "allow_subprocess": False, "env_passthrough": ["PATH"]},
             },

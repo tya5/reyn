@@ -23,10 +23,46 @@ permission internals — it orchestrates, the OS gates (P3/P7).
 from __future__ import annotations
 
 import json
+import keyword
 import re
 from typing import Any
 
 from reyn.kernel.codeact_runner import CodeActRunner
+
+
+def _sanitize_identifier(name: str) -> str:
+    """#1658: a qualified action name → a valid Python identifier. Most names
+    (``file__read``, ``exec__sandboxed_exec``) already are; MCP / skill names with
+    hyphens or dots (``web-search__search``) are not — non-identifier chars become
+    ``_``, a leading digit is prefixed, and a Python keyword is suffixed. The REAL
+    qualified name is preserved in the actions map and is what the parent gate
+    receives — the identifier is only the LLM-facing Python name."""
+    s = re.sub(r"\W", "_", name)
+    if not s or s[0].isdigit():
+        s = "_" + s
+    if keyword.iskeyword(s):
+        s = s + "_"
+    return s
+
+
+def _build_actions_map(qualified_names: "list[str]") -> "dict[str, str]":
+    """#1658: ``{python_identifier: qualified_name}`` for the direct-function code-API.
+
+    DETERMINISTIC (sorted) with collision-disambiguation (``_2`` / ``_3`` …) so that
+    ``build_presentation`` (renders the SP signatures) and ``execute`` (builds the
+    harness stubs) compute the **identical** map when both run it over the same full
+    dispatchable name set — the model's identifier call always matches a stub, and
+    the stub marshals the real qualified name to the parent gate."""
+    out: "dict[str, str]" = {}
+    used: set[str] = set()
+    for qn in sorted(qualified_names):
+        base = _sanitize_identifier(qn)
+        ident, n = base, 2
+        while ident in used:
+            ident, n = f"{base}_{n}", n + 1
+        used.add(ident)
+        out[ident] = qn
+    return out
 from reyn.tools.scheme import (
     CodeBlock,
     ExecContext,
@@ -44,53 +80,54 @@ from reyn.tools.scheme import (
 _FENCE_RE = re.compile(r"```(?:python|py|tool_code)?\s*\n(.*?)```", re.DOTALL)
 
 
-def _render_code_api(entries: list[dict]) -> str:
-    """Render flat ``{name, description, parameters}`` action entries as a CodeAct
-    *code-API*: a reference list of the actions the model invokes via the
-    ``tool(...)`` proxy. Pure presentation — the model reads it; it is NOT executed
-    Python. The arg names come from each entry's JSON-schema ``parameters.properties``
-    (CodeAct's strictest-consumer schema-completeness floor guarantees a dict)."""
-    # #1618 root-3 (②): this is the REPLACEMENT tool-use SP (Presentation.tool_use_sp)
-    # — it is the SOLE tool-use instruction the model sees (the OS drops the universal
-    # invoke_action / list_actions / ROUTING-RULE vocab for this region). So it must
-    # carry the whole CodeAct contract: act = a single fenced python block; prose = the
-    # terminal final answer (the #2 loop-unify contract — the model must KNOW prose ends
-    # the turn, or it never cleanly finishes). Wording is the measured variable for the
-    # fence-compliance oracle (dogfood-coder owns content finalization).
+def _render_code_api(entries: list[dict], ident_by_qn: "dict[str, str]") -> str:
+    """#1658: render flat ``{name, description, parameters}`` entries as a CodeAct
+    *code-API* — DIRECT function signatures the model calls by name
+    (``file__read(path=...)``), NOT the old ``tool('name', ...)`` string-proxy. The
+    function name is a selected Python identifier (``ident_by_qn[qualified]``), so the
+    action name can never be a hallucinated produced string. Pure presentation — the
+    model reads these signatures and writes the calls; the OS injects gated stubs of
+    the same names into the sandbox namespace (each marshals to the parent gate).
+
+    This is the SOLE tool-use instruction the model sees (Presentation.tool_use_sp —
+    the OS drops the universal invoke_action / list_actions vocab for this region), so
+    it carries the whole CodeAct contract: act = a single fenced python block; prose =
+    the terminal final answer (the loop-unify contract — prose ends the turn)."""
     lines = [
         "## Tool use — this agent acts by running Python, not JSON tool calls",
         "",
         "To DO anything (read a file, call an action, compute), respond with a "
         "SINGLE fenced ```python block and NOTHING else — no prose before or after it, "
-        "no \"I am a Reyn agent\" preamble on an action turn. Inside the block, call any "
-        "available action:",
+        "no \"I am a Reyn agent\" preamble on an action turn. Inside the block, call the "
+        "available functions DIRECTLY by name and assign your final value to `result`:",
         "",
-        "    result = `tool('<name>', <arg>=<value>, ...)`",
+        "    result = file__read(path=\"README.md\")",
         "",
-        "`tool(...)` returns the action's result, or raises if the action is denied / "
-        "excluded / unknown. Assign your final answer to `result`. The Python standard "
-        "library is available; filesystem / network / subprocess are sandboxed — reach "
-        "the outside world ONLY via `tool()`.",
+        "Each function returns the action's result, or raises if the action is denied / "
+        "excluded / unknown. The Python standard library is available; filesystem / "
+        "network / subprocess are sandboxed — reach the outside world ONLY by calling "
+        "these functions.",
         "",
         "When you are DONE (answer in hand, no more actions to run): reply in plain "
         "prose with NO code block — that ends the turn. A turn is EITHER one fenced "
         "```python block OR a plain-prose final answer, never both.",
         "",
-        "Available actions:",
+        "Available functions:",
     ]
     for entry in entries:
         name = entry.get("name", "")
+        ident = ident_by_qn.get(name, _sanitize_identifier(name))
         params = entry.get("parameters") or {}
         arg_names = list((params.get("properties") or {}).keys())
         sig = ", ".join(arg_names)
         desc_raw = (entry.get("description") or "").strip()
         desc = desc_raw.splitlines()[0] if desc_raw else ""
-        # #1638: backtick-wrap the rendered call so the SP carries NO bare quoted
-        # `tool('<x>')` token — gemini-2.5-flash-lite returns ~100% empty-choices on a
-        # bare `tool('<quoted>')` token (content-trigger; lead+sandbox_2 proxy-probe:
-        # bare 6/6 empty → backtick 0/6). Presentation-only: the catalog is a reference
-        # list the model READS; it still writes bare `tool(...)` inside its python block.
-        lines.append(f"- `tool('{name}'{', ' + sig if sig else ''})` — {desc}".rstrip(" —"))
+        # A direct function signature — the model calls `ident(args)`. No quoted
+        # `tool('<x>')` token anywhere in the SP (#1638: that bare token caused
+        # ~100% empty choices on gemini-2.5-flash-lite; the direct-call form removes
+        # it entirely — the model writes an identifier call, not a quoted string).
+        line = f"- `def {ident}({sig})`"
+        lines.append(f"{line} — {desc}" if desc else line)
     return "\n".join(lines)
 
 
@@ -173,6 +210,12 @@ class CodeActScheme:
         # OS-owned projection — no hand-read of a nested dict at a guessed depth, which
         # was #1: tool('') ×50, and #3: the exclude filter silently never matched).
         flat = flat_catalog_entries(entries)
+        # #1658: the identifier map over the FULL dispatchable name set (deterministic
+        # sort + collision-disambig) so it is IDENTICAL to the map execute builds for
+        # the harness stubs → the model's identifier call always matches a stub.
+        ident_by_qn = {
+            qn: ident for ident, qn in _build_actions_map([e["name"] for e in flat]).items()
+        }
         # Presentation parity with the JSON path (#1400): omit excluded actions from
         # the rendered code-API (defense-in-depth — the real gate is per-call). The OS
         # supplies the session exclude-set via ``available``.
@@ -196,7 +239,7 @@ class CodeActScheme:
             # 1/2/5/6). tool_use_sp ⇒ the OS injects this at the ## Capabilities
             # position + drops the universal tool-use construction, so the code-API is
             # the SOLE tool-use instruction the model sees.
-            tool_use_sp=_render_code_api(rendered),
+            tool_use_sp=_render_code_api(rendered, ident_by_qn),
         )
 
     def interpret(
@@ -233,9 +276,25 @@ class CodeActScheme:
                 "(the OS per-call exclude + dispatch_tool gate)"
             )
         extra = exec_ctx.extra or {}
+        # #1658: build the {identifier: qualified_name} map over the full dispatchable
+        # catalog the OS threads in (the gate's membership) using the SAME deterministic
+        # _build_actions_map as build_presentation → identical identifiers as the SP.
+        # The harness injects a gated stub per identifier that marshals the REAL
+        # qualified name to `dispatch` (the parent gate) — gating identical to the old
+        # tool('name') proxy (denied/excluded/unknown → same raise).
+        _dispatchable = extra.get("dispatchable_catalog") or exec_ctx.tool_catalog or {}
+        if isinstance(_dispatchable, dict):
+            _names = list(_dispatchable.keys())
+        else:
+            _names = [
+                (e.get("function") if isinstance(e.get("function"), dict) else e).get("name", "")
+                for e in _dispatchable
+            ]
+        actions_map = _build_actions_map([n for n in _names if n])
         out = await self._runner.run(
             code=interp.code,
             dispatch=dispatch,
+            actions=actions_map,
             sandbox_backend=exec_ctx.sandbox,
             sandbox_policy=extra.get("sandbox_policy"),
             allowed_modules=extra.get("allowed_modules"),
