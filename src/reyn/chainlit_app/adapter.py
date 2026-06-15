@@ -94,27 +94,61 @@ _AUTHOR_TOOL = "🔧 tool"
 _AUTHOR_FALLBACK = "ℹ system"
 
 
+# #1642: char caps (NOT byte — multibyte/JA-safe; Python str slicing is char-based)
+# so a large arg/result doesn't fill the conversation (full content out of scope for
+# this inline row). args ~120 / result ~200 per lead; cross-surface-aligned with the
+# TUI renderer (skill_activity.py). _TOOL_VALUE_LIMIT caps one arg value so a single
+# big arg can't dominate the whole-args preview.
+_TOOL_ARGS_LIMIT = 120
+_TOOL_RESULT_LIMIT = 200
+_TOOL_VALUE_LIMIT = 80
+
+
+def _truncate_one_line(s: str, limit: int) -> str:
+    """Collapse to one line + cap CHAR length with an ellipsis (multibyte-safe)."""
+    s = " ".join(s.split())  # collapse whitespace/newlines to a single line
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _preview_tool_content(value: object, limit: int) -> str:
+    """#1642: a one-line, length-bounded preview of a tool call's args dict or
+    result, for inline display in the conversation row. Args render as a compact
+    ``key=value, …``; a scalar/other result renders via str/repr. Empty/None ⇒ ``""``
+    (caller falls back to the bare name — no noisy ``name()``)."""
+    if value is None or value == {} or value == "":
+        return ""
+    if isinstance(value, dict):
+        body = ", ".join(
+            f"{k}={_truncate_one_line(v if isinstance(v, str) else repr(v), _TOOL_VALUE_LIMIT)}"
+            for k, v in value.items()
+        )
+    else:
+        body = value if isinstance(value, str) else repr(value)
+    return _truncate_one_line(body, limit)
+
+
 def _format_tool_call(msg: OutboxMessage) -> str:
     """Build the tool-call body text with a status-prefix marker.
 
     The lifecycle forwarder packs the tool name into both ``text`` and
     ``meta["tool"]`` so either works; we prefer meta when present so a
-    future emitter that uses a richer text field (e.g. with args
-    inline) won't collide with the prefix.
+    future emitter that uses a richer text field won't collide with the prefix.
+    #1642: args (``meta["args"]``) render inline on start and result
+    (``meta["result"]``) as a preview on completion — both truncated.
     """
-    name = msg.meta.get("tool") if isinstance(msg.meta, dict) else None
+    meta = msg.meta if isinstance(msg.meta, dict) else {}
+    name = meta.get("tool")
     if not isinstance(name, str) or not name:
         name = msg.text or "(unnamed)"
     if msg.kind == "tool_call_started":
-        return f"→ {name}"
+        args = _preview_tool_content(meta.get("args"), _TOOL_ARGS_LIMIT)
+        return f"→ {name}({args})" if args else f"→ {name}"
     if msg.kind == "tool_call_completed":
-        return f"✓ {name}"
+        result = _preview_tool_content(meta.get("result"), _TOOL_RESULT_LIMIT)
+        return f"✓ {name} → {result}" if result else f"✓ {name}"
     # tool_call_failed
-    err = ""
-    if isinstance(msg.meta, dict):
-        em = msg.meta.get("error_message")
-        if isinstance(em, str) and em:
-            err = f": {em}"
+    em = meta.get("error_message")
+    err = f": {em}" if isinstance(em, str) and em else ""
     return f"✗ {name}{err}"
 
 

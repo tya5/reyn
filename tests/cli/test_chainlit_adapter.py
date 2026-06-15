@@ -118,18 +118,52 @@ def test_tool_call_started_renders_arrow_prefix():
     assert payload.message_type == MSG_TYPE_SYSTEM
 
 
-def test_tool_call_completed_renders_check_prefix():
-    """Tier 1: ``tool_call_completed`` → ``✓ <name>``."""
+def test_tool_call_completed_renders_result_preview():
+    """Tier 1: #1642 — ``tool_call_completed`` renders the result preview inline:
+    ``✓ <name> → <result>`` (from meta["result"]); bare ``✓ <name>`` when absent."""
     msg = OutboxMessage(
         kind="tool_call_completed",
         text="shell__run",
-        meta={"tool": "shell__run", "op_id": "h2", "result": "..."},
+        meta={"tool": "shell__run", "op_id": "h2", "result": "exit 0"},
     )
     payload = outbox_to_chainlit(msg)
     assert payload is not None
     assert payload.author == "🔧 tool"
-    assert payload.content == "✓ shell__run"
+    assert payload.content == "✓ shell__run → exit 0"
     assert payload.message_type == MSG_TYPE_SYSTEM
+
+    # No result in meta → bare name (fallback).
+    bare = OutboxMessage(kind="tool_call_completed", text="t", meta={"tool": "t"})
+    assert outbox_to_chainlit(bare).content == "✓ t"
+
+
+def test_tool_call_started_renders_args_inline():
+    """Tier 1: #1642 — ``tool_call_started`` renders args inline: ``→ <name>(k=v, …)``
+    (from meta["args"]); bare ``→ <name>`` when args absent/empty."""
+    with_args = OutboxMessage(
+        kind="tool_call_started",
+        text="file__read",
+        meta={"tool": "file__read", "args": {"path": "notes.txt"}},
+    )
+    assert outbox_to_chainlit(with_args).content == "→ file__read(path=notes.txt)"
+
+    empty_args = OutboxMessage(
+        kind="tool_call_started", text="x", meta={"tool": "x", "args": {}},
+    )
+    assert outbox_to_chainlit(empty_args).content == "→ x"
+
+
+def test_tool_call_content_is_truncated():
+    """Tier 1: #1642 — a large arg/result preview is truncated (the inline row is
+    length-bounded; full content is out of scope). Behavior-pinned: truncation marker
+    present + the full result is NOT inlined — no exact-length assertion."""
+    full = "A" * 1000
+    big = OutboxMessage(
+        kind="tool_call_completed", text="x", meta={"tool": "x", "result": full},
+    )
+    content = outbox_to_chainlit(big).content
+    assert content.endswith("…")   # truncation marker (the documented behavior)
+    assert full not in content     # the full result is NOT inlined (bounded)
 
 
 def test_tool_call_failed_renders_x_with_error_message():
