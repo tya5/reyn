@@ -27,6 +27,16 @@ from reyn.llm.builtin_models import BUILTIN_MODELS
 #: The three standard model tiers. Users should map these in reyn.yaml.
 STANDARD_CLASSES = ("light", "standard", "strong")
 
+#: #1650: valid values for the per-model ``reasoning_effort`` field. These are
+#: litellm's accepted reasoning-effort levels for the gemini provider, each of
+#: which maps to a native thinking budget (low→1024, medium→2048, high→4096,
+#: minimal→model-specific, disable/none→0; verified live against litellm 1.84.0
+#: gemini/gemini-2.5-flash-lite). Validated at config-load (fail-fast) so a typo
+#: surfaces at startup instead of raising mid-call inside litellm.
+VALID_REASONING_EFFORTS: frozenset = frozenset(
+    {"minimal", "low", "medium", "high", "disable", "none"}
+)
+
 
 @dataclass(frozen=True)
 class ModelSpec:
@@ -41,6 +51,40 @@ class ModelSpec:
 
     model: str
     kwargs: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # #1650: validate the operator-declared ``reasoning_effort`` at
+        # config-load (fail-fast) rather than letting an invalid value reach
+        # litellm and raise mid-call. The value itself rides the existing
+        # ``kwargs`` passthrough to litellm.acompletion (call_llm:1155 /
+        # call_llm_tools:1359), which maps it to the provider's native thinking
+        # budget — we only gate the value set + the conflicting-config combo.
+        # Placed here (not in from_config) so BOTH the plain-dict path and the
+        # extends-merge path (which build ModelSpec directly) are covered
+        # by-construction — single validation site, no parallel drift.
+        effort = self.kwargs.get("reasoning_effort")
+        if effort is None:
+            return
+        if not isinstance(effort, str) or effort not in VALID_REASONING_EFFORTS:
+            raise ValueError(
+                f"models reasoning_effort must be one of "
+                f"{sorted(VALID_REASONING_EFFORTS)}, got {effort!r} "
+                f"(model={self.model!r})"
+            )
+        # Both-set reject: reasoning_effort already maps to a native thinking
+        # budget, so a hand-set extra_body thinking config is a contradictory
+        # second control (litellm raises UnsupportedParamsError on a
+        # thinking_level+budget conflict). Reject at load so the operator picks
+        # exactly one.
+        extra_body = self.kwargs.get("extra_body")
+        if isinstance(extra_body, dict) and (
+            "thinking_config" in extra_body or "thinkingConfig" in extra_body
+        ):
+            raise ValueError(
+                f"models cannot set both reasoning_effort and an extra_body "
+                f"thinking config (model={self.model!r}); reasoning_effort "
+                f"already maps to the native thinking budget — set only one."
+            )
 
     @classmethod
     def from_config(cls, value: object) -> "ModelSpec":

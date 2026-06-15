@@ -117,12 +117,34 @@ models:
 | `max_tokens` | いいえ | レガシーのソフトヒント — 多くのプロバイダーが無視する。`max_completion_tokens` を推奨。 |
 | `top_p` | いいえ | litellm に渡す top-p サンプリング。 |
 | `extra_body` | いいえ | プロバイダー固有のペイロード（例：推論モデルの `thinking`）。 |
+| `reasoning_effort` | いいえ | モデルの推論バジェット: `minimal` / `low` / `medium` / `high` / `disable` / `none`。**ロード時にバリデーション**（下記参照）。 |
 | `extends` | いいえ | 名前付きクラスから継承し、オーバーライドを deep merge（下記参照）。 |
 | *（その他のフィールド）* | いいえ | litellm にそのまま渡されます（パススルーポリシー）。 |
 
 > **コスト制限**: `max_tokens` ではなく `max_completion_tokens` を使用してください。`max_tokens` は多くのプロバイダーが無視するレガシーのソフトヒントです。`max_completion_tokens` は API レベルで強制されます（OpenAI o1+ および Anthropic モデル）。
 
-**フィールドポリシー**: `model` のみ必須です。他のフィールドはすべてバリデーションなしで `litellm.acompletion` に直接渡されます（未知のフィールドも silent に転送されます — future-proof）。タイポは reyn エラーではなく silent な litellm 失敗を引き起こします。
+**フィールドポリシー**: `model` のみ必須です。ほとんどのフィールドはバリデーションなしで `litellm.acompletion` に直接渡されます（未知のフィールドも silent に転送されます — future-proof）。タイポは reyn エラーではなく silent な litellm 失敗を引き起こします。唯一の例外は `reasoning_effort` で、ロード時にバリデーションされます（下記）。
+
+### `reasoning_effort`（モデルごとの推論バジェット）
+
+モデルが回答前にどれだけ「思考」するかを設定します。分かりやすさのためモデル定義ごとに宣言します:
+
+```yaml
+models:
+  light:
+    model: gemini-flash-lite
+    reasoning_effort: low      # minimal | low | medium | high | disable | none
+```
+
+- **有効な値**: `minimal`, `low`, `medium`, `high`, `disable`, `none`。無効な値は litellm の呼び出し中ではなく**コンフィグロード時に fail-fast**（不正値を示す明確な `ValueError`）。
+- **ネイティブマッピング**: 値は litellm にネイティブに渡され、プロバイダー自身の推論バジェットにマッピングされます。Gemini（例: `gemini-2.5-flash-lite`）では: `low` → thinking budget 1024、`medium` → 2048、`high` → 4096、`minimal` → モデル固有（flash-lite は 512）、`disable` / `none` → 0。手書きの `extra_body` は不要です。
+- **`extra_body` の thinking 設定とは排他**: `reasoning_effort` *が* thinking-budget の制御なので、同一モデルに `reasoning_effort` と `extra_body` の thinking 設定の両方を宣言すると**ロード時に reject**されます（どちらか一方を選択）。
+
+> **既知の挙動 — 推論テキストは表示されません。** 非ゼロの `reasoning_effort` はプロバイダーの `includeThoughts=true` を設定するため、レスポンスに推論／思考テキストが含まれます。reyn は現在、推論 vs 出力の**トークン数**の内訳のみを記録し、推論テキスト自体は捕捉・表示しません。したがって `reasoning_effort` を有効にすると、思考を表示せずに推論トークンのコストが発生します。
+
+> **既知の挙動 — tool-use パスで thinking が再有効化されます。** reyn は thinking を強制 off にせず、プロバイダーのデフォルト（Gemini 2.5 は off）に従います。`reasoning_effort` を設定すると thinking が on になり、Gemini で以前 parallel-tools + thinking の相互作用があったマルチターン tool-use パス（Gemini #17949）でも有効になります。tool-heavy なエージェントで有効化する場合はモデルの挙動を検証してください。
+
+> **プロキシ経由（openai 互換）での透過**: litellm プロキシ経由でルーティングする場合、reyn は `reasoning_effort` を `allowed_openai_params` でホワイトリスト化し、プロキシに転送します（プロキシがプロバイダーのネイティブ thinking budget にマッピング）。追加設定は不要です。
 
 **Skill / Phase 側オーバーライド**: サポートしていません。Operator config（`reyn.yaml`）が LLM パラメータの唯一の source of truth です。Skill 作者はクラス名のみを指定します（例：`model_class: strong`）。
 
