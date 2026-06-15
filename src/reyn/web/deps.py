@@ -321,6 +321,7 @@ def _get_registry():
                 project_context=project_context,
                 agent_role=profile.role,
                 compaction_config=config.chat.compaction,
+                reasoning_config=config.chat.reasoning,  # #1652
                 registry=registry,
                 allowed_skills=profile.allowed_skills,
                 events_config=config.events,
