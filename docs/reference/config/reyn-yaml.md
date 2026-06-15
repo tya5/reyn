@@ -120,6 +120,7 @@ models:
 | `max_tokens` | no | Legacy soft hint — ignored by many providers. Prefer `max_completion_tokens`. |
 | `top_p` | no | Top-p sampling passed to litellm. |
 | `extra_body` | no | Provider-specific payload (e.g. `thinking` for reasoning models). |
+| `reasoning_effort` | no | Reasoning budget for the model: `minimal` / `low` / `medium` / `high` / `disable` / `none`. **Validated at load** (see below). |
 | `extends` | no | Inherit from a named class and deep-merge overrides (see below). |
 | *(any other field)* | no | Silently passed through to litellm (passthrough policy). |
 
@@ -127,7 +128,48 @@ models:
 > soft hint that many providers ignore; it has no enforcement power on OpenAI o1+ or
 > Anthropic models.  `max_completion_tokens` is enforced at the API level.
 
-**Field policy**: `model` is the only required field. All other fields are passed directly to `litellm.acompletion` without validation — unknown fields are silently forwarded (future-proof). Typos cause silent litellm failures, not reyn errors.
+**Field policy**: `model` is the only required field. Most other fields are passed directly to `litellm.acompletion` without validation — unknown fields are silently forwarded (future-proof); typos cause silent litellm failures, not reyn errors. The one exception is `reasoning_effort`, which is validated at load (below).
+
+### `reasoning_effort` (per-model reasoning budget)
+
+Set how much the model is allowed to "think" before answering. Declared per model
+definition so it's explicit and easy to understand:
+
+```yaml
+models:
+  light:
+    model: gemini-flash-lite
+    reasoning_effort: low      # minimal | low | medium | high | disable | none
+```
+
+- **Valid values**: `minimal`, `low`, `medium`, `high`, `disable`, `none`. An invalid
+  value **fails fast at config load** (a clear `ValueError` naming the bad value), not
+  mid-call inside litellm.
+- **Native mapping**: the value is passed through natively to litellm, which maps it to
+  the provider's own reasoning budget. For Gemini (e.g. `gemini-2.5-flash-lite`):
+  `low` → thinking budget 1024, `medium` → 2048, `high` → 4096, `minimal` →
+  model-specific (512 for flash-lite), `disable` / `none` → 0. No hand-rolled
+  `extra_body` needed.
+- **Mutually exclusive with an `extra_body` thinking config**: `reasoning_effort` *is* the
+  thinking-budget control, so declaring both `reasoning_effort` and an `extra_body`
+  thinking config on the same model is **rejected at load** (pick one).
+
+> **Known behavior — reasoning text is not surfaced.** A non-zero `reasoning_effort`
+> sets the provider's `includeThoughts=true`, so the response carries reasoning/thought
+> text. Reyn currently records only the reasoning-vs-output **token-count** split — it
+> does **not** capture or display the reasoning text itself. Enabling `reasoning_effort`
+> therefore costs reasoning tokens without surfacing the thoughts.
+
+> **Known behavior — re-enables thinking on the tool-use path.** Reyn does not force
+> thinking off; it relies on the provider default (off for Gemini 2.5). Setting
+> `reasoning_effort` turns thinking on, including on the multi-turn tool-use path where
+> Gemini previously had a parallel-tools + thinking interaction (Gemini #17949). Verify
+> behavior on your model if you enable it for a tool-heavy agent.
+
+> **Proxy passthrough (openai-compat).** When routing through a litellm proxy, reyn
+> whitelists `reasoning_effort` via `allowed_openai_params` so it is forwarded to the
+> proxy (which maps it to the provider's native thinking budget) instead of being
+> rejected as an unsupported OpenAI param. No extra configuration needed.
 
 **Skill / phase override**: NOT supported. Operator config (`reyn.yaml`) is the single source of truth for LLM parameters. Skill authors specify class names only (e.g. `model_class: strong`).
 

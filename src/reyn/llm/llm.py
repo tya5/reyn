@@ -901,6 +901,21 @@ async def recorded_acompletion(
     base_kwargs = dict(extra_kwargs or {})
     base_kwargs.update(extra)  # Reyn proxy kwargs win over caller-supplied ones
 
+    # #1650: when an operator sets ``reasoning_effort`` on a model, the proxy
+    # path forces ``custom_llm_provider=openai`` (proxy_kwargs), under which
+    # litellm validates params against OpenAI and REJECTS ``reasoning_effort``
+    # as unsupported for a gemini model name BEFORE forwarding to the proxy
+    # (UnsupportedParamsError). Whitelisting it via ``allowed_openai_params``
+    # makes litellm forward it to the proxy, which maps it to the provider's
+    # native thinking budget. Verified live (#1650 proxy smoke: reasoning_tokens
+    # 0 → ~420). Harmless on the direct path where reasoning_effort is already
+    # a native gemini param. Single chokepoint = covers call_llm + call_llm_tools.
+    if "reasoning_effort" in base_kwargs:
+        _allowed = list(base_kwargs.get("allowed_openai_params") or [])
+        if "reasoning_effort" not in _allowed:
+            _allowed.append("reasoning_effort")
+        base_kwargs["allowed_openai_params"] = _allowed
+
     async def _once(rf: dict | None) -> object:
         call_kwargs = dict(base_kwargs)
         if rf is not None:
