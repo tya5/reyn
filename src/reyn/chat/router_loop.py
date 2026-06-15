@@ -2709,6 +2709,10 @@ class RouterLoop:
                 ),
                 detail=f"chain_id={self.chain_id}",
                 extension_amount=float(self.max_iterations),
+                # #1649: non-TTY/run-once → handle_limit_exceeded falls back to
+                # bounded auto-extend instead of a silent refuse (the agent
+                # completes instead of an empty exit-0 stop).
+                non_interactive=self._non_interactive,
             )
             if _dec.allow_continue:
                 self.max_iterations += int(_dec.extension)

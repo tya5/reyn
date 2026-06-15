@@ -99,6 +99,32 @@ def _yes_no_choices() -> list[InterventionChoice]:
     ]
 
 
+def _bounded_auto_extend(
+    *,
+    on_limit: OnLimitConfig,
+    run_id: str,
+    kind: str,
+    extension_amount: float,
+    exhausted_reason: str,
+) -> LimitDecision:
+    """Per-(run_id, kind) bounded auto-extend: grant up to
+    ``on_limit.auto_extend_times`` extensions, then refuse with
+    ``exhausted_reason``. Shared by ``auto_extend`` mode and the
+    interactive-but-no-TTY fallback (#1649)."""
+    key = (run_id, kind)
+    used = _auto_extend_used.get(key, 0)
+    if used < on_limit.auto_extend_times:
+        _auto_extend_used[key] = used + 1
+        _logger.info(
+            "safety.limit auto-extended (kind=%s run=%s used=%d/%d via=%s)",
+            kind, run_id, used + 1, on_limit.auto_extend_times, exhausted_reason,
+        )
+        return LimitDecision(
+            allow_continue=True, extension=extension_amount, reason="auto_extended",
+        )
+    return LimitDecision(allow_continue=False, extension=0.0, reason=exhausted_reason)
+
+
 async def handle_limit_exceeded(
     *,
     bus: Optional[RequestBus],
@@ -109,6 +135,7 @@ async def handle_limit_exceeded(
     detail: str = "",
     extension_amount: float = 1.0,
     skill_name: str | None = None,
+    non_interactive: bool = False,
 ) -> LimitDecision:
     """Generic safety-limit checkpoint dispatcher (FP-0005).
 
@@ -151,25 +178,27 @@ async def handle_limit_exceeded(
         )
 
     if on_limit.mode == "auto_extend":
-        key = (run_id, kind)
-        used = _auto_extend_used.get(key, 0)
-        if used < on_limit.auto_extend_times:
-            _auto_extend_used[key] = used + 1
-            _logger.info(
-                "safety.limit auto-extended (kind=%s run=%s used=%d/%d)",
-                kind, run_id, used + 1, on_limit.auto_extend_times,
-            )
-            return LimitDecision(
-                allow_continue=True,
-                extension=extension_amount,
-                reason="auto_extended",
-            )
-        # Auto-extend budget exhausted — fall through to abort.
-        return LimitDecision(
-            allow_continue=False, extension=0.0, reason="unattended",
+        return _bounded_auto_extend(
+            on_limit=on_limit, run_id=run_id, kind=kind,
+            extension_amount=extension_amount, exhausted_reason="unattended",
         )
 
     # interactive
+    if non_interactive:
+        # #1649: mode=interactive but this run CANNOT ask the user (non-TTY /
+        # run-once / piped — isatty()=False, threaded from the session's
+        # non_interactive flag). The operator chose interactive = "continue
+        # when asked"; with no way to ask, the intent-preserving behaviour is a
+        # BOUNDED auto-extend (the agent makes progress + completes) rather than
+        # a SILENT refuse that a wrapper sees as an empty exit-0 stop (the
+        # owner's "auto-deny"). When the bounded extensions are exhausted the
+        # caller emits a loud decision-enabling abort + non-zero exit — never
+        # silent. The interactive TTY path (non_interactive=False) is untouched.
+        return _bounded_auto_extend(
+            on_limit=on_limit, run_id=run_id, kind=kind,
+            extension_amount=extension_amount,
+            exhausted_reason="interactive_no_tty_exhausted",
+        )
     if bus is None:
         # No bus → no way to ask. Behave as unattended so headless
         # callers (= dispatch_tool / scripted runs) abort silently

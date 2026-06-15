@@ -164,6 +164,47 @@ async def test_interactive_no_bus_returns_no_bus_reason() -> None:
 
 
 @pytest.mark.asyncio
+async def test_interactive_non_tty_falls_back_to_bounded_auto_extend() -> None:
+    """Tier 2: #1649 — mode=interactive but ``non_interactive=True`` (non-TTY /
+    run-once, can't ask) → BOUNDED auto-extend instead of a SILENT refuse. The
+    operator chose interactive ("continue when asked"); with no TTY the
+    intent-preserving behaviour is to extend (make progress + complete), then
+    abort LOUDLY (a distinct reason) when the bounded budget is exhausted —
+    never a silent exit-0 stop (the owner's "auto-deny")."""
+    reset_run_extensions("run-NTTY")
+    cfg = OnLimitConfig(mode="interactive", auto_extend_times=1)
+    # bus is irrelevant (never asked) — pass None to prove we don't try to ask.
+    d1 = await handle_limit_exceeded(
+        bus=None, on_limit=cfg, kind="max_iterations", run_id="run-NTTY",
+        prompt="?", extension_amount=5.0, non_interactive=True,
+    )
+    assert d1.allow_continue is True
+    assert d1.extension == 5.0
+    assert d1.reason == "auto_extended"
+    # exhausted → loud, distinct reason (NOT silent "no_bus"/"unattended")
+    d2 = await handle_limit_exceeded(
+        bus=None, on_limit=cfg, kind="max_iterations", run_id="run-NTTY",
+        prompt="?", extension_amount=5.0, non_interactive=True,
+    )
+    assert d2.allow_continue is False
+    assert d2.reason == "interactive_no_tty_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_interactive_tty_path_unchanged_by_non_interactive_default() -> None:
+    """Tier 2: #1649 regression guard — the interactive TTY path
+    (non_interactive defaults False) is UNTOUCHED: a real bus is still asked,
+    and bus=None still returns no_bus (not the auto-extend fallback)."""
+    bus = _FakeBus(answer_choice="yes")
+    d = await handle_limit_exceeded(
+        bus=bus, on_limit=OnLimitConfig(mode="interactive"),
+        kind="max_iterations", run_id="run-TTY", prompt="?", extension_amount=3.0,
+    )
+    assert d.allow_continue is True and d.reason == "user_approved"
+    assert bus.dispatched, "TTY path must still ASK the user (no auto-extend shortcut)"
+
+
+@pytest.mark.asyncio
 async def test_interactive_ask_timeout_returns_refusal() -> None:
     """Tier 2: when ``ask_timeout_seconds`` elapses without a reply
     the helper returns ``ask_timeout``. The hung bus is cancelled by
