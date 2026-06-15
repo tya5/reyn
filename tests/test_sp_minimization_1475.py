@@ -1,5 +1,10 @@
 """Tier 2: #1475 — SP minimization: backtick convention + Behaviour dedup.
 
+#1627 Stage 4: ``build_system_prompt`` is now a pure slot-injector. The
+``universal_wrappers_enabled``, ``discovery_mandate``, and ``search_actions_enabled``
+parameters have been REMOVED. Tests now call ``build_universal_tool_use_slots``
+and pass the result as ``tool_use_sp``.
+
 Pins:
 
 1. Backtick convention: action qualified names and tool names in the SP
@@ -15,25 +20,32 @@ Pins:
 3. N=0 smoke residual: discovery_mandate `_otherwise` branch no longer says
    "hot-list subset" (false when N=0) — says "universal wrappers" instead.
 
-No mocks. Tests call build_system_prompt with real arguments.
+No mocks. Tests call build_system_prompt + build_universal_tool_use_slots with
+real arguments.
 """
 from __future__ import annotations
 
 from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 
 def _sp(*, universal_wrappers_enabled: bool = True,
         discovery_mandate: bool = False,
         search_actions_enabled: bool = False) -> str:
+    slots = build_universal_tool_use_slots(
+        universal_wrappers_enabled=universal_wrappers_enabled,
+        search_actions_enabled=search_actions_enabled,
+        discovery_mandate=discovery_mandate,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
     return build_system_prompt(
         agent_name="test",
         agent_role="tester",
         available_skills=[],
         available_agents=[],
         memory_index={},
-        universal_wrappers_enabled=universal_wrappers_enabled,
-        search_actions_enabled=search_actions_enabled,
-        discovery_mandate=discovery_mandate,
+        tool_use_sp=slots,
     )
 
 

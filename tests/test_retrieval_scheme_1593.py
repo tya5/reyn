@@ -125,7 +125,8 @@ async def test_initial_presentation_supplies_search_sp_fragment(tmp_path) -> Non
     search_actions guidance even when the OS's named-gate block is off."""
     ops = _FakeOps()
     pres = await RetrievalScheme().build_presentation({}, {}, ops)
-    assert pres.sp_params["universal_wrappers_enabled"] is False   # named-gate SP off
+    # #1627 Stage 4: sp_params removed from build_presentation.
+    assert pres.sp_params == {}                                      # no longer populated
     assert isinstance(pres.tool_use_sp, dict)                      # scheme owns SP via slot-map
     slot = pres.tool_use_sp.get("slot_post_catalog", "")
     assert slot                                                     # scheme supplies its own

@@ -1,9 +1,29 @@
-"""Tests for the PR35 router system prompt builder."""
+"""Tests for the PR35 router system prompt builder.
+
+#1627 Stage 4: ``build_system_prompt`` is a pure slot-injector. Tests that
+need tool-use SP content (Capabilities routing guide, ROUTING RULE, etc.) must
+pass a ``tool_use_sp`` slot-map explicitly — the default (None) yields a bare
+OS frame with no tool-use SP.
+"""
 from __future__ import annotations
 
 import pytest
 
 from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
+
+
+def _default_slots() -> "dict[str, str]":
+    """Default universal slot-map (wrappers off, search on) — mirrors the legacy
+    tool_use_sp=None path that previously called build_universal_tool_use_slots
+    with all defaults."""
+    return build_universal_tool_use_slots(
+        universal_wrappers_enabled=False,
+        search_actions_enabled=True,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,13 +52,17 @@ _EMPTY_MEMORY: dict = {"status": "not_found", "content": ""}
 
 class TestEmptyStateRenders:
     def test_empty_state_renders(self):
-        """Tier 2: build_system_prompt returns a non-empty string with required sections."""
+        """Tier 2: build_system_prompt returns a non-empty string with required sections.
+
+        #1627 Stage 4: tool_use_sp must be supplied for Capabilities content.
+        """
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="general assistant",
             available_skills=[],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
+            tool_use_sp=_default_slots(),
         )
         assert isinstance(prompt, str)
         assert len(prompt) > 0
@@ -260,8 +284,9 @@ class TestIntentAxisDynamic:
 
         Phase 6 cleanup: intent-axis row format removed; routing intent
         encoded in Behaviour section via invoke_action vocabulary.
+        #1627 Stage 4: tool_use_sp slot-map required for routing content.
         """
-        prompt = _base_prompt()
+        prompt = _base_prompt(tool_use_sp=_default_slots())
         assert "ROUTING RULE (ABSOLUTE)" in prompt
         assert "invoke_action" in prompt
         assert "NO clarifying questions" in prompt
@@ -283,13 +308,16 @@ class TestBehaviourRulesAfterF3F9Fix:
     def test_reply_directly_restricted_to_chitchat(self):
         """Tier 2: 'Reply directly' rule restricted — only conversation (chitchat).
         Domain tasks must go to invoke_action. Canonical location: Capabilities
-        routing guide (#1475: Policy 1 removed from Behaviour, single canonical)."""
+        routing guide (#1475: Policy 1 removed from Behaviour, single canonical).
+        #1627 Stage 4: tool_use_sp slot-map required for Capabilities content.
+        """
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="",
             available_skills=[],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
+            tool_use_sp=_default_slots(),
         )
         # Conversation → reply directly (canonical in Capabilities routing guide)
         assert "Conversation" in prompt
@@ -299,6 +327,7 @@ class TestBehaviourRulesAfterF3F9Fix:
     def test_v3_absolute_routing_rule_present(self):
         """Tier 2: B13-R3 V3 wording — ABSOLUTE routing rule block is present
         in the Behaviour section with the required components.
+        #1627 Stage 4: tool_use_sp slot-map required for ROUTING RULE content.
         """
         prompt = build_system_prompt(
             agent_name="chat",
@@ -306,6 +335,7 @@ class TestBehaviourRulesAfterF3F9Fix:
             available_skills=[_make_skill("skill_improver", "general")],
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
+            tool_use_sp=_default_slots(),
         )
         # ABSOLUTE rule framing must be present
         assert "ROUTING RULE (ABSOLUTE)" in prompt

@@ -17,6 +17,17 @@ from __future__ import annotations
 
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.router_tools import build_tools
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
+
+
+def _default_slots() -> "dict[str, str]":
+    return build_universal_tool_use_slots(
+        universal_wrappers_enabled=False,
+        search_actions_enabled=True,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -200,6 +211,7 @@ def test_system_prompt_uses_invoke_action_routing():
     Phase 6 cleanup: ## Skills section removed from SP. Discovery goes through
     list_actions(category=['skill']) at runtime via the universal catalog.
     SP uses invoke_action routing vocabulary.
+    #1627 Stage 4: tool_use_sp slot-map required for invoke_action content.
     """
     prompt = build_system_prompt(
         agent_name="chat",
@@ -207,6 +219,7 @@ def test_system_prompt_uses_invoke_action_routing():
         available_skills=_SKILLS,
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
+        tool_use_sp=_default_slots(),
     )
     # Wrapper-only path: no ## Skills section
     assert "## Skills" not in prompt
@@ -221,6 +234,7 @@ def test_system_prompt_no_skills_no_skills_section():
 
     Phase 6 cleanup: ## Skills section removed. SP is O(1) regardless of
     skill count — skills are not enumerated or section-counted in the SP.
+    #1627 Stage 4: tool_use_sp slot-map required for Capabilities content.
     """
     prompt = build_system_prompt(
         agent_name="chat",
@@ -228,6 +242,7 @@ def test_system_prompt_no_skills_no_skills_section():
         available_skills=[],
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
+        tool_use_sp=_default_slots(),
     )
     assert "## Skills" not in prompt
     # Basic SP structure still present

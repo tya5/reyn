@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import dataclasses
 
-from reyn.chat.router_system_prompt import build_universal_tool_use_slots
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -40,6 +39,7 @@ from reyn.tools.scheme import (
     register_scheme,
 )
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 
 class UniversalCategoryScheme:
@@ -71,7 +71,7 @@ class UniversalCategoryScheme:
         #   non_interactive            = layer_ctx["non_interactive"]
         univ: bool = bool(layer_ctx.get("univ_enabled", False))
         sv: bool = bool(layer_ctx.get("search_visible", True))
-        sa: bool = sv if univ else True  # mirrors ops.present's sp_params formula
+        sa: bool = sv if univ else True  # same formula as the prior sp_params["search_actions_enabled"]
         dm: bool = tier_wants_discovery_mandate(layer_ctx.get("router_model"))
         hl: bool = bool((available or {}).get("hot_list_aliases"))
         ni: bool = bool(layer_ctx.get("non_interactive", False))
@@ -83,7 +83,8 @@ class UniversalCategoryScheme:
             has_hot_list_aliases=hl,
             non_interactive=ni,
         )
-        # Keep sp_params AS-IS (Stage 4 removes it; harmless now).
+        # #1627 Stage 4: sp_params removed from build_presentation (build_system_prompt
+        # no longer reads it). tool_use_sp is now the sole SP channel.
         return dataclasses.replace(pres, tool_use_sp=slots)
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:

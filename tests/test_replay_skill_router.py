@@ -29,6 +29,18 @@ from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.router_tools import build_tools
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
+
+
+def _default_slots() -> "dict[str, str]":
+    """Default universal slot-map for tests that need tool-use content in the SP."""
+    return build_universal_tool_use_slots(
+        universal_wrappers_enabled=False,
+        search_actions_enabled=True,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -557,6 +569,7 @@ async def test_validator_anchor_unchanged():
         memory_index=host.get_memory_index(),
         file_permissions=host.get_file_permissions(),
         mcp_servers=host.get_mcp_servers(),
+        tool_use_sp=_default_slots(),
     )
 
     # Wrapper-only SP: no per-category skill enumeration; phantom must not appear
@@ -580,6 +593,7 @@ async def test_validator_anchor_unchanged():
         memory_index=host_no_skills.get_memory_index(),
         file_permissions=None,
         mcp_servers=None,
+        tool_use_sp=_default_slots(),
     )
     assert "invoke_action" in prompt_empty, (
         "Empty skill list: invoke_action routing must still be in SP"

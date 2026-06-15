@@ -21,6 +21,17 @@ import asyncio
 import pytest
 
 from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
+
+
+def _default_slots() -> "dict[str, str]":
+    return build_universal_tool_use_slots(
+        universal_wrappers_enabled=False,
+        search_actions_enabled=True,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
 from reyn.chat.router_tools import MCP_SEARCH_THRESHOLD, build_tools
 from reyn.tools import get_default_registry
 from reyn.tools.mcp import (
@@ -424,6 +435,7 @@ def test_system_prompt_mcp_section_absent_when_no_tool_list():
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
         mcp_servers=_MCP_SERVERS_NO_TOOLS,
+        tool_use_sp=_default_slots(),
     )
     assert "## MCP servers" not in prompt, (
         "SP must not contain ## MCP servers section in wrapper-only path"

@@ -54,22 +54,36 @@ Pins:
 from __future__ import annotations
 
 from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 from reyn.tools.universal_catalog import _LIST_ACTIONS_DESCRIPTION
+
+
+def _slots(*, has_hot_list_aliases: bool, universal_wrappers_enabled: bool = True) -> "dict[str, str]":
+    """Build slot-map for catalog-partial signal tests."""
+    return build_universal_tool_use_slots(
+        universal_wrappers_enabled=universal_wrappers_enabled,
+        search_actions_enabled=False,
+        discovery_mandate=False,
+        has_hot_list_aliases=has_hot_list_aliases,
+        non_interactive=False,
+    )
+
 
 # ── A: SP partial-signal ─────────────────────────────────────────────
 
 
 def test_sp_catalog_partial_signal_present_when_wrappers_enabled() -> None:
     """Tier 2: when universal wrappers are enabled with hot-list aliases
-    (has_hot_list_aliases=True), the SP includes the HOT-LIST subset signal."""
+    (has_hot_list_aliases=True), the SP includes the HOT-LIST subset signal.
+    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
+    """
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
         available_skills=[],
         available_agents=[],
         memory_index={},
-        universal_wrappers_enabled=True,
-        has_hot_list_aliases=True,
+        tool_use_sp=_slots(has_hot_list_aliases=True),
     )
     assert "HOT-LIST" in sp
     assert "subset" in sp
@@ -79,17 +93,16 @@ def test_sp_catalog_partial_signal_present_when_wrappers_enabled() -> None:
 
 def test_sp_no_aliases_branch_omits_hot_list_paragraph() -> None:
     """Tier 2: when has_hot_list_aliases=False (new default N=0), the
-    HOT-LIST paragraph is completely absent — no subset claim, no
-    replacement text. Owner decision: nothing to qualify when no aliases
-    exist."""
+    HOT-LIST paragraph is completely absent.
+    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
+    """
     sp = build_system_prompt(
         agent_name="test",
         agent_role="tester",
         available_skills=[],
         available_agents=[],
         memory_index={},
-        universal_wrappers_enabled=True,
-        has_hot_list_aliases=False,
+        tool_use_sp=_slots(has_hot_list_aliases=False),
     )
     assert "HOT-LIST" not in sp
     assert "No actions are pre-loaded" not in sp
@@ -99,16 +112,18 @@ def test_sp_no_aliases_branch_omits_hot_list_paragraph() -> None:
 def test_sp_two_branches_are_distinct() -> None:
     """Tier 2: the aliases-present and aliases-absent branches produce
     different SP text — regression pin against the conditional being
-    silently stripped."""
+    silently stripped.
+    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
+    """
     sp_with = build_system_prompt(
         agent_name="test", agent_role="tester",
         available_skills=[], available_agents=[], memory_index={},
-        universal_wrappers_enabled=True, has_hot_list_aliases=True,
+        tool_use_sp=_slots(has_hot_list_aliases=True),
     )
     sp_without = build_system_prompt(
         agent_name="test", agent_role="tester",
         available_skills=[], available_agents=[], memory_index={},
-        universal_wrappers_enabled=True, has_hot_list_aliases=False,
+        tool_use_sp=_slots(has_hot_list_aliases=False),
     )
     assert sp_with != sp_without
     assert "HOT-LIST" in sp_with and "HOT-LIST" not in sp_without
@@ -116,8 +131,8 @@ def test_sp_two_branches_are_distinct() -> None:
 
 def test_sp_partial_signal_appears_after_action_categories() -> None:
     """Tier 2: position pin — the HOT-LIST signal (aliases branch) lives right
-    after the category enumeration so the LLM reads it as a concluding rule
-    for the catalog section, not a buried hint.
+    after the category enumeration.
+    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
     """
     sp = build_system_prompt(
         agent_name="test",
@@ -125,8 +140,7 @@ def test_sp_partial_signal_appears_after_action_categories() -> None:
         available_skills=[],
         available_agents=[],
         memory_index={},
-        universal_wrappers_enabled=True,
-        has_hot_list_aliases=True,
+        tool_use_sp=_slots(has_hot_list_aliases=True),
     )
     cat_pos = sp.find("## Action categories")
     sig_pos = sp.find("HOT-LIST")
@@ -134,34 +148,13 @@ def test_sp_partial_signal_appears_after_action_categories() -> None:
     assert cat_pos >= 0
     assert sig_pos >= 0
     assert behav_pos >= 0
-    # The signal must sit between the category section header and the
-    # next major section (= Behaviour).
     assert cat_pos < sig_pos < behav_pos
 
 
 def test_sp_no_aliases_action_categories_section_still_present() -> None:
     """Tier 2: when has_hot_list_aliases=False, ## Action categories section
-    is still rendered (only the HOT-LIST paragraph is absent, not the whole
-    section). The category list remains for context."""
-    sp = build_system_prompt(
-        agent_name="test",
-        agent_role="tester",
-        available_skills=[],
-        available_agents=[],
-        memory_index={},
-        universal_wrappers_enabled=True,
-        has_hot_list_aliases=False,
-    )
-    assert "## Action categories" in sp
-    assert "list_actions" in sp  # the section header still references it
-
-
-def test_sp_partial_signal_absent_when_wrappers_disabled() -> None:
-    """Tier 2: the signal only applies to the universal-wrappers SP
-    path (= the path that exposes list_actions). When wrappers are
-    off, the legacy SP doesn't reference list_actions, so the partial
-    signal would be inert — omit to keep the legacy byte content
-    stable for LLMReplay fixtures.
+    is still rendered (only the HOT-LIST paragraph is absent).
+    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
     """
     sp = build_system_prompt(
         agent_name="test",
@@ -169,7 +162,24 @@ def test_sp_partial_signal_absent_when_wrappers_disabled() -> None:
         available_skills=[],
         available_agents=[],
         memory_index={},
-        universal_wrappers_enabled=False,
+        tool_use_sp=_slots(has_hot_list_aliases=False),
+    )
+    assert "## Action categories" in sp
+    assert "list_actions" in sp
+
+
+def test_sp_partial_signal_absent_when_wrappers_disabled() -> None:
+    """Tier 2: the signal only applies to the universal-wrappers SP path.
+    When wrappers are off, no HOT-LIST paragraph.
+    #1627 Stage 4: slot-map via build_universal_tool_use_slots (wrappers=False).
+    """
+    sp = build_system_prompt(
+        agent_name="test",
+        agent_role="tester",
+        available_skills=[],
+        available_agents=[],
+        memory_index={},
+        tool_use_sp=_slots(has_hot_list_aliases=False, universal_wrappers_enabled=False),
     )
     assert "HOT-LIST" not in sp
 
@@ -177,7 +187,7 @@ def test_sp_partial_signal_absent_when_wrappers_disabled() -> None:
 def test_sp_partial_signal_is_domain_agnostic() -> None:
     """Tier 2: the HOT-LIST signal (aliases branch) MUST NOT mention specific
     MCP server names, specific tools, or other domain-specific tokens.
-    Project policy forbids SP overfit. The signal is structural.
+    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
     """
     sp = build_system_prompt(
         agent_name="test",
@@ -185,8 +195,7 @@ def test_sp_partial_signal_is_domain_agnostic() -> None:
         available_skills=[],
         available_agents=[],
         memory_index={},
-        universal_wrappers_enabled=True,
-        has_hot_list_aliases=True,
+        tool_use_sp=_slots(has_hot_list_aliases=True),
     )
     # Extract the catalog-partial signal paragraph.
     cat_pos = sp.find("HOT-LIST")
