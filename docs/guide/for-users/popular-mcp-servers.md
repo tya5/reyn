@@ -114,7 +114,7 @@ reyn chat
 > What time is it in Tokyo right now?
 ```
 
-The agent calls `mcp__call_tool({tool: "time__get_current_time", args:
+The agent calls `mcp__call_tool({tool: "time__get_current_time", tool_args:
 {timezone: "Asia/Tokyo"}})` and replies in natural language. For
 multi-timezone queries ("Tokyo, NYC, London"), the agent chains 3
 calls and synthesises one answer.
@@ -153,7 +153,7 @@ reyn chat
 > Summarise the last 3 commits in this repo.
 ```
 
-The agent calls `mcp__call_tool({tool: "git__git_log", args: {repo_path:
+The agent calls `mcp__call_tool({tool: "git__git_log", tool_args: {repo_path:
 "<session cwd>", max_count: 3}})` and produces a short summary.
 
 ### Tools surfaced
@@ -298,7 +298,7 @@ reyn chat
 > Use the everything MCP server to compute 17 plus 25.
 ```
 
-The agent calls `mcp__call_tool({tool: "everything__get-sum", args:
+The agent calls `mcp__call_tool({tool: "everything__get-sum", tool_args:
 {a: 17, b: 25}})` and reports the result. Success rate ≈ 90% on clean history.
 
 > Note: explicitly mentioning "the everything MCP server" in the

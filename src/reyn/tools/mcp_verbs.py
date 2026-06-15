@@ -40,6 +40,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Mapping
 
+from reyn.tools.mcp import _MCP_TOOL_ARGS_KEY  # #1646: single-source the inner-args key
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # ── mcp__search_registry ──────────────────────────────────────────────────────
@@ -480,7 +481,11 @@ _MCP_CALL_TOOL_PARAMETERS: dict[str, Any] = {
                 "(e.g. 'time__get_current_time')."
             ),
         },
-        "args": {
+        # #1646: the target tool's params nest under "tool_args", NOT "args" — the
+        # universal-scheme live path is invoke_action(action_name="mcp__call_tool",
+        # args={tool, tool_args:{...}}); a nested "args" here collided with
+        # invoke_action's own "args" (the LLM collapsed it → empty at the MCP call).
+        _MCP_TOOL_ARGS_KEY: {
             "type": "object",
             "description": "Per-tool args dict (consult mcp__list_tools).",
         },
@@ -522,7 +527,10 @@ async def _handle_mcp_call_tool(
         {
             "server": server,
             "mcp_tool_name": mcp_tool_name,
-            "args": dict(args.get("args") or {}),
+            # #1646: read the LLM's params from tool_args (K3 collision-kill) AND pass
+            # them to mcp.py under the SAME key it now reads (K4 — pre-fix this passed
+            # "args" while mcp.py read tool_args → delegation dropped to {}).
+            _MCP_TOOL_ARGS_KEY: dict(args.get(_MCP_TOOL_ARGS_KEY) or {}),
         },
         ctx,
     )
