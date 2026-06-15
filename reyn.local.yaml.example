@@ -267,6 +267,18 @@
 #       pending: 400
 #       session_user_facts: 200
 #       artifacts_referenced: 300
+#
+# chat.reasoning: model reasoning/"thinking" text handling (#1652). Capture of
+# the provider reasoning_content is always-on; these knobs gate what happens
+# afterwards (both default ON). See docs/reference/config/reyn-yaml.md.
+#   reasoning:
+#     continuity: true        # persist reasoning to history + replay recent turns'
+#                             #   reasoning into the next prompt (cross-turn
+#                             #   continuity). false = disable persist+replay.
+#     display: true           # surface reasoning in the UI (TUI + chainlit,
+#                             #   collapsible). false = hide. Independent of continuity.
+#     recent_turns: 3         # how many recent turns' reasoning to replay.
+#                             #   <= 0 (e.g. 0 / -1) = unbounded (keep all).
 
 
 # -----------------------------------------------------------------------------

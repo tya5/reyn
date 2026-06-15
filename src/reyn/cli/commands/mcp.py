@@ -407,6 +407,7 @@ def run_serve(args: argparse.Namespace) -> None:
             project_context=project_context,
             agent_role=profile.role,
             compaction_config=session_cfg.config.chat.compaction,
+            reasoning_config=session_cfg.config.chat.reasoning,  # #1652
             registry=registry,
             allowed_skills=profile.allowed_skills,
             allowed_mcp=profile.allowed_mcp,

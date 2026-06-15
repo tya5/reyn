@@ -182,6 +182,7 @@ async def _get_or_build_registry() -> "AgentRegistry":
                 project_context=project_context,
                 agent_role=profile.role,
                 compaction_config=session_cfg.config.chat.compaction,
+                reasoning_config=session_cfg.config.chat.reasoning,  # #1652
                 registry=registry_ref[0],
                 allowed_skills=profile.allowed_skills,
                 allowed_mcp=profile.allowed_mcp,
@@ -240,6 +241,22 @@ async def _drain_loop(registry: "AgentRegistry") -> None:
             # or input box (= AskUserMessage) and the answer flows back
             # to the awaiting skill via `answer_pending_intervention`.
             await _handle_intervention(registry, msg)
+            continue
+
+        if msg.kind == "reasoning":
+            # #1652: the model's reasoning/thinking text, rendered as a
+            # collapsible cl.Step (mirrors tool-call steps) so it's visually
+            # distinct from the reply and expandable. Display-gated UPSTREAM —
+            # the host only emits kind="reasoning" when chat.reasoning.display
+            # is on — so here we render-if-present. Defensive: never break the
+            # drain loop on a chainlit glitch.
+            try:
+                _r = msg.meta.get("reasoning") or msg.text
+                if _r:
+                    async with cl.Step(name="💭 reasoning", type="tool") as _step:
+                        _step.output = _r
+            except Exception:
+                pass
             continue
 
         if msg.kind in _TOOL_CALL_KINDS:

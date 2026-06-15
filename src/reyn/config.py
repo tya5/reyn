@@ -433,9 +433,31 @@ class CompactionConfig:
 
 
 @dataclass
+class ReasoningConfig:
+    """`chat.reasoning:` — model reasoning/thinking-text handling (#1652).
+
+    Capture of the provider ``reasoning_content`` is always-on (not gated here).
+    These knobs gate what happens to it afterwards; both default ON.
+
+    ``continuity`` — persist reasoning to history and replay the recent turns'
+      reasoning into the next turn's system prompt (cross-user-turn reasoning
+      continuity, the #1212-mirror text-section). Opt-out to disable persist+replay.
+    ``display`` — surface reasoning to the UI (TUI + chainlit, collapsible).
+      Opt-out to hide it. Independent of ``continuity``.
+    ``recent_turns`` — how many recent turns' reasoning to replay under
+      ``continuity``. ``<= 0`` (e.g. 0 / -1) = unbounded (keep all). Bounding
+      matters on gemini (no provider auto-filter → reasoning is billed in full).
+    """
+    continuity: bool = True
+    display: bool = True
+    recent_turns: int = 3
+
+
+@dataclass
 class ChatConfig:
     """`chat:` — chat-session-specific runtime knobs."""
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
+    reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
 
 
 @dataclass
@@ -2002,12 +2024,28 @@ def _build_python_config(raw: object) -> PythonConfig:
     return PythonConfig(allowed_modules=[str(m) for m in modules])
 
 
+def _build_reasoning_config(raw: object) -> ReasoningConfig:
+    """#1652: parse ``chat.reasoning`` (continuity / display / recent_turns)."""
+    defaults = ReasoningConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    return ReasoningConfig(
+        continuity=bool(raw.get("continuity", defaults.continuity)),
+        display=bool(raw.get("display", defaults.display)),
+        # recent_turns: <=0 = unbounded (keep-all). int() coerces YAML scalars.
+        recent_turns=int(raw.get("recent_turns", defaults.recent_turns)),
+    )
+
+
 def _build_chat_config(raw: object) -> ChatConfig:
     if not isinstance(raw, dict):
         return ChatConfig()
+    # #1652: reasoning parses independently of compaction (a chat: block with
+    # only `reasoning:` and no `compaction:` must still honour it).
+    reasoning = _build_reasoning_config(raw.get("reasoning"))
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
-        return ChatConfig()
+        return ChatConfig(reasoning=reasoning)
     # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
     # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
     # component_weights and auto-compaction is window-relative (no turn-count
@@ -2084,7 +2122,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
         ),
         section_token_caps=section,
     )
-    return ChatConfig(compaction=compaction)
+    return ChatConfig(compaction=compaction, reasoning=reasoning)
 
 
 def _find_project_root(start: Path) -> Path | None:

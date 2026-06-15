@@ -39,6 +39,7 @@ def build_system_prompt(
     context_size_signal: str | None = None,  # #272/#1128 — pre-rendered, appended LAST
     environment_info: "dict | None" = None,  # #1479: date/platform/shell/git from get_environment_info()
     scheme_sp_fragment: str = "",  # kept for backward compat; prefer tool_use_sp slot_post_catalog
+    reasoning_continuity_section: str = "",  # #1652: pre-rendered prior-reasoning text section ("" = omit, byte-identical)
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -305,6 +306,13 @@ def build_system_prompt(
     # section — keeping it at the tail preserves the cached SP prefix above it.
     # P8-clean: OS-level vocabulary, no skill-specific enumeration; the `compact`
     # op format itself is advertised separately via the tool/control_ir catalog.
+    # #1652 reasoning-continuity: prior turns' reasoning text section (pre-rendered
+    # + bounded by the caller via render_reasoning_section/bound_reasoning). Empty
+    # string when continuity is off / no prior reasoning → omitted (byte-identical
+    # SP, LLMReplay-safe, same omit-when-empty discipline as act_turn_reasoning).
+    if reasoning_continuity_section:
+        parts.append(reasoning_continuity_section)
+
     if context_size_signal:
         parts.append(context_size_signal)
 

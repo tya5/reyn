@@ -1149,6 +1149,7 @@ class ChatSession:
         project_context: str = "",
         agent_role: str = "",
         compaction_config: "CompactionConfig | None" = None,
+        reasoning_config: "ReasoningConfig | None" = None,  # #1652 chat.reasoning
         registry: "AgentRegistry | None" = None,
         allowed_skills: list[str] | None = None,
         allowed_mcp: list[str] | None = None,
@@ -1552,8 +1553,12 @@ class ChatSession:
         # Per-turn router cap: read from safety config.
         _router_cap: int = _safety.loop.max_router_calls_per_turn
 
-        from reyn.config import CompactionConfig
+        from reyn.config import CompactionConfig, ReasoningConfig
         self._compaction = compaction_config or CompactionConfig()
+        # #1652: reasoning capture/continuity/display config. Defaults (ON/ON/3)
+        # apply when a frontend doesn't thread it — feature on-by-default; the
+        # reyn.yaml opt-out flows in via the frontend's config.chat.reasoning.
+        self._reasoning = reasoning_config or ReasoningConfig()
         self._next_seq = 1
 
         # `agents/<name>/` is state-only as of PR20: profile / history /
@@ -1820,6 +1825,13 @@ class ChatSession:
             ),
             # Issue #364 multi-modal cluster: media-size gate config.
             multimodal_config=self._multimodal_config,
+            # #1652: reasoning config (display/continuity/recent_turns gates) +
+            # the bounded prior-reasoning section renderer (reads this session's
+            # history). The host exposes reasoning_display_enabled() /
+            # reasoning_continuity_enabled() / reasoning_continuity_section() to
+            # the router loop for emit-gating, persist-gating, and SP replay.
+            reasoning_config=self._reasoning,
+            reasoning_continuity_section_fn=self.reasoning_continuity_section,
             # Issue #383 PR-C: shared MediaStore for image + tool-result storage.
             media_store=self._media_store,
             # #1128 size axis: per-turn tool-result cap/offload (dead-end #1).
@@ -5060,6 +5072,37 @@ class ChatSession:
     ) -> None:
         """Forwarding → ContextBudgetAdvisor.maybe_force_compact (PR-1)."""
         await self._budget_advisor.maybe_force_compact(new_msg_text=new_msg_text)
+
+    def reasoning_continuity_section(self) -> str:
+        """#1652: render the bounded prior-reasoning text section for the next
+        router turn's system prompt — the (a) cross-user-turn continuity vehicle.
+
+        ``""`` when continuity is off or there is no prior reasoning
+        (omit-when-empty → byte-identical SP). Reads each assistant turn's
+        persisted reasoning from history (``meta["reasoning"]``, written by the
+        agent-reply put_outbox when continuity is on) and bounds to the most
+        recent ``recent_turns`` (``<=0`` = unbounded). The reasoning is replayed
+        as this text section, NOT via the wire assistant messages (those are
+        built from content+tool_calls only — no native double-inject on gemini).
+        """
+        if not self._reasoning.continuity:
+            return ""
+        items = [
+            m.meta["reasoning"]
+            for m in self.history
+            if m.role == "assistant"
+            and isinstance(getattr(m, "meta", None), dict)
+            and m.meta.get("reasoning")
+        ]
+        if not items:
+            return ""
+        from reyn.chat.reasoning_continuity import (
+            bound_reasoning,
+            render_reasoning_section,
+        )
+        return render_reasoning_section(
+            bound_reasoning(items, self._reasoning.recent_turns)
+        )
 
     async def _run_router_loop(
         self,

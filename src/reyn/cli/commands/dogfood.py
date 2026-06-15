@@ -454,6 +454,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 project_context=project_context,
                 agent_role=profile.role,
                 compaction_config=config.chat.compaction,
+                reasoning_config=config.chat.reasoning,  # #1652
                 registry=_reg_cell[0] if _reg_cell else None,
                 allowed_skills=profile.allowed_skills,
                 allowed_mcp=profile.allowed_mcp,
