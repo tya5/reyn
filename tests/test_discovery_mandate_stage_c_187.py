@@ -1,46 +1,34 @@
 """Tier 2: #187 Stage C — weak-tier discovery mandate (composed into taxonomy).
 
-owner decision: weak router tiers under-explore the catalog (satisfice instead
-of discovering the action they need). Rather than a standalone unconditional
-mandate (which would reverse B11-R3's named-skill→direct-invoke fix and
-re-introduce the clarification-fallthrough attractor #187 fights), Stage C
-STRENGTHENS the existing V18 intent taxonomy's branch-3 "Otherwise" routing hint
-(soft → mechanical MUST), reinforced 3x (branch-3 / §D9 hot-list / Behaviour),
-each carrying a NON-obvious/unknown/not-named scope qualifier. Tier-gated
-(light ON / strong+unknown OFF).
+#1627 Stage 4: ``build_system_prompt`` is now a pure slot-injector. The
+``discovery_mandate`` parameter has been REMOVED from ``build_system_prompt`` and
+moved fully into the scheme layer (``build_universal_tool_use_slots`` / schemes).
+Tests that previously called ``build_system_prompt(..., discovery_mandate=True)``
+now call ``build_universal_tool_use_slots`` directly and pass the result as
+``tool_use_sp``. The AST wiring test is updated to verify that
+``tier_wants_discovery_mandate`` is called in the scheme layer (universal_category.py)
+rather than in router_loop.py's ``build_system_prompt`` call.
 
 Pinned invariants:
 
 - ``tier_wants_discovery_mandate``: only the verified weak tier (``light``) opts
   in; ``strong`` / unknown / ``None`` stay OFF.
-- When ``discovery_mandate=True``, all 3 reinforcements render, each
-  scope-qualified + mechanical MUST/MANDATORY, with the verified
-  explicit-action-enumeration "reading, writing, or editing" (NOT the generic
-  "before acting", which detunes 25-55% → 0-10%). file__edit MUST is carried.
+- When ``discovery_mandate=True`` in ``build_universal_tool_use_slots``, all 3
+  reinforcements render, each scope-qualified + mechanical MUST/MANDATORY.
 - When False, the SP keeps the SOFT branch-3 "Otherwise <chain>" + no MUST /
-  MANDATORY reinforcement (byte-clean for non-weak tiers → valid replay
-  fixtures, strong latitude preserved).
-- B11-R3 (obvious/named → invoke directly) + the Conversation (branch-1) /
-  Question (branch-2) wording are UNTOUCHED in BOTH modes (diff-touch-0): the
-  scope qualifier is structural, so chitchat / named-skill / direct routing are
-  preserved by construction.
-- All reinforcements sit in the static cacheable prefix (before project_context).
-- router_loop wires the call site with ``tier_wants_discovery_mandate``.
-
-The live behavioural proof (weak model fires list_actions-first ~75-85% on
-genuine unnamed-discovery WITHOUT bleeding chitchat/named into discovery) is
-sandbox_2's production-flow verify, not a unit test.
+  MANDATORY reinforcement.
+- B11-R3 + Conversation/Question wording untouched in BOTH modes (diff-touch-0).
+- router_loop wires the call through scheme layer (not build_system_prompt).
 """
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 
-import reyn.chat.router_loop as rl_mod
-from reyn.chat.router_system_prompt import (
-    build_system_prompt,
-)
+import reyn.tools.schemes.universal_category as uc_mod
+from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 _BASE = dict(
     agent_name="chat",
@@ -48,7 +36,6 @@ _BASE = dict(
     available_skills=[],
     available_agents=[],
     memory_index={"status": "not_found", "content": ""},
-    universal_wrappers_enabled=True,
 )
 
 # Markers for the B11-R3 named-direct clause + branch-1 Conversation, which must
@@ -58,11 +45,25 @@ _CONVERSATION_MARKER = "reply"
 
 
 def _on() -> str:
-    return build_system_prompt(**_BASE, discovery_mandate=True)
+    slots = build_universal_tool_use_slots(
+        universal_wrappers_enabled=True,
+        search_actions_enabled=True,
+        discovery_mandate=True,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
+    return build_system_prompt(**_BASE, tool_use_sp=slots)
 
 
 def _off() -> str:
-    return build_system_prompt(**_BASE, discovery_mandate=False)
+    slots = build_universal_tool_use_slots(
+        universal_wrappers_enabled=True,
+        search_actions_enabled=True,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
+    return build_system_prompt(**_BASE, tool_use_sp=slots)
 
 
 # ---------------------------------------------------------------------------
@@ -166,43 +167,45 @@ def test_reinforcements_in_static_cacheable_prefix() -> None:
     to the single canonical MUST occurrence (backtick-wrapped `list_actions`).
     """
     marker = "ZZZ_DYNAMIC_PROJECT_CONTEXT_MARKER_ZZZ"
-    on = build_system_prompt(**_BASE, project_context=marker, discovery_mandate=True)
+    slots = build_universal_tool_use_slots(
+        universal_wrappers_enabled=True,
+        search_actions_enabled=True,
+        discovery_mandate=True,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
+    on = build_system_prompt(**_BASE, project_context=marker, tool_use_sp=slots)
     assert marker in on
     # The canonical reinforcement (branch-3) must come before the dynamic marker.
     assert on.rindex("FIRST tool call MUST be `list_actions`") < on.index(marker)
 
 
 # ---------------------------------------------------------------------------
-# Call-site wiring (AST) — router_loop gates on the tier
+# Call-site wiring (AST) — scheme layer gates on the tier
 # ---------------------------------------------------------------------------
 
 
-def test_router_loop_wires_discovery_mandate_gate() -> None:
-    """Tier 2: #187 Stage C — router_loop's build_system_prompt(...) call passes
-    ``discovery_mandate=tier_wants_discovery_mandate(...)``. Falsifiable: drop the
-    gate (or hardcode True/False) → this fails, naming the construction-wiring
-    gap. Without the gate the mandate is either unreachable or applied to every
-    tier (strong included)."""
-    tree = ast.parse(Path(rl_mod.__file__).read_text(encoding="utf-8"))
+def test_scheme_layer_wires_discovery_mandate_gate() -> None:
+    """Tier 2: #187 Stage C / #1627 Stage 4 — ``tier_wants_discovery_mandate`` is
+    called in the scheme layer (universal_category.py's build_presentation), NOT in
+    router_loop.py's build_system_prompt call. Falsifiable: remove the call from
+    universal_category → this fails, naming the construction-wiring gap.
+
+    #1627 Stage 4 migration: the mandate computation moved out of router_loop (OS)
+    into the scheme layer (P7). The AST check now targets universal_category.py."""
+    tree = ast.parse(Path(uc_mod.__file__).read_text(encoding="utf-8"))
     wired = False
     for node in ast.walk(tree):
         if not (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
-            and node.func.id == "build_system_prompt"
+            and node.func.id == "tier_wants_discovery_mandate"
         ):
             continue
-        for kw in node.keywords:
-            if kw.arg != "discovery_mandate":
-                continue
-            v = kw.value
-            if (
-                isinstance(v, ast.Call)
-                and isinstance(v.func, ast.Name)
-                and v.func.id == "tier_wants_discovery_mandate"
-            ):
-                wired = True
+        wired = True
+        break
     assert wired, (
-        "router_loop must call build_system_prompt(..., "
-        "discovery_mandate=tier_wants_discovery_mandate(self.router_model))"
+        "universal_category.build_presentation must call tier_wants_discovery_mandate "
+        "to derive the discovery_mandate for build_universal_tool_use_slots "
+        "(#1627 Stage 4: mandate computation relocated to scheme layer)"
     )

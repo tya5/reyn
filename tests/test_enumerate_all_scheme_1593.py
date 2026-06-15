@@ -82,15 +82,27 @@ async def test_build_presentation_is_base_plus_catalog_flat() -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_presentation_sp_params_disable_wrappers() -> None:
-    """Tier 2: SP params drive the prior-shape (no wrapper-chain) minimal SP —
-    no build_system_prompt surgery (the existing gate yields enumerate-all's SP)."""
+async def test_build_presentation_tool_use_sp_disable_wrappers() -> None:
+    """Tier 2: #1627 Stage 4 — enumerate-all's tool_use_sp slot-map encodes the
+    no-wrapper, search-visible SP (sp_params removed from build_presentation).
+
+    The slot-map must contain slot_pre_environment (the Capabilities block) with
+    NO ## Action categories (universal_wrappers_enabled=False) and WITH the
+    search_actions chain (search_visible=True from layer_ctx).
+    """
     s = EnumerateAllScheme()
     pres = await s.build_presentation(
-        {"skills_for_tools": [], "hot_list_aliases": []}, {"search_visible": True}, _FakeOps(),
+        {"skills_for_tools": [], "hot_list_aliases": []},
+        {"search_visible": True},
+        _FakeOps(),
     )
-    assert pres.sp_params["universal_wrappers_enabled"] is False
-    assert pres.sp_params["search_actions_enabled"] is True   # follows layer search_visible
+    # sp_params removed — check the slot-map instead
+    assert isinstance(pres.tool_use_sp, dict), "tool_use_sp must be a dict slot-map"
+    slots = pres.tool_use_sp
+    # Wrappers off → no ## Action categories in slot_post_environment
+    assert "slot_post_environment" not in slots or "## Action categories" not in slots.get("slot_post_environment", "")
+    # search_visible=True → search_actions in the chain
+    assert "search_actions" in slots.get("slot_pre_environment", "")
 
 
 def test_interpret_resolves_to_execute() -> None:

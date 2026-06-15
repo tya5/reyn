@@ -1,20 +1,12 @@
-"""Tier 2: #1593 — the scheme-owned ``Presentation.sp_fragment`` SP channel.
+"""Tier 2: #1593/#1627 — the scheme-owned ``Presentation.sp_fragment`` / slot-map SP channel.
 
-A tool-use scheme shapes the system prompt through two deliberately separate
-channels (see ``Presentation``):
+#1627 Stage 4: ``build_system_prompt`` is now a pure slot-injector. The legacy
+``scheme_sp_fragment`` backward-compat param is still accepted and appended
+verbatim. The canonical path is ``tool_use_sp["slot_post_catalog"]`` (used by
+retrieval's ``_search_sp``); ``scheme_sp_fragment`` stays for callers that haven't
+migrated. This file pins the OS-side contract for the fragment channel:
 
-  - ``sp_params`` — named gates ``build_system_prompt`` already understands
-    (``universal_wrappers_enabled`` / ``search_actions_enabled`` …). The
-    named-gate schemes (universal-category, enumerate-all) express their whole
-    SP through these, leaving ``sp_fragment`` empty.
-  - ``sp_fragment`` — free-form, scheme-owned tool-use SP text the OS appends
-    **verbatim** without interpreting it (P7: the OS has no notion of
-    "code-API" / "search-SP"). CodeAct / retrieval are the first consumers.
-
-This file pins the OS-side contract of that second channel:
-
-  1. Empty fragment (the default) ⇒ the SP is byte-identical to the call with
-     no fragment argument at all — the named-gate path is untouched.
+  1. Empty fragment + empty slot-map ⇒ no fragment in the SP.
   2. A non-empty fragment appears verbatim in the rendered SP.
   3. The fragment is appended (OS-agnostic): the OS does not transform, prefix,
      or wrap it — what the scheme wrote is what lands.
@@ -26,6 +18,19 @@ No mocks. Tests call ``build_system_prompt`` with real arguments.
 from __future__ import annotations
 
 from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
+
+
+def _base_slots() -> "dict[str, str]":
+    """Minimal universal slot-map (wrappers on, search off) — mirrors the
+    prior universal_wrappers_enabled=True / search_actions_enabled=False call."""
+    return build_universal_tool_use_slots(
+        universal_wrappers_enabled=True,
+        search_actions_enabled=False,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
 
 
 def _sp(*, scheme_sp_fragment: str = "", context_size_signal: str | None = None) -> str:
@@ -35,29 +40,25 @@ def _sp(*, scheme_sp_fragment: str = "", context_size_signal: str | None = None)
         available_skills=[],
         available_agents=[],
         memory_index={},
-        universal_wrappers_enabled=True,
-        search_actions_enabled=False,
+        tool_use_sp=_base_slots(),
         scheme_sp_fragment=scheme_sp_fragment,
         context_size_signal=context_size_signal,
     )
 
 
-# ── 1. Empty fragment = byte-identical named-gate path ───────────────────────
+# ── 1. Empty fragment = byte-identical to same call with no fragment arg ────────
 
 
 def test_empty_fragment_leaves_named_gate_sp_unchanged() -> None:
-    """Tier 2: #1593 — default ``sp_fragment=""`` renders an SP equal to the call
-    that passes no fragment argument; the named-gate schemes (universal-category
-    / enumerate-all) are therefore unchanged by this seam. This is a permanent
-    contract (the empty channel is invisible), not a refactor-equivalence check."""
+    """Tier 2: #1593/#1627 — ``scheme_sp_fragment=""`` renders an SP equal to the call
+    that passes no fragment argument; the empty channel is invisible, permanent contract."""
     without_arg = build_system_prompt(
         agent_name="test",
         agent_role="tester",
         available_skills=[],
         available_agents=[],
         memory_index={},
-        universal_wrappers_enabled=True,
-        search_actions_enabled=False,
+        tool_use_sp=_base_slots(),
     )
     with_empty = _sp(scheme_sp_fragment="")
     assert with_empty == without_arg, (

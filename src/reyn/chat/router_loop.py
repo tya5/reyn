@@ -30,7 +30,6 @@ from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 from reyn.services.turn_budget import wrap_up_system_prompt
-from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
 
 if TYPE_CHECKING:
     from reyn.config import SkillSearchConfig
@@ -1753,53 +1752,15 @@ class RouterLoop:
                 output_language=host.output_language,
                 project_context=host.get_project_context(),
                 indexed_sources_section=indexed_sources,
-                # FP-0034 PR-3b-v: same getattr-fallback pattern as build_tools.
-                # Hosts without get_universal_wrappers_enabled (= FakeRouterHost
-                # in LLMReplay tests) default to False so SP byte content stays
-                # unchanged for cached fixtures.
-                # #1593: the scheme owns the SP-shaping params (PR-1 parameterizes
-                # the monolithic build_system_prompt; identical values to _univ_enabled).
-                universal_wrappers_enabled=_pres.sp_params["universal_wrappers_enabled"],
                 cwd=_cwd_str,
-                # FP-0034 §D14: propagate the search_actions D14 visibility gate
-                # into the SP so the wrapper enumeration matches tools=.
-                # When wrappers are off (_univ_enabled=False), pass True so the
-                # SP stays byte-identical to the pre-fix output — those callers
-                # are non-wrapper-path tests whose fixtures already include
-                # search_actions in the wrapper line and re-recording is not
-                # wanted.  When wrappers are on, _search_visible is the runtime
-                # truth derived from is_search_available() (= embedding_class
-                # configured + index ready); False there means the SP and tools=
-                # both exclude search_actions, eliminating the N5 hallucination.
-                search_actions_enabled=_pres.sp_params["search_actions_enabled"],
-                # #1593: free-form scheme-owned tool-use SP. Empty for the
-                # named-gate schemes (universal-category / enumerate-all) ⇒ the
-                # SP is byte-identical; a divergent scheme (CodeAct code-API /
-                # retrieval search-SP) supplies its own tool-use text here and
-                # the OS appends it verbatim (P7 — no scheme concepts in the OS).
-                scheme_sp_fragment=_pres.sp_fragment,
-                # #1618 root-3: scheme REPLACEMENT for the tool-use SP region. None
-                # (named-gate schemes) ⇒ OS builds today's tool-use SP byte-identical;
-                # non-None (CodeAct code-API) ⇒ OS injects it at the ## Capabilities
-                # position + skips the universal tool-use construction (P7 — OS owns
-                # the region/position, the scheme owns the content).
+                # #1627 Stage 4: scheme-owned slot-map (all 4 schemes populate
+                # tool_use_sp via build_universal_tool_use_slots or their own
+                # renderer). The OS is a pure injector — no tool-use vocab here.
                 tool_use_sp=_pres.tool_use_sp,
                 # #272/#1128: OS-injected context-size signal (header), computed
                 # once above. Rendered LAST in the SP (most volatile section →
                 # preserves the cached prefix above it); None when ample.
                 context_size_signal=_ctx_signal,
-                # #187 Stage C: weak-tier mechanical list_actions-first mandate.
-                # Gated to weak tiers (light = the flash-lite-backed default
-                # intent tier that under-explores the catalog); strong/unknown
-                # tiers OFF (strong-flexibility-preserving). Only the chat
-                # router path reaches build_system_prompt — the phase op-loop
-                # uses system_prompt_override, so this does not touch it.
-                discovery_mandate=tier_wants_discovery_mandate(self.router_model),
-                non_interactive=self._non_interactive,  # #1440 followup: live-path wiring
-                # #1473: conditional HOT-LIST vs no-aliases SP branch. True when
-                # N>0 produced actual alias functions (hot_list_n > 0 opt-in);
-                # False (new default) renders the "no pre-loaded actions" variant.
-                has_hot_list_aliases=bool(_hot_list_aliases),
                 # #1479: system info (date/platform/shell/git).
                 environment_info=_environment_info,
             )
@@ -3108,9 +3069,8 @@ class RouterLoop:
     def present(self, available, layer_ctx):
         """SchemeOps.present: today's universal-category presentation — the phase
         op-catalog (when the phase layer supplies one) OR ``build_tools`` with the
-        catalog wrappers, plus the SP-shaping params (``universal_wrappers_enabled`` /
-        ``search_actions_enabled``) the monolithic ``build_system_prompt`` consumes
-        (PR-1 parameterizes the SP; PR-2 extracts a scheme-owned fragment)."""
+        catalog wrappers. #1627 Stage 4: sp_params removed (build_system_prompt no
+        longer reads them; the scheme layer owns SP via tool_use_sp slot-map)."""
         from reyn.tools.scheme import Presentation
 
         phase_op_catalog = layer_ctx.get("phase_op_catalog")
@@ -3130,12 +3090,9 @@ class RouterLoop:
                 hot_list_aliases=available["hot_list_aliases"],
                 compact_visible=layer_ctx["ctx_signal_present"],
             )
+        # #1627 Stage 4: sp_params removed — build_system_prompt no longer reads it.
         return Presentation(
             llm_tools_payload=tools,
-            sp_params={
-                "universal_wrappers_enabled": univ,
-                "search_actions_enabled": search_visible if univ else True,
-            },
         )
 
     def base_tools(self, available, layer_ctx) -> list[dict]:

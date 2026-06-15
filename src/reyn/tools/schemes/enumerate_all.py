@@ -33,9 +33,6 @@ enumerate never has wrappers, so the fallback-to-True branch does not apply).
 """
 from __future__ import annotations
 
-import dataclasses
-
-from reyn.chat.router_system_prompt import build_universal_tool_use_slots
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -46,6 +43,7 @@ from reyn.tools.scheme import (
     register_scheme,
 )
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 
 class EnumerateAllScheme:
@@ -61,11 +59,6 @@ class EnumerateAllScheme:
         # catalog_entries is async (the live-catalog enumeration awaits the
         # router caller-state / rag manifest); base_tools stays sync.
         flat_tools = list(ops.base_tools(available, layer_ctx)) + list(await ops.catalog_entries())
-        # sp_params kept AS-IS (Stage 4 removes it; harmless now).
-        sp_params = {
-            "universal_wrappers_enabled": False,
-            "search_actions_enabled": bool(layer_ctx.get("search_visible", False)),
-        }
         # #1627 Stage 2: own the tool-use SP via the slot-map.
         # Derive the 5 builder inputs from the raw FACTS in layer_ctx. Enumerate
         # NEVER has universal wrappers, so universal_wrappers_enabled is always
@@ -80,8 +73,8 @@ class EnumerateAllScheme:
             has_hot_list_aliases=bool((available or {}).get("hot_list_aliases")),
             non_interactive=bool(layer_ctx.get("non_interactive", False)),
         )
-        pres = Presentation(llm_tools_payload=flat_tools, sp_params=sp_params)
-        return dataclasses.replace(pres, tool_use_sp=slots)
+        # #1627 Stage 4: sp_params removed — build_system_prompt no longer reads it.
+        return Presentation(llm_tools_payload=flat_tools, tool_use_sp=slots)
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
         # Flat (qualified) names resolve through the shared resolution (dedupe +

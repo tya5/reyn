@@ -16,6 +16,7 @@ import pytest
 
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.index.source_manifest import SourceEntry, SourceManifest
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal args for build_system_prompt
@@ -34,8 +35,21 @@ _SYNTHETIC_MEMORY_CONTENT = """\
 _SYNTHETIC_MEMORY: dict = {"status": "ok", "content": _SYNTHETIC_MEMORY_CONTENT}
 
 
+def _default_slots() -> "dict[str, str]":
+    return build_universal_tool_use_slots(
+        universal_wrappers_enabled=False,
+        search_actions_enabled=True,
+        discovery_mandate=False,
+        has_hot_list_aliases=False,
+        non_interactive=False,
+    )
+
+
 def _minimal_prompt(indexed_sources_section: str | None = None) -> str:
-    """Build a minimal system prompt with the given indexed_sources_section."""
+    """Build a minimal system prompt with the given indexed_sources_section.
+
+    #1627 Stage 4: tool_use_sp slot-map required for tool-use SP content.
+    """
     return build_system_prompt(
         agent_name="chat",
         agent_role="general assistant",
@@ -43,6 +57,7 @@ def _minimal_prompt(indexed_sources_section: str | None = None) -> str:
         available_agents=[],
         memory_index=_SYNTHETIC_MEMORY,
         indexed_sources_section=indexed_sources_section,
+        tool_use_sp=_default_slots(),
     )
 
 

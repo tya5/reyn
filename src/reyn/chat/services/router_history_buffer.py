@@ -404,7 +404,21 @@ class RouterHistoryBuffer:
         The error is small relative to the total context window.
         """
         from reyn.chat.router_system_prompt import build_system_prompt
+        from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
+        from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
         rh = self._router_host
+        univ = bool(getattr(self._action_retrieval, "universal_wrappers_enabled", False))
+        # Conservative T_SP estimate: use the router model if known; if not,
+        # default to False (= no mandate, slightly under-counts for weak tier
+        # but this is an estimation path — conservatively acceptable).
+        dm = tier_wants_discovery_mandate(self._model)
+        tool_use_sp = build_universal_tool_use_slots(
+            universal_wrappers_enabled=univ,
+            search_actions_enabled=True,  # conservative: assume enabled (larger SP)
+            discovery_mandate=dm,
+            has_hot_list_aliases=False,   # conservative: assume no aliases (smaller SP)
+            non_interactive=self._non_interactive,
+        )
         return build_system_prompt(
             agent_name=rh.agent_name,
             agent_role=rh.agent_role,
@@ -417,6 +431,5 @@ class RouterHistoryBuffer:
             output_language=rh.output_language,
             project_context=rh.get_project_context(),
             indexed_sources_section=None,
-            universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
-            non_interactive=self._non_interactive,
+            tool_use_sp=tool_use_sp,
         )

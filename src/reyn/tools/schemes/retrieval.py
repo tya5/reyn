@@ -20,10 +20,8 @@ present that drops the search tool → guaranteed ``Execute`` exit). ``execute``
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 
-from reyn.chat.router_system_prompt import build_universal_tool_use_slots
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -36,6 +34,7 @@ from reyn.tools.scheme import (
     register_scheme,
 )
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 _SEARCH_TOOL_NAME = "search_actions"
 
@@ -118,18 +117,14 @@ class RetrievalScheme:
 
     async def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
         base = list(ops.base_tools(available, layer_ctx))
-        sp_params = {
-            "universal_wrappers_enabled": False,
-            "search_actions_enabled": bool(layer_ctx.get("search_visible", False)),
-        }
         refinement = layer_ctx.get("refinement")
         if not refinement:
             # Initial presentation: the base + the search tool (no catalog flood).
-            # #1627 Stage 3: own the tool-use SP via the slot-map (sp_fragment dropped).
-            pres = Presentation(
-                llm_tools_payload=base + [_search_tool_schema()], sp_params=sp_params,
+            # #1627 Stage 3+4: sp_params removed; tool_use_sp carries the full SP.
+            return Presentation(
+                llm_tools_payload=base + [_search_tool_schema()],
+                tool_use_sp=self._slots_for(available, layer_ctx, False),
             )
-            return dataclasses.replace(pres, tool_use_sp=self._slots_for(available, layer_ctx, False))
         # Refined presentation: run the search (the async, dynamic-query I/O) and
         # present the matched catalog subset (∪ everything already presented).
         query = refinement.get("query", "")
@@ -156,11 +151,12 @@ class RetrievalScheme:
         terminal = not new
         if not terminal:
             tools = tools + [_search_tool_schema()]
-        # #1627 Stage 3: own the tool-use SP via the slot-map (sp_fragment dropped).
-        pres = Presentation(
-            llm_tools_payload=tools, sp_params=sp_params, candidates=tuple(matched),
+        # #1627 Stage 3+4: sp_params removed; tool_use_sp carries the full SP.
+        return Presentation(
+            llm_tools_payload=tools,
+            candidates=tuple(matched),
+            tool_use_sp=self._slots_for(available, layer_ctx, terminal),
         )
-        return dataclasses.replace(pres, tool_use_sp=self._slots_for(available, layer_ctx, terminal))
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
         # Pure classifier (no I/O): NO tool calls → PlainText (the model answered
