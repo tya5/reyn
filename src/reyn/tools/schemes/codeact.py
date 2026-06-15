@@ -65,7 +65,7 @@ def _render_code_api(entries: list[dict]) -> str:
         "no \"I am a Reyn agent\" preamble on an action turn. Inside the block, call any "
         "available action:",
         "",
-        "    result = tool('<name>', <arg>=<value>, ...)",
+        "    result = `tool('<name>', <arg>=<value>, ...)`",
         "",
         "`tool(...)` returns the action's result, or raises if the action is denied / "
         "excluded / unknown. Assign your final answer to `result`. The Python standard "
@@ -85,7 +85,12 @@ def _render_code_api(entries: list[dict]) -> str:
         sig = ", ".join(arg_names)
         desc_raw = (entry.get("description") or "").strip()
         desc = desc_raw.splitlines()[0] if desc_raw else ""
-        lines.append(f"- tool('{name}'{', ' + sig if sig else ''}) — {desc}".rstrip(" —"))
+        # #1638: backtick-wrap the rendered call so the SP carries NO bare quoted
+        # `tool('<x>')` token — gemini-2.5-flash-lite returns ~100% empty-choices on a
+        # bare `tool('<quoted>')` token (content-trigger; lead+sandbox_2 proxy-probe:
+        # bare 6/6 empty → backtick 0/6). Presentation-only: the catalog is a reference
+        # list the model READS; it still writes bare `tool(...)` inside its python block.
+        lines.append(f"- `tool('{name}'{', ' + sig if sig else ''})` — {desc}".rstrip(" —"))
     return "\n".join(lines)
 
 
