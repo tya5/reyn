@@ -134,3 +134,85 @@ def test_warning_log_emitted_once_with_options(caplog) -> None:
     assert "hugging face" in text or "hf" in text or "download" in text, (
         "cause (HF / download) must be named"
     )
+
+
+# ── #1616: cause-aware guidance — UnsupportedParamsError vs HF-download ──────────
+
+
+class _UnsupportedParamsError(Exception):
+    """Real fake mirroring litellm's UnsupportedParamsError TYPENAME (the helper
+    keys on the type name, not the class identity). No Mock per policy."""
+
+
+class _UnsupportedParamProvider:
+    """Real fake provider whose embed() raises the proxy-rejects-param error —
+    the #1616 gemini-via-LiteLLM-proxy case (encoding_format rejected)."""
+
+    async def embed(self, *_args, **_kwargs):  # type: ignore[override]
+        raise _UnsupportedParamsError(
+            "litellm.UnsupportedParamsError: gemini-embedding-001 does not support "
+            "parameter: encoding_format"
+        )
+
+    def get_dimension(self, *_args, **_kwargs) -> int:
+        raise _UnsupportedParamsError("does not support parameter: encoding_format")
+
+
+class _UnsupportedParamIndex:
+    """Real fake index whose build() surfaces the provider's UnsupportedParamsError
+    (mirrors ActionEmbeddingIndex.build propagating the embed() exception)."""
+
+    def is_ready(self) -> bool:
+        return False
+
+    async def build(self, items, provider, model_class):  # type: ignore[override]
+        # Drive the real embed() so the genuine provider exception propagates,
+        # exactly as the production build path does (idx.build(items, provider, model_class)).
+        await provider.embed(items)
+
+
+def test_helper_unsupported_param_points_to_proxy_drop_params() -> None:
+    """Tier 2: #1616 — the cause-aware helper, given an UnsupportedParamsError,
+    returns the PROXY-side drop_params guidance (not the misleading HF-download
+    message). reyn cannot suppress a param the proxy injects, so the operator is
+    pointed to the recommended `litellm_settings: drop_params: true` on the proxy."""
+    from reyn.chat.router_loop import _action_index_build_failure_warning
+
+    exc = _UnsupportedParamsError(
+        "gemini-embedding-001 does not support parameter: encoding_format"
+    )
+    msg = _action_index_build_failure_warning(exc, "standard").lower()
+    assert "drop_params" in msg, "must name the recommended proxy-side fix"
+    assert "proxy" in msg, "must say the fix is proxy-side"
+    assert "encoding_format" in msg, "must name the rejected param"
+    # Must NOT mislead with the HF-download cause for a param-rejection failure.
+    assert "hugging face" not in msg and "download" not in msg
+
+
+def test_helper_generic_failure_keeps_hf_guidance() -> None:
+    """Tier 2: #1616 — a non-param failure (e.g. HF unreachable) still returns the
+    pre-existing offline/cache guidance (regression pin for the #1458 branch)."""
+    from reyn.chat.router_loop import _action_index_build_failure_warning
+
+    exc = RuntimeError("Name or service not known (HF unreachable)")
+    msg = _action_index_build_failure_warning(exc, "local-mini").lower()
+    assert "hugging face" in msg or "download" in msg
+    assert "drop_params" not in msg
+
+
+def test_build_failure_unsupported_param_warns_proxy_fix(caplog) -> None:
+    """Tier 2: #1616 — driving the real build path with a provider that raises the
+    proxy-rejects-param error logs the proxy drop_params guidance (the operator is
+    NOT left with a silent empty index nor the misleading HF message)."""
+    loop = _LoopWithFailingBuild()
+    idx = _UnsupportedParamIndex()
+    provider = _UnsupportedParamProvider()
+    with caplog.at_level(logging.WARNING, logger="reyn.chat.router_loop"):
+        asyncio.run(loop._build_action_embedding_index_background(idx, provider, "standard"))
+
+    text = " ".join(
+        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+    ).lower()
+    assert "drop_params" in text and "proxy" in text, (
+        f"expected proxy drop_params guidance; got: {text!r}"
+    )

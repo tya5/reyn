@@ -298,6 +298,14 @@ class LiteLLMEmbeddingProvider:
                 response = await litellm.aembedding(
                     model=effective_model,
                     input=batch,
+                    # #1616: drop provider-unsupported params (e.g. encoding_format
+                    # on a DIRECT gemini-embedding call) — the litellm-recommended
+                    # client default for embeddings. Fixes the direct / non-proxy
+                    # provider-mismatch; a harmless no-op when routing via a proxy
+                    # (there the param is added/rejected proxy-side, so the proxy
+                    # needs `litellm_settings: drop_params: true` — see the
+                    # action-index-build-failed operator guidance + docs).
+                    drop_params=True,
                     **extra,
                 )
                 return self._parse_response(response, resolved_model)
