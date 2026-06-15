@@ -20,6 +20,14 @@ what is allowed, only how the LLM is asked to express a call. See
 
 ## The four schemes
 
+A cross-scheme finding (H1): **tool-name visibility predicts invocation
+success**. Schemes that place the callable name directly in the LLM-facing
+surface (`enumerate-all`, `CodeAct`) let the model invoke without guessing;
+schemes that put the name behind an indirection it must first traverse
+(`universal-category`'s discover→invoke, `retrieval`'s search-first) invite
+name-hallucination on non-hot-list tools. This is why the chat default moved to
+`enumerate-all` (#1657).
+
 ### `enumerate-all` (chat default, #1657)
 
 Presents *every* usable tool flatly in the LLM's tool list and dispatches by
@@ -30,8 +38,11 @@ discover-then-call indirection induced (measured ~30%→100% non-hot-list tool-u
 on the chat path). Leaving `tool_use.chat` unset keeps it.
 
 **Use when:** the default for chat — direct, deterministic name→dispatch. The
-trade-off is request size: the flat list grows with the tool set (see
-`universal-category` for very large catalogs).
+trade-off is a **visibility cost, not a weak-model penalty**: request size grows
+linearly with the catalogue (H1 measured ~67 tools ≈ ~50KB of tool surface,
+~3.2× the `universal-category` request) because every name is shown up front.
+That visibility is precisely what fixes weak-model tool-use; the cost is tokens,
+which only bites at very large catalogues (see `universal-category`).
 
 ### `universal-category`
 
