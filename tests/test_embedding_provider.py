@@ -283,6 +283,38 @@ class TestEmbedEmptyList:
         assert result["vectors"] == []
 
 
+class TestEmbedDropParams:
+    def test_direct_call_passes_drop_params_true(self, monkeypatch):
+        """Tier 2: #1616 — the direct litellm.aembedding call passes drop_params=True
+        so a provider-unsupported param (e.g. encoding_format on a DIRECT gemini-
+        embedding call) is dropped client-side instead of failing the index build.
+        Captures the real kwargs via a monkeypatched aembedding (no Mock)."""
+        from types import SimpleNamespace
+
+        captured: dict[str, Any] = {}
+
+        async def _fake_aembedding(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                data=[{"index": 0, "embedding": [0.1, 0.2, 0.3]}],
+                usage=SimpleNamespace(total_tokens=3),
+                model=kwargs.get("model", ""),
+            )
+
+        import litellm
+
+        monkeypatch.setattr(litellm, "aembedding", _fake_aembedding)
+
+        provider = _make_provider()
+        result = asyncio.run(provider.embed(["hello"], "openai/text-embedding-3-small"))
+
+        assert captured.get("drop_params") is True, (
+            f"expected drop_params=True forwarded to litellm.aembedding; got {captured!r}"
+        )
+        assert captured.get("input") == ["hello"]
+        assert result["vectors"] == [[0.1, 0.2, 0.3]]
+
+
 # ---------------------------------------------------------------------------
 # estimate_indexing_cost
 # ---------------------------------------------------------------------------

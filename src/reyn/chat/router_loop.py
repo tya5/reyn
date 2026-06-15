@@ -498,6 +498,61 @@ def _is_context_overflow_error(exc: BaseException) -> bool:
     return any(kw in msg for kw in _CONTEXT_OVERFLOW_KEYWORDS)
 
 
+def _is_unsupported_param_error(exc: BaseException) -> bool:
+    """#1616: True when *exc* is the embedding provider rejecting a param.
+
+    Detects the gemini-via-LiteLLM-proxy case where the proxy adds
+    ``encoding_format`` and the provider rejects it (``UnsupportedParamsError``),
+    which fails the action embedding index build. Keyword/typename match — the
+    same stringified-exception heuristic family as ``_is_context_overflow_error``.
+    """
+    return (
+        "UnsupportedParams" in type(exc).__name__
+        or "does not support parameter" in str(exc)
+        or "encoding_format" in str(exc)
+    )
+
+
+def _action_index_build_failure_warning(exc: BaseException, model_class: Any) -> str:
+    """#1616: cause-aware operator guidance for a failed action-embedding-index build.
+
+    Two distinct failure modes need two distinct operator actions, so branch on
+    the cause instead of emitting one misleading message (the #1458 warning was
+    HF-download-specific):
+
+    * **Unsupported-param** (``UnsupportedParamsError`` — the embedding provider
+      rejected a param, typically ``encoding_format`` on a gemini-routed embedding
+      behind a LiteLLM proxy): point to the recommended *proxy-side* fix
+      (``litellm_settings: drop_params: true``), since reyn cannot suppress a
+      param the proxy injects.
+    * **Otherwise** (e.g. a Hugging Face model download failed): the pre-existing
+      offline/cache guidance.
+
+    Returned as a fully-formatted string so the cause-selection is unit-testable
+    without driving the whole index build.
+    """
+    if _is_unsupported_param_error(exc):
+        return (
+            "Semantic search_actions disabled for this session: the embedding "
+            f"provider REJECTED a parameter ({type(exc).__name__}: {exc}). This is "
+            "typically `encoding_format` on a gemini-routed embedding behind a "
+            "LiteLLM proxy (the proxy adds it; the provider rejects it). Fix: set "
+            "`litellm_settings:\n  drop_params: true` on your LiteLLM PROXY (the "
+            "client-side flag does NOT apply on the proxy route — known litellm "
+            "behaviour), OR use an OpenAI-compatible embedding class. Options to "
+            "opt out: set `action_retrieval.embedding_class: null`."
+        )
+    return (
+        "Semantic search_actions disabled for this session: action embedding "
+        f"index build failed for model class {model_class!r} "
+        f"({type(exc).__name__}). Possible cause: model download failed — "
+        "Hugging Face unreachable (offline / corporate network?). Options: "
+        "(1) pre-download the model on a connected machine so it is in the HF "
+        "cache, (2) set `action_retrieval.embedding_class: null` to opt out, "
+        "(3) use an API-backed class (e.g. `standard`)."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Host protocol
 # ---------------------------------------------------------------------------
@@ -3580,16 +3635,12 @@ class RouterLoop:
             # consistent.
             import logging
 
+            # #1616: cause-aware guidance (UnsupportedParamsError → proxy-side
+            # drop_params; else the HF-download case). Extracted to a unit-testable
+            # module helper so the cause-selection is pinned without driving the
+            # whole index build.
             logging.getLogger(__name__).warning(
-                "Semantic search_actions disabled for this session: action "
-                "embedding index build failed for model class %r (%s). "
-                "Possible cause: model download failed — Hugging Face "
-                "unreachable (offline / corporate network?). "
-                "Options: (1) pre-download the model on a connected machine "
-                "so it is in the HF cache, (2) set "
-                "`action_retrieval.embedding_class: null` to opt out, "
-                "(3) use an API-backed class (e.g. `standard`).",
-                model_class, type(exc).__name__,
+                "%s", _action_index_build_failure_warning(exc, model_class)
             )
 
     async def _build_router_caller_state(self) -> Any:

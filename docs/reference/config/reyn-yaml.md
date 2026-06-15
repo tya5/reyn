@@ -925,6 +925,20 @@ See [Concepts: MCP](../../concepts/tools-integrations/mcp.md) for the protocol o
 
 RAG embedding model classes and batch settings. Built-in defaults cover the OpenAI path — no `reyn.yaml` changes are required for a fresh install with `OPENAI_API_KEY`.
 
+> **Non-OpenAI embeddings behind a LiteLLM proxy (#1616).** If your embedding
+> class routes through a LiteLLM proxy to a non-OpenAI provider (e.g. an
+> OpenAI-named route like `text-embedding-3-small` that the proxy maps to
+> `gemini-embedding-001`), the proxy may add `encoding_format` — which Gemini
+> rejects (`UnsupportedParamsError`), and the **action embedding index build
+> fails → `search_actions` is disabled** (the retrieval scheme goes dead). The
+> fix is **proxy-side**: set `litellm_settings:\n  drop_params: true` on your
+> LiteLLM proxy so it drops provider-unsupported params. (The client-side flag
+> does **not** apply on the proxy route — a known litellm behaviour. For a
+> *direct* non-proxy embedding call, reyn already passes `drop_params=True`.)
+> Alternatively use an OpenAI-compatible embedding class, or set
+> `action_retrieval.embedding_class: null` to opt out. reyn surfaces this exact
+> guidance when the index build fails with an `UnsupportedParamsError`.
+
 ```yaml
 embedding:
   default_class: standard         # class to use when no class is specified
