@@ -51,7 +51,7 @@ def test_chat_reasoning_parsed_without_compaction_block():
 # ── Tier 1: build_system_prompt injection (omit-when-empty) ─────────────────
 
 
-def test_sp_omits_empty_reasoning_section_byte_identical():
+def test_sp_omits_empty_reasoning_section():
     """Tier 1: #1652 — empty section → SP byte-identical to no-section (omit-
     when-empty, LLMReplay-safe, same as act_turn_reasoning)."""
     assert build_system_prompt(**_SP_BASE, reasoning_continuity_section="") == build_system_prompt(**_SP_BASE)

@@ -220,6 +220,11 @@ class RouterHostAdapter:
         # file__read / mcp ops consult the cap + on_oversize policy.
         # ``None`` = no cap.
         multimodal_config: Any = None,
+        # #1652: ReasoningConfig (continuity/display/recent_turns) + the session
+        # callback that renders the bounded prior-reasoning text section (reads
+        # history + applies the continuity gate). None → reasoning disabled.
+        reasoning_config: Any = None,
+        reasoning_continuity_section_fn: "Callable[[], str] | None" = None,
         # Issue #383 PR-C: media + tool-result file storage.
         media_store: Any = None,
         # #1128 size axis: per-turn tool-result cap/offload callable. Takes the
@@ -350,6 +355,9 @@ class RouterHostAdapter:
         # Issue #364: store the gate config so make_router_op_context can
         # thread it into the OpContext for router-initiated binary ops.
         self._multimodal_config = multimodal_config
+        # #1652: reasoning capture/continuity/display config + the section renderer.
+        self._reasoning_config = reasoning_config
+        self._reasoning_continuity_section_fn = reasoning_continuity_section_fn
         # Issue #383 PR-C: store the MediaStore for path-ref save/read.
         self._media_store = media_store
         # #1128 size axis: per-turn tool-result cap/offload callable (or None).
@@ -853,7 +861,30 @@ class RouterHostAdapter:
     async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
         from reyn.chat.outbox import OutboxMessage
         from reyn.chat.session import ChatMessage, _now_iso
-        await self._put_outbox_cb(OutboxMessage(kind=kind, text=text, meta=meta))
+        # #1652: centralised reasoning handling for agent replies. The router
+        # passes the turn's reasoning as meta["reasoning"]; this single chokepoint
+        # applies the two independent gates so every agent-reply site is covered
+        # by-construction:
+        #   - DISPLAY (toggle2): emit a discrete kind="reasoning" OutboxMessage
+        #     BEFORE the reply (the channels render reasoning ONLY from this
+        #     signal — never from agent meta — so display-off = no render).
+        #   - then strip reasoning from the agent OutboxMessage's meta.
+        #   - PERSIST (toggle1): keep reasoning on the persisted history
+        #     ChatMessage only when continuity is on (so replay can read it);
+        #     the wire-shape (content+tool_calls) never carries it → no
+        #     native double-inject on gemini.
+        _reasoning = meta.get("reasoning") if kind == "agent" else None
+        if _reasoning and self.reasoning_display_enabled():
+            await self._put_outbox_cb(OutboxMessage(
+                kind="reasoning",
+                text=_reasoning,
+                meta={"chain_id": meta.get("chain_id"), "reasoning": _reasoning},
+            ))
+        _outbox_meta = (
+            {k: v for k, v in meta.items() if k != "reasoning"}
+            if "reasoning" in meta else meta
+        )
+        await self._put_outbox_cb(OutboxMessage(kind=kind, text=text, meta=_outbox_meta))
         # Persist agent (conversational) replies to history so the context
         # window stays coherent across turns.
         #
@@ -872,14 +903,42 @@ class RouterHostAdapter:
             # ``content=`` (= wire shape mirror); the OutboxMessage above
             # keeps ``kind="agent"`` since that's the TUI-facing
             # OutboxMessage taxonomy, independent of the LLM-side role.
+            # #1652: persist reasoning on the history ChatMessage ONLY when
+            # continuity is on (so _reasoning_continuity_section can replay it);
+            # otherwise persist the stripped meta. Either way the wire-shape
+            # builder never emits meta to the LLM (no native double-inject).
+            _persist_meta = (
+                meta if (_reasoning and self.reasoning_continuity_enabled())
+                else _outbox_meta
+            )
             self._append_history_cb(ChatMessage(
-                role="assistant", content=text, ts=_now_iso(), meta=meta,
+                role="assistant", content=text, ts=_now_iso(), meta=_persist_meta,
             ))
             # Capture for agent-to-agent paths that need to forward the
             # reply upstream via _send_agent_response.
             replies = self._agent_replies_tracker()
             if replies is not None:
                 replies.append(text)
+
+    # --- #1652 reasoning capture/continuity/display ---
+
+    def reasoning_display_enabled(self) -> bool:
+        """Whether the model's reasoning text should be surfaced to the UI
+        (config ``chat.reasoning.display``; default False when unconfigured)."""
+        return bool(getattr(self._reasoning_config, "display", False))
+
+    def reasoning_continuity_enabled(self) -> bool:
+        """Whether reasoning is persisted to history + replayed into the next
+        turn (config ``chat.reasoning.continuity``; default False unconfigured)."""
+        return bool(getattr(self._reasoning_config, "continuity", False))
+
+    def reasoning_continuity_section(self) -> str:
+        """Pre-rendered prior-reasoning text section for the next system prompt,
+        or ``""`` when continuity is off / no prior reasoning. The session
+        callback reads recent history + applies the bound + continuity gate."""
+        if self._reasoning_continuity_section_fn is None:
+            return ""
+        return self._reasoning_continuity_section_fn() or ""
 
     # --- File ops ---
 

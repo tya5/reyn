@@ -1763,6 +1763,15 @@ class RouterLoop:
                 context_size_signal=_ctx_signal,
                 # #1479: system info (date/platform/shell/git).
                 environment_info=_environment_info,
+                # #1652: prior-turns' reasoning text section (continuity). Host
+                # returns "" when continuity is off / no prior reasoning →
+                # omit-when-empty (byte-identical SP). The model's own thoughts
+                # are stripped from the wire assistant messages (built explicitly
+                # from content+tool_calls), so this text-section is the single
+                # replay vehicle on gemini (no native double-inject).
+                reasoning_continuity_section=getattr(
+                    host, "reasoning_continuity_section", lambda: ""
+                )(),
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
@@ -2120,7 +2129,13 @@ class RouterLoop:
                     await self.host.put_outbox(
                         kind="agent",
                         text=_tool_turn_text,
-                        meta={"chain_id": self.chain_id, "source": "router_tool_turn_text"},
+                        # #1652: supply this turn's reasoning (host gates display/
+                        # continuity + emits the discrete kind="reasoning" signal).
+                        meta={
+                            "chain_id": self.chain_id,
+                            "source": "router_tool_turn_text",
+                            "reasoning": result.reasoning,
+                        },
                     )
                 # F5 fix (dogfood batch 1): dedupe duplicate async
                 # tool_calls within the same round. Weak models
@@ -2652,7 +2667,9 @@ class RouterLoop:
             await self.host.put_outbox(
                 kind="agent",
                 text=result.content or "",
-                meta={"chain_id": self.chain_id},
+                # #1652: supply the turn's reasoning; the host applies the
+                # display/continuity gates + the discrete kind="reasoning" emit.
+                meta={"chain_id": self.chain_id, "reasoning": result.reasoning},
             )
             return self._total_usage
 
