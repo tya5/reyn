@@ -2107,6 +2107,21 @@ class RouterLoop:
             if isinstance(interp, Execute):
                 # B28-Q2: count non-empty tool_call rounds for chat_turn_completed_inline.
                 _tool_calls_attempted += 1
+                # #1642: surface the assistant's TEXT content that accompanies tool_calls.
+                # The terminal text-reply path (below, ~line 2638) only fires for a
+                # no-tool_calls turn, so on a tool-turn the explanatory text was dropped
+                # from the conversation (it is still persisted to history). Emit it as an
+                # ``agent`` bubble BEFORE _run_execute_round so the text renders ahead of
+                # the tool rows (lifecycle_forwarder queues tool_call_started during the
+                # round). Skip empty (no empty bubble); no double-emit — the terminal path
+                # is no-tool_calls-only, and history persistence is unchanged.
+                _tool_turn_text = result.content or ""
+                if _tool_turn_text.strip():
+                    await self.host.put_outbox(
+                        kind="agent",
+                        text=_tool_turn_text,
+                        meta={"chain_id": self.chain_id, "source": "router_tool_turn_text"},
+                    )
                 # F5 fix (dogfood batch 1): dedupe duplicate async
                 # tool_calls within the same round. Weak models
                 # occasionally emit `delegate_to_agent` twice in one
