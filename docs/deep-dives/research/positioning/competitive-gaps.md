@@ -11,6 +11,8 @@ audience: [maintainer]
 OpenClaw、CrewAI / AutoGen / LangGraph）に基づく、Reyn が現状負けている領域の
 findings 記録。owner 方針: 将来これらの強化を検討する。本ドキュメントは
 findings の記録であり提案ではない — 断定で記すが、出典・段階は注記する。
+なお §4（sandbox）は当初 gap と疑ったが調査の結果 core 技術は競争力ありと
+判明した項目で、周辺機能の差分のみを gap として残す（経緯も記録として残す）。
 
 > **出典・確度**: thenewstack / turingpost / Anthropic agent-autonomy / 各社
 > 公式 docs（2026-06 時点、二次情報を含む）+ owner の実観測。競合側の数値・
@@ -41,27 +43,33 @@ default 見直し + 代替 scheme（enumerate-all / retrieval / CodeAct）の整
 （[tool-use-schemes](../../../concepts/tools-integrations/tool-use-schemes.md) /
 [codeact](../../../concepts/tools-integrations/codeact.md) 参照）。
 
-## 4. Permission / sandbox の成熟度
+## 4. Sandbox: core tech は競争力あり、周辺機能で差
 
-ClaudeCode は OS レベル sandbox（macOS Seatbelt / Linux seccomp で FS・network
-境界を agentic loop 全体に強制）、Codex は reviewer-agent による自動承認 + 全
-action の audit attribution を持つ。
+**ここは Reyn の劣位ではない。** core sandbox 技術は競合と同等以上:
 
-**Reyn の現状（正確な差分）**: Reyn は OS レベル実行隔離を**持っている** —
-`SeatbeltBackend`（macOS SBPL deny-default）/ `LandlockBackend`（Linux 5.13+
-Landlock LSM + seccomp-BPF stacking）で、subprocess 実行中に syscall レベルで
-境界を強制し、宣言的 permission gating と独立・additive に重なる（stdio MCP
-server も Seatbelt 下で subprocess-sandboxed）。劣位なのは「持っていない」ことでは
-なく**スコープと成熟度**:
+- ClaudeCode = Seatbelt（macOS）+ bubblewrap（Linux）+ network-proxy（opt-in）。
+- Codex = Landlock + seccomp（default-on）。
+- **Reyn = `SeatbeltBackend`（macOS SBPL deny-default）+ `LandlockBackend`
+  （Linux 5.13+ Landlock LSM + seccomp-BPF stacking）** — macOS は ClaudeCode と
+  同等、**Linux は ClaudeCode の bubblewrap より granular（syscall レベル）**。
+  subprocess 実行中に syscall レベルで境界を強制し、宣言的 permission gating と
+  独立・additive に重なる（stdio MCP server も Seatbelt 下で subprocess-sandboxed）。
 
-- Reyn の OS-sandbox は `sandboxed_exec` op + stdio MCP subprocess に scope され、
-  ClaudeCode のように**エージェントループ全体を丸ごと sandbox する blanket 境界**
-  ではない。
-- Codex 型の **reviewer-agent 自動承認 + per-action audit attribution** フローは
-  無い（Reyn は `chain_id` / `agent_id` の P6 audit 伝播は持つが、reviewer-agent
-  パターンではない）。
-- 成熟度の caveat: `sandbox-exec` は upstream で deprecated（macOS 26.3 では機能
-  するが）、Landlock は kernel 5.13+ 依存。
+つまり **core sandbox tech は gap ではない**。残る本当の差分は周辺機能のみ:
+
+- **(a) network 隔離**: ClaudeCode の network-proxy 相当のネットワーク境界制御は
+  未整備（`SandboxPolicy.network` の on/off はあるが proxy ベースの制御ではない）。
+- **(b) cloud microVM 実行**: Claude Code for web 相当の cloud microVM サンドボックス
+  実行環境は無い。
+- **(c) default-on enforcement**: Codex は sandbox が default-on。Reyn の OS-sandbox
+  は op/config 依存で、Codex のような全実行 default-on enforcement ではない。
+- **(d) scope**: Reyn の OS-sandbox は `sandboxed_exec` op + stdio MCP subprocess に
+  scope され、より広い surface（エージェントループ全体）への blanket 適用ではない。
+- **(e) エコシステム成熟度**: backend caveat（`sandbox-exec` は upstream deprecated /
+  macOS 26.3 で機能、Landlock は kernel 5.13+ 依存）。
+
+reviewer-agent 自動承認 + per-action audit attribution（Codex）も無い（Reyn は
+`chain_id` / `agent_id` の P6 audit 伝播は持つが reviewer-agent パターンではない）。
 
 ## 5. Computer use（browser / GUI 操作）
 
