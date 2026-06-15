@@ -53,6 +53,7 @@ def _tool_result(calls: list[dict]) -> LLMToolCallResult:
 def _make_session(tmp_path: Path) -> ChatSession:
     return ChatSession(
         agent_name="test_agent",
+        chat_tool_use_scheme="universal-category",  # #1657: suite uses universal-category stub shape
     )
 
 
@@ -292,6 +293,7 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
     session = ChatSession(
         agent_name="test_agent",
         registry=registry,
+        chat_tool_use_scheme="universal-category",  # #1657
     )
     session.is_attached = True
 
