@@ -503,6 +503,12 @@ class LLMToolCallResult:
     usage: TokenUsage
     # raw message for debugging:
     raw_message: object | None = None
+    # #1652: the model's reasoning/thinking text (provider ``reasoning_content``),
+    # surfaced separately from the visible ``content``. None when the model emitted
+    # no thoughts (thinking off / weak model / first turn). Captured here at the
+    # boundary so the chat layer can persist + (optionally) replay it; display and
+    # cross-turn replay are gated above, capture is always-on.
+    reasoning: str | None = None
 
 # ---------------------------------------------------------------------------
 # Infrastructure retry — exponential backoff on transient LLM API errors
@@ -1465,4 +1471,8 @@ async def call_llm_tools(
         finish_reason=finish_reason,
         usage=usage,
         raw_message=msg,
+        # #1652: capture the provider reasoning text (litellm surfaces it on
+        # message.reasoning_content for thinking-enabled models; verified live
+        # for gemini-2.5-flash-lite via the proxy). `or None` normalises "" → None.
+        reasoning=getattr(msg, "reasoning_content", None) or None,
     )
