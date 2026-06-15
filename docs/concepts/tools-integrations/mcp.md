@@ -66,7 +66,7 @@ If you prefer to configure a server manually (or are adding a server not in the 
 | `mcp__install_local({name, command, args})`                 | Register a local command (e.g. LLM-authored script) as an MCP server |
 | `mcp__list_servers()`                                       | Returns the names of all servers configured in `.reyn/mcp.yaml` |
 | `mcp__list_tools({server})`                                 | Returns the tools exposed by one server (each entry has `name="<server>__<tool>"`, `description`, `inputSchema`) |
-| `mcp__call_tool({tool, args})`                              | Call a tool by `<server>__<tool>` identifier (from `mcp__list_tools`) with its declared args |
+| `mcp__call_tool({tool, tool_args})`                              | Call a tool by `<server>__<tool>` identifier (from `mcp__list_tools`) with its declared tool_args |
 | `mcp__drop_server({server})`                                | Remove an installed server from the config |
 
 The LLM router can call these directly during a chat turn. Typical first-time flow:

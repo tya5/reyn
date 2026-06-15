@@ -66,7 +66,7 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 | `mcp__install_local({name, command, args})`                 | local command (LLM 生成 script 等) を直接 MCP server として登録 |
 | `mcp__list_servers()`                                       | `.reyn/mcp.yaml` に設定された全サーバー名を返す |
 | `mcp__list_tools({server})`                                 | 1 サーバーが露出する tool 一覧を `{name: "<server>__<tool>", description, inputSchema}` 形式で返す |
-| `mcp__call_tool({tool, args})`                              | `<server>__<tool>` ID + tool の declared args で tool を call |
+| `mcp__call_tool({tool, tool_args})`                              | `<server>__<tool>` ID + tool の declared tool_args で tool を call |
 | `mcp__drop_server({server})`                                | install 済サーバーを config から削除 |
 
 LLM router がチャット turn 内で直接これらを呼べます。 初回利用の典型 flow:

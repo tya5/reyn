@@ -74,7 +74,7 @@ hallucination 0/35)。
 | `mcp__install_local`    | local command (LLM 生成 script 等) を直接登録 |
 | `mcp__list_servers`     | install 済 server を列挙 |
 | `mcp__list_tools`     | 1 server の tool を `<server>__<tool>` ID で列挙 |
-| `mcp__call_tool`      | `<server>__<tool>` ID + `args` で tool を call |
+| `mcp__call_tool`      | `<server>__<tool>` ID + `tool_args` で tool を call |
 | `mcp__drop_server`    | install 済 server を削除 |
 
 ## Qualified-name format
@@ -183,7 +183,7 @@ invoke すると、 その種別の *canonical default operation* が走る:
 旧 `mcp.server` / `mcp.tool` の resource entry は削除。
 per-MCP-server / per-MCP-tool dispatch は `mcp` category 内の verb
 actions 経由 (= `mcp__list_tools` →
-`mcp__call_tool({tool: "<server>__<tool>", args})`) で flow する。
+`mcp__call_tool({tool: "<server>__<tool>", tool_args})`) で flow する。
 
 これにより LLM は `invoke_action("rag_corpus__meetings", {"query": "Q3
 roadmap"})` と書くだけで wrapper が `recall(sources=["meetings"],

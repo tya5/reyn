@@ -71,7 +71,7 @@ The `mcp` category provides six verb_object actions that cover the LLM-visible s
 | `mcp__install_local`    | Register a local command (e.g. LLM-authored script) as an MCP server |
 | `mcp__list_servers`     | Enumerate installed servers |
 | `mcp__list_tools`     | Enumerate one server's tools as `<server>__<tool>` ids |
-| `mcp__call_tool`      | Call a tool by `<server>__<tool>` id with `args` |
+| `mcp__call_tool`      | Call a tool by `<server>__<tool>` id with `tool_args` |
 | `mcp__drop_server`    | Remove an installed server |
 
 `exec` is gated by `is_exec_available()` — it only appears when a real
@@ -185,7 +185,7 @@ resource runs the *canonical default operation* for that kind:
 | `rag_corpus` | single-source recall |
 
 The previous `mcp.server` / `mcp.tool` resource entries are removed; per-MCP-server / per-MCP-tool dispatch now flows through the verb actions in the `mcp` category (= `mcp__list_tools` →
-`mcp__call_tool({tool: "<server>__<tool>", args})`).
+`mcp__call_tool({tool: "<server>__<tool>", tool_args})`).
 
 This means an LLM can say `invoke_action("rag_corpus__meetings",
 {"query": "Q3 roadmap"})` and the wrapper expands it to
