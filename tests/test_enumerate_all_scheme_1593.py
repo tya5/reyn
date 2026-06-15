@@ -152,10 +152,11 @@ def test_format_feedback_delegates_to_ops() -> None:
     assert msgs == [{"role": "tool", "content": "git__commit"}]
 
 
-def test_per_layer_config_nondefault_selects_enumerate_all() -> None:
-    """Tier 2: a NON-default ``tool_use: {chat: enumerate-all}`` resolves the chat
-    layer to EnumerateAllScheme, while the default stays universal-category
-    (byte-identical) and a chat-only override leaves step/phase untouched.
+def test_default_chat_layer_resolves_to_enumerate_all() -> None:
+    """Tier 2: #1657 — the DEFAULT chat layer (None / missing tool_use:) is
+    ``enumerate-all`` (the owner H1 fix) and resolves to EnumerateAllScheme;
+    step/phase keep ``universal-category``. A config override flips chat back to
+    universal-category per-layer (the knob still works both ways).
 
     Pins the config→selection seam at its public surfaces: the per-layer config
     dataclass (``ToolUseConfig``), the scheme resolver (``_resolve_tool_use_scheme``),
@@ -165,14 +166,18 @@ def test_per_layer_config_nondefault_selects_enumerate_all() -> None:
     from reyn.chat.router_loop import _resolve_tool_use_scheme
     from reyn.config import _build_tool_use_config
 
-    # Default (None / missing tool_use:) → all layers universal-category.
+    # #1657: default chat → enumerate-all (resolves to EnumerateAllScheme);
+    # step/phase remain universal-category (the H1 evidence is the chat path).
     default_cfg = _build_tool_use_config(None)
-    assert default_cfg.chat == "universal-category"
-    assert _resolve_tool_use_scheme(default_cfg.chat).name == "universal-category"
+    assert default_cfg.chat == "enumerate-all"
+    assert default_cfg.step == "universal-category"
+    assert default_cfg.phase == "universal-category"
+    assert _resolve_tool_use_scheme(default_cfg.chat).name == "enumerate-all"
 
-    # NON-default chat layer → enumerate-all; sibling layers keep the default.
-    cfg = _build_tool_use_config({"chat": "enumerate-all"})
-    assert cfg.chat == "enumerate-all"
-    assert cfg.step == "universal-category"    # chat-only override is per-layer
+    # The override knob still works: chat → universal-category (the now-non-default)
+    # resolves back, and is per-layer (step/phase untouched).
+    cfg = _build_tool_use_config({"chat": "universal-category"})
+    assert cfg.chat == "universal-category"
+    assert cfg.step == "universal-category"
     assert cfg.phase == "universal-category"
-    assert _resolve_tool_use_scheme(cfg.chat).name == "enumerate-all"
+    assert _resolve_tool_use_scheme(cfg.chat).name == "universal-category"

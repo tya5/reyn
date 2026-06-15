@@ -8,8 +8,9 @@ audience: [human, agent]
 
 How an agent's tools are shown to the LLM — and how the LLM's calls are turned
 back into dispatched actions — is a **pluggable scheme**. Reyn ships four, and
-you select one per layer in `reyn.yaml`. The default reproduces the standard
-behaviour, so schemes are entirely opt-in.
+you select one per layer in `reyn.yaml`. The defaults are `enumerate-all` for the
+`chat` layer (#1657) and `universal-category` for `step` / `phase`; any layer can
+be switched to another scheme via config.
 
 The key invariant: **the scheme only changes the LLM-facing surface**. Every
 tool call, whichever scheme produced it, is routed through the same OS gate —
@@ -19,25 +20,31 @@ what is allowed, only how the LLM is asked to express a call. See
 
 ## The four schemes
 
-### `universal-category` (default)
+### `enumerate-all` (chat default, #1657)
+
+Presents *every* usable tool flatly in the LLM's tool list and dispatches by
+name — the plain, native-JSON baseline with no discovery indirection. **This is
+the default for the `chat` layer** (#1657): flat-listing actions lets the LLM
+invoke them directly, avoiding the `invoke_action` name-hallucination that the
+discover-then-call indirection induced (measured ~30%→100% non-hot-list tool-use
+on the chat path). Leaving `tool_use.chat` unset keeps it.
+
+**Use when:** the default for chat — direct, deterministic name→dispatch. The
+trade-off is request size: the flat list grows with the tool set (see
+`universal-category` for very large catalogs).
+
+### `universal-category`
 
 The [universal action catalog](universal-catalog.md): every action — a skill, an
 MCP tool, a memory entry, a file op, an indexed corpus — is addressed by a single
 qualified name and reached through a small fixed set of wrappers (discover →
 describe → invoke). The LLM-facing tool list stays constant as the catalogue
-grows. This is Reyn's shipped behaviour; leaving `tool_use` unset keeps it.
+grows. The default for the `step` / `phase` layers; set `tool_use.chat:
+universal-category` to use it for chat too.
 
-**Use when:** the default — a broad, growing tool set where you don't want the
-tool list to scale with the number of resources.
-
-### `enumerate-all`
-
-Presents *every* usable tool flatly in the LLM's tool list and dispatches by
-name — the plain, native-JSON baseline with no discovery indirection.
-
-**Use when:** the tool set is **small** and you want maximum determinism and the
-simplest possible mapping from the LLM's call to a dispatch. Note this is *not* a
-weak-model aid — a flat JSON tool list is the hardest surface for weak models.
+**Use when:** a very large / fast-growing tool set where flat-listing every
+action in the request would cost too many tokens — the wrappers keep the
+LLM-facing tool list constant.
 
 ### `retrieval`
 
@@ -66,9 +73,9 @@ The scheme is chosen independently for each of the three layers an agent runs:
 ```yaml
 # reyn.yaml
 tool_use:
-  chat: universal-category    # top-level chat router
-  step: universal-category    # plan / skill steps
-  phase: universal-category   # OS phases
+  chat: enumerate-all         # top-level chat router (default, #1657)
+  step: universal-category    # plan / skill steps (default)
+  phase: universal-category   # OS phases (default)
 ```
 
 Any layer can use any registered scheme; the others are unaffected. Full per-key
@@ -90,6 +97,6 @@ gate is constant.
 
 ## See also
 
-- [Universal Action Catalog](universal-catalog.md) — the internals of the default `universal-category` scheme
+- [Universal Action Catalog](universal-catalog.md) — the internals of the `universal-category` scheme (step/phase default; chat alternative)
 - [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block) — config reference
 - [Permission model](../runtime/permission-model.md) — the gate every scheme dispatches through

@@ -1183,8 +1183,10 @@ class ChatSession:
         # #1593 PR-2: the chat-layer tool-use scheme name (config.tool_use.chat).
         # Threaded → RouterLoopDriver → RouterLoop(scheme_name=) so the chat
         # router resolves the selected ToolUseScheme. Default "universal-category"
-        # keeps today's behaviour (the factory passes the resolved config value).
-        chat_tool_use_scheme: str = "universal-category",
+        # #1657: default enumerate-all (owner H1 fix) — matches ToolUseConfig.chat.
+        # The 5 entry callers pass the resolved config.tool_use.chat; this fallback
+        # only applies to direct ChatSession construction without that kwarg.
+        chat_tool_use_scheme: str = "enumerate-all",
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
         tool_calls_op_loop_skills: list[str] | None = None,  # #1212: op-loop gate for chat-run skills

@@ -281,7 +281,7 @@ def _tool_result(calls: list[dict]) -> LLMToolCallResult:
 
 
 def _make_loop(host: FakeRouterHost, max_iterations: int = 5) -> RouterLoop:
-    return RouterLoop(host=host, chain_id="chain-test", max_iterations=max_iterations)
+    return RouterLoop(host=host, chain_id="chain-test", max_iterations=max_iterations, scheme_name="universal-category")  # #1657: this suite covers universal-category
 
 
 # ---------------------------------------------------------------------------

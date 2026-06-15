@@ -197,7 +197,7 @@ def _run_with_llm_sequence(
     async def _fake_call_llm_tools(**kwargs: object) -> LLMToolCallResult:
         return turns.pop(0)
 
-    loop = RouterLoop(host=host, chain_id="chain-test", max_iterations=5)
+    loop = RouterLoop(host=host, chain_id="chain-test", max_iterations=5, scheme_name="universal-category")  # #1657
     monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _fake_call_llm_tools)
     asyncio.run(loop.run("hello", []))
 
@@ -460,7 +460,7 @@ def test_invoke_action_description_has_no_ars_block(monkeypatch: pytest.MonkeyPa
         captured["tools"] = kwargs.get("tools")
         return _text_result("ok")  # finish immediately
 
-    loop = RouterLoop(host=host, chain_id="chain-test", max_iterations=5)
+    loop = RouterLoop(host=host, chain_id="chain-test", max_iterations=5, scheme_name="universal-category")  # #1657
     monkeypatch.setattr("reyn.chat.router_loop.call_llm_tools", _capture_tools)
     asyncio.run(loop.run("hello", []))
 

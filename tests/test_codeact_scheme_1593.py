@@ -208,5 +208,5 @@ def test_codeact_scheme_registered_and_selectable() -> None:
     selected = _resolve_tool_use_scheme("codeact")
     assert selected.name == "codeact"
     assert isinstance(selected, CodeActScheme)
-    # Default is unchanged (universal-category), not codeact.
-    assert _resolve_tool_use_scheme(None).name == "universal-category"
+    # #1657: default is now enumerate-all (not codeact, not universal).
+    assert _resolve_tool_use_scheme(None).name == "enumerate-all"  # #1657
