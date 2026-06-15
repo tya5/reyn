@@ -273,6 +273,10 @@ class OutboxRouter:
             "tool_call_started":        self._on_tool_call_started,
             "tool_call_completed":      self._on_tool_call_completed,
             "tool_call_failed":         self._on_tool_call_failed,
+            # #1652: discrete reasoning signal emitted immediately BEFORE its
+            # reply — store it for the next reply render to consume (streaming
+            # → interactive ReasoningBlock; non-streaming → static log text).
+            "reasoning":                self._on_reasoning,
         }
 
     # ── public read-only accessors ────────────────────────────────────────────
@@ -1534,6 +1538,21 @@ class OutboxRouter:
         # event set (= agents), and Ctrl+B after a tool failure opens the
         # Agents tab instead of the Events trace the user came to see.
         self._app._last_focal_tab = "events"
+
+    def _on_reasoning(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """``reasoning`` (#1652) — store the model's reasoning text for the
+        upcoming reply. The producer emits this discrete signal IMMEDIATELY
+        before the reply, so the next reply render consumes it in correct order
+        (streaming → interactive ReasoningBlock before the StreamingRow;
+        non-streaming → static reasoning text before the RichLog reply). The
+        text is carried in both ``meta["reasoning"]`` (convention) and ``text``;
+        read meta first, fall back to text. Empty → nothing stored."""
+        meta = msg.meta or {}
+        reasoning = meta.get("reasoning") or msg.text or ""
+        if reasoning:
+            conv.set_pending_reasoning(reasoning)
 
     def _on_embedding_lifecycle(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,

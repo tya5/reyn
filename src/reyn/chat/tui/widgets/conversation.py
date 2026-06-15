@@ -74,6 +74,7 @@ from ._inline_row_manager import _InlineRowManager
 from .async_stack_panel import AsyncStackPanel
 from .inline_thinking_row import InlineThinkingRow
 from .intervention import InterventionWidget
+from .reasoning_block import ReasoningBlock
 from .skill_activity import SkillActivityRow
 from .sticky_status import StickyStatus
 from .streaming_row import StreamingRow
@@ -821,6 +822,16 @@ class _MessageRenderer:
             _indent_body(renderable, self._parent._current_body_indent())
         )
 
+    def _write_reasoning(self, reasoning: str) -> None:
+        """#1652 non-streaming path: write the model's reasoning as static dim
+        text into the RichLog, BEFORE the reply (correct order). Dim italic
+        ``💭 reasoning`` marker + dim body so it reads as the model's thoughts,
+        visually subordinate to the answer. The streaming path uses the
+        interactive ReasoningBlock instead; this is the correct-order static
+        treatment for the monolithic-RichLog reply path (design A)."""
+        self._write_body(Text("💭 reasoning", style="italic dim " + _TEXT_MUTED))
+        self._write_body(Text(reasoning, style="dim " + _TEXT_MUTED))
+
     # ── empty state ───────────────────────────────────────────────────────────
 
     def _consume_empty_hint(self) -> None:
@@ -1139,6 +1150,14 @@ class _MessageRenderer:
         self._consume_empty_hint()
         self._parent.stop_thinking()  # turn finished — unmount inline spinner
         self._parent.hide_status()    # also clear any sticky status
+        # #1652: a pending reasoning signal → write it as static text into the
+        # RichLog BEFORE the reply (correct order). The non-streaming reply lands
+        # in the monolithic RichLog, so a mounted ReasoningBlock would sit below
+        # it (wrong order) — static log text is the correct-order treatment here
+        # (the interactive ReasoningBlock is reserved for the streaming path).
+        reasoning = self._parent.consume_pending_reasoning()
+        if reasoning:
+            self._write_reasoning(reasoning)
         meta_pfx = _meta_prefix(msg.meta)
         body_text = msg.text or ""
 
@@ -1521,6 +1540,12 @@ class _StreamController:
         )
         self._stream_rows[msg_id] = row
         self._stream_new_turn[msg_id] = is_new_turn
+        # #1652: a pending reasoning signal (emitted just before this reply) →
+        # mount the interactive ReasoningBlock FIRST so it renders above the
+        # StreamingRow (DOM order: RichLog history, ReasoningBlock, StreamingRow).
+        reasoning = self._parent.consume_pending_reasoning()
+        if reasoning:
+            self._parent.mount(ReasoningBlock(reasoning=reasoning))
         self._parent.mount(row)
         return row
 
@@ -1726,6 +1751,29 @@ class ConversationView(Widget):
         # messages stay at whatever indent they had when rendered (= no
         # full re-render of scroll history).
         self._show_timestamps: bool = True
+        # #1652: reasoning text from the discrete ``kind="reasoning"`` outbox
+        # signal (emitted immediately before its reply). Stored on receipt; the
+        # NEXT reply render consumes it path-appropriately — streaming mounts an
+        # interactive ReasoningBlock before the StreamingRow, non-streaming writes
+        # static reasoning text before the reply in the RichLog. Deferring the
+        # consume (vs mounting on receipt) is load-bearing: a widget mounted at
+        # signal time sits BELOW the monolithic RichLog, so the non-streaming
+        # reply (RichLog text) would render above it — wrong order.
+        self._pending_reasoning: str | None = None
+
+    # ── #1652 reasoning ────────────────────────────────────────────────────────
+
+    def set_pending_reasoning(self, reasoning: str) -> None:
+        """Store the reasoning text for the upcoming reply (from the discrete
+        ``kind="reasoning"`` outbox signal). Consumed by the next reply render."""
+        self._pending_reasoning = reasoning or None
+
+    def consume_pending_reasoning(self) -> "str | None":
+        """Return + clear any pending reasoning. The reply-render path calls this
+        and renders the result path-appropriately (mounted block / static text).
+        Returns None when there is nothing pending (no reasoning this turn / off)."""
+        pending, self._pending_reasoning = self._pending_reasoning, None
+        return pending
 
     # ── composition ──────────────────────────────────────────────────────────
 
