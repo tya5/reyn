@@ -39,11 +39,14 @@ def get_default_backend(config: "SandboxConfig | None" = None) -> SandboxBackend
     | Linux          | kernel >= 5.13 + landlock pkg | Landlock    |
     | other / fallback | any                         | Noop        |
 
-    If ``config`` is provided and ``config.backend != "auto"``, force-select
-    that backend (still respects ``available()``). If the forced backend is
-    unavailable on this platform:
-    - ``on_unsupported == "warn"``:  log WARN and fall back to NoopBackend
-    - ``on_unsupported == "error"``: raise RuntimeError
+    ``on_unsupported`` is applied whenever no real backend is available — BOTH
+    when an explicit ``backend`` is forced-but-unavailable AND (#1660) when
+    ``backend="auto"`` finds no platform backend (previously the auto path fell
+    back to NoopBackend SILENTLY, ignoring the knob — so ``error`` was a no-op
+    with the default backend). In all those cases:
+    - ``on_unsupported == "warn"``:  log WARN and fall back to NoopBackend (default)
+    - ``on_unsupported == "error"``: raise RuntimeError (fail-closed — refuse to run
+      AI code unsandboxed; now works with ``backend="auto"`` too)
     - ``on_unsupported == "ignore"``: silently fall back to NoopBackend
 
     Backend modules are lazy-imported so missing sibling files degrade
@@ -69,7 +72,11 @@ def get_default_backend(config: "SandboxConfig | None" = None) -> SandboxBackend
         on_unsupported = config.on_unsupported
 
     if backend_name == "auto":
-        return _auto_select(SeatbeltBackend, LandlockBackend)
+        # #1660: pass on_unsupported so the auto path applies it when no platform
+        # backend is available (previously a SILENT NoopBackend fallback — the
+        # selection-time silence + the broken fail-closed knob bug). The supported-
+        # platform selection (Seatbelt/Landlock available) is unaffected.
+        return _auto_select(SeatbeltBackend, LandlockBackend, on_unsupported)
 
     # Explicit backend requested — construct and check availability.
     if backend_name == "noop":
@@ -93,8 +100,42 @@ def get_default_backend(config: "SandboxConfig | None" = None) -> SandboxBackend
     return NoopBackend()
 
 
-def _auto_select(SeatbeltBackend: type | None, LandlockBackend: type | None) -> SandboxBackend:  # noqa: N803
-    """Platform-aware auto-selection for backend="auto"."""
+def _noop_with_policy(on_unsupported: str, detail: str) -> SandboxBackend:
+    """#1660: apply ``sandbox.on_unsupported`` when no OS sandbox backend is
+    available on the auto path. Previously the auto path fell back to NoopBackend
+    SILENTLY (ignoring the knob) — so the selection was silent AND
+    ``on_unsupported: error`` (the fail-closed knob) was a no-op with the default
+    ``backend: auto``. Now unified with the explicit path:
+    - ``error``  → RAISE (fail-closed: refuse to run AI code unsandboxed).
+    - ``warn``   → LOUD log at selection + NoopBackend (default; not silent).
+    - ``ignore`` → silent NoopBackend (explicit opt-in to silence).
+    """
+    if on_unsupported == "error":
+        raise RuntimeError(
+            f"No OS sandbox backend available ({detail}) and sandbox.on_unsupported="
+            "'error' → refusing to run AI-generated code unsandboxed. Use a supported "
+            "platform (macOS + sandbox-exec / Linux + landlock), or set "
+            "sandbox.on_unsupported to 'warn' / 'ignore' to allow the NoopBackend fallback."
+        )
+    if on_unsupported == "warn":
+        _logger.warning(
+            "Sandbox: no OS enforcement backend available (%s) — AI-generated code "
+            "(sandboxed_exec) will run UNSANDBOXED via NoopBackend. Set "
+            "sandbox.on_unsupported: error to refuse, or use a supported platform "
+            "(macOS + sandbox-exec / Linux + landlock).",
+            detail,
+        )
+    return NoopBackend()
+
+
+def _auto_select(
+    SeatbeltBackend: type | None,  # noqa: N803
+    LandlockBackend: type | None,  # noqa: N803
+    on_unsupported: str = "warn",
+) -> SandboxBackend:
+    """Platform-aware auto-selection for backend="auto". #1660: when no platform
+    backend is available, apply ``on_unsupported`` (via ``_noop_with_policy``) instead
+    of a silent NoopBackend fallback."""
     system = platform.system()
 
     if system == "Darwin":
@@ -102,17 +143,17 @@ def _auto_select(SeatbeltBackend: type | None, LandlockBackend: type | None) -> 
             candidate = SeatbeltBackend()
             if candidate.available():
                 return candidate
-        return NoopBackend()
+        return _noop_with_policy(on_unsupported, "macOS without sandbox-exec / SeatbeltBackend")
 
     if system == "Linux":
         if LandlockBackend is not None:
             candidate = LandlockBackend()
             if candidate.available():
                 return candidate
-        return NoopBackend()
+        return _noop_with_policy(on_unsupported, "Linux without landlock / LandlockBackend")
 
-    # FreeBSD, Windows, or anything else — always Noop.
-    return NoopBackend()
+    # FreeBSD, Windows, or anything else — no OS backend.
+    return _noop_with_policy(on_unsupported, f"unsupported platform {system!r}")
 
 
 def _resolve_explicit(

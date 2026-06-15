@@ -112,6 +112,61 @@ def test_auto_on_unknown_platform_returns_noop(monkeypatch):
     assert isinstance(result, NoopBackend)
 
 
+# ─── #1660: the auto path honors on_unsupported (was silent / fail-closed broken) ──
+
+
+def test_auto_unsupported_error_raises(monkeypatch):
+    """Tier 2: #1660 (the bug-fix) — backend='auto' + on_unsupported='error' on a
+    platform with NO OS sandbox RAISES (fail-closed). Previously the auto path
+    ignored on_unsupported → the fail-closed knob was a silent no-op with the default
+    backend, so AI code ran unsandboxed even when the operator asked to refuse."""
+    monkeypatch.setattr("platform.system", lambda: "FreeBSD")
+    with pytest.raises(RuntimeError, match="No OS sandbox backend available"):
+        get_default_backend(SandboxConfig(backend="auto", on_unsupported="error"))
+
+
+def test_auto_unsupported_warn_is_loud_at_selection(monkeypatch, caplog):
+    """Tier 2: #1660 — backend='auto' + on_unsupported='warn' (default) → NoopBackend
+    AND a WARN logged AT SELECTION (not silent — the operator is told upfront that AI
+    exec will run unsandboxed, vs the prior selection-time silence)."""
+    monkeypatch.setattr("platform.system", lambda: "FreeBSD")
+    with caplog.at_level(logging.WARNING, logger="reyn.sandbox"):
+        result = get_default_backend(SandboxConfig(backend="auto", on_unsupported="warn"))
+    assert isinstance(result, NoopBackend)
+    assert any("UNSANDBOXED" in r.message for r in caplog.records), (
+        f"Expected a loud selection-time WARN; got: {[r.message for r in caplog.records]}"
+    )
+
+
+def test_auto_unsupported_ignore_is_silent(monkeypatch, caplog):
+    """Tier 2: #1660 — on_unsupported='ignore' → NoopBackend with NO selection-time
+    warn (explicit opt-in to silence)."""
+    monkeypatch.setattr("platform.system", lambda: "FreeBSD")
+    with caplog.at_level(logging.WARNING, logger="reyn.sandbox"):
+        result = get_default_backend(SandboxConfig(backend="auto", on_unsupported="ignore"))
+    assert isinstance(result, NoopBackend)
+    assert not any("UNSANDBOXED" in r.message for r in caplog.records)
+
+
+def test_auto_unsupported_does_not_fire_when_backend_available(monkeypatch):
+    """Tier 2: #1660 regression guard — on a SUPPORTED platform the policy is NOT
+    consulted: auto returns the real backend even with on_unsupported='error' (no
+    spurious raise). The policy applies ONLY on the no-backend fallback."""
+    from reyn.sandbox import _auto_select
+
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+
+    class _FakeLandlock:
+        name = "landlock"
+
+        def available(self) -> bool:
+            return True
+
+    # Backend available ⇒ returned, even with on_unsupported='error' (no raise).
+    result = _auto_select(None, _FakeLandlock, "error")
+    assert result.name == "landlock"
+
+
 # ─── 3. Explicit backend forcing ──────────────────────────────────────────────
 
 
