@@ -375,9 +375,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="swe_bench_runner.py",
         description=(
-            "Wrap `reyn run swe_bench` for the SWE-bench evaluation harness. "
-            "Reads a single SWE-bench instance, runs the Reyn solver, and emits "
-            "the harness-expected JSON on stdout."
+            "Solve a SWE-bench instance with the general agent via `reyn run-once` "
+            "for the SWE-bench evaluation harness (the swe_bench skill was retired "
+            "in #187 — the agent iterates with its own tools, no test_patch). Reads "
+            "a single SWE-bench instance and emits the harness-expected JSON on stdout."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -407,13 +408,13 @@ def build_parser() -> argparse.ArgumentParser:
     # FP-0008 #1115 Stage 2 (β2b): faithful in-container run. When
     # --env-backend=docker, the runner owns the per-instance container lifecycle
     # (docker run the official SWE-bench image → reyn run inside it via the
-    # generic --env-backend flags → teardown), so the swe_bench skill's
+    # generic --env-backend flags → teardown), so the general agent's
     # repo FS + commands execute against the pre-built /testbed, not the host.
     p.add_argument(
         "--env-backend", dest="env_backend", choices=["host", "docker"],
         default="host",
         help=(
-            "Where the swe_bench skill's repo FS + commands run: 'host' (default) "
+            "Where the general agent's repo FS + commands run: 'host' (default) "
             "or 'docker' (per-instance container from --image; faithful in-container run)."
         ),
     )
