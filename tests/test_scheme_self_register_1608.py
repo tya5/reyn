@@ -48,7 +48,7 @@ def test_all_builtins_resolve_in_fresh_interpreter() -> None:
         for n in expected:
             s = get_scheme(n)
             assert s is not None and s.name == n, n
-        assert DEFAULT_SCHEME_NAME == "universal-category"
+        assert DEFAULT_SCHEME_NAME == "enumerate-all"
         assert get_scheme(DEFAULT_SCHEME_NAME) is not None
         print("RESOLVE_OK")
         """
@@ -68,8 +68,8 @@ def test_resolver_finds_all_builtins_without_naming_them() -> None:
             s = _resolve_tool_use_scheme(n)
             assert s is not None and s.name == n, n
         # Unknown / None → default.
-        assert _resolve_tool_use_scheme("no-such").name == "universal-category"
-        assert _resolve_tool_use_scheme(None).name == "universal-category"
+        assert _resolve_tool_use_scheme("no-such").name == "enumerate-all"
+        assert _resolve_tool_use_scheme(None).name == "enumerate-all"
         print("RESOLVE_OK")
         """
     )

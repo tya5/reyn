@@ -311,10 +311,13 @@ def registered_scheme_names() -> list[str]:
     return sorted(_SCHEMES)
 
 
-# The default scheme name — universal-category, preserving today's behaviour when
-# no per-layer config overrides it. The OS holds the *name* string (a config key),
-# not scheme logic, so this stays P7-clean.
-DEFAULT_SCHEME_NAME = "universal-category"
+# The default scheme name — enumerate-all (#1657: owner default switch, the H1
+# fix; enumerate-all flat-lists actions so the LLM invokes them directly instead
+# of hallucinating invoke_action names → 30%→100% non-hot-list tool-use).
+# universal-category remains available via config (tool_use.chat) for many-tool /
+# minimal-surface setups. The OS holds the *name* string (a config key), not
+# scheme logic, so this stays P7-clean.
+DEFAULT_SCHEME_NAME = "enumerate-all"
 
 
 __all__ = [

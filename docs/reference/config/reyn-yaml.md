@@ -387,18 +387,18 @@ Per-layer tool-use scheme selector. Each layer picks a registered `ToolUseScheme
 
 ```yaml
 tool_use:
-  chat: universal-category    # default
+  chat: enumerate-all         # default (#1657)
   step: universal-category    # default
   phase: universal-category   # default
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `chat` | string | `universal-category` | Tool-use scheme for the top-level chat layer. Set to another registered scheme (e.g. `enumerate-all`) to change how tools are presented to / dispatched from the LLM at that layer. |
+| `chat` | string | `enumerate-all` | Tool-use scheme for the top-level chat layer. **Default `enumerate-all` (#1657)** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call), or another registered scheme. |
 | `step` | string | `universal-category` | Tool-use scheme for the plan/skill step layer. |
 | `phase` | string | `universal-category` | Tool-use scheme for the OS phase layer. |
 
-Defaults preserve today's behaviour (all `universal-category`). A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping a layer's scheme changes the whole tool-use loop for that layer without OS changes.
+The chat layer defaults to `enumerate-all` (#1657); `step` / `phase` keep `universal-category`. A scheme owns how the `tools=` payload is built, the SP tool-use instructions, how an LLM response is interpreted, and how it is dispatched — so swapping a layer's scheme changes the whole tool-use loop for that layer without OS changes. `universal-category` remains available per-layer via this config (e.g. for very large tool catalogs where flat-listing every action would bloat the request).
 
 For what each scheme does and **when to choose which** (`enumerate-all` / `retrieval` / `CodeAct` vs the default), see [Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.md).
 

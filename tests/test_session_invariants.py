@@ -154,6 +154,13 @@ def _make_session(
         safety=safety,
         registry=registry,
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
+        # #1657: these chain-invariant tests stub the LLM with the universal-
+        # category tool-call shape (_delegate_result = invoke_action wrapper),
+        # so pin the scheme to match the stub. They assert WAL/chain behaviour,
+        # not the tool-use scheme; the default is now enumerate-all (which
+        # interprets FLAT native tool_calls, not the wrapper) so an unpinned
+        # session would not dispatch the stub's delegate → no chain_register.
+        chat_tool_use_scheme="universal-category",
     )
     session.register_intervention_listener("test")
     return session

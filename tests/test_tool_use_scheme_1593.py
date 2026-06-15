@@ -72,9 +72,9 @@ class _RecordingOps:
 def test_registry_register_get_resolve() -> None:
     """Tier 2: register a scheme by name, look it up, and the default name resolves."""
     register_scheme(UniversalCategoryScheme())
-    assert DEFAULT_SCHEME_NAME == "universal-category"
+    assert DEFAULT_SCHEME_NAME == "enumerate-all"
     s = get_scheme(DEFAULT_SCHEME_NAME)
-    assert s is not None and s.name == "universal-category"
+    assert s is not None and s.name == "enumerate-all"  # #1657
     assert DEFAULT_SCHEME_NAME in registered_scheme_names()
     assert get_scheme("no-such-scheme") is None
 
@@ -138,7 +138,7 @@ def test_tool_use_config_per_layer_and_defaults() -> None:
     """Tier 2: per-layer scheme selection parses (NON-default) + defaults to
     universal-category; a non-string value is a loud error."""
     assert _build_tool_use_config(None) == ToolUseConfig()
-    assert ToolUseConfig().chat == "universal-category"
+    assert ToolUseConfig().chat == "enumerate-all"
     cfg = _build_tool_use_config({"chat": "enumerate-all"})
     assert cfg.chat == "enumerate-all"
     assert cfg.step == "universal-category" and cfg.phase == "universal-category"
