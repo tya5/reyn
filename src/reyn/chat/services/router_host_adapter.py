@@ -999,6 +999,15 @@ class RouterHostAdapter:
         """Resolve config model name (e.g. 'router') to actual model id."""
         return self._resolver.resolve(name).model
 
+    def resolve_model_spec(self, name: str) -> "Any":
+        """#1654: resolve a config model name to the FULL ModelSpec (model +
+        operator kwargs). The chat router must pass this to call_llm_tools so
+        per-model kwargs (reasoning_effort, temperature, extra_body, …) reach
+        litellm. ``resolve_model`` returns the bare ``.model`` string, DROPPING
+        those kwargs — which left reasoning_effort (#1650/#1652) and every model
+        kwarg inert on the chat-router path."""
+        return self._resolver.resolve(name)
+
     def context_window_status(self) -> "dict | None":
         """#272/#1128: live exact-token context budget for the SP context-size
         signal, or None when no provider is wired (= signal omitted)."""

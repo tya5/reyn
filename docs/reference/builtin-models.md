@@ -80,25 +80,42 @@ OpenAI GPT-4o.  Strong general-purpose model.
 
 ```yaml
 model: gemini/gemini-2.5-flash-lite
+reasoning_effort: low      # #1654: reasoning ON by default
 ```
 
-Google Gemini 2.5 Flash Lite.  Very low cost.
+Google Gemini 2.5 Flash Lite.  Very low cost. Ships with `reasoning_effort: low`
+so reasoning/thinking is **on out of the box** (see the reasoning note below).
 
 ### `gemini-pro`
 
 ```yaml
 model: gemini/gemini-2.5-pro
+reasoning_effort: medium   # #1654: reasoning ON by default
 ```
 
-Google Gemini 2.5 Pro.  High capability, suitable for strong-tier tasks.
+Google Gemini 2.5 Pro.  High capability, suitable for strong-tier tasks. Ships
+with `reasoning_effort: medium`.
 
 ### `gemini-3.1-flash-preview`
 
 ```yaml
 model: gemini/gemini-3.1-flash-preview
+reasoning_effort: low      # #1654: reasoning ON by default
 ```
 
-Google Gemini 3.1 Flash Preview.
+Google Gemini 3.1 Flash Preview. Ships with `reasoning_effort: low`.
+
+> **Reasoning on by default (#1654)** — the Gemini reasoning models above ship
+> with a default `reasoning_effort`, and `chat.reasoning.{capture,display,
+> continuity}` default on, so the model's reasoning text is produced, shown
+> (collapsible), and carried across turns out of the box. **Cost note**: thinking
+> tokens add to spend (low ≈ 1024, medium ≈ 2048 thinking-budget tokens/turn). To
+> turn it off, set `reasoning_effort: none` on the model (or `disable`), or keep
+> the budget but hide the text with `chat.reasoning.display: false`. **OpenAI-family
+> caveat**: OpenAI reasoning models (o-series / GPT-5) often do NOT expose raw
+> reasoning text (it is summarized/encrypted) — there `reasoning_effort` still
+> controls the budget but the text display may be empty; prefer a Gemini model
+> for visible reasoning text.
 
 ### `gemini-2.0-flash`
 

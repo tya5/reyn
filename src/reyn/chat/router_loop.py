@@ -1872,6 +1872,20 @@ class RouterLoop:
                 _loop_cancelled = True
                 break
             resolved_model = host.resolve_model(self.router_model)
+            # #1654: the FULL ModelSpec (model + operator kwargs) for the LLM
+            # call below, so per-model kwargs (reasoning_effort #1650/#1652,
+            # temperature, extra_body, …) reach litellm. resolve_model returns
+            # the bare string (kwargs dropped) — fine for the model-NAME params
+            # (compaction / force-close / memo-key / events) which keep
+            # resolved_model, but the actual call_llm_tools must get the spec.
+            # Host-polymorphic: phase/test hosts without resolve_model_spec fall
+            # back to a kwargs-less spec = byte-identical to the prior behaviour.
+            _spec_fn = getattr(host, "resolve_model_spec", None)
+            if _spec_fn is not None:
+                resolved_spec = _spec_fn(self.router_model)
+            else:
+                from reyn.llm.model_resolver import ModelSpec
+                resolved_spec = ModelSpec(model=resolved_model, kwargs={})
             # #1092 PR-C-5 (2): per-turn phase wall-clock budget enforcement. A phase
             # host implements ``check_phase_budget`` (RAISES PhaseBudgetExceededError
             # when over budget, unless on_limit grants an extension) — the same
@@ -1977,7 +1991,10 @@ class RouterLoop:
                     # production callers don't have to know about the seam.
                     _llm = self._llm_caller or call_llm_tools
                     result = await _llm(
-                        model=resolved_model,
+                        # #1654: pass the FULL ModelSpec (not the bare string) so
+                        # per-model kwargs (reasoning_effort/temperature/…) reach
+                        # litellm; call_llm_tools accepts Union[str, ModelSpec].
+                        model=resolved_spec,
                         messages=messages,
                         tools=tools,
                         tool_choice="auto",
