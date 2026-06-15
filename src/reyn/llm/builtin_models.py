@@ -49,9 +49,19 @@ BUILTIN_MODELS: dict[str, dict] = {
     # -------------------------------------------------------------------------
     # Gemini  (gemini/ prefix = correct litellm catalog lookup → 1M context)
     # -------------------------------------------------------------------------
-    "gemini-flash-lite": {"model": "gemini/gemini-2.5-flash-lite"},
-    "gemini-pro": {"model": "gemini/gemini-2.5-pro"},
-    "gemini-3.1-flash-preview": {"model": "gemini/gemini-3.1-flash-preview"},
+    # #1654: reasoning ON by default (out-of-box) — reasoning_effort maps to the
+    # provider's native thinking budget (low→1024, medium→2048; verified live via
+    # the litellm proxy: reasoning_content text exposed). Capture + display +
+    # cross-turn continuity are config-default-ON (chat.reasoning); this default
+    # makes the model actually produce reasoning so the feature works without
+    # operator config. Cost note: thinking tokens add to spend — operators who
+    # want it off set `reasoning_effort: none` (or `disable`) on the model, or
+    # `chat.reasoning.display: false` to keep the budget but hide the text.
+    # Only the gemini reasoning models get a default; gpt-4o* (non-reasoning) +
+    # gemini-2.0-flash (thinking_budget=0, mutually exclusive) are left alone.
+    "gemini-flash-lite": {"model": "gemini/gemini-2.5-flash-lite", "reasoning_effort": "low"},
+    "gemini-pro": {"model": "gemini/gemini-2.5-pro", "reasoning_effort": "medium"},
+    "gemini-3.1-flash-preview": {"model": "gemini/gemini-3.1-flash-preview", "reasoning_effort": "low"},
     "gemini-2.0-flash": {
         "model": "gemini/gemini-2.0-flash",
         "extra_body": {

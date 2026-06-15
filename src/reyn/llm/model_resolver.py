@@ -65,10 +65,25 @@ class ModelSpec:
         effort = self.kwargs.get("reasoning_effort")
         if effort is None:
             return
-        if not isinstance(effort, str) or effort not in VALID_REASONING_EFFORTS:
+        # #1654: two accepted forms —
+        #   - str (gemini native): the effort level directly, e.g. "low".
+        #   - dict (OpenAI/GPT-5 summary opt-in): {"effort": <level>, "summary":
+        #     "detailed"}. OpenAI reasoning models don't return reasoning TEXT
+        #     unless a summary is requested; litellm's GPT-5 transformation reads
+        #     {effort, summary} (gpt_5_transformation.py). The level is validated
+        #     either way; the optional "summary" rides through to litellm.
+        if isinstance(effort, dict):
+            level = effort.get("effort")
+        elif isinstance(effort, str):
+            level = effort
+        else:
+            level = None
+        if level not in VALID_REASONING_EFFORTS:
             raise ValueError(
                 f"models reasoning_effort must be one of "
-                f"{sorted(VALID_REASONING_EFFORTS)}, got {effort!r} "
+                f"{sorted(VALID_REASONING_EFFORTS)} (a string), or a dict with "
+                f"'effort' one of them (e.g. {{'effort': 'low', 'summary': "
+                f"'detailed'}} for OpenAI summary text); got {effort!r} "
                 f"(model={self.model!r})"
             )
         # Both-set reject: reasoning_effort already maps to a native thinking

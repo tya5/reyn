@@ -153,12 +153,30 @@ models:
 - **Mutually exclusive with an `extra_body` thinking config**: `reasoning_effort` *is* the
   thinking-budget control, so declaring both `reasoning_effort` and an `extra_body`
   thinking config on the same model is **rejected at load** (pick one).
+- **OpenAI summary opt-in (dict form)**: OpenAI reasoning models (o-series / GPT-5)
+  do **not** return raw reasoning text — they encrypt the chain and expose only an
+  optional *summary*, which is **opt-in**. For those models pass the dict form to
+  request the summary text:
+  ```yaml
+  models:
+    strong:
+      model: openai/gpt-5
+      reasoning_effort:
+        effort: medium      # the budget level (validated, same set as above)
+        summary: detailed   # opt into summary text → rides into reasoning_content
+  ```
+  litellm's GPT-5 transformation reads `{effort, summary}`. **Provider difference**:
+  Gemini exposes raw reasoning text natively from the string form; OpenAI needs the
+  dict + `summary` for any text (and even then it is a summary, not the raw chain).
+  Without `summary`, an OpenAI model's `reasoning_effort` still controls the budget
+  but no reasoning text is displayed.
 
-> **Known behavior — reasoning text is not surfaced.** A non-zero `reasoning_effort`
-> sets the provider's `includeThoughts=true`, so the response carries reasoning/thought
-> text. Reyn currently records only the reasoning-vs-output **token-count** split — it
-> does **not** capture or display the reasoning text itself. Enabling `reasoning_effort`
-> therefore costs reasoning tokens without surfacing the thoughts.
+> **Reasoning text IS captured, displayed, and replayed (#1652).** A non-zero
+> `reasoning_effort` sets the provider's `includeThoughts=true`; reyn captures the
+> reasoning text, displays it (TUI + chainlit, collapsible — `chat.reasoning.display`),
+> and replays recent turns' reasoning into the next prompt (`chat.reasoning.continuity`).
+> See the [`chat` block](#chat-block) for the toggles. (For OpenAI models the displayed
+> text is the *summary* and only when the dict `summary` opt-in is set — see above.)
 
 > **Known behavior — re-enables thinking on the tool-use path.** Reyn does not force
 > thinking off; it relies on the provider default (off for Gemini 2.5). Setting
