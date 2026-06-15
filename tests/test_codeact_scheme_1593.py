@@ -170,6 +170,22 @@ async def test_build_presentation_includes_arg_names() -> None:
 
 
 @pytest.mark.asyncio
+async def test_code_api_has_no_bare_tool_call_for_flashlite() -> None:
+    """Tier 2: #1638 — the rendered code-API carries NO bare quoted ``tool('<x>')``
+    token. gemini-2.5-flash-lite returns ~100% empty-choices on a bare ``tool('<quoted>')``
+    token (content-trigger, lead+sandbox_2 proxy-probe: bare 6/6 empty → backtick 0/6);
+    the CodeAct code-API rendered ~50 such bare lines. Presentation-only — every rendered
+    call is backtick-wrapped; the model still writes bare ``tool(...)`` in its python block."""
+    import re
+
+    pres = await CodeActScheme().build_presentation({}, {}, _CatalogOps())
+    # No bare `tool('` (one not immediately preceded by a backtick) anywhere in the render.
+    assert not re.search(r"(?<!`)tool\('", pres.tool_use_sp)
+    # The call IS present, backtick-wrapped (the action is still discoverable/usable).
+    assert "`tool('file__read'" in pres.tool_use_sp
+
+
+@pytest.mark.asyncio
 async def test_build_presentation_omits_excluded_actions() -> None:
     """Tier 2: presentation parity (#1400) — an excluded action is omitted from the
     code-API (CodeAct presentation not looser than JSON tools=). The OS supplies the
