@@ -1,10 +1,21 @@
 # FP-0008: SWE-bench Participation Infrastructure — stdlib Skill + Batch Execution
 
-**Status**: proposed
+**Status**: partially superseded — Component A (`swe_bench` skill) retired in #187; Component B (`reyn eval benchmark`) shipped
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 
 ---
+
+> **Status update (post-#187).** Component B — the `reyn eval benchmark` batch
+> runner — was implemented and is current. Component A — the `swe_bench` stdlib
+> skill — was implemented and then **retired in #187**: the current SWE-bench run
+> method routes each instance through the **general agent via `reyn run-once`** (no
+> skill, no held-out `test_patch` in the prompt), wrapped per-instance by
+> `scripts/swe_bench_runner.py`. Authoritative scoring delegates to the external
+> `swebench` harness (`eval_benchmark.run_tier1_swebench_eval`). The skill-based
+> design below (Component A) is preserved as the original proposal record.
+> **To actually run SWE-bench today, see the operator how-to:
+> [Run SWE-bench](../../guide/for-reyn-developers/run-swe-bench.md).**
 
 ## Summary
 
@@ -53,6 +64,12 @@ SWE-bench harness
   → judges pass / fail
 ```
 
+> ⚠️ **Superseded (historical).** The "Reyn runs the swe_bench skill" step above was
+> retired in #187. The current flow runs the **general agent via `reyn run-once`** in a
+> per-instance container (no skill); the harness still applies the patch and scores
+> externally. See the
+> [operator how-to](../../guide/for-reyn-developers/run-swe-bench.md).
+
 Reyn's entry point:
 
 ```
@@ -67,7 +84,11 @@ reyn eval benchmark swe_bench --tasks swe_bench_verified.jsonl --output results/
 
 ## Proposed implementation
 
-### Component A — `swe_bench` stdlib Skill (MEDIUM)
+### Component A — `swe_bench` stdlib Skill (MEDIUM) — RETIRED in #187
+
+> **Retired.** This skill was implemented and later retired in #187 in favour of the
+> agent-routed runner (general agent via `reyn run-once`, no skill). The phase/skill
+> design below is preserved as the original proposal record only.
 
 ```
 src/reyn/stdlib/skills/swe_bench/
@@ -142,9 +163,15 @@ class SweBenchResult(BaseModel):
     attempts: int       # Number of verify loop iterations
 ```
 
-### Component B — `reyn eval benchmark` Batch Execution Command (MEDIUM)
+### Component B — `reyn eval benchmark` Batch Execution Command (MEDIUM) — SHIPPED
 
 A batch runner for efficiently executing all 500 problems in SWE-bench Verified.
+
+> **Shipped (current).** `reyn eval benchmark <SKILL> --tasks … --output …` exists and
+> is the batch driver. It runs a skill across a JSONL task file with concurrent dispatch
+> and built-in Tier-1 faithful scoring (`--clone-task-repo` for SWE-bench tasks). See the
+> [`reyn eval` reference](../../reference/cli/eval.md#subcommand-benchmark) and the
+> [operator how-to](../../guide/for-reyn-developers/run-swe-bench.md).
 
 ```
 reyn eval benchmark <skill_name> \
