@@ -40,6 +40,9 @@ def build_universal_tool_use_slots(
                                     (inside ``## Behaviour``, after the errors line).
       - ``slot_in_environment``   — the cwd-idiom file-discovery HOW clause injected
                                     inside ``## Environment``.
+      - ``slot_post_catalog``     — scheme-owned SP appended at the post-catalog
+                                    position (e.g. retrieval's search guidance),
+                                    before the context-size signal (#1627 Stage 3).
 
     Each slot value equals ``"\\n".join(<elements>)`` where ``<elements>`` is the
     exact list that the corresponding inline region would have appended to ``parts``
@@ -552,7 +555,7 @@ def build_system_prompt(
             "  Do NOT switch language even for error messages or clarifying questions."
         )
 
-    # ── 13b. Scheme-owned SP fragment (#1593) ────────────────────────────────
+    # ── 13b. Scheme-owned SP fragment (#1593) / slot_post_catalog (#1627 Stage 3) ─
     # A tool-use scheme whose tool-use instructions are genuinely new content
     # (e.g. CodeAct's rendered fn-signature code-API, retrieval's search-tool SP)
     # supplies them here as free-form text. The OS appends it verbatim and does
@@ -560,9 +563,14 @@ def build_system_prompt(
     # Empty default ⇒ universal-category / enumerate-all (named-gate schemes) are
     # byte-identical. Placed before the volatile context-size signal so the
     # scheme's tool-use SP sits with the rest of the cached prefix.
-    if scheme_sp_fragment:
+    # #1627 Stage 3: slot_post_catalog — scheme-owned SP appended at the
+    # post-catalog position (e.g. retrieval's search guidance). Sourced from the
+    # slot-map FIRST (when a scheme owns its SP via tool_use_sp dict), else falls
+    # back to the legacy scheme_sp_fragment channel (CodeAct str-shim path).
+    _frag = (_slots.get("slot_post_catalog") if _slots else None) or scheme_sp_fragment
+    if _frag:
         parts.append("")
-        parts.append(scheme_sp_fragment)
+        parts.append(_frag)
 
     # ── 14. Context-size signal (#272/#1128) ─────────────────────────────────
     # OS-injected, pre-rendered by the caller (router_loop / phase runtime) from

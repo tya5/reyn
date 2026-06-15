@@ -118,28 +118,37 @@ async def test_new_matches_keep_search_tool(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_initial_presentation_supplies_search_sp_fragment(tmp_path) -> None:
-    """Tier 2: #1601 channel — retrieval runs with universal_wrappers_enabled=False
-    (named-gate SP off), so it MUST supply its own search-tool instructions through
-    Presentation.sp_fragment, else the LLM sees search_actions with no guidance."""
+    """Tier 2: #1627 Stage 3 slot-map channel — retrieval runs with
+    universal_wrappers_enabled=False (named-gate SP off), so it MUST supply its own
+    search-tool instructions through Presentation.tool_use_sp["slot_post_catalog"]
+    (formerly sp_fragment; folded into the slot-map in Stage 3). The LLM must see
+    search_actions guidance even when the OS's named-gate block is off."""
     ops = _FakeOps()
     pres = await RetrievalScheme().build_presentation({}, {}, ops)
     assert pres.sp_params["universal_wrappers_enabled"] is False   # named-gate SP off
-    assert pres.sp_fragment                                        # scheme supplies its own
-    assert _SEARCH_TOOL_NAME in pres.sp_fragment                   # tells the LLM to search first
+    assert isinstance(pres.tool_use_sp, dict)                      # scheme owns SP via slot-map
+    slot = pres.tool_use_sp.get("slot_post_catalog", "")
+    assert slot                                                     # scheme supplies its own
+    assert _SEARCH_TOOL_NAME in slot                                # tells the LLM to search first
+    assert pres.sp_fragment == ""                                   # old channel vacated
 
 
 @pytest.mark.asyncio
 async def test_terminal_presentation_sp_fragment_reflects_dropped_search(tmp_path) -> None:
     """Tier 2: when the presentation converges to terminal (search tool dropped), the
-    sp_fragment flips from "search first" to "call one of the presented matches"
-    — the SP and the tools= stay consistent (no dangling search instruction)."""
+    slot_post_catalog guidance flips from "search first" to "call one of the presented
+    matches" — the SP and the tools= stay consistent (no dangling search instruction).
+    #1627 Stage 3: guidance lives in tool_use_sp["slot_post_catalog"] (not sp_fragment)."""
     ops = _FakeOps(matches=["file__write"], catalog=[_tool("file__write")])
     pres = await RetrievalScheme().build_presentation(
         {}, {"refinement": {"query": "edit"}, "presented": ("file__write",)}, ops,
     )
-    assert pres.sp_fragment                                        # still guided
-    assert _SEARCH_TOOL_NAME not in pres.sp_fragment               # no "call search_actions" — it's gone
-    assert "available" in pres.sp_fragment.lower()                 # "matching tools are now available"
+    assert isinstance(pres.tool_use_sp, dict)
+    slot = pres.tool_use_sp.get("slot_post_catalog", "")
+    assert slot                                                     # still guided
+    assert _SEARCH_TOOL_NAME not in slot                            # no "call search_actions" — it's gone
+    assert "available" in slot.lower()                              # "matching tools are now available"
+    assert pres.sp_fragment == ""                                   # old channel vacated
 
 
 def test_interpret_search_call_is_represent_pure() -> None:

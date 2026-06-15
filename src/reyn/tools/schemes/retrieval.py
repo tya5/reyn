@@ -20,8 +20,10 @@ present that drops the search tool → guaranteed ``Execute`` exit). ``execute``
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 
+from reyn.chat.router_system_prompt import build_universal_tool_use_slots
 from reyn.tools.scheme import (
     ExecContext,
     Execute,
@@ -33,6 +35,7 @@ from reyn.tools.scheme import (
     SchemeOps,
     register_scheme,
 )
+from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
 
 _SEARCH_TOOL_NAME = "search_actions"
 
@@ -94,6 +97,25 @@ class RetrievalScheme:
 
     name = "retrieval"
 
+    def _slots_for(self, available, layer_ctx, terminal: bool) -> "dict[str, str]":
+        """Build the tool-use SP slot-map for a retrieval presentation.
+
+        Mirrors the enumerate-all pattern (#1627 Stage 3): base slots via
+        ``build_universal_tool_use_slots`` (retrieval is always
+        ``universal_wrappers_enabled=False``; ``search_actions_enabled`` derived
+        from ``search_visible``) plus ``slot_post_catalog`` = ``_search_sp(terminal)``
+        — the retrieval search-guidance block injected at the post-catalog position.
+        """
+        slots = build_universal_tool_use_slots(
+            universal_wrappers_enabled=False,
+            search_actions_enabled=bool(layer_ctx.get("search_visible", False)),
+            discovery_mandate=tier_wants_discovery_mandate(layer_ctx.get("router_model")),
+            has_hot_list_aliases=bool((available or {}).get("hot_list_aliases")),
+            non_interactive=bool(layer_ctx.get("non_interactive", False)),
+        )
+        slots["slot_post_catalog"] = _search_sp(terminal=terminal)
+        return slots
+
     async def build_presentation(self, available, layer_ctx, ops: SchemeOps) -> Presentation:
         base = list(ops.base_tools(available, layer_ctx))
         sp_params = {
@@ -103,10 +125,11 @@ class RetrievalScheme:
         refinement = layer_ctx.get("refinement")
         if not refinement:
             # Initial presentation: the base + the search tool (no catalog flood).
-            return Presentation(
+            # #1627 Stage 3: own the tool-use SP via the slot-map (sp_fragment dropped).
+            pres = Presentation(
                 llm_tools_payload=base + [_search_tool_schema()], sp_params=sp_params,
-                sp_fragment=_search_sp(terminal=False),
             )
+            return dataclasses.replace(pres, tool_use_sp=self._slots_for(available, layer_ctx, False))
         # Refined presentation: run the search (the async, dynamic-query I/O) and
         # present the matched catalog subset (∪ everything already presented).
         query = refinement.get("query", "")
@@ -133,10 +156,11 @@ class RetrievalScheme:
         terminal = not new
         if not terminal:
             tools = tools + [_search_tool_schema()]
-        return Presentation(
+        # #1627 Stage 3: own the tool-use SP via the slot-map (sp_fragment dropped).
+        pres = Presentation(
             llm_tools_payload=tools, sp_params=sp_params, candidates=tuple(matched),
-            sp_fragment=_search_sp(terminal=terminal),
         )
+        return dataclasses.replace(pres, tool_use_sp=self._slots_for(available, layer_ctx, terminal))
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
         # Pure classifier (no I/O): NO tool calls → PlainText (the model answered
