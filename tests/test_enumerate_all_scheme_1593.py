@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,6 +26,7 @@ if str(_SRC) not in sys.path:
 from reyn.tools.scheme import (
     Execute,
     ExecutionResult,
+    PlainText,
     Presentation,
     SchemeOps,
     ToolUseScheme,
@@ -106,12 +108,27 @@ async def test_build_presentation_tool_use_sp_disable_wrappers() -> None:
 
 
 def test_interpret_resolves_to_execute() -> None:
-    """Tier 2: interpret delegates to ops.resolve → Execute carrying resolved
-    effective-name actions (qualified names route through the shared resolution)."""
+    """Tier 2: with tool_calls present, interpret delegates to ops.resolve → Execute
+    carrying resolved effective-name actions (qualified names route through the shared
+    resolution)."""
     s = EnumerateAllScheme()
-    interp = s.interpret("llm-resp", tool_catalog={}, ops=_FakeOps())
+    resp = SimpleNamespace(tool_calls=[{"id": "1"}])
+    interp = s.interpret(resp, tool_catalog={}, ops=_FakeOps())
     assert isinstance(interp, Execute)
     assert interp.actions[0]["name"] == "git__commit"
+
+
+def test_interpret_no_tool_calls_returns_plaintext_terminal() -> None:
+    """Tier 2: #1640 — a response with NO tool_calls is a plain-text answer (the model's
+    normal terminal) ⇒ PlainText, so the OS loop exits to the text-reply path. Without
+    this guard, resolve→[] → Execute([]) → the loop runs nothing → re-prompt →
+    empty-content turn → never terminates → 120s timeout (weak-model robustness bug).
+    Mirrors universal_category + retrieval (real instance, no mocks)."""
+    s = EnumerateAllScheme()
+    resp = SimpleNamespace(tool_calls=None, content="The answer is 42.")
+    interp = s.interpret(resp, tool_catalog={}, ops=_FakeOps())
+    assert isinstance(interp, PlainText)
+    assert not isinstance(interp, Execute)
 
 
 @pytest.mark.asyncio

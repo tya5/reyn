@@ -38,6 +38,7 @@ from reyn.tools.scheme import (
     Execute,
     ExecutionResult,
     Interpretation,
+    PlainText,
     Presentation,
     SchemeOps,
     register_scheme,
@@ -77,6 +78,13 @@ class EnumerateAllScheme:
         return Presentation(llm_tools_payload=flat_tools, tool_use_sp=slots)
 
     def interpret(self, llm_response, *, tool_catalog: dict, ops: SchemeOps) -> Interpretation:
+        # #1640: no tool_calls = a plain-text answer (the model's normal terminal) →
+        # PlainText so the OS loop exits to the text-reply path. Without this guard,
+        # resolve→[] → Execute([]) → the loop runs nothing → re-prompt → empty-content
+        # turn → never terminates → 120s timeout (weak-model robustness bug). Mirrors
+        # universal_category + retrieval (and root-3 #2's codeact no-fence→PlainText).
+        if not getattr(llm_response, "tool_calls", None):
+            return PlainText()
         # Flat (qualified) names resolve through the shared resolution (dedupe +
         # salvage/unwrap → effective names) so the OS exclude-gates pre-dispatch.
         actions = ops.resolve(llm_response, tool_catalog)
