@@ -196,8 +196,8 @@ def build_system_prompt(
     # sections) to maximise cache prefix coverage.
     parts.append("## Behaviour")
     # Cross-cutting rules that apply regardless of which tool was last called.
-    # Routing decisions live in ## Capabilities above — single canonical location.
-    # B23-PRE-1 SP role-separation: spawn-ack / task_completed live in invoke_action.description.
+    # #1627: tool-use routing guidance is scheme-owned (delivered via the slot-map);
+    # the OS keeps only these scheme-agnostic behaviour rules here.
     parts.extend([
         "  - Errors MUST surface verbatim. Never narrate an error as success.",
         "    Optimism bias on errors is the single largest router-narration"
@@ -208,8 +208,8 @@ def build_system_prompt(
     # B23-PRE-1 SP role-separation: ## Plan decomposition subsection (detail)
     # moved to plan.description.
     parts.append("")
-    # ── R3: never-invent / search guidance + ROUTING RULE ────────────────────
-    # Delivered via slot_in_behaviour from the scheme's slot-map.
+    # ── R3 slot injection (post-behaviour position) ──────────────────────────
+    # Scheme-owned content delivered via slot_in_behaviour; the OS only injects.
     if "slot_in_behaviour" in _slots:
         parts.append(_slots["slot_in_behaviour"])
 
@@ -240,12 +240,12 @@ def build_system_prompt(
         parts.append("")
 
     # ── 7 & 8. Skills / Agents catalog ──────────────────────────────────────
-    # Wrapper-only path: skill / agent are 2 of the 13 categories
-    # listed in the "## Action categories" section above. Dedicated
-    # sections would impose a per-category special-case structure
-    # that contradicts FP-0034's uniform-invoke design — so they
-    # are omitted here. Resource discovery goes through
-    # list_actions(category=[...]).
+    # Wrapper-only path: skill / agent are 2 of the action categories (now
+    # scheme-owned, no longer rendered by the OS). Dedicated sections would
+    # impose a per-category special-case structure that contradicts FP-0034's
+    # uniform-invoke design — so they are omitted here. (Resource discovery
+    # guidance in the catalog-context sections below is a tracked content-layer
+    # follow-up — see #1625.)
 
     # ── 9. Memory ────────────────────────────────────────────────────────────
     # B23-PRE-1 SP role-separation: ## Memory inline section is dropped in the

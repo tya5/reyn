@@ -15,8 +15,8 @@ from __future__ import annotations
 import pytest
 
 from reyn.chat.router_system_prompt import build_system_prompt
-from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 from reyn.index.source_manifest import SourceEntry, SourceManifest
+from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 
 # ---------------------------------------------------------------------------
 # Helpers — minimal args for build_system_prompt
