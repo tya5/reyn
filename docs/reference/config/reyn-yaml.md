@@ -294,6 +294,7 @@ safety:
     max_act_turns_per_phase: 10  # LLM ↔ op volleys per phase visit; 0 = unlimited
     max_router_calls_per_turn: 3 # chat-router calls per user turn
     max_router_iterations: 5   # LLM tool-call iterations per user turn (CLI --max-iterations overrides)
+    max_tool_calls_per_turn: 50 # max tool_calls honoured from ONE completion (cost-bound); 0 = unlimited
     max_agent_hops: 3          # maximum delegation depth
   timeout:
     llm_call_seconds: 60       # per-call HTTP timeout (--llm-timeout)
@@ -314,6 +315,7 @@ safety:
 | `safety.loop.max_act_turns_per_phase` | int | `10` | — | LLM ↔ op volleys allowed inside one phase visit. `0` = unlimited. |
 | `safety.loop.max_router_calls_per_turn` | int | `3` | — | Chat-router invocations per user turn. `0` = unlimited. |
 | `safety.loop.max_router_iterations` | int | `5` | `--max-iterations` | Maximum LLM tool-call iterations per user turn. CLI `--max-iterations` overrides when provided; `reyn run-once` uses CLI default of 80. |
+| `safety.loop.max_tool_calls_per_turn` | int | `50` | — | Cost-bound: maximum `tool_calls` honoured from a SINGLE LLM completion. A degenerate completion can emit thousands (observed 3451); the OS processes only the first N, drops the overflow, and appends a re-grounding notice. `0` = unlimited. |
 | `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
 | `safety.loop.plan_invalid_retries` | int | `1` | — | When the router emits a malformed `plan()` tool call, append the error + an "escape inner quotes" hint and let the LLM re-emit. `0` disables; `1` (default) allows one directive-driven correction per chat turn. |
 | `safety.loop.skill_calls_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) spawn cap. `hard_limit` + `warn_ratio` sub-fields. Hybrid: loop-detection semantics, budget-style user approval on hit. |

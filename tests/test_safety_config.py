@@ -68,6 +68,7 @@ safety:
     max_phase_visits: 50
     max_router_calls_per_turn: 7
     max_agent_hops: 5
+    max_tool_calls_per_turn: 17
     skill_calls_per_chain:
       hard_limit: 12
     plan_invalid_retries: 2
@@ -76,6 +77,9 @@ safety:
     assert cfg.safety.loop.max_phase_visits == 50
     assert cfg.safety.loop.max_router_calls_per_turn == 7
     assert cfg.safety.loop.max_agent_hops == 5
+    # #1666: non-default value proves the yaml→LoopConfig parser wiring (not the
+    # trivial default round-trip).
+    assert cfg.safety.loop.max_tool_calls_per_turn == 17
     assert cfg.safety.loop.skill_calls_per_chain.hard_limit == 12.0
     assert cfg.safety.loop.plan_invalid_retries == 2
 
