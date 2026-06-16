@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from reyn.mcp.server import *  # noqa: F401,F403 — re-export the public surface (__all__)
 from reyn.mcp.server import (  # noqa: F401 — underscore internals (not in __all__)
+    _get_agent_lock,
     _MCPInterventionBus,
     _MCPProgressBridge,
-    _get_agent_lock,
 )

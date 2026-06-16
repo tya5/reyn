@@ -4898,7 +4898,7 @@ class ChatSession:
 
     async def _mcp_list_tools(self, server: str) -> list[dict]:
         """Query the MCP server for its tools list."""
-        from reyn.mcp_client import MCPClient, MCPError, expand_env
+        from reyn.mcp.client import MCPClient, MCPError, expand_env
 
         servers = self._mcp_servers_flat()
         if not servers:

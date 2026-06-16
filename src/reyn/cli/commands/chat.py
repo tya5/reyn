@@ -46,7 +46,7 @@ async def _run_once(agent_registry, agent_name, *, instream=None, send=None) -> 
     if instream is None:
         instream = sys.stdin
     if send is None:
-        from reyn.mcp_server import send_to_agent_impl as send
+        from reyn.mcp.server import send_to_agent_impl as send
     message = instream.read()
     result = await send(
         agent_registry, agent_name=agent_name, message=message,

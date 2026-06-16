@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from starlette.routing import Mount
 
-from reyn.mcp_server import DEFAULT_SEND_TIMEOUT_SECONDS, build_server
+from reyn.mcp.server import DEFAULT_SEND_TIMEOUT_SECONDS, build_server
 from reyn.web.deps import get_registry
 
 router = APIRouter(tags=["mcp"])

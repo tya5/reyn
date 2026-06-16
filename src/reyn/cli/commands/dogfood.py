@@ -410,7 +410,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     from reyn.dogfood.runner import ScenarioRunResult
     from reyn.events.event_store import EventStore
     from reyn.llm.model_resolver import ModelResolver
-    from reyn.mcp_server import send_to_agent_impl
+    from reyn.mcp.server import send_to_agent_impl
     from reyn.permissions.permissions import PermissionResolver
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
