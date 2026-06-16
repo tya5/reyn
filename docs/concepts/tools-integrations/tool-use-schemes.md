@@ -61,7 +61,11 @@ LLM-facing tool list constant.
 
 RAG-over-tools. Instead of presenting the whole catalogue, it presents a **search
 tool**; the LLM searches, the OS re-presents only the matched actions as callable
-tools, and the LLM calls one.
+tools, and the LLM calls one. A **supported opt-in** alternative to the chat
+default — it requires `action_retrieval.embedding_class` set to a configured
+embedding provider (the search is semantic). Because matching is semantic, its
+quality depends on the embedding index, so it suits stable, well-indexed
+catalogues.
 
 **Use when:** the tool set is **very large** and presenting it in full would cost
 too many tokens — the search narrows the candidates before the call.
