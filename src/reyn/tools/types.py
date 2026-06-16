@@ -259,6 +259,12 @@ class ToolContext:
     # Typed sub-objects carry caller-kind-specific state.
     router_state: RouterCallerState | None = None    # populated for caller_kind="router"
     phase_state: PhaseCallerState | None = None      # populated for caller_kind="phase"
+    # #1673: the config-aware ModelResolver, threaded so tool handlers that spawn a
+    # sub-run (invoke_skill → run_skill) hand the spawned OpContext a REAL resolver
+    # + a config-following model class instead of resolver=None + the literal
+    # "standard" (which litellm rejects with BadRequestError — the latent bug).
+    # Also completes #1672 CAT-3 (tool sub-runs follow model_class_by_purpose).
+    resolver: Any | None = None                      # ModelResolver | None
 
 
 # ToolHandler: async callable signature.

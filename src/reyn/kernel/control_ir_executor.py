@@ -525,6 +525,10 @@ class ControlIRExecutor:
                         workspace=self.workspace,
                         caller_kind="phase",
                         phase_state=phase_state,
+                        # #1673: thread the config-aware resolver so a tool handler
+                        # that spawns a sub-run hands it a real resolver (not None →
+                        # literal "standard" → litellm BadRequestError).
+                        resolver=self._resolver,
                     )
                     result = await invoke_tool(_registry, _name, args, tool_ctx)
                 else:

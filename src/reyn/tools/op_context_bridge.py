@@ -51,6 +51,8 @@ def build_legacy_op_context(ctx: "ToolContext") -> Any:
     phase_op_ctx = (
         ctx.phase_state.op_context if ctx.phase_state is not None else None
     )
+    from reyn.llm.model_resolver import resolve_purpose_class  # #1673
+
     return OpContext(
         workspace=ctx.workspace,
         events=ctx.events,
@@ -61,4 +63,11 @@ def build_legacy_op_context(ctx: "ToolContext") -> Any:
         ),
         permission_resolver=ctx.permission_resolver,
         skill_name="",
+        # #1673: thread the config-aware resolver + "tool" purpose class so this
+        # ONE shared bridge gives every delegating tool a real resolver instead of
+        # the OpContext default resolver=None (+ literal "standard"). Eliminates the
+        # resolver=None → litellm-BadRequestError class by construction for all
+        # bridge-using tools (recall / web_fetch / compact / file / …).
+        model=resolve_purpose_class(None, ctx.resolver, "tool"),
+        resolver=ctx.resolver,
     )
