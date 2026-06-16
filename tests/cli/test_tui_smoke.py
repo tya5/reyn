@@ -26,8 +26,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ConversationView, InputBar, ReynHeader
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets import ConversationView, InputBar, ReynHeader
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -138,7 +138,7 @@ async def test_input_bar_clear_on_submit():
 @pytest.mark.asyncio
 async def test_slash_picker_shows_on_slash_prefix():
     """Tier 2c: Typing '/' opens the SlashPicker with matches."""
-    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.tui.widgets.slash_picker import SlashPicker
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -154,7 +154,7 @@ async def test_slash_picker_shows_on_slash_prefix():
 @pytest.mark.asyncio
 async def test_slash_picker_filters_by_prefix():
     """Tier 2b: Picker narrows down as user types more characters."""
-    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.tui.widgets.slash_picker import SlashPicker
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -173,7 +173,7 @@ async def test_slash_picker_tab_confirms():
     """Tier 2b: Tab inserts the highlighted command name into the input."""
     from textual.widgets import TextArea
 
-    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.tui.widgets.slash_picker import SlashPicker
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -202,7 +202,7 @@ async def test_slash_picker_escape_dismisses():
     """
     from textual.widgets import TextArea
 
-    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.tui.widgets.slash_picker import SlashPicker
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -599,7 +599,7 @@ async def test_status_message_routes_to_sticky_status():
     """Tier 2b: kind=status no longer pollutes RichLog — it activates StickyStatus instead."""
     from textual.widgets import RichLog
 
-    from reyn.chat.tui.widgets.sticky_status import StickyStatus
+    from reyn.tui.widgets.sticky_status import StickyStatus
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -681,7 +681,7 @@ async def test_preview_pane_vim_keys_scroll_richlog():
     the preview pane's public scroll_line / scroll_col surface. Asserts on
     a behavior pin (call counts), not on internal RichLog state.
     """
-    from reyn.chat.tui.widgets.right_panel.shells import _PreviewPane
+    from reyn.tui.widgets.right_panel.shells import _PreviewPane
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -740,7 +740,7 @@ async def test_preview_pane_shift_jk_moves_parent_tab_cursor():
     refactor of the dispatch can't silently regress it. Lowercase j / k
     remain scroll-inside-preview and must not move the cursor.
     """
-    from reyn.chat.tui.widgets.right_panel.shells import _PreviewPane
+    from reyn.tui.widgets.right_panel.shells import _PreviewPane
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -823,7 +823,7 @@ async def test_events_tab_returns_in_timestamp_order(tmp_path):
     """
     import json as _json
 
-    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+    from reyn.tui.widgets.right_panel.events_tab import render_events
 
     events_root = tmp_path / ".reyn" / "events"
     # Two source dirs — ``agents/`` is alphabetically earlier but holds the
@@ -874,7 +874,7 @@ async def test_event_filter_cycling_rotates_through_groups():
     that pressing 'f' steps forward through the groups defined in
     events_tab._FILTER_GROUPS and wraps at the end.
     """
-    from reyn.chat.tui.widgets.right_panel.events_tab import _FILTER_GROUPS
+    from reyn.tui.widgets.right_panel.events_tab import _FILTER_GROUPS
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -935,7 +935,7 @@ async def test_panel_cycle_advances_and_wraps():
     Pins the contract behind ctrl+w / ctrl+shift+w so a future Tabs refactor
     cannot silently change ordering or wrap behaviour.
     """
-    from reyn.chat.tui.widgets.right_panel import PANEL_TYPES
+    from reyn.tui.widgets.right_panel import PANEL_TYPES
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -974,8 +974,8 @@ async def test_slash_picker_wraps_around_at_boundaries():
     the last row. Pins the modular-navigation contract documented in the
     picker's design notes.
     """
-    from reyn.chat.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
+    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:

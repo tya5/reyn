@@ -46,7 +46,7 @@ def _write_events(events_root: Path, events: list[dict]) -> None:
 
 def test_render_events_verbose_false_hides_compaction_check(tmp_path: Path) -> None:
     """Tier 2: verbose=False suppresses compaction_check, keeps other types."""
-    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+    from reyn.tui.widgets.right_panel.events_tab import render_events
 
     events_root = tmp_path / ".reyn" / "events" / "agents" / "test" / "events"
     _write_events(events_root, [
@@ -89,7 +89,7 @@ def test_render_events_verbose_false_hides_compaction_check(tmp_path: Path) -> N
 
 def test_render_events_verbose_true_shows_compaction_check(tmp_path: Path) -> None:
     """Tier 2: verbose=True includes compaction_check events in visible list."""
-    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+    from reyn.tui.widgets.right_panel.events_tab import render_events
 
     events_root = tmp_path / ".reyn" / "events" / "agents" / "test" / "events"
     _write_events(events_root, [
@@ -120,7 +120,7 @@ def test_render_events_verbose_true_shows_compaction_check(tmp_path: Path) -> No
 
 def test_render_events_verbose_false_footer_shows_hidden_count(tmp_path: Path) -> None:
     """Tier 2: footer surfaces count of suppressed compaction_check events."""
-    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+    from reyn.tui.widgets.right_panel.events_tab import render_events
 
     events_root = tmp_path / ".reyn" / "events" / "agents" / "test" / "events"
     _write_events(events_root, [
@@ -154,7 +154,7 @@ def test_render_events_verbose_false_footer_shows_hidden_count(tmp_path: Path) -
 
 def test_render_events_verbose_false_no_footer_when_zero_hidden(tmp_path: Path) -> None:
     """Tier 2: footer not added when no compaction_check events were suppressed."""
-    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+    from reyn.tui.widgets.right_panel.events_tab import render_events
 
     events_root = tmp_path / ".reyn" / "events" / "agents" / "test" / "events"
     _write_events(events_root, [
@@ -184,8 +184,8 @@ async def test_v_key_on_events_tab_toggles_verbose() -> None:
     """Tier 2: pressing v on the events tab flips _events_verbose."""
     from textual import events as textual_events
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -223,8 +223,8 @@ async def test_v_key_on_memory_tab_does_not_toggle_verbose() -> None:
     """Tier 2: pressing v on the memory tab must not change _events_verbose."""
     from textual import events as textual_events
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -251,14 +251,14 @@ async def test_v_key_on_memory_tab_does_not_toggle_verbose() -> None:
 
 def test_v_in_events_keys_set() -> None:
     """Tier 2: v is registered in _EVENTS_KEYS (= EVENTS (gated) group)."""
-    from reyn.chat.tui.widgets.right_panel.keys_tab import _EVENTS_KEYS
+    from reyn.tui.widgets.right_panel.keys_tab import _EVENTS_KEYS
 
     assert "v" in _EVENTS_KEYS
 
 
 def test_v_in_key_details() -> None:
     """Tier 2: v has a detail entry in _KEY_DETAILS."""
-    from reyn.chat.tui.widgets.right_panel.keys_tab import _KEY_DETAILS
+    from reyn.tui.widgets.right_panel.keys_tab import _KEY_DETAILS
 
     assert "v" in _KEY_DETAILS
     assert "verbose" in _KEY_DETAILS["v"].lower()
@@ -276,7 +276,7 @@ def test_render_events_footer_d_hint_no_missing_style(tmp_path: Path) -> None:
     """
     from rich.text import Text
 
-    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+    from reyn.tui.widgets.right_panel.events_tab import render_events
 
     events_root = tmp_path / ".reyn" / "events" / "agents" / "test" / "events"
     events_root.mkdir(parents=True, exist_ok=True)
@@ -309,7 +309,7 @@ def test_render_events_footer_v_hint_no_missing_style(tmp_path: Path) -> None:
     """
     from rich.text import Text
 
-    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+    from reyn.tui.widgets.right_panel.events_tab import render_events
 
     events_root = tmp_path / ".reyn" / "events" / "agents" / "test" / "events"
     events_root.mkdir(parents=True, exist_ok=True)
@@ -338,8 +338,8 @@ def test_render_events_footer_v_hint_no_missing_style(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_keys_tab_render_includes_v_description() -> None:
     """Tier 2: rendered Keys tab markup surfaces the v verbose hint."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.right_panel.keys_tab import render_keys
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.right_panel.keys_tab import render_keys
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

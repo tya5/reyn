@@ -43,8 +43,8 @@ def _seed_lines(conv, lines: list[str]) -> None:
 @pytest.mark.asyncio
 async def test_dump_buffer_text_returns_lines_in_order() -> None:
     """Tier 2: ``dump_buffer_text`` returns the buffer in insertion order."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -66,9 +66,9 @@ async def test_dump_buffer_text_returns_lines_in_order() -> None:
 async def test_on_save_writes_to_explicit_path(tmp_path: Path) -> None:
     """Tier 2: /save with an explicit path writes the buffer to that file."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     target = tmp_path / "dump.txt"
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
@@ -103,9 +103,9 @@ async def test_on_save_auto_generates_path_when_arg_empty(
 ) -> None:
     """Tier 2: empty arg → auto-named file in cwd matching reyn-conv-*.txt."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     # Run with cwd = tmp_path so the auto-generated file lands there.
     monkeypatch.chdir(tmp_path)
@@ -135,9 +135,9 @@ async def test_on_save_expands_tilde(
 ) -> None:
     """Tier 2: ``~/foo.txt`` is expanded against $HOME."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     # Point HOME at tmp_path so the test never touches the real home dir.
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -171,9 +171,9 @@ async def test_on_save_parent_dir_missing_emits_error(tmp_path: Path) -> None:
     error message names the missing parent so the user can fix it.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     bad = tmp_path / "no-such-dir" / "out.txt"
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
@@ -208,9 +208,9 @@ async def test_on_save_overwrites_existing_file(tmp_path: Path) -> None:
     safety policy is a deliberate decision.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     target = tmp_path / "existing.txt"
     target.write_text("stale content\n", encoding="utf-8")
@@ -254,9 +254,9 @@ async def test_on_save_empty_buffer_writes_zero_line_file(
 ) -> None:
     """Tier 2: empty conv pane → file exists (possibly with no content)."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     target = tmp_path / "empty.txt"
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)

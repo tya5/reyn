@@ -31,8 +31,8 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ConversationView
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets import ConversationView
 
 
 def _make_app() -> ReynTUIApp:
@@ -108,7 +108,7 @@ async def test_seal_before_mount_defers_cancel_to_on_mount() -> None:
     path: handle is None, sealed is True. Pins the symmetry so a future
     refactor of one branch doesn't leave the other leaking.
     """
-    from reyn.chat.tui.widgets.streaming_row import StreamingRow
+    from reyn.tui.widgets.streaming_row import StreamingRow
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
@@ -168,7 +168,7 @@ async def test_no_chunks_list_attribute() -> None:
     quietly re-introduce the O(N²) join. Pinning the absence ensures
     one source of truth.
     """
-    from reyn.chat.tui.widgets.streaming_row import StreamingRow
+    from reyn.tui.widgets.streaming_row import StreamingRow
     row = StreamingRow(prefix="r")
     assert not hasattr(row, "_chunks"), (
         "_chunks list was replaced by _accumulated; the list path "

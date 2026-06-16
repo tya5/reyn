@@ -5,7 +5,7 @@ bindings / refresh loop) and dispatches per-tab rendering to dedicated
 sibling modules (``keys_tab``, ``events_tab``, ``agents_tab``, ``memory_tab``,
 ``cost_tab``, ``docs_tab``). The split keeps each tab's rendering logic
 independently readable while preserving the public API: ``RightPanel`` and
-``PANEL_TYPES`` are still importable from ``reyn.chat.tui.widgets``.
+``PANEL_TYPES`` are still importable from ``reyn.tui.widgets``.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Tab, Tabs
 
-from reyn.chat.tui._palette import _BG_PANEL, _BORDER_DIM
+from reyn.tui._palette import _BG_PANEL, _BORDER_DIM
 
 from .agents_tab import render_agents
 from .base import (

@@ -26,7 +26,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.widgets.conversation import (
+from reyn.tui.widgets.conversation import (
     _BODY_INDENT_NO_TS,
     _BODY_INDENT_WITH_TS,
 )
@@ -36,7 +36,7 @@ from reyn.chat.tui.widgets.conversation import (
 
 def test_streaming_row_body_indent_default_is_ts_on() -> None:
     """Tier 2: StreamingRow with no indent arg reports ts-on indent."""
-    from reyn.chat.tui.widgets.streaming_row import BODY_INDENT_COLS, StreamingRow
+    from reyn.tui.widgets.streaming_row import BODY_INDENT_COLS, StreamingRow
 
     row = StreamingRow()
     assert row.body_indent == BODY_INDENT_COLS == _BODY_INDENT_WITH_TS, (
@@ -47,7 +47,7 @@ def test_streaming_row_body_indent_default_is_ts_on() -> None:
 
 def test_streaming_row_body_indent_custom_value() -> None:
     """Tier 2: StreamingRow(indent=N) reports N via body_indent."""
-    from reyn.chat.tui.widgets.streaming_row import StreamingRow
+    from reyn.tui.widgets.streaming_row import StreamingRow
 
     row = StreamingRow(indent=_BODY_INDENT_NO_TS)
     assert row.body_indent == _BODY_INDENT_NO_TS, (
@@ -64,8 +64,8 @@ async def test_begin_stream_ts_on_uses_ts_on_indent() -> None:
     """Tier 2: begin_stream while ts=on produces a row with ts-on indent."""
     from textual.widgets import Static
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -98,8 +98,8 @@ async def test_begin_stream_ts_off_uses_ts_off_indent() -> None:
     """
     from textual.widgets import Static
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -130,7 +130,7 @@ async def test_begin_stream_ts_off_uses_ts_off_indent() -> None:
 
 def test_inline_thinking_row_body_indent_default_is_none() -> None:
     """Tier 2: InlineThinkingRow() with no indent passes None (uses DEFAULT_CSS)."""
-    from reyn.chat.tui.widgets.inline_thinking_row import InlineThinkingRow
+    from reyn.tui.widgets.inline_thinking_row import InlineThinkingRow
 
     row = InlineThinkingRow()
     assert row.body_indent is None, (
@@ -140,7 +140,7 @@ def test_inline_thinking_row_body_indent_default_is_none() -> None:
 
 def test_inline_thinking_row_body_indent_custom_value() -> None:
     """Tier 2: InlineThinkingRow(indent=N) reports N via body_indent."""
-    from reyn.chat.tui.widgets.inline_thinking_row import InlineThinkingRow
+    from reyn.tui.widgets.inline_thinking_row import InlineThinkingRow
 
     row = InlineThinkingRow(indent=_BODY_INDENT_WITH_TS)
     assert row.body_indent == _BODY_INDENT_WITH_TS, (
@@ -155,9 +155,9 @@ def test_inline_thinking_row_body_indent_custom_value() -> None:
 @pytest.mark.asyncio
 async def test_start_thinking_ts_on_uses_ts_on_indent() -> None:
     """Tier 2: start_thinking() while ts=on mounts a row with ts-on indent."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.inline_thinking_row import InlineThinkingRow
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.inline_thinking_row import InlineThinkingRow
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -187,9 +187,9 @@ async def test_start_thinking_ts_off_uses_ts_off_indent() -> None:
     of state, so ts-on was wrong at 2 (body at 8, spinner at 2 = 6 cols left
     of body).
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.inline_thinking_row import InlineThinkingRow
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.inline_thinking_row import InlineThinkingRow
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

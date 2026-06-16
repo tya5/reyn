@@ -26,14 +26,14 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import reyn.chat.tui.app as app_mod
+import reyn.tui.app as app_mod
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ConversationView, InputBar
-from reyn.chat.tui.widgets.sticky_status import StickyStatus
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets import ConversationView, InputBar
+from reyn.tui.widgets.sticky_status import StickyStatus
 
 
 def _no_factory(_profile):

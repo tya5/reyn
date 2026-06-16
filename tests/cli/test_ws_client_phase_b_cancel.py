@@ -19,7 +19,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.ws_client import _WSSessionProxy
+from reyn.tui.ws_client import _WSSessionProxy
 
 
 @pytest.mark.asyncio

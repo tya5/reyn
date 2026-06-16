@@ -22,7 +22,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.widgets.right_panel.events_tab import _truncate_to_cells
+from reyn.tui.widgets.right_panel.events_tab import _truncate_to_cells
 
 
 def test_short_ascii_passes_through_untruncated() -> None:

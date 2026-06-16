@@ -19,10 +19,10 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ConversationView
-from reyn.chat.tui.widgets._branch_tree import build_branch_tree_rows
-from reyn.chat.tui.widgets.rewind_menu import _MAX_VISIBLE, RewindMenuWidget
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets import ConversationView
+from reyn.tui.widgets._branch_tree import build_branch_tree_rows
+from reyn.tui.widgets.rewind_menu import _MAX_VISIBLE, RewindMenuWidget
 
 
 def _rows_two_branches() -> list[dict]:

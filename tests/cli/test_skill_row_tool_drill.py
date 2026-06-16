@@ -47,8 +47,8 @@ def _rendered(row) -> str:
 @pytest.mark.asyncio
 async def test_record_tool_call_appears_in_expanded_render() -> None:
     """Tier 2: ``record_tool_call`` adds the tool name to the expanded view."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -69,8 +69,8 @@ async def test_record_tool_call_appears_in_expanded_render() -> None:
 @pytest.mark.asyncio
 async def test_collapsed_view_omits_tools_line() -> None:
     """Tier 2: collapsed render does NOT include the tools drill-down."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -93,8 +93,8 @@ async def test_expanded_with_no_tools_omits_tools_line() -> None:
     misleading "tools (0):" row for skills that didn't fire
     any tools.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -115,8 +115,8 @@ async def test_expanded_with_no_tools_omits_tools_line() -> None:
 @pytest.mark.asyncio
 async def test_tool_args_snippet_truncated_for_long_args() -> None:
     """Tier 2: long args repr gets shortened with ``…`` so the line stays compact."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -140,9 +140,9 @@ async def test_tool_args_snippet_truncated_for_long_args() -> None:
 @pytest.mark.asyncio
 async def test_tool_drill_renders_plus_n_more_beyond_cap() -> None:
     """Tier 2: tool call count beyond the cap collapses to "+N more"."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.skill_activity import _TOOL_DRILL_MAX_RENDER
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.skill_activity import _TOOL_DRILL_MAX_RENDER
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -176,8 +176,8 @@ async def test_start_tool_call_row_propagates_to_skill_row() -> None:
     skill row's drill-down should record it. This is the path
     ``app_outbox._on_tool_call_started`` drives in production.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -211,8 +211,8 @@ async def test_orphan_tool_call_does_not_record_on_any_skill() -> None:
     with an empty or mismatching ``parent_run_id``, the call should
     NOT contaminate a different skill row's drill-down.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

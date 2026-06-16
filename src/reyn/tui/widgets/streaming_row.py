@@ -34,7 +34,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _AMBER, _STATUS_ERROR, _STATUS_WARN
+from reyn.tui._palette import _AMBER, _STATUS_ERROR, _STATUS_WARN
 
 _RENDER_INTERVAL_MS = 16  # ~60 fps max
 _RENDER_INTERVAL_S = _RENDER_INTERVAL_MS / 1000

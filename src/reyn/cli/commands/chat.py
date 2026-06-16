@@ -244,9 +244,9 @@ def _run_connect_mode(args: argparse.Namespace, base_url: str) -> None:
     will lift the limit; v1 takes the scoped-disable path per the
     #276 owner decision.
     """
-    from reyn.chat.tui.app import run_tui
-    from reyn.chat.tui.ws_client import connect as ws_connect
     from reyn.llm.llm import run_async
+    from reyn.tui.app import run_tui
+    from reyn.tui.ws_client import connect as ws_connect
 
     agent_name = args.agent_name or "default"
     # No project root probe — remote mode doesn't read local .reyn/
@@ -487,7 +487,7 @@ def run(args: argparse.Namespace) -> None:
             return False
 
     if use_tui:
-        from reyn.chat.tui.app import run_tui
+        from reyn.tui.app import run_tui
 
         async def _main_tui() -> None:
             if not skip_restore:

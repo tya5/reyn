@@ -19,7 +19,7 @@ Naming convention:
 """
 from __future__ import annotations
 
-# Primary accent — keep in sync with reyn.chat.tui.app.ReynTUIApp._REYN_THEME
+# Primary accent — keep in sync with reyn.tui.app.ReynTUIApp._REYN_THEME
 _CORAL = "#C8553D"
 # Agent-identity accent. Warm amber, distinct enough from _CORAL that the
 # eye reads "agent name / agent stream" as a separate signal from "you

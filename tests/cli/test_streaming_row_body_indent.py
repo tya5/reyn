@@ -38,8 +38,8 @@ def test_streaming_row_indent_constant_matches_conversation() -> None:
     Pins the cross-module contract — both files must agree on the
     ts-on hanging indent or the horizontal jump returns.
     """
-    from reyn.chat.tui.widgets import conversation as conv_mod
-    from reyn.chat.tui.widgets import streaming_row as stream_mod
+    from reyn.tui.widgets import conversation as conv_mod
+    from reyn.tui.widgets import streaming_row as stream_mod
 
     assert stream_mod.BODY_INDENT_COLS == conv_mod.BODY_INDENT_COLS, (
         f"streaming_row.BODY_INDENT_COLS={stream_mod.BODY_INDENT_COLS} "
@@ -52,9 +52,9 @@ async def test_streaming_static_has_ts_on_left_padding() -> None:
     """Tier 2: the streaming Static is rendered at the ts-on hanging indent."""
     from textual.widgets import Static
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.streaming_row import _BODY_INDENT_COLS as _STREAM_INDENT
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.streaming_row import _BODY_INDENT_COLS as _STREAM_INDENT
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -85,9 +85,9 @@ async def test_sealed_markdown_has_ts_on_left_padding() -> None:
     """
     from textual.widgets import Markdown
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.streaming_row import _BODY_INDENT_COLS as _STREAM_INDENT
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.streaming_row import _BODY_INDENT_COLS as _STREAM_INDENT
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

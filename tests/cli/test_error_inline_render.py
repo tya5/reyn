@@ -31,7 +31,7 @@ if str(_SRC) not in sys.path:
 
 
 def _make_app():
-    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.tui.app import ReynTUIApp
     return ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
 
 
@@ -65,7 +65,7 @@ def _log_markup(conv) -> str:
 @pytest.mark.asyncio
 async def test_write_error_writes_cross_glyph_to_log() -> None:
     """Tier 2: write_error always writes '✗' into the conv RichLog."""
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -84,7 +84,7 @@ async def test_write_error_writes_cross_glyph_to_log() -> None:
 @pytest.mark.asyncio
 async def test_write_error_includes_message_text() -> None:
     """Tier 2: write_error includes the error message text in the log."""
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -103,7 +103,7 @@ async def test_write_error_includes_message_text() -> None:
 @pytest.mark.asyncio
 async def test_write_error_includes_skill_run_prefix() -> None:
     """Tier 2: write_error includes '[skill#run_id]' prefix when both provided."""
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -126,7 +126,7 @@ async def test_write_error_includes_skill_run_prefix() -> None:
 @pytest.mark.asyncio
 async def test_write_error_includes_trace_pointer_when_has_trace() -> None:
     """Tier 2: write_error includes 'Ctrl+B → events' when skill or run_id present."""
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -153,7 +153,7 @@ async def test_write_error_includes_trace_pointer_when_has_trace() -> None:
 @pytest.mark.asyncio
 async def test_write_error_omits_trace_pointer_when_no_trace() -> None:
     """Tier 2: write_error omits 'Ctrl+B → events' when no skill/run_id (slash error)."""
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -173,7 +173,7 @@ async def test_write_error_omits_trace_pointer_when_no_trace() -> None:
 @pytest.mark.asyncio
 async def test_write_error_returns_none() -> None:
     """Tier 2: write_error returns None (no widget mount)."""
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -189,7 +189,7 @@ async def test_write_error_returns_none() -> None:
 @pytest.mark.asyncio
 async def test_write_error_includes_inline_hint() -> None:
     """Tier 2: write_error splits '• hint' from message and renders it as a separate line."""
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -221,7 +221,7 @@ async def test_write_error_no_errorbox_widget_mounted() -> None:
     """
     from textual.widgets import RichLog
 
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:

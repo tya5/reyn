@@ -41,8 +41,8 @@ async def test_clear_sets_last_header_date_to_today() -> None:
     ``if today != self._last_header_date`` evaluates False on the
     next same-day message, suppressing the redundant separator.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -68,8 +68,8 @@ async def test_same_day_clear_does_not_emit_duplicate_date_separator() -> None:
     (= the same day was already marked).
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

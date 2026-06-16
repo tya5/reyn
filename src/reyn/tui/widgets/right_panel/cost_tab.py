@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from reyn.chat.tui._palette import _TEXT_DIMMEST
+from reyn.tui._palette import _TEXT_DIMMEST
 
 from .base import (
     _CORAL,

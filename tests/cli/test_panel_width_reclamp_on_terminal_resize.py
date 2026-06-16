@@ -31,8 +31,8 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import RightPanel
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets import RightPanel
 
 
 def _make_app() -> ReynTUIApp:

@@ -13,12 +13,12 @@ import pytest
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.services.snapshot_journal import SnapshotJournal
-from reyn.chat.tui.widgets._branch_tree import build_branch_tree_rows
-from reyn.chat.tui.widgets.rewind_menu import RewindMenuWidget
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.anchor_store import AnchorStore, truncate_anchor
 from reyn.events.snapshot_generations import SnapshotGenerationStore
 from reyn.events.state_log import StateLog
+from reyn.tui.widgets._branch_tree import build_branch_tree_rows
+from reyn.tui.widgets.rewind_menu import RewindMenuWidget
 
 # ── truncate_anchor ──────────────────────────────────────────────────────────
 

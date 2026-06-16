@@ -30,8 +30,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_scroll_to_bottom_still_resets_user_scrolled_flag() -> None:
     """Tier 2: behaviour unchanged — ``_user_scrolled = False`` after call."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -55,7 +55,7 @@ def test_scroll_to_bottom_source_has_no_duplicate_flag_set() -> None:
     most ONCE in ``_snap_to_bottom``'s body, never in
     ``scroll_to_bottom``'s.
     """
-    from reyn.chat.tui.widgets.conversation import ConversationView, _ScrollController
+    from reyn.tui.widgets.conversation import ConversationView, _ScrollController
 
     snap_src = inspect.getsource(_ScrollController.snap_to_bottom)
     scroll_src = inspect.getsource(ConversationView.scroll_to_bottom)

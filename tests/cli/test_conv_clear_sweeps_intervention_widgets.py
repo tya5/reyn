@@ -34,9 +34,9 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_clear_removes_pending_intervention_widget() -> None:
     """Tier 2: clear() unmounts a pending InterventionWidget."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -68,9 +68,9 @@ async def test_clear_with_no_intervention_is_safe() -> None:
     Regression guard: the ``for widget in list(self.query(...))`` empty
     iteration must not raise.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

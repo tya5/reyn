@@ -39,8 +39,8 @@ async def test_single_row_sealed_ids_use_row_id_prefix() -> None:
     """Tier 2: sealed prefix + markdown ids include the row's own id."""
     from textual.widgets import Markdown, Static
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -82,9 +82,9 @@ async def test_two_concurrent_sealed_rows_have_distinct_child_ids() -> None:
     """
     from textual.widgets import Markdown, Static
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.streaming_row import StreamingRow
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.streaming_row import StreamingRow
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

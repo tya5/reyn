@@ -59,7 +59,7 @@ def _running_plan_flat_item(plan_id_full: str) -> dict:
 
     Returns the running_plan flat_item dict so the test can inspect it.
     """
-    from reyn.chat.tui.widgets.right_panel import agents_tab
+    from reyn.tui.widgets.right_panel import agents_tab
 
     # Monkeypatch _plans_for_agent to return our stub plan.
     original = agents_tab._plans_for_agent
@@ -103,7 +103,7 @@ def test_running_plan_flat_item_carries_plan_id_full() -> None:
 
 def test_running_plan_bundle_uses_plan_id_full() -> None:
     """Tier 2: ``_build_running_plan_bundle`` output starts with full UUID."""
-    from reyn.chat.tui.widgets.right_panel import RightPanel
+    from reyn.tui.widgets.right_panel import RightPanel
 
     full = "abc12345-def6-7890-abcd-ef1234567890"
     item = _running_plan_flat_item(full)
@@ -121,7 +121,7 @@ def test_running_plan_bundle_falls_back_on_missing_full_id() -> None:
     code path) should still produce a bundle using the truncated
     ``plan_id`` so the contract isn't worsened by the new key.
     """
-    from reyn.chat.tui.widgets.right_panel import RightPanel
+    from reyn.tui.widgets.right_panel import RightPanel
 
     legacy_item = {
         "kind": "running_plan",

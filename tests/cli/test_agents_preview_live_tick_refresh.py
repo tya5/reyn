@@ -37,8 +37,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_exec_state_tick_refreshes_open_preview_on_agents_tab() -> None:
     """Tier 2: with preview open on agents tab, tick → _update_preview fires."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -68,8 +68,8 @@ async def test_exec_state_tick_refreshes_open_preview_on_agents_tab() -> None:
 @pytest.mark.asyncio
 async def test_exec_state_tick_with_preview_closed_does_not_refresh() -> None:
     """Tier 2: regression guard — preview closed → no wasted update."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -99,8 +99,8 @@ async def test_exec_state_tick_with_preview_closed_does_not_refresh() -> None:
 @pytest.mark.asyncio
 async def test_exec_state_tick_on_non_agents_tab_skips_preview() -> None:
     """Tier 2: scope guard — non-agents tab + preview open → no refresh."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

@@ -35,9 +35,9 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.app_outbox import OutboxRouter
-from reyn.chat.tui.widgets import ConversationView, ReynHeader
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.app_outbox import OutboxRouter
+from reyn.tui.widgets import ConversationView, ReynHeader
 
 
 def _make_app() -> ReynTUIApp:
@@ -235,7 +235,7 @@ async def test_user_submit_resets_title_to_idle() -> None:
         assert app.title == "reyn — error"
 
         # User types a fresh message — drive the submit path
-        from reyn.chat.tui.widgets import InputBar
+        from reyn.tui.widgets import InputBar
         app.post_message(InputBar.UserSubmitted("hello"))
         # Pump the message queue a few times
         for _ in range(5):

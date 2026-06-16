@@ -33,8 +33,8 @@ if str(_SRC) not in sys.path:
 
 from textual.binding import Binding
 
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets.right_panel.keys_tab import render_keys
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets.right_panel.keys_tab import render_keys
 
 # ── Binding existence ────────────────────────────────────────────────────────
 
@@ -276,7 +276,7 @@ async def test_focus_toggle_panel_allowed_when_intervention_pending() -> None:
     primary affordance for the prompt; gating their focus on panel
     visibility broke the keyboard-only path.
     """
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(
         registry=None,

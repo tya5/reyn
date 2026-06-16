@@ -66,8 +66,8 @@ async def test_badge_shown_when_images_pending() -> None:
     """
     from textual.widgets import Label
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     fake_session = _FakeSession(pending=2)
 
@@ -94,8 +94,8 @@ async def test_badge_singular_form_for_one_image() -> None:
     """Tier 2: exactly 1 pending image → singular ``image`` (not ``images``)."""
     from textual.widgets import Label
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     fake_session = _FakeSession(pending=1)
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
@@ -123,8 +123,8 @@ async def test_badge_plural_form_for_multiple_images() -> None:
     """Tier 2: 3 pending images → plural ``images``."""
     from textual.widgets import Label
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     fake_session = _FakeSession(pending=3)
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
@@ -149,8 +149,8 @@ async def test_no_badge_when_queue_empty() -> None:
     """Tier 2: empty queue → no badge in hint text."""
     from textual.widgets import Label
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     fake_session = _FakeSession(pending=0)
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
@@ -179,8 +179,8 @@ async def test_in_flight_suppresses_badge() -> None:
     """
     from textual.widgets import Label
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     fake_session = _FakeSession(pending=2)
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
@@ -212,8 +212,8 @@ async def test_badge_appears_after_unlock() -> None:
     """
     from textual.widgets import Label
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     fake_session = _FakeSession(pending=1)
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)

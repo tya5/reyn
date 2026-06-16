@@ -52,8 +52,8 @@ async def test_set_in_flight_true_updates_hint_label() -> None:
     """
     from textual.widgets import Label
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -89,8 +89,8 @@ async def test_set_in_flight_false_reverts_hint_label() -> None:
     """
     from textual.widgets import Label
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -126,8 +126,8 @@ async def test_set_in_flight_idempotent_does_not_corrupt_hint() -> None:
     """
     from textual.widgets import Label
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

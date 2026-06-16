@@ -8,7 +8,7 @@ CSS placement rule (see also ``../theme.tcss`` header):
   composition). Used by widgets composed inside other widgets where
   theme.tcss can't reach naturally.
 
-Colour values: import from ``reyn.chat.tui._palette`` rather than
+Colour values: import from ``reyn.tui._palette`` rather than
 hard-coding hex literals. ``_palette.py`` is the single source of
 truth; re-themeing means editing that one file.
 """

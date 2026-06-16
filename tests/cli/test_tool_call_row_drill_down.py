@@ -41,8 +41,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_row_starts_collapsed() -> None:
     """Tier 2: a freshly mounted row is not expanded."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -59,8 +59,8 @@ async def test_row_starts_collapsed() -> None:
 @pytest.mark.asyncio
 async def test_toggle_expand_flips_state() -> None:
     """Tier 2: ``toggle_expand`` round-trips collapsed↔expanded."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -79,8 +79,8 @@ async def test_toggle_expand_flips_state() -> None:
 @pytest.mark.asyncio
 async def test_collapsed_view_truncates_long_args() -> None:
     """Tier 2: long args repr truncates with ``…`` in collapsed view."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(80, 30)) as pilot:
@@ -101,8 +101,8 @@ async def test_collapsed_view_truncates_long_args() -> None:
 @pytest.mark.asyncio
 async def test_expanded_view_surfaces_full_args() -> None:
     """Tier 2: expanded view contains the entire args repr, no ``…`` cut."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(80, 30)) as pilot:
@@ -124,8 +124,8 @@ async def test_expanded_view_surfaces_full_args() -> None:
 async def test_expanded_view_un_elides_long_tool_name() -> None:
     """Tier 2: qualified tool names that get middle-elided collapsed are
     rendered in full when expanded."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     # Narrow terminal so the collapsed view triggers middle-elide.
@@ -149,8 +149,8 @@ async def test_expanded_view_un_elides_long_tool_name() -> None:
 @pytest.mark.asyncio
 async def test_expanded_view_surfaces_full_result_snippet() -> None:
     """Tier 2: long result snippets show in full when expanded."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(80, 30)) as pilot:
@@ -177,8 +177,8 @@ async def test_click_event_toggles_expand() -> None:
     """Tier 2: Click event invokes the expand toggle."""
     from textual import events as textual_events
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -201,8 +201,8 @@ async def test_click_event_toggles_expand() -> None:
 @pytest.mark.asyncio
 async def test_finished_row_remains_expandable() -> None:
     """Tier 2: ``finish_success`` doesn't lock out the expand toggle."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(80, 30)) as pilot:
@@ -231,9 +231,9 @@ async def test_tool_call_row_inherits_renderable_cache_mixin() -> None:
     that the mixin extraction targeted (= SkillActivityRow + SlashPicker
     already migrated; ToolCallRow newly added here).
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets._renderable_cache import RenderableCacheMixin
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets._renderable_cache import RenderableCacheMixin
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

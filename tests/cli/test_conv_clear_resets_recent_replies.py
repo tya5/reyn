@@ -34,8 +34,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_clear_empties_recent_replies_buffer() -> None:
     """Tier 2: after clear() ``/copy`` finds no prior reply."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -69,8 +69,8 @@ async def test_new_reply_after_clear_starts_fresh_buffer() -> None:
     Ensures clear() doesn't break the natural append path — a new
     reply lands at index 1 and is reachable via ``last_reply_text``.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

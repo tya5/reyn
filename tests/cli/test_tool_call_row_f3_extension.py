@@ -41,8 +41,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_in_flight_tool_call_rows_excludes_finished() -> None:
     """Tier 2: only unfinished tool call rows are returned."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -64,8 +64,8 @@ async def test_in_flight_tool_call_rows_excludes_finished() -> None:
 @pytest.mark.asyncio
 async def test_f3_toggles_in_flight_tool_call_rows() -> None:
     """Tier 2: F3 expands an in-flight tool call row (no skill rows present)."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -92,8 +92,8 @@ async def test_f3_toggles_mixed_skill_and_tool_call_set() -> None:
     Pre-state: skill row collapsed, tool call row collapsed.
     F3 → both expanded. F3 again → both collapsed.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -129,8 +129,8 @@ async def test_f3_convergence_across_mixed_states() -> None:
     looks at the skill (= first in the list), target = collapsed.
     Both rows land collapsed.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -156,8 +156,8 @@ async def test_f3_convergence_across_mixed_states() -> None:
 @pytest.mark.asyncio
 async def test_f3_skips_finished_tool_call_rows() -> None:
     """Tier 2: F3 only touches in-flight tool call rows, leaves finished ones."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -189,9 +189,9 @@ async def test_no_rows_status_hint_uses_neutral_wording(
     rows" hint is what gets shown (= this test exercises the non-tip
     code path; first-use tip path is covered in test_f3_first_use_tip.py).
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.prefs import save_tui_prefs
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.prefs import save_tui_prefs
+    from reyn.tui.widgets import ConversationView
 
     # Mark tip already seen so the standard "no rows" hint appears.
     save_tui_prefs(tmp_path, {"tip_f3_seen": True})
@@ -216,7 +216,7 @@ async def test_no_rows_status_hint_uses_neutral_wording(
 
 def test_f3_binding_description_widened() -> None:
     """Tier 2: binding description reflects the extended F3 scope."""
-    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.tui.app import ReynTUIApp
 
     for b in ReynTUIApp.BINDINGS:
         key = getattr(b, "key", None) or (b[0] if isinstance(b, tuple) else None)

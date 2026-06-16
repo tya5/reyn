@@ -32,8 +32,8 @@ from typing import Any
 import pytest
 
 from reyn.chat.lifecycle_forwarder import ChatLifecycleForwarder
-from reyn.chat.tui.widgets.right_panel.memory_tab import render_memory
 from reyn.schemas.models import Event
+from reyn.tui.widgets.right_panel.memory_tab import render_memory
 
 
 def _make_forwarder() -> tuple[ChatLifecycleForwarder, asyncio.Queue]:

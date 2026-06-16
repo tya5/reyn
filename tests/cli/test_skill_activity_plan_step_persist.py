@@ -42,7 +42,7 @@ def _row():
     context. The renderer (``_build_running``) is pure over those
     fields and can be called the same way to read the visible state.
     """
-    from reyn.chat.tui.widgets.skill_activity import SkillActivityRow
+    from reyn.tui.widgets.skill_activity import SkillActivityRow
     return SkillActivityRow(run_id="abc1efgh", skill_name="test_skill")
 
 

@@ -43,8 +43,8 @@ async def test_jump_to_relative_anchor_marks_user_scrolled_true() -> None:
     to set it as a side effect, which silently flipped back to False
     when ``at_bottom`` evaluated True near the last anchor.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -87,8 +87,8 @@ async def test_jump_keeps_user_scrolled_even_on_forward_to_last_anchor() -> None
     True`` in the jump function prevents the watcher's reset from
     being the load-bearing signal.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

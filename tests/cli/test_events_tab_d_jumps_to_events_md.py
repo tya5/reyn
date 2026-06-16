@@ -28,7 +28,7 @@ if str(_SRC) not in sys.path:
 
 def test_events_tab_footer_contains_d_hint(tmp_path: Path) -> None:
     """Tier 2: render_events output ends with the [d]-for-events.md footer row."""
-    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+    from reyn.tui.widgets.right_panel.events_tab import render_events
 
     # Seed a minimal events log so the renderer doesn't return the early
     # "no matching events" branch (= that path also now appends the footer,
@@ -65,8 +65,8 @@ async def test_d_key_on_events_tab_jumps_to_docs_events_md(
     """Tier 2: ``d`` on events tab activates Docs tab with cursor on events.md."""
     from textual import events as textual_events
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     # Seed a minimal docs/ tree so build_docs_index finds something.
     # Place events.md under docs/reference/runtime/ — the canonical location.
@@ -118,8 +118,8 @@ async def test_d_key_on_memory_tab_does_not_open_docs(tmp_path: Path) -> None:
     """Tier 2: ``d`` while memory tab is active leaves panel_type unchanged."""
     from textual import events as textual_events
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(
         registry=None,

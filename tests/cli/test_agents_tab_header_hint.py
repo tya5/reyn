@@ -30,8 +30,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_agents_header_surfaces_space_and_c_hints() -> None:
     """Tier 2: ``Agents`` header includes ``space=open`` and ``c=copy``."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -62,8 +62,8 @@ async def test_agents_header_hint_matches_memory_idiom() -> None:
     actions all appear in both" (= superset relation), not strict
     equality.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -95,8 +95,8 @@ async def test_other_tab_headers_unchanged() -> None:
 
     Regression guard — H-F2 was scoped to the agents header only.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

@@ -30,7 +30,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.widgets.right_panel.pending_tab import (
+from reyn.tui.widgets.right_panel.pending_tab import (
     _KIND_RENDERERS,
     render_pending,
 )

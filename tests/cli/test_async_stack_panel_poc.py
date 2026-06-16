@@ -35,7 +35,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.widgets.async_stack_panel import (  # noqa: E402
+from reyn.tui.widgets.async_stack_panel import (  # noqa: E402
     AsyncStackPanel,
 )
 

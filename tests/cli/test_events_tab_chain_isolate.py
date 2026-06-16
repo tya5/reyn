@@ -41,8 +41,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_toggle_chain_isolate_captures_cursor_chain() -> None:
     """Tier 2: first ``i`` press sets isolate to cursor's chain_id."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -65,8 +65,8 @@ async def test_toggle_chain_isolate_captures_cursor_chain() -> None:
 @pytest.mark.asyncio
 async def test_toggle_chain_isolate_second_press_clears() -> None:
     """Tier 2: re-press of ``i`` clears the active isolate."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -87,8 +87,8 @@ async def test_toggle_chain_isolate_second_press_clears() -> None:
 @pytest.mark.asyncio
 async def test_toggle_chain_isolate_empty_list_returns_false() -> None:
     """Tier 2: toggling with no events visible is a no-op."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -108,8 +108,8 @@ async def test_toggle_chain_isolate_cursor_event_no_chain_id() -> None:
     isolation; toggling should leave state unchanged and return
     False so the caller surfaces a hint.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -126,7 +126,7 @@ async def test_toggle_chain_isolate_cursor_event_no_chain_id() -> None:
 
 def test_render_events_filters_by_chain_isolate(tmp_path: Path) -> None:
     """Tier 2: ``render_events(..., chain_isolate=X)`` keeps only chain X."""
-    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+    from reyn.tui.widgets.right_panel.events_tab import render_events
 
     # Seed a fake events dir with 2 chains interleaved.
     events_root = tmp_path / ".reyn" / "events" / "agents" / "test" / "events"
@@ -171,8 +171,8 @@ async def test_i_key_on_events_tab_invokes_toggle() -> None:
     """Tier 2: pressing ``i`` while events tab focused triggers the toggle."""
     from textual import events as textual_events
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -194,7 +194,7 @@ async def test_i_key_on_events_tab_invokes_toggle() -> None:
 
 def test_keys_tab_lists_i_under_panel_explicit() -> None:
     """Tier 2: ``i`` appears in the Keys tab's panel-key listing."""
-    from reyn.chat.tui.widgets.right_panel.keys_tab import _EVENTS_KEYS
+    from reyn.tui.widgets.right_panel.keys_tab import _EVENTS_KEYS
 
     assert "i" in _EVENTS_KEYS
 
@@ -202,8 +202,8 @@ def test_keys_tab_lists_i_under_panel_explicit() -> None:
 @pytest.mark.asyncio
 async def test_keys_tab_render_includes_i_isolate_description() -> None:
     """Tier 2: rendered Keys tab markup surfaces the ``i`` isolate hint."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.right_panel.keys_tab import render_keys
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.right_panel.keys_tab import render_keys
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

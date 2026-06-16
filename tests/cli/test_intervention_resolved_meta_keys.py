@@ -27,8 +27,8 @@ if str(_SRC) not in sys.path:
 
 async def _mount_intervention_widget(pilot, iv_id: str):
     """Mount an InterventionWidget under the conversation view."""
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = pilot.app
     conv = app.query_one("#conversation", ConversationView)
@@ -51,8 +51,8 @@ async def test_resolved_handler_finds_widget_with_legacy_iv_id_key() -> None:
     The service emits ``meta={"iv_id": iv.id, …}`` on resolve today.
     The handler must continue to honor this legacy shape.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -61,7 +61,7 @@ async def test_resolved_handler_finds_widget_with_legacy_iv_id_key() -> None:
         assert app.query(InterventionWidget)
 
         msg = _resolved_msg({"iv_id": "abc1efgh-xxxx"})
-        from reyn.chat.tui.app_outbox import OutboxRouter
+        from reyn.tui.app_outbox import OutboxRouter
         router = OutboxRouter(app)
         conv = app.query_one("#conversation")
         header = app.query_one("#header")
@@ -81,8 +81,8 @@ async def test_resolved_handler_finds_widget_with_intervention_id_key() -> None:
     same ``intervention_id`` key as the mount emit, the TUI must not
     leak orphan widgets.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -91,7 +91,7 @@ async def test_resolved_handler_finds_widget_with_intervention_id_key() -> None:
         assert app.query(InterventionWidget)
 
         msg = _resolved_msg({"intervention_id": "def2hijk-yyyy"})
-        from reyn.chat.tui.app_outbox import OutboxRouter
+        from reyn.tui.app_outbox import OutboxRouter
         router = OutboxRouter(app)
         conv = app.query_one("#conversation")
         header = app.query_one("#header")
@@ -113,8 +113,8 @@ async def test_resolved_handler_prefers_intervention_id_when_both_present() -> N
     NONSENSE ``iv_id`` value alongside the correct ``intervention_id``
     — successful removal proves ``intervention_id`` was the key read.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -126,7 +126,7 @@ async def test_resolved_handler_prefers_intervention_id_when_both_present() -> N
             "intervention_id": "ghi3lmno-zzzz",  # correct
             "iv_id": "WRONG_KEY_zzz",  # nonsense; would miss the widget
         })
-        from reyn.chat.tui.app_outbox import OutboxRouter
+        from reyn.tui.app_outbox import OutboxRouter
         router = OutboxRouter(app)
         conv = app.query_one("#conversation")
         header = app.query_one("#header")

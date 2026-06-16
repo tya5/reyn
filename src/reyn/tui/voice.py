@@ -35,7 +35,7 @@ Design notes:
     audio in ~1 s; ``medium`` ~3 s.
 
 P7 / engine-design boundary: this module lives entirely under
-``chat/tui/``. The OS layer (skills / phases / runtime) has no awareness of
+``tui/``. The OS layer (skills / phases / runtime) has no awareness of
 voice input.
 """
 from __future__ import annotations

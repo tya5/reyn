@@ -32,7 +32,7 @@ if str(_SRC) not in sys.path:
 
 def test_middle_elide_id_short_input_unchanged() -> None:
     """Tier 2: ID shorter than budget round-trips unchanged."""
-    from reyn.chat.tui.widgets.async_stack_panel import _middle_elide_id
+    from reyn.tui.widgets.async_stack_panel import _middle_elide_id
 
     assert _middle_elide_id("alice", 9) == "alice"
     assert _middle_elide_id("ab", 5) == "ab"
@@ -40,7 +40,7 @@ def test_middle_elide_id_short_input_unchanged() -> None:
 
 def test_middle_elide_id_long_input_keeps_head_and_tail() -> None:
     """Tier 2b: long input collapses to ``<head>…<tail>``."""
-    from reyn.chat.tui.widgets.async_stack_panel import _middle_elide_id
+    from reyn.tui.widgets.async_stack_panel import _middle_elide_id
 
     uuid_36 = "abcdef12-3456-7890-abcd-ef1234567890"
     out = _middle_elide_id(uuid_36, 9)
@@ -56,7 +56,7 @@ def test_middle_elide_id_long_input_keeps_head_and_tail() -> None:
 
 def test_middle_elide_id_subtle_budget_degrades_to_trunc() -> None:
     """Tier 2: < 3 cell budget degrades to plain head trim."""
-    from reyn.chat.tui.widgets.async_stack_panel import _middle_elide_id
+    from reyn.tui.widgets.async_stack_panel import _middle_elide_id
 
     assert _middle_elide_id("abcdefgh", 2) == "ab"
     assert _middle_elide_id("abcdefgh", 1) == "a"
@@ -70,8 +70,8 @@ async def test_wide_panel_shows_summary_primary_and_id_dim_suffix() -> None:
     the ``  async: <id>`` dim suffix.  Both must appear in the rendered text.
     snapshot() always returns the raw agent_id key regardless of render width.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(140, 30)) as pilot:
@@ -101,8 +101,8 @@ async def test_narrow_panel_summary_primary_id_dropped() -> None:
     the dim agent_id suffix first so the human-readable summary stays fully
     visible as the bold primary label.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     # Narrow terminal — async stack panel is full-width on the bottom
@@ -132,8 +132,8 @@ async def test_narrow_panel_no_summary_renders_without_id_suffix() -> None:
     only the rendered suffix may be omitted. ``snapshot()`` still returns
     the full agent_id regardless.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True, size=(60, 30)) as pilot:

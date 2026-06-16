@@ -36,11 +36,11 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui import _clipboard
-from reyn.chat.tui._clipboard import copy_to_clipboard_async
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.app_outbox import OutboxRouter
-from reyn.chat.tui.widgets import ConversationView, ReynHeader
+from reyn.tui import _clipboard
+from reyn.tui._clipboard import copy_to_clipboard_async
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.app_outbox import OutboxRouter
+from reyn.tui.widgets import ConversationView, ReynHeader
 
 
 def _make_app() -> ReynTUIApp:

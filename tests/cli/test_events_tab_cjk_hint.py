@@ -33,7 +33,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.widgets.right_panel.events_tab import _event_hint  # noqa: E402
+from reyn.tui.widgets.right_panel.events_tab import _event_hint  # noqa: E402
 
 # 41 = 40 content cells + 1 ellipsis cell (the "…" glyph is 1 cell wide).
 _MAX_HINT_CELLS = 41
