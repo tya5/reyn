@@ -41,13 +41,30 @@ _CONSUME = "op_loop_enabled"  # the terminal OSRuntime → PhaseExecutor convers
 def _references_gate(tree: ast.AST) -> bool:
     """True if the module references the gate as code (NOT in a docstring/comment):
     a parameter named ``tool_calls_op_loop_skills``, an attribute access ending in
-    ``tool_calls_op_loop_skills`` / ``_tool_calls_op_loop_skills``, or a bare Name."""
+    ``tool_calls_op_loop_skills`` / ``_tool_calls_op_loop_skills``, or a bare Name.
+
+    #1682 #3: the gate's DECLARATION — the ReynConfig dataclass field
+    ``tool_calls_op_loop_skills: list[str] = field(...)`` (an AnnAssign target) — is
+    the gate's HOME, not a consumer that could drop it. The config-package split
+    moved that field-declaration (config/root.py) apart from ``load_config``'s
+    ``ReynConfig(tool_calls_op_loop_skills=...)`` construction (config/loader.py),
+    so the declaration site no longer co-locates a propagation. Exclude the
+    AnnAssign-target Name so the schema home is not flagged as a drop."""
+    decl_target_nodes = {
+        id(node.target)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    }
     for node in ast.walk(tree):
         if isinstance(node, ast.arg) and node.arg == _GATE:
             return True
         if isinstance(node, ast.Attribute) and node.attr in (_GATE, _GATE_ATTR):
             return True
-        if isinstance(node, ast.Name) and node.id in (_GATE, _GATE_ATTR):
+        if (
+            isinstance(node, ast.Name)
+            and node.id in (_GATE, _GATE_ATTR)
+            and id(node) not in decl_target_nodes  # exclude the dataclass field declaration
+        ):
             return True
     return False
 
