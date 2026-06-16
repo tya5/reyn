@@ -26,7 +26,7 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.slash import suggest_for_unknown
+from reyn.slash import suggest_for_unknown
 
 # Stable fixture list independent of live registry evolution.
 _NAMES = sorted([

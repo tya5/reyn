@@ -41,10 +41,10 @@ async def test_alias_prefix_surfaces_canonical_command() -> None:
     only checked ``c.name.startswith("img")``. After the fix, the alias
     check surfaces /image as a candidate.
     """
-    from reyn.chat.slash import REGISTRY
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import InputBar
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import REGISTRY
 
     # Verify the alias actually exists in the registry before asserting on it.
     image_cmd = REGISTRY.get("image")
@@ -84,10 +84,10 @@ async def test_canonical_name_prefix_still_works() -> None:
     Regression guard: the alias extension must not break the existing
     name-prefix path.
     """
-    from reyn.chat.slash import REGISTRY
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import InputBar
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import REGISTRY
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -117,10 +117,10 @@ async def test_no_duplicate_when_both_name_and_alias_match() -> None:
     candidate object. Pin that the picker renders ``/ab_cmd_test`` only
     once in its text.
     """
-    from reyn.chat.slash import SlashCommand
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import InputBar
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import SlashCommand
 
     async def _noop(_session, _args: str) -> None:
         return None
@@ -156,10 +156,10 @@ async def test_unknown_prefix_still_shows_unknown_hint() -> None:
     Alias support must not suppress the unknown-hint path for genuinely
     unknown tokens.
     """
-    from reyn.chat.slash import REGISTRY
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets import InputBar
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import REGISTRY
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

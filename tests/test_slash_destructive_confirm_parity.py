@@ -30,7 +30,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.slash import REGISTRY
+from reyn.slash import REGISTRY
 
 # ── /cancel stubs ─────────────────────────────────────────────────────────
 

@@ -36,7 +36,7 @@ if str(_SRC) not in sys.path:
 
 def test_help_listing_registry_data_carries_alias_for_image() -> None:
     """Tier 2: /image has aliases in the REGISTRY — the listing path precondition."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     image_cmd = REGISTRY.get("image")
     assert image_cmd is not None, "/image not in REGISTRY"
@@ -61,7 +61,7 @@ def test_help_listing_output_contains_also_img() -> None:
             self._messages.append(msg.text)
 
     async def _run() -> str:
-        from reyn.chat.slash.help import help_cmd
+        from reyn.slash.help import help_cmd
         session = _FakeSession()
         await help_cmd(session, "")  # bare /help, no arg
         return "\n".join(session._messages)
@@ -83,7 +83,7 @@ def test_help_listing_no_alias_hint_for_no_alias_cmd() -> None:
             self._messages.append(msg.text)
 
     async def _run() -> str:
-        from reyn.chat.slash.help import help_cmd
+        from reyn.slash.help import help_cmd
         session = _FakeSession()
         await help_cmd(session, "")
         return "\n".join(session._messages)
@@ -108,9 +108,9 @@ async def test_picker_row_contains_alias_hint_for_image() -> None:
     ``RenderableCacheMixin`` — inside a real app pilot so the Textual
     widget machinery is properly initialised.
     """
-    from reyn.chat.slash import REGISTRY
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import REGISTRY
 
     image_cmd = REGISTRY.get("image")
     assert image_cmd is not None, "/image not in REGISTRY"
@@ -132,9 +132,9 @@ async def test_picker_row_contains_alias_hint_for_image() -> None:
 @pytest.mark.asyncio
 async def test_picker_row_no_alias_hint_for_cmd_without_aliases() -> None:
     """Tier 2: picker row for a no-alias command shows no alias annotation (regression guard)."""
-    from reyn.chat.slash import REGISTRY
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import REGISTRY
 
     find_cmd = REGISTRY.get("find")
     assert find_cmd is not None, "/find not in REGISTRY"

@@ -19,7 +19,6 @@ from rich.text import Text
 from textual.message import Message
 from textual.widgets import Static
 
-from reyn.chat.slash import SlashCommand
 from reyn.chat.tui._palette import (
     _BG_HEADER,
     _CORAL,
@@ -30,6 +29,7 @@ from reyn.chat.tui._palette import (
     _TEXT_NEUTRAL,
     _TEXT_SELECTED,
 )
+from reyn.slash import SlashCommand
 
 from ._renderable_cache import RenderableCacheMixin
 

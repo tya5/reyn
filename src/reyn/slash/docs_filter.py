@@ -11,7 +11,7 @@ Sends a `__docs_filter__` sentinel; the TUI app routes it to
 from __future__ import annotations
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.slash import slash
+from reyn.slash import slash
 
 
 @slash(

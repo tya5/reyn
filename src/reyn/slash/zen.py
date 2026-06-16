@@ -10,7 +10,7 @@ serves both languages first-class, and the Zen reflects that.
 """
 from __future__ import annotations
 
-from reyn.chat.slash import reply, slash
+from reyn.slash import reply, slash
 
 _ZEN = """The Zen of Reyn, by Tetsuya Yasuda
 

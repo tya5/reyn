@@ -10,7 +10,7 @@ The block shape is the path-ref form introduced by issue #383 PR-C
 (= storage points at the file on disk; LLM-call time reads + embeds
 binary). Mirrored here so we don't fork the wire shape.
 
-Supported extensions mirror ``reyn.chat.slash.image._IMAGE_EXTENSIONS``
+Supported extensions mirror ``reyn.slash.image._IMAGE_EXTENSIONS``
 (= same set ``file__read`` accepts via #365). Non-image elements
 (.pdf / audio / video / etc.) are dropped — multimodal pipelines for
 those are V2.
@@ -21,7 +21,7 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
-# Mirror reyn.chat.slash.image._IMAGE_EXTENSIONS. Duplicated rather
+# Mirror reyn.slash.image._IMAGE_EXTENSIONS. Duplicated rather
 # than imported because the slash module pulls in ChatSession
 # internals; the chainlit adapter intentionally stays decoupled from
 # that import graph so unit tests run fast.

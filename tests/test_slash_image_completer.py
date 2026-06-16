@@ -23,7 +23,7 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.slash.image import _image_path_completer
+from reyn.slash.image import _image_path_completer
 
 
 class _FakeSession:
@@ -119,7 +119,7 @@ def test_image_completer_prefix_filtering(tmp_path: Path) -> None:
 
 def test_image_completer_bounded_at_max(tmp_path: Path) -> None:
     """Tier 2: result count is capped at the module constant (default 20)."""
-    from reyn.chat.slash.image import _COMPLETER_MAX
+    from reyn.slash.image import _COMPLETER_MAX
     for i in range(_COMPLETER_MAX + 10):
         (tmp_path / f"img{i:03d}.png").write_bytes(b"")
     results = _image_path_completer(_FakeSession(), str(tmp_path) + "/")

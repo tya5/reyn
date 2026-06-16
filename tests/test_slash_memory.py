@@ -16,8 +16,8 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.slash import REGISTRY
-from reyn.chat.slash.memory import _memory_completer
+from reyn.slash import REGISTRY
+from reyn.slash.memory import _memory_completer
 
 
 @pytest.mark.asyncio

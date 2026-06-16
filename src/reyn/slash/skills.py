@@ -4,7 +4,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from reyn.chat.slash import reply, slash
+from reyn.slash import reply, slash
 
 # See help.py for rationale — 65 = common 80-col terminal minus the
 # combined body indent (7) + conv pane / RichLog padding overhead.

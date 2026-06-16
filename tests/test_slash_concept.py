@@ -22,8 +22,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 # Import the module so the @slash decorator fires and registers the command.
-import reyn.chat.slash.concept  # noqa: F401  (side-effect: registers /concept)
-from reyn.chat.slash.concept import _lookup, _parse_glossary
+import reyn.slash.concept  # noqa: F401  (side-effect: registers /concept)
+from reyn.slash.concept import _lookup, _parse_glossary
 
 # ── fixture ────────────────────────────────────────────────────────────────
 
@@ -129,8 +129,8 @@ async def _run_concept(args: str, *, glossary_path: Path | None = None) -> list[
     is monkey-patched so the command reads a test-controlled file rather than
     the real glossary.
     """
-    import reyn.chat.slash.concept as _mod
-    from reyn.chat.slash import REGISTRY
+    import reyn.slash.concept as _mod
+    from reyn.slash import REGISTRY
 
     session = _FakeSession()
     cmd = REGISTRY.get("concept")
@@ -260,7 +260,7 @@ def test_concept_missing_glossary_returns_error(tmp_path: Path) -> None:
 
 def test_concept_in_registry() -> None:
     """Tier 2: /concept is present in the REGISTRY after import."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
     cmd = REGISTRY.get("concept")
     assert cmd is not None
     assert cmd.name == "concept"

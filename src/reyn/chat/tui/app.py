@@ -423,7 +423,7 @@ class ReynTUIApp(App):
     def on_mount(self) -> None:
         """Wire up after DOM is ready."""
         # Load slash commands from registry into the inline picker
-        from reyn.chat.slash import REGISTRY as SLASH_REGISTRY
+        from reyn.slash import REGISTRY as SLASH_REGISTRY
 
         inputbar = self.query_one("#inputbar", InputBar)
         inputbar.update_slash_commands(SLASH_REGISTRY.all_commands())
@@ -1097,7 +1097,7 @@ class ReynTUIApp(App):
             # ``/quit`` / ``/exit`` previously had a hard-coded intercept
             # here that short-circuited to ``action_quit_tui`` before the
             # registry dispatch. Wave-2 P3 moved them into the registry
-            # (``reyn.chat.slash.quit``) so they surface in the palette
+            # (``reyn.slash.quit``) so they surface in the palette
             # + ``/help``; the registry handler emits ``__quit__`` and
             # ``app_outbox._on_quit`` runs the same shutdown. Removing
             # the intercept keeps a single source of truth for the slash

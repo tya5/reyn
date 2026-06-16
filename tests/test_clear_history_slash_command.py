@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.slash import REGISTRY
+from reyn.slash import REGISTRY
 from reyn.tools.action_usage_tracker import ActionUsageTracker
 
 

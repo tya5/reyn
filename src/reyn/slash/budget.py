@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from reyn.chat.slash import reply, slash
+from reyn.slash import reply, slash
 
 if TYPE_CHECKING:
     from reyn.chat.session import ChatSession

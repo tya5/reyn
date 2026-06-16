@@ -30,9 +30,9 @@ if str(_SRC) not in sys.path:
 
 from textual.widgets import TextArea
 
-from reyn.chat.slash import SlashCommand
 from reyn.chat.tui.app import ReynTUIApp
 from reyn.chat.tui.widgets.slash_picker import SlashPicker
+from reyn.slash import SlashCommand
 
 
 def _make_app() -> ReynTUIApp:

@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import textwrap
 
-from reyn.chat.slash import REGISTRY, reply, reply_error, slash, suggest_for_unknown
+from reyn.slash import REGISTRY, reply, reply_error, slash, suggest_for_unknown
 
 # Built-ins handled outside the registry. ``/quit`` + ``/exit`` were
-# previously here but moved into ``reyn.chat.slash.quit`` (= wave-2 P3)
+# previously here but moved into ``reyn.slash.quit`` (= wave-2 P3)
 # so the slash palette can match them on ``/q`` / ``/ex`` prefixes.
 # Keep this list as the future home for any TUI-intercepted commands
 # that genuinely cannot land in the registry.

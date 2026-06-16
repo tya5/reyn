@@ -304,7 +304,7 @@ async def test_flag_only_no_query_shows_usage_hint() -> None:
 
 def test_find_slash_summary_and_usage_updated() -> None:
     """Tier 2: /find's structured usage field reflects the new flag set."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("find")
     assert cmd is not None
