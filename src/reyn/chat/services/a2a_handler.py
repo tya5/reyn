@@ -30,7 +30,7 @@ from reyn.chat.outbox import OutboxMessage
 if TYPE_CHECKING:
     from reyn.chat.services.chain_manager import ChainManager, _PendingChain
     from reyn.events.events import EventLog
-    from reyn.safety.limit_handler import LimitDecision
+    from reyn.limits.limit_handler import LimitDecision
 
 logger = logging.getLogger(__name__)
 

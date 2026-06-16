@@ -56,13 +56,13 @@ from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
 from reyn.events.snapshot_generations import SnapshotGenerationStore
 from reyn.events.state_log import StateLog
-from reyn.llm.model_resolver import ModelResolver
-from reyn.permissions.permissions import PermissionResolver
-from reyn.safety.limit_handler import (
+from reyn.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
     reset_run_extensions,
 )
+from reyn.llm.model_resolver import ModelResolver
+from reyn.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 from reyn.skill.skill_registry import SkillRegistry

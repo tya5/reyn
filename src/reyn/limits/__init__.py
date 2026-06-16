@@ -14,7 +14,7 @@ counter / re-arm the deadline / continue. Keeping the helper raise-free
 lets it stay site-agnostic (= one helper, six call sites) while each
 site keeps its bespoke "extend the counter" logic.
 """
-from reyn.safety.limit_handler import (
+from reyn.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
     reset_run_extensions,

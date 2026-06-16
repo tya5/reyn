@@ -26,7 +26,7 @@ from reyn.kernel.runtime_types import (
     RunResult,
     WorkflowAbortedError,
 )
-from reyn.safety.limit_handler import (
+from reyn.limits.limit_handler import (
     handle_limit_exceeded,
     reset_run_extensions,
 )

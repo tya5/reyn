@@ -1284,7 +1284,7 @@ async def execute_plan(
                     # FP-0031-D: retry budget exhausted — ask user for extension.
                     if on_limit is not None:
                         try:
-                            from reyn.safety.limit_handler import handle_limit_exceeded
+                            from reyn.limits.limit_handler import handle_limit_exceeded
                             err_preview = str(last_exc)[:120]
                             limit_decision = await handle_limit_exceeded(
                                 bus=intervention_bus,
