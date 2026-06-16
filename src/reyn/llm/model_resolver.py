@@ -263,7 +263,25 @@ class ModelResolver:
         BEFORE this fallback and still win. Returns a CLASS name — feed it through
         ``resolve()`` to get the ModelSpec / litellm string.
         """
-        return self._purpose_classes.get(purpose, self._default_class)
+        return self.purpose_class_or(purpose, self._default_class)
+
+    def purpose_class_or(self, purpose: str, default: str) -> str:
+        """#1679: the per-purpose class override if one is configured, else
+        *default* — a caller-supplied fallback.
+
+        Unlike ``class_for_purpose`` (whose fallback is the resolver's configured
+        ``default_class`` = ``ReynConfig.model``), this lets a caller keep its OWN
+        existing model source when no override is set. The CompactionEngine sites
+        need exactly this: their model source today is the chat session's model
+        (``self.model``) / the plan router model, which can diverge from
+        ``default_class`` under an ``Agent(model=…)`` override — so feeding
+        ``default_class`` would silently move compaction OFF the agent's chosen
+        model. With ``default`` = the site's existing source, wiring is
+        byte-identical until ``model_class_by_purpose.compaction`` is set, at which
+        point the documented key takes effect (was a dead key — #1679). Returns a
+        CLASS name — feed it through ``resolve()`` to get the litellm string.
+        """
+        return self._purpose_classes.get(purpose, default)
 
     def is_known_class(self, name: str) -> bool:
         """Return True if name is a configured model class (i.e. present in the namespace).
