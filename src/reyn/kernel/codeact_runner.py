@@ -40,8 +40,10 @@ def _harness_subprocess_env() -> dict[str, str]:
     multi-worktree editable-install dev env can point at a DIFFERENT worktree lacking
     this harness module (``No module named reyn.kernel._codeact_harness``). Prepending
     this process's reyn tree makes the subprocess resolve the SAME tree. Production
-    (single reyn install) is unaffected — same path either way. (``REYN_HARNESS_PYTHON``
-    still overrides the *interpreter*; this fixes the *module-resolution* default.)"""
+    (single reyn install) is unaffected — same path either way. (The codeact harness
+    interpreter is always the host ``sys.executable`` — #1663; it does NOT honor
+    ``REYN_HARNESS_PYTHON`` (unlike the preprocessor harness), so this PYTHONPATH
+    propagation pairs with that host interpreter.)"""
     import reyn  # noqa: PLC0415
 
     tree = str(Path(reyn.__file__).resolve().parent.parent)  # dir containing the reyn pkg
@@ -64,11 +66,19 @@ class CodeActRunner:
     """
 
     def __init__(self, python_executable: str | None = None) -> None:
-        self.python_executable = (
-            python_executable
-            or os.environ.get("REYN_HARNESS_PYTHON")
-            or sys.executable
-        )
+        # #1663: the CodeAct harness is a HOST-LOCAL orchestrator — its AF_UNIX
+        # control socket is passed to the child via ``pass_fds`` (an inherited fd
+        # cannot cross a ``docker exec`` boundary), so the harness must run on the
+        # reyn host under the reyn-process interpreter. It deliberately does NOT
+        # honor ``REYN_HARNESS_PYTHON``: that override targets the in-container
+        # #1356 *preprocessor* harness (PythonRunner), which is routed through
+        # ``backend.run`` (= ``docker exec``) and so needs the container's python.
+        # Picking it up here pointed codeact's host Popen at a container-only path
+        # (``/opt/reyn-venv/bin/python``) under ``--env-backend=docker`` → the
+        # seatbelt-wrapped exec failed with execvp rc=71. Tool EFFECTS still reach
+        # the container via the gated dispatch (DockerEnvironmentBackend), so the
+        # host-local harness loses nothing. An explicit arg still wins (tests).
+        self.python_executable = python_executable or sys.executable
 
     async def run(
         self,
