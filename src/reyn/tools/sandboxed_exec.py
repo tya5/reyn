@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from reyn.llm.model_resolver import resolve_purpose_class  # #1673
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _SANDBOXED_EXEC_DESCRIPTION = (
@@ -111,8 +112,12 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         permission_resolver=ctx.permission_resolver,
         skill_name="",
         skill=None,
-        model="standard",
-        resolver=None,
+        # #1673: real config-aware resolver + "tool" purpose class (was None +
+        # literal "standard"). This handler makes no LLM call, but threading the
+        # resolver eliminates the resolver=None → litellm-BadRequestError class by
+        # construction (uniform with invoke_skill, the LLM-bearing sibling).
+        model=resolve_purpose_class(None, ctx.resolver, "tool"),
+        resolver=ctx.resolver,
         subscribers=getattr(ctx.events, "subscribers", []),
         output_language=None,
         max_phase_visits=25,

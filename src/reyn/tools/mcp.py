@@ -45,6 +45,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any, Final, Mapping
 
+from reyn.llm.model_resolver import resolve_purpose_class  # #1673
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 if TYPE_CHECKING:
@@ -303,8 +304,11 @@ async def _handle_call_mcp_tool(
             permission_resolver=ctx.permission_resolver,
             skill_name="",
             skill=None,
-            model="standard",
-            resolver=None,
+            # #1673: real resolver + "tool" purpose class (was None + literal
+            # "standard") — eliminates the resolver=None → litellm-BadRequestError
+            # class by construction (uniform; this handler makes no LLM call).
+            model=resolve_purpose_class(None, ctx.resolver, "tool"),
+            resolver=ctx.resolver,
             subscribers=getattr(ctx.events, "subscribers", []),
             output_language=None,
             max_phase_visits=25,

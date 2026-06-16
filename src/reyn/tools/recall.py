@@ -180,6 +180,11 @@ async def _handle_recall(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
             permission_resolver=ctx.permission_resolver,
             skill_name="",
             subscribers=getattr(ctx.events, "subscribers", []),
+            # #1673: thread the config-aware resolver so this OpContext is never
+            # resolver=None (the bug-class invariant). recall uses op.embedding_model
+            # for its embedding call — no chat-LLM sink here — but the uniform
+            # threading keeps the "no tool OpContext is resolver=None" invariant.
+            resolver=ctx.resolver,
         )
 
     return await execute_op(op, legacy_ctx, caller="control_ir")

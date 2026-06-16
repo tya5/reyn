@@ -34,6 +34,7 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any, Mapping
 
+from reyn.llm.model_resolver import resolve_purpose_class  # #1673
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 if TYPE_CHECKING:
@@ -193,8 +194,12 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         permission_resolver=ctx.permission_resolver,
         skill_name="",
         skill=None,
-        model="standard",
-        resolver=None,
+        # #1673: the spawned skill run follows the configured "tool" purpose class
+        # (was the literal "standard"), and gets the REAL config-aware resolver
+        # (was None → run_skill's resolver-None branch yielded the literal
+        # "standard" → litellm BadRequestError on the spawned run's first LLM call).
+        model=resolve_purpose_class(None, ctx.resolver, "tool"),
+        resolver=ctx.resolver,
         subscribers=getattr(ctx.events, "subscribers", []),
         output_language=None,
         max_phase_visits=25,

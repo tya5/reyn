@@ -3290,6 +3290,10 @@ class RouterLoop:
             workspace=getattr(self.host, "workspace", None),
             caller_kind="router",
             router_state=rs,
+            # #1673: thread the config-aware resolver so a tool handler that spawns
+            # a sub-run (invoke_skill) hands the spawned OpContext a real resolver
+            # instead of resolver=None (→ literal "standard" → litellm BadRequestError).
+            resolver=getattr(self.host, "resolver", None),
         )
         return [
             {
@@ -3703,6 +3707,8 @@ class RouterLoop:
                 workspace=getattr(self.host, "workspace", None),
                 caller_kind="router",
                 router_state=rs,
+                # #1673: thread the config-aware resolver (see the sibling sites).
+                resolver=getattr(self.host, "resolver", None),
             )
             list_actions_def = get_default_registry().lookup("list_actions")
             if list_actions_def is None:
@@ -3928,6 +3934,10 @@ class RouterLoop:
             workspace=getattr(self.host, "workspace", None),
             caller_kind="router",
             router_state=rs,
+            # #1673: thread the config-aware resolver so a tool handler that spawns
+            # a sub-run (invoke_skill) hands the spawned OpContext a real resolver
+            # instead of resolver=None (→ literal "standard" → litellm BadRequestError).
+            resolver=getattr(self.host, "resolver", None),
         )
         result = await invoke_tool(get_default_registry(), name, args, tool_ctx)
         return self._normalise_router_tool_result(name, result)

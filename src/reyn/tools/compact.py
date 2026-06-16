@@ -74,6 +74,10 @@ async def _handle_compact(args: Mapping[str, Any], ctx: ToolContext) -> ToolResu
             permission_resolver=ctx.permission_resolver,
             skill_name="",
             subscribers=getattr(ctx.events, "subscribers", []),
+            # #1673: never resolver=None (the bug-class invariant). This minimal
+            # path returns compaction_unavailable (no LLM call), but the uniform
+            # threading keeps the invariant provable.
+            resolver=ctx.resolver,
         )
 
     return await execute_op(op, legacy_ctx, caller="control_ir")
