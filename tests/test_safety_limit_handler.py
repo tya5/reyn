@@ -18,7 +18,7 @@ import asyncio
 import pytest
 
 from reyn.config import OnLimitConfig
-from reyn.safety.limit_handler import (
+from reyn.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
     reset_run_extensions,

@@ -35,7 +35,7 @@ from reyn.kernel.runtime_types import (
     _validate_artifact_structure,
 )
 from reyn.kernel.validation import ValidationError, validate_output
-from reyn.safety.limit_handler import LimitDecision, handle_limit_exceeded
+from reyn.limits.limit_handler import LimitDecision, handle_limit_exceeded
 from reyn.schemas.models import ActOutput, CandidateOutput, LLMOutput
 from reyn.workspace.artifact_validator import validate_artifact_data
 

@@ -30,7 +30,7 @@ import inspect
 
 from reyn.cli.commands import eval_benchmark
 from reyn.config import OnLimitConfig
-from reyn.safety.limit_handler import handle_limit_exceeded
+from reyn.limits.limit_handler import handle_limit_exceeded
 
 
 def test_eval_benchmark_does_not_import_stdininterventionbus() -> None:
