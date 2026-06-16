@@ -56,8 +56,8 @@ def _make_fake_entries():
 @pytest.mark.asyncio
 async def test_cycle_memory_type_filter_walks_order() -> None:
     """Tier 2: cycle advances None → user → feedback → project → reference → None."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -74,8 +74,8 @@ async def test_cycle_memory_type_filter_walks_order() -> None:
 @pytest.mark.asyncio
 async def test_cycle_resets_memory_cursor() -> None:
     """Tier 2: cycling clamps cursor to 0 (= list shape changed)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -88,7 +88,7 @@ async def test_cycle_resets_memory_cursor() -> None:
 
 def test_render_memory_with_type_filter_keeps_only_target(tmp_path: Path) -> None:
     """Tier 2: ``render_memory(type_filter='feedback')`` drops other types."""
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     # Build a real memory dir with 4 entries — one per type.
     mem_dir = tmp_path / ".reyn" / "memory"
@@ -129,7 +129,7 @@ def test_render_memory_with_type_filter_keeps_only_target(tmp_path: Path) -> Non
 
 def test_render_memory_without_filter_omits_banner(tmp_path: Path) -> None:
     """Tier 2: cold-default (no filter) does NOT prepend the banner."""
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     mem_dir = tmp_path / ".reyn" / "memory"
     mem_dir.mkdir(parents=True)
@@ -143,7 +143,7 @@ def test_render_memory_without_filter_omits_banner(tmp_path: Path) -> None:
 
 def test_render_memory_unknown_filter_is_ignored(tmp_path: Path) -> None:
     """Tier 2: an unrecognised ``type_filter`` value falls through to all-types."""
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     mem_dir = tmp_path / ".reyn" / "memory"
     mem_dir.mkdir(parents=True)
@@ -163,8 +163,8 @@ async def test_t_key_on_memory_tab_invokes_cycle() -> None:
     """Tier 2: pressing ``t`` while memory tab focused advances the filter."""
     from textual import events as textual_events
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -189,8 +189,8 @@ def test_keys_tab_t_first_occurrence_is_events() -> None:
     for a single-tab convenience binding. Pin that the events
     binding (the prior owner of ``t``) still renders.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.right_panel.keys_tab import render_keys
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.right_panel.keys_tab import render_keys
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     markup, _, _ = render_keys(app)

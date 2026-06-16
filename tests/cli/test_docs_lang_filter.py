@@ -50,7 +50,7 @@ def _make_docs_tree(tmp_path: Path) -> Path:
 def test_build_docs_index_ja_lang_resolves_correctly(tmp_path: Path) -> None:
     """Tier 2: lang=ja → glossary→.ja.md, plan-mode→.md (fallback), no duplicates."""
     root = _make_docs_tree(tmp_path)
-    from reyn.tui.widgets.right_panel.docs_tab import build_docs_index
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import build_docs_index
 
     groups, ordered = build_docs_index(root, lang="ja")
 
@@ -66,7 +66,7 @@ def test_build_docs_index_ja_lang_resolves_correctly(tmp_path: Path) -> None:
     )
 
     # Strict no-duplicate check: each base stem appears at most once.
-    from reyn.tui.widgets.right_panel.docs_tab import _base_stem
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import _base_stem
     base_stems = [_base_stem(p) for p in ordered]
     assert len(base_stems) == len(set(base_stems)), (
         f"Duplicate base stems found: {base_stems}"
@@ -81,7 +81,7 @@ def test_build_docs_index_ja_lang_resolves_correctly(tmp_path: Path) -> None:
 def test_build_docs_index_en_lang_resolves_correctly(tmp_path: Path) -> None:
     """Tier 2: lang=en → glossary→.md, plan-mode→.md, universal-catalog→.ja.md (fallback)."""
     root = _make_docs_tree(tmp_path)
-    from reyn.tui.widgets.right_panel.docs_tab import build_docs_index
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import build_docs_index
 
     groups, ordered = build_docs_index(root, lang="en")
 
@@ -101,7 +101,7 @@ def test_build_docs_index_en_lang_resolves_correctly(tmp_path: Path) -> None:
     )
 
     # Strict no-duplicate check.
-    from reyn.tui.widgets.right_panel.docs_tab import _base_stem
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import _base_stem
     base_stems = [_base_stem(p) for p in ordered]
     assert len(base_stems) == len(set(base_stems)), (
         f"Duplicate base stems found: {base_stems}"
@@ -116,7 +116,7 @@ def test_build_docs_index_en_lang_resolves_correctly(tmp_path: Path) -> None:
 def test_render_docs_ja_lang_header(tmp_path: Path) -> None:
     """Tier 2: render_docs(lang='ja') header shows 'lang: ja' and 'en fallback'."""
     root = _make_docs_tree(tmp_path)
-    from reyn.tui.widgets.right_panel.docs_tab import (
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import (
         build_docs_index,
         render_docs,
     )
@@ -151,7 +151,7 @@ def test_render_docs_ja_lang_header(tmp_path: Path) -> None:
 def test_render_docs_ja_lang_fallback_en_suffix(tmp_path: Path) -> None:
     """Tier 2: render_docs(lang='ja') shows (en) suffix for en-only doc."""
     root = _make_docs_tree(tmp_path)
-    from reyn.tui.widgets.right_panel.docs_tab import (
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import (
         build_docs_index,
         render_docs,
     )
@@ -174,7 +174,7 @@ def test_render_docs_ja_lang_fallback_en_suffix(tmp_path: Path) -> None:
 def test_render_docs_ja_lang_no_en_suffix_for_preferred_match(tmp_path: Path) -> None:
     """Tier 2: render_docs(lang='ja') glossary row has no (en) suffix (ja matched)."""
     root = _make_docs_tree(tmp_path)
-    from reyn.tui.widgets.right_panel.docs_tab import (
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import (
         build_docs_index,
         render_docs,
     )
@@ -208,7 +208,7 @@ def test_render_docs_ja_lang_no_en_suffix_for_preferred_match(tmp_path: Path) ->
 
 def test_right_panel_g_key_on_docs_tab_toggles_lang() -> None:
     """Tier 2: pressing 'g' on docs tab cycles _docs_lang ja → en → ja."""
-    from reyn.tui.widgets.right_panel import RightPanel
+    from reyn.interfaces.tui.widgets.right_panel import RightPanel
 
     panel = RightPanel.__new__(RightPanel)
     panel._panel_type = "docs"
@@ -250,7 +250,7 @@ def test_right_panel_g_key_on_docs_tab_toggles_lang() -> None:
 
 def test_right_panel_g_key_on_memory_tab_does_not_toggle_lang() -> None:
     """Tier 2: pressing 'g' on a non-docs tab must NOT change _docs_lang."""
-    from reyn.tui.widgets.right_panel import RightPanel
+    from reyn.interfaces.tui.widgets.right_panel import RightPanel
 
     panel = RightPanel.__new__(RightPanel)
     panel._panel_type = "memory"
@@ -288,7 +288,7 @@ def test_right_panel_g_key_on_memory_tab_does_not_toggle_lang() -> None:
 def test_build_docs_index_filter_applied_after_lang_collapse(tmp_path: Path) -> None:
     """Tier 2: docs_filter substring is applied after lang-collapse (no duplicates leak)."""
     root = _make_docs_tree(tmp_path)
-    from reyn.tui.widgets.right_panel.docs_tab import build_docs_index
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import build_docs_index
 
     # Filter to "glossary" only, ja preferred.
     groups, ordered = build_docs_index(root, docs_filter="glossary", lang="ja")
@@ -321,7 +321,7 @@ def test_docs_lang_toggle_hint_no_missing_style(tmp_path: Path) -> None:
     """
     from rich.text import Text
 
-    from reyn.tui.widgets.right_panel.docs_tab import (
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import (
         build_docs_index,
         render_docs,
     )

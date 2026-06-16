@@ -31,8 +31,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_drill_failed_tool_only_toggles_failure_row() -> None:
     """Tier 2: action toggles the failure row; success row stays collapsed."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -73,8 +73,8 @@ async def test_drill_failed_tool_only_toggles_failure_row() -> None:
 @pytest.mark.asyncio
 async def test_drill_failed_tool_no_failure_shows_hint() -> None:
     """Tier 2: action with no failed row surfaces 'no recent tool failure'."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -94,7 +94,7 @@ async def test_drill_failed_tool_no_failure_shows_hint() -> None:
 
 def test_f7_binding_registered() -> None:
     """Tier 2: 'f7' is bound to 'drill_failed_tool' in app BINDINGS."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     binds = {(b.key, b.action) for b in ReynTUIApp.BINDINGS}
     assert ("f7", "drill_failed_tool") in binds
@@ -103,8 +103,8 @@ def test_f7_binding_registered() -> None:
 @pytest.mark.asyncio
 async def test_drill_failed_tool_toggle_twice_returns_original() -> None:
     """Tier 2: pressing F7 twice leaves the row in its original expand state."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -135,8 +135,8 @@ async def test_drill_failed_tool_toggle_twice_returns_original() -> None:
 @pytest.mark.asyncio
 async def test_latest_failed_tool_row_none_before_failure() -> None:
     """Tier 2: latest_failed_tool_row() is None when no failure occurred."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -148,8 +148,8 @@ async def test_latest_failed_tool_row_none_before_failure() -> None:
 @pytest.mark.asyncio
 async def test_latest_failed_tool_row_set_after_fail() -> None:
     """Tier 2: fail_tool_call_row() causes latest_failed_tool_row() to return the row."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -176,7 +176,7 @@ async def test_latest_failed_tool_row_set_after_fail() -> None:
 
 def test_keys_tab_routes_f7_to_conversation() -> None:
     """Tier 2: F7 lands in CONVERSATION group, pretty-prints as F7."""
-    from reyn.tui.widgets.right_panel.keys_tab import (
+    from reyn.interfaces.tui.widgets.right_panel.keys_tab import (
         _key_group_for,
         _pretty_key,
     )

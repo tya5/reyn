@@ -26,13 +26,13 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets.right_panel import keys_tab as _kt
-from reyn.tui.widgets.right_panel.keys_tab import (
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets.right_panel import keys_tab as _kt
+from reyn.interfaces.tui.widgets.right_panel.keys_tab import (
     _KEY_DETAILS,
     render_keys,
 )
-from reyn.tui.widgets.sticky_status import StickyStatus
+from reyn.interfaces.tui.widgets.sticky_status import StickyStatus
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ def _app() -> ReynTUIApp:
 
 def _sticky_snapshot(app: ReynTUIApp) -> dict:
     """Return StickyStatus.snapshot() from the conv pane (public surface)."""
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets import ConversationView
     try:
         conv = app.query_one("#conversation", ConversationView)
         s = conv.query_one("#sticky-status", StickyStatus)
@@ -203,7 +203,7 @@ async def test_f_on_events_tab_does_not_flash_wrong_tab_hint() -> None:
 
 def test_voice_badge_recording_shows_enter_esc_hint() -> None:
     """Tier 2: while voice_state='recording', header _format_status contains 'Enter' or 'Esc'."""
-    from reyn.tui.widgets.header import ReynHeader
+    from reyn.interfaces.tui.widgets.header import ReynHeader
 
     # Instantiate ReynHeader in isolation (no Textual app needed for
     # _format_status; we call it directly after setting the voice state).

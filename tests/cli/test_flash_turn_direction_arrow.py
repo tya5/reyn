@@ -30,8 +30,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_backward_jump_renders_up_arrow() -> None:
     """Tier 2: Ctrl+P (delta=-1) → ``↑ turn N / M`` in sticky."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -63,8 +63,8 @@ async def test_forward_jump_renders_down_arrow() -> None:
 
     Pre-fix this was ``↑ turn N / M`` — wrong direction.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -95,7 +95,7 @@ def test_flash_turn_position_signature_accepts_delta_kwarg() -> None:
     """
     import inspect
 
-    from reyn.tui.widgets.conversation import _ScrollController
+    from reyn.interfaces.tui.widgets.conversation import _ScrollController
     sig = inspect.signature(_ScrollController._flash_turn_position)
     assert "delta" in sig.parameters
     # Default is backward (preserves legacy behavior for any caller

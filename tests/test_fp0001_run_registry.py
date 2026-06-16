@@ -1,6 +1,6 @@
 """Tier 1 contract tests for RunRegistry (FP-0001).
 
-Verifies the public API surface of ``reyn.web.run_registry.RunRegistry`` and
+Verifies the public API surface of ``reyn.interfaces.web.run_registry.RunRegistry`` and
 ``RunEntry``. No mocks, no MagicMock / AsyncMock / patch — real instances
 throughout.
 
@@ -16,8 +16,8 @@ import asyncio
 
 import pytest
 
+from reyn.interfaces.web.run_registry import RunEntry, RunRegistry
 from reyn.user_intervention import InterventionAnswer, UserIntervention
-from reyn.web.run_registry import RunEntry, RunRegistry
 
 # ---------------------------------------------------------------------------
 # Helpers

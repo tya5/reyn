@@ -4,20 +4,20 @@ The adapter is the single boundary between reyn's outbox kinds and
 Chainlit's render primitives. This test pins the mapping so a kind
 rename / new kind doesn't silently start being dropped or mis-rendered.
 
-Lives in ``reyn.chainlit_app.adapter`` (= pure module, no chainlit
+Lives in ``reyn.interfaces.chainlit_app.adapter`` (= pure module, no chainlit
 import) so this test runs without the ``[chainlit]`` extra installed.
 """
 from __future__ import annotations
 
 import pytest
 
-from reyn.chainlit_app.adapter import (
+from reyn.chat.outbox import OutboxMessage
+from reyn.interfaces.chainlit_app.adapter import (
     MSG_TYPE_ASSISTANT,
     MSG_TYPE_SYSTEM,
     ChainlitPayload,
     outbox_to_chainlit,
 )
-from reyn.chat.outbox import OutboxMessage
 
 
 @pytest.mark.parametrize(

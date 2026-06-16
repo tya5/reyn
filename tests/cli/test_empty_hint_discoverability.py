@@ -27,7 +27,7 @@ if str(_SRC) not in sys.path:
 
 from textual.widgets import Static
 
-from reyn.tui.app import ReynTUIApp
+from reyn.interfaces.tui.app import ReynTUIApp
 
 
 def _make_app() -> ReynTUIApp:
@@ -68,7 +68,7 @@ async def test_empty_hint_names_side_panel_and_tabs() -> None:
 async def test_empty_hint_hides_after_first_message() -> None:
     """Tier 2b: hint hides after first message — empty-conv-pane subsystem contract."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:

@@ -1,15 +1,15 @@
-"""Tier 2: reyn.api.safe wrapper behaviour."""
+"""Tier 2: reyn.interfaces.api.safe wrapper behaviour."""
 
 from __future__ import annotations
 
 import pytest
 
-from reyn.api.safe import hash as safe_hash
-from reyn.api.safe import json as safe_json
-from reyn.api.safe import random as safe_random
-from reyn.api.safe import schema as safe_schema
-from reyn.api.safe import text as safe_text
-from reyn.api.safe import time as safe_time
+from reyn.interfaces.api.safe import hash as safe_hash
+from reyn.interfaces.api.safe import json as safe_json
+from reyn.interfaces.api.safe import random as safe_random
+from reyn.interfaces.api.safe import schema as safe_schema
+from reyn.interfaces.api.safe import text as safe_text
+from reyn.interfaces.api.safe import time as safe_time
 
 # -- hash --------------------------------------------------------------
 

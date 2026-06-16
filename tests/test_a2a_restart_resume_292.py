@@ -57,12 +57,12 @@ from reyn.chat.session import (
 )
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
+from reyn.interfaces.web.run_registry import RunRegistry
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionChoice,
     UserIntervention,
 )
-from reyn.web.run_registry import RunRegistry
 
 # ── helpers ────────────────────────────────────────────────────────────
 
@@ -343,7 +343,7 @@ def test_handle_answer_injection_routes_through_chat_session(
     """
     import inspect
 
-    from reyn.web.routers import a2a as a2a_router
+    from reyn.interfaces.web.routers import a2a as a2a_router
 
     src = inspect.getsource(a2a_router._handle_answer_injection)
     assert "answer_pending_intervention" in src, (

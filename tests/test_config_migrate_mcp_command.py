@@ -34,7 +34,7 @@ def _write_yaml(path: Path, content: str) -> None:
 
 
 def _run_migrate(*, dry_run: bool = False):
-    from reyn.cli.commands.config import _migrate_mcp
+    from reyn.interfaces.cli.commands.config import _migrate_mcp
     _migrate_mcp(dry_run=dry_run)
 
 
@@ -223,7 +223,7 @@ def test_migrate_subcommand_is_registered():
     """
     import argparse
 
-    from reyn.cli.commands.config import register
+    from reyn.interfaces.cli.commands.config import register
 
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers()

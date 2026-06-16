@@ -65,7 +65,7 @@ def test_catalog_filter_hides_web_keeps_others() -> None:
 
 def test_chat_parser_exposes_exclude_tools_flag() -> None:
     """Tier 2: `reyn chat` registers --exclude-tools (dest=exclude_tools)."""
-    from reyn.cli.commands.chat import register
+    from reyn.interfaces.cli.commands.chat import register
 
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers()

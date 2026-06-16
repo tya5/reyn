@@ -91,7 +91,7 @@ def _exec_entry(
 @pytest.mark.asyncio
 async def test_running_skill_with_plan_step_carries_fields_in_flat_items(tmp_path):
     """Tier 2b: plan_n_done / plan_n_total surface in flat_items."""
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
     exec_state = {
@@ -107,7 +107,7 @@ async def test_running_skill_with_plan_step_carries_fields_in_flat_items(tmp_pat
 @pytest.mark.asyncio
 async def test_running_skill_without_plan_step_omits_badge_in_render(tmp_path):
     """Tier 2b: skills without plan_n_done/plan_n_total render no badge."""
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
     exec_state = {"r-1": _exec_entry("non_planner_skill")}
@@ -127,7 +127,7 @@ async def test_running_skill_without_plan_step_omits_badge_in_render(tmp_path):
 @pytest.mark.asyncio
 async def test_running_skill_with_plan_step_renders_badge_text(tmp_path):
     """Tier 2b: ``[plan N/M]`` substring appears in the rendered output."""
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
     exec_state = {
@@ -145,7 +145,7 @@ async def test_plan_badge_survives_subskill_nesting(tmp_path):
     Verifies the badge axis is orthogonal to the parent_run_id nesting
     axis — both can coexist on the same row.
     """
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     registry = _make_registry(tmp_path)
     exec_state = {

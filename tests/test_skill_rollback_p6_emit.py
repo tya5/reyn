@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.commands.skill import cmd_rollback
 from reyn.events.events import emit_cli_event
+from reyn.interfaces.cli.commands.skill import cmd_rollback
 
 # ---------------------------------------------------------------------------
 # helpers shared with test_skill_rollback_cli.py
@@ -117,14 +117,14 @@ def test_rollback_emit_failure_does_not_crash_cli(tmp_path, monkeypatch, caplog)
     )
 
     # Monkeypatch emit_cli_event inside the skill command module to raise.
-    import reyn.cli.commands.skill as skill_mod
+    import reyn.interfaces.cli.commands.skill as skill_mod
 
     def _raise(*args, **kwargs):  # noqa: ANN001, ANN002, ANN003
         raise OSError("simulated disk full")
 
     monkeypatch.setattr(skill_mod, "emit_cli_event", _raise)
 
-    with caplog.at_level(logging.WARNING, logger="reyn.cli.commands.skill"):
+    with caplog.at_level(logging.WARNING, logger="reyn.interfaces.cli.commands.skill"):
         # Must NOT raise SystemExit or any exception.
         cmd_rollback(_rollback_args("my_skill"))
 

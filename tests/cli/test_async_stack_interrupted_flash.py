@@ -52,8 +52,8 @@ def _panel_row(snap: list[dict], agent_id: str) -> dict | None:
 @pytest.mark.asyncio
 async def test_remove_ok_unmounts_immediately() -> None:
     """Tier 2: remove(terminal="ok") drops row immediately — existing behaviour."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -78,8 +78,8 @@ async def test_remove_ok_unmounts_immediately() -> None:
 @pytest.mark.asyncio
 async def test_remove_interrupted_row_still_present_before_flush() -> None:
     """Tier 2: remove(terminal="interrupted") → row present and flashing after 0.1 s."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -115,8 +115,8 @@ async def test_remove_interrupted_row_still_present_before_flush() -> None:
 @pytest.mark.asyncio
 async def test_remove_interrupted_row_gone_after_flush_delay() -> None:
     """Tier 2: remove(terminal="interrupted") → row gone after ~1.6 s (post-flush)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -141,8 +141,8 @@ async def test_remove_interrupted_row_gone_after_flush_delay() -> None:
 @pytest.mark.asyncio
 async def test_second_remove_cancels_timer_and_unmounts_immediately() -> None:
     """Tier 2: remove(interrupted) then remove(ok) → immediate unmount (timer cancelled)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -174,8 +174,8 @@ async def test_second_remove_cancels_timer_and_unmounts_immediately() -> None:
 @pytest.mark.asyncio
 async def test_remove_no_kwarg_still_works() -> None:
     """Tier 2: remove(agent_id) no-kwarg call → immediate unmount (backwards-compat)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -206,8 +206,8 @@ async def test_elapsed_frozen_at_flash_start() -> None:
     the flashing row must not increase when time passes — it must stay at
     (approximately) the value captured at the moment of remove().
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -256,8 +256,8 @@ async def test_live_elapsed_for_running_entry() -> None:
     Freeze logic must only apply to flashing entries; a still-running entry
     must continue to report live elapsed so the user sees the task progressing.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

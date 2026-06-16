@@ -51,7 +51,7 @@ def test_no_hot_list_shows_placeholder(tmp_path):
     ARS emitted ``hot_list_updated`` for the first time, leaving
     new users with no idea the feature existed.
     """
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     rendered, _flat, _ys = render_memory(
         _project_with_empty_memory(tmp_path), cursor=0, hot_list=None,
@@ -68,7 +68,7 @@ def test_no_hot_list_shows_placeholder(tmp_path):
 
 def test_hot_list_renders_qualified_name_and_freq(tmp_path):
     """Tier 2: each ranking entry's name + freq surface in the rendered output."""
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     hot = [
         {"qualified_name": "skill__direct_llm", "freq": 7, "last_ts": "..."},
@@ -94,7 +94,7 @@ def test_hot_list_does_not_populate_flat_entries(tmp_path):
     must NOT participate in that cursor or the Enter→preview integration
     will receive a dict where it expects a MemoryEntry.
     """
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     hot = [{"qualified_name": "skill__direct_llm", "freq": 1, "last_ts": ""}]
     _rendered, flat_entries, _ys = render_memory(
@@ -110,7 +110,7 @@ def test_hot_list_skips_malformed_entries_without_crashing(tmp_path):
     The forwarder normalises shape but a partial-roll out (= older OS
     image emitting a thin payload) shouldn't take down the Memory tab.
     """
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     hot = [
         {"qualified_name": "skill__direct_llm", "freq": 5, "last_ts": ""},
@@ -131,7 +131,7 @@ def test_hot_list_skips_malformed_entries_without_crashing(tmp_path):
 
 def test_hot_list_overflow_marker(tmp_path):
     """Tier 2: ranking longer than the visible cap shows ``… N more``."""
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     hot = [
         {"qualified_name": f"skill__entry_{i}", "freq": 10 - i, "last_ts": ""}
@@ -154,7 +154,7 @@ def test_hot_list_renders_relative_time_when_last_ts_valid(tmp_path):
     """
     import time as _time
 
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     hot = [
         {
@@ -180,7 +180,7 @@ def test_hot_list_skips_zero_freq_entries(tmp_path):
     times in the relevant window"; a zero count means the skill is no
     longer hot and should not appear under HOT NOW at all.
     """
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     hot = [
         {"qualified_name": "skill__alive", "freq": 3, "last_ts": ""},
@@ -204,7 +204,7 @@ def test_other_bucket_entries_render_description(tmp_path):
     must use the same render shape — otherwise the OTHER section
     becomes silently lower-fidelity than the typed ones.
     """
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     # Plant one memory file with type="custom" so it lands in OTHER.
     mem_dir = tmp_path / ".reyn" / "memory"

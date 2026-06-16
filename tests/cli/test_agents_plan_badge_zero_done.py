@@ -71,7 +71,7 @@ def _render_for_skill(plan_n_done, plan_n_total):
     """
     from rich.console import Console
 
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     exec_state = {
         "run_abcdef12": {

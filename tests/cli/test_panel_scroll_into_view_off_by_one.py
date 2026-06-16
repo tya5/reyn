@@ -86,7 +86,7 @@ def test_events_event_ys_cursor0_scroll_target_not_off_by_one(
 
     Pure render-function contract, no scroll geometry needed.
     """
-    from reyn.tui.widgets.right_panel.events_tab import render_events
+    from reyn.interfaces.tui.widgets.right_panel.events_tab import render_events
 
     _write_events(tmp_path, [
         {
@@ -141,7 +141,7 @@ def test_events_event_ys_all_cursor_rows_contain_cursor_indicator(
     line containing the cursor marker for that cursor value.  If any entry
     is off, the scroll helper would scroll to the wrong row.
     """
-    from reyn.tui.widgets.right_panel.events_tab import render_events
+    from reyn.interfaces.tui.widgets.right_panel.events_tab import render_events
 
     events = [
         {
@@ -193,7 +193,7 @@ def test_memory_entry_ys_cursor0_scroll_target_not_off_by_one(
     2. render line entry_ys[0] contains ▶ for cursor=0
     3. render line (1 + entry_ys[0]) does NOT contain ▶
     """
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     mem_dir = tmp_path / ".reyn" / "memory"
     mem_dir.mkdir(parents=True)
@@ -237,7 +237,7 @@ def test_memory_entry_ys_parallel_to_flat_entries(tmp_path: Path) -> None:
     cursor indexes into ``_memory_entries``.  If lengths differ, lookups
     will silently miss or raise IndexError.
     """
-    from reyn.tui.widgets.right_panel.memory_tab import render_memory
+    from reyn.interfaces.tui.widgets.right_panel.memory_tab import render_memory
 
     _, flat_entries, entry_ys = render_memory(None, cursor=0)
     # None project_root → early return with empty lists.
@@ -278,7 +278,7 @@ def test_agents_item_ys_cursor0_scroll_target_not_off_by_one(
     3. ``1 + item_ys[0] > item_ys[0]`` — the off-by-one is strictly greater
     """
     from reyn.chat.registry import AgentRegistry
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     def _factory(profile: object) -> object:
         return object()
@@ -313,7 +313,7 @@ def test_agents_item_ys_parallel_contract(tmp_path: Path) -> None:
     the parallel-list contract so cursor arithmetic is always valid.
     """
     from reyn.chat.registry import AgentRegistry
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     def _factory(profile: object) -> object:
         return object()
@@ -356,7 +356,7 @@ def test_docs_cursor_y_cursor0_is_after_section_header(tmp_path: Path) -> None:
     ``_docs_cursor_y`` is a private helper; we test it indirectly via the
     render contract (public render_docs return value) per testing.ja.md.
     """
-    from reyn.tui.widgets.right_panel.docs_tab import render_docs
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import render_docs
 
     # Build a minimal docs tree under tmp_path.
     docs_dir = tmp_path / "docs" / "concepts"
@@ -402,7 +402,7 @@ def test_docs_cursor_y_formula_matches_render_line(tmp_path: Path) -> None:
 
     Uses direct attribute substitution (no MagicMock) per testing.ja.md.
     """
-    from reyn.tui.widgets.right_panel.docs_tab import render_docs
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import render_docs
 
     docs_dir = tmp_path / "docs" / "concepts"
     docs_dir.mkdir(parents=True)

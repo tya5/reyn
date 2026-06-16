@@ -37,8 +37,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_cursor_on_running_skill_walks_to_owning_agent() -> None:
     """Tier 2: ``a`` on a running_skill row prefills the parent agent's /attach."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar, RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar, RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -64,8 +64,8 @@ async def test_cursor_on_running_skill_walks_to_owning_agent() -> None:
 @pytest.mark.asyncio
 async def test_cursor_on_bobs_sub_row_walks_to_bob_not_alice() -> None:
     """Tier 2: walk-up stops at the NEAREST agent header above cursor."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar, RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar, RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -88,8 +88,8 @@ async def test_cursor_on_bobs_sub_row_walks_to_bob_not_alice() -> None:
 @pytest.mark.asyncio
 async def test_cursor_on_agent_row_unchanged_behaviour() -> None:
     """Tier 2: cursor directly on agent header → original prefill path."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar, RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar, RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -109,8 +109,8 @@ async def test_cursor_on_agent_row_unchanged_behaviour() -> None:
 @pytest.mark.asyncio
 async def test_no_agent_above_cursor_flashes_hint() -> None:
     """Tier 2: when no agent header exists above a non-agent cursor → flash."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar, RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar, RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -134,8 +134,8 @@ async def test_no_agent_above_cursor_flashes_hint() -> None:
 @pytest.mark.asyncio
 async def test_empty_agents_items_silent_no_op() -> None:
     """Tier 2: empty list → silent no-op (existing behaviour preserved)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

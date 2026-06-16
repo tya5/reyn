@@ -159,7 +159,7 @@ def test_channel_impl_docstrings_can_still_reference_legacy_name() -> None:
     we'd lose useful migration context).
     """
     import reyn.chat.session as chat_session
-    import reyn.web.a2a_intervention as a2a
+    import reyn.interfaces.web.a2a_intervention as a2a
 
     chat_src = inspect.getsource(chat_session)
     a2a_src = inspect.getsource(a2a)

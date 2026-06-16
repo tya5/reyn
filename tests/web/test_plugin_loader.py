@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 from fastapi import APIRouter, FastAPI
 
-from reyn.web.plugin_loader import load_webhook_plugins, load_webhooks_yaml
+from reyn.interfaces.web.plugin_loader import load_webhook_plugins, load_webhooks_yaml
 
 # ── load_webhooks_yaml ────────────────────────────────────────────────
 
@@ -103,7 +103,7 @@ def _patch_entry_points(monkeypatch):
         return []
 
     monkeypatch.setattr(
-        "reyn.web.plugin_loader.importlib.metadata.entry_points",
+        "reyn.interfaces.web.plugin_loader.importlib.metadata.entry_points",
         _fake_entry_points,
     )
     return fake_eps

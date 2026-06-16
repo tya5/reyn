@@ -1,4 +1,4 @@
-"""Tier 1: ``reyn.chainlit_app.first_run`` asset-copy contracts.
+"""Tier 1: ``reyn.interfaces.chainlit_app.first_run`` asset-copy contracts.
 
 The CLI calls these helpers before launching chainlit so the operator
 sees reyn defaults (welcome page + UI tweaks) instead of chainlit's
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.chainlit_app.first_run import (
+from reyn.interfaces.chainlit_app.first_run import (
     assets_dir,
     ensure_all_assets,
     ensure_chainlit_config,

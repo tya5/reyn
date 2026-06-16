@@ -32,7 +32,7 @@ if str(_SRC) not in sys.path:
 
 def test_set_in_flight_toggles_css_class_idempotently() -> None:
     """Tier 2: ``set_in_flight`` is idempotent + toggles ``in-flight`` class."""
-    from reyn.tui.widgets import InputBar
+    from reyn.interfaces.tui.widgets import InputBar
 
     bar = InputBar()
     # Default state.
@@ -68,8 +68,8 @@ async def test_submit_during_in_flight_swallows_text_unchanged() -> None:
     """
     from textual.widgets import TextArea
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     posted: list[InputBar.UserSubmitted] = []
@@ -132,8 +132,8 @@ async def test_ctrl_c_releases_in_flight_lock() -> None:
     escape hatch from a stuck state. The lock must release so the
     user can submit again.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
 

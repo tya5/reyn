@@ -17,7 +17,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui.widgets.right_panel.events_tab import (
+from reyn.interfaces.tui.widgets.right_panel.events_tab import (
     _EVENT_COLORS,
     _FILTER_GROUPS,
     _event_hint,

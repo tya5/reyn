@@ -24,7 +24,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui.widgets.right_panel.agents_tab import _compact_ts
+from reyn.interfaces.tui.widgets.right_panel.agents_tab import _compact_ts
 
 
 def test_today_timestamp_collapses_to_time_only() -> None:

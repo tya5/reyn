@@ -38,8 +38,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_cancelled_partial_is_appended_to_recent_replies() -> None:
     """Tier 2: ``last_reply_text()`` returns the partial after cancel."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -71,8 +71,8 @@ async def test_empty_cancel_does_not_pollute_recent_replies() -> None:
     append branch must prevent inserting empty strings into the
     ring buffer.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -95,8 +95,8 @@ async def test_cancel_then_normal_reply_both_in_buffer_order() -> None:
     after the cancel). ``reply_at(2)`` returns the partial. Pins the
     interleaving contract.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

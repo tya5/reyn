@@ -36,6 +36,7 @@ import inspect
 from pathlib import Path
 
 from reyn.chat.session import ChatInterventionBus, ChatSession
+from reyn.interfaces.web.a2a_intervention import A2AInterventionBus
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
@@ -45,7 +46,6 @@ from reyn.user_intervention import (
     UserChannel,
     UserIntervention,
 )
-from reyn.web.a2a_intervention import A2AInterventionBus
 
 # ── 1. Protocol definitions ────────────────────────────────────────────
 
@@ -290,7 +290,7 @@ def test_a2a_intervention_bus_does_not_import_skill_completed_handler() -> None:
     don't false-positive the assertion. Only actual imports / calls /
     attribute access count.
     """
-    import reyn.web.a2a_intervention as mod
+    import reyn.interfaces.web.a2a_intervention as mod
 
     names = _names_used_in_module(mod)
     forbidden = {

@@ -22,7 +22,7 @@ if str(_SRC) not in sys.path:
 
 def test_render_docs_filter_hint_advertises_esc_to_clear(tmp_path) -> None:
     """Tier 2: rendered docs output advertises Esc clear path."""
-    from reyn.tui.widgets.right_panel.docs_tab import render_docs
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import render_docs
 
     # Build a docs/ tree so the renderer has something to enumerate.
     docs = tmp_path / "docs"
@@ -30,7 +30,7 @@ def test_render_docs_filter_hint_advertises_esc_to_clear(tmp_path) -> None:
     (docs / "alpha.md").write_text("# alpha\n", encoding="utf-8")
     (docs / "beta.md").write_text("# beta\n", encoding="utf-8")
 
-    from reyn.tui.widgets.right_panel.docs_tab import build_docs_index
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import build_docs_index
     groups, _flat = build_docs_index(tmp_path, docs_filter="alpha")
     rendered = render_docs(tmp_path, 0, groups, docs_filter="alpha")
     # New hint is present.
@@ -41,13 +41,13 @@ def test_render_docs_filter_hint_advertises_esc_to_clear(tmp_path) -> None:
 
 def test_render_docs_no_filter_omits_clear_hint(tmp_path) -> None:
     """Tier 2: no filter active → no clear hint rendered."""
-    from reyn.tui.widgets.right_panel.docs_tab import render_docs
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import render_docs
 
     docs = tmp_path / "docs"
     docs.mkdir()
     (docs / "alpha.md").write_text("# alpha\n", encoding="utf-8")
 
-    from reyn.tui.widgets.right_panel.docs_tab import build_docs_index
+    from reyn.interfaces.tui.widgets.right_panel.docs_tab import build_docs_index
     groups, _flat = build_docs_index(tmp_path, docs_filter="")
     rendered = render_docs(tmp_path, 0, groups, docs_filter="")
     assert "Esc to clear" not in rendered
@@ -62,7 +62,7 @@ def test_right_panel_on_key_esc_clears_docs_filter() -> None:
     branch touches; full Textual app context isn't needed to verify
     the state mutation.
     """
-    from reyn.tui.widgets.right_panel import RightPanel
+    from reyn.interfaces.tui.widgets.right_panel import RightPanel
 
     panel = RightPanel.__new__(RightPanel)
     panel._panel_type = "docs"

@@ -30,12 +30,12 @@ import asyncio
 
 import pytest
 
-from reyn.web.routers.a2a import (
+from reyn.interfaces.web.routers.a2a import (
     _await_skill_completion,
     _handle_message_send,
     _harvest_completion_narration,
 )
-from reyn.web.run_registry import RunRegistry
+from reyn.interfaces.web.run_registry import RunRegistry
 
 # ---------------------------------------------------------------------------
 # Stand-in session/history shapes — real types where they matter
@@ -280,7 +280,7 @@ async def test_escalation_skipped_when_reply_text_nonempty(monkeypatch):
     ``(empty)`` to the caller (B48 W2-S2 = ``skill_builder_web_summariser``
     3/3 deterministic reproduction).
     """
-    import reyn.web.routers.a2a as a2a_mod
+    import reyn.interfaces.web.routers.a2a as a2a_mod
 
     stub = _StubSendImpl({
         "reply": "Skill creation started — wait for completion.",
@@ -325,7 +325,7 @@ async def test_escalation_still_fires_when_reply_text_empty(monkeypatch):
     to a Task envelope — preserves B42-NF-W6-2's intent (= no silent
     tombstone for callers that didn't poll back).
     """
-    import reyn.web.routers.a2a as a2a_mod
+    import reyn.interfaces.web.routers.a2a as a2a_mod
 
     stub = _StubSendImpl({
         "reply": "",
@@ -369,7 +369,7 @@ async def test_escalation_skipped_when_whitespace_only_reply(monkeypatch):
     A trailing-newline-only response is not a real ack, so the escalation
     branch should still run when a skill is in flight.
     """
-    import reyn.web.routers.a2a as a2a_mod
+    import reyn.interfaces.web.routers.a2a as a2a_mod
 
     stub = _StubSendImpl({
         "reply": "   \n  ",

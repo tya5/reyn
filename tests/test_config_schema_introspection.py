@@ -159,7 +159,7 @@ def test_set_nested_three_level_produces_nested_yaml(tmp_path: Path) -> None:
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
-        from reyn.cli.commands.config import _set
+        from reyn.interfaces.cli.commands.config import _set
         _set("safety.loop.max_phase_visits", "50")
         local_yaml = root / "reyn.local.yaml"
         assert local_yaml.exists(), "reyn.local.yaml not created by _set"
@@ -189,7 +189,7 @@ def test_set_two_level_nested_key(tmp_path: Path) -> None:
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
-        from reyn.cli.commands.config import _set
+        from reyn.interfaces.cli.commands.config import _set
         _set("cost.rate_limit_warn_ratio", "0.9")
         local_yaml = root / "reyn.local.yaml"
         data = yaml.safe_load(local_yaml.read_text(encoding="utf-8"))
@@ -210,7 +210,7 @@ def test_set_free_form_dict_subkey_mcp(tmp_path: Path) -> None:
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
-        from reyn.cli.commands.config import _set
+        from reyn.interfaces.cli.commands.config import _set
         # Must not sys.exit — free-form sub-keys under mcp are valid
         _set("mcp.servers.github.url", "https://api.example.com/mcp/")
         local_yaml = root / "reyn.local.yaml"
@@ -226,7 +226,7 @@ def test_set_free_form_dict_subkey_permissions(tmp_path: Path) -> None:
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
-        from reyn.cli.commands.config import _set
+        from reyn.interfaces.cli.commands.config import _set
         _set("permissions.shell", "allow")
         local_yaml = root / "reyn.local.yaml"
         data = yaml.safe_load(local_yaml.read_text(encoding="utf-8"))
@@ -246,7 +246,7 @@ def test_get_nested_key_resolves_correctly(tmp_path: Path, capsys) -> None:
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
-        from reyn.cli.commands.config import _get
+        from reyn.interfaces.cli.commands.config import _get
         _get("safety.loop.max_phase_visits")
         captured = capsys.readouterr()
         assert "25" in captured.out, (
@@ -265,7 +265,7 @@ def test_get_top_level_scalar(tmp_path: Path, capsys) -> None:
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
-        from reyn.cli.commands.config import _get
+        from reyn.interfaces.cli.commands.config import _get
         _get("model")
         captured = capsys.readouterr()
         assert "standard" in captured.out
@@ -302,7 +302,7 @@ def test_set_rejects_invalid_key(tmp_path: Path) -> None:
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
-        from reyn.cli.commands.config import _set
+        from reyn.interfaces.cli.commands.config import _set
         with pytest.raises(SystemExit) as exc_info:
             _set("safety.loop.totally_nonexistent_key_xyz", "42")
         assert exc_info.value.code == 1
@@ -316,7 +316,7 @@ def test_get_rejects_invalid_key(tmp_path: Path) -> None:
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
-        from reyn.cli.commands.config import _get
+        from reyn.interfaces.cli.commands.config import _get
         with pytest.raises(SystemExit) as exc_info:
             _get("completely_nonexistent_key_xyz_12345")
         assert exc_info.value.code == 1
@@ -335,7 +335,7 @@ def test_get_none_value_is_not_unknown_key(tmp_path: Path, capsys) -> None:
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
-        from reyn.cli.commands.config import _get
+        from reyn.interfaces.cli.commands.config import _get
         # Should NOT sys.exit — None is a legitimate value, not an unknown key
         _get("output_language")
         captured = capsys.readouterr()

@@ -56,7 +56,7 @@ class _StubRegistry:
 
 def _agent_order(registry) -> list[str]:
     """Run render_agents and extract the agent-row order from flat_items."""
-    from reyn.tui.widgets.right_panel.agents_tab import render_agents
+    from reyn.interfaces.tui.widgets.right_panel.agents_tab import render_agents
 
     _, flat_items, _ = render_agents(
         registry=registry, exec_state={}, project_root=None, cursor=0,

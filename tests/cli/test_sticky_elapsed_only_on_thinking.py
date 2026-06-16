@@ -29,7 +29,7 @@ _ELAPSED_RE = re.compile(r"·\s+\d+\.\d+s")
 
 async def _render_plain(pilot, kind: str, body: str) -> str:
     """Drive a real mounted StickyStatus + read the rendered plain text."""
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets import ConversationView
     conv = pilot.app.query_one("#conversation", ConversationView)
     sticky = conv._sticky()
     sticky.show(body, kind=kind)
@@ -47,7 +47,7 @@ async def _render_plain(pilot, kind: str, body: str) -> str:
 @pytest.mark.asyncio
 async def test_general_kind_does_not_render_elapsed_suffix() -> None:
     """Tier 2: general flash has no trailing elapsed."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -62,7 +62,7 @@ async def test_general_kind_does_not_render_elapsed_suffix() -> None:
 @pytest.mark.asyncio
 async def test_error_kind_does_not_render_elapsed_suffix() -> None:
     """Tier 2: error flash has no trailing elapsed either."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

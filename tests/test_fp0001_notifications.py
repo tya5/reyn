@@ -18,7 +18,7 @@ import logging
 import httpx
 import pytest
 
-from reyn.web.notifications import _DEFAULT_TIMEOUT, post_webhook
+from reyn.interfaces.web.notifications import _DEFAULT_TIMEOUT, post_webhook
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ async def test_post_webhook_non_2xx_logged_not_raised(caplog) -> None:
 
     client = _client(_handler)
     try:
-        with caplog.at_level(logging.WARNING, logger="reyn.web.notifications"):
+        with caplog.at_level(logging.WARNING, logger="reyn.interfaces.web.notifications"):
             # Must not raise even for 503
             await post_webhook(
                 "https://example.com/hook", {"run_id": "x"}, _http_client=client
@@ -91,7 +91,7 @@ async def test_post_webhook_network_error_logged_not_raised(caplog) -> None:
 
     client = _client(_handler)
     try:
-        with caplog.at_level(logging.WARNING, logger="reyn.web.notifications"):
+        with caplog.at_level(logging.WARNING, logger="reyn.interfaces.web.notifications"):
             # Must not raise despite network error
             await post_webhook(url, {"run_id": "y"}, _http_client=client)
     finally:

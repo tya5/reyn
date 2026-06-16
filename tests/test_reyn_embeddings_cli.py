@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.commands.embeddings import (
+from reyn.interfaces.cli.commands.embeddings import (
     _backend_for_model,
     _collect_status_rows,
     run_clear,

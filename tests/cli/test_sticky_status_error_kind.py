@@ -46,7 +46,7 @@ if str(_SRC) not in sys.path:
 
 async def _sticky(pilot):
     """Get the StickyStatus mounted under the ConversationView."""
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets import ConversationView
     conv = pilot.app.query_one("#conversation", ConversationView)
     return conv._sticky()
 
@@ -54,7 +54,7 @@ async def _sticky(pilot):
 @pytest.mark.asyncio
 async def test_error_kind_is_registered_not_silent_fallback() -> None:
     """Tier 2: ``show(kind="error")`` records "error" not "general"."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -72,7 +72,7 @@ async def test_error_kind_is_registered_not_silent_fallback() -> None:
 @pytest.mark.asyncio
 async def test_error_overwrites_active_general() -> None:
     """Tier 2: ``error`` (priority 80) displaces ``general`` (priority 50)."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -93,7 +93,7 @@ async def test_unknown_kind_falls_back_to_general() -> None:
     kinds. After ``"thinking"`` was removed, the fallback is now
     ``"general"``.
     """
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -114,7 +114,7 @@ async def test_error_glyph_resolves_to_check_cross() -> None:
     into the Text the Static renders. Pre-fix this was ⟳ for the
     error kind too because the kind fell through to ``"thinking"``.
     """
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

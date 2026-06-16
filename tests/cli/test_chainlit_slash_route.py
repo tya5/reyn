@@ -1,4 +1,4 @@
-"""Tier 1: ``reyn.chainlit_app.slash_route`` contract.
+"""Tier 1: ``reyn.interfaces.chainlit_app.slash_route`` contract.
 
 Pinned invariants:
 
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chainlit_app.slash_route import (
+from reyn.interfaces.chainlit_app.slash_route import (
     QUICK_ACTIONS,
     QuickAction,
     action_name_for,

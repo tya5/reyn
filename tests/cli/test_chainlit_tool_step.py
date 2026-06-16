@@ -1,4 +1,4 @@
-"""Tier 1: ``reyn.chainlit_app.tool_step.build_tool_step_update`` contract.
+"""Tier 1: ``reyn.interfaces.chainlit_app.tool_step.build_tool_step_update`` contract.
 
 The drain loop's ``_handle_tool_call`` consumes ``ToolStepUpdate``
 to drive ``cl.Step.send()`` / ``cl.Step.update()`` for the
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chainlit_app.tool_step import (
+from reyn.interfaces.chainlit_app.tool_step import (
     ToolStepUpdate,
     build_tool_step_update,
     is_tool_call,

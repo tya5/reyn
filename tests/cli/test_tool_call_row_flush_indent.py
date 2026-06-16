@@ -25,8 +25,8 @@ if str(_SRC) not in sys.path:
 import pytest
 from textual.widgets import RichLog
 
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import ConversationView
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import ConversationView
 
 
 def _make_app() -> ReynTUIApp:
@@ -51,7 +51,7 @@ def _find_line_containing(log: RichLog, needle: str) -> int:
 
 def _row_with_prefix(label_prefix: str = "  └─ "):
     """Unmounted ToolCallRow with label_prefix for direct render testing."""
-    from reyn.tui.widgets.tool_call_row import ToolCallRow
+    from reyn.interfaces.tui.widgets.tool_call_row import ToolCallRow
     row = ToolCallRow(
         tool_name="bash",
         args_repr="cmd=ls",
@@ -63,7 +63,7 @@ def _row_with_prefix(label_prefix: str = "  └─ "):
 
 def _row_no_prefix():
     """Unmounted ToolCallRow without label_prefix (top-level)."""
-    from reyn.tui.widgets.tool_call_row import ToolCallRow
+    from reyn.interfaces.tui.widgets.tool_call_row import ToolCallRow
     row = ToolCallRow(
         tool_name="bash",
         args_repr="cmd=ls",

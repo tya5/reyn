@@ -26,8 +26,8 @@ if str(_SRC) not in sys.path:
 
 from textual.widgets import Tab, Tabs
 
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import RightPanel
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import RightPanel
 
 
 def _make_app() -> ReynTUIApp:

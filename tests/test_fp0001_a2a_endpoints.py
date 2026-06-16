@@ -34,7 +34,7 @@ pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missin
 pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
 
 
-from reyn.web.run_registry import RunRegistry  # noqa: E402
+from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -45,8 +45,8 @@ def _make_client_with_registry(registry: RunRegistry):
     """Build a TestClient that uses the supplied RunRegistry via DI override."""
     from fastapi.testclient import TestClient
 
-    from reyn.web.deps import get_run_registry
-    from reyn.web.server import app
+    from reyn.interfaces.web.deps import get_run_registry
+    from reyn.interfaces.web.server import app
 
     app.dependency_overrides[get_run_registry] = lambda: registry
     client = TestClient(app, raise_server_exceptions=False)
@@ -54,7 +54,7 @@ def _make_client_with_registry(registry: RunRegistry):
 
 
 def _restore_overrides() -> None:
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
     app.dependency_overrides.clear()
 
 
@@ -224,8 +224,8 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
     from reyn.events.state_log import StateLog
-    from reyn.web.deps import get_registry
-    from reyn.web.server import app
+    from reyn.interfaces.web.deps import get_registry
+    from reyn.interfaces.web.server import app
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -249,7 +249,7 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
     )
     registry.create("demo", role="demo agent")
 
-    from reyn.web.deps import get_run_registry  # noqa: PLC0415
+    from reyn.interfaces.web.deps import get_run_registry  # noqa: PLC0415
 
     run_registry = RunRegistry()
     app.dependency_overrides[get_registry] = lambda: registry
@@ -295,9 +295,9 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
     from reyn.events.state_log import StateLog
+    from reyn.interfaces.web.deps import get_registry, get_run_registry
+    from reyn.interfaces.web.server import app
     from reyn.user_intervention import UserIntervention
-    from reyn.web.deps import get_registry, get_run_registry
-    from reyn.web.server import app
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -391,8 +391,8 @@ def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> N
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
     from reyn.events.state_log import StateLog
-    from reyn.web.deps import get_registry, get_run_registry
-    from reyn.web.server import app
+    from reyn.interfaces.web.deps import get_registry, get_run_registry
+    from reyn.interfaces.web.server import app
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -490,7 +490,7 @@ def test_fp0001_routes_mounted() -> None:
     Pins that include_router wired them correctly without accidentally
     shadowing or dropping any existing route.
     """
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
 
     paths = {getattr(r, "path", None) for r in app.routes}
     assert "/a2a/tasks/{run_id}" in paths, "GET /a2a/tasks/{run_id} must be mounted"

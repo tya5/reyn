@@ -1,4 +1,4 @@
-"""Tier 1: ``reyn.chainlit_app.profiles.list_agent_profiles`` contract.
+"""Tier 1: ``reyn.interfaces.chainlit_app.profiles.list_agent_profiles`` contract.
 
 The chainlit-side ``@cl.set_chat_profiles`` decorator consumes the
 list this helper returns and wraps each entry with
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reyn.chainlit_app.profiles import (
+from reyn.interfaces.chainlit_app.profiles import (
     _NO_ROLE_MARKER,
     ChatProfileDict,
     list_agent_profiles,

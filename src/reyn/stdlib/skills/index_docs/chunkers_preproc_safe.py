@@ -5,7 +5,7 @@ This module is the safe-mode home for ``gather_samples`` and
 sample input files and estimate embedding cost so the LLM can choose
 a chunk strategy (or abort on cost). Before FP-0042 these lived in
 ``chunkers.py`` with ``mode: unsafe`` because they called
-``reyn.api.unsafe.file``. After FP-0042 they read via
+``reyn.interfaces.api.unsafe.file``. After FP-0042 they read via
 ``reyn.safe.file``, which goes through Reyn's permission resolver
 per call.
 
@@ -210,7 +210,7 @@ def cost_preflight(artifact: dict) -> dict:
     is metadata-only (admitted by the safe-mode allowlist as a
     restricted ambient source); no ``reyn.safe.file`` calls happen, so
     the migration is purely about dropping the
-    ``import reyn.api.unsafe.file`` dependency.
+    ``import reyn.interfaces.api.unsafe.file`` dependency.
     """
     data = artifact.get("data") or {}
     path = str(data.get("path") or "")

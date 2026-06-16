@@ -54,7 +54,7 @@ def _panel_with_overridable_mounted(monkeypatch):
     attribute we can control. ``monkeypatch`` undoes the swap when
     the test ends so other tests in the suite see the real property.
     """
-    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.interfaces.tui.widgets.async_stack_panel import AsyncStackPanel
 
     original = AsyncStackPanel.is_mounted
     monkeypatch.setattr(
@@ -97,7 +97,7 @@ def test_refresh_post_mount_pushes_update(_panel_with_overridable_mounted) -> No
 
 def test_refresh_with_no_static_is_safe_noop() -> None:
     """Tier 2b: existing ``_static is None`` guard still works (regression)."""
-    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.interfaces.tui.widgets.async_stack_panel import AsyncStackPanel
 
     panel = AsyncStackPanel()
     # ``_static`` is None at construction time; ``_refresh`` should

@@ -57,12 +57,12 @@ pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missin
 
 
 def _new_run_registry():
-    from reyn.web.run_registry import RunRegistry
+    from reyn.interfaces.web.run_registry import RunRegistry
     return RunRegistry()
 
 
 def _new_a2a_bus(run_id: str, registry):
-    from reyn.web.a2a_intervention import A2AInterventionBus
+    from reyn.interfaces.web.a2a_intervention import A2AInterventionBus
     return A2AInterventionBus(run_id=run_id, registry=registry)
 
 
@@ -248,7 +248,7 @@ def test_chat_session_intervention_override_is_used():
 def _router_has_task_endpoints() -> bool:
     """Return True iff the A2A router has GET /a2a/tasks/{run_id} mounted."""
     try:
-        from reyn.web.server import app
+        from reyn.interfaces.web.server import app
         paths = {getattr(r, "path", None) for r in app.routes}
         return "/a2a/tasks/{run_id}" in paths
     except Exception:
@@ -310,9 +310,9 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
 
-    from reyn.web.deps import get_registry, get_run_registry
-    from reyn.web.run_registry import RunRegistry
-    from reyn.web.server import app
+    from reyn.interfaces.web.deps import get_registry, get_run_registry
+    from reyn.interfaces.web.run_registry import RunRegistry
+    from reyn.interfaces.web.server import app
 
     registry = _build_registry_for_test(tmp_path)
     # FP-0009 B: RunRegistry now lives in the FastAPI lifespan startup.
@@ -362,9 +362,9 @@ def test_get_task_returns_run_entry(tmp_path, monkeypatch):
 
     from fastapi.testclient import TestClient
 
-    from reyn.web.deps import get_registry, get_run_registry
-    from reyn.web.run_registry import RunRegistry
-    from reyn.web.server import app
+    from reyn.interfaces.web.deps import get_registry, get_run_registry
+    from reyn.interfaces.web.run_registry import RunRegistry
+    from reyn.interfaces.web.server import app
 
     registry = _build_registry_for_test(tmp_path)
 

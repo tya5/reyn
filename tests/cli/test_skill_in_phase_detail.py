@@ -34,8 +34,8 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.forwarder import ChatEventForwarder
 from reyn.chat.outbox import OutboxMessage
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import ConversationView
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import ConversationView
 
 
 def _make_app() -> ReynTUIApp:

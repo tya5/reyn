@@ -31,9 +31,9 @@ async def test_initial_find_status_includes_ctrl_g_hint_when_multi_match() -> No
     from rich.text import Text
 
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -70,9 +70,9 @@ async def test_initial_find_status_omits_hint_when_single_match() -> None:
     from rich.text import Text
 
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -103,7 +103,7 @@ def test_keys_tab_groups_find_cycle_under_conversation() -> None:
     navigation keys (Ctrl+P / Ctrl+N turn jump) which is exactly
     where users will look first.
     """
-    from reyn.tui.widgets.right_panel.keys_tab import _key_group_for
+    from reyn.interfaces.tui.widgets.right_panel.keys_tab import _key_group_for
 
     assert _key_group_for("ctrl+g") == "CONVERSATION"
     assert _key_group_for("ctrl+shift+g") == "CONVERSATION"
@@ -117,8 +117,8 @@ async def test_keys_tab_render_includes_find_cycle_descriptions() -> None:
     match" / "Find prev match") flow through ``render_keys`` to
     the visible markup so users actually see them in the panel.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.right_panel.keys_tab import render_keys
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.right_panel.keys_tab import render_keys
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

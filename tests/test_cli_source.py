@@ -25,13 +25,13 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.commands.source import (
+from reyn.index.source_manifest import SourceEntry, SourceManifest, get_source_manifest
+from reyn.interfaces.cli.commands.source import (
     _cmd_describe_async,
     _cmd_list_async,
     _cmd_rm_async,
     register,
 )
-from reyn.index.source_manifest import SourceEntry, SourceManifest, get_source_manifest
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -150,7 +150,7 @@ def test_rm_short_yes_flag():
 @pytest.mark.asyncio
 async def test_cmd_list_empty_manifest(tmp_path, capsys, monkeypatch):
     """Tier 2: cmd_list with empty manifest prints a 'No indexed sources' hint."""
-    import reyn.cli.commands.source as _src_mod
+    import reyn.interfaces.cli.commands.source as _src_mod
 
     manifest = SourceManifest(tmp_path)
     monkeypatch.setattr(_src_mod, "get_source_manifest", lambda _root: manifest)
@@ -170,7 +170,7 @@ async def test_cmd_list_empty_manifest(tmp_path, capsys, monkeypatch):
 @pytest.mark.asyncio
 async def test_cmd_list_populated_tabular(tmp_path, capsys, monkeypatch):
     """Tier 2: cmd_list with sources prints tabular output with name + chunks."""
-    import reyn.cli.commands.source as _src_mod
+    import reyn.interfaces.cli.commands.source as _src_mod
 
     manifest = await _seed_manifest(tmp_path, [
         _make_entry("reyn_code", chunk_count=1247),
@@ -195,7 +195,7 @@ async def test_cmd_list_populated_tabular(tmp_path, capsys, monkeypatch):
 @pytest.mark.asyncio
 async def test_cmd_list_json_output(tmp_path, capsys, monkeypatch):
     """Tier 2: cmd_list --json prints valid JSON with all source entries."""
-    import reyn.cli.commands.source as _src_mod
+    import reyn.interfaces.cli.commands.source as _src_mod
 
     entry = _make_entry("my_source", chunk_count=55)
     manifest = await _seed_manifest(tmp_path, [entry])
@@ -214,7 +214,7 @@ async def test_cmd_list_json_output(tmp_path, capsys, monkeypatch):
 @pytest.mark.asyncio
 async def test_cmd_list_json_empty(tmp_path, capsys, monkeypatch):
     """Tier 2: cmd_list --json with empty manifest prints empty JSON object."""
-    import reyn.cli.commands.source as _src_mod
+    import reyn.interfaces.cli.commands.source as _src_mod
 
     manifest = SourceManifest(tmp_path)
     monkeypatch.setattr(_src_mod, "get_source_manifest", lambda _root: manifest)
@@ -234,7 +234,7 @@ async def test_cmd_list_json_empty(tmp_path, capsys, monkeypatch):
 @pytest.mark.asyncio
 async def test_cmd_describe_full_details(tmp_path, capsys, monkeypatch):
     """Tier 2: cmd_describe prints all SourceEntry fields."""
-    import reyn.cli.commands.source as _src_mod
+    import reyn.interfaces.cli.commands.source as _src_mod
 
     entry = _make_entry(
         "reyn_code",
@@ -263,7 +263,7 @@ async def test_cmd_describe_full_details(tmp_path, capsys, monkeypatch):
 @pytest.mark.asyncio
 async def test_cmd_describe_missing_source(tmp_path, capsys, monkeypatch):
     """Tier 2: cmd_describe missing source returns exit code 1 and writes to stderr."""
-    import reyn.cli.commands.source as _src_mod
+    import reyn.interfaces.cli.commands.source as _src_mod
 
     manifest = SourceManifest(tmp_path)
     monkeypatch.setattr(_src_mod, "get_source_manifest", lambda _root: manifest)
@@ -282,7 +282,7 @@ async def test_cmd_describe_missing_source(tmp_path, capsys, monkeypatch):
 @pytest.mark.asyncio
 async def test_cmd_rm_missing_source(tmp_path, capsys, monkeypatch):
     """Tier 2: cmd_rm with unknown source name returns exit 1 + stderr message."""
-    import reyn.cli.commands.source as _src_mod
+    import reyn.interfaces.cli.commands.source as _src_mod
 
     manifest = SourceManifest(tmp_path)
     monkeypatch.setattr(_src_mod, "get_source_manifest", lambda _root: manifest)
@@ -304,7 +304,7 @@ async def test_cmd_rm_yes_removes_source(tmp_path, capsys, monkeypatch):
     environment). The invariant under test is that the CLI correctly wires
     the op and prints the result.
     """
-    import reyn.cli.commands.source as _src_mod
+    import reyn.interfaces.cli.commands.source as _src_mod
     import reyn.op_runtime as _orm
 
     entry = _make_entry("trial_source", chunk_count=77)
@@ -333,7 +333,7 @@ async def test_cmd_rm_yes_removes_source(tmp_path, capsys, monkeypatch):
 @pytest.mark.asyncio
 async def test_cmd_rm_no_confirmation_aborts(tmp_path, capsys, monkeypatch):
     """Tier 2: cmd_rm without --yes aborts when user inputs 'n'."""
-    import reyn.cli.commands.source as _src_mod
+    import reyn.interfaces.cli.commands.source as _src_mod
 
     entry = _make_entry("keep_me", chunk_count=10)
     manifest = await _seed_manifest(tmp_path, [entry])
@@ -359,7 +359,7 @@ async def test_cmd_rm_no_confirmation_aborts(tmp_path, capsys, monkeypatch):
 
 def test_source_subcommand_wired_in_cli():
     """Tier 2: `reyn source` is a valid top-level subcommand."""
-    from reyn.cli import build_parser
+    from reyn.interfaces.cli import build_parser
     parser = build_parser()
     args = parser.parse_args(["source", "list"])
     assert args.command == "source"

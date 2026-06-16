@@ -221,7 +221,7 @@ def compare_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Set up a tmpdir with eval-results for 'my_skill' and patch the template."""
     import types
 
-    from reyn.cli.commands import eval as _eval_mod
+    from reyn.interfaces.cli.commands import eval as _eval_mod
 
     results_root = tmp_path / ".reyn" / "eval-results"
     template = str(results_root / "{skill}")
@@ -269,7 +269,7 @@ def test_cli_compare_command_text_output(
     compare_workspace, capsys
 ) -> None:
     """Tier 2: CLI text output contains expected summary and ALERT headers."""
-    from reyn.cli.commands import eval as _eval_mod
+    from reyn.interfaces.cli.commands import eval as _eval_mod
 
     # Seed two runs: baseline has higher scores → candidate regresses
     compare_workspace.seed(
@@ -305,7 +305,7 @@ def test_cli_compare_command_json_output(
     compare_workspace, capsys
 ) -> None:
     """Tier 2: --format json produces parseable JSON with required keys."""
-    from reyn.cli.commands import eval as _eval_mod
+    from reyn.interfaces.cli.commands import eval as _eval_mod
 
     compare_workspace.seed(
         "my_skill", "20260513T100000Z",
@@ -342,7 +342,7 @@ def test_cli_compare_exit_code_alert(
     compare_workspace, capsys
 ) -> None:
     """Tier 2: exit 1 when regressions present, exit 0 when none."""
-    from reyn.cli.commands import eval as _eval_mod
+    from reyn.interfaces.cli.commands import eval as _eval_mod
 
     # --- setup: 3 runs; older ones improve, newest regresses ---
     # Run 1 (baseline): c1=0.9
@@ -400,8 +400,8 @@ def test_cli_compare_auto_baseline_picks_previous_version(
     """Tier 2: 3 runs (hash A, A, B); candidate=most-recent (hash B);
     baseline auto-picks the most recent hash-A run.
     """
-    from reyn.cli.commands import eval as _eval_mod
     from reyn.eval.result_loader import load_runs_for_skill
+    from reyn.interfaces.cli.commands import eval as _eval_mod
 
     # Run 1 (oldest, hash A): c1=0.9
     compare_workspace.seed(

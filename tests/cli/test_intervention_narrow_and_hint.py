@@ -34,7 +34,7 @@ if str(_SRC) not in sys.path:
 
 
 def _make_app():
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     return ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
 
@@ -58,8 +58,8 @@ async def test_free_text_intervention_renders_keyboard_hint() -> None:
     """
     from textual.widgets import Label
 
-    from reyn.tui.widgets import ConversationView
-    from reyn.tui.widgets.intervention import InterventionWidget
+    from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets.intervention import InterventionWidget
 
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -94,8 +94,8 @@ async def test_free_text_hint_uses_iv_hint_css_class() -> None:
     Ensures the label reuses the existing iv-hint style (not a new ad-hoc
     class) so the WCAG-compliant #888888 colour and padding-top:1 apply.
     """
-    from reyn.tui.widgets import ConversationView
-    from reyn.tui.widgets.intervention import InterventionWidget
+    from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets.intervention import InterventionWidget
 
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -126,8 +126,8 @@ async def test_chip_path_still_has_iv_hint_label() -> None:
     Regression guard: the C5 fix must not remove the existing chip-path
     hint ('hotkey · Tab cycles · Ctrl+C cancels · free response… for free text').
     """
-    from reyn.tui.widgets import ConversationView
-    from reyn.tui.widgets.intervention import InterventionWidget
+    from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets.intervention import InterventionWidget
 
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -166,8 +166,8 @@ async def test_chips_present_at_narrow_width() -> None:
     """
     from textual.widgets import Button
 
-    from reyn.tui.widgets import ConversationView
-    from reyn.tui.widgets.intervention import InterventionWidget
+    from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets.intervention import InterventionWidget
 
     app = _make_app()
     # 40 cols × 24 rows — narrow enough to trigger overflow on ~62-cell chip row

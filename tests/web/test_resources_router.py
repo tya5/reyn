@@ -42,7 +42,7 @@ def tmp_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     Mirrors the smoke-test fixture so the FastAPI TestClient runs
     against a clean filesystem and the cached singletons in
-    ``reyn.web.deps`` resolve to this tmp project.
+    ``reyn.interfaces.web.deps`` resolve to this tmp project.
     """
     reyn_dir = tmp_path / ".reyn"
     agents_dir = reyn_dir / "agents" / "researcher"
@@ -54,7 +54,7 @@ def tmp_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         encoding="utf-8",
     )
 
-    import reyn.web.deps as deps
+    import reyn.interfaces.web.deps as deps
     deps._get_project_root.cache_clear()
     deps._load_config.cache_clear()
     deps._state_log = None
@@ -82,7 +82,7 @@ def tmp_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _client():
     from fastapi.testclient import TestClient
 
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -195,7 +195,7 @@ def test_resources_route_is_mounted_on_app():
     this, every other test in this module would still pass via 404 from
     FastAPI's default-not-found, masking a route-mount regression.
     """
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
     paths = {getattr(r, "path", "") for r in app.routes}
     assert any(
         "/agents/" in p and "/tool-results/" in p

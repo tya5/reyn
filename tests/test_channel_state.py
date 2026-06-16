@@ -1,7 +1,7 @@
 """Tier 2: ChannelState + DeliveryResult + RetryPolicy data model
 (issue #269 outbound notification ack).
 
-Pins the shared vocabulary used by ``reyn.web.notifications`` (=
+Pins the shared vocabulary used by ``reyn.interfaces.web.notifications`` (=
 HTTP webhook) + channel-specific senders (= ``A2AInterventionBus``,
 future TUI / mobile listeners) for tracking per-channel liveness
 and outbound delivery confirmation.

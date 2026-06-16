@@ -1,4 +1,4 @@
-"""Smoke tests for the reyn.web gateway.
+"""Smoke tests for the reyn.interfaces.web gateway.
 
 These tests verify:
 1. The FastAPI app can be imported.
@@ -36,15 +36,15 @@ httpx = pytest.importorskip("httpx", reason="httpx not installed (needed by Test
 # ---------------------------------------------------------------------------
 
 def test_app_import() -> None:
-    """Tier 2b: the FastAPI app can be imported from reyn.web.server."""
-    from reyn.web.server import app
+    """Tier 2b: the FastAPI app can be imported from reyn.interfaces.web.server."""
+    from reyn.interfaces.web.server import app
     assert app is not None
     assert app.title == "Reyn Web Gateway"
 
 
 def test_routers_mounted() -> None:
     """Tier 2b: all expected routers are included in the app."""
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
     routes = {r.path for r in app.routes}
     # Basic sanity: key prefixes exist
     assert any("/api/agents" in r for r in routes), f"No /api/agents route in {routes}"
@@ -113,7 +113,7 @@ def test_get_agents_200(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
     # Patch _find_project_root and the lru_cache-based singletons so the test
     # uses our tmp_project directory instead of the real project root.
-    import reyn.web.deps as deps
+    import reyn.interfaces.web.deps as deps
 
     # Clear cached singletons from previous test runs.
     deps._get_project_root.cache_clear()
@@ -128,7 +128,7 @@ def test_get_agents_200(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> N
         lambda _cwd: tmp_project,
     )
 
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
     client = TestClient(app, raise_server_exceptions=False)
     response = client.get("/api/agents")
 
@@ -153,7 +153,7 @@ def test_health_endpoint() -> None:
     """Tier 2c: GET /health returns {status: ok}."""
     from fastapi.testclient import TestClient
 
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
 
     client = TestClient(app, raise_server_exceptions=False)
     response = client.get("/health")

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.commands.chat import register
+from reyn.interfaces.cli.commands.chat import register
 from reyn.security.permissions.permissions import (
     PermissionDecl,
     PermissionResolver,

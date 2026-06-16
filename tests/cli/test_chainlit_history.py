@@ -1,4 +1,4 @@
-"""Tier 1: ``reyn.chainlit_app.history`` contract.
+"""Tier 1: ``reyn.interfaces.chainlit_app.history`` contract.
 
 Pinned invariants:
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from reyn.chainlit_app.history import HistoryEntry, history_to_chainlit
+from reyn.interfaces.chainlit_app.history import HistoryEntry, history_to_chainlit
 
 
 @dataclass

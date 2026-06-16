@@ -2,7 +2,7 @@
 
 Two enforcement axes:
 
-1. **`reyn.api.unsafe.*` imports in stdlib MUST be zero.** This is the
+1. **`reyn.interfaces.api.unsafe.*` imports in stdlib MUST be zero.** This is the
    strict success criterion from the FP-0042 proposal — stdlib code must
    not reach for raw I/O via the unsafe namespace.
 
@@ -56,7 +56,7 @@ def _stdlib_root() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Test A: no reyn.api.unsafe.* imports in stdlib
+# Test A: no reyn.interfaces.api.unsafe.* imports in stdlib
 # ---------------------------------------------------------------------------
 
 
@@ -68,7 +68,7 @@ _UNSAFE_IMPORT_RE = re.compile(
 
 def test_no_unsafe_api_imports_in_stdlib() -> None:
     """Tier 2: no Python file under ``src/reyn/stdlib/`` imports from
-    ``reyn.api.unsafe.*``.
+    ``reyn.interfaces.api.unsafe.*``.
 
     The FP-0042 proposal's headline Phase 3 success criterion. Imports
     are detected by line-anchored regex over the actual python source —
@@ -90,7 +90,7 @@ def test_no_unsafe_api_imports_in_stdlib() -> None:
             violations.append(str(py_file.relative_to(_stdlib_root())))
 
     assert violations == [], (
-        f"stdlib python files must not import reyn.api.unsafe.*; "
+        f"stdlib python files must not import reyn.interfaces.api.unsafe.*; "
         f"violations: {violations}. "
         "See FP-0042 (docs/deep-dives/proposals/0042-...) — use "
         "reyn.safe.* instead, or split I/O out via a run_op."

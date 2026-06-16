@@ -47,8 +47,8 @@ def _header_text(header) -> str:
 @pytest.mark.asyncio
 async def test_set_voice_state_recording_renders_badge() -> None:
     """Tier 2: ``set_voice_state('recording')`` shows the 🔴 voice badge."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -63,8 +63,8 @@ async def test_set_voice_state_recording_renders_badge() -> None:
 @pytest.mark.asyncio
 async def test_set_voice_state_transcribing_renders_badge() -> None:
     """Tier 2: ``set_voice_state('transcribing')`` shows the ⏳ voice badge."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -79,8 +79,8 @@ async def test_set_voice_state_transcribing_renders_badge() -> None:
 @pytest.mark.asyncio
 async def test_set_voice_state_none_clears_badge() -> None:
     """Tier 2: ``set_voice_state(None)`` removes the badge."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -99,8 +99,8 @@ async def test_set_voice_state_none_clears_badge() -> None:
 @pytest.mark.asyncio
 async def test_unknown_state_is_normalized_to_none() -> None:
     """Tier 2: unknown state strings (= caller typo) clear the badge."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -118,8 +118,8 @@ async def test_unknown_state_is_normalized_to_none() -> None:
 @pytest.mark.asyncio
 async def test_set_voice_state_idempotent_no_churn() -> None:
     """Tier 2: redundant calls early-return (= equality gate)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -145,8 +145,8 @@ async def test_voice_badge_appears_before_clock() -> None:
     """Tier 2: badge sits left of the HH:MM:SS clock canary."""
     import re
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -165,8 +165,8 @@ async def test_voice_badge_appears_before_clock() -> None:
 @pytest.mark.asyncio
 async def test_app_voice_set_header_state_helper_routes_through_header() -> None:
     """Tier 2: ``_voice_set_header_state`` calls the header's set_voice_state."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -183,8 +183,8 @@ async def test_app_voice_set_header_state_helper_routes_through_header() -> None
 @pytest.mark.asyncio
 async def test_voice_and_find_badges_coexist() -> None:
     """Tier 2: voice + find badges can both render in the same status line."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

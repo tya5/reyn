@@ -93,7 +93,7 @@ def test_model_patch_extraction_real_repo(tmp_path) -> None:
     Uses a real git repository (not a mock) to verify the extraction.
     The diff must contain the expected change and be non-empty.
     """
-    from reyn.cli.commands.eval_benchmark import extract_model_patch
+    from reyn.interfaces.cli.commands.eval_benchmark import extract_model_patch
 
     # Set up a real git repo
     subprocess.run(
@@ -137,7 +137,7 @@ def test_model_patch_extraction_empty(tmp_path) -> None:
 
     git diff HEAD exits 0 with empty output when no files are modified.
     """
-    from reyn.cli.commands.eval_benchmark import extract_model_patch
+    from reyn.interfaces.cli.commands.eval_benchmark import extract_model_patch
 
     subprocess.run(
         ["git", "init"], cwd=tmp_path, check=True, capture_output=True
@@ -173,7 +173,7 @@ def test_prediction_dict_shape() -> None:
     swebench uses KEY_INSTANCE_ID='instance_id', KEY_MODEL='model_name_or_path',
     KEY_PREDICTION='model_patch'.  The prediction dict must match exactly.
     """
-    from reyn.cli.commands.eval_benchmark import build_swebench_prediction
+    from reyn.interfaces.cli.commands.eval_benchmark import build_swebench_prediction
 
     patch = "diff --git a/foo.py b/foo.py\n--- a/foo.py\n+++ b/foo.py\n"
     pred = build_swebench_prediction("django__django-12345", patch)
@@ -197,7 +197,7 @@ def test_accounting_harness_resolved_wins() -> None:
     verdict (harness_resolved), NOT the skill self-check (tests_passed).
     When both fields are present on a faithful result, harness_resolved wins.
     """
-    from reyn.cli.commands.eval_benchmark import compute_faithful_accounting
+    from reyn.interfaces.cli.commands.eval_benchmark import compute_faithful_accounting
 
     results = [_make_tier1_pass("t1"), _make_tier1_fail("t2")]
     acct = compute_faithful_accounting(results)
@@ -218,7 +218,7 @@ def test_accounting_harness_resolved_false() -> None:
 
     Harness verdict trumps skill self-check even when the self-check claims pass.
     """
-    from reyn.cli.commands.eval_benchmark import compute_faithful_accounting
+    from reyn.interfaces.cli.commands.eval_benchmark import compute_faithful_accounting
 
     results = [_make_tier1_fail("t1")]
     acct = compute_faithful_accounting(results)
@@ -236,7 +236,7 @@ def test_accounting_tests_passed_fallback() -> None:
     The fallback path (Tier-2/3 results without harness_resolved) still works
     correctly using tests_passed.
     """
-    from reyn.cli.commands.eval_benchmark import compute_faithful_accounting
+    from reyn.interfaces.cli.commands.eval_benchmark import compute_faithful_accounting
 
     results = [_make_tier2_pass("t1"), _make_tier2_fail("t2")]
     acct = compute_faithful_accounting(results)
@@ -252,7 +252,7 @@ def test_accounting_mixed_tier1_and_tier2() -> None:
     Tier-1 result with harness_resolved=True contributes a pass.
     Tier-2 result with tests_passed=True contributes a pass.
     """
-    from reyn.cli.commands.eval_benchmark import compute_faithful_accounting
+    from reyn.interfaces.cli.commands.eval_benchmark import compute_faithful_accounting
 
     results = [
         _make_tier1_pass("t1"),   # harness_resolved=True → PASS
@@ -273,7 +273,7 @@ def test_accounting_skipped_excluded_harness() -> None:
     The invariant: NEVER count a verify_skipped result as pass or fail,
     even if it carries a harness_resolved field.
     """
-    from reyn.cli.commands.eval_benchmark import compute_faithful_accounting
+    from reyn.interfaces.cli.commands.eval_benchmark import compute_faithful_accounting
 
     results = [_make_skipped_with_harness("s1")]
     acct = compute_faithful_accounting(results)
@@ -299,7 +299,7 @@ def test_swebench_missing_honest_skip() -> None:
     the CI environment, the real lazy import raises ImportError and the function
     raises RuntimeError('swebench_missing') — no mocks needed.
     """
-    from reyn.cli.commands.eval_benchmark import (
+    from reyn.interfaces.cli.commands.eval_benchmark import (
         _TIER1_SWEBENCH_MISSING_REASON,
         run_tier1_swebench_eval,
     )
@@ -344,7 +344,7 @@ def test_lazy_import_not_at_module_top() -> None:
             (
                 "import sys; "
                 "sys.path.insert(0, 'src'); "
-                "import reyn.cli.commands.eval_benchmark; "
+                "import reyn.interfaces.cli.commands.eval_benchmark; "
                 "swebench_keys = [k for k in sys.modules if 'swebench' in k]; "
                 "print('swebench_in_modules:', bool(swebench_keys)); "
                 "print('keys:', swebench_keys)"
@@ -373,7 +373,7 @@ def test_tier1_routing_structure() -> None:
     The 'docker' tier is the entry point for Tier-1 swebench delegation.
     Routing invariant: when Docker is available, ALL platforms return 'docker'.
     """
-    from reyn.cli.commands.eval_benchmark import (
+    from reyn.interfaces.cli.commands.eval_benchmark import (
         _TIER_DOCKER,
         classify_verification_tier,
     )
@@ -398,7 +398,7 @@ def test_make_verify_skip_record_tier1() -> None:
     be marked as verify_skipped=True with verify_tier='docker' and a non-empty
     reason.  This is the honest-skip invariant for Tier-1.
     """
-    from reyn.cli.commands.eval_benchmark import (
+    from reyn.interfaces.cli.commands.eval_benchmark import (
         _TIER1_SWEBENCH_MISSING_REASON,
         _TIER_DOCKER,
         _make_verify_skip_record,

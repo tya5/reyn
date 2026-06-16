@@ -36,7 +36,7 @@ def _write_events(tmp_path: Path, events: list[dict]) -> None:
 
 def test_event_ys_returned_for_single_chain_no_blanks(tmp_path: Path) -> None:
     """Tier 2b: same chain_id → no blank lines → ys are contiguous."""
-    from reyn.tui.widgets.right_panel.events_tab import render_events
+    from reyn.interfaces.tui.widgets.right_panel.events_tab import render_events
 
     _write_events(tmp_path, [
         {"type": "phase_started", "timestamp": f"2026-05-22T10:00:0{i}Z",
@@ -64,7 +64,7 @@ def test_event_ys_skips_blank_line_at_chain_switch(tmp_path: Path) -> None:
     Without the per-row tracking, ``y = 1 + cursor`` would point at
     the blank separator row rather than the second event's headline.
     """
-    from reyn.tui.widgets.right_panel.events_tab import render_events
+    from reyn.interfaces.tui.widgets.right_panel.events_tab import render_events
 
     _write_events(tmp_path, [
         {"type": "phase_started", "timestamp": "2026-05-22T10:00:00Z",
@@ -97,7 +97,7 @@ def test_event_ys_accounts_for_user_message_reply_line(tmp_path: Path) -> None:
     consumes 2 rendered lines (headline + ``↳`` reply), so the next
     event's y is 2 not 1.
     """
-    from reyn.tui.widgets.right_panel.events_tab import render_events
+    from reyn.interfaces.tui.widgets.right_panel.events_tab import render_events
 
     _write_events(tmp_path, [
         {"type": "user_message_received",
@@ -126,7 +126,7 @@ def test_event_ys_accounts_for_user_message_reply_line(tmp_path: Path) -> None:
 
 def test_empty_visible_returns_empty_ys(tmp_path: Path) -> None:
     """Tier 2b: empty / no-match return shape stays a 3-tuple."""
-    from reyn.tui.widgets.right_panel.events_tab import render_events
+    from reyn.interfaces.tui.widgets.right_panel.events_tab import render_events
 
     # No events root → "no events yet" early return.
     rendered, visible, ys = render_events(

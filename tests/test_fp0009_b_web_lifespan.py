@@ -44,7 +44,7 @@ async def _run_lifespan(app):
     Returns app.state after startup so tests can inspect scheduler / registry.
     """
     # Import here so module-level guards have already run.
-    from reyn.web.server import _lifespan
+    from reyn.interfaces.web.server import _lifespan
 
     async with _lifespan(app):
         # Capture the state inside the lifespan (= after startup, before shutdown)
@@ -154,7 +154,7 @@ async def test_enabled_job_scheduler_is_cron_scheduler_instance(tmp_path, monkey
     async def _noop_runner(job):
         return "ok"
 
-    from reyn.web.server import _lifespan
+    from reyn.interfaces.web.server import _lifespan
 
     async with _lifespan(app):
         # Verify scheduler is a CronScheduler
@@ -202,7 +202,7 @@ async def test_shutdown_stops_scheduler(tmp_path, monkeypatch):
     stopped_event = asyncio.Event()
     original_stop = None
 
-    from reyn.web.server import _lifespan
+    from reyn.interfaces.web.server import _lifespan
 
     async with _lifespan(app):
         scheduler = app.state.cron_scheduler
@@ -229,14 +229,14 @@ async def test_shutdown_stops_scheduler(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_run_registry_is_set_in_lifespan(tmp_path, monkeypatch):
     """Tier 2: lifespan sets app.state.run_registry (FP-0001 not regressed by move)."""
-    from reyn.web.run_registry import RunRegistry
+    from reyn.interfaces.web.run_registry import RunRegistry
 
     _write_reyn_yaml(tmp_path, "model: standard\n")
     monkeypatch.chdir(tmp_path)
 
     app = _make_bare_app()
 
-    from reyn.web.server import _lifespan
+    from reyn.interfaces.web.server import _lifespan
 
     async with _lifespan(app):
         assert isinstance(app.state.run_registry, RunRegistry)
@@ -283,5 +283,5 @@ async def test_malformed_cron_schedule_does_not_prevent_boot(tmp_path, monkeypat
     # Boot must succeed and scheduler stays None
     assert state.cron_scheduler is None
     # RunRegistry must still be set (= startup continued after cron failure)
-    from reyn.web.run_registry import RunRegistry
+    from reyn.interfaces.web.run_registry import RunRegistry
     assert isinstance(state.run_registry, RunRegistry)

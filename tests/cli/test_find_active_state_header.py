@@ -62,9 +62,9 @@ async def test_header_inherits_renderable_cache_mixin() -> None:
     through the shared mixin, not a per-widget duplicate. Same
     pattern as SkillActivityRow + SlashPicker + ToolCallRow.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
-    from reyn.tui.widgets._renderable_cache import RenderableCacheMixin
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.widgets._renderable_cache import RenderableCacheMixin
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -79,8 +79,8 @@ async def test_header_inherits_renderable_cache_mixin() -> None:
 @pytest.mark.asyncio
 async def test_set_find_state_renders_badge() -> None:
     """Tier 2: set_find_state(...) makes the badge visible in the header."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -95,8 +95,8 @@ async def test_set_find_state_renders_badge() -> None:
 @pytest.mark.asyncio
 async def test_set_find_state_none_clears_badge() -> None:
     """Tier 2: passing ``None`` clears the badge."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -119,8 +119,8 @@ async def test_set_find_state_idempotent_no_repaint_churn() -> None:
     so router-side noise (= per-frame re-seeds) doesn't generate
     paint churn.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -140,9 +140,9 @@ async def test_set_find_state_idempotent_no_repaint_churn() -> None:
 async def test_on_find_sets_header_badge() -> None:
     """Tier 2: initial /find sets the header badge with the cursor's position."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -167,9 +167,9 @@ async def test_on_find_sets_header_badge() -> None:
 async def test_cycle_find_updates_header_position() -> None:
     """Tier 2: Ctrl+G advances the badge position alongside the cursor."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -203,9 +203,9 @@ async def test_no_match_branch_clears_header_badge() -> None:
     no longer relevant.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -235,9 +235,9 @@ async def test_no_match_branch_clears_header_badge() -> None:
 async def test_buffer_mutation_clears_badge_via_cycle() -> None:
     """Tier 2: when buffer empties, Ctrl+G clears the badge alongside state."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -272,8 +272,8 @@ async def test_badge_appears_before_clock() -> None:
     """
     import re
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

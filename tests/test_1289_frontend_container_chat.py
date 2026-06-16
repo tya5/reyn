@@ -2,7 +2,7 @@
 
 #1200 wired ChatSession's two seams (FS Workspace + exec OpContext) to a single
 injected backend (verified in test_1200_*). #1289 ACTIVATES that at the CLI
-frontends: a shared `reyn.cli.env_backend` helper registers the `--env-backend`
+frontends: a shared `reyn.interfaces.cli.env_backend` helper registers the `--env-backend`
 args + builds the EnvironmentBackend; `reyn chat` / `reyn dogfood` (like `reyn
 run`) build it and pass the SAME instance to BOTH ChatSession seams.
 
@@ -17,9 +17,9 @@ import argparse
 from pathlib import Path
 
 from reyn.chat.session import ChatSession
-from reyn.cli.env_backend import build_environment_backend, register_env_backend_args
 from reyn.environment.host_backend import HostBackend
 from reyn.events.state_log import StateLog
+from reyn.interfaces.cli.env_backend import build_environment_backend, register_env_backend_args
 
 
 def test_register_env_backend_args_surface() -> None:

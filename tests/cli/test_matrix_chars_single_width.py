@@ -24,7 +24,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui.widgets.matrix import _CHARS  # noqa: E402
+from reyn.interfaces.tui.widgets.matrix import _CHARS  # noqa: E402
 
 
 def test_all_chars_are_single_cell_width() -> None:

@@ -27,9 +27,9 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_start_thinking_mounts_one_row() -> None:
     """Tier 2b: start_thinking() mounts exactly 1 InlineThinkingRow."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
-    from reyn.tui.widgets.inline_thinking_row import InlineThinkingRow
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets.inline_thinking_row import InlineThinkingRow
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -47,9 +47,9 @@ async def test_start_thinking_mounts_one_row() -> None:
 @pytest.mark.asyncio
 async def test_start_thinking_idempotent() -> None:
     """Tier 2b: calling start_thinking() twice mounts only 1 row."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
-    from reyn.tui.widgets.inline_thinking_row import InlineThinkingRow
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets.inline_thinking_row import InlineThinkingRow
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -70,9 +70,9 @@ async def test_start_thinking_idempotent() -> None:
 @pytest.mark.asyncio
 async def test_stop_thinking_unmounts_row() -> None:
     """Tier 2b: stop_thinking() after start_thinking() unmounts the row."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
-    from reyn.tui.widgets.inline_thinking_row import InlineThinkingRow
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets.inline_thinking_row import InlineThinkingRow
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -91,8 +91,8 @@ async def test_stop_thinking_unmounts_row() -> None:
 @pytest.mark.asyncio
 async def test_stop_thinking_without_start_no_error() -> None:
     """Tier 2b: stop_thinking() without prior start_thinking() is a no-op."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -106,9 +106,9 @@ async def test_stop_thinking_without_start_no_error() -> None:
 @pytest.mark.asyncio
 async def test_inline_thinking_row_shows_braille_frame() -> None:
     """Tier 2b: InlineThinkingRow frame index is valid after mounting."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
-    from reyn.tui.widgets.inline_thinking_row import _FRAMES, InlineThinkingRow
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets.inline_thinking_row import _FRAMES, InlineThinkingRow
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -129,7 +129,7 @@ async def test_inline_thinking_row_shows_braille_frame() -> None:
 @pytest.mark.asyncio
 async def test_tick_advances_frame() -> None:
     """Tier 2b: _tick() cycles the Braille frame index forward."""
-    from reyn.tui.widgets.inline_thinking_row import _FRAMES, InlineThinkingRow
+    from reyn.interfaces.tui.widgets.inline_thinking_row import _FRAMES, InlineThinkingRow
 
     # Exercise _tick() directly without a full app mount.
     row = InlineThinkingRow()
@@ -150,7 +150,7 @@ async def test_tick_advances_frame() -> None:
 
 def test_thinking_not_in_kind_priority() -> None:
     """Tier 2b: cleanup — 'thinking' no longer in _KIND_PRIORITY (sticky removed it)."""
-    from reyn.tui.widgets.sticky_status import _KIND_PRIORITY
+    from reyn.interfaces.tui.widgets.sticky_status import _KIND_PRIORITY
 
     assert "thinking" not in _KIND_PRIORITY, (
         f"'thinking' should have been removed from _KIND_PRIORITY after "

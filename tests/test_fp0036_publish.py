@@ -368,7 +368,7 @@ def test_publish_run_no_token_raises(tmp_path) -> None:
 
 def test_cli_publish_argparse() -> None:
     """Tier 1: CLI argparse correctly parses 'reyn dogfood publish RUN_ID --repo X/Y --dry-run'."""
-    from reyn.cli.commands.dogfood import register
+    from reyn.interfaces.cli.commands.dogfood import register
 
     root = argparse.ArgumentParser()
     sub = root.add_subparsers(dest="cmd")
@@ -387,7 +387,7 @@ def test_cli_publish_argparse() -> None:
 
 def test_cli_publish_argparse_defaults() -> None:
     """Tier 1: CLI argparse applies expected defaults for publish subcommand."""
-    from reyn.cli.commands.dogfood import register
+    from reyn.interfaces.cli.commands.dogfood import register
 
     root = argparse.ArgumentParser()
     sub = root.add_subparsers(dest="cmd")

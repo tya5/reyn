@@ -35,13 +35,13 @@ import pytest
 
 
 def _maybe_skip_if_router_unavailable() -> None:
-    """Skip when ``reyn.web.routers.a2a`` can't import (= optional
+    """Skip when ``reyn.interfaces.web.routers.a2a`` can't import (= optional
     fastapi extra missing). CI has it; local dev may not.
     """
     try:
-        import reyn.web.routers.a2a  # noqa: F401
+        import reyn.interfaces.web.routers.a2a  # noqa: F401
     except ImportError as exc:
-        pytest.skip(f"reyn.web.routers.a2a unavailable: {exc}")
+        pytest.skip(f"reyn.interfaces.web.routers.a2a unavailable: {exc}")
 
 
 # ── 1. streaming = True + backed by producer wire ────────────────────
@@ -53,7 +53,7 @@ def test_agent_card_streaming_is_true_after_gap1_lands() -> None:
     landed in PR #288.
     """
     _maybe_skip_if_router_unavailable()
-    from reyn.web.routers.a2a import _build_agent_card
+    from reyn.interfaces.web.routers.a2a import _build_agent_card
 
     card = _build_agent_card("test_agent", "test role", "http://localhost/a2a")
     assert card["capabilities"]["streaming"] is True
@@ -67,7 +67,7 @@ def test_streaming_claim_backed_by_append_event_call_site() -> None:
     this test alongside the Z-c claim test.
     """
     _maybe_skip_if_router_unavailable()
-    from reyn.web.routers import a2a as a2a_router
+    from reyn.interfaces.web.routers import a2a as a2a_router
 
     bridge_src = inspect.getsource(a2a_router._A2AProgressBridge)
     assert "append_event" in bridge_src, (
@@ -87,7 +87,7 @@ def test_agent_card_push_notifications_is_true_after_gap2_lands() -> None:
     path landed in PR #286 + the original 3 terminal triggers.
     """
     _maybe_skip_if_router_unavailable()
-    from reyn.web.routers.a2a import _build_agent_card
+    from reyn.interfaces.web.routers.a2a import _build_agent_card
 
     card = _build_agent_card("test_agent", "test role", "http://localhost/a2a")
     assert card["capabilities"]["pushNotifications"] is True
@@ -136,7 +136,7 @@ def test_agent_card_state_transition_history_stays_false() -> None:
     Catches any accidental flip during the Z-c adjustment.
     """
     _maybe_skip_if_router_unavailable()
-    from reyn.web.routers.a2a import _build_agent_card
+    from reyn.interfaces.web.routers.a2a import _build_agent_card
 
     card = _build_agent_card("test_agent", "test role", "http://localhost/a2a")
     assert card["capabilities"]["stateTransitionHistory"] is False
@@ -152,7 +152,7 @@ def test_agent_card_required_fields_shape_stable_through_gap3_zc() -> None:
     way.
     """
     _maybe_skip_if_router_unavailable()
-    from reyn.web.routers.a2a import _build_agent_card
+    from reyn.interfaces.web.routers.a2a import _build_agent_card
 
     card = _build_agent_card("test_agent", "test role", "http://localhost/a2a")
 

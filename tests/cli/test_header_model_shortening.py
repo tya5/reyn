@@ -28,9 +28,9 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import ReynHeader
-from reyn.tui.widgets.header import _shorten_model_id
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import ReynHeader
+from reyn.interfaces.tui.widgets.header import _shorten_model_id
 
 # ── Tier 1: pure-function bucket coverage ────────────────────────────────────
 

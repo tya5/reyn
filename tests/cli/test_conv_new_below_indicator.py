@@ -28,8 +28,8 @@ if str(_SRC) not in sys.path:
 from rich.text import Text
 from textual.widgets import RichLog, Static
 
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import ConversationView
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import ConversationView
 
 
 def _make_app() -> ReynTUIApp:

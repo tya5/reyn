@@ -205,7 +205,7 @@ async def test_yaml_mtime_watch_initial_call_seeds_mtimes(
 ) -> None:
     """Tier 2: first call to maybe_refresh_mcp_tools_from_yaml reads current
     yaml mtimes and populates yaml_mtimes_snapshot WITHOUT triggering a probe."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     project_root = tmp_path / "project"
     reyn_yaml = project_root / "reyn.yaml"
@@ -244,7 +244,7 @@ async def test_yaml_mtime_watch_unchanged_mtimes_no_reprobe(
 ) -> None:
     """Tier 2: calling maybe_refresh_mcp_tools_from_yaml twice with no yaml edit
     does NOT invoke the probe on the second call."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     project_root = tmp_path / "project"
     reyn_yaml = project_root / "reyn.yaml"
@@ -283,7 +283,7 @@ async def test_yaml_mtime_watch_advances_triggers_reprobe(
     """Tier 2: when a yaml file's mtime advances (= operator edited it),
     maybe_refresh_mcp_tools_from_yaml re-probes, writes the cache file, and
     updates yaml_mtimes_snapshot."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     project_root = tmp_path / "project"
     reyn_yaml = project_root / "reyn.yaml"
@@ -339,7 +339,7 @@ async def test_yaml_mtime_watch_only_existing_yamls_tracked(
 ) -> None:
     """Tier 2: if ~/.reyn/config.yaml (or any yaml) doesn't exist, it is
     silently skipped — no exception raised, only existing paths recorded."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     project_root = tmp_path / "project_no_local"
     reyn_yaml = project_root / "reyn.yaml"
@@ -380,7 +380,7 @@ async def test_yaml_mtime_watch_handles_yaml_creation_mid_session(
 ) -> None:
     """Tier 2: a yaml file created between two maybe_refresh calls is detected
     on the second call and triggers a probe."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     project_root = tmp_path / "project_new"
     reyn_yaml = project_root / "reyn.yaml"
@@ -430,7 +430,7 @@ async def test_yaml_mtime_watch_probe_failure_does_not_raise(
     """Tier 2: when _probe_server_tools raises on one server, the watch method
     swallows the error (probe helper itself must return [] on failure per S1
     contract), and maybe_refresh_mcp_tools_from_yaml returns without raising."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     project_root = tmp_path / "project_failprobe"
     reyn_yaml = project_root / "reyn.yaml"
@@ -494,7 +494,7 @@ async def test_yaml_mtime_watch_silent_on_stat_failure(
 ) -> None:
     """Tier 2: when a yaml path disappears mid-session (stat falls back to
     OSError), the watch method silently skips it and does not probe."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     project_root = tmp_path / "project_stat_fail"
     reyn_yaml = project_root / "reyn.yaml"

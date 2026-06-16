@@ -1,4 +1,4 @@
-"""Tier 1: ``reyn.chainlit_app.settings`` round-trip contracts.
+"""Tier 1: ``reyn.interfaces.chainlit_app.settings`` round-trip contracts.
 
 The chat-settings panel surfaces ``output_language`` as a Select
 widget. Two round-trips need to stay consistent:
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.chainlit_app.settings import (
+from reyn.interfaces.chainlit_app.settings import (
     AGENT_ROLE_SETTING_ID,
     LANGUAGE_ITEMS,
     LANGUAGE_SETTING_ID,

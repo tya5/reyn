@@ -57,8 +57,8 @@ async def test_agent_label_preview_renders_name_and_status() -> None:
     preview). After the fix the pane.show_text path is exercised with
     a non-empty title + rendered body.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -103,8 +103,8 @@ async def test_agent_label_preview_renders_name_and_status() -> None:
 @pytest.mark.asyncio
 async def test_agent_label_preview_running_badge_when_skills_in_flight() -> None:
     """Tier 2: running skill in exec_state → ``running`` badge."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -148,8 +148,8 @@ async def test_non_agent_kind_still_routes_to_dedicated_handler() -> None:
     recent_skill / running_plan / recent_plan routing — those still
     call their dedicated ``_preview_*`` methods.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import RightPanel
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

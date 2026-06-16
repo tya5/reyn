@@ -64,7 +64,7 @@ def _make_normal_error_msg():
 
 async def _get_sticky(pilot):
     """Return the StickyStatus from the ConversationView."""
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.widgets import ConversationView
     conv = pilot.app.query_one("#conversation", ConversationView)
     return conv._sticky()
 
@@ -80,9 +80,9 @@ async def test_disconnect_frame_shows_persistent_sticky_with_error_kind() -> Non
     drive it through _on_error, and verify the sticky shows the
     expected body + kind via the public snapshot() API.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -122,9 +122,9 @@ async def test_disconnect_frame_sets_inputbar_disconnected_state() -> None:
     carry both the ``disconnected`` property (True) and the ``.disconnected``
     CSS class so styling can dim the border/text.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, InputBar, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, InputBar, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -164,9 +164,9 @@ async def test_disconnect_submit_swallowed_no_user_submitted_posted() -> None:
     """
     from textual.widgets import TextArea
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, InputBar, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, InputBar, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     posted: list[InputBar.UserSubmitted] = []
@@ -216,9 +216,9 @@ async def test_normal_error_frame_does_not_trigger_disconnected_state() -> None:
     different) must leave InputBar fully functional and sticky NOT
     persistently locked on the disconnected message.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, InputBar, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, InputBar, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

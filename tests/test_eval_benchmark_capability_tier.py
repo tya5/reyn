@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest  # noqa: F401 — used for pytest.raises in future tests
 
-from reyn.cli.commands.eval_benchmark import (
+from reyn.interfaces.cli.commands.eval_benchmark import (
     _TIER_DOCKER,
     _TIER_LINUX_HOST,
     _TIER_NO_FAITHFUL_ENV,
@@ -173,7 +173,7 @@ def test_honest_skip_fields() -> None:
 
 def test_honest_skip_reason_nonempty() -> None:
     """Tier 2: the no_faithful_env skip reason is a non-empty string."""
-    from reyn.cli.commands.eval_benchmark import _NO_FAITHFUL_ENV_REASON
+    from reyn.interfaces.cli.commands.eval_benchmark import _NO_FAITHFUL_ENV_REASON
 
     assert isinstance(_NO_FAITHFUL_ENV_REASON, str)
     assert len(_NO_FAITHFUL_ENV_REASON) > 0
@@ -199,7 +199,7 @@ def test_write_summary_verify_accounting_block(tmp_path) -> None:
     """
     import json
 
-    from reyn.cli.commands.eval_benchmark import _write_summary
+    from reyn.interfaces.cli.commands.eval_benchmark import _write_summary
 
     run_dir = tmp_path / "run_c7_test"
     run_dir.mkdir()

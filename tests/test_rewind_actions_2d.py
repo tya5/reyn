@@ -17,14 +17,14 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chainlit_app.rewind_actions import (
+from reyn.chat.profile import AgentProfile
+from reyn.chat.registry import AgentRegistry
+from reyn.events.state_log import StateLog
+from reyn.interfaces.chainlit_app.rewind_actions import (
     build_rewind_action_specs,
     handle_rewind_checkout,
     resolve_edit_target,
 )
-from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import AgentRegistry
-from reyn.events.state_log import StateLog
 
 
 def _no_factory(_profile):

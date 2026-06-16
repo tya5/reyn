@@ -466,7 +466,7 @@ def test_registry_path_unaffected_by_source_field_being_none(tmp_path, monkeypat
 # Part 3: CLI argparse — --source flag and mutual exclusivity
 # ===========================================================================
 
-from reyn.cli.commands.mcp import register
+from reyn.interfaces.cli.commands.mcp import register
 
 
 def _make_parser() -> argparse.ArgumentParser:

@@ -18,7 +18,7 @@ import pytest
 
 pytest.importorskip("chainlit")
 
-from reyn.chainlit_app import app as chainlit_app  # noqa: E402
+from reyn.interfaces.chainlit_app import app as chainlit_app  # noqa: E402
 
 
 def test_render_rewind_picker_is_async_glue():

@@ -27,7 +27,7 @@ if str(_SRC) not in sys.path:
 
 from rich.text import Text
 
-from reyn.tui.widgets.right_panel.cost_tab import (
+from reyn.interfaces.tui.widgets.right_panel.cost_tab import (
     _MEDIUM_THRESHOLD,
     _WIDE_THRESHOLD,
     render_cost,

@@ -27,9 +27,9 @@ if str(_SRC) not in sys.path:
 from textual.widgets import RichLog
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import ConversationView
-from reyn.tui.widgets.conversation import (
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import ConversationView
+from reyn.interfaces.tui.widgets.conversation import (
     _BODY_INDENT_NO_TS,
     _BODY_INDENT_WITH_TS,
     _GLYPH_AGENT,

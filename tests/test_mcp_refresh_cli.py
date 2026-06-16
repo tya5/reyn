@@ -31,7 +31,7 @@ def _parse_mcp(argv: list[str]):
     """Parse argv via the real mcp.register argparse tree."""
     import argparse
 
-    from reyn.cli.commands.mcp import register
+    from reyn.interfaces.cli.commands.mcp import register
 
     root = argparse.ArgumentParser(prog="reyn")
     sub = root.add_subparsers(dest="command")
@@ -76,7 +76,7 @@ def _make_fake_probe(tools_by_server: dict[str, list[dict]]):
 def test_refresh_writes_cache_file(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: with a stub probe, run_refresh writes mcp_tools_cache.json
     containing the expected servers dict."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     fixed_tools = [{"name": "get_repo", "description": "Get a repository"}]
     monkeypatch.setattr(
@@ -122,7 +122,7 @@ def test_refresh_writes_cache_file(tmp_path: Path, monkeypatch) -> None:
 
 def test_refresh_handles_empty_server_config(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: with no configured servers, run_refresh writes servers: {}."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     project_root = tmp_path / "empty_proj"
     project_root.mkdir()
@@ -151,7 +151,7 @@ def test_refresh_per_server_failure_warns_writes_empty(
 ) -> None:
     """Tier 2: a server that times out / errors gets empty list in cache;
     a warning is printed; the command exits without raising."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     async def _failing_probe(server_name, cfg, *, per_server_timeout=5.0):
         return server_name, []  # simulates timeout / connection error
@@ -194,7 +194,7 @@ def test_refresh_per_server_failure_warns_writes_empty(
 
 def test_refresh_uses_atomic_write(tmp_path: Path, monkeypatch) -> None:
     """Tier 2: after run_refresh completes, no .tmp sibling file lingers."""
-    import reyn.cli.commands.mcp as mcp_cmd
+    import reyn.interfaces.cli.commands.mcp as mcp_cmd
 
     monkeypatch.setattr(
         mcp_cmd,

@@ -48,8 +48,8 @@ class _StubLog:
 @pytest.mark.asyncio
 async def test_normal_call_returns_attribute_value() -> None:
     """Tier 2b: present ``_start_line`` value is returned (regression)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -62,8 +62,8 @@ async def test_normal_call_returns_attribute_value() -> None:
 @pytest.mark.asyncio
 async def test_missing_attribute_returns_zero_fallback() -> None:
     """Tier 2: missing ``_start_line`` → 0 fallback (same as legacy getattr)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -83,8 +83,8 @@ async def test_missing_attribute_logs_one_shot_warning(caplog) -> None:
     the log on every turn navigation when Textual changes its
     private API.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -127,8 +127,8 @@ async def test_absolute_line_position_uses_helper() -> None:
     instance method using ``self._richlog_start_line(log)`` so the
     one-shot warning path covers ``_absolute_line_position`` too.
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

@@ -48,7 +48,7 @@ def _seed(conv, lines: list[str]) -> None:
 
 def test_parse_no_flag_is_default_path() -> None:
     """Tier 2: bare query → both flags False, full arg preserved."""
-    from reyn.tui.app_outbox import _parse_find_flags
+    from reyn.interfaces.tui.app_outbox import _parse_find_flags
 
     assert _parse_find_flags("foo") == (False, False, "foo")
     assert _parse_find_flags("foo bar baz") == (False, False, "foo bar baz")
@@ -57,7 +57,7 @@ def test_parse_no_flag_is_default_path() -> None:
 
 def test_parse_recognises_individual_flags() -> None:
     """Tier 2: ``-c`` / ``-r`` parsed cleanly."""
-    from reyn.tui.app_outbox import _parse_find_flags
+    from reyn.interfaces.tui.app_outbox import _parse_find_flags
 
     assert _parse_find_flags("-c Foo") == (False, True, "Foo")
     assert _parse_find_flags("-r f.*o") == (True, False, "f.*o")
@@ -65,7 +65,7 @@ def test_parse_recognises_individual_flags() -> None:
 
 def test_parse_combined_flag_order_independent() -> None:
     """Tier 2: ``-rc`` and ``-cr`` mean the same."""
-    from reyn.tui.app_outbox import _parse_find_flags
+    from reyn.interfaces.tui.app_outbox import _parse_find_flags
 
     assert _parse_find_flags("-rc Foo.*") == (True, True, "Foo.*")
     assert _parse_find_flags("-cr Foo.*") == (True, True, "Foo.*")
@@ -78,7 +78,7 @@ def test_parse_unrecognised_flag_treated_as_query() -> None:
     their conv (e.g., ``-h`` or ``--force``). Without this fall-
     through they'd have no way to /find it.
     """
-    from reyn.tui.app_outbox import _parse_find_flags
+    from reyn.interfaces.tui.app_outbox import _parse_find_flags
 
     assert _parse_find_flags("-foo bar") == (False, False, "-foo bar")
     assert _parse_find_flags("-x") == (False, False, "-x")
@@ -90,7 +90,7 @@ def test_parse_flag_only_no_query_returns_empty_query() -> None:
     The caller surfaces a usage hint when query is empty, so the
     parser just splits cleanly without inventing content.
     """
-    from reyn.tui.app_outbox import _parse_find_flags
+    from reyn.interfaces.tui.app_outbox import _parse_find_flags
 
     assert _parse_find_flags("-r") == (True, False, "")
     assert _parse_find_flags("-c") == (False, True, "")
@@ -102,8 +102,8 @@ def test_parse_flag_only_no_query_returns_empty_query() -> None:
 @pytest.mark.asyncio
 async def test_find_in_buffer_case_sensitive_excludes_lowercase_variants() -> None:
     """Tier 2: case-sensitive substring matches case exactly."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -121,8 +121,8 @@ async def test_find_in_buffer_case_sensitive_excludes_lowercase_variants() -> No
 @pytest.mark.asyncio
 async def test_find_in_buffer_regex_pattern_matches() -> None:
     """Tier 2: regex search picks up pattern-matching lines."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -142,8 +142,8 @@ async def test_find_in_buffer_regex_pattern_matches() -> None:
 @pytest.mark.asyncio
 async def test_find_in_buffer_regex_case_sensitive() -> None:
     """Tier 2: regex + case-sensitive only matches exact case patterns."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -165,8 +165,8 @@ async def test_find_in_buffer_invalid_regex_raises() -> None:
     """Tier 2: invalid regex bubbles up so the caller can surface it."""
     import re
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -183,9 +183,9 @@ async def test_find_in_buffer_invalid_regex_raises() -> None:
 async def test_on_find_with_flags_seeds_router_state() -> None:
     """Tier 2: /find -r preserves the regex flag in router cycle state."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -211,9 +211,9 @@ async def test_on_find_with_flags_seeds_router_state() -> None:
 async def test_on_find_invalid_regex_emits_error_status() -> None:
     """Tier 2: malformed regex surfaces an error status, clears cycle state."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -240,9 +240,9 @@ async def test_on_find_invalid_regex_emits_error_status() -> None:
 async def test_cycle_find_preserves_flags() -> None:
     """Tier 2: Ctrl+G re-search uses the same flags as the initial /find."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -281,9 +281,9 @@ async def test_cycle_find_preserves_flags() -> None:
 async def test_flag_only_no_query_shows_usage_hint() -> None:
     """Tier 2: ``/find -r`` with no query falls through to the usage hint."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

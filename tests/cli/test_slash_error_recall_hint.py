@@ -112,9 +112,9 @@ async def test_image_no_path_recall_hint_visible_in_sticky(
     ``kind="general"`` (= transient, not the persistent thinking kind).
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, ReynHeader
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -196,8 +196,8 @@ async def test_inputbar_history_captures_slash_submit() -> None:
     """
     from textual.widgets import TextArea
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -231,8 +231,8 @@ async def test_inputbar_history_captures_errored_slash_submit() -> None:
     """
     from textual.widgets import TextArea
 
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import InputBar
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

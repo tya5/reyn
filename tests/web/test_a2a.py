@@ -95,9 +95,9 @@ def _client_with_registry(tmp_path: Path, agents: list[tuple[str, str]]):
     """
     from fastapi.testclient import TestClient
 
-    from reyn.web.deps import get_registry, get_run_registry
-    from reyn.web.run_registry import RunRegistry
-    from reyn.web.server import app
+    from reyn.interfaces.web.deps import get_registry, get_run_registry
+    from reyn.interfaces.web.run_registry import RunRegistry
+    from reyn.interfaces.web.server import app
 
     registry = _build_registry(tmp_path, agents)
     run_registry = RunRegistry()
@@ -109,7 +109,7 @@ def _client_with_registry(tmp_path: Path, agents: list[tuple[str, str]]):
 
 def _restore_overrides() -> None:
     """Clear FastAPI dependency overrides between tests."""
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
     app.dependency_overrides.clear()
 
 
@@ -124,7 +124,7 @@ def test_a2a_routes_mounted() -> None:
     Pins the wiring without exercising the protocol. A renamed router
     or a missing ``include_router`` would trip this test.
     """
-    from reyn.web.server import app
+    from reyn.interfaces.web.server import app
 
     paths = {getattr(r, "path", None) for r in app.routes}
     assert "/a2a/agents" in paths

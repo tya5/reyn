@@ -54,9 +54,9 @@ from reyn.chat.channel_state import (  # noqa: E402
     DeliveryResult,
 )
 from reyn.events.events import EventLog  # noqa: E402
+from reyn.interfaces.web.a2a_intervention import A2AInterventionBus  # noqa: E402
+from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402
 from reyn.user_intervention import UserIntervention  # noqa: E402
-from reyn.web.a2a_intervention import A2AInterventionBus  # noqa: E402
-from reyn.web.run_registry import RunRegistry  # noqa: E402
 
 # ── 1. RunRegistry.webhook_channel_state lifecycle ─────────────────────
 
@@ -113,7 +113,7 @@ def test_a2a_bus_on_dispatch_skips_post_when_channel_dead(
         posted.append((url, payload))
         return DeliveryResult(outcome=DeliveryOutcome.SUCCESS)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     registry = RunRegistry()
@@ -151,7 +151,7 @@ def test_a2a_bus_on_dispatch_records_success(monkeypatch) -> None:
     async def _fake_post(url: str, payload: dict):  # noqa: ANN202
         return DeliveryResult(outcome=DeliveryOutcome.SUCCESS)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     registry = RunRegistry()
@@ -189,7 +189,7 @@ def test_a2a_bus_on_dispatch_accumulates_consecutive_failures(
         call_count["n"] += 1
         return DeliveryResult(outcome=DeliveryOutcome.RETRYABLE_FAILURE)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     registry = RunRegistry()
@@ -235,7 +235,7 @@ def test_a2a_bus_on_dispatch_success_resets_failure_counter(
         call_count["n"] += 1
         return DeliveryResult(outcome=outcome)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     registry = RunRegistry()
@@ -269,7 +269,7 @@ def test_progress_bridge_send_gates_on_is_alive(monkeypatch) -> None:
     earlier on_dispatch failures means progress events skip the
     webhook fire too.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     posted: list = []
 
@@ -277,7 +277,7 @@ def test_progress_bridge_send_gates_on_is_alive(monkeypatch) -> None:
         posted.append((url, payload))
         return DeliveryResult(outcome=DeliveryOutcome.SUCCESS)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     registry = RunRegistry()
@@ -319,12 +319,12 @@ def test_bus_and_bridge_share_the_same_channel_state(monkeypatch) -> None:
     bridge progress, then bus completed) feeds one consecutive-failure
     counter — not three separate counters that never hit threshold.
     """
-    from reyn.web.routers.a2a import _A2AProgressBridge
+    from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
 
     async def _fake_post(url: str, payload: dict):  # noqa: ANN202
         return DeliveryResult(outcome=DeliveryOutcome.RETRYABLE_FAILURE)
 
-    import reyn.web.notifications as notifications_mod
+    import reyn.interfaces.web.notifications as notifications_mod
     monkeypatch.setattr(notifications_mod, "post_webhook", _fake_post)
 
     registry = RunRegistry()

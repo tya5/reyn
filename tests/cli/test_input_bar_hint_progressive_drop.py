@@ -29,7 +29,7 @@ if str(_SRC) not in sys.path:
 
 
 def _hint(width: int = 0) -> str:
-    from reyn.tui.widgets.input_bar import InputBar
+    from reyn.interfaces.tui.widgets.input_bar import InputBar
 
     bar = InputBar.__new__(InputBar)
     return InputBar._build_hint(bar, width)

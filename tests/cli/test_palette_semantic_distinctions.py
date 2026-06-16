@@ -38,7 +38,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.tui._palette import (
+from reyn.interfaces.tui._palette import (
     _EVENT_PLAN,
     _EVENT_PLAN_STEP,
     _EVENT_SKILL,

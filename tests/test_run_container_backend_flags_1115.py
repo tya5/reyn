@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.cli.env_backend import (
+from reyn.interfaces.cli.env_backend import (
     build_environment_backend as _build_environment_backend,
 )
 

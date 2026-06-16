@@ -35,7 +35,7 @@ if str(_SRC) not in sys.path:
 
 def test_freshly_constructed_row_renders_cursor_not_stall() -> None:
     """Tier 2: a new row with no tokens shows the cursor, not the stall cue."""
-    from reyn.tui.widgets.streaming_row import StreamingRow
+    from reyn.interfaces.tui.widgets.streaming_row import StreamingRow
 
     row = StreamingRow(prefix="")
     rendered = row.build_renderable().plain
@@ -55,7 +55,7 @@ def test_open_with_no_tokens_after_six_seconds_renders_stall_cue() -> None:
     by 6s to simulate "first token still pending after 6s of cold
     start" without actually sleeping in the test.
     """
-    from reyn.tui.widgets.streaming_row import StreamingRow
+    from reyn.interfaces.tui.widgets.streaming_row import StreamingRow
 
     row = StreamingRow(prefix="")
     # Simulate 6s elapsed since open with NO append() ever called.
@@ -76,7 +76,7 @@ def test_chunk_arrival_resets_idle_timer() -> None:
     later refactors of the idle path can't silently disable the
     post-first-token cursor reset.
     """
-    from reyn.tui.widgets.streaming_row import StreamingRow
+    from reyn.interfaces.tui.widgets.streaming_row import StreamingRow
 
     row = StreamingRow(prefix="")
     row._last_chunk_at = monotonic() - 6.0  # stall would fire here

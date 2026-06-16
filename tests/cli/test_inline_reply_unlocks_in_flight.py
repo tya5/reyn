@@ -26,8 +26,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.tui.app import ReynTUIApp
-from reyn.tui.widgets import InputBar
+from reyn.interfaces.tui.app import ReynTUIApp
+from reyn.interfaces.tui.widgets import InputBar
 
 
 def _make_app() -> ReynTUIApp:
@@ -48,8 +48,8 @@ async def _dispatch_via_router(app: ReynTUIApp, msg: OutboxMessage) -> None:
     dispatch table — identical logic to the while-loop body in
     OutboxRouter.run().  This is the real dispatch path, not a re-implementation.
     """
-    from reyn.tui.app_outbox import OutboxRouter
-    from reyn.tui.widgets import ConversationView, ReynHeader
+    from reyn.interfaces.tui.app_outbox import OutboxRouter
+    from reyn.interfaces.tui.widgets import ConversationView, ReynHeader
 
     conv = app.query_one("#conversation", ConversationView)
     header = app.query_one("#header", ReynHeader)

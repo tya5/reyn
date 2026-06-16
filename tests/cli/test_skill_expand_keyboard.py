@@ -36,8 +36,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_in_flight_skill_rows_excludes_finished() -> None:
     """Tier 2: only unfinished rows are returned (= F3 target set)."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -58,8 +58,8 @@ async def test_in_flight_skill_rows_excludes_finished() -> None:
 @pytest.mark.asyncio
 async def test_f3_action_expands_single_in_flight_row() -> None:
     """Tier 2: F3 toggles is_expanded on the lone in-flight row."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -88,8 +88,8 @@ async def test_f3_converges_mixed_state_to_single_target() -> None:
     toggle would flip each individually and the next press would
     return to the original split — F3 would feel "stuck".
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -128,9 +128,9 @@ async def test_f3_with_no_in_flight_shows_status_hint(
     skill" hint is what gets shown (= this test exercises the non-tip
     code path; first-use tip path is covered in test_f3_first_use_tip.py).
     """
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.prefs import save_tui_prefs
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.prefs import save_tui_prefs
+    from reyn.interfaces.tui.widgets import ConversationView
 
     # Mark tip already seen so the standard "no rows" hint appears.
     save_tui_prefs(tmp_path, {"tip_f3_seen": True})
@@ -156,8 +156,8 @@ async def test_f3_with_no_in_flight_shows_status_hint(
 @pytest.mark.asyncio
 async def test_f3_skips_finished_rows() -> None:
     """Tier 2: F3 only touches in-flight rows, leaves finished ones alone."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets import ConversationView
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -181,7 +181,7 @@ async def test_f3_skips_finished_rows() -> None:
 
 def test_f3_binding_registered() -> None:
     """Tier 2: ``f3`` is bound to ``skill_expand_toggle`` in app BINDINGS."""
-    from reyn.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.app import ReynTUIApp
 
     binds = {(b.key, b.action) for b in ReynTUIApp.BINDINGS}
     assert ("f3", "skill_expand_toggle") in binds
@@ -189,7 +189,7 @@ def test_f3_binding_registered() -> None:
 
 def test_keys_tab_routes_f3_to_conversation() -> None:
     """Tier 2: F3 lands in the CONVERSATION group, not OTHER."""
-    from reyn.tui.widgets.right_panel.keys_tab import (
+    from reyn.interfaces.tui.widgets.right_panel.keys_tab import (
         _key_group_for,
         _pretty_key,
     )
@@ -202,8 +202,8 @@ def test_keys_tab_routes_f3_to_conversation() -> None:
 @pytest.mark.asyncio
 async def test_keys_tab_render_includes_f3_with_description() -> None:
     """Tier 2: rendered Keys tab markup surfaces F3 + its description."""
-    from reyn.tui.app import ReynTUIApp
-    from reyn.tui.widgets.right_panel.keys_tab import render_keys
+    from reyn.interfaces.tui.app import ReynTUIApp
+    from reyn.interfaces.tui.widgets.right_panel.keys_tab import render_keys
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
