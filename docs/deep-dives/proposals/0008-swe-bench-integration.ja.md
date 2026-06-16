@@ -1,10 +1,20 @@
 # FP-0008: SWE-bench 参加インフラ — stdlib スキル + バッチ実行
 
-**Status**: proposed
+**Status**: partially superseded — Component A（`swe_bench` スキル）は #187 で退役 / Component B（`reyn eval benchmark`）は実装済
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 
 ---
+
+> **Status update（#187 以降）。** Component B — `reyn eval benchmark` バッチランナー
+> — は実装され現行。Component A — `swe_bench` stdlib スキル — は実装後 **#187 で退役**:
+> 現在の SWE-bench 実行方式は各 instance を **general agent 経由 `reyn run-once`**（スキル
+> なし、prompt に held-out `test_patch` なし）でルートし、per-instance に
+> `scripts/swe_bench_runner.py` がラップする。authoritative スコアリングは外部
+> `swebench` harness（`eval_benchmark.run_tier1_swebench_eval`）へ委譲。以下のスキル
+> ベース設計（Component A）は当初提案の記録として保持する。
+> **今 SWE-bench を実際に回す手順は operator how-to を参照:
+> [Run SWE-bench](../../guide/for-reyn-developers/run-swe-bench.md)。**
 
 ## Summary
 
@@ -53,6 +63,11 @@ SWE-bench harness
   → pass / fail を判定
 ```
 
+> ⚠️ **Superseded（歴史的記録）。** 上記の「Reyn が swe_bench スキルを実行」ステップは
+> #187 で退役。現在のフローは per-instance コンテナ内で **general agent 経由 `reyn run-once`**
+> を実行（スキルなし）し、harness が patch を apply して外部スコアリングする。
+> [operator how-to](../../guide/for-reyn-developers/run-swe-bench.md) を参照。
+
 Reyn の呼び出し口:
 
 ```
@@ -67,7 +82,11 @@ reyn eval benchmark swe_bench --tasks swe_bench_verified.jsonl --output results/
 
 ## Proposed implementation
 
-### Component A — `swe_bench` stdlib スキル（MEDIUM）
+### Component A — `swe_bench` stdlib スキル（MEDIUM） — #187 で退役
+
+> **退役済。** このスキルは実装後 #187 で退役し、agent-routed runner（general agent
+> 経由 `reyn run-once`、スキルなし）へ置換された。以下の phase/スキル設計は当初提案の
+> 記録としてのみ保持する。
 
 ```
 src/reyn/stdlib/skills/swe_bench/
@@ -142,9 +161,15 @@ class SweBenchResult(BaseModel):
     attempts: int       # verify ループの回数
 ```
 
-### Component B — `reyn eval benchmark` バッチ実行コマンド（MEDIUM）
+### Component B — `reyn eval benchmark` バッチ実行コマンド（MEDIUM） — 実装済
 
 SWE-bench Verified の 500 問を効率的に実行するバッチランナー。
+
+> **実装済（現行）。** `reyn eval benchmark <SKILL> --tasks … --output …` は実在し、
+> バッチドライバとして稼働。スキルを JSONL タスクファイルに対し並行ディスパッチで実行し、
+> Tier-1 faithful スコアリングを内蔵する（SWE-bench タスクは `--clone-task-repo`）。
+> [`reyn eval` reference](../../reference/cli/eval.md#subcommand-benchmark) と
+> [operator how-to](../../guide/for-reyn-developers/run-swe-bench.md) を参照。
 
 ```
 reyn eval benchmark <skill_name> \

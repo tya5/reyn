@@ -128,6 +128,8 @@ nav:
           - Extending Reyn:
               - guide/for-reyn-developers/add-an-op-kind.md
               - guide/for-reyn-developers/write-replay-tests.md
+          - Benchmarking:
+              - guide/for-reyn-developers/run-swe-bench.md
   - Reference:
       - CLI:
           - Running Reyn:

@@ -39,6 +39,10 @@ The OS (`kernel/runtime.py`) is the only thing that calls the LLM, executes Cont
 - **[Add a new op kind](add-an-op-kind.md)** — register a new Control IR operation. Three touch points: model, registry, handler.
 - **[Write LLMReplay tests](write-replay-tests.md)** — test LLM-dependent behaviour deterministically without live API calls.
 
+### Benchmarking
+
+- **[Run SWE-bench](run-swe-bench.md)** — run Reyn against SWE-bench: solve a single instance, run a batch, and the optional-dep / honest-skip scoring gotcha.
+
 ### Understanding the system
 
 - **[P1–P8 and the code that enforces them](principles-and-code.md)** — file-by-file map of how each principle is mechanically upheld.
