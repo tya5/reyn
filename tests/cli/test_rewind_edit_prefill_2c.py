@@ -30,7 +30,7 @@ from reyn.chat.registry import AgentRegistry
 from reyn.events.state_log import StateLog
 from reyn.tui.app import ReynTUIApp
 from reyn.tui.widgets import ConversationView, InputBar
-from reyn.tui.widgets._branch_tree import build_branch_tree_rows
+from reyn.tui.widgets.branch_tree import build_branch_tree_rows
 from reyn.tui.widgets.rewind_menu import RewindMenuWidget
 
 

@@ -35,7 +35,7 @@ from reyn.tui._palette import (
     _TEXT_DIM,
     _TEXT_MUTED,
 )
-from reyn.tui.widgets._branch_tree import ROW_CHECKPOINT, ROW_HEADER
+from reyn.tui.widgets.branch_tree import ROW_CHECKPOINT, ROW_HEADER
 
 # Max tree rows (headers + checkpoints) rendered at once (#1577 — mirrors
 # SlashPicker / the old flat window). The window slides to keep the selected
