@@ -25,6 +25,7 @@ models:
 |-----|------|-------------|
 | `model` | string | Default model class. Resolved via `models`. Override with `--model`. |
 | `models` | map | Class name → LiteLLM model string **or** dict (see below). |
+| `model_class_by_purpose` | map | Per-purpose model-class override (`router` / `control_ir` / `tool` / `compaction` / `judge`). Unset purpose → `model`. See below. |
 | `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `safety` | map | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
 | `cost` | map | Budget caps and rate limits (per-agent, daily, monthly). See below. |
@@ -249,6 +250,38 @@ User-declared entries **override** built-ins with the same name.  The built-in c
 is a convenience starting point; your `reyn.yaml` is always the source of truth.
 
 See [Reference: built-in models](../builtin-models.md) for per-entry details.
+
+### `model_class_by_purpose` — per-purpose model class
+
+Reyn makes several internal LLM calls beyond the main agent reply, each tied to a
+logical **purpose**. By default every purpose uses your configured `model` (the
+default class) — **routing follows the model you configured; there is no hidden
+cheaper tier**. `model_class_by_purpose` lets you override the class for a
+specific purpose; an unset purpose falls back to `model`.
+
+| Purpose | What it covers |
+|---|---|
+| `router` | The per-turn chat router / intent classification (and the plan-decomposition router). |
+| `control_ir` | Control-IR sub-execution model. |
+| `tool` | The default class for tool-spawned skill runs. |
+| `compaction` | Context-compaction summarisation. |
+| `judge` | Output-judging / evaluation calls. |
+
+```yaml
+model: standard                  # the default class for every purpose
+models:
+  standard: openai/gpt-5.4
+  light:    openai/gpt-4o-mini
+model_class_by_purpose:
+  router: light                  # opt INTO a cheaper per-turn router (an explicit choice)
+  # control_ir / tool / compaction / judge unset → follow `model` (gpt-5.4)
+```
+
+**Cost note**: the router runs on every turn, so the cheap-router optimisation is
+still available — it is now an explicit one-line opt-in (`router: light`) rather
+than a hidden default. Explicit per-call selections (a skill's `op.model`, a
+phase's frontmatter `model_class`) still win over this fallback. Unknown purpose
+keys are warned (not fatal) at load time.
 
 ## `chat` block
 

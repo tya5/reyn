@@ -56,7 +56,7 @@ class PlanRuntime:
         chain_id: str,
         plan_id: str | None = None,
         budget: Any = None,
-        router_model: str = "light",
+        router_model: "str | None" = None,  # #1672: None → config "router" class (resolved downstream by execute_plan)
         resume_plan: PlanResumePlan | None = None,
         step_max_iterations: int | None = None,
         retry_limit: int | None = None,

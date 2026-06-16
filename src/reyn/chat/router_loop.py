@@ -1383,7 +1383,7 @@ class RouterLoop:
         host: RouterLoopHost,
         chain_id: str,
         max_iterations: int = 5,
-        router_model: str = "light",  # config tier (light = intent classification)
+        router_model: "str | None" = None,  # #1672: None → config (model_class_for("router")); was hardcoded "light"
         budget: Any = None,  # BudgetTracker | None — process-shared cost tracker
         system_prompt_override: str | None = None,
         non_interactive: bool = False,  # #1440 followup: run-once (no TTY) → live router SP proceeds instead of asking a clarifying question (13398). Threaded from ChatSession.
@@ -1401,7 +1401,16 @@ class RouterLoop:
         self.host = host
         self.chain_id = chain_id
         self.max_iterations = max_iterations
-        self.router_model = router_model
+        # #1672: an UNSET router_model follows the configured model (no hidden
+        # "light" tier) — resolve the "router" purpose class via the host's
+        # config-aware ModelResolver. Explicit router_model still wins. The plan
+        # path inherits this resolved value (dispatch_plan_tool passes
+        # self.router_model), so the chat router + plan-decomposition router both
+        # follow config from this single resolution point.
+        from reyn.llm.model_resolver import resolve_purpose_class
+        self.router_model = resolve_purpose_class(
+            router_model, getattr(host, "resolver", None), "router",
+        )
         self.budget = budget
         # #1092 PR-C-2.5: phase-relative op-dispatch counter for crash-resume WAL
         # memoization. Only advanced when the host opts a dispatch into phase-memo

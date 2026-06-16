@@ -283,7 +283,11 @@ def _build_runner():
 
         config = load_config()
         model_class = config.model
-        resolver = ModelResolver(config.models)
+        resolver = ModelResolver(
+            config.models,
+            default_class=config.model,
+            purpose_classes=config.model_class_by_purpose,
+        )
         resolved = resolver.resolve(model_class).model
         project_root = _find_project_root(Path.cwd())
         project_context = load_project_context(config, project_root)

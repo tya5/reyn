@@ -726,7 +726,11 @@ def run_install(args: argparse.Namespace) -> None:
 
     if config.api_base:
         os.environ.setdefault("LITELLM_API_BASE", config.api_base)
-    resolver = ModelResolver(config.models)
+    resolver = ModelResolver(
+        config.models,
+        default_class=config.model,
+        purpose_classes=config.model_class_by_purpose,
+    )
     logger = make_logger()
     # #997 dir2: config-derived permission/runtime bundle wired by from_config.
     agent = Agent.from_config(

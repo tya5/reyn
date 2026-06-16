@@ -415,7 +415,11 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
     config = load_config()
-    resolver = ModelResolver(config.models)
+    resolver = ModelResolver(
+        config.models,
+        default_class=config.model,
+        purpose_classes=config.model_class_by_purpose,
+    )
     model = config.model
     output_language = config.output_language
     safety = config.safety
