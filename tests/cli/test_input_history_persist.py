@@ -44,9 +44,9 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_history_deque_caps_at_max() -> None:
     """Tier 2: in-memory history evicts oldest past ``_HISTORY_MAX``."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
-    from reyn.chat.tui.widgets.input_bar import _HISTORY_MAX
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
+    from reyn.tui.widgets.input_bar import _HISTORY_MAX
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -67,8 +67,8 @@ async def test_save_persisted_history_writes_to_prefs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: ``_save_persisted_history`` writes to tui_prefs.json."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -92,9 +92,9 @@ async def test_persisted_slice_caps_at_persist_max(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: persisted JSON contains only the last ``_HISTORY_PERSIST_MAX``."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
-    from reyn.chat.tui.widgets.input_bar import _HISTORY_PERSIST_MAX
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
+    from reyn.tui.widgets.input_bar import _HISTORY_PERSIST_MAX
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -117,9 +117,9 @@ async def test_oversized_entry_excluded_from_persisted_slice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: entries past the byte cap are kept in memory but dropped from prefs."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
-    from reyn.chat.tui.widgets.input_bar import _HISTORY_ENTRY_PERSIST_MAX_BYTES
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
+    from reyn.tui.widgets.input_bar import _HISTORY_ENTRY_PERSIST_MAX_BYTES
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -154,8 +154,8 @@ async def test_load_persisted_history_hydrates_on_mount(
     # Patch the project-root resolver BEFORE mount via monkey-patching
     # the App method post-construction. Mount fires on_mount which
     # invokes the helper.
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     monkeypatch.setattr(app, "_project_root_path", lambda: tmp_path)
@@ -175,8 +175,8 @@ async def test_load_persisted_history_missing_file_is_silent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: no prefs file → empty history, no crash."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -198,8 +198,8 @@ async def test_load_persisted_history_malformed_value_silent(
     (prefs_dir / "tui_prefs.json").write_text(json.dumps({
         "input_history": "not-a-list",
     }))
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -216,8 +216,8 @@ async def test_round_trip_submit_then_reload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: append-then-save-then-reload returns the same entries."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

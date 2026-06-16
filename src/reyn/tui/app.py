@@ -37,7 +37,7 @@ from textual.containers import Horizontal
 from textual.theme import Theme
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui._palette import (
+from reyn.tui._palette import (
     _BORDER_DIM,
     _CORAL,
     _RED_MUTED,
@@ -435,7 +435,7 @@ class ReynTUIApp(App):
         # when the file is absent / malformed (= first launch, fresh
         # project). F10: previously /cost-inline reset to "off" on
         # every restart because no persistence existed.
-        from reyn.chat.tui.prefs import load_tui_prefs
+        from reyn.tui.prefs import load_tui_prefs
         prefs = load_tui_prefs(self._project_root_path())
         self._cost_inline_enabled = bool(prefs.get("cost_inline", False))
 
@@ -1665,7 +1665,7 @@ class ReynTUIApp(App):
           but that's better than crashing the action).
         - ``show_status_fn`` raising → swallowed (= conv pane mid-init).
         """
-        from reyn.chat.tui.prefs import load_tui_prefs, save_tui_prefs
+        from reyn.tui.prefs import load_tui_prefs, save_tui_prefs
 
         root = self._project_root_path()
         prefs = load_tui_prefs(root)

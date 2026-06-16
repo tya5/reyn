@@ -21,7 +21,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label
 
-from reyn.chat.tui._palette import (
+from reyn.tui._palette import (
     _BG_HEADER,
     _STATUS_CRITICAL,
     _STATUS_ERROR,

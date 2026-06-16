@@ -54,8 +54,8 @@ def _render_text(row) -> str:
 @pytest.mark.asyncio
 async def test_row_starts_collapsed() -> None:
     """Tier 2: a freshly mounted row is not expanded."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -71,8 +71,8 @@ async def test_row_starts_collapsed() -> None:
 @pytest.mark.asyncio
 async def test_toggle_expand_shows_history_line() -> None:
     """Tier 2: after ``toggle_expand``, the rendered text includes phase names."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -99,8 +99,8 @@ async def test_toggle_expand_shows_history_line() -> None:
 @pytest.mark.asyncio
 async def test_toggle_expand_round_trip_back_to_collapsed() -> None:
     """Tier 2: toggling twice returns to the original collapsed render shape."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -134,8 +134,8 @@ async def test_phase_history_records_revisits_with_visit_count() -> None:
     ("we went back to research a 2nd time"). Pin that the visit
     count surfaces in the drilled-down render.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -164,8 +164,8 @@ async def test_repeated_set_phase_same_value_does_not_inflate_history() -> None:
     plan → plan → research". Pin that consecutive identical calls
     record only once.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -199,8 +199,8 @@ async def test_finish_preserves_expand_state() -> None:
     completion (= "what did this skill end up doing?"). The expand
     state must outlive the running → finished transition.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -232,8 +232,8 @@ async def test_click_event_toggles_expand() -> None:
     """
     from textual import events as textual_events
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -275,8 +275,8 @@ async def test_expanded_with_no_phase_history_shows_none_yet() -> None:
     any phase transition has been recorded. The drill-down line
     should explain there's nothing to show rather than render empty.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

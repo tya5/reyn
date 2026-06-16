@@ -32,9 +32,9 @@ if str(_SRC) not in sys.path:
 
 from textual.widgets import RichLog
 
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ConversationView
-from reyn.chat.tui.widgets.conversation import _GLYPH_AGENT
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets import ConversationView
+from reyn.tui.widgets.conversation import _GLYPH_AGENT
 
 
 def _make_app() -> ReynTUIApp:

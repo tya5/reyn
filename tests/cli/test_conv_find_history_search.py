@@ -30,8 +30,8 @@ async def test_find_in_buffer_returns_substring_matches() -> None:
     """Tier 2: substring match against the RichLog buffer is case-insensitive."""
     from rich.text import Text
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -55,8 +55,8 @@ async def test_find_in_buffer_returns_substring_matches() -> None:
 @pytest.mark.asyncio
 async def test_find_in_buffer_empty_query_returns_empty_list() -> None:
     """Tier 2: empty / whitespace-only query → empty result (= safe no-op)."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -75,9 +75,9 @@ async def test_on_find_no_matches_writes_error_status() -> None:
     from rich.text import Text
 
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -105,9 +105,9 @@ async def test_on_find_matches_writes_count_and_lines_in_status() -> None:
     from rich.text import Text
 
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -143,9 +143,9 @@ async def test_on_find_matches_writes_count_and_lines_in_status() -> None:
 async def test_on_find_empty_query_writes_usage_status() -> None:
     """Tier 2: empty query → usage hint via error-kind status."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

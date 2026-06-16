@@ -21,7 +21,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui._palette import (
+from reyn.tui._palette import (
     _BG_PANEL,
     _HINT_ACTION,
     _RED_MUTED,

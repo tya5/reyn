@@ -18,7 +18,7 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label
 
-from reyn.chat.tui._palette import (
+from reyn.tui._palette import (
     _EVENT_INTERVENTION,
     _IV_HOVER,
     _IV_SURFACE,

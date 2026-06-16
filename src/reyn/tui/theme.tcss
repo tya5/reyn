@@ -16,7 +16,7 @@
    pane border was defined in two places and only the theme.tcss one
    was effective).
 
-   Colour values are documented in src/reyn/chat/tui/_palette.py — keep
+   Colour values are documented in src/reyn/tui/_palette.py — keep
    `_palette.py` as the single source of truth and reference its values
    here when a literal is needed. */
 

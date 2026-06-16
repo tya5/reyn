@@ -56,14 +56,14 @@ def _seed(conv, lines: list[str]) -> None:
 
 def test_preview_short_text_passes_through() -> None:
     """Tier 2: a short line returns unchanged."""
-    from reyn.chat.tui.app_outbox import _find_preview_snippet
+    from reyn.tui.app_outbox import _find_preview_snippet
 
     assert _find_preview_snippet("hello world") == "hello world"
 
 
 def test_preview_long_text_truncated_with_ellipsis() -> None:
     """Tier 2: text past the budget collapses to ``<head>…``."""
-    from reyn.chat.tui.app_outbox import (
+    from reyn.tui.app_outbox import (
         _FIND_PREVIEW_MAX_CHARS,
         _find_preview_snippet,
     )
@@ -76,14 +76,14 @@ def test_preview_long_text_truncated_with_ellipsis() -> None:
 
 def test_preview_collapses_whitespace_runs() -> None:
     """Tier 2: indented / multi-space lines compact to single-space."""
-    from reyn.chat.tui.app_outbox import _find_preview_snippet
+    from reyn.tui.app_outbox import _find_preview_snippet
 
     assert _find_preview_snippet("   foo    bar  baz") == "foo bar baz"
 
 
 def test_preview_empty_or_whitespace_returns_empty() -> None:
     """Tier 2: whitespace-only / empty input → empty snippet (no quotes)."""
-    from reyn.chat.tui.app_outbox import _find_preview_snippet
+    from reyn.tui.app_outbox import _find_preview_snippet
 
     assert _find_preview_snippet("") == ""
     assert _find_preview_snippet("   ") == ""
@@ -97,9 +97,9 @@ def test_preview_empty_or_whitespace_returns_empty() -> None:
 async def test_on_find_status_includes_matched_line_content() -> None:
     """Tier 2: initial /find status includes the matched line text in quotes."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -130,9 +130,9 @@ async def test_on_find_status_includes_matched_line_content() -> None:
 async def test_on_find_preview_truncates_long_match() -> None:
     """Tier 2: long matched lines get the ``…`` suffix in the preview."""
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     # Wider terminal so RichLog doesn't wrap the long line — we
@@ -171,9 +171,9 @@ async def test_cycle_find_status_updates_preview() -> None:
     match's content to the second's.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -225,9 +225,9 @@ async def test_cycle_find_preview_whitespace_only_line_omits_quotes() -> None:
     suppresses the suffix.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -240,5 +240,5 @@ async def test_cycle_find_preview_whitespace_only_line_omits_quotes() -> None:
         # match whose line text is all whitespace. Use find_in_buffer
         # to verify the case via the helper — direct status assertion
         # is hard because a real "blank line search" rarely arises.
-        from reyn.chat.tui.app_outbox import _find_preview_snippet
+        from reyn.tui.app_outbox import _find_preview_snippet
         assert _find_preview_snippet("   \t  ") == ""

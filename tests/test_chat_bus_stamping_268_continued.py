@@ -157,7 +157,7 @@ def test_chat_bus_channel_id_property_returns_configured_value() -> None:
 
 def test_default_chat_channel_id_constant_is_tui() -> None:
     """Tier 2: the module-level constant matches what
-    ``src/reyn/chat/tui/app.py:on_mount`` registers as the listener_id.
+    ``src/reyn/tui/app.py:on_mount`` registers as the listener_id.
 
     If either side drifts, this test catches the mismatch immediately.
     """
@@ -171,7 +171,7 @@ def test_tui_on_mount_registers_default_chat_channel_id_listener() -> None:
 
     AST grep keeps this aligned without booting a real TUI.
     """
-    from reyn.chat.tui import app as tui_app
+    from reyn.tui import app as tui_app
 
     src = inspect.getsource(tui_app)
     # ChatTUIApp.on_mount calls

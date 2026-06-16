@@ -28,10 +28,10 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets._branch_tree import ROW_HEADER
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets._branch_tree import ROW_HEADER
 
 
 def _no_factory(_profile):

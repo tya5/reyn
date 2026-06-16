@@ -31,8 +31,8 @@ if str(_SRC) not in sys.path:
 
 async def _mount_intervention(pilot, iv_id: str = "focus-test"):
     """Mount a free-text-only InterventionWidget under the conv pane."""
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = pilot.app
     conv = app.query_one("#conversation", ConversationView)
@@ -47,8 +47,8 @@ async def test_ctrl_c_after_intervention_focuses_input_bar() -> None:
     """Tier 2: Ctrl+C dismisses intervention + focuses the InputBar TextArea."""
     from textual.widgets import TextArea
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -90,8 +90,8 @@ async def test_ctrl_c_without_intervention_does_not_steal_focus() -> None:
     bare Ctrl+C should not yank focus away from wherever the user
     intentionally moved it.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import InputBar
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import InputBar
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
 

@@ -42,9 +42,9 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_async_stack_panel_mounted_in_conv_pane() -> None:
     """Tier 2: ``compose()`` yields an AsyncStackPanel with id ``async-stack``."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -57,8 +57,8 @@ async def test_async_stack_panel_mounted_in_conv_pane() -> None:
 @pytest.mark.asyncio
 async def test_add_async_task_surfaces_entry_in_snapshot() -> None:
     """Tier 2: ``add_async_task`` adds a row visible via the panel's snapshot."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -77,8 +77,8 @@ async def test_add_async_task_surfaces_entry_in_snapshot() -> None:
 @pytest.mark.asyncio
 async def test_remove_async_task_drops_entry() -> None:
     """Tier 2: ``remove_async_task`` removes the entry from the panel."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -105,8 +105,8 @@ async def test_clear_async_tasks_empties_panel() -> None:
     The full ``ConversationView.clear()`` also calls this — verified
     indirectly via the panel ending up empty after clear.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -134,8 +134,8 @@ async def test_helpers_safe_when_panel_absent() -> None:
     Directly unmounting via ``panel.remove()`` would collide with
     AsyncStackPanel's own ``remove(agent_id)`` method override.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

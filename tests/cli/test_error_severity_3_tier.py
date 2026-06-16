@@ -29,63 +29,63 @@ if str(_SRC) not in sys.path:
 
 def test_classify_budget_exceeded_is_high() -> None:
     """Tier 2: [budget exceeded] text → high severity."""
-    from reyn.chat.tui.widgets.conversation import _classify_error_severity
+    from reyn.tui.widgets.conversation import _classify_error_severity
 
     assert _classify_error_severity("[budget exceeded] daily limit hit", {}) == "high"
 
 
 def test_classify_auth_error_is_high() -> None:
     """Tier 2: [auth error] text → high severity."""
-    from reyn.chat.tui.widgets.conversation import _classify_error_severity
+    from reyn.tui.widgets.conversation import _classify_error_severity
 
     assert _classify_error_severity("[auth error] invalid API key", {}) == "high"
 
 
 def test_classify_permission_denied_text_is_high() -> None:
     """Tier 2: [permission denied] text → high severity."""
-    from reyn.chat.tui.widgets.conversation import _classify_error_severity
+    from reyn.tui.widgets.conversation import _classify_error_severity
 
     assert _classify_error_severity("[permission denied] path /etc/passwd", {}) == "high"
 
 
 def test_classify_meta_source_failed_is_high() -> None:
     """Tier 2: meta source ending in _failed → high severity."""
-    from reyn.chat.tui.widgets.conversation import _classify_error_severity
+    from reyn.tui.widgets.conversation import _classify_error_severity
 
     assert _classify_error_severity("something went wrong", {"source": "workflow_failed"}) == "high"
 
 
 def test_classify_meta_source_aborted_is_high() -> None:
     """Tier 2: meta source ending in _aborted → high severity."""
-    from reyn.chat.tui.widgets.conversation import _classify_error_severity
+    from reyn.tui.widgets.conversation import _classify_error_severity
 
     assert _classify_error_severity("aborted", {"source": "skill_run_aborted"}) == "high"
 
 
 def test_classify_usage_prefix_is_low() -> None:
     """Tier 2: 'usage: /image <path>' → low severity (user-input mistake)."""
-    from reyn.chat.tui.widgets.conversation import _classify_error_severity
+    from reyn.tui.widgets.conversation import _classify_error_severity
 
     assert _classify_error_severity("usage: /image <path>", {}) == "low"
 
 
 def test_classify_unknown_command_is_low() -> None:
     """Tier 2: 'unknown command /foo' → low severity."""
-    from reyn.chat.tui.widgets.conversation import _classify_error_severity
+    from reyn.tui.widgets.conversation import _classify_error_severity
 
     assert _classify_error_severity("unknown command /foo", {}) == "low"
 
 
 def test_classify_generic_error_is_med() -> None:
     """Tier 2: unclassified error → med severity (recoverable default)."""
-    from reyn.chat.tui.widgets.conversation import _classify_error_severity
+    from reyn.tui.widgets.conversation import _classify_error_severity
 
     assert _classify_error_severity("router failed: connection reset", {}) == "med"
 
 
 def test_classify_empty_message_is_med() -> None:
     """Tier 2: empty message with empty meta → med (safe default)."""
-    from reyn.chat.tui.widgets.conversation import _classify_error_severity
+    from reyn.tui.widgets.conversation import _classify_error_severity
 
     assert _classify_error_severity("", {}) == "med"
 
@@ -100,7 +100,7 @@ async def test_terminal_error_priority_above_thinking() -> None:
     We verify via snapshot() that after a terminal error show, the sticky
     IS active (= not suppressed by thinking) when shown over a thinking sticky.
     """
-    from reyn.chat.tui.widgets.sticky_status import (
+    from reyn.tui.widgets.sticky_status import (
         _KIND_PRIORITY,
         _TERMINAL_ERROR_PRIORITY,
     )
@@ -126,8 +126,8 @@ async def test_terminal_error_show_via_show_status() -> None:
     show_status(kind="error", terminal=True) activates the sticky correctly
     and that a subsequent lower-priority general show is suppressed.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -159,7 +159,7 @@ async def test_terminal_error_show_via_show_status() -> None:
 
 def test_events_tab_error_filter_includes_safety_limit_checkpoint() -> None:
     """Tier 2: events-tab 'error' filter includes safety_limit_checkpoint."""
-    from reyn.chat.tui.widgets.right_panel.events_tab import _FILTER_GROUPS
+    from reyn.tui.widgets.right_panel.events_tab import _FILTER_GROUPS
 
     error_set = dict(_FILTER_GROUPS).get("error") or next(
         (s for label, s in _FILTER_GROUPS if label == "error"), frozenset()
@@ -169,7 +169,7 @@ def test_events_tab_error_filter_includes_safety_limit_checkpoint() -> None:
 
 def test_events_tab_error_filter_includes_chain_timeout() -> None:
     """Tier 2: events-tab 'error' filter includes chain_timeout."""
-    from reyn.chat.tui.widgets.right_panel.events_tab import _FILTER_GROUPS
+    from reyn.tui.widgets.right_panel.events_tab import _FILTER_GROUPS
 
     error_set = next(
         (s for label, s in _FILTER_GROUPS if label == "error"), frozenset()
@@ -179,7 +179,7 @@ def test_events_tab_error_filter_includes_chain_timeout() -> None:
 
 def test_events_tab_error_filter_includes_chain_peer_discarded() -> None:
     """Tier 2: events-tab 'error' filter includes chain_peer_discarded."""
-    from reyn.chat.tui.widgets.right_panel.events_tab import _FILTER_GROUPS
+    from reyn.tui.widgets.right_panel.events_tab import _FILTER_GROUPS
 
     error_set = next(
         (s for label, s in _FILTER_GROUPS if label == "error"), frozenset()

@@ -31,8 +31,8 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_cycle_event_tail_calls_scroll_into_view() -> None:
     """Tier 2: ``cycle_event_tail`` invokes ``_scroll_events_into_view``."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -55,8 +55,8 @@ async def test_cycle_event_tail_calls_scroll_into_view() -> None:
 @pytest.mark.asyncio
 async def test_cycle_event_filter_still_calls_scroll_into_view() -> None:
     """Tier 2: regression — the existing filter cycle still re-anchors."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -78,9 +78,9 @@ async def test_cycle_event_filter_still_calls_scroll_into_view() -> None:
 @pytest.mark.asyncio
 async def test_cycle_event_tail_advances_index() -> None:
     """Tier 2: regression — tail cycle still advances ``_event_tail_idx``."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
-    from reyn.chat.tui.widgets.right_panel import _TAIL_CYCLE
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
+    from reyn.tui.widgets.right_panel import _TAIL_CYCLE
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

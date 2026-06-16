@@ -1,7 +1,7 @@
 """Tier 2: WS client frame parser + URL builder + session proxy submit.
 
 Issue #276 Phase A (= TUI thin client `--connect ws://...` proof of
-concept). Pins the public surface of ``reyn.chat.tui.ws_client``
+concept). Pins the public surface of ``reyn.tui.ws_client``
 without standing up a real WebSocket server (= server side is the
 existing ``reyn web`` endpoint, no changes needed for Phase A).
 
@@ -34,7 +34,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.ws_client import (
+from reyn.tui.ws_client import (
     _build_ws_url,
     _parse_frame,
     _WSSessionProxy,

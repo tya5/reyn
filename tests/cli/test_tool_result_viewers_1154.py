@@ -21,7 +21,7 @@ from rich.json import JSON as RichJSON
 from rich.markdown import Markdown as RichMarkdown
 from rich.table import Table
 
-from reyn.chat.tui.widgets.right_panel.tool_result_viewers import render_tool_result
+from reyn.tui.widgets.right_panel.tool_result_viewers import render_tool_result
 
 # ── dispatch: recognized content-types route to a viewer ─────────────────────
 
@@ -239,9 +239,9 @@ async def test_wire_tool_returned_md_event_renders_via_viewer() -> None:
     Guards the data-nesting seam: the result dict is at ev["data"]["result"],
     so a wire reading ev["result"] would fall back to YAML (regression).
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
-    from reyn.chat.tui.widgets.right_panel.shells import _PreviewPane
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
+    from reyn.tui.widgets.right_panel.shells import _PreviewPane
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -277,9 +277,9 @@ async def test_wire_unknown_type_event_falls_back_and_shows_content() -> None:
 
     from rich.console import Console
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
-    from reyn.chat.tui.widgets.right_panel.shells import _PreviewPane
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
+    from reyn.tui.widgets.right_panel.shells import _PreviewPane
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

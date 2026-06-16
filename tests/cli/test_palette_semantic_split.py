@@ -33,9 +33,9 @@ if str(_SRC) not in sys.path:
 from rich.color import Color as _RichColor
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui._palette import _AMBER, _CORAL
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ConversationView
+from reyn.tui._palette import _AMBER, _CORAL
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets import ConversationView
 
 
 def _make_app() -> ReynTUIApp:
@@ -106,7 +106,7 @@ async def test_agent_header_label_renders_with_amber() -> None:
 
         # Render an agent message so the agent symbol appears in a header.
         # Post-refactor: headers are symbol-only (``⏺``); no label text or dash rule.
-        from reyn.chat.tui.widgets.conversation import _GLYPH_AGENT
+        from reyn.tui.widgets.conversation import _GLYPH_AGENT
         conv.render_message(OutboxMessage(kind="agent", text="hi"))
         await pilot.pause()
 
@@ -142,7 +142,7 @@ async def test_streaming_cursor_uses_amber() -> None:
     agent is mid-utterance. Pinning it to amber keeps the agent-identity
     family consistent (header + cursor read as one signal).
     """
-    from reyn.chat.tui.widgets.streaming_row import StreamingRow
+    from reyn.tui.widgets.streaming_row import StreamingRow
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()

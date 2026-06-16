@@ -17,7 +17,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label
 
-from reyn.chat.tui._palette import _AMBER
+from reyn.tui._palette import _AMBER
 
 _FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # 10-frame Braille cycle
 _INTERVAL_S = 0.10  # ~10 fps

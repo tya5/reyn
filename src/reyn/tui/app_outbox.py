@@ -24,7 +24,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui._palette import _TEXT_DIM, _TEXT_MUTED
+from reyn.tui._palette import _TEXT_DIM, _TEXT_MUTED
 
 from .widgets import ConversationView, ReynHeader, RightPanel
 
@@ -533,14 +533,14 @@ class OutboxRouter:
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
         """`__matrix__` — easter egg; push the matrix screen."""
-        from reyn.chat.tui.widgets.matrix import MatrixScreen
+        from reyn.tui.widgets.matrix import MatrixScreen
         self._app.push_screen(MatrixScreen())
 
     def _on_donut(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
         """`__donut__` — easter egg; push the donut screen."""
-        from reyn.chat.tui.widgets.donut import DonutScreen
+        from reyn.tui.widgets.donut import DonutScreen
         self._app.push_screen(DonutScreen())
 
     def _on_cost_inline_toggle(
@@ -569,7 +569,7 @@ class OutboxRouter:
         # lifecycle-marker shape (= same dim ``── ↑ <body> ────`` divider
         # used by compaction markers) keeps the visual weight low while
         # leaving an auditable record of when the toggle fired.
-        from reyn.chat.tui.widgets.conversation import _render_lifecycle_marker
+        from reyn.tui.widgets.conversation import _render_lifecycle_marker
         try:
             conv._write_log(_render_lifecycle_marker(f"↑ cost-inline {state}"))
         except Exception:
@@ -577,7 +577,7 @@ class OutboxRouter:
         # Persist the new state — additive merge, so unknown future
         # pref keys round-trip untouched. Failure is silent (= file
         # write errors don't break the toggle itself).
-        from reyn.chat.tui.prefs import load_tui_prefs, save_tui_prefs
+        from reyn.tui.prefs import load_tui_prefs, save_tui_prefs
         root = app._project_root_path()
         if root is not None:
             prefs = load_tui_prefs(root)

@@ -32,9 +32,9 @@ if str(_SRC) not in sys.path:
 from textual.widgets import RichLog
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ConversationView
-from reyn.chat.tui.widgets.conversation import (
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets import ConversationView
+from reyn.tui.widgets.conversation import (
     _BODY_INDENT_NO_TS,
     _BODY_INDENT_WITH_TS,
     _GLYPH_AGENT,
@@ -220,7 +220,7 @@ async def test_f9_dispatch_flips_state_and_flashes_status():
 
 def test_toggle_persists_to_prefs_file(tmp_path: Path):
     """Tier 2: toggle_timestamps() writes show_timestamps to tui_prefs.json."""
-    from reyn.chat.tui.prefs import load_tui_prefs, save_tui_prefs
+    from reyn.tui.prefs import load_tui_prefs, save_tui_prefs
 
     # Seed an empty prefs file.
     prefs_dir = tmp_path / ".reyn"
@@ -230,7 +230,7 @@ def test_toggle_persists_to_prefs_file(tmp_path: Path):
 
     # Build a minimal ConversationView-like object to test the persist path
     # directly (= no Textual app needed for the prefs layer).
-    from reyn.chat.tui.widgets.conversation import ConversationView as CV
+    from reyn.tui.widgets.conversation import ConversationView as CV
 
     # Patch _project_root_path to return tmp_path.
     class _FakeApp:
@@ -326,7 +326,7 @@ def test_date_separator_emitted_regardless_of_ts_state():
     """
     from rich.cells import cell_len
 
-    from reyn.chat.tui.widgets.conversation import _DASH_TOTAL, _date_separator
+    from reyn.tui.widgets.conversation import _DASH_TOTAL, _date_separator
 
     sep = _date_separator("2026-05-24")
     assert "2026-05-24" in sep.plain

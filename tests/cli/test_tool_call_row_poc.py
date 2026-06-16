@@ -33,7 +33,7 @@ if str(_SRC) not in sys.path:
 
 def _row(tool_name: str = "web_fetch", args_repr: str = "url=https://example.com"):
     """Construct an unmounted ToolCallRow for direct API exercise."""
-    from reyn.chat.tui.widgets.tool_call_row import ToolCallRow
+    from reyn.tui.widgets.tool_call_row import ToolCallRow
     return ToolCallRow(tool_name=tool_name, args_repr=args_repr)
 
 
@@ -131,7 +131,7 @@ def test_terminal_state_with_sub_100ms_elapsed_hides_segment() -> None:
     resolution. Hide the elapsed segment entirely when the row is
     terminal AND elapsed is below the threshold.
     """
-    from reyn.chat.tui.widgets.tool_call_row import ToolCallRow
+    from reyn.tui.widgets.tool_call_row import ToolCallRow
     row = ToolCallRow(tool_name="cached_op", args_repr="key=x")
     # Force frozen elapsed to a sub-threshold value before finishing
     # — avoids race against monotonic clock in test environment.
@@ -149,7 +149,7 @@ def test_terminal_state_with_sub_100ms_elapsed_hides_segment() -> None:
 
 def test_running_state_always_shows_elapsed_even_at_zero() -> None:
     """Tier 2: running rows ALWAYS show elapsed (= "alive" signal)."""
-    from reyn.chat.tui.widgets.tool_call_row import ToolCallRow
+    from reyn.tui.widgets.tool_call_row import ToolCallRow
     row = ToolCallRow(tool_name="slow_op", args_repr="key=x")
     # Force frozen elapsed visible by NOT finishing — still running.
     # Render and check elapsed appears regardless of value.
@@ -160,7 +160,7 @@ def test_running_state_always_shows_elapsed_even_at_zero() -> None:
 def test_terminal_state_above_threshold_shows_elapsed() -> None:
     """Tier 2: terminal-state row with elapsed >= 0.1s still shows the
     elapsed segment (= meaningful timing preserved)."""
-    from reyn.chat.tui.widgets.tool_call_row import ToolCallRow
+    from reyn.tui.widgets.tool_call_row import ToolCallRow
     row = ToolCallRow(tool_name="op", args_repr="")
     row.finish_success(result_snippet="ok")
     # Frozen elapsed has whatever monotonic captured; force above threshold.
@@ -178,7 +178,7 @@ def test_long_qualified_tool_name_middle_elides_for_args_budget() -> None:
     head + tail of the qualified name so args still get a usable
     budget.
     """
-    from reyn.chat.tui.widgets.tool_call_row import (
+    from reyn.tui.widgets.tool_call_row import (
         ToolCallRow,
         _maybe_middle_elide,
     )

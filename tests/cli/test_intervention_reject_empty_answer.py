@@ -30,8 +30,8 @@ if str(_SRC) not in sys.path:
 
 async def _mount_widget(pilot, choices=None):
     """Mount a free-text-only InterventionWidget under the conv pane."""
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = pilot.app
     conv = app.query_one("#conversation", ConversationView)
@@ -63,8 +63,8 @@ def _make_submitted_event(value: str):
 @pytest.mark.asyncio
 async def test_empty_value_enter_is_ignored() -> None:
     """Tier 2: Enter on empty Input does NOT post Answered or remove widget."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     answered: list[str] = []
@@ -98,8 +98,8 @@ async def test_whitespace_only_value_enter_is_ignored() -> None:
     Spaces / tabs / newlines alone aren't a real answer; same
     treatment as empty.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     answered: list[str] = []
@@ -127,8 +127,8 @@ async def test_whitespace_only_value_enter_is_ignored() -> None:
 @pytest.mark.asyncio
 async def test_non_empty_value_enter_posts_answered_and_removes_widget() -> None:
     """Tier 2: real answer fires Answered + removes widget (regression)."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     answered: list[str] = []

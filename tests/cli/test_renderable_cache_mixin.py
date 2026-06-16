@@ -28,7 +28,7 @@ def test_mixin_accepts_text_renderable() -> None:
     """Tier 2: Text input round-trips through ``rendered_text``."""
     from rich.text import Text
 
-    from reyn.chat.tui.widgets._renderable_cache import RenderableCacheMixin
+    from reyn.tui.widgets._renderable_cache import RenderableCacheMixin
 
     obj = RenderableCacheMixin()
     obj._set_rendered_cache(Text("hello world"))
@@ -37,7 +37,7 @@ def test_mixin_accepts_text_renderable() -> None:
 
 def test_mixin_accepts_str_renderable() -> None:
     """Tier 2: str input is wrapped + plain text returned."""
-    from reyn.chat.tui.widgets._renderable_cache import RenderableCacheMixin
+    from reyn.tui.widgets._renderable_cache import RenderableCacheMixin
 
     obj = RenderableCacheMixin()
     obj._set_rendered_cache("plain string")
@@ -46,7 +46,7 @@ def test_mixin_accepts_str_renderable() -> None:
 
 def test_mixin_default_returns_empty() -> None:
     """Tier 2: pre-set / fresh instance returns ``""``."""
-    from reyn.chat.tui.widgets._renderable_cache import RenderableCacheMixin
+    from reyn.tui.widgets._renderable_cache import RenderableCacheMixin
 
     obj = RenderableCacheMixin()
     assert obj.rendered_text() == ""
@@ -56,7 +56,7 @@ def test_mixin_empty_string_round_trip() -> None:
     """Tier 2: explicit empty string sets a non-None cache that reads as ``""``."""
     from rich.text import Text
 
-    from reyn.chat.tui.widgets._renderable_cache import RenderableCacheMixin
+    from reyn.tui.widgets._renderable_cache import RenderableCacheMixin
 
     obj = RenderableCacheMixin()
     obj._set_rendered_cache("")
@@ -75,7 +75,7 @@ def test_mixin_styled_text_yields_plain_text() -> None:
     """
     from rich.text import Text
 
-    from reyn.chat.tui.widgets._renderable_cache import RenderableCacheMixin
+    from reyn.tui.widgets._renderable_cache import RenderableCacheMixin
 
     obj = RenderableCacheMixin()
     styled = Text()
@@ -97,9 +97,9 @@ async def test_skill_activity_row_uses_mixin_accessor() -> None:
     Regression guard — refactor must not silently remove the
     accessor or change its signature.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets._renderable_cache import RenderableCacheMixin
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets._renderable_cache import RenderableCacheMixin
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -123,10 +123,10 @@ async def test_slash_picker_uses_mixin_accessor() -> None:
     Pins same contract as the SkillActivityRow case — picker
     keeps its public rendered_text() accessor via the mixin.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets._renderable_cache import RenderableCacheMixin
-    from reyn.chat.tui.widgets.slash_picker import SlashPicker
     from reyn.slash import SlashCommand
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets._renderable_cache import RenderableCacheMixin
+    from reyn.tui.widgets.slash_picker import SlashPicker
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

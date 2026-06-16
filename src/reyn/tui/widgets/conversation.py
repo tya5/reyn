@@ -56,7 +56,7 @@ from textual.widgets import RichLog, Static
 logger = logging.getLogger(__name__)
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui._palette import (
+from reyn.tui._palette import (
     _AMBER,
     _CORAL,
     _EVENT_INTERVENTION,
@@ -1941,7 +1941,7 @@ class ConversationView(Widget):
         """
         self._show_timestamps = not self._show_timestamps
         try:
-            from reyn.chat.tui.prefs import load_tui_prefs, save_tui_prefs
+            from reyn.tui.prefs import load_tui_prefs, save_tui_prefs
             root = None
             try:
                 root = self.app._project_root_path()  # type: ignore[attr-defined]
@@ -2067,7 +2067,7 @@ class ConversationView(Widget):
         # the project root; ConversationView reaches it defensively via
         # app.app (= the Textual ``app`` property on every widget).
         try:
-            from reyn.chat.tui.prefs import load_tui_prefs
+            from reyn.tui.prefs import load_tui_prefs
             root = None
             try:
                 root = self.app._project_root_path()  # type: ignore[attr-defined]

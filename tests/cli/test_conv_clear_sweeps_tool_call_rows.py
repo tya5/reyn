@@ -39,9 +39,9 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_clear_removes_in_flight_tool_call_widgets() -> None:
     """Tier 2: after clear() the DOM has no ToolCallRow children."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.tool_call_row import ToolCallRow
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.tool_call_row import ToolCallRow
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -80,8 +80,8 @@ async def test_tool_completion_after_clear_does_not_raise() -> None:
     an orphaned widget → exception. The dict-pop-returns-None
     pattern means a late completion now silently returns.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -113,8 +113,8 @@ async def test_clear_with_no_tool_call_rows_is_no_op_safe() -> None:
 
     Regression guard for ``for row in list({}.values())`` empty-iter.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

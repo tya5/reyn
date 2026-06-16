@@ -35,7 +35,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import (
+from reyn.tui._palette import (
     _CORAL,
     _STATUS_ERROR,
     _STATUS_WARN,

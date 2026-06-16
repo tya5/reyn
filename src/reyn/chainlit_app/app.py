@@ -584,7 +584,7 @@ async def _on_chat_start() -> None:
     # ``events/agents/*/chat/*.jsonl`` ``intervention_routed`` rows.)
     #
     # This is the same id the TUI surface registers under
-    # (``chat/tui/app.py``); only one of TUI / chainlit is attached
+    # (``tui/app.py``); only one of TUI / chainlit is attached
     # to a given process so there's no collision.
     from reyn.chat.session import DEFAULT_CHAT_CHANNEL_ID
     try:

@@ -31,7 +31,7 @@ if str(_SRC) not in sys.path:
 
 
 def _make_app():
-    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.tui.app import ReynTUIApp
     return ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
 
 
@@ -68,8 +68,8 @@ async def test_high_severity_error_sticky_persists_after_render() -> None:
     Verifies the C[2] race fix: the sticky must survive the hide_status()
     call inside write_error because render_message is now called first.
     """
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView, ReynHeader
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView, ReynHeader
 
     app = _make_app()
 
@@ -113,8 +113,8 @@ async def test_high_severity_error_renders_inline_in_log() -> None:
     Public surface: iterate log.lines (RichLog's public buffer) and check
     that at least one line's plain text contains '✗'.
     """
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView, ReynHeader
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView, ReynHeader
 
     app = _make_app()
 
@@ -158,8 +158,8 @@ async def test_med_severity_error_does_not_show_terminal_sticky() -> None:
     or the 'terminal error' body — that would escalate every transient
     error to terminal prominence.
     """
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ConversationView, ReynHeader
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ConversationView, ReynHeader
 
     app = _make_app()
 

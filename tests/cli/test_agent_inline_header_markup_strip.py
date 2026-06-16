@@ -23,7 +23,7 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.widgets.conversation import _plain_first_line
+from reyn.tui.widgets.conversation import _plain_first_line
 
 
 def test_bold_markup_stripped_from_first_line() -> None:

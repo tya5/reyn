@@ -25,7 +25,7 @@ if str(_SRC) not in sys.path:
 
 import yaml
 
-from reyn.chat.tui.widgets.right_panel import _yaml_block_dump
+from reyn.tui.widgets.right_panel import _yaml_block_dump
 
 
 def test_multiline_string_roundtrips_unchanged() -> None:

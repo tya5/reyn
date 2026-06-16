@@ -28,14 +28,14 @@ from datetime import datetime
 from rich.text import Text
 from textual.widget import Widget
 
-from reyn.chat.tui._palette import (
+from reyn.tui._palette import (
     _BG_HEADER,
     _CORAL,
     _TEXT_BRIGHT,
     _TEXT_DIM,
     _TEXT_MUTED,
 )
-from reyn.chat.tui.widgets._branch_tree import ROW_CHECKPOINT, ROW_HEADER
+from reyn.tui.widgets._branch_tree import ROW_CHECKPOINT, ROW_HEADER
 
 # Max tree rows (headers + checkpoints) rendered at once (#1577 — mirrors
 # SlashPicker / the old flat window). The window slides to keep the selected

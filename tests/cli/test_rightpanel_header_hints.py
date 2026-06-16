@@ -45,8 +45,8 @@ async def test_keys_tab_header_contains_sp_expand() -> None:
     prior header only showed ``j↓ k↑``.  The fix appends ``sp=expand``
     matching the sp=open idiom used by other tabs.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -77,8 +77,8 @@ async def test_events_tab_header_contains_i_isolate_hint() -> None:
     Before the fix the ``i`` chain-isolate key was undiscoverable from
     the header; the fix appends ``i=isolate`` to the static hint suffix.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -117,8 +117,8 @@ async def test_events_tab_header_shows_i_marker_when_isolated() -> None:
     must surface ``[i]`` so the user can tell at a glance whether the
     event list is scoped to a single chain.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -142,8 +142,8 @@ async def test_events_tab_header_no_i_marker_when_not_isolated() -> None:
     a permanent fixture — matching the ``[v]`` marker's off-by-default
     behaviour.
     """
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -173,8 +173,8 @@ async def test_events_tab_header_no_i_marker_when_not_isolated() -> None:
 @pytest.mark.asyncio
 async def test_keys_change_does_not_regress_events_header() -> None:
     """Tier 2: events header still surfaces f/t/v/sp=open after B4 change."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -193,8 +193,8 @@ async def test_keys_change_does_not_regress_events_header() -> None:
 @pytest.mark.asyncio
 async def test_events_change_does_not_regress_keys_header() -> None:
     """Tier 2: keys header still surfaces j↓ k↑ and Key Bindings after B5 change."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import RightPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import RightPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

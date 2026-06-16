@@ -206,7 +206,7 @@ class InputBar(Widget):
         navigation behave the same as a session that never restarted.
         """
         try:
-            from reyn.chat.tui.prefs import load_tui_prefs
+            from reyn.tui.prefs import load_tui_prefs
             root = self.app._project_root_path()  # type: ignore[attr-defined]
         except Exception:
             return
@@ -232,7 +232,7 @@ class InputBar(Widget):
         leaves the in-memory state intact.
         """
         try:
-            from reyn.chat.tui.prefs import load_tui_prefs, save_tui_prefs
+            from reyn.tui.prefs import load_tui_prefs, save_tui_prefs
             root = self.app._project_root_path()  # type: ignore[attr-defined]
         except Exception:
             return

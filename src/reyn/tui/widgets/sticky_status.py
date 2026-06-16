@@ -19,7 +19,7 @@ from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _CORAL, _RED_MUTED
+from reyn.tui._palette import _CORAL, _RED_MUTED
 
 _TICK_INTERVAL_S = 0.1  # elapsed timer refresh rate
 

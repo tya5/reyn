@@ -34,9 +34,9 @@ _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets.right_panel import keys_tab as _kt
-from reyn.chat.tui.widgets.right_panel.keys_tab import (
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets.right_panel import keys_tab as _kt
+from reyn.tui.widgets.right_panel.keys_tab import (
     _KEY_DETAILS,
     get_keys_cursor,
     get_keys_expanded,

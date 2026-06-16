@@ -35,7 +35,7 @@ if str(_SRC) not in sys.path:
 
 def test_tip_f3_seen_absent_treated_as_false(tmp_path: Path) -> None:
     """Tier 2: missing tui_prefs.json → tip_f3_seen defaults to False."""
-    from reyn.chat.tui.prefs import load_tui_prefs
+    from reyn.tui.prefs import load_tui_prefs
 
     prefs = load_tui_prefs(tmp_path)
     assert prefs.get("tip_f3_seen", False) is False
@@ -43,7 +43,7 @@ def test_tip_f3_seen_absent_treated_as_false(tmp_path: Path) -> None:
 
 def test_tip_f3_seen_round_trip(tmp_path: Path) -> None:
     """Tier 2: save tip_f3_seen=True, reload → flag is True."""
-    from reyn.chat.tui.prefs import load_tui_prefs, save_tui_prefs
+    from reyn.tui.prefs import load_tui_prefs, save_tui_prefs
 
     prefs: dict[str, Any] = {}
     prefs["tip_f3_seen"] = True
@@ -63,7 +63,7 @@ async def test_maybe_emit_f3_tip_emits_when_unseen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 2: _maybe_emit_f3_tip with unseen flag emits and returns True."""
-    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.tui.app import ReynTUIApp
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     monkeypatch.setattr(app, "_project_root_path", lambda: tmp_path)
@@ -90,8 +90,8 @@ async def test_maybe_emit_f3_tip_silent_when_already_seen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 2: _maybe_emit_f3_tip with seen flag does not emit, returns False."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.prefs import save_tui_prefs
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.prefs import save_tui_prefs
 
     # Pre-seed the flag.
     save_tui_prefs(tmp_path, {"tip_f3_seen": True})
@@ -119,8 +119,8 @@ async def test_f3_first_press_shows_drill_down_tip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 2: first F3 press with unseen tip → status contains "drill-down"."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     monkeypatch.setattr(app, "_project_root_path", lambda: tmp_path)
@@ -149,9 +149,9 @@ async def test_f3_second_press_no_drill_down_tip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Tier 2: F3 with tip already seen → status shows "rows to expand" hint, not tip."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.prefs import save_tui_prefs
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.prefs import save_tui_prefs
+    from reyn.tui.widgets import ConversationView
 
     # Pre-seed the seen flag.
     save_tui_prefs(tmp_path, {"tip_f3_seen": True})

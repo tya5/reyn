@@ -31,8 +31,8 @@ if str(_SRC) not in sys.path:
 
 from textual.widgets import TextArea
 
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ConversationView
+from reyn.tui.app import ReynTUIApp
+from reyn.tui.widgets import ConversationView
 
 
 def _make_app() -> ReynTUIApp:
@@ -134,8 +134,8 @@ async def test_intervention_resolved_handler_restores_input_focus() -> None:
     and must hand focus back the same way.
     """
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.tui.app_outbox import OutboxRouter
-    from reyn.chat.tui.widgets import ReynHeader
+    from reyn.tui.app_outbox import OutboxRouter
+    from reyn.tui.widgets import ReynHeader
 
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:

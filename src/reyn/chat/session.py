@@ -258,7 +258,7 @@ class RouterCapExceeded(Exception):
 
 # issue #268 Phase 2 continuation: canonical channel identifier for
 # chat-side interventions (= matches the listener_id that
-# ``ChatTUIApp.on_mount`` registers in src/reyn/chat/tui/app.py).
+# ``ChatTUIApp.on_mount`` registers in src/reyn/tui/app.py).
 # Production ChatInterventionBus instances stamp ivs with this id so
 # the agent layer's origin-pin check + cross-channel observe / claim
 # routing work end-to-end for TUI-initiated tasks. Module-level so
@@ -2493,7 +2493,7 @@ class ChatSession:
                 project_root = getattr(registry, "_project_root", None)
 
             if project_root is not None:
-                from reyn.chat.tui.widgets.right_panel.agents_tab import (
+                from reyn.tui.widgets.right_panel.agents_tab import (
                     _recent_plans_for_agent,
                     _recent_skill_runs_for_agent,
                 )

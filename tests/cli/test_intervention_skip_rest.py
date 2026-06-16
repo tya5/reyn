@@ -36,7 +36,7 @@ if str(_SRC) not in sys.path:
 
 
 def _make_app():
-    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.tui.app import ReynTUIApp
 
     return ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
 
@@ -82,12 +82,12 @@ async def test_skip_rest_chip_renders_when_queued() -> None:
     """
     from textual.widgets import Button
 
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        from reyn.chat.tui.widgets import ConversationView
+        from reyn.tui.widgets import ConversationView
 
         conv = app.query_one("#conversation", ConversationView)
         # Mount head intervention with 3 queued behind it.
@@ -123,12 +123,12 @@ async def test_no_skip_rest_chip_when_queue_empty() -> None:
     """
     from textual.widgets import Button
 
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
+    from reyn.tui.widgets.intervention import InterventionWidget
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        from reyn.chat.tui.widgets import ConversationView
+        from reyn.tui.widgets import ConversationView
 
         conv = app.query_one("#conversation", ConversationView)
         conv.mount_intervention(
@@ -163,7 +163,7 @@ async def test_skip_rest_cancels_queued_ivs_not_head() -> None:
     surface) to assert post-cancel state.
     """
     from reyn.chat.services.intervention_registry import InterventionRegistry
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -235,7 +235,7 @@ async def test_skip_rest_emits_breadcrumb() -> None:
     by other Tier-2 tests) to assert the breadcrumb text.
     """
     from reyn.chat.services.intervention_registry import InterventionRegistry
-    from reyn.chat.tui.widgets import ConversationView
+    from reyn.tui.widgets import ConversationView
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:

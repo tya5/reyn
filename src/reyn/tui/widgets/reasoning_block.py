@@ -30,7 +30,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _TEXT_MUTED
+from reyn.tui._palette import _TEXT_MUTED
 
 from ._renderable_cache import RenderableCacheMixin
 

@@ -41,7 +41,7 @@ if str(_SRC) not in sys.path:
 @pytest.mark.asyncio
 async def test_panel_is_focusable() -> None:
     """Tier 2: ``can_focus`` is True so F4 routing can land here."""
-    from reyn.chat.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
 
     assert AsyncStackPanel.can_focus is True
 
@@ -49,9 +49,9 @@ async def test_panel_is_focusable() -> None:
 @pytest.mark.asyncio
 async def test_move_cursor_advances_and_wraps() -> None:
     """Tier 2: ``move_cursor(+1)`` advances + wraps at the end."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -83,8 +83,8 @@ async def test_move_cursor_advances_and_wraps() -> None:
 @pytest.mark.asyncio
 async def test_empty_panel_move_cursor_safe_noop() -> None:
     """Tier 2: navigation on an empty panel doesn't raise + clamps cursor to 0."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -97,9 +97,9 @@ async def test_empty_panel_move_cursor_safe_noop() -> None:
 @pytest.mark.asyncio
 async def test_f4_focuses_panel_when_entries_present() -> None:
     """Tier 2: ``action_focus_async_stack`` focuses the panel when non-empty."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -116,9 +116,9 @@ async def test_f4_focuses_panel_when_entries_present() -> None:
 @pytest.mark.asyncio
 async def test_f4_with_empty_panel_shows_hint_and_doesnt_focus() -> None:
     """Tier 2: F4 on an empty strip surfaces a status hint, leaves focus."""
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -141,9 +141,9 @@ async def test_c_key_prefills_inputbar_with_cancel() -> None:
     """Tier 2: pressing ``c`` while panel focused stages ``/cancel <id>``."""
     from textual import events
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView, InputBar
-    from reyn.chat.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView, InputBar
+    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -172,9 +172,9 @@ async def test_escape_returns_focus_to_input() -> None:
     """
     from textual import events
 
-    from reyn.chat.tui.app import ReynTUIApp
-    from reyn.chat.tui.widgets import ConversationView
-    from reyn.chat.tui.widgets.async_stack_panel import AsyncStackPanel
+    from reyn.tui.app import ReynTUIApp
+    from reyn.tui.widgets import ConversationView
+    from reyn.tui.widgets.async_stack_panel import AsyncStackPanel
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -194,7 +194,7 @@ async def test_escape_returns_focus_to_input() -> None:
 
 def test_f4_binding_registered() -> None:
     """Tier 2: F4 is bound to ``focus_async_stack`` action."""
-    from reyn.chat.tui.app import ReynTUIApp
+    from reyn.tui.app import ReynTUIApp
 
     binds = {(b.key, b.action) for b in ReynTUIApp.BINDINGS}
     assert ("f4", "focus_async_stack") in binds
@@ -202,7 +202,7 @@ def test_f4_binding_registered() -> None:
 
 def test_keys_tab_routes_f4_to_conversation() -> None:
     """Tier 2: F4 lands in the CONVERSATION group + pretty-prints as "F4"."""
-    from reyn.chat.tui.widgets.right_panel.keys_tab import (
+    from reyn.tui.widgets.right_panel.keys_tab import (
         _key_group_for,
         _pretty_key,
     )
