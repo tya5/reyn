@@ -2069,6 +2069,9 @@ class RouterLoop:
                         budget=self.budget,
                         budget_agent=host.agent_name,
                         trace_caller="router",
+                        # #1683: chat path emits llm_called + llm_response_received
+                        # so the TUI cost tab updates (kernel emits via LLMCallRecorder).
+                        emit_cost_events=True,
                     )
                 # Record the fresh result for future resume hit. Defensive:
                 # never let recording failure break the loop. NOT for a
@@ -3023,6 +3026,8 @@ class RouterLoop:
             budget=self.budget,
             budget_agent=self.host.agent_name,
             trace_caller="router_force_close",
+            # #1683: chat path emits cost events for the TUI cost tab.
+            emit_cost_events=True,
         )
 
     async def _force_close_call_with_retry(
