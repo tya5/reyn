@@ -123,7 +123,7 @@ def test_slash_copy_forwards_arg_to_outbox_sentinel() -> None:
     import asyncio
 
     from reyn.chat.outbox import OutboxMessage
-    from reyn.chat.slash.copy import copy_cmd
+    from reyn.slash.copy import copy_cmd
 
     sent: list[OutboxMessage] = []
 

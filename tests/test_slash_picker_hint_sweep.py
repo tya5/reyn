@@ -21,7 +21,7 @@ if str(_SRC) not in sys.path:
 
 def test_pending_usage_surfaces_subcommand_vocab() -> None:
     """Tier 2: /pending usage exposes list/discard/claim in the picker hint."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("pending")
     assert cmd is not None, "/pending not in registry"
@@ -32,7 +32,7 @@ def test_pending_usage_surfaces_subcommand_vocab() -> None:
 
 def test_agent_summary_mentions_rm_escape_hatch() -> None:
     """Tier 2: /agent summary tells the user where rm lives."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("agent")
     assert cmd is not None, "/agent not in registry"
@@ -43,7 +43,7 @@ def test_agent_summary_mentions_rm_escape_hatch() -> None:
 
 def test_image_summary_lists_supported_extensions() -> None:
     """Tier 2: /image summary surfaces png and webp without pinning exact wording."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("image")
     assert cmd is not None, "/image not in registry"
@@ -57,7 +57,7 @@ def test_image_summary_lists_supported_extensions() -> None:
 
 def test_docs_filter_summary_names_tab_and_keybinding() -> None:
     """Tier 2: /docs-filter summary surfaces Ctrl+B route and Docs tab name."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("docs-filter")
     assert cmd is not None, "/docs-filter not in registry"

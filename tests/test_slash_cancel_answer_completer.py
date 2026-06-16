@@ -51,7 +51,7 @@ class _StubIntervention:
 
 def test_running_run_id_completer_returns_keys_when_empty_partial() -> None:
     """Tier 2: empty arg_partial returns all running ``run_id`` keys."""
-    from reyn.chat.slash.chat import _running_run_id_completer
+    from reyn.slash.chat import _running_run_id_completer
 
     session = _StubSession(run_ids=["abc123", "def456", "ghi789"])
     out = _running_run_id_completer(session, "")
@@ -60,7 +60,7 @@ def test_running_run_id_completer_returns_keys_when_empty_partial() -> None:
 
 def test_running_run_id_completer_filters_by_prefix() -> None:
     """Tier 2: prefix narrows the completion list."""
-    from reyn.chat.slash.chat import _running_run_id_completer
+    from reyn.slash.chat import _running_run_id_completer
 
     session = _StubSession(run_ids=["abc123", "abc999", "def456"])
     assert set(_running_run_id_completer(session, "abc")) == {"abc123", "abc999"}
@@ -70,7 +70,7 @@ def test_running_run_id_completer_filters_by_prefix() -> None:
 
 def test_running_run_id_completer_empty_session_returns_empty() -> None:
     """Tier 2: session with no running skills returns empty list."""
-    from reyn.chat.slash.chat import _running_run_id_completer
+    from reyn.slash.chat import _running_run_id_completer
 
     session = _StubSession(run_ids=[])
     assert _running_run_id_completer(session, "abc") == []
@@ -78,7 +78,7 @@ def test_running_run_id_completer_empty_session_returns_empty() -> None:
 
 def test_running_run_id_completer_handles_no_attribute() -> None:
     """Tier 2: session without ``running_skills`` returns empty (defensive)."""
-    from reyn.chat.slash.chat import _running_run_id_completer
+    from reyn.slash.chat import _running_run_id_completer
 
     class _Bare:
         pass
@@ -88,7 +88,7 @@ def test_running_run_id_completer_handles_no_attribute() -> None:
 
 def test_intervention_id_completer_returns_active_ids() -> None:
     """Tier 2: empty arg_partial returns all active intervention IDs."""
-    from reyn.chat.slash.chat import _intervention_id_completer
+    from reyn.slash.chat import _intervention_id_completer
 
     session = _StubSession(interventions=[
         _StubIntervention("iv-aaa"),
@@ -100,7 +100,7 @@ def test_intervention_id_completer_returns_active_ids() -> None:
 
 def test_intervention_id_completer_filters_by_prefix() -> None:
     """Tier 2: prefix filter narrows."""
-    from reyn.chat.slash.chat import _intervention_id_completer
+    from reyn.slash.chat import _intervention_id_completer
 
     session = _StubSession(interventions=[
         _StubIntervention("iv-aaa"),
@@ -118,7 +118,7 @@ def test_intervention_id_completer_past_first_space_empty() -> None:
     the first whitespace they're writing the answer body, not the
     id. Returning [] lets the picker fall back to plain hint mode.
     """
-    from reyn.chat.slash.chat import _intervention_id_completer
+    from reyn.slash.chat import _intervention_id_completer
 
     session = _StubSession(interventions=[_StubIntervention("iv-aaa")])
     assert _intervention_id_completer(session, "iv-aaa hello") == []
@@ -127,7 +127,7 @@ def test_intervention_id_completer_past_first_space_empty() -> None:
 
 def test_intervention_id_completer_no_registry_returns_empty() -> None:
     """Tier 2: session without ``_interventions`` returns empty (defensive)."""
-    from reyn.chat.slash.chat import _intervention_id_completer
+    from reyn.slash.chat import _intervention_id_completer
 
     class _Bare:
         pass
@@ -137,8 +137,8 @@ def test_intervention_id_completer_no_registry_returns_empty() -> None:
 
 def test_cancel_slash_has_completer_registered() -> None:
     """Tier 2: ``/cancel`` registers ``_running_run_id_completer``."""
-    from reyn.chat.slash import REGISTRY
-    from reyn.chat.slash.chat import _running_run_id_completer
+    from reyn.slash import REGISTRY
+    from reyn.slash.chat import _running_run_id_completer
 
     cmd = REGISTRY.get("cancel")
     assert cmd is not None
@@ -147,8 +147,8 @@ def test_cancel_slash_has_completer_registered() -> None:
 
 def test_answer_slash_has_completer_registered() -> None:
     """Tier 2: ``/answer`` registers ``_intervention_id_completer``."""
-    from reyn.chat.slash import REGISTRY
-    from reyn.chat.slash.chat import _intervention_id_completer
+    from reyn.slash import REGISTRY
+    from reyn.slash.chat import _intervention_id_completer
 
     cmd = REGISTRY.get("answer")
     assert cmd is not None

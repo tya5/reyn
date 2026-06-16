@@ -24,7 +24,7 @@ Usage::
 from __future__ import annotations
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.slash import slash
+from reyn.slash import slash
 
 
 @slash(

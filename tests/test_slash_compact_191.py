@@ -22,9 +22,9 @@ import litellm
 
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.session import ChatMessage, ChatSession
-from reyn.chat.slash import REGISTRY
 from reyn.config import CompactionConfig
 from reyn.events.state_log import StateLog
+from reyn.slash import REGISTRY
 
 # Compaction summary the engine's litellm call returns; new_turn_seqs lists the
 # candidate turn seqs (head=2/tail=2 over 8 turns → candidates 3..6).

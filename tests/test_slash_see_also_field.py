@@ -26,7 +26,7 @@ if str(_SRC) not in sys.path:
 
 def test_slash_command_defaults_see_also_to_empty_tuple() -> None:
     """Tier 2: SlashCommand.see_also defaults to () — existing commands unaffected."""
-    from reyn.chat.slash import SlashCommand
+    from reyn.slash import SlashCommand
 
     async def _h(s: object, a: str) -> None:
         pass
@@ -38,7 +38,7 @@ def test_slash_command_defaults_see_also_to_empty_tuple() -> None:
 
 def test_slash_decorator_stores_see_also_on_registered_command() -> None:
     """Tier 2: @slash(see_also=(...)) stores the tuple on the registered command."""
-    from reyn.chat.slash import REGISTRY, SlashCommand, slash
+    from reyn.slash import REGISTRY, SlashCommand, slash
 
     @slash(
         "xtest_see_also_reg",
@@ -55,8 +55,8 @@ def test_slash_decorator_stores_see_also_on_registered_command() -> None:
 
 def test_render_command_focus_includes_see_also_line_when_non_empty() -> None:
     """Tier 2: focus panel renders 'see also:' footer when see_also is non-empty."""
-    from reyn.chat.slash import REGISTRY, SlashCommand
-    from reyn.chat.slash.help import _render_command_focus
+    from reyn.slash import REGISTRY, SlashCommand
+    from reyn.slash.help import _render_command_focus
 
     async def _h(s: object, a: str) -> None:
         pass
@@ -74,8 +74,8 @@ def test_render_command_focus_includes_see_also_line_when_non_empty() -> None:
 
 def test_render_command_focus_omits_see_also_line_when_empty() -> None:
     """Tier 2: focus panel omits 'see also:' footer when see_also is empty."""
-    from reyn.chat.slash import REGISTRY, SlashCommand
-    from reyn.chat.slash.help import _render_command_focus
+    from reyn.slash import REGISTRY, SlashCommand
+    from reyn.slash.help import _render_command_focus
 
     async def _h(s: object, a: str) -> None:
         pass
@@ -95,7 +95,7 @@ def test_render_command_focus_omits_see_also_line_when_empty() -> None:
 
 def test_plan_command_has_expected_see_also_at_import() -> None:
     """Tier 2: /plan has see_also=('docs/concepts/multi-agent/plan-mode.md',) at import time."""
-    from reyn.chat.slash import REGISTRY  # noqa: F401 — triggers registration
+    from reyn.slash import REGISTRY  # noqa: F401 — triggers registration
 
     cmd = REGISTRY.get("plan")
     assert cmd is not None

@@ -240,7 +240,7 @@ def test_save_slash_command_is_registered() -> None:
     ``slash/__init__.py``, the decorator never runs and the user's
     typed ``/save`` falls through to "unknown command".
     """
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     names = {c.name for c in REGISTRY.all_commands()}
     assert "save" in names, (

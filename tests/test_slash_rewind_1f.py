@@ -22,8 +22,8 @@ if str(_SRC) not in sys.path:
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
-from reyn.chat.slash import REGISTRY
 from reyn.events.state_log import StateLog
+from reyn.slash import REGISTRY
 
 
 class _CapturingSession:

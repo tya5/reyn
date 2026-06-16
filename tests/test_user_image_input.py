@@ -24,9 +24,9 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.session import ChatMessage
-from reyn.chat.slash import REGISTRY
 from reyn.config import MultimodalConfig
 from reyn.permissions.permissions import PermissionResolver
+from reyn.slash import REGISTRY
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 

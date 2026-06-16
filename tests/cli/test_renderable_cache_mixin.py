@@ -123,10 +123,10 @@ async def test_slash_picker_uses_mixin_accessor() -> None:
     Pins same contract as the SkillActivityRow case — picker
     keeps its public rendered_text() accessor via the mixin.
     """
-    from reyn.chat.slash import SlashCommand
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets._renderable_cache import RenderableCacheMixin
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import SlashCommand
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:

@@ -22,7 +22,7 @@ _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.slash.plan import _plan_completer
+from reyn.slash.plan import _plan_completer
 
 
 class _FakeSession:

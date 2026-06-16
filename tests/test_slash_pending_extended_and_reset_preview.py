@@ -76,8 +76,8 @@ class _StubSession:
 
 def test_pending_list_no_attention_when_clean() -> None:
     """Tier 2: /pending list with 0 interrupted/stuck → no needs-attention section."""
-    from reyn.chat.slash import REGISTRY  # noqa: F401 — triggers registration
-    from reyn.chat.slash.pending import pending_cmd
+    from reyn.slash import REGISTRY  # noqa: F401 — triggers registration
+    from reyn.slash.pending import pending_cmd
 
     session = _StubSession(
         interrupted_plans=[],
@@ -93,8 +93,8 @@ def test_pending_list_no_attention_when_clean() -> None:
 
 def test_pending_list_shows_interrupted_plan() -> None:
     """Tier 2: /pending list with 1 interrupted plan → output contains 'interrupted'."""
-    from reyn.chat.slash import REGISTRY  # noqa: F401
-    from reyn.chat.slash.pending import pending_cmd
+    from reyn.slash import REGISTRY  # noqa: F401
+    from reyn.slash.pending import pending_cmd
 
     session = _StubSession(
         interrupted_plans=[{
@@ -118,8 +118,8 @@ def test_pending_list_shows_interrupted_plan() -> None:
 
 def test_pending_list_shows_stuck_skill() -> None:
     """Tier 2: /pending list with 1 stuck skill → output contains 'stuck @'."""
-    from reyn.chat.slash import REGISTRY  # noqa: F401
-    from reyn.chat.slash.pending import pending_cmd
+    from reyn.slash import REGISTRY  # noqa: F401
+    from reyn.slash.pending import pending_cmd
 
     session = _StubSession(
         stuck_skills=[{
@@ -144,8 +144,8 @@ def test_pending_list_shows_stuck_skill() -> None:
 
 def test_reset_no_arg_no_state_shows_currently_zero() -> None:
     """Tier 2: /reset (no arg, no state) → contains 'Currently:' with zeros."""
-    from reyn.chat.slash import REGISTRY  # noqa: F401
-    from reyn.chat.slash.reset import reset_cmd
+    from reyn.slash import REGISTRY  # noqa: F401
+    from reyn.slash.reset import reset_cmd
 
     session = _StubSession(
         running_skills=0,
@@ -167,8 +167,8 @@ def test_reset_no_arg_no_state_shows_currently_zero() -> None:
 
 def test_reset_no_arg_with_state_shows_counts() -> None:
     """Tier 2: /reset (no arg, 2 skills, 1 plan) → output contains counts."""
-    from reyn.chat.slash import REGISTRY  # noqa: F401
-    from reyn.chat.slash.reset import reset_cmd
+    from reyn.slash import REGISTRY  # noqa: F401
+    from reyn.slash.reset import reset_cmd
 
     session = _StubSession(
         running_skills=2,

@@ -2,7 +2,7 @@
 
 Add a new command with three lines::
 
-    from reyn.chat.slash import slash, reply
+    from reyn.slash import slash, reply
 
     @slash("ping", summary="Echo pong")
     async def ping_cmd(session, args: str) -> None:
@@ -230,33 +230,33 @@ async def reply_error(session: "object", text: str) -> None:
 
 # ── trigger registration of built-in commands ─────────────────────────────
 # Sub-modules register on import; importing them here makes the registry
-# fully populated as soon as `reyn.chat.slash` is imported.
-from reyn.chat.slash import agent as _agent_mod  # noqa: E402, F401
-from reyn.chat.slash import agents as _agents_mod  # noqa: E402, F401
-from reyn.chat.slash import budget as _budget_mod  # noqa: E402, F401
-from reyn.chat.slash import chat as _chat_mod  # noqa: E402, F401
-from reyn.chat.slash import clear_history as _clear_history_mod  # noqa: E402, F401
-from reyn.chat.slash import compact as _compact_mod  # noqa: E402, F401
-from reyn.chat.slash import concept as _concept_mod  # noqa: E402, F401
-from reyn.chat.slash import copy as _copy_mod  # noqa: E402, F401
-from reyn.chat.slash import cost_inline as _cost_inline_mod  # noqa: E402, F401
-from reyn.chat.slash import docs_filter as _docs_filter_mod  # noqa: E402, F401
-from reyn.chat.slash import donut as _donut_mod  # noqa: E402, F401
-from reyn.chat.slash import find as _find_mod  # noqa: E402, F401
-from reyn.chat.slash import help as _help_mod  # noqa: E402, F401
-from reyn.chat.slash import image as _image_mod  # noqa: E402, F401
-from reyn.chat.slash import matrix as _matrix_mod  # noqa: E402, F401
-from reyn.chat.slash import memory as _memory_mod  # noqa: E402, F401
-from reyn.chat.slash import pending as _pending_mod  # noqa: E402, F401
-from reyn.chat.slash import plan as _plan_mod  # noqa: E402, F401
-from reyn.chat.slash import quit as _quit_mod  # noqa: E402, F401
-from reyn.chat.slash import reset as _reset_mod  # noqa: E402, F401
-from reyn.chat.slash import rewind as _rewind_mod  # noqa: E402, F401
-from reyn.chat.slash import save as _save_mod  # noqa: E402, F401
-from reyn.chat.slash import skill as _skill_mod  # noqa: E402, F401
-from reyn.chat.slash import skills as _skills_mod  # noqa: E402, F401
-from reyn.chat.slash import tasks as _tasks_mod  # noqa: E402, F401
-from reyn.chat.slash import zen as _zen_mod  # noqa: E402, F401
+# fully populated as soon as `reyn.slash` is imported.
+from reyn.slash import agent as _agent_mod  # noqa: E402, F401
+from reyn.slash import agents as _agents_mod  # noqa: E402, F401
+from reyn.slash import budget as _budget_mod  # noqa: E402, F401
+from reyn.slash import chat as _chat_mod  # noqa: E402, F401
+from reyn.slash import clear_history as _clear_history_mod  # noqa: E402, F401
+from reyn.slash import compact as _compact_mod  # noqa: E402, F401
+from reyn.slash import concept as _concept_mod  # noqa: E402, F401
+from reyn.slash import copy as _copy_mod  # noqa: E402, F401
+from reyn.slash import cost_inline as _cost_inline_mod  # noqa: E402, F401
+from reyn.slash import docs_filter as _docs_filter_mod  # noqa: E402, F401
+from reyn.slash import donut as _donut_mod  # noqa: E402, F401
+from reyn.slash import find as _find_mod  # noqa: E402, F401
+from reyn.slash import help as _help_mod  # noqa: E402, F401
+from reyn.slash import image as _image_mod  # noqa: E402, F401
+from reyn.slash import matrix as _matrix_mod  # noqa: E402, F401
+from reyn.slash import memory as _memory_mod  # noqa: E402, F401
+from reyn.slash import pending as _pending_mod  # noqa: E402, F401
+from reyn.slash import plan as _plan_mod  # noqa: E402, F401
+from reyn.slash import quit as _quit_mod  # noqa: E402, F401
+from reyn.slash import reset as _reset_mod  # noqa: E402, F401
+from reyn.slash import rewind as _rewind_mod  # noqa: E402, F401
+from reyn.slash import save as _save_mod  # noqa: E402, F401
+from reyn.slash import skill as _skill_mod  # noqa: E402, F401
+from reyn.slash import skills as _skills_mod  # noqa: E402, F401
+from reyn.slash import tasks as _tasks_mod  # noqa: E402, F401
+from reyn.slash import zen as _zen_mod  # noqa: E402, F401
 
 __all__ = [
     "REGISTRY",

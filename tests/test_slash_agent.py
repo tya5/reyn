@@ -18,7 +18,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.slash import REGISTRY
+from reyn.slash import REGISTRY
 
 
 class _FakeSession:
@@ -83,7 +83,7 @@ async def test_agent_new_creates_and_emits_attach_request(tmp_path):
     Drives the slash handler through a real registry on tmp_path so the
     create + outbox-emit chain is exercised end-to-end.
     """
-    from reyn.chat.slash.agent import _create_agent
+    from reyn.slash.agent import _create_agent
 
     registry = _build_real_registry(tmp_path)
     session = _FakeSession(registry)
@@ -106,7 +106,7 @@ async def test_agent_new_creates_and_emits_attach_request(tmp_path):
 async def test_agent_new_rejects_duplicate(tmp_path):
     """Tier 2: creating an existing agent surfaces a recoverable error,
     NOT a Python stack trace."""
-    from reyn.chat.slash.agent import _create_agent
+    from reyn.slash.agent import _create_agent
 
     registry = _build_real_registry(tmp_path)
     registry.create("dup")
@@ -126,7 +126,7 @@ async def test_agent_new_rejects_duplicate(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_new_rejects_invalid_name(tmp_path):
     """Tier 2: invalid names (= regex violation) surface a clean error."""
-    from reyn.chat.slash.agent import _create_agent
+    from reyn.slash.agent import _create_agent
 
     registry = _build_real_registry(tmp_path)
     session = _FakeSession(registry)
@@ -149,7 +149,7 @@ async def test_agent_edit_role_persists_to_profile_and_session(tmp_path):
     """Tier 2: ``/agent edit role <text>`` writes the new role to disk
     and updates ``session.agent_role`` so the next turn sees it."""
     from reyn.chat.profile import AgentProfile
-    from reyn.chat.slash.agent import _edit_role
+    from reyn.slash.agent import _edit_role
 
     registry = _build_real_registry(tmp_path)
     registry.create("gamma", role="old role")
@@ -172,7 +172,7 @@ async def test_agent_edit_role_preserves_other_profile_fields(tmp_path):
     """Tier 2: role edit MUST NOT clobber name / created_at / allowed_skills /
     allowed_mcp."""
     from reyn.chat.profile import PROFILE_FILENAME, AgentProfile
-    from reyn.chat.slash.agent import _edit_role
+    from reyn.slash.agent import _edit_role
 
     registry = _build_real_registry(tmp_path)
     registry.create("delta", role="initial")
@@ -204,7 +204,7 @@ async def test_agent_edit_role_preserves_other_profile_fields(tmp_path):
 async def test_agent_edit_role_empty_value_errors(tmp_path):
     """Tier 2: empty / whitespace role → error message, no disk change."""
     from reyn.chat.profile import AgentProfile
-    from reyn.chat.slash.agent import _edit_role
+    from reyn.slash.agent import _edit_role
 
     registry = _build_real_registry(tmp_path)
     registry.create("eps", role="keep me")
@@ -226,7 +226,7 @@ async def test_agent_edit_unknown_field_errors(tmp_path):
 
     Drives the dispatcher (= ``_edit_agent``) so the sub-routing
     layer is covered, not only the leaf handler."""
-    from reyn.chat.slash.agent import _edit_agent
+    from reyn.slash.agent import _edit_agent
 
     registry = _build_real_registry(tmp_path)
     session = _FakeSession(registry, agent_name="default", agent_role="r")
@@ -241,7 +241,7 @@ async def test_agent_edit_unknown_field_errors(tmp_path):
 @pytest.mark.asyncio
 async def test_agent_edit_no_args_errors(tmp_path):
     """Tier 2: bare ``/agent edit`` (= no sub-field) errors."""
-    from reyn.chat.slash.agent import _edit_agent
+    from reyn.slash.agent import _edit_agent
 
     registry = _build_real_registry(tmp_path)
     session = _FakeSession(registry, agent_name="default", agent_role="r")
@@ -257,7 +257,7 @@ async def test_agent_dispatcher_routes_edit_to_handler(tmp_path):
     """Tier 2: the top-level ``agent_cmd`` dispatches ``edit role <text>``
     through to the leaf handler (= ``_edit_role``)."""
     from reyn.chat.profile import AgentProfile
-    from reyn.chat.slash.agent import agent_cmd
+    from reyn.slash.agent import agent_cmd
 
     registry = _build_real_registry(tmp_path)
     registry.create("zeta", role="before")

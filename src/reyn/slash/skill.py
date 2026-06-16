@@ -19,7 +19,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
-from reyn.chat.slash import reply, reply_error, slash
+from reyn.slash import reply, reply_error, slash
 
 if TYPE_CHECKING:
     from reyn.chat.session import ChatSession

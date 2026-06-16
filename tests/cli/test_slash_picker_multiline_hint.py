@@ -52,7 +52,7 @@ def _picker_text(picker) -> str:
 
 def test_slashcommand_usage_field_defaults_to_empty() -> None:
     """Tier 2: ``usage`` defaults to empty so existing commands keep working."""
-    from reyn.chat.slash import SlashCommand
+    from reyn.slash import SlashCommand
 
     async def _h(s, a):
         return None
@@ -63,7 +63,7 @@ def test_slashcommand_usage_field_defaults_to_empty() -> None:
 
 def test_slash_decorator_forwards_usage() -> None:
     """Tier 2: ``@slash(usage=...)`` propagates the value into the registered command."""
-    from reyn.chat.slash import REGISTRY, slash
+    from reyn.slash import REGISTRY, slash
 
     @slash("xtmpcmd_usage", summary="t", usage="/xtmpcmd_usage <arg>")
     async def _h(s, a):
@@ -77,9 +77,9 @@ def test_slash_decorator_forwards_usage() -> None:
 @pytest.mark.asyncio
 async def test_hint_with_usage_renders_two_lines() -> None:
     """Tier 2: hint mode shows the usage line below the summary."""
-    from reyn.chat.slash import SlashCommand
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import SlashCommand
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -109,9 +109,9 @@ async def test_hint_with_usage_renders_two_lines() -> None:
 @pytest.mark.asyncio
 async def test_hint_without_usage_renders_one_line() -> None:
     """Tier 2: legacy command (no usage set) keeps the original 1-line hint."""
-    from reyn.chat.slash import SlashCommand
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import SlashCommand
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -145,9 +145,9 @@ async def test_usage_and_completions_render_together() -> None:
     (= 1 summary + 1 usage + ≤ 8 completions + optional "+N more")
     stays within the CSS ``max-height: 11`` budget.
     """
-    from reyn.chat.slash import SlashCommand
     from reyn.chat.tui.app import ReynTUIApp
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from reyn.slash import SlashCommand
 
     app = ReynTUIApp(registry=None, agent_name="t", model="m", budget_tracker=None)
     async with app.run_test(headless=True) as pilot:
@@ -180,7 +180,7 @@ def test_find_command_has_usage() -> None:
     (``[-r|-c|-rc]`` flag block). The substring ``<query>`` stays
     so the contract "usage names the query placeholder" survives.
     """
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("find")
     assert cmd is not None
@@ -190,7 +190,7 @@ def test_find_command_has_usage() -> None:
 
 def test_save_command_has_usage() -> None:
     """Tier 2: /save opts into the structured usage line."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("save")
     assert cmd is not None
@@ -199,7 +199,7 @@ def test_save_command_has_usage() -> None:
 
 def test_copy_command_has_usage() -> None:
     """Tier 2: /copy opts into the structured usage line."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("copy")
     assert cmd is not None
@@ -208,7 +208,7 @@ def test_copy_command_has_usage() -> None:
 
 def test_attach_command_has_usage() -> None:
     """Tier 2: /attach opts into the structured usage line."""
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("attach")
     assert cmd is not None
@@ -224,7 +224,7 @@ def test_find_summary_no_longer_carries_redundant_paren_usage() -> None:
     which is mode disambiguation, NOT a usage hint, so it stays.
     Pin only that the embedded ``(/find ...)`` form doesn't return.
     """
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     cmd = REGISTRY.get("find")
     assert cmd is not None

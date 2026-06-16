@@ -173,7 +173,7 @@ def test_find_slash_command_is_registered() -> None:
     decorator-registered command is reachable from the registry
     (= the same surface the slash picker walks).
     """
-    from reyn.chat.slash import REGISTRY
+    from reyn.slash import REGISTRY
 
     names = {c.name for c in REGISTRY.all_commands()}
     assert "find" in names, (
