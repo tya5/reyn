@@ -979,6 +979,32 @@ def _emit_llm_request_error(
         pass
 
 
+class ResponsesEndpointRequiredError(Exception):
+    """#1678: raised when a ``reasoning_effort + tools`` call was routed to the
+    OpenAI ``/v1/responses`` endpoint but the configured endpoint/proxy does not
+    serve it (HTTP 405). Carries a decision-enabling message naming BOTH remedies
+    so the operator isn't left with a raw 405."""
+
+
+def _to_responses_model(model: str) -> str:
+    """#1678: rewrite a resolved litellm model string to route through the OpenAI
+    Responses API (``/v1/responses``) via the ``responses/`` bridge marker, which
+    litellm.acompletion honours and returns a chat-completions-shaped response for
+    (so reyn's response parsing is unchanged). Idempotent — an already-routed model
+    (explicit ``openai/responses/...`` prefix) is returned unchanged.
+
+    - ``openai/gpt-5.4``    → ``openai/responses/gpt-5.4`` (direct path)
+    - ``gpt-5.4``           → ``responses/gpt-5.4``        (proxy path, post-strip;
+      reyn's ``custom_llm_provider="openai"`` carries the provider)
+    """
+    if "/responses/" in model or model.startswith("responses/"):
+        return model
+    if "/" in model:
+        provider, rest = model.split("/", 1)
+        return f"{provider}/responses/{rest}"
+    return f"responses/{model}"
+
+
 async def recorded_acompletion(
     *,
     model: str,
@@ -1035,6 +1061,22 @@ async def recorded_acompletion(
             _allowed.append("reasoning_effort")
         base_kwargs["allowed_openai_params"] = _allowed
 
+    # #1678: route reasoning-model + tools calls to the OpenAI Responses API.
+    # ``reasoning_effort`` + ``tools`` together are only valid on /v1/responses
+    # (owner-confirmed: removing reasoning_effort cleared the 405) — but reyn
+    # sends everything via acompletion (/chat/completions) → 405. litellm's
+    # auto-route is unreliable (litellm#23156), so apply the ``responses/`` bridge
+    # prefix EXPLICITLY: it routes to /v1/responses yet returns a chat-completions
+    # shape, so the existing chokepoint + response parsing are unchanged (no
+    # parallel recorded_aresponses). An explicit operator prefix is preserved
+    # (idempotent). ``_routed_to_responses`` gates the decision-enabling error
+    # below so a normal 405 is unaffected.
+    _routed_to_responses = bool(
+        base_kwargs.get("tools") and base_kwargs.get("reasoning_effort")
+    )
+    if _routed_to_responses:
+        effective_model = _to_responses_model(effective_model)
+
     # #1669: emit a P6 ``llm_request`` event (TUI-observable) carrying the
     # non-message call params, ONCE here — before the ``_once`` response_format
     # retry loop, so a fallback retry does not double-emit. Ambient EventLog via
@@ -1083,6 +1125,20 @@ async def recorded_acompletion(
                 raise
     except Exception as exc:
         _emit_llm_request_error(effective_model, purpose, exc, base_kwargs)
+        # #1678: when WE routed this call to /v1/responses (reasoning_effort +
+        # tools) and it still 405s, the endpoint/proxy does not serve /v1/responses.
+        # Turn that raw dead-end into a decision-enabling error naming BOTH remedies
+        # (the raw 405 detail is already captured in the #1676 llm_request_error
+        # event above). Only fires when reyn applied the responses route, so a
+        # normal/unrelated 405 is unaffected.
+        if _routed_to_responses and getattr(exc, "status_code", None) == 405:
+            raise ResponsesEndpointRequiredError(
+                f"This call combines reasoning_effort + tools on model {model!r}, "
+                "which requires the OpenAI /v1/responses endpoint — but the "
+                "configured endpoint/proxy does not serve /v1/responses (HTTP 405). "
+                "Options: (1) set reasoning_effort to none / unset it for this "
+                "agent, OR (2) enable the /v1/responses endpoint on your proxy."
+            ) from exc
         raise
 
     if recorder is not None:
